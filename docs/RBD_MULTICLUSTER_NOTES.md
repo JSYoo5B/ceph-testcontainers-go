@@ -1,6 +1,6 @@
 # RBD cluster 간 복사와 복구 PoC
 
-[rbd_multicluster_integration_test.go](../rbd_multicluster_integration_test.go)는 FSID와 MON/MGR/OSD·네트워크·인증키가 서로 다른 두 Ceph cluster를 사용합니다. 각 cluster는 OSD 두 개를 갖고, mirror 연결이 소유한 관리 client와 mirror daemon만 양쪽 네트워크에 연결합니다. 데이터 검증 client는 자기 클러스터에만 접속합니다. Go 호스트에는 `go-ceph`, cgo, Linux block-device mapping이 필요하지 않습니다.
+[rbd_multicluster_integration_test.go](../internal/integration/rbd_multicluster_integration_test.go)는 FSID와 MON/MGR/OSD·네트워크·인증키가 서로 다른 두 Ceph cluster를 사용합니다. 각 cluster는 OSD 두 개를 갖고, mirror 연결이 소유한 관리 client와 mirror daemon만 양쪽 네트워크에 연결합니다. 데이터 검증 client는 자기 클러스터에만 접속합니다. Go 호스트에는 `go-ceph`, cgo, Linux block-device mapping이 필요하지 않습니다.
 
 ## 전체 및 증분 backup
 
@@ -22,7 +22,7 @@ source를 demote한 뒤 destination을 강제 옵션 없이 promote합니다. mi
 
 ## 전환·복구·peer 변경 확장
 
-[rbd_multicluster_scenarios_integration_test.go](../rbd_multicluster_scenarios_integration_test.go)는 위의 기본 mirror와 별도로 세 경로를 검증합니다.
+[rbd_multicluster_scenarios_integration_test.go](../internal/integration/rbd_multicluster_scenarios_integration_test.go)는 위의 기본 mirror와 별도로 세 경로를 검증합니다.
 
 - `TestMultiClusterRBDFailback`: 고정 site 이름과 양쪽 receiver를 구성하고 A → B → A 순서로 강제 옵션 없이 demote/promote합니다. B에서 쓴 데이터와 user snapshot이 A에 도착한 뒤 A를 다시 승격하고, 이후 A의 변경이 B에 복제되는지 확인합니다.
 - `TestMultiClusterRBDSplitBrainResync`: 일회성 image를 일부러 양쪽 primary로 만들고 서로 다른 데이터와 snapshot을 생성합니다. Ceph의 `up+error / split-brain`을 확인한 뒤 A를 기준으로 B를 demote·resync합니다. B의 상충된 변경과 snapshot은 폐기되고, 이후 새 checkpoint가 다시 복제돼야 합니다.
@@ -39,7 +39,7 @@ CGO_ENABLED=0 \
 CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
 CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
 go test -tags='integration multicluster' -run '^TestMultiClusterRBD' \
-  -count=1 -v -timeout=35m ./...
+  -count=1 -v -timeout=35m ./internal/integration
 ```
 
 추가 daemon과 두 cluster가 필요한 PoC이므로 일반 `integration` tag의 단일 cluster 회귀 테스트와 분리했습니다. 동시에 실행하면 작은 Docker VM의 memory budget을 넘을 수 있어 테스트는 순차적으로 실행합니다. 실제 실행 결과와 소요 시간은 상위 multi-cluster PoC 보고서에 기록합니다.

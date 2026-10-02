@@ -100,15 +100,15 @@ Tentacle의 익명 루트 GET은 HTTP 200으로 빈 bucket 목록을 반환했�
 Docker를 실행한 상태에서 저장소 루트에서 각각 실행합니다. 테스트는 cluster와 client를 생성하고 정리하므로 사전 Ceph 배포가 필요하지 않습니다.
 
 ```sh
-CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestRGWS3$' ./...
-CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestRBDLifecycle$' ./...
-CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestCephFSFilesystem$' ./...
+CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestRGWS3$' ./internal/integration
+CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestRBDLifecycle$' ./internal/integration
+CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=15m -run '^TestCephFSFilesystem$' ./internal/integration
 ```
 
 세 서비스 테스트를 한 번에 순차 실행할 수도 있습니다.
 
 ```sh
-CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m -run '^Test(RGWS3|RBDLifecycle|CephFSFilesystem)$' ./...
+CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m -run '^Test(RGWS3|RBDLifecycle|CephFSFilesystem)$' ./internal/integration
 ```
 
 다른 이미지는 `CEPH_TEST_IMAGE` 환경 변수로 지정할 수 있지만, 위 결과는 고정된 Tentacle 20.2.4 이미지에 대한 결과입니다. `CGO_ENABLED=0 go test ./...`만 실행하면 Docker 통합 테스트는 실행하지 않습니다.

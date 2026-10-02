@@ -122,7 +122,7 @@ CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds \
 make multicluster
 ```
 
-별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./...`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
+별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./internal/integration`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
 
 `make slim-images-multicluster` 또는 빌더의 `--multicluster`는 새 이미지를 빌드하고 control을 mirror 이미지로 명시하여 이 suite를 실행합니다. 일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
 

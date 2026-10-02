@@ -258,7 +258,7 @@ def main():
         if args.integration:
             env = dict(os.environ, CGO_ENABLED="0", CEPH_TEST_IMAGE=tags["control"],
                        CEPH_TEST_OSD_IMAGE=tags["osd"], CEPH_TEST_RGW_IMAGE=tags["rgw"], CEPH_TEST_MDS_IMAGE=tags["mds"])
-            test = [args.go_command, "test", "-tags=integration", "-count=1", "-v", "-timeout=20m", "./..."]
+            test = [args.go_command, "test", "-tags=integration", "-count=1", "-v", "-timeout=20m", "./internal/integration"]
             print("Testing mixed control/osd/rgw/mds images...", flush=True)
             report["checks"]["mixed_integration"] = "running"
             save_json(output / "build-report.json", report)
@@ -275,7 +275,7 @@ def main():
                        CEPH_TEST_OSD_IMAGE=tags["osd"], CEPH_TEST_RGW_IMAGE=tags["rgw"],
                        CEPH_TEST_MDS_IMAGE=tags["mds"], CEPH_TEST_MIRROR_IMAGE=tags["control"])
             test = [args.go_command, "test", "-tags=integration,multicluster", "-run", "^TestMultiCluster",
-                    "-count=1", "-v", "-timeout=60m", "./..."]
+                    "-count=1", "-v", "-timeout=60m", "./internal/integration"]
             print("Testing multiple clusters with mixed roles and control mirror image...", flush=True)
             report["checks"]["multicluster_integration"] = "running"
             save_json(output / "build-report.json", report)

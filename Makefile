@@ -9,10 +9,10 @@ test:
 	CGO_ENABLED=0 go test ./...
 
 integration:
-	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./...
+	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
 
 multicluster:
-	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./...
+	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration
 
 vet:
 	go vet ./...
@@ -24,7 +24,7 @@ slim-smoke:
 	docker run --rm -i --entrypoint /bin/sh $(SLIM_IMAGE) < image/slim/smoke.sh
 
 slim-integration:
-	CEPH_TEST_IMAGE=$(SLIM_IMAGE) CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./...
+	CEPH_TEST_IMAGE=$(SLIM_IMAGE) CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
 
 slim-images:
 	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)"

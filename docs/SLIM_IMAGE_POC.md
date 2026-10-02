@@ -88,7 +88,7 @@ build의 `RUN` 단계는 `--network=none`으로 실행하며, 설치된 RPM을 o
 ```sh
 CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-slim CGO_ENABLED=0 \
   go test -tags=integration -count=1 -v -timeout=20m \
-  -run '^Test(RGWS3|RBDLifecycle|CephFSFilesystem)$' ./...
+  -run '^Test(RGWS3|RBDLifecycle|CephFSFilesystem)$' ./internal/integration
 ```
 
 라이브러리의 `DefaultImage`는 공식 Quay 기준 이미지로 유지합니다. 소비자는 `Run(ctx, "ceph-testcontainers:20.2.4-slim", ...)`처럼 명시적으로 slim 이미지를 선택할 수 있습니다. 이 local tag는 사용자 registry에 공개한 이미지가 아니므로 다른 개발자나 CI에서는 먼저 같은 Dockerfile로 build해야 합니다.

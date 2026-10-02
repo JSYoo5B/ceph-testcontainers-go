@@ -61,7 +61,7 @@ permission mode와 UID/GID를 엄격하게 비교한다. user xattr는 별도 �
 
 ```sh
 CGO_ENABLED=0 go test -tags='integration multicluster' \
-  -run '^TestMultiClusterCephFS' -count=1 -v -timeout=20m ./...
+  -run '^TestMultiClusterCephFS' -count=1 -v -timeout=20m ./internal/integration
 ```
 
 PoC는 하나의 source/destination peer와 mirror daemon을 사용한다. active-active

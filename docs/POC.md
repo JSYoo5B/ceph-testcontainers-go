@@ -22,7 +22,7 @@ Ceph MON의 Docker inspect에서 `Privileged=false`, host devices와 bind mounts
 
 ## 통합 테스트
 
-`ceph_integration_test.go`의 `TestClusterLifecycle`은 아래를 순서대로 실행합니다.
+[ceph_integration_test.go](../internal/integration/ceph_integration_test.go)의 `TestClusterLifecycle`은 아래를 순서대로 실행합니다.
 
 1. MON/MGR/OSD 2개를 부트스트랩하고 Cephx 인증으로 CLI 통신합니다.
 2. 8 PG, 복제 수 2, min_size 1인 `tc-poc` 풀을 만들고 모든 PG가 active+clean이 될 때까지 기다립니다.

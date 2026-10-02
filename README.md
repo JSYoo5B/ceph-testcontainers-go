@@ -6,6 +6,21 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 경량화의 초기 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 현재 역할별 빌드와 검증은 [SLIM_IMAGE_AUTOMATION.md](docs/SLIM_IMAGE_AUTOMATION.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)를 확인합니다.
 
+## 프로젝트 구성
+
+루트에는 공개 `ceph` API와 해당 패키지의 단위 테스트·godoc 예제를 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
+
+```text
+./                     ceph API, 단위 테스트와 사용 예
+multicluster/          클러스터 사이의 구성·복제·백업 API
+internal/integration/  단일·다중 클러스터의 Docker 통합 테스트와 PoC
+internal/scripts/      컨테이너 안에서 실행하는 bootstrap 스크립트
+image/slim/            역할별 이미지 빌드·분석 도구
+docs/                  설계·조사·검증 기록
+```
+
+단위 테스트는 구현 옆에 유지하고, 새 Docker 시나리오는 `internal/integration`에 추가합니다. 단일·다중 클러스터 테스트가 공통 fixture를 사용하므로 같은 패키지에 두고 build tag로 실행 범위를 선택합니다.
+
 ## 요구사항
 
 - Go 1.25 이상
@@ -91,7 +106,7 @@ RGW는 HTTP endpoint를 publish하므로 호스트 Go 프로세스에서 일반 
 
 ### RBD / CephFS
 
-RBD는 클라이언트 컨테이너에서 `rbd pool init`, `rbd create/import/export` 등 CLI로 제어합니다. 별도의 RBD 서버 컨테이너는 필요하지 않습니다. 실제 데이터와 snapshot/clone 검증은 [rbd_integration_test.go](rbd_integration_test.go)에 있습니다.
+RBD는 클라이언트 컨테이너에서 `rbd pool init`, `rbd create/import/export` 등 CLI로 제어합니다. 별도의 RBD 서버 컨테이너는 필요하지 않습니다. 실제 데이터와 snapshot/clone 검증은 [rbd_integration_test.go](internal/integration/rbd_integration_test.go)에 있습니다.
 
 ```go
 fs, err := cluster.StartCephFS(ctx)
@@ -149,9 +164,9 @@ make integration
 각 인터페이스만 실행할 수도 있습니다.
 
 ```sh
-CGO_ENABLED=0 go test -tags=integration -run '^TestRGWS3$' -count=1 -v -timeout=15m ./...
-CGO_ENABLED=0 go test -tags=integration -run '^TestRBDLifecycle$' -count=1 -v -timeout=15m ./...
-CGO_ENABLED=0 go test -tags=integration -run '^TestCephFSFilesystem$' -count=1 -v -timeout=15m ./...
+CGO_ENABLED=0 go test -tags=integration -run '^TestRGWS3$' -count=1 -v -timeout=15m ./internal/integration
+CGO_ENABLED=0 go test -tags=integration -run '^TestRBDLifecycle$' -count=1 -v -timeout=15m ./internal/integration
+CGO_ENABLED=0 go test -tags=integration -run '^TestCephFSFilesystem$' -count=1 -v -timeout=15m ./internal/integration
 ```
 
 통합 테스트는 `integration` build tag로 분리했습니다. Docker가 없을 때 조용히 skip하지 않으므로 PoC 실행 여부를 분명하게 알 수 있습니다. 다른 이미지로 같은 시나리오를 시험하려면:

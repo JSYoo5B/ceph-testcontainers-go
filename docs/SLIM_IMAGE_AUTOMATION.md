@@ -78,7 +78,7 @@ CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
 CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
 CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw \
 CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds \
-CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./...
+CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
 ```
 
 `CEPH_TEST_IMAGE`는 MON/MGR와 독립 client에 사용합니다. 빈 역할 환경 변수는 이 이미지로 fallback하므로, `CEPH_TEST_IMAGE`만 `all`로 지정하고 나머지 역할 변수는 설정하지 않으면 기존 단일 이미지 suite를 실행할 수 있습니다.

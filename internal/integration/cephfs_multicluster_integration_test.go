@@ -1,6 +1,6 @@
 //go:build integration && multicluster
 
-package ceph_test
+package integration_test
 
 import (
 	"context"
