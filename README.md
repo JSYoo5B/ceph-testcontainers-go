@@ -8,13 +8,14 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 ## 프로젝트 구성
 
-루트에는 공개 `ceph` API와 해당 패키지의 단위 테스트·godoc 예제를 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
+공개 API는 `ceph/`와 `multicluster/`에 나란히 두고, 루트의 `go.mod` 하나로 관리합니다. 각 패키지의 단위 테스트·godoc 예제는 구현 옆에 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
 
 ```text
-./                     ceph API, 단위 테스트와 사용 예
+go.mod                 두 공개 패키지를 관리하는 단일 Go module
+ceph/                  단일 클러스터 API, 단위 테스트와 사용 예
+ceph/internal/scripts/ ceph 패키지에 embed하는 bootstrap 스크립트
 multicluster/          클러스터 사이의 구성·복제·백업 API
 internal/integration/  단일·다중 클러스터의 Docker 통합 테스트와 PoC
-internal/scripts/      컨테이너 안에서 실행하는 bootstrap 스크립트
 image/slim/            역할별 이미지 빌드·분석 도구
 docs/                  설계·조사·검증 기록
 ```
@@ -37,7 +38,7 @@ package integration_test
 import (
     "testing"
 
-    ceph "github.com/jsyoo5b/ceph-testcontainers-go"
+    ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
     "github.com/testcontainers/testcontainers-go"
 )
 

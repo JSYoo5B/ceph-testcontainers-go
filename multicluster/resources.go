@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/containerd/errdefs"
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"

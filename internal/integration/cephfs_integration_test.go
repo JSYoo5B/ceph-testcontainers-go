@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 )
 
 func TestCephFSFilesystem(t *testing.T) {

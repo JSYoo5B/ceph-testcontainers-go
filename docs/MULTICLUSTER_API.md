@@ -1,6 +1,6 @@
 # 단일 클러스터와 다중 클러스터 시나리오 API
 
-`ceph` 패키지는 단일 일회성 클러스터, `multicluster` 패키지는 기존 클러스터 사이의 multisite 구성·정책, mirroring과 백업·복원을 다룹니다. Go module은 하나를 유지하며 의존 방향은 `multicluster → ceph`입니다. `ceph.Run`에는 다른 클러스터와의 관계를 섞지 않습니다. 일반 RGW/RBD/CephFS 테스트에서는 복제용 컨테이너를 실행하지 않습니다.
+`ceph/`의 `ceph` 패키지는 단일 일회성 클러스터, `multicluster/`의 `multicluster` 패키지는 기존 클러스터 사이의 multisite 구성·정책, mirroring과 백업·복원을 다룹니다. 루트의 `go.mod` 하나를 유지하며 의존 방향은 `multicluster → ceph`입니다. 단일 클러스터의 bootstrap 스크립트는 `ceph/internal/scripts/`에 두고 `ceph` 패키지에 embed합니다. `ceph.Run`에는 다른 클러스터와의 관계를 섞지 않습니다. 일반 RGW/RBD/CephFS 테스트에서는 복제용 컨테이너를 실행하지 않습니다.
 
 ## 책임과 수명
 
@@ -18,6 +18,15 @@
 클러스터 cleanup을 먼저 등록하고 연결 cleanup을 나중에 등록합니다. LIFO로 연결 → 클러스터 순서로 종료합니다. 오류와 함께 non-nil 연결이 반환돼도 cleanup이 필요합니다. Mirror는 `testcontainers.Container`를 embed하여 `Stop`/`Start`로 장애를 주입할 수 있습니다. `Terminate`는 연결이 소유한 추가 컨테이너와 네트워크 연결을 제거하고 클러스터나 데이터를 삭제하지 않습니다. Ceph에 쓴 realm, peer, auth, directory policy는 일회성 클러스터에 남습니다. CephFS의 `RemoveDirectory`/`RemovePeer`와 RBD의 peer 제어는 호출자가 명시적으로 선택하는 구성 변경이며 `Terminate`가 자동으로 수행하지 않습니다. 기존 클러스터 전체의 원래 상태 복원도 계약에 포함하지 않습니다.
 
 ## 사용 예
+
+두 공개 패키지는 다음 경로로 import합니다.
+
+```go
+import (
+    "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+    "github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+)
+```
 
 ```go
 source, err := ceph.Run(ctx, controlImage, ceph.WithOSDImage(osdImage))
