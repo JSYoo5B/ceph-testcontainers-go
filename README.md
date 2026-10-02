@@ -1,6 +1,6 @@
 # ceph-testcontainers-go
 
-Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 testcontainers-go 모듈입니다. 실제 Ceph 데몬을 작은 일회성 클러스터로 실행하고, 컨테이너 내부 CLI로 구성과 상태를 제어합니다. Go 코드에는 `go-ceph`, 호스트 `librados`, cgo 의존성을 넣지 않습니다.
+Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 testcontainers-go 모듈입니다. 실제 Ceph 데몬을 작은 일회성 클러스터로 실행하고, 컨테이너 내부 CLI로 구성과 상태를 제어합니다. 공개 Go 모듈에는 `go-ceph`, 호스트 `librados`, cgo 의존성을 넣지 않습니다. 실제 go-ceph 소비자 검증은 별도 테스트 모듈에서 Linux 전용으로 실행합니다.
 
 현재 PoC는 MON 1개, MGR 1개, 기본 OSD 2개를 각각 별도 컨테이너로 실행합니다. RGW와 CephFS용 MDS는 필요할 때 추가합니다. RBD는 별도 데몬 없이 OSD 풀을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
@@ -119,7 +119,7 @@ _, _ = config, keyring
 
 Docker Desktop의 host networking은 4.34 이상에서 설정으로 활성화하는 기능이며 Linux Engine과 네트워크 동작이 다릅니다. 현재 macOS 환경의 Python RADOS 검증은 Desktop Linux VM의 host 네트워크 안에 있는 별도 클라이언트 컨테이너에서 수행합니다. macOS native Ceph 클라이언트의 인증된 RADOS I/O 자체를 검증한 결과는 아닙니다. RGW 테스트는 호스트 Go HTTP 클라이언트의 endpoint 도달 가능 여부를 별도로 확인하고, 연결되면 signed S3 읽기·쓰기를 추가 검증합니다. 연결되지 않으면 VM에서 통과한 범위와 호스트 HTTP 미검증 상태를 각각 로그에 남깁니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패도 테스트 실패로 처리합니다. 기본 suite timeout은 40분이며 `HOSTNETWORK_TIMEOUT`으로 바꿀 수 있습니다. [Docker host network 지원 범위](https://docs.docker.com/engine/network/drivers/host/), [Testcontainers networking](https://golang.testcontainers.org/features/networking/)을 참고합니다.
 
-Docker Desktop host networking을 활성화한 뒤에는 macOS Go 프로세스에서 두 RGW의 signed S3 읽기·쓰기·삭제와 MON/MGR/OSD의 실제 광고 포트에 대한 TCP 연결이 통과했습니다. OSD 추가·삭제 후 새 포트도 도달했습니다. `CEPH_TEST_HOST_TCP_REQUIRED=1`을 지정하면 이 직접 TCP 검사를 클러스터 기동과 각 OSD 변경 전후에 필수로 실행합니다. macOS native go-ceph/librados의 인증된 I/O는 별도 검증 대상입니다.
+Docker Desktop host networking을 활성화한 뒤에는 macOS Go 프로세스에서 두 RGW의 signed S3 읽기·쓰기·삭제와 MON/MGR/OSD의 실제 광고 포트에 대한 TCP 연결이 통과했습니다. OSD 추가·삭제 후 새 포트도 도달했습니다. `CEPH_TEST_HOST_TCP_REQUIRED=1`을 지정하면 이 직접 TCP 검사를 클러스터 기동과 각 OSD 변경 전후에 필수로 실행합니다. go-ceph 연동 테스트의 실행 지원 범위는 Linux로 한정합니다.
 
 ```sh
 make hostnetwork
@@ -162,6 +162,21 @@ _ = fs
 ```
 
 CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하고 rank 0의 `up:active`를 기다립니다. 검증에는 공식 이미지 내부의 Python `libcephfs` 바인딩을 사용했습니다. 이 네이티브 라이브러리는 Linux 컨테이너 안에만 있으며 Go 호스트의 cgo 의존성을 추가하지 않습니다. RBD kernel mapping과 CephFS kernel/FUSE mount는 이번 검증 범위에 포함하지 않습니다.
+
+### Linux go-ceph 연동 테스트
+
+`make goceph-linux`는 Linux runner 안에서 testcontainers 클러스터를 구성하고, 별도 모듈의 go-ceph v0.41.0 클라이언트를 실제로 컴파일·실행합니다. Ceph 20.2.4 공개 헤더와 같은 버전의 native 라이브러리, `CGO_ENABLED=1`, `-tags tentacle`을 사용합니다. macOS/Windows에서 이 명령을 실행하더라도 Go 테스트와 native I/O는 Docker의 Linux 환경 안에서 수행합니다.
+
+bridge/host 각각 두 클러스터를 함께 실행하여 CephX·FSID, 같은 이름의 RADOS object/RBD image/CephFS file 분리, 새 연결에서 전체 데이터 비교, RBD snapshot 불변성, 각 OSD `2 → 3 → 2` 후 읽기·쓰기와 삭제를 검사합니다. host 모드에는 `ConnectionConfig()`를 사용하는 Linux 프로세스 검증도 포함합니다. 클러스터 제어에는 기존 CLI API를 사용하며 데이터 I/O는 Go의 go-ceph API로 수행합니다.
+
+```sh
+make goceph-linux
+# 이미 만든 20.2.4 slim 이미지로 실행하려면 역할 이미지 변수를 지정하고:
+python3 internal/integration/goceph/run.py \
+  --client-base-image ceph-testcontainers:20.2.4-control
+```
+
+Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 Linux Docker Engine 또는 host networking을 켠 Docker Desktop이 필요합니다. Python 3.9 이상과 named build context를 지원하는 BuildKit이 필요하며 호스트에 Go/Ceph 개발 라이브러리를 설치하지 않습니다. 현재 fixture의 native 빌드 버전은 20.2.4로 고정합니다. 결과와 범위는 [Linux go-ceph 검증 기록](docs/HOST_NETWORK_POC.md#linux-go-ceph-연동-검증)에 정리합니다.
 
 ## API
 

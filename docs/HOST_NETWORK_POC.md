@@ -100,3 +100,59 @@ CEPH_TEST_HOST_HTTP_REQUIRED=1 CEPH_TEST_HOST_TCP_REQUIRED=1 make hostnetwork
 `CEPH_TEST_HOST_TCP_REQUIRED=1`은 실제 광고된 IP와 포트를 그대로 사용하며 각 연결을 3초로 제한합니다. TCP 연결 성공은 CephX 인증이나 macOS native librados/go-ceph I/O를 뜻하지 않습니다. 해당 데이터 I/O는 Linux 클라이언트 컨테이너에서 별도로 확인합니다.
 
 이 재검증 범위에서는 host networking 활성화 외에 추가 Docker Desktop 설정이 필요하지 않았습니다. 실행 로그와 최종 결과는 git에서 제외된 `artifacts/host-network-desktop-enabled/`에 남깁니다.
+
+## Linux go-ceph 연동 검증
+
+go-ceph를 사용하는 소비자 테스트는 Linux 전용으로 제공합니다. 클러스터를 생성하는 공개 모듈의 `go.mod`에는 go-ceph를 추가하지 않고, `internal/integration/goceph/probe`의 별도 모듈에서 v0.41.0을 고정합니다. Linux runner의 testcontainers 코드는 `CGO_ENABLED=0`, 데이터 I/O를 수행하는 별도 Go 프로세스는 `CGO_ENABLED=1`, `-tags tentacle`로 빌드합니다. [go-ceph의 native 의존성과 release tag](https://github.com/ceph/go-ceph/blob/v0.41.0/README.md)를 따릅니다.
+
+빌드 stage는 digest로 고정한 Quay Ceph 20.2.4 이미지의 GCC·native 라이브러리를 사용합니다. 이 이미지에 개발 헤더가 없으므로 같은 Ceph v20.2.4 공개 소스의 `rados/librados.h`, `rados/rados_types.h`, `rbd/librbd.h`, `rbd/features.h`, `cephfs/libcephfs.h`, `cephfs/ceph_ll_client.h`를 가져옵니다. 임시 linker symlink로 기존 SONAME 라이브러리에 링크합니다. 런타임에는 선택한 Ceph 20.2.4 이미지와 컴파일된 바이너리만 필요하며 호스트의 Ceph 설치·헤더·cgo 환경을 사용하지 않습니다.
+
+테스트 전체가 Docker Desktop의 Linux ARM64 VM에서 실행됩니다. Runner는 Docker socket을 통해 형제 컨테이너를 생성하고 Linux host network에 배치합니다. bridge 케이스의 클라이언트는 각 전용 네트워크에 `WithClient()`로 연결합니다. host 케이스는 같은 옵션으로 연결한 클라이언트 외에도 `ConnectionConfig()`를 임시 파일에 저장하여 runner의 Linux 프로세스에서 직접 연결합니다. 후자는 Docker daemon과 같은 network namespace에서 실행되며, macOS native 실행을 뜻하지 않습니다.
+
+각 네트워크 모드에서 두 클러스터를 동시 부트스트랩합니다. 클러스터마다 MON 1개, MGR 1개, OSD 2개, MDS 1개를 사용하며 서로 다른 FSID와 CephX admin keyring을 확인합니다. 구성·상태 조회에는 기존 컨테이너 CLI를 사용하고 다음 데이터 검증은 모두 Go의 go-ceph API로 실행합니다.
+
+| 검증 | 데이터와 API 범위 |
+| --- | --- |
+| 인증·클러스터 선택 | CephX 필수 설정, admin keyring, 실제 연결 후 FSID 일치 |
+| RADOS | 동일 object 이름에 클러스터별 64 KiB 데이터, 전체 읽기 비교, 새 object 쓰기·읽기·삭제 |
+| RBD | 동일 image 이름에 클러스터별 8 MiB 데이터, 전체 읽기 비교, head 변경 후 baseline snapshot 불변성, 삭제 |
+| CephFS | 동일 file 경로에 클러스터별 96 KiB 데이터, userspace libcephfs mount, 전체 읽기·새 파일 쓰기·fsync·삭제 |
+| OSD topology | 양쪽 클러스터 각각 `2 → 3 → 2`, 교체 후 양쪽에서 새 연결로 기존 데이터와 새 쓰기 검증 |
+| 클러스터 분리 | 같은 pool/image/object/file 이름을 쓰면서 서로 다른 전체 bytes와 FSID 유지 |
+
+각 probe는 별도 프로세스여서 이전 연결의 캐시에 의존하지 않습니다. Native MON/OSD/mount timeout은 30초이며 프로세스 전체에 75초 제한을 둡니다. RBD head를 변경하여 snapshot 불변성을 확인한 뒤 baseline으로 복원하므로 각 topology 단계에서 독립적으로 다시 비교할 수 있습니다.
+
+2026-10-02 역할별 Ceph 20.2.4 slim 이미지, Go 1.27.1, go-ceph v0.41.0, testcontainers-go v0.44.0으로 실행했습니다. Linux Engine 29.8.1, ARM64, 4 vCPU, 3916 MiB 환경입니다.
+
+| 케이스 | 결과 / 관측 시간 |
+| --- | --- |
+| bridge: 전용 네트워크 두 개와 `WithClient()`의 실제 go-ceph I/O | PASS / 106.67초 |
+| host: 자동 MON 포트, `WithClient()`와 Linux 프로세스의 실제 go-ceph I/O | PASS / 108.41초 |
+| 전체 `TestGoCephLinux`, 각 클러스터 OSD 교체와 cleanup 포함 | PASS / 215.09초 |
+
+26개 별도 go-ceph 프로세스가 성공했습니다. 컨테이너 내부 probe 20개와 Linux runner의 직접 probe 6개이며, seed 4회·새 연결 verify 18회·삭제 확인 4회입니다. 모든 verify에서 RADOS 64 KiB, RBD 8 MiB, CephFS 96 KiB 전체 bytes를 비교하고 새 데이터를 읽기·쓰기했습니다. 같은 이름의 리소스를 쓰는 두 클러스터의 payload hash와 실제 FSID는 각 모드에서 서로 달랐습니다. 성공한 실행이 생성한 컨테이너 32개를 검사한 결과 잔여 컨테이너는 0개였습니다.
+
+Linux native CGO 빌드와 Linux의 기존 `ceph`/`multicluster` 단위 테스트도 통과했습니다. macOS에서는 공개 모듈의 `CGO_ENABLED=0 go test ./...`, integration/goceph 태그 compile·vet, Python script compile, diff 검사를 통과했습니다. 위 native 기능을 위해 공개 API나 서버 구성을 추가 수정할 필요는 없었습니다.
+
+초기 테스트 작성 중 공유 pool에 두 application label을 활성화하여 Ceph 확인 요구에 실패했고, `client_metadata_timeout`이라는 미지원 옵션을 설정하여 probe가 거절됐습니다. 테스트 pool의 label을 `rbd`로 정하고 지원되는 timeout만 사용한 뒤 위 전체 케이스가 통과했습니다. 초기 실패 두 번의 생성 자원도 모두 정리했습니다. 최종 로그와 이미지 inspect는 `artifacts/go-ceph-linux-poc-run3/`에 있습니다. 이미지 build 시간은 위 테스트 시간에 포함하지 않으며, 한 번의 관측값입니다.
+
+기본 실행은 Quay 20.2.4를 모든 역할에 사용합니다.
+
+```sh
+make goceph-linux
+```
+
+현재 역할별 slim 이미지로 실행한 명령은 다음과 같습니다.
+
+```sh
+export CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control
+export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd
+export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw
+export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds
+python3 internal/integration/goceph/run.py \
+  --client-base-image ceph-testcontainers:20.2.4-control
+```
+
+로컬 Docker Engine의 `/var/run/docker.sock`에 접근할 수 있어야 합니다. Docker Desktop에서는 host networking을 활성화합니다. 빌드에는 Python 3.9 이상, Docker CLI/BuildKit의 named context, upstream header 및 Go module을 내려받을 네트워크가 필요합니다. `--docker`로 CLI 경로를, `--output-dir`로 새 결과 디렉터리를 지정합니다. 기본 결과는 `artifacts/go-ceph-linux-UTC-UUID/`이며 build log, integration log, 실제 이미지 inspect, 시간과 cleanup 결과를 `summary.json`에 기록합니다. Ryuk의 정상 재접속 유예 시간 이후 생성한 컨테이너만 검사합니다.
+
+현재 fixture의 native 빌드와 런타임 라이브러리는 Ceph 20.2.4로 맞춥니다. macOS native go-ceph, Linux AMD64·독립 bare-metal host, 제한된 client capability, RGW admin HTTP API, mirror/failover의 go-ceph 소비자 검증은 이번 케이스에 포함하지 않습니다. 기존 RGW/S3와 multicluster 시나리오의 CLI/Python 검증 결과는 앞의 기록을 따릅니다.
