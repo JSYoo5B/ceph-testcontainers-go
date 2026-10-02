@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -100,13 +101,15 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 		hostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "initial")
 	}
 	for i, cluster := range clusters {
-		advanceServiceTopology(t, ctx, cluster)
-		hostNetworkAssertDistinctAddresses(t, ctx, clusters)
+		hostNetworkAdvanceTopology(t, ctx, cluster, clusters)
 		for j := range clients {
 			hostNetworkRadosProbe(t, ctx, clients[j], fsids[j], payloads[j], fmt.Sprintf("after-topology-%d", i))
 		}
 	}
 	t.Log("native Python librados: identical pool/object names remained independent after both OSD 2 -> 3 -> 2 replacements; fresh sessions read retained bytes and wrote new objects")
+	if os.Getenv("CEPH_TEST_HOST_TCP_REQUIRED") == "1" {
+		t.Log("test runner TCP: every advertised MON/MGR/OSD endpoint was reachable before and after each OSD addition/removal; authenticated RADOS I/O ran separately in Linux client containers")
+	}
 }
 
 func TestHostNetworkRGWEndpoints(t *testing.T) {
@@ -447,9 +450,16 @@ func hostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 	})
 }
 
-func hostNetworkAssertDistinctAddresses(t *testing.T, ctx context.Context, clusters []*ceph.Container) {
+type hostNetworkDaemonEndpoints struct {
+	cluster   int
+	daemon    string
+	addresses []string
+}
+
+func hostNetworkAssertDistinctAddresses(t *testing.T, ctx context.Context, clusters []*ceph.Container) []hostNetworkDaemonEndpoints {
 	t.Helper()
 	seen := make(map[string]int)
+	var groups []hostNetworkDaemonEndpoints
 	for i, cluster := range clusters {
 		for _, daemon := range []string{"mon", "mgr", "osd"} {
 			data, err := cluster.Ceph(ctx, daemon, "dump", "--format", "json")
@@ -460,53 +470,119 @@ func hostNetworkAssertDistinctAddresses(t *testing.T, ctx context.Context, clust
 			if err := json.Unmarshal(data, &dump); err != nil {
 				t.Fatal(err)
 			}
-			// Dump fields differ between Ceph versions. Extract and normalize
-			// address vectors rather than comparing nonce-bearing map strings.
-			prefix := net.JoinHostPort(cluster.PublicAddress(), "")
-			pattern := regexp.MustCompile(`(?:v[12]:)?(` + regexp.QuoteMeta(prefix) + `[0-9]+)(?:/[0-9]+)?`)
-			addresses := make(map[string]bool)
-			var visit func(any)
-			visit = func(value any) {
-				switch value := value.(type) {
-				case string:
-					for _, match := range pattern.FindAllStringSubmatch(value, -1) {
-						_, port, err := net.SplitHostPort(match[1])
-						if err != nil {
-							t.Fatalf("invalid advertised endpoint %q: %v", match[1], err)
-						}
-						// MGR maps can retain a legacy address with port zero
-						// alongside their actual messenger address vectors.
-						if port == "0" {
-							continue
-						}
-						addresses[match[1]] = true
-					}
-				case []any:
-					for _, child := range value {
-						visit(child)
-					}
-				case map[string]any:
-					for _, child := range value {
-						visit(child)
-					}
-				}
+			endpoints, err := hostNetworkNormalizeEndpoints(dump, cluster.PublicAddress())
+			if err != nil {
+				t.Fatalf("cluster %d %s advertised endpoints: %v", i, daemon, err)
 			}
-			visit(dump)
-			if len(addresses) == 0 {
+			if len(endpoints) == 0 {
 				t.Fatalf("cluster %d %s dump does not advertise any %s endpoints: %s", i, daemon, cluster.PublicAddress(), data)
 			}
-			var endpoints []string
-			for endpoint := range addresses {
+			for _, endpoint := range endpoints {
 				if owner, exists := seen[endpoint]; exists && owner != i {
 					t.Fatalf("clusters %d and %d advertise the same endpoint %s", owner, i, endpoint)
 				}
 				seen[endpoint] = i
-				endpoints = append(endpoints, endpoint)
 			}
-			slices.Sort(endpoints)
+			groups = append(groups, hostNetworkDaemonEndpoints{cluster: i, daemon: daemon, addresses: endpoints})
 			t.Logf("cluster %d %s endpoints: %v", i, daemon, endpoints)
 		}
 	}
+	if os.Getenv("CEPH_TEST_HOST_TCP_REQUIRED") == "1" {
+		hostNetworkAssertRunnerTCP(t, ctx, groups)
+	}
+	return groups
+}
+
+// Dump fields differ between Ceph versions. Normalize actual IP/port pairs
+// across address vectors and legacy fields rather than nonce-bearing strings.
+func hostNetworkNormalizeEndpoints(dump any, publicAddress string) ([]string, error) {
+	prefix := net.JoinHostPort(publicAddress, "")
+	pattern := regexp.MustCompile(`(?:v[12]:)?(` + regexp.QuoteMeta(prefix) + `[0-9]+)(?:/[0-9]+)?`)
+	addresses := make(map[string]bool)
+	var visit func(any) error
+	visit = func(value any) error {
+		switch value := value.(type) {
+		case string:
+			for _, match := range pattern.FindAllStringSubmatch(value, -1) {
+				_, port, err := net.SplitHostPort(match[1])
+				if err != nil {
+					return fmt.Errorf("invalid endpoint %q: %w", match[1], err)
+				}
+				number, err := strconv.Atoi(port)
+				if err != nil || number > 65535 {
+					return fmt.Errorf("invalid endpoint port %q", match[1])
+				}
+				// MGR can retain a legacy :0 sentinel alongside real vectors.
+				if number == 0 {
+					continue
+				}
+				addresses[match[1]] = true
+			}
+		case []any:
+			for _, child := range value {
+				if err := visit(child); err != nil {
+					return err
+				}
+			}
+		case map[string]any:
+			for _, child := range value {
+				if err := visit(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(dump); err != nil {
+		return nil, err
+	}
+	var endpoints []string
+	for address := range addresses {
+		endpoints = append(endpoints, address)
+	}
+	slices.Sort(endpoints)
+	return endpoints, nil
+}
+
+// This connects from the Go test runner, using each advertised IP unchanged.
+// A successful TCP connection is not CephX authentication or native RADOS I/O.
+func hostNetworkAssertRunnerTCP(t *testing.T, ctx context.Context, groups []hostNetworkDaemonEndpoints) {
+	t.Helper()
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	for _, group := range groups {
+		for _, address := range group.addresses {
+			connection, err := dialer.DialContext(ctx, "tcp", address)
+			if err != nil {
+				t.Fatalf("test runner cannot reach cluster %d %s advertised endpoint %s: %v", group.cluster, group.daemon, address, err)
+			}
+			connection.Close()
+		}
+		t.Logf("test runner TCP reached cluster %d %s advertised endpoints: %v", group.cluster, group.daemon, group.addresses)
+	}
+}
+
+func hostNetworkAdvanceTopology(t *testing.T, ctx context.Context, cluster *ceph.Container, clusters []*ceph.Container) {
+	t.Helper()
+	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
+	original := cluster.OSDs()[0]
+	added, err := cluster.AddOSD(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
+	logStatus(t, ctx, cluster, "host service data after OSD addition")
+	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
+	logStatus(t, ctx, cluster, "host service data after original OSD removal")
+	t.Logf("host service topology 2 -> 3 -> 2: added osd.%d, removed original osd.%d", added.ID, original.ID)
 }
 
 func hostNetworkRadosProbe(t *testing.T, ctx context.Context, client testcontainers.Container, fsid string, payload []byte, stage string) {

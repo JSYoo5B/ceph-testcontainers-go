@@ -74,8 +74,29 @@ make hostnetwork-multicluster
 
 로컬 실행 로그는 git에서 제외된 `artifacts/host-network-poc/`에 보존합니다. `make hostnetwork`는 기본 bridge integration과 분리되며, mirror 검증에는 추가 `multicluster` 태그를 사용합니다.
 
-Docker host mode는 port publishing을 사용하지 않습니다. Linux Engine에서는 호스트의 네트워크 namespace를 공유하며, Docker Desktop은 별도 설정으로 활성화하는 layer 4 기능입니다. 이번 native librados/libcephfs 검증은 Docker Desktop **Linux VM의 host namespace에 있는 클라이언트 컨테이너**에서 수행했습니다. macOS native RADOS 연결을 검증했다는 의미는 아닙니다. Docker Desktop 설정을 변경하거나 재시작하지 않았습니다. [Docker 문서](https://docs.docker.com/engine/network/drivers/host/)
+Docker host mode는 port publishing을 사용하지 않습니다. Linux Engine에서는 호스트의 네트워크 namespace를 공유하며, Docker Desktop은 별도 설정으로 활성화하는 layer 4 기능입니다. Native librados/libcephfs I/O 검증은 Docker Desktop **Linux VM의 host namespace에 있는 클라이언트 컨테이너**에서 수행했습니다. macOS native RADOS I/O를 검증했다는 의미는 아닙니다. [Docker 문서](https://docs.docker.com/engine/network/drivers/host/)
 
-RGW의 VM 내부 endpoint는 `http://localhost:58835`와 `http://localhost:59565`였고 signed S3 I/O가 성공했습니다. macOS Go 프로세스의 직접 HTTP 연결은 두 endpoint 모두 connection refused였으므로 호스트 직접 S3 검증은 통과 범위에 포함하지 않습니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 이 상태를 테스트 실패로 처리합니다.
+최초 실행에서 RGW의 VM 내부 endpoint는 `http://localhost:58835`와 `http://localhost:59565`였고 signed S3 I/O가 성공했습니다. 당시 macOS Go 프로세스의 직접 HTTP 연결은 두 endpoint 모두 connection refused였습니다. 이후 사용자가 Docker Desktop host networking을 활성화한 상태에서 아래와 같이 호스트 직접 연결을 다시 검증했습니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패를 테스트 실패로 처리합니다.
 
 현재 RGW multisite 구성은 bridge 모드에서 제공합니다. Host-mode RGW multisite는 변경 전에 명시적으로 거절합니다. Host 모드의 대량 클러스터 실행, 원격 Docker/NIC 주소, 여러 MON의 quorum, macOS native RADOS 전체 경로는 이번 검증에 포함하지 않습니다.
+
+## Docker Desktop host networking 활성화 후 재검증
+
+같은 날 사용자가 Docker Desktop의 host networking을 활성화한 후 macOS Go 프로세스의 직접 연결을 필수 조건으로 다시 실행했습니다. Agent는 Docker Desktop 설정을 추가로 변경하거나 재시작하지 않았습니다.
+
+| 검사 | 결과 |
+| --- | --- |
+| macOS Go → 두 RGW의 signed S3 GET/PUT/DELETE | PASS, 83.11초; `http://localhost:57397`, `http://localhost:56173` |
+| macOS Go → 두 클러스터의 실제 MON/MGR/OSD 광고 주소 | 모든 TCP 연결 PASS |
+| 각 OSD 추가 전·추가 후·기존 OSD 삭제 후 macOS 포트 도달 | 모두 PASS; 새로 선택된 OSD 포트 포함 |
+| 별도 Linux 클라이언트의 인증된 RADOS I/O와 클러스터 분리 | PASS; 위 TCP 검사를 포함한 테스트 전체 80.80초 |
+
+재현 시에는 기존 이미지 환경 변수에 다음 옵션을 추가합니다.
+
+```sh
+CEPH_TEST_HOST_HTTP_REQUIRED=1 CEPH_TEST_HOST_TCP_REQUIRED=1 make hostnetwork
+```
+
+`CEPH_TEST_HOST_TCP_REQUIRED=1`은 실제 광고된 IP와 포트를 그대로 사용하며 각 연결을 3초로 제한합니다. TCP 연결 성공은 CephX 인증이나 macOS native librados/go-ceph I/O를 뜻하지 않습니다. 해당 데이터 I/O는 Linux 클라이언트 컨테이너에서 별도로 확인합니다.
+
+이 재검증 범위에서는 host networking 활성화 외에 추가 Docker Desktop 설정이 필요하지 않았습니다. 실행 로그와 최종 결과는 git에서 제외된 `artifacts/host-network-desktop-enabled/`에 남깁니다.

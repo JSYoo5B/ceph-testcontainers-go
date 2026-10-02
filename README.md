@@ -117,10 +117,14 @@ _, _ = config, keyring
 
 `make hostnetwork-multicluster`는 host-mode 클러스터 간 RBD snapshot mirror와 CephFS mirror·backup을 검사합니다. 현재 RGW multisite는 bridge-mode 클러스터에서 제공하며 host mode는 구성 변경 전에 거절합니다. 실행 결과와 검증 범위는 [HOST_NETWORK_POC.md](docs/HOST_NETWORK_POC.md)에 기록합니다.
 
-Docker Desktop의 host networking은 4.34 이상에서 설정으로 활성화하는 기능이며 Linux Engine과 네트워크 동작이 다릅니다. 현재 macOS 환경의 Python RADOS 검증은 Desktop Linux VM의 host 네트워크 안에 있는 별도 클라이언트 컨테이너에서 수행합니다. macOS 네이티브 프로세스에서 RADOS 전체 경로가 도달 가능하다는 검증으로 해석하지 않습니다. RGW 테스트는 호스트 Go HTTP 클라이언트의 endpoint 도달 가능 여부를 별도로 확인하고, 연결되면 signed S3 읽기·쓰기를 추가 검증합니다. 연결되지 않으면 VM에서 통과한 범위와 호스트 HTTP 미검증 상태를 각각 로그에 남깁니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패도 테스트 실패로 처리합니다. 기본 suite timeout은 40분이며 `HOSTNETWORK_TIMEOUT`으로 바꿀 수 있습니다. [Docker host network 지원 범위](https://docs.docker.com/engine/network/drivers/host/), [Testcontainers networking](https://golang.testcontainers.org/features/networking/)을 참고합니다.
+Docker Desktop의 host networking은 4.34 이상에서 설정으로 활성화하는 기능이며 Linux Engine과 네트워크 동작이 다릅니다. 현재 macOS 환경의 Python RADOS 검증은 Desktop Linux VM의 host 네트워크 안에 있는 별도 클라이언트 컨테이너에서 수행합니다. macOS native Ceph 클라이언트의 인증된 RADOS I/O 자체를 검증한 결과는 아닙니다. RGW 테스트는 호스트 Go HTTP 클라이언트의 endpoint 도달 가능 여부를 별도로 확인하고, 연결되면 signed S3 읽기·쓰기를 추가 검증합니다. 연결되지 않으면 VM에서 통과한 범위와 호스트 HTTP 미검증 상태를 각각 로그에 남깁니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패도 테스트 실패로 처리합니다. 기본 suite timeout은 40분이며 `HOSTNETWORK_TIMEOUT`으로 바꿀 수 있습니다. [Docker host network 지원 범위](https://docs.docker.com/engine/network/drivers/host/), [Testcontainers networking](https://golang.testcontainers.org/features/networking/)을 참고합니다.
+
+Docker Desktop host networking을 활성화한 뒤에는 macOS Go 프로세스에서 두 RGW의 signed S3 읽기·쓰기·삭제와 MON/MGR/OSD의 실제 광고 포트에 대한 TCP 연결이 통과했습니다. OSD 추가·삭제 후 새 포트도 도달했습니다. `CEPH_TEST_HOST_TCP_REQUIRED=1`을 지정하면 이 직접 TCP 검사를 클러스터 기동과 각 OSD 변경 전후에 필수로 실행합니다. macOS native go-ceph/librados의 인증된 I/O는 별도 검증 대상입니다.
 
 ```sh
 make hostnetwork
+# Docker Desktop host networking 활성화 후 호스트 직접 접근을 필수로 검사
+CEPH_TEST_HOST_HTTP_REQUIRED=1 CEPH_TEST_HOST_TCP_REQUIRED=1 make hostnetwork
 make hostnetwork-multicluster
 # 다른 역할별 이미지는 기존 CEPH_TEST_IMAGE/CEPH_TEST_OSD_IMAGE 등의 변수를 사용합니다.
 ```
