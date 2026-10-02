@@ -186,7 +186,7 @@ make integration
 
 ## 경량 이미지
 
-원본 Ceph 이미지 하나를 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 동일한 Ceph 바이너리와 설치된 RPM 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR, 클라이언트 도구, `rbd-mirror`·`cephfs-mirror`를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
+원본 Ceph RPM 이미지 또는 로컬 Debian 패키지 묶음을 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 입력의 Ceph 바이너리와 설치된 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR, 클라이언트 도구, `rbd-mirror`·`cephfs-mirror`를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
 
 ```sh
 make slim-images         # 원본 pull, 다섯 이미지 빌드와 smoke test
@@ -195,6 +195,18 @@ make slim-images-multicluster # 위 과정 + 독립 두 클러스터의 복제/�
 ```
 
 Makefile의 기본 원본은 digest로 고정한 Ceph 20.2.4입니다. `CEPH_SOURCE_IMAGE`로 다른 원본을 지정할 수 있으며, 출력 tag는 원본의 실제 Ceph 버전에서 정합니다. 기본 repository에서는 `ceph-testcontainers:20.2.4-control` 등의 tag가 만들어집니다. 이미지 빌드에는 Python 3.9 이상, Docker API 1.49 이상과 호환 CLI, `ADD --link`를 지원하는 BuildKit/buildx가 필요하고, Go는 통합 테스트를 선택할 때 사용합니다.
+
+회사에서 빌드한 `.deb` 패키지는 호환되는 Debian/Ubuntu 기반 이미지와 함께 지정합니다. Ceph 패키지의 의존 라이브러리도 같은 빌드의 `.deb` 묶음에 포함하며, 일반 배포판 의존성은 기반 이미지의 APT 저장소에서 설치합니다. 입력 파일의 SHA256·패키지명·버전·architecture와 설치 결과를 기록하고, 제공하지 않은 Ceph 패키지가 저장소에서 보충되면 실패합니다.
+
+```sh
+python3 image/slim/build.py \
+  --deb-packages /path/to/company-build/*.deb \
+  --base-image ubuntu:24.04 \
+  --tag company-patch-001 \
+  --integration
+```
+
+출력은 `company-patch-001-control/osd/rgw/mds/all`입니다. 동일한 Ceph 버전의 서로 다른 패치 빌드는 `--tag`로 구분합니다. 패키지 디렉터리는 `--deb-directory` 또는 `make slim-images-deb CEPH_DEB_DIRECTORY=...`로 전달할 수 있습니다. Ubuntu 24.04 ARM64의 공개 Ceph 19.2.3 `.deb` 21개로 다섯 이미지의 smoke와 혼합/all 단일 클러스터 전체 suite를 통과했습니다. 동일 버전의 수정된 파일 재설치도 별도 검증했습니다. 재현 절차와 입력 조건은 [Debian 패키지 이미지 빌드](docs/DEBIAN_IMAGE_AUTOMATION.md)를 따릅니다.
 
 앞의 예제에서 `Run` 호출을 다음처럼 바꾸면 역할별 이미지를 사용합니다. 이미지 옵션을 생략한 역할은 `Run`의 이미지로 실행하며, 새로 추가하는 OSD에도 같은 OSD 이미지 설정을 적용합니다.
 

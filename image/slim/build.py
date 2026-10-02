@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build five local Ceph role images from one upstream RPM image.
+"""Build five local Ceph role images from an RPM image or local Debian packages.
 
-Only Docker and Python 3.9+ are required on the host. Package inspection and
-filesystem assembly run inside the source image, without a host mount or network.
+Only Docker and Python 3.9+ are required on the host. Local .deb installation may
+fetch distro dependencies; inspection and assembly then run offline in Linux.
 """
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -67,6 +68,88 @@ def inspect_image(image, platform=None):
     if platform:
         args += ["--platform", platform]
     return json.loads(run(args + [image], capture=True))[0]
+
+
+def pull_image(image, args, log):
+    if not args.skip_pull:
+        command = ["docker", "pull"]
+        if args.platform:
+            command += ["--platform", args.platform]
+        run(command + [image], log=log)
+
+
+def deb_inputs(args):
+    files = args.deb_packages or sorted(args.deb_directory.glob("*.deb"))
+    if not files:
+        raise BuildError("No .deb packages were supplied")
+    inputs = []
+    seen = set()
+    for supplied in files:
+        path = supplied.resolve(strict=True)
+        if not path.is_file() or path.suffix != ".deb":
+            raise BuildError("Expected a regular .deb file: " + str(supplied))
+        if path in seen:
+            raise BuildError("Package file supplied twice: " + str(supplied))
+        seen.add(path)
+        digest = hashlib.sha256()
+        with path.open("rb") as package:
+            for block in iter(lambda: package.read(1024 * 1024), b""):
+                digest.update(block)
+        inputs.append((path, {"filename": supplied.name,
+                              "staged_filename": "%04d.deb" % len(inputs),
+                              "sha256": digest.hexdigest()}))
+    return inputs
+
+
+def prepare_deb_source(args, output, timestamp, staging_tag, report):
+    inputs = deb_inputs(args)
+    pull_image(args.base_image, args, output / "base-pull.log")
+    base = inspect_image(args.base_image, args.platform)
+    if base["Os"] != "linux":
+        raise BuildError("Debian packages require a Linux Debian/Ubuntu base image")
+    platform = args.platform or "linux/" + base["Architecture"]
+    save_json(output / "base-image.json", base)
+    provenance = {"base_image": args.base_image, "base_image_id": base["Id"],
+                  "base_image_digests": base.get("RepoDigests", []), "platform": platform,
+                  "packages": [metadata for _, metadata in inputs]}
+    save_json(output / "deb-input.json", provenance)
+    base_tag = "ceph-testcontainers-deb-base:" + uuid.uuid4().hex
+    # Containerd's platform-specific inspect ID may identify an untaggable
+    # child manifest. Pin the locally addressable index/digest instead.
+    base_reference = next(iter(base.get("RepoDigests", [])), None) or inspect_image(args.base_image)["Id"]
+    run(["docker", "tag", base_reference, base_tag])
+    try:
+        with tempfile.TemporaryDirectory(prefix="ceph-deb-source-") as directory:
+            context = Path(directory)
+            (context / "debs").mkdir()
+            for path, metadata in inputs:
+                shutil.copyfile(path, context / "debs" / metadata["staged_filename"])
+            shutil.copyfile(HERE / "install_debs.py", context / "install_debs.py")
+            save_json(context / "input.json", provenance)
+            generated = "\n".join([
+                "# Generated local package installation stage; excluded from role images.",
+                "ARG BASE_IMAGE=scratch", "FROM ${BASE_IMAGE}",
+                "ENV DEBIAN_FRONTEND=noninteractive",
+                "RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates gawk",
+                'COPY ["install_debs.py", "/tmp/install_debs.py"]',
+                'COPY ["debs/", "/tmp/ceph-debs/"]',
+                'COPY ["input.json", "/tmp/ceph-input.json"]',
+                "RUN python3 /tmp/install_debs.py --directory /tmp/ceph-debs --input /tmp/ceph-input.json --output /usr/share/ceph-testcontainers/source-packages.json && rm -rf /tmp/ceph-debs /tmp/ceph-input.json /tmp/install_debs.py /var/lib/apt/lists/*",
+                'LABEL io.ceph-testcontainers.package-manager="dpkg"',
+                "LABEL io.ceph-testcontainers.slim-build=" + json.dumps(timestamp),
+            ]) + "\n"
+            (context / "Dockerfile").write_text(generated)
+            (output / "Dockerfile.source.generated").write_text(generated)
+            run(["docker", "buildx", "build", "--load", "--no-cache", "--platform", platform,
+                 "--provenance=false", "--build-arg", "BASE_IMAGE=" + base_tag,
+                 "-t", staging_tag, str(context)], log=output / "deb-install.log")
+    finally:
+        cleanup = subprocess.run(["docker", "image", "rm", base_tag], text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (output / "base-tag-cleanup.log").write_text(cleanup.stdout + cleanup.stderr)
+        if cleanup.returncode:
+            report["base_tag_cleanup_error"] = cleanup.stderr.strip()
+    return inspect_image(staging_tag, platform), platform
 
 
 def archive_path(value, prefix):
@@ -135,20 +218,27 @@ def check_layers(plan, images):
     }
 
 
-def arguments():
+def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-image", required=True, help="Quay Ceph tag or immutable digest")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--source-image", help="Quay Ceph RPM tag or immutable digest")
+    source.add_argument("--deb-packages", nargs="+", type=Path, help="Local Ceph .deb files; shell globs are accepted")
+    source.add_argument("--deb-directory", type=Path, help="Directory containing local Ceph .deb files (not recursive)")
+    parser.add_argument("--base-image", help="Matching Debian/Ubuntu base image; required for .deb inputs")
     parser.add_argument("--repository", default="ceph-testcontainers", help="Local output repository; no push is performed")
     parser.add_argument("--tag", help="Output tag prefix; defaults to actual Ceph version")
     parser.add_argument("--platform", help="One platform per run, e.g. linux/arm64 or linux/amd64")
     parser.add_argument("--output-dir", type=Path, help="Empty directory for manifests, build/smoke logs and report")
-    parser.add_argument("--skip-pull", action="store_true", help="Use an already cached source image")
+    parser.add_argument("--skip-pull", action="store_true", help="Use an already cached source or base image")
     parser.add_argument("--skip-smoke", action="store_true", help="Record smoke validation as skipped")
     parser.add_argument("--integration", action="store_true", help="Run Go integration suite with mixed role images and then all")
     parser.add_argument("--multicluster", action="store_true", help="Run multi-cluster Go tests with mixed roles and control mirror image")
     parser.add_argument("--go-command", default="go", help="Go executable used only for integration checks")
     parser.add_argument("--keep-context", action="store_true", help="Keep generated tar build context in the output directory")
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if bool(args.base_image) != bool(args.deb_packages or args.deb_directory):
+        parser.error("--base-image is required with .deb inputs and cannot be used with --source-image")
+    return args
 
 
 def main():
@@ -163,7 +253,8 @@ def main():
     if output.exists() and any(output.iterdir()):
         raise BuildError("Output directory must be empty: " + str(output))
     output.mkdir(parents=True, exist_ok=True)
-    report = {"status": "running", "source_input": args.source_image, "started_at_utc": timestamp,
+    report = {"status": "running", "source_input": args.source_image or args.base_image,
+              "package_manager": "rpm" if args.source_image else "dpkg", "started_at_utc": timestamp,
               "output_directory": str(output), "checks": {
                   "smoke": "skipped" if args.skip_smoke else "pending",
                   "mixed_integration": "pending" if args.integration else "not_requested",
@@ -172,19 +263,21 @@ def main():
               }}
     save_json(output / "build-report.json", report)
     container_id = None
+    staging_tag = None
     try:
         run(["docker", "version"], log=output / "docker-version.log")
         run(["docker", "buildx", "version"], log=output / "buildx-version.log")
-        if not args.skip_pull:
-            pull = ["docker", "pull"]
-            if args.platform:
-                pull += ["--platform", args.platform]
-            run(pull + [args.source_image], log=output / "source-pull.log")
-        source = inspect_image(args.source_image, args.platform)
+        if args.source_image:
+            pull_image(args.source_image, args, output / "source-pull.log")
+            source = inspect_image(args.source_image, args.platform)
+            immutable = args.source_image if "@sha256:" in args.source_image else next(iter(source.get("RepoDigests", [])), source["Id"])
+            platform = args.platform or "linux/" + source["Architecture"]
+        else:
+            staging_tag = "ceph-testcontainers-deb-source:" + uuid.uuid4().hex
+            source, platform = prepare_deb_source(args, output, timestamp, staging_tag, report)
+            immutable = source["Id"]
         if source["Os"] != "linux":
             raise BuildError("The source must be a Linux Ceph image")
-        immutable = args.source_image if "@sha256:" in args.source_image else next(iter(source.get("RepoDigests", [])), source["Id"])
-        platform = args.platform or "linux/" + source["Architecture"]
         report["source"] = {"resolved_image": immutable, "image_id": source["Id"], "platform": platform,
                             "architecture": source["Architecture"], "local_size_bytes": source["Size"]}
         save_json(output / "source-image.json", source)
@@ -194,12 +287,15 @@ def main():
             context.mkdir()
             scripts = work / "ceph-slim"
             scripts.mkdir()
-            for name in ("assemble.py", "analyze.py", "package_roles.py"):
+            for name in ("assemble.py", "analyze.py", "package_roles.py", "debian_packages.py"):
                 shutil.copy2(HERE / name, scripts / name)
             create = ["docker", "create", "--network=none", "--platform", platform,
                       "--label", "io.ceph-testcontainers.slim-build=" + timestamp,
-                      "-e", "SOURCE_IMAGE=" + immutable, "-e", "SOURCE_IMAGE_ID=" + source["Id"],
-                      "--entrypoint", "python3", source["Id"], "/tmp/ceph-slim/package_roles.py"]
+                      "-e", "SOURCE_IMAGE=" + immutable, "-e", "SOURCE_IMAGE_ID=" + source["Id"]]
+            if not args.source_image:
+                create += ["-e", "PACKAGE_BACKEND=dpkg", "-e",
+                           "LOCAL_PACKAGE_PROVENANCE=/usr/share/ceph-testcontainers/source-packages.json"]
+            create += ["--entrypoint", "python3", immutable, "/tmp/ceph-slim/package_roles.py"]
             container_id = run(create, capture=True)
             run(["docker", "cp", str(scripts), container_id + ":/tmp/ceph-slim"], log=output / "source-copy.log")
             print("Assembling package closures and shared file groups...", flush=True)
@@ -219,6 +315,9 @@ def main():
                 raise BuildError("Invalid output tag prefix; specify --tag")
             tags = {role: "%s:%s-%s" % (args.repository, tag, role) for role in ROLES}
             report.update({"ceph_version": plan["ceph_version"], "tags": tags})
+            if not args.source_image:
+                report["local_package_provenance"] = plan["local_package_provenance"]
+                save_json(output / "source-packages.json", plan["local_package_provenance"])
             save_json(output / "plan.json", plan)
             archives = {archive_path(g["archive"], "groups") for g in plan["groups"].values()}
             archives.update(archive_path(plan["roles"][role]["manifest_archive"], "manifests") for role in ROLES)
@@ -296,6 +395,10 @@ def main():
             cleanup = subprocess.run(["docker", "rm", "-f", container_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if cleanup.returncode:
                 report["assembly_container_cleanup_error"] = cleanup.stderr.strip()
+        if staging_tag:
+            cleanup = subprocess.run(["docker", "image", "rm", staging_tag], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if cleanup.returncode:
+                report["source_stage_cleanup_error"] = cleanup.stderr.strip()
         save_json(output / "build-report.json", report)
 
 

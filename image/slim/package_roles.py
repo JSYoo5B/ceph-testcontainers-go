@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Materialize the pinned RPM runtime once, then package disjoint role overlays.
+"""Materialize an installed package runtime once, then package role overlays.
 
-Run inside the upstream Linux image with assemble.py and analyze.py alongside
-this file. No per-overlay RPM copying or symlink target traversal occurs: all
+Run inside the Linux source image with the package backend alongside this file.
+No per-overlay package copying or symlink target traversal occurs: all
 overlay content comes from the single fully materialized runtime filesystem.
 """
 
@@ -231,11 +231,11 @@ def group_summary(materialized, group, name, overlay):
     }
 
 
-def validate_executables(materialized, path_members):
+def validate_executables(materialized, path_members, package_manager="rpm"):
     for role, executables in REQUIRED_EXECUTABLES.items():
         for path in executables:
             if not os.path.exists(path) or not os.access(path, os.X_OK):
-                raise RuntimeError("Role %s requires missing/non-executable source path %s; source RPM layout changed" % (role, path))
+                raise RuntimeError("Role %s requires missing/non-executable source path %s; source %s layout changed" % (role, path, package_manager))
             relative = canonical_destination(path, materialized)
             if role not in path_members.get(relative, set()):
                 raise RuntimeError("Role %s does not include required executable %s" % (role, path))
@@ -243,9 +243,9 @@ def validate_executables(materialized, path_members):
                 raise RuntimeError("Materialized executable lost its executable permission: " + path)
 
 
-def metadata_probes(materialized):
+def metadata_probes(materialized, probe_paths=METADATA_PROBE_PATHS):
     result = {}
-    for path in METADATA_PROBE_PATHS:
+    for path in probe_paths:
         source = materialized / path
         info = os.lstat(source)
         entry = {"uid": info.st_uid, "gid": info.st_gid, "mode": "%04o" % stat.S_IMODE(info.st_mode)}
@@ -261,6 +261,13 @@ def metadata_probes(materialized):
     return result
 
 
+def role_metadata_probes(probes, path_members, materialized, role):
+    if role == "all":
+        return dict(probes)
+    return {path: metadata for path, metadata in probes.items()
+            if role in path_members.get(canonical_destination(path, materialized), set())}
+
+
 def main():
     output = Path(os.environ.get("OUTPUT_ROOT", "/role-output"))
     if not output.is_absolute():
@@ -271,38 +278,59 @@ def main():
     if not re.search(r"(?:^sha256:|@sha256:)[0-9a-f]{64}$", source_image):
         raise RuntimeError("SOURCE_IMAGE must be an immutable sha256 image ID or repository digest")
     output.mkdir(parents=True, exist_ok=True)
-    inventory = analyze.installed_inventory()
-    roots = {role: tuple(dict.fromkeys(ROOT_PACKAGES[role] + analyze.BASE)) for role in ROLES}
-    selected = {role: analyze.closure(roots[role]) for role in ROLES}
+    package_manager = os.environ.get("PACKAGE_BACKEND", "rpm")
+    if package_manager == "dpkg":
+        import debian_packages
+        inventory = debian_packages.installed_inventory()
+        native_architecture = debian_packages.query("dpkg", "--print-architecture").strip()
+        base = debian_packages.BASE + debian_packages.essential_roots(inventory)
+        roots = {role: tuple(dict.fromkeys(debian_packages.ROOT_PACKAGES[role] + base)) for role in ROLES}
+        resolver = debian_packages.DependencyResolver(inventory, native_architecture)
+        selected = {role: resolver.closure(roots[role]) for role in ROLES}
+        provenance = debian_packages.load_provenance(inventory, native_architecture)
+    elif package_manager == "rpm":
+        inventory = analyze.installed_inventory()
+        roots = {role: tuple(dict.fromkeys(ROOT_PACKAGES[role] + analyze.BASE)) for role in ROLES}
+        selected = {role: analyze.closure(roots[role]) for role in ROLES}
+    else:
+        raise RuntimeError("Unsupported PACKAGE_BACKEND: " + package_manager)
     all_roots = tuple(dict.fromkeys(package for role in ROLES for package in roots[role]))
     all_selected = set().union(*(selected[role] for role in ROLES))
     if all_selected.difference(inventory):
-        raise RuntimeError("Role dependency closure references uninstalled RPM packages")
+        raise RuntimeError("Role dependency closure references uninstalled packages")
 
     materialized = output / ".materialized"
-    assemble.ROOT = materialized
-    assemble.PACKAGES = all_roots
-    assemble.copied.clear()
-    assemble.hardlinks.clear()
-    assemble.license_files.clear()
-    assemble.main()
-    # The shared filesystem's aggregate manifest is replaced by role manifests.
-    shutil.rmtree(materialized / MANIFEST_DIRECTORY)
+    if package_manager == "dpkg":
+        debian_packages.validate_ceph_packages(inventory, all_selected, provenance)
+        debian_packages.assemble_runtime(materialized, all_selected, inventory)
+    else:
+        assemble.ROOT = materialized
+        assemble.PACKAGES = all_roots
+        assemble.copied.clear()
+        assemble.hardlinks.clear()
+        assemble.license_files.clear()
+        assemble.main()
+        # The aggregate manifest is replaced by individual role manifests.
+        shutil.rmtree(materialized / MANIFEST_DIRECTORY)
 
     path_members = {}
-    extras = analyze.extra_paths()
+    extras = debian_packages.extra_paths() if package_manager == "dpkg" else analyze.extra_paths()
+    role_licenses = {}
     for role in ROLES:
-        licenses = set().union(*(inventory[p]["licenses"] for p in selected[role]))
-        licenses.add(COPYING)
+        licenses = (debian_packages.license_paths(inventory, selected[role]) if package_manager == "dpkg"
+                    else set().union(*(inventory[p]["licenses"] for p in selected[role])))
+        if package_manager == "rpm":
+            licenses.add(COPYING)
         files = set(extras).union(*(inventory[p]["files"] for p in selected[role]))
-        files.add(COPYING)
+        files.update(licenses)
+        role_licenses[role] = licenses
         for path in plan_source_paths(files, licenses, materialized):
             path_members.setdefault(path, set()).add(role)
         # These generated directories are required in every runtime image.
         for source_path in assemble.WRITABLE_DIRS:
             path = canonical_destination(source_path, materialized)
             path_members.setdefault(path, set()).add(role)
-    if not os.path.isfile(COPYING):
+    if package_manager == "rpm" and not os.path.isfile(COPYING):
         raise RuntimeError("Required Ceph license file missing: " + COPYING)
     add_parent_memberships(path_members)
     actual_paths = tree_paths(materialized)
@@ -314,7 +342,7 @@ def main():
         ))
 
     groups, ordered = partition_materialized(materialized, path_members)
-    validate_executables(materialized, path_members)
+    validate_executables(materialized, path_members, package_manager)
     group_metadata = {}
     for name in ordered:
         overlay = output / "groups" / name
@@ -327,13 +355,14 @@ def main():
     ).stdout.strip()
     architecture = platform.machine()
     oci_architecture = {"aarch64": "arm64", "x86_64": "amd64"}.get(architecture, architecture)
-    probes = metadata_probes(materialized)
+    probes = metadata_probes(materialized, debian_packages.metadata_probe_paths(materialized)) if package_manager == "dpkg" else metadata_probes(materialized)
     role_metadata = {}
     roots["all"] = all_roots
     selected["all"] = all_selected
     for role in ROLES + ("all",):
         role_groups = [name for name in ordered if role == "all" or role in groups[name]["members"]]
-        versions = sorted(name + "-" + inventory[name]["version"] for name in selected[role])
+        versions = (debian_packages.package_versions(inventory, selected[role]) if package_manager == "dpkg"
+                    else sorted(name + "-" + inventory[name]["version"] for name in selected[role]))
         executables = list(REQUIRED_EXECUTABLES[role]) if role != "all" else sorted(set().union(*REQUIRED_EXECUTABLES.values()))
         metadata = {
             "role": role,
@@ -346,9 +375,20 @@ def main():
             "root_packages": list(roots[role]),
             "package_versions": versions,
             "required_executables": executables,
-            "metadata_probes": probes,
+            "metadata_probes": role_metadata_probes(probes, path_members, materialized, role),
             "logical_regular_file_bytes": sum(group_metadata[name]["regular_file_bytes"] for name in role_groups),
         }
+        if package_manager == "dpkg":
+            licenses = set().union(*role_licenses.values()) if role == "all" else role_licenses[role]
+            metadata.update({
+                "package_manager": package_manager,
+                "debian_architecture": native_architecture,
+                "local_package_provenance": provenance,
+                "package_records": debian_packages.package_records(inventory, selected[role]),
+                "license_paths": sorted({"/" + canonical_destination(path, materialized)
+                                         for path in licenses if os.path.isfile(path)}),
+                "library_directories": debian_packages.library_directories(inventory, selected[role]),
+            })
         role_metadata[role] = metadata
         manifest_root = output / "manifests" / role
         manifest_directory = manifest_root / MANIFEST_DIRECTORY
@@ -373,6 +413,11 @@ def main():
         "logical_regular_file_bytes": sum(group["regular_file_bytes"] for group in group_metadata.values()),
         "metadata_probes": probes,
     }
+    if package_manager == "dpkg":
+        plan.update({field: role_metadata["all"][field] for field in (
+            "package_manager", "debian_architecture", "local_package_provenance",
+            "package_records", "license_paths", "library_directories",
+        )})
     (output / "plan.json").write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n")
     shutil.rmtree(materialized)
     print("Packaged %d disjoint groups for %s (%d logical regular-file bytes)" % (

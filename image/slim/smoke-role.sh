@@ -7,7 +7,6 @@ case "$role" in
     *) echo "Unsupported Ceph image role: $role" >&2; exit 2 ;;
 esac
 
-test -s /usr/share/doc/ceph/COPYING
 test -s /usr/share/ceph-testcontainers/runtime-packages.txt
 test -s /usr/share/ceph-testcontainers/image-manifest.json
 
@@ -44,8 +43,21 @@ require(bool(manifest.get('groups')), 'Image manifest has no runtime groups')
 probes = manifest.get('metadata_probes')
 required_probes = {
     '/etc/ceph', '/var/lib/ceph', '/run/ceph', '/var/log/ceph', '/tmp',
-    '/bin', '/lib64', '/usr/share/doc/ceph/COPYING',
+    '/bin',
 }
+if manifest.get('package_manager') == 'dpkg':
+    licenses = manifest.get('license_paths', [])
+    require(bool(licenses), 'Debian runtime has no retained copyright files')
+    require(all(Path(path).is_file() and Path(path).stat().st_size for path in licenses),
+            'Debian runtime copyright/common-license file is missing or empty')
+    provenance = manifest.get('local_package_provenance', {})
+    require(bool(provenance.get('packages')), 'Debian runtime lacks local package provenance')
+    for package in provenance['packages']:
+        require(re.fullmatch(r'[a-f0-9]{64}', package.get('sha256', '')) is not None,
+                'Debian package provenance lacks SHA256')
+else:
+    required_probes.update(('/lib64', '/usr/share/doc/ceph/COPYING'))
+    require(Path('/usr/share/doc/ceph/COPYING').stat().st_size > 0, 'Ceph COPYING is empty')
 require(isinstance(probes, dict) and required_probes.issubset(probes),
         'Image manifest lacks required ownership/mode probes')
 for path, expected in sorted(probes.items()):
@@ -105,12 +117,14 @@ for binary in clients + daemons[role] + control_tools:
     print(binary + ': ' + result.stdout.strip())
 
 if role in ('osd', 'all'):
+    library_roots = ['/usr/lib64', '/usr/lib']
+    library_roots += [str(path) for path in Path('/usr/lib').glob('*-linux-gnu') if path.is_dir()]
     for suffix in ('rados-classes', 'ceph/compressor', 'ceph/erasure-code'):
-        files = [path for base in ('/usr/lib64', '/usr/lib')
+        files = [path for base in library_roots
                  for path in (Path(base) / suffix).glob('*.so*') if path.is_file()]
         require(bool(files), 'Missing OSD runtime plugins/object classes: ' + suffix)
         print(suffix + ': ' + str(len(files)) + ' shared objects available')
-    crypto = [path for base in ('/usr/lib64', '/usr/lib')
+    crypto = [path for base in library_roots
               for path in (Path(base) / 'ceph/crypto').glob('*.so*') if path.is_file()]
     print('ceph/crypto: ' + str(len(crypto)) + ' shared objects available (build dependent)')
 

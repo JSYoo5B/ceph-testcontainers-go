@@ -1,6 +1,6 @@
 # 다섯 역할 Ceph 이미지 자동화
 
-검증일: 2026-10-02, Asia/Seoul. [build.py](../image/slim/build.py)는 원본 Ceph RPM 이미지를 받아 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 조립하고 검증합니다. Ceph를 다시 컴파일하지 않고 원본 바이너리와 의존성을 사용합니다. Linux ARM64에서 역할별 smoke test, 혼합 이미지 클러스터, 기존 단일 이미지 방식의 전체 테스트를 통과했습니다.
+검증일: 2026-10-02, Asia/Seoul. [build.py](../image/slim/build.py)는 원본 Ceph RPM 이미지 또는 로컬 `.deb` 묶음을 받아 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 조립하고 검증합니다. Ceph를 다시 컴파일하지 않고 원본 바이너리와 의존성을 사용합니다. Linux ARM64에서 역할별 smoke test, 혼합 이미지 클러스터, 기존 단일 이미지 방식의 전체 테스트를 통과했습니다.
 
 ## 역할과 Go API
 
@@ -34,7 +34,7 @@ if err != nil {
 
 ## 실행
 
-호스트에는 Python 3.9 이상, Docker API 1.49 이상을 지원하는 엔진과 호환 CLI, `ADD --link`를 지원하는 BuildKit/buildx가 필요합니다. 생성 이미지 조회에 사용하는 `docker image inspect --platform`의 API 요구사항입니다. [Docker inspect 문서](https://docs.docker.com/reference/cli/docker/image/inspect/). 이번 환경은 Docker Engine 29.8.1/buildx 0.37.1입니다. 이미지 조립에 Go는 필요하지 않습니다. `--integration` 또는 `--multicluster`를 선택할 때만 프로젝트의 Go 1.25 이상 환경이 필요하며 `CGO_ENABLED=0`으로 실행합니다.
+호스트에는 Python 3.9 이상, Docker API 1.49 이상을 지원하는 엔진과 호환 CLI, `ADD --link`를 지원하는 BuildKit/buildx가 필요합니다. 생성 이미지 조회에 사용하는 `docker image inspect --platform`의 API 요구사항입니다. [Docker inspect 문서](https://docs.docker.com/reference/cli/docker/image/inspect/). 이번 환경은 Docker Engine 29.8.1/buildx 0.37.1이며, 로컬 기반 이미지를 사용하는 `.deb` 설치 단계는 Docker driver에서 검증했습니다. 이미지 조립에 Go는 필요하지 않습니다. `--integration` 또는 `--multicluster`를 선택할 때만 프로젝트의 Go 1.25 이상 환경이 필요하며 `CGO_ENABLED=0`으로 실행합니다.
 
 ```sh
 make slim-images
@@ -44,7 +44,7 @@ make slim-images-multicluster
 
 첫 명령은 원본 pull → 다섯 이미지 빌드 → 다섯 smoke test를 실행합니다. 두 번째는 이어서 혼합 이미지 전체 suite와 `all` 이미지 전체 suite를 순서대로 실행합니다. 세 번째는 혼합 역할과 control mirror 이미지로 다중 클러스터 복제/백업 PoC를 실행합니다. 두 검증 옵션을 함께 지정할 수도 있습니다. 기본 원본은 [Makefile](../Makefile)의 고정 Ceph 20.2.4 digest이며, `CEPH_SOURCE_IMAGE`와 `SLIM_REPOSITORY`로 원본과 출력 repository를 바꿀 수 있습니다.
 
-직접 실행할 때 `--source-image`는 필수입니다. tag나 digest를 받을 수 있습니다.
+직접 실행할 때 RPM 방식은 `--source-image`에 tag나 digest를 전달합니다. 로컬 `.deb` 방식은 `--deb-packages` 또는 `--deb-directory`와 호환되는 `--base-image`를 지정합니다. [Debian 패키지 입력과 Ubuntu 실험](DEBIAN_IMAGE_AUTOMATION.md)을 참고합니다.
 
 ```sh
 python3 image/slim/build.py \
@@ -53,16 +53,19 @@ python3 image/slim/build.py \
   --integration
 ```
 
-출력 tag는 원본의 `ceph --version`에서 읽은 실제 버전을 사용합니다. 기본 repository가 `ceph-testcontainers`이고 실제 버전이 20.2.4이면 `20.2.4-control`, `20.2.4-osd`, `20.2.4-rgw`, `20.2.4-mds`, `20.2.4-all` tag를 만듭니다. 입력 tag는 조회한 RepoDigest로 정규화하며 RepoDigest가 없으면 image ID를 기록합니다. 추출용 컨테이너는 조회 당시의 source image ID로 생성하므로 이후 입력 tag가 바뀌어도 같은 실행의 추출 대상은 고정됩니다. registry push는 하지 않습니다.
+출력 tag는 원본의 `ceph --version`에서 읽은 실제 버전을 사용합니다. 기본 repository가 `ceph-testcontainers`이고 실제 버전이 20.2.4이면 `20.2.4-control`, `20.2.4-osd`, `20.2.4-rgw`, `20.2.4-mds`, `20.2.4-all` tag를 만듭니다. 입력 tag는 조회한 RepoDigest로 정규화하며 RepoDigest가 없으면 image ID를 기록합니다. 추출용 컨테이너는 고정한 digest 또는 image ID와 platform으로 생성하므로 이후 입력 tag가 바뀌어도 같은 실행의 추출 대상은 고정됩니다. registry push는 하지 않습니다.
 
 | 옵션 | 동작 |
 | --- | --- |
-| `--source-image IMAGE` | 필수 원본 Linux Ceph RPM 이미지 |
+| `--source-image IMAGE` | 원본 Linux Ceph RPM 이미지; `.deb` 입력과 상호 배타적 |
+| `--deb-packages FILE...` | 로컬 Ceph `.deb` 파일 목록 |
+| `--deb-directory DIR` | 디렉터리 바로 아래의 로컬 `*.deb` |
+| `--base-image IMAGE` | `.deb`와 ABI가 호환되는 Debian/Ubuntu 기반 이미지; `.deb` 방식에서 필수 |
 | `--repository NAME` | 로컬 출력 repository, 기본 `ceph-testcontainers` |
 | `--tag PREFIX` | 실제 버전 대신 사용할 출력 tag prefix; manifest의 실제 Ceph 버전은 유지 |
 | `--platform PLATFORM` | 한 실행의 platform 선택; 생략하면 조회한 source architecture 사용 |
 | `--output-dir DIR` | 기록 디렉터리 지정; 없거나 비어 있어야 함 |
-| `--skip-pull` | 로컬에 캐시된 source 사용 |
+| `--skip-pull` | 로컬에 캐시된 source 또는 `.deb` 기반 이미지 사용 |
 | `--skip-smoke` | smoke 생략; report에는 `skipped`로 기록 |
 | `--integration` | 혼합 역할 이미지와 `all`의 Go 단일 클러스터 전체 suite 실행 |
 | `--multicluster` | 혼합 역할과 control mirror 이미지로 복제/백업 suite 실행 |

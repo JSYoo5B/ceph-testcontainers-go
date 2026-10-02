@@ -1,8 +1,11 @@
-.PHONY: test integration multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster
+.PHONY: test integration multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
 
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
 SLIM_REPOSITORY ?= ceph-testcontainers
+CEPH_DEB_DIRECTORY ?= artifacts/debs
+CEPH_DEB_BASE_IMAGE ?= ubuntu:24.04
+CEPH_DEB_TAG ?= local-deb
 MULTICLUSTER_TIMEOUT ?= 60m
 
 test:
@@ -34,3 +37,12 @@ slim-images-verify:
 
 slim-images-multicluster:
 	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --multicluster
+
+slim-images-deb:
+	python3 image/slim/build.py --deb-directory "$(CEPH_DEB_DIRECTORY)" --base-image "$(CEPH_DEB_BASE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --tag "$(CEPH_DEB_TAG)"
+
+slim-images-deb-verify:
+	python3 image/slim/build.py --deb-directory "$(CEPH_DEB_DIRECTORY)" --base-image "$(CEPH_DEB_BASE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --tag "$(CEPH_DEB_TAG)" --integration
+
+slim-test:
+	python3 -m unittest discover -s image/slim/tests -v
