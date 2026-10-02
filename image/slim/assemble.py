@@ -87,6 +87,8 @@ def copy_path(path):
             if info.st_nlink > 1:
                 hardlinks[inode] = target
     os.chown(target, info.st_uid, info.st_gid, follow_symlinks=False)
+    # chown may clear set-id bits; restore source modes after ownership.
+    shutil.copystat(path, target, follow_symlinks=False)
 
 
 def copy_tree(path):

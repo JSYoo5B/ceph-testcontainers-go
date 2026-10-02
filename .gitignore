@@ -1,3 +1,4 @@
 /artifacts/
 *.test
 coverage.out
+__pycache__/

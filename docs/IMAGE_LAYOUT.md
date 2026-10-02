@@ -1,8 +1,8 @@
-# mon-mgr / osd / rgw / mds / client / all 이미지 구성
+# 6개 역할 후보의 이미지 구성 분석 (설계 기록)
 
-분석일: 2026-10-02, Asia/Seoul. 이 6개를 공개 이미지 역할로 나누는 구성은 적절합니다. 내부 build stage는 전체 공통과 서버 공통으로 나누고, `all`은 다른 다섯 역할의 합집합으로 취급합니다.
+분석일: 2026-10-02, Asia/Seoul. 이 문서는 `mon-mgr`, `osd`, `rgw`, `mds`, `client`, `all`의 여섯 역할을 비교한 초기 설계 기록입니다. 내부 build stage를 전체 공통과 서버 공통으로 나누고, `all`을 다른 다섯 역할의 합집합으로 계산했습니다.
 
-이번 작업은 역할 경계와 파일 용량을 실제 upstream 이미지에서 분석한 결과입니다. 여섯 role 이미지를 빌드하거나 혼합 이미지 클러스터를 실행한 결과는 아닙니다. 현재 실행 검증된 이미지는 [기존 단일 slim 이미지](SLIM_IMAGE_POC.md)이고, Go API도 하나의 image를 모든 역할에 사용합니다.
+이후 `mon-mgr`와 `client`를 **`control`**로 합쳐 `control`, `osd`, `rgw`, `mds`, `all` 다섯 이미지를 실제로 빌드했습니다. 역할별 Go image 옵션과 혼합 클러스터 검증도 완료했습니다. 현재 사용법·공통 layer 분할·실측 결과는 [5개 이미지 자동화](SLIM_IMAGE_AUTOMATION.md)를 따릅니다. 아래 수치는 client를 별도로 배포하는 초기 모델이며, 여섯 이미지의 실행 결과가 아닙니다.
 
 ## 역할과 실행 방식
 
@@ -21,7 +21,7 @@
 
 `all`도 모든 바이너리를 포함하는 이미지입니다. 이 태그만으로 모든 daemon을 한 컨테이너에서 실행한다는 뜻은 아닙니다. 기존 PoC처럼 같은 `all` 이미지로 여러 컨테이너를 실행할 수 있습니다.
 
-현재 코드의 경계는 다음과 같습니다.
+이 분석 당시 코드의 경계는 다음과 같습니다. 현재는 MON/MGR와 client 모두 `control` 이미지를 사용합니다.
 
 - MON이 `Container.Ceph`와 OSD 인증키 생성을 수행합니다. 별도의 상시 control 컨테이너를 더 만들 필요는 없습니다.
 - MON/MGR readiness도 `ceph status`를 사용하므로 현재 구성에서는 CLI/Python 런타임을 유지해야 합니다.
@@ -65,7 +65,7 @@ Ceph 20.2.4 ARM64의 고정된 Quay 이미지에서 설치된 RPM dependency clo
 
 ## 권장 layer 구조
 
-공개 tag는 제안한 여섯 개로 유지합니다. `common`, `server-common`, `mon-mgr-osd-common`은 내부 stage로 두면 됩니다.
+여섯 역할 모델에서는 `common`, `server-common`, `mon-mgr-osd-common`을 내부 stage로 둘 수 있습니다. 구현한 다섯 역할 모델은 client를 `control`로 합치면서 전체 공통과 서버 공통을 하나의 `common` 그룹으로 합쳤습니다.
 
 ```mermaid
 flowchart TD
@@ -115,7 +115,7 @@ layer blob의 공유와 로컬 unpacked snapshot의 공유도 구분합니다. �
 
 현재 분석은 [검증된 slim](SLIM_IMAGE_POC.md)의 파일을 그대로 나누는 보수적인 첫 단계입니다. 그 다음에는 전체 공통의 denc plugin 약 40.8 MB, RGW 고유의 독립 도구 3개 약 70.8 MB, 서버 공통의 원본 RPM DB 약 28.8 MB 등을 검토할 수 있습니다. 필요한 `radosgw-admin`, MGR module, OSD runtime plugin은 유지해야 합니다. 후보와 근거는 [큰 구성요소 분석](COMPONENT_SIZE_ANALYSIS.md)에 정리했습니다. 아직 이 파일들을 제거한 역할별 이미지를 테스트한 것은 아닙니다.
 
-이미지를 나누더라도 Go 호스트에 go-ceph/cgo dependency를 추가할 필요는 없습니다. 현재 container CLI·Linux 내부 client 방식을 유지합니다. 실제 패키징 이후에는 각 role의 smoke test와 혼합 cluster의 기존 RADOS/RGW/RBD/CephFS·OSD 교체·실패 cleanup 테스트를 실행해야 합니다. Go의 역할별 image 선택 옵션도 함께 필요합니다.
+이미지를 나누더라도 Go 호스트에 go-ceph/cgo dependency를 추가할 필요는 없습니다. container CLI·Linux 내부 client 방식을 유지합니다. 현재 자동화는 각 role의 smoke test를 실행하고, `--integration`으로 혼합 이미지와 `all` 구성의 RADOS/RGW/RBD/CephFS·OSD 교체·실패 cleanup을 검증합니다. `WithOSDImage`, `WithRGWImage`, `WithMDSImage`로 역할별 이미지를 선택합니다.
 
 ## 재현
 

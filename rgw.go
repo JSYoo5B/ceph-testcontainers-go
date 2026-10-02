@@ -27,7 +27,7 @@ type RGWContainer struct {
 func (c *Container) StartRGW(ctx context.Context) (*RGWContainer, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	ctr, err := c.startService(ctx, "rgw",
+	ctr, err := c.startService(ctx, "rgw", c.settings.rgwImage,
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/rgw.sh"),
 		testcontainers.WithCmd(),
 		testcontainers.WithFiles(scriptFile("rgw")),

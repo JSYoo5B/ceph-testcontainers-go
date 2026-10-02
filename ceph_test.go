@@ -24,11 +24,23 @@ var (
 )
 
 func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
-	for _, opt := range []Option{WithOSDCount(0), WithOSDBlockSize(0), WithStartupTimeout(0)} {
-		cluster, err := Run(context.Background(), DefaultImage, opt)
-		if err == nil || cluster != nil {
-			t.Fatalf("invalid setting allocated resources: cluster=%v error=%v", cluster, err)
-		}
+	for _, test := range []struct {
+		name string
+		opt  Option
+	}{
+		{"OSD count", WithOSDCount(0)},
+		{"OSD block size", WithOSDBlockSize(0)},
+		{"startup timeout", WithStartupTimeout(0)},
+		{"OSD image", WithOSDImage("")},
+		{"RGW image", WithRGWImage(" \t")},
+		{"MDS image", WithMDSImage("\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cluster, err := Run(context.Background(), DefaultImage, test.opt)
+			if err == nil || cluster != nil {
+				t.Fatalf("invalid setting allocated resources: cluster=%v error=%v", cluster, err)
+			}
+		})
 	}
 }
 

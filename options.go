@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -11,6 +12,9 @@ type options struct {
 	osds           int
 	blockSize      int64
 	startupTimeout time.Duration
+	osdImage       string
+	rgwImage       string
+	mdsImage       string
 }
 
 // Option transfers cluster settings outside the monitor's container request.
@@ -18,6 +22,42 @@ type Option func(*options) error
 
 // Customize implements testcontainers.ContainerCustomizer.
 func (Option) Customize(*testcontainers.GenericContainerRequest) error { return nil }
+
+// WithOSDImage selects the image for initial and subsequently added OSDs.
+// If omitted, OSDs use the image passed to Run. Use matching Ceph versions.
+func WithOSDImage(image string) Option {
+	return func(o *options) error {
+		if strings.TrimSpace(image) == "" {
+			return fmt.Errorf("OSD image must not be blank")
+		}
+		o.osdImage = image
+		return nil
+	}
+}
+
+// WithRGWImage selects the image used by StartRGW.
+// If omitted, RGW uses the image passed to Run. Use matching Ceph versions.
+func WithRGWImage(image string) Option {
+	return func(o *options) error {
+		if strings.TrimSpace(image) == "" {
+			return fmt.Errorf("RGW image must not be blank")
+		}
+		o.rgwImage = image
+		return nil
+	}
+}
+
+// WithMDSImage selects the metadata server image used by StartCephFS.
+// If omitted, MDS uses the image passed to Run. Use matching Ceph versions.
+func WithMDSImage(image string) Option {
+	return func(o *options) error {
+		if strings.TrimSpace(image) == "" {
+			return fmt.Errorf("MDS image must not be blank")
+		}
+		o.mdsImage = image
+		return nil
+	}
+}
 
 // WithOSDCount sets the initial number of OSD containers (default: 2).
 func WithOSDCount(count int) Option {

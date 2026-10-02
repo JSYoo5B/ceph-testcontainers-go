@@ -35,7 +35,6 @@ type Container struct {
 	testcontainers.Container
 	mu                sync.Mutex
 	settings          options
-	image             string
 	network           *testcontainers.DockerNetwork
 	manager           testcontainers.Container
 	services          map[string]testcontainers.Container
@@ -56,9 +55,13 @@ type OSDContainer struct {
 }
 
 // Run creates one MON, one MGR and a configurable number of OSD containers.
+// img supplies MON/MGR and all other roles unless overridden by image options.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	settings := options{osds: 2, blockSize: 1 << 30, startupTimeout: 3 * time.Minute}
+	settings := options{
+		osds: 2, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
+		osdImage: img, rgwImage: img, mdsImage: img,
+	}
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
 			if err := opt(&settings); err != nil {
@@ -72,7 +75,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, fmt.Errorf("create ceph network: %w", err)
 	}
-	c := &Container{settings: settings, image: img, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
+	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
 		testcontainers.WithCmd(),
@@ -191,7 +194,7 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 	osd := &OSDContainer{ID: id}
 	c.osds[id] = osd
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
-	ctr, err := testcontainers.Run(ctx, c.image,
+	ctr, err := testcontainers.Run(ctx, c.settings.osdImage,
 		c.WithClient(), testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{
 			"CEPH_OSD_ID": strconv.Itoa(id), "CEPH_OSD_UUID": osdUUID, "CEPH_OSD_HOST": fmt.Sprintf("osd-%d", id),
@@ -294,8 +297,8 @@ func (c *Container) ServiceContainers() []testcontainers.Container {
 }
 
 // startService registers partial failures too, so callers can always terminate
-// the cluster after a failed RGW/MDS bootstrap. Services use the cluster image.
-func (c *Container) startService(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+// the cluster after a failed RGW/MDS bootstrap.
+func (c *Container) startService(ctx context.Context, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -310,7 +313,7 @@ func (c *Container) startService(ctx context.Context, name string, opts ...testc
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
-	ctr, err := testcontainers.Run(ctx, c.image, moduleOpts...)
+	ctr, err := testcontainers.Run(ctx, image, moduleOpts...)
 	if ctr != nil {
 		c.services[name] = ctr
 	}

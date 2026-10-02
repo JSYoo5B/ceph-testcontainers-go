@@ -2,6 +2,8 @@
 
 측정일: 2026-10-02, Asia/Seoul. Ceph 20.2.4 ARM64 공식 이미지와 [검증된 slim 이미지](SLIM_IMAGE_POC.md)를 기준으로 조사했습니다.
 
+이 문서는 경량화 후보를 찾은 초기 분석입니다. 이후 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 이미지를 빌드하고 혼합 구성 및 `all`의 전체 integration test를 검증했습니다. 현재 구현과 실측은 [이미지 자동화](SLIM_IMAGE_AUTOMATION.md)를 따릅니다. 아래 추가 삭제 후보들은 아직 제거하지 않았습니다.
+
 가장 먼저 제외할 것은 dashboard·머신러닝·개발 도구입니다. 이들은 이미 slim 이미지에서 제외했습니다. 남은 큰 패키지는 RGW와 ceph-common입니다. RGW를 선택적으로 배포하면 RBD/CephFS 전용 환경에서는 의미 있는 용량 절감이 가능하지만, RGW 전용 환경에서 MDS를 제외하는 효과는 작습니다. 더 작은 RGW fixture를 원한다면 패키지를 역할별로 나누는 것보다 패키지 안의 미사용 도구를 선별하는 작업이 먼저입니다.
 
 ## 측정 기준
@@ -78,7 +80,7 @@ dashboard, diskprediction-local, SciPy, scikit-learn 네 패키지의 선언 용
 
 ## 서비스별로 제외했을 때의 효과
 
-아래 값은 실제 설치 package closure를 선별해 비교한 결과입니다. 역할별 이미지를 새로 빌드하거나 혼합 클러스터를 실행한 결과는 아닙니다.
+아래 값은 실제 설치 package closure를 선별해 비교한 분석 당시의 결과입니다. 이 표 자체는 역할별 image 실행이나 Docker 저장 공간 실측을 나타내지 않습니다.
 
 | 필요한 클러스터 | 선택 파일 총량 | 전체 slim 대비 제외 용량 | 감소율 |
 | --- | ---: | ---: | ---: |

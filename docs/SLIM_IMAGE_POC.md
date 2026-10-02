@@ -99,6 +99,6 @@ CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-slim CGO_ENABLED=0 \
 
 현재 실측 환경은 macOS ARM64 호스트의 Docker Desktop Linux aarch64 VM, 4 vCPU, 약 3916 MiB RAM입니다. AMD64 빌드와 실행은 별도 검증이 필요합니다. 같은 script가 다른 release/image의 RPM 구조에도 그대로 적용된다고 보장하지 않습니다. 기준 digest를 바꾸면 package manifest와 smoke/full integration 결과를 다시 확인해야 합니다.
 
-한 이미지에 모든 검증 대상의 daemon과 client를 유지하여 기존 `Run` 및 `WithClient` 구조를 그대로 사용합니다. 큰 패키지·실제 파일, 서비스별 제외 효과와 공통 의존성 중복은 [구성요소 용량 분석](COMPONENT_SIZE_ANALYSIS.md)에 측정했습니다. RGW를 제외하는 효과는 약 97 MB지만 RGW 전용 환경에서 MDS를 제외하는 효과는 약 6.5 MB입니다. 더 줄일 때는 미사용 도구 선별을 먼저 검토하고, 역할별 이미지에는 공통 base를 공유하는 편이 적절합니다. 역할별 image를 받는 API 및 혼합 구성 테스트는 아직 구현하지 않았습니다.
+이 단일 이미지 PoC는 모든 검증 대상의 daemon과 client를 유지하여 기존 `Run` 및 `WithClient` 구조를 그대로 사용합니다. 큰 패키지·실제 파일, 서비스별 제외 효과와 공통 의존성 중복은 [구성요소 용량 분석](COMPONENT_SIZE_ANALYSIS.md)에 측정했습니다. RGW를 제외하는 효과는 약 97 MB지만 RGW 전용 환경에서 MDS를 제외하는 효과는 약 6.5 MB입니다. 더 줄일 때는 미사용 도구 선별을 먼저 검토하고, 역할별 이미지에는 공통 base를 공유하는 편이 적절합니다.
 
-공개 이미지 역할을 `mon-mgr`, `osd`, `rgw`, `mds`, `client`, `all`로 나누는 구체적인 파일 분할과 layer 효율은 [이미지 구성 분석](IMAGE_LAYOUT.md)에 정리했습니다.
+초기 여섯 역할의 파일 분할은 [이미지 구성 분석](IMAGE_LAYOUT.md)에 정리했습니다. 이후 `mon-mgr`와 `client`를 `control`로 합친 **다섯 이미지 자동화 및 역할별 Go API**를 구현하고, 혼합 구성과 `all` 양쪽의 전체 integration test를 통과했습니다. 새 버전으로 빌드하고 검증하는 방법은 [자동화 문서](SLIM_IMAGE_AUTOMATION.md)를 따릅니다.

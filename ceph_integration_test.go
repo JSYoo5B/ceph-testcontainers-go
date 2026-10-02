@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +21,9 @@ func TestClusterLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	started := time.Now()
-	image := os.Getenv("CEPH_TEST_IMAGE")
-	if image == "" {
-		image = ceph.DefaultImage
-	}
-	cluster, err := ceph.Run(ctx, image, ceph.WithOSDCount(2))
+	image, opts := integrationImages(t)
+	opts = append(opts, ceph.WithOSDCount(2))
+	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -141,10 +138,12 @@ func TestClusterLifecycle(t *testing.T) {
 }
 
 func TestBootstrapFailureCleanup(t *testing.T) {
-	cluster, err := ceph.Run(t.Context(), ceph.DefaultImage,
+	image, opts := integrationImages(t)
+	opts = append(opts,
 		ceph.WithStartupTimeout(15*time.Second),
 		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"),
 	)
+	cluster, err := ceph.Run(t.Context(), image, opts...)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}

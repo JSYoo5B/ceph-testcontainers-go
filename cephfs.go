@@ -50,7 +50,7 @@ func (c *Container) StartCephFS(ctx context.Context, opts ...testcontainers.Cont
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds.a.asok"}).WithStartupTimeout(c.settings.startupTimeout)),
 	}
 	moduleOpts = append(moduleOpts, opts...)
-	ctr, err := c.startService(ctx, "cephfs", moduleOpts...)
+	ctr, err := c.startService(ctx, "cephfs", c.settings.mdsImage, moduleOpts...)
 	if ctr != nil {
 		fs.Container = ctr
 	}

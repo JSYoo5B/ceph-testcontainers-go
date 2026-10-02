@@ -14,14 +14,32 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// Integration tests may use one image for all roles or compatible role images.
+// The control image also supplies the tools for the independent client container.
+func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
+	t.Helper()
+	imageFromEnv := func(name, fallback string) string {
+		if image := os.Getenv(name); image != "" {
+			return image
+		}
+		return fallback
+	}
+	control := imageFromEnv("CEPH_TEST_IMAGE", ceph.DefaultImage)
+	osd := imageFromEnv("CEPH_TEST_OSD_IMAGE", control)
+	rgw := imageFromEnv("CEPH_TEST_RGW_IMAGE", control)
+	mds := imageFromEnv("CEPH_TEST_MDS_IMAGE", control)
+	t.Logf("images: control/client=%s OSD=%s RGW=%s MDS=%s", control, osd, rgw, mds)
+	return control, []testcontainers.ContainerCustomizer{
+		ceph.WithOSDImage(osd), ceph.WithRGWImage(rgw), ceph.WithMDSImage(mds),
+	}
+}
+
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
 func newServiceCluster(t *testing.T) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
-	image := os.Getenv("CEPH_TEST_IMAGE")
-	if image == "" {
-		image = ceph.DefaultImage
-	}
-	cluster, err := ceph.Run(t.Context(), image, ceph.WithOSDCount(2))
+	image, opts := integrationImages(t)
+	opts = append(opts, ceph.WithOSDCount(2))
+	cluster, err := ceph.Run(t.Context(), image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
