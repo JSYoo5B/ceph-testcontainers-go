@@ -64,3 +64,9 @@ CLI/JSON 관리 동작, 인증, 풀과 객체 기능, 실제 Ceph 프로토콜�
 파일 기반 BlueStore와 OSD failure domain, 적은 복제 수는 작은 fixture를 위한 설정입니다. 디스크 장애, 실제 호스트 failure domain, LVM, cephadm orchestration, 운영 성능/내구성은 이 구성의 검증 범위가 아닙니다.
 
 RGW/S3는 일반 HTTP endpoint와 호스트 Go 클라이언트, RBD는 컨테이너 CLI, CephFS는 MDS와 컨테이너 내부 libcephfs 클라이언트로 확장했습니다. 각각 실제 저장 데이터와 OSD 토폴로지 변경을 검증하는 과정과 한계는 [SERVICES_POC.md](SERVICES_POC.md)를 기준으로 구분합니다. 소비 애플리케이션이 사용하는 SDK나 wire protocol 구현을 이 fixture에 연결하는 것이 다음 단계입니다. MON quorum 테스트는 독립된 후속 PoC가 필요합니다.
+
+## 이미지 경량화
+
+공식 이미지는 일반 배포용으로 dashboard, NFS/iSCSI, mirror, 머신러닝 패키지와 개발 도구도 포함합니다. 이번 fixture에 필요한 RPM과 설치된 의존성만 공식 이미지에서 복사하고, 새 scratch stage에 배치하는 경량 이미지 PoC를 추가했습니다. 원본과 같은 Ceph 바이너리·glibc·Python ABI를 유지하며 동적 OSD plugin, Python binding, MGR core module도 보존합니다. 구성, 같은 테스트를 사용한 호환성 검증과 크기 비교는 [SLIM_IMAGE_POC.md](SLIM_IMAGE_POC.md)에 정리합니다. [공식 Containerfile](https://github.com/ceph/ceph/blob/v20.2.4/container/Containerfile), [Docker multi-stage build](https://docs.docker.com/build/building/multi-stage/).
+
+가장 큰 package와 파일, RGW/MDS 제외 효과, 독립 role image의 공통 payload 중복도 [구성요소 용량 분석](COMPONENT_SIZE_ANALYSIS.md)에서 비교했습니다. RGW 분리는 RBD/CephFS용 이미지에 약 97 MB의 효과가 있지만, RGW 전용 이미지에서 MDS를 제외하는 효과는 약 6.5 MB입니다. 미사용 RGW 도구와 denc plugin 선별은 약 112 MB의 추가 후보이며, 아직 제거 후 검증한 결과는 아닙니다.

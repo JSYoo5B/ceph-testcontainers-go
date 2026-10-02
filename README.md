@@ -4,7 +4,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 현재 PoC는 MON 1개, MGR 1개, 기본 OSD 2개를 각각 별도 컨테이너로 실행합니다. RGW와 CephFS용 MDS는 필요할 때 추가합니다. RBD는 별도 데몬 없이 OSD 풀을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
-자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다.
+자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md), 경량 이미지 구성과 비교는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)에 정리했습니다.
 
 ## 요구사항
 
@@ -163,6 +163,20 @@ export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 make integration
 ```
+
+## 경량 이미지
+
+공식 이미지의 동일한 Ceph 바이너리, Python 바인딩, 설치된 RPM 의존성을 선별한 이미지도 빌드할 수 있습니다. dashboard, 머신러닝 패키지, GCC 등의 불필요한 구성과 일반 문서는 최종 이미지에서 제외합니다. 라이선스 파일과 OSD 동적 플러그인, MGR core module은 보존합니다.
+
+```sh
+make slim-image
+make slim-smoke
+make slim-integration
+```
+
+기본 tag는 `ceph-testcontainers:20.2.4-slim`입니다. `Run(ctx, "ceph-testcontainers:20.2.4-slim", ...)`으로 선택하거나 `CEPH_TEST_IMAGE`로 기존 통합 테스트에 적용할 수 있습니다. `DefaultImage`는 공식 Quay 이미지로 유지합니다. 최종 이미지는 로컬 빌드이며 registry에 publish하지 않았습니다. 빌드할 때는 원본 공식 이미지가 필요합니다.
+
+이미지는 여러 컨테이너가 공유합니다. 이 PoC는 이미지 저장 용량 감소를 확인했습니다. 동일한 Ceph 데몬의 RAM 사용량과 registry 전송 크기는 별도 측정이 필요합니다. 측정값과 검증 범위는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)를 확인합니다.
 
 ## 현재 범위
 

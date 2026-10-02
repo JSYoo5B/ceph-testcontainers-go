@@ -113,6 +113,8 @@ CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m -run '^Test(RGW
 
 다른 이미지는 `CEPH_TEST_IMAGE` 환경 변수로 지정할 수 있지만, 위 결과는 고정된 Tentacle 20.2.4 이미지에 대한 결과입니다. `CGO_ENABLED=0 go test ./...`만 실행하면 Docker 통합 테스트는 실행하지 않습니다.
 
+공식 바이너리를 유지한 경량 이미지에서도 같은 테스트를 실행합니다. 별도 비교 결과와 빌드 방법은 [SLIM_IMAGE_POC.md](SLIM_IMAGE_POC.md)를 확인합니다.
+
 로컬 최종 로그는 `artifacts/poc-rgw.log`와 `artifacts/poc-services-regression.log`에 보관합니다. 최초 RBD 성공은 `artifacts/poc-rbd.log`, 최초 CephFS 성공과 RGW keyring 실패는 `artifacts/poc-rgw-cephfs.log`, RGW readiness 실패는 `artifacts/poc-rgw-readiness-failure.log`에 남아 있습니다. 자원 정리 조회 결과는 `artifacts/poc-resource-audit.json`입니다. `artifacts/`는 `.gitignore`에 포함되어 있으므로 저장소 clone에는 로그가 따라가지 않습니다. 필요하면 위 명령의 출력을 파일로 저장하여 재생성합니다.
 
 ## 판단과 남은 범위
