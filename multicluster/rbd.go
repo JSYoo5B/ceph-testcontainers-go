@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+// RBDMirrorMode selects the per-image replication mechanism, independently of
+// the pool's image scope. Images are enabled explicitly with EnableImage.
+type RBDMirrorMode string
+
+const (
+	RBDMirrorModeSnapshot RBDMirrorMode = "snapshot"
+	RBDMirrorModeJournal  RBDMirrorMode = "journal"
 )
 
 // RBDMirrorConfig connects two existing clusters through one destination-side
@@ -26,6 +36,9 @@ type RBDMirrorConfig struct {
 	Pool            string
 	SourceSite      string
 	DestinationSite string
+	// Mode defaults to snapshot and is used by EnableImage. Both modes keep
+	// pool scope=image so unrelated images are not automatically mirrored.
+	Mode RBDMirrorMode
 }
 
 // RBDMirror owns its daemon and setup CLI containers, not the Ceph clusters.
@@ -41,8 +54,9 @@ type RBDMirror struct {
 // peer into the destination, and starts a daemon connected to both clusters.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
-// image must contain the RBD CLI and rbd-mirror. Enable snapshot mirroring and
-// create checkpoints on each intended source image separately with the RBD CLI.
+// image must contain the RBD CLI and rbd-mirror. Enable each intended source
+// image through EnableImage or the RBD CLI. Snapshot images need subsequent
+// mirror checkpoints; journal images replay writes without mirror snapshots.
 //
 // The caller must Terminate a non-nil result even when setup returns an error.
 // Terminate removes runtime containers but leaves mirroring mode, peer and auth
@@ -282,6 +296,59 @@ func (m *RBDMirror) DestinationRBD(ctx context.Context, args ...string) ([]byte,
 	return exec(ctx, m.destinationClient, append([]string{"rbd"}, args...)...)
 }
 
+// EnableImage enables the configured snapshot or journal mode on an existing
+// source image in this link's Pool. imageName is a name, without pool, namespace
+// or snapshot syntax. A matching enabled image is left unchanged; a different
+// enabled mode is rejected before any mutation.
+//
+// Journal mode requires the exclusive-lock image feature. The native enable
+// command adds journaling when necessary; this method does not change the
+// image's other features or broaden the pool's mirroring scope. Callers must
+// quiesce their application before changing an existing image's mirroring.
+func (m *RBDMirror) EnableImage(ctx context.Context, imageName string) error {
+	if m == nil || m.sourceClient == nil {
+		return errors.New("RBD mirror source setup client is unavailable")
+	}
+	if imageName == "" || strings.TrimSpace(imageName) != imageName || strings.HasPrefix(imageName, "-") || strings.ContainsAny(imageName, "/@\x00\t\r\n") {
+		return errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax")
+	}
+	mode, err := normalizeRBDMirrorMode(m.config.Mode)
+	if err != nil {
+		return err
+	}
+	image := m.config.Pool + "/" + imageName
+	data, err := m.SourceRBD(ctx, "info", image, "--format", "json")
+	if err != nil {
+		return fmt.Errorf("read source RBD image: %w", err)
+	}
+	var info struct {
+		Features  []string `json:"features"`
+		Mirroring *struct {
+			Mode  string `json:"mode"`
+			State string `json:"state"`
+		} `json:"mirroring"`
+	}
+	if err := json.Unmarshal(data, &info); err != nil {
+		return fmt.Errorf("decode source RBD image: %w", err)
+	}
+	if info.Mirroring != nil && info.Mirroring.State != "disabled" && info.Mirroring.State != "" {
+		if info.Mirroring.State != "enabled" {
+			return fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State)
+		}
+		if info.Mirroring.Mode != string(mode) {
+			return fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode)
+		}
+		return nil
+	}
+	if mode == RBDMirrorModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
+		return errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring")
+	}
+	if _, err := m.SourceRBD(ctx, "mirror", "image", "enable", image, string(mode)); err != nil {
+		return fmt.Errorf("enable source %s RBD mirroring: %w", mode, err)
+	}
+	return nil
+}
+
 // Terminate removes the daemon and setup clients while preserving both clusters,
 // their image data, and the mirroring/auth configuration written during setup.
 func (m *RBDMirror) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
@@ -292,6 +359,11 @@ func normalizeRBDMirrorConfig(config RBDMirrorConfig) (RBDMirrorConfig, error) {
 	config.Pool = strings.TrimSpace(config.Pool)
 	config.SourceSite = strings.TrimSpace(config.SourceSite)
 	config.DestinationSite = strings.TrimSpace(config.DestinationSite)
+	mode, err := normalizeRBDMirrorMode(config.Mode)
+	if err != nil {
+		return config, err
+	}
+	config.Mode = mode
 	if config.SourceSite == "" {
 		config.SourceSite = "source"
 	}
@@ -311,4 +383,16 @@ func normalizeRBDMirrorConfig(config RBDMirrorConfig) (RBDMirrorConfig, error) {
 		return config, errors.New("source and destination RBD site names must differ")
 	}
 	return config, nil
+}
+
+func normalizeRBDMirrorMode(mode RBDMirrorMode) (RBDMirrorMode, error) {
+	if mode == "" {
+		return RBDMirrorModeSnapshot, nil
+	}
+	switch mode {
+	case RBDMirrorModeSnapshot, RBDMirrorModeJournal:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode)
+	}
 }

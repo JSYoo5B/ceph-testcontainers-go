@@ -20,6 +20,8 @@ import (
 var (
 	_ testcontainers.Container = (*Container)(nil)
 	_ testcontainers.Container = (*OSDContainer)(nil)
+	_ testcontainers.Container = (*MonitorContainer)(nil)
+	_ testcontainers.Container = (*ManagerContainer)(nil)
 	_ testcontainers.Container = (*RGWContainer)(nil)
 	_ testcontainers.Container = (*CephFSContainer)(nil)
 )
@@ -30,6 +32,12 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		opt  Option
 	}{
 		{"OSD count", WithOSDCount(0)},
+		{"MON count", WithMonitorCount(0)},
+		{"MGR count", WithManagerCount(-1)},
+		{"empty OSD layout", WithInitialOSDs()},
+		{"invalid OSD layout", WithInitialOSDs(OSDConfig{Host: "bad host"})},
+		{"conflicting OSD host", WithInitialOSDs(OSDConfig{Host: "host1", Rack: "rack1"}, OSDConfig{Host: "host1", Rack: "rack2"})},
+		{"invalid pool defaults", WithPoolDefaults(2, 3)},
 		{"OSD block size", WithOSDBlockSize(0)},
 		{"startup timeout", WithStartupTimeout(0)},
 		{"OSD image", WithOSDImage("")},

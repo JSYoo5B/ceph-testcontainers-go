@@ -1,10 +1,18 @@
 package multicluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
+	"io"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func TestRunRBDMirrorRejectsMissingClusters(t *testing.T) {
@@ -16,7 +24,7 @@ func TestRunRBDMirrorRejectsMissingClusters(t *testing.T) {
 
 func TestRBDMirrorConfigDefaultsAndRejectsAmbiguousPool(t *testing.T) {
 	config, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: " rbd "})
-	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" {
+	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" || config.Mode != RBDMirrorModeSnapshot {
 		t.Fatalf("unexpected normalized configuration: %+v error=%v", config, err)
 	}
 	for _, pool := range []string{"", " ", "-rbd", "rbd/namespace", "rbd images"} {
@@ -28,6 +36,76 @@ func TestRBDMirrorConfigDefaultsAndRejectsAmbiguousPool(t *testing.T) {
 	}
 	if _, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", SourceSite: "same", DestinationSite: "same"}); err == nil {
 		t.Fatal("identical source and destination site names accepted")
+	}
+}
+
+func TestRBDMirrorModeRejectsAmbiguousValues(t *testing.T) {
+	config, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", Mode: RBDMirrorModeJournal})
+	if err != nil || config.Mode != RBDMirrorModeJournal {
+		t.Fatalf("journal mode was not retained: %+v %v", config, err)
+	}
+	for _, mode := range []RBDMirrorMode{"pool", "image", "snapshot ", " journal", "--force", "unknown"} {
+		if _, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", Mode: mode}); err == nil {
+			t.Errorf("unsupported per-image mode %q accepted", mode)
+		}
+	}
+}
+
+type rbdEnableFixture struct {
+	testcontainers.Container
+	info  string
+	calls [][]string
+}
+
+func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	c.calls = append(c.calls, slices.Clone(args))
+	var stream bytes.Buffer
+	if len(args) > 1 && args[1] == "info" {
+		header := [8]byte{byte(stdcopy.Stdout)}
+		binary.BigEndian.PutUint32(header[4:], uint32(len(c.info)))
+		_, _ = stream.Write(header[:])
+		_, _ = stream.WriteString(c.info)
+	}
+	return 0, bytes.NewReader(stream.Bytes()), nil
+}
+
+func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
+	client := &rbdEnableFixture{info: `{"features":["layering"]}`}
+	link := &RBDMirror{sourceClient: client, config: RBDMirrorConfig{Pool: "rbd", Mode: RBDMirrorModeJournal}}
+	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "exclusive-lock") || len(client.calls) != 1 {
+		t.Fatalf("journal setup changed an image without exclusive-lock: calls=%v error=%v", client.calls, err)
+	}
+	client.info = `{"features":["layering","exclusive-lock"]}`
+	client.calls = nil
+	if err := link.EnableImage(t.Context(), "volume"); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.calls) != 2 || !slices.Equal(client.calls[1], []string{"rbd", "mirror", "image", "enable", "rbd/volume", "journal"}) {
+		t.Fatalf("journal mode was not applied to only the selected image: %v", client.calls)
+	}
+}
+
+func TestEnableRBDImagePreservesExistingModeAndRejectsAmbiguousSpec(t *testing.T) {
+	client := &rbdEnableFixture{info: `{"features":["exclusive-lock","journaling"],"mirroring":{"mode":"journal","state":"enabled"}}`}
+	link := &RBDMirror{sourceClient: client, config: RBDMirrorConfig{Pool: "rbd", Mode: RBDMirrorModeJournal}}
+	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 1 {
+		t.Fatalf("already enabled image should remain unchanged: calls=%v error=%v", client.calls, err)
+	}
+	link.config.Mode = RBDMirrorModeSnapshot
+	client.calls = nil
+	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "already uses journal") || len(client.calls) != 1 {
+		t.Fatalf("existing journal mode was implicitly changed: calls=%v error=%v", client.calls, err)
+	}
+	for _, name := range []string{"", " volume", "--force", "other/volume", "volume@snapshot", "volume\x00"} {
+		client.calls = nil
+		if err := link.EnableImage(t.Context(), name); err == nil || len(client.calls) != 0 {
+			t.Errorf("ambiguous image %q reached the CLI: calls=%v error=%v", name, client.calls, err)
+		}
+	}
+	client.info = `{"features":["exclusive-lock"],"mirroring":{"mode":"journal","state":"disabling"}}`
+	client.calls = nil
+	if err := link.EnableImage(t.Context(), "volume"); err == nil || len(client.calls) != 1 {
+		t.Fatal("transitional mirroring state must not be mutated")
 	}
 }
 

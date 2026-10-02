@@ -29,8 +29,8 @@ type CephFSMirrorConfig struct {
 	Directories                             []string
 }
 
-// CephFSMirror owns its daemon and any network attachment added to the source
-// MGR. It embeds the daemon for Stop/Start failure injection. It does not own
+// CephFSMirror owns its daemon and network attachments added to source MGR
+// candidates. It embeds the daemon for Stop/Start failure injection. It does not own
 // either Ceph cluster or the filesystems' data.
 type CephFSMirror struct {
 	testcontainers.Container
@@ -42,6 +42,8 @@ type CephFSMirror struct {
 	source, destination                         *ceph.Container
 	destinationSite, peerID                     string
 	pendingPeerImport                           *cephFSPeerIdentity
+	managerNetworking                           *cephFSManagerNetworking
+	closed                                      bool
 }
 
 // peer_list in Tentacle's mgr mirroring/fs/snapshot_mirror.py reports
@@ -69,9 +71,8 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	if err != nil {
 		return nil, err
 	}
-	manager := config.Source.ManagerContainer()
-	if manager == nil || manager.GetContainerID() == "" {
-		return nil, errors.New("source Ceph manager is unavailable")
+	if _, err := cephFSManagerCandidates(ctx, config.Source); err != nil {
+		return nil, err
 	}
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	sourceID, destinationID := "tc-cephfs-mirror-"+suffix, "tc-cephfs-peer-"+suffix
@@ -86,39 +87,8 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 			return mirror, fmt.Errorf("enable CephFS mirroring manager module: %w", err)
 		}
 	}
-	// The manager mounts the peer filesystem during bootstrap import to verify
-	// its identity and record ceph.mirror.info. The daemon's network attachment
-	// alone cannot provide this control-plane connectivity. Host-mode clusters
-	// already share that namespace and do not need an extra attachment.
-	if !config.Source.UsesHostNetwork() {
-		docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-		if err != nil {
-			return mirror, fmt.Errorf("create Docker client for CephFS manager networking: %w", err)
-		}
-		ownedAttachment := false
-		mirror.owned.addCleanup("disconnect CephFS manager and close Docker client", func(cleanupCtx context.Context) error {
-			if ownedAttachment {
-				if _, err := docker.NetworkDisconnect(cleanupCtx, config.Destination.NetworkName(), mobycl.NetworkDisconnectOptions{Container: manager.GetContainerID()}); ignoreMissing(err) != nil {
-					// Keep the client available when disconnect must be retried.
-					return err
-				}
-				ownedAttachment = false
-			}
-			return docker.Close()
-		})
-		inspection, err := docker.ContainerInspect(ctx, manager.GetContainerID(), mobycl.ContainerInspectOptions{})
-		if err != nil {
-			return mirror, fmt.Errorf("inspect source CephFS manager: %w", err)
-		}
-		if inspection.Container.NetworkSettings == nil {
-			return mirror, errors.New("source CephFS manager has no Docker network settings")
-		}
-		if _, attached := inspection.Container.NetworkSettings.Networks[config.Destination.NetworkName()]; !attached {
-			if _, err := docker.NetworkConnect(ctx, config.Destination.NetworkName(), mobycl.NetworkConnectOptions{Container: manager.GetContainerID()}); err != nil {
-				return mirror, fmt.Errorf("connect source CephFS manager to destination network: %w", err)
-			}
-			ownedAttachment = true
-		}
+	if err := mirror.AttachManagers(ctx); err != nil {
+		return mirror, err
 	}
 	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.SourceClientEntity,
 		"mon", "profile cephfs-mirror", "mds", "allow r",
@@ -165,11 +135,206 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	return mirror, nil
 }
 
-// Terminate removes owned containers and the MGR network attachment. It leaves
+// Terminate removes owned containers and MGR network attachments. It leaves
 // caller-owned clusters, auth entities, peer policies and snapshots intact.
 // It may be retried after a cleanup error.
 func (mirror *CephFSMirror) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	mirror.mu.Lock()
+	defer mirror.mu.Unlock()
+	mirror.closed = true
 	return mirror.owned.terminate(ctx, opts...)
+}
+
+// AttachManagers reconciles peer-network access for every currently owned source
+// MGR candidate, including standbys and stopped candidates. Call it after
+// AddManager when the new candidate needs peer access before a later failover.
+// RebootstrapPeer also calls it before importing a peer token. Host-network
+// fixtures already share the namespace and require no Docker attachments.
+// Existing attachments supplied by the caller remain caller-owned.
+func (mirror *CephFSMirror) AttachManagers(ctx context.Context) error {
+	mirror.mu.Lock()
+	defer mirror.mu.Unlock()
+	return mirror.attachManagers(ctx)
+}
+
+// Called under mirror.mu; Terminate uses the same lock so the Docker client
+// cannot close while a topology reconciliation is using it.
+func (mirror *CephFSMirror) attachManagers(ctx context.Context) error {
+	if mirror.closed {
+		return errors.New("CephFS mirror has been terminated")
+	}
+	if mirror.source == nil || mirror.destination == nil {
+		return errors.New("CephFS mirror is not initialized")
+	}
+	ids, err := cephFSManagerCandidates(ctx, mirror.source)
+	if err != nil {
+		return err
+	}
+	if mirror.source.UsesHostNetwork() {
+		return nil
+	}
+	if mirror.managerNetworking == nil {
+		docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+		if err != nil {
+			return fmt.Errorf("create Docker client for CephFS manager networking: %w", err)
+		}
+		mirror.managerNetworking = &cephFSManagerNetworking{
+			docker: docker, network: mirror.destination.NetworkName(), owned: make(map[string]bool),
+		}
+		mirror.owned.addCleanup("disconnect CephFS managers and close Docker client", mirror.managerNetworking.cleanup)
+	}
+	return mirror.managerNetworking.attach(ctx, ids)
+}
+
+func cephFSManagerCandidates(ctx context.Context, cluster *ceph.Container) ([]string, error) {
+	if cluster == nil {
+		return nil, errors.New("source Ceph manager is unavailable")
+	}
+	// Enabling a Python MGR module can restart the active manager's module
+	// runtime and temporarily clear mgrmap.available. Topology construction
+	// needs the recovered owned active, rather than a single transient map.
+	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	return waitForCephFSManagerCandidates(waitCtx, 500*time.Millisecond, func(observeCtx context.Context) (ceph.ManagerStatus, []*ceph.ManagerContainer, error) {
+		managers := cluster.Managers()
+		status, err := cluster.ManagerStatus(observeCtx)
+		return status, managers, err
+	})
+}
+
+func waitForCephFSManagerCandidates(ctx context.Context, interval time.Duration, observe func(context.Context) (ceph.ManagerStatus, []*ceph.ManagerContainer, error)) ([]string, error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	lastErr := errors.New("manager map has not been observed")
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("wait for a running owned active source Ceph manager (last observation: %v): %w", lastErr, err)
+		}
+		status, managers, err := observe(ctx)
+		if err != nil {
+			lastErr = fmt.Errorf("inspect source Ceph manager map: %w", err)
+		} else {
+			ids, err := selectCephFSManagerCandidates(status, managers)
+			if err == nil {
+				return ids, nil
+			}
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for a running owned active source Ceph manager (last observation: %v): %w", lastErr, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func selectCephFSManagerCandidates(status ceph.ManagerStatus, managers []*ceph.ManagerContainer) ([]string, error) {
+	if !status.Available || status.ActiveName == "" {
+		return nil, fmt.Errorf("source Ceph manager is unavailable: available=%t active=%q gid=%d", status.Available, status.ActiveName, status.ActiveGID)
+	}
+	ids := make([]string, 0, len(managers))
+	activeOwned := false
+	for _, manager := range managers {
+		if manager == nil || manager.Container == nil || manager.GetContainerID() == "" {
+			continue
+		}
+		ids = append(ids, manager.GetContainerID())
+		if manager.DaemonName == status.ActiveName && manager.IsRunning() {
+			activeOwned = true
+		}
+	}
+	if !activeOwned {
+		return nil, fmt.Errorf("active source Ceph manager %q gid=%d is not a running owned candidate", status.ActiveName, status.ActiveGID)
+	}
+	return ids, nil
+}
+
+type cephFSManagerDocker interface {
+	ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error)
+	NetworkConnect(context.Context, string, mobycl.NetworkConnectOptions) (mobycl.NetworkConnectResult, error)
+	NetworkDisconnect(context.Context, string, mobycl.NetworkDisconnectOptions) (mobycl.NetworkDisconnectResult, error)
+	Close() error
+}
+
+// One Docker client survives partial connect/disconnect failures so cleanup can
+// be retried. Only an attachment observed absent before our connect is owned.
+type cephFSManagerNetworking struct {
+	docker  cephFSManagerDocker
+	network string
+	owned   map[string]bool
+	closed  bool
+}
+
+func (networking *cephFSManagerNetworking) attached(ctx context.Context, id string) (bool, error) {
+	inspection, err := networking.docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
+	if err != nil {
+		return false, err
+	}
+	if inspection.Container.NetworkSettings == nil {
+		return false, errors.New("source CephFS manager has no Docker network settings")
+	}
+	_, attached := inspection.Container.NetworkSettings.Networks[networking.network]
+	return attached, nil
+}
+
+func (networking *cephFSManagerNetworking) attach(ctx context.Context, ids []string) error {
+	if networking.closed {
+		return errors.New("CephFS manager networking has been closed")
+	}
+	for _, id := range ids {
+		attached, err := networking.attached(ctx, id)
+		if err != nil {
+			return fmt.Errorf("inspect source CephFS manager %s: %w", id, err)
+		}
+		if attached {
+			continue
+		}
+		// Exec/transport failure cannot establish that Docker did not connect
+		// the endpoint. Retain this previously absent attachment for cleanup.
+		networking.owned[id] = true
+		if _, err := networking.docker.NetworkConnect(ctx, networking.network, mobycl.NetworkConnectOptions{Container: id}); err != nil {
+			return fmt.Errorf("connect source CephFS manager %s to destination network: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func (networking *cephFSManagerNetworking) cleanup(ctx context.Context) error {
+	if networking.closed {
+		return nil
+	}
+	ids := make([]string, 0, len(networking.owned))
+	for id := range networking.owned {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var errs []error
+	for _, id := range ids {
+		attached, err := networking.attached(ctx, id)
+		if err != nil {
+			if ignoreMissing(err) == nil {
+				delete(networking.owned, id)
+			} else {
+				errs = append(errs, fmt.Errorf("inspect source CephFS manager %s during cleanup: %w", id, err))
+			}
+			continue
+		}
+		if attached {
+			if _, err := networking.docker.NetworkDisconnect(ctx, networking.network, mobycl.NetworkDisconnectOptions{Container: id}); ignoreMissing(err) != nil {
+				errs = append(errs, fmt.Errorf("disconnect source CephFS manager %s: %w", id, err))
+				continue
+			}
+		}
+		delete(networking.owned, id)
+	}
+	if len(errs) != 0 {
+		return errors.Join(errs...)
+	}
+	if err := networking.docker.Close(); err != nil {
+		return fmt.Errorf("close CephFS manager Docker client: %w", err)
+	}
+	networking.closed = true
+	return nil
 }
 
 // AddDirectory registers an absolute CephFS path for snapshot mirroring. Ceph
@@ -281,11 +446,16 @@ func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 // If import or its subsequent peer lookup fails, retry with a fresh context.
 // A pending import is reconciled only against the exact destination identity
 // this mirror attempted to bootstrap, using the server-assigned peer UUID.
+// Current source MGR candidates receive peer-network access before import,
+// including replacements added after the mirror was constructed.
 func (mirror *CephFSMirror) RebootstrapPeer(ctx context.Context) (string, error) {
 	mirror.mu.Lock()
 	defer mirror.mu.Unlock()
 	if mirror.destination == nil {
 		return "", errors.New("CephFS mirror is not initialized")
+	}
+	if err := mirror.attachManagers(ctx); err != nil {
+		return "", err
 	}
 	peers, err := mirror.peerRecords(ctx)
 	if err != nil {

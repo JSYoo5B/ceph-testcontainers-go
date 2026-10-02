@@ -35,10 +35,18 @@ var scripts embed.FS
 type Container struct {
 	testcontainers.Container
 	mu                sync.Mutex
+	cephfsSetupMu     sync.Mutex
+	controlMu         sync.RWMutex
+	configMu          sync.RWMutex
+	controlPlane      testcontainers.Container
 	settings          options
 	network           *testcontainers.DockerNetwork
 	manager           testcontainers.Container
+	monitors          map[string]*MonitorContainer
+	managers          map[string]*ManagerContainer
 	services          map[string]testcontainers.Container
+	filesystems       map[string]*CephFSContainer
+	gateways          map[string]*RGWContainer
 	osds              map[int]*OSDContainer
 	config            []byte
 	keyring           []byte
@@ -52,16 +60,17 @@ type Container struct {
 // Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
-	ID     int
-	purged bool
+	ID        int
+	placement OSDConfig
+	purged    bool
 }
 
-// Run creates one MON, one MGR and a configurable number of OSD containers.
+// Run creates configurable MON, MGR and OSD containers for a disposable cluster.
 // img supplies MON/MGR and all other roles unless overridden by image options.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
-		osds: 2, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
+		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
 		osdImage: img, rgwImage: img, mdsImage: img, controlImage: img, publicAddress: "127.0.0.1",
 	}
 	for _, opt := range opts {
@@ -74,6 +83,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.hostAddressSet && !settings.hostNetwork {
 		return nil, errors.New("WithHostAddress requires WithHostNetwork")
 	}
+	if !settings.poolDefaultsSet {
+		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
+	}
+	if err := prepareInitialComposition(&settings); err != nil {
+		return nil, fmt.Errorf("configure initial ceph topology: %w", err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
 	var nw *testcontainers.DockerNetwork
@@ -84,7 +99,8 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return nil, fmt.Errorf("create ceph network: %w", err)
 		}
 	}
-	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
+	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer), gateways: make(map[string]*RGWContainer)}
 	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
@@ -98,23 +114,25 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
 		return c, err
 	}
-	mgrKey, err := c.Ceph(ctx, "auth", "get-or-create", "mgr.a", "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
-	if err != nil {
-		return c, err
+	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
+		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
 	}
-	mgr, err := testcontainers.Run(ctx, img,
-		c.WithClient(), testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
-		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", mgrKey, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(settings.startupTimeout)),
-	)
-	if mgr != nil {
-		c.manager = mgr
+	for i := 1; i < settings.monitors; i++ {
+		if _, err := c.AddMonitor(ctx, daemonName(i)); err != nil {
+			return c, err
+		}
 	}
-	if err != nil {
-		return c, fmt.Errorf("run ceph manager: %w", err)
+	for i := range settings.managers {
+		if _, err := c.AddManager(ctx, daemonName(i)); err != nil {
+			return c, err
+		}
 	}
-	for range settings.osds {
-		if _, err := c.AddOSD(ctx); err != nil {
+	for i := range settings.osds {
+		var placement OSDConfig
+		if len(settings.initialOSDs) != 0 {
+			placement = settings.initialOSDs[i]
+		}
+		if _, err := c.AddOSDWithConfig(ctx, placement); err != nil {
 			return c, err
 		}
 	}
@@ -123,6 +141,21 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return s.MgrMap.Available, err
 	}); err != nil {
 		return c, fmt.Errorf("wait for ceph manager: %w", err)
+	}
+	for _, pool := range settings.pools {
+		if _, err := c.CreatePool(ctx, pool); err != nil {
+			return c, err
+		}
+	}
+	for _, fs := range settings.filesystems {
+		if _, err := c.StartCephFSWithConfig(ctx, fs); err != nil {
+			return c, err
+		}
+	}
+	for _, gateway := range settings.gateways {
+		if _, err := c.StartRGWWithConfig(ctx, gateway); err != nil {
+			return c, err
+		}
 	}
 	return c, nil
 }
@@ -147,6 +180,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithCmd(),
 			testcontainers.WithEnv(map[string]string{
 				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
+				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 			}),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
@@ -225,6 +259,8 @@ func (c *Container) ConnectionConfig() ([]byte, []byte, error) {
 	if c.closed {
 		return nil, nil, errors.New("ceph cluster is terminated")
 	}
+	c.configMu.RLock()
+	defer c.configMu.RUnlock()
 	if len(c.config) == 0 || len(c.keyring) == 0 {
 		return nil, nil, errors.New("ceph cluster bootstrap is incomplete")
 	}
@@ -240,8 +276,10 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	c.portLeases = append(c.portLeases, lease)
 }
 
-// ManagerContainer returns the owned MGR for inspection and failure injection.
-// The cluster owns its cleanup; a partial or terminated cluster may return nil.
+// ManagerContainer returns the initial MGR a for compatibility and inspection.
+// It may be nil after a is removed while another MGR remains active. Use
+// Managers and ManagerStatus for the current candidates and active identity.
+// The cluster owns its cleanup.
 func (c *Container) ManagerContainer() testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -253,6 +291,9 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // Caller owns and terminates that container before terminating the cluster.
 func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
+		c.configMu.RLock()
+		config, keyring := bytes.Clone(c.config), bytes.Clone(c.keyring)
+		c.configMu.RUnlock()
 		if c.settings.hostNetwork {
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
 				return err
@@ -263,8 +304,8 @@ func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
 			}
 		}
 		return testcontainers.WithFiles(
-			textFile("/etc/ceph/ceph.conf", c.config, 0o644),
-			textFile("/etc/ceph/ceph.client.admin.keyring", c.keyring, 0o600),
+			textFile("/etc/ceph/ceph.conf", config, 0o644),
+			textFile("/etc/ceph/ceph.client.admin.keyring", keyring, 0o600),
 		)(req)
 	}
 }
@@ -272,13 +313,24 @@ func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
 // Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
 // without shell interpolation. Use --format json for machine-readable responses.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
-	return command(ctx, c.Container, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+	return command(ctx, c.cliContainer(), append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
 }
 
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.
 // Topology operations are serialized. An OSD returned with an error is tracked
 // for cleanup and may be inspected; no data is silently purged on failure.
 func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
+	return c.AddOSDWithConfig(ctx, OSDConfig{})
+}
+
+// AddOSDWithConfig starts an OSD in an explicit logical CRUSH location.
+// Omitted host names resolve to osd-ID; logical hosts/racks are simulated
+// placement domains on the same Docker engine, not physical failure domains.
+func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OSDContainer, error) {
+	config, err := normalizeOSDConfig(resolveOSDDefaults(c.settings, config))
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -289,10 +341,14 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 			return nil, fmt.Errorf("finish removing osd.%d before adding another OSD", osd.ID)
 		}
 	}
+	if err := c.validateOSDPlacement(config); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	osdUUID := uuid.NewString()
-	secret, err := command(ctx, c.Container, "ceph-authtool", "--gen-print-key")
+	control := c.cliContainer()
+	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +357,7 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 		return nil, err
 	}
 	keyPath := "/tmp/osd-" + osdUUID + ".json"
-	if err := c.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
+	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
 		return nil, fmt.Errorf("copy osd registration key: %w", err)
 	}
 	result, err := c.Ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
@@ -312,13 +368,22 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse osd ID %q: %w", result, err)
 	}
-	osd := &OSDContainer{ID: id}
+	if config.Host == "" {
+		config.Host = fmt.Sprintf("osd-%d", id)
+	}
+	osd := &OSDContainer{ID: id, placement: config}
 	c.osds[id] = osd
+	// A generated host name is known only after registration. Preserve the
+	// partial OSD descriptor if it conflicts, without moving any CRUSH bucket.
+	if err := c.validateOSDPlacement(config); err != nil {
+		return osd, fmt.Errorf("place registered osd.%d: %w", id, err)
+	}
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
 	ctr, err := testcontainers.Run(ctx, c.settings.osdImage,
 		c.WithClient(), testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{
-			"CEPH_OSD_ID": strconv.Itoa(id), "CEPH_OSD_UUID": osdUUID, "CEPH_OSD_HOST": fmt.Sprintf("osd-%d", id),
+			"CEPH_OSD_ID": strconv.Itoa(id), "CEPH_OSD_UUID": osdUUID, "CEPH_OSD_HOST": config.Host,
+			"CEPH_OSD_ROOT": config.Root, "CEPH_OSD_RACK": config.Rack, "CEPH_OSD_DEVICE_CLASS": config.DeviceClass,
 		}),
 		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", keyring, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", fmt.Sprintf("/var/run/ceph/ceph-osd.%d.asok", id)}).WithStartupTimeout(c.settings.startupTimeout)),
@@ -331,6 +396,18 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 	}
 	if err := c.waitOSD(ctx, id, true); err != nil {
 		return osd, fmt.Errorf("wait for osd.%d up/in: %w", id, err)
+	}
+	if config.DeviceClass != "" {
+		// Ceph assigns a class from the sparse backing device during startup.
+		// A different explicit class must be applied through the CRUSH CLI.
+		for _, args := range [][]string{
+			{"osd", "crush", "rm-device-class", fmt.Sprintf("osd.%d", id)},
+			{"osd", "crush", "set-device-class", config.DeviceClass, fmt.Sprintf("osd.%d", id)},
+		} {
+			if _, err := c.Ceph(ctx, args...); err != nil {
+				return osd, fmt.Errorf("assign osd.%d device class: %w", id, err)
+			}
+		}
 	}
 	return osd, nil
 }
@@ -380,7 +457,7 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 		osd.purged = true
 	}
 	if osd.Container != nil {
-		if err := osd.Terminate(ctx); err != nil {
+		if err := osd.Terminate(ctx); !onlyMissingHostResource(err) {
 			return fmt.Errorf("terminate %s: %w", name, err)
 		}
 	}
@@ -480,6 +557,30 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.manager = nil
 		}
 	}
+	for name, mgr := range c.managers {
+		if name == "a" {
+			if c.manager == nil {
+				delete(c.managers, name)
+			}
+			continue
+		}
+		if mgr.Container != nil {
+			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		delete(c.managers, name)
+	}
+	for name, mon := range c.monitors {
+		if mon.Container != nil {
+			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		delete(c.monitors, name)
+	}
 	if c.Container != nil && !c.monitorTerminated {
 		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
@@ -487,8 +588,17 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.monitorTerminated = true
 		}
 	}
+	c.controlMu.Lock()
+	if c.controlPlane != nil {
+		if err := c.controlPlane.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			c.controlPlane = nil
+		}
+	}
+	c.controlMu.Unlock()
 	if c.network != nil && !c.networkRemoved {
-		if err := c.network.Remove(ctx); err != nil {
+		if err := c.network.Remove(ctx); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {
 			c.networkRemoved = true

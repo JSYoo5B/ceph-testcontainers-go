@@ -114,8 +114,18 @@ func validatePair(image string, source, destination *ceph.Container) error {
 	if source == destination || source.GetContainerID() == destination.GetContainerID() || (!source.UsesHostNetwork() && source.NetworkName() == destination.NetworkName()) {
 		return errors.New("multicluster requires independent Ceph clusters")
 	}
-	if source.NetworkName() == "" || destination.NetworkName() == "" || !source.IsRunning() || !destination.IsRunning() {
+	// A multi-MON fixture can remain live after its embedded primary MON was
+	// stopped or removed. Its independent CLI is the control handle; checking
+	// only the original container would reject a healthy surviving quorum.
+	if source.NetworkName() == "" || destination.NetworkName() == "" ||
+		source.ControlContainer() == nil || destination.ControlContainer() == nil ||
+		!source.ControlContainer().IsRunning() || !destination.ControlContainer().IsRunning() {
 		return errors.New("multicluster requires two running Ceph clusters")
+	}
+	for _, cluster := range []*ceph.Container{source, destination} {
+		if _, _, err := cluster.ConnectionConfig(); err != nil {
+			return errors.New("multicluster requires initialized, unterminated Ceph clusters")
+		}
 	}
 	return nil
 }

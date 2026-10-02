@@ -1,4 +1,4 @@
-.PHONY: test integration hostnetwork hostnetwork-multicluster multicluster goceph-linux vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
+.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
 
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
@@ -8,12 +8,16 @@ CEPH_DEB_BASE_IMAGE ?= ubuntu:24.04
 CEPH_DEB_TAG ?= local-deb
 MULTICLUSTER_TIMEOUT ?= 60m
 HOSTNETWORK_TIMEOUT ?= 40m
+TOPOLOGY_TIMEOUT ?= 40m
 
 test:
 	CGO_ENABLED=0 go test ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
+
+topology:
+	CGO_ENABLED=0 go test -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '^Test(MonitorManagerTopology|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$' ./internal/integration
 
 # All tests and native go-ceph clients execute on the Docker Linux host.
 # The fixture's nested module does not add go-ceph to this library's deps.
@@ -24,7 +28,7 @@ hostnetwork:
 	CGO_ENABLED=0 go test -tags=integration,hostnetwork -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork' ./internal/integration
 
 hostnetwork-multicluster:
-	CGO_ENABLED=0 go test -tags=integration,hostnetwork,multicluster -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork(RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup)$$' ./internal/integration
+	CGO_ENABLED=0 go test -tags=integration,hostnetwork,multicluster -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork(RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)$$' ./internal/integration
 
 multicluster:
 	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration

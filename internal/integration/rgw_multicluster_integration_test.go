@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,16 +13,23 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/testcontainers/testcontainers-go"
 	"os"
 )
 
 // This exercises RGW's native HTTP multisite replication. It never copies an
 // object through the host or shares an OSD between the independent clusters.
 func TestMultiClusterRGWMultisite(t *testing.T) {
+	testMultiClusterRGWMultisite(t)
+}
+
+func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.ContainerCustomizer) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	source, destination, _, _ := newMultiClusterPair(t)
+	source, destination, _, _ := newMultiClusterPair(t, options...)
 	controlImage, _ := integrationImages(t)
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {
@@ -32,6 +40,16 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 	})
 	if multisite != nil {
 		t.Cleanup(func() {
+			if t.Failed() {
+				for _, gateway := range []*ceph.RGWContainer{multisite.Source, multisite.Destination} {
+					if gateway == nil {
+						continue
+					}
+					logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					multiClusterLogContainer(t, logCtx, gateway.Container)
+					cancel()
+				}
+			}
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 			if err := multisite.Terminate(cleanupCtx); err != nil {
@@ -52,6 +70,12 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("independent clusters share realm=%s with distinct primary=%s and secondary=%s zones", multisite.RealmID, multisite.SourceZoneID, multisite.DestinationZoneID)
+	sourcePeer, sourcePeerErr := multisite.Source.DaemonEndpoint(ctx)
+	destinationPeer, destinationPeerErr := multisite.Destination.DaemonEndpoint(ctx)
+	if sourcePeerErr != nil || destinationPeerErr != nil {
+		t.Fatalf("gateway daemon endpoints unavailable: source=%v destination=%v", sourcePeerErr, destinationPeerErr)
+	}
+	t.Logf("S3 endpoints source=%s destination=%s; daemon endpoints source=%s destination=%s; committed period master and zone endpoints verified", sourceEndpoint, destinationEndpoint, sourcePeer, destinationPeer)
 	sourceS3 := s3HTTPClient{endpoint: sourceEndpoint, accessKey: sourceRGW.AccessKey, secretKey: sourceRGW.SecretKey, region: sourceRGW.Region, http: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
@@ -109,7 +133,7 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 	if err := sourceRGW.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	sourceS3.endpoint, err = sourceRGW.PortEndpoint(ctx, "7480/tcp", "http")
+	sourceS3.endpoint, err = sourceRGW.S3Endpoint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +169,13 @@ func waitMultisiteObject(t *testing.T, ctx context.Context, client s3HTTPClient,
 				t.Logf("multisite %s returned %d with expected payload after %s", path, wantStatus, time.Since(started).Round(time.Millisecond))
 				return
 			}
-			lastErr = fmt.Errorf("HTTP %d, payload bytes=%d, expected bytes=%d, read error=%v", response.StatusCode, len(body), len(payload), readErr)
+			var failure struct {
+				Code, Message string
+			}
+			if response.StatusCode >= http.StatusBadRequest {
+				_ = xml.Unmarshal(body, &failure)
+			}
+			lastErr = fmt.Errorf("HTTP %d, code=%q message=%q, payload bytes=%d, expected bytes=%d, read error=%v", response.StatusCode, failure.Code, failure.Message, len(body), len(payload), readErr)
 		} else {
 			lastErr = err
 		}

@@ -2,9 +2,11 @@
 
 Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 testcontainers-go 모듈입니다. 실제 Ceph 데몬을 작은 일회성 클러스터로 실행하고, 컨테이너 내부 CLI로 구성과 상태를 제어합니다. 공개 Go 모듈에는 `go-ceph`, 호스트 `librados`, cgo 의존성을 넣지 않습니다. 실제 go-ceph 소비자 검증은 별도 테스트 모듈에서 Linux 전용으로 실행합니다.
 
-현재 PoC는 MON 1개, MGR 1개, 기본 OSD 2개를 각각 별도 컨테이너로 실행합니다. RGW와 CephFS용 MDS는 필요할 때 추가합니다. RBD는 별도 데몬 없이 OSD 풀을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
+기본 구성은 MON 1개, MGR 1개, OSD 2개를 각각 별도 컨테이너로 실행합니다. MON quorum·MGR standby, OSD 수, 여러 filesystem과 active/standby MDS, 이름별 RGW와 클러스터 사이의 peer/zone 연결을 선택할 수 있습니다. RBD는 별도 데몬 없이 OSD pool을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
 자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 경량화의 초기 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 현재 역할별 빌드와 검증은 [SLIM_IMAGE_AUTOMATION.md](docs/SLIM_IMAGE_AUTOMATION.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)를 확인합니다.
+
+작업의 완료 기준은 testcontainers로 필요한 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지를 구성하고, 노드 추가·제거·교체·장애·복구와 실제 통신을 검증하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 클라이언트 기능은 후속 확장으로 두며 완료 기준에 포함하지 않습니다. 구성별 상태와 다음 검증 대상은 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다.
 
 ## 프로젝트 구성
 
@@ -64,6 +66,36 @@ func TestTopology(t *testing.T) {
 
 모듈 경로는 배포 전 프로젝트 이름으로 설정되어 있으며 아직 원격 저장소나 릴리스를 만들지는 않았습니다. 같은 체크아웃에서 테스트를 실행하거나 소비 프로젝트에서 로컬 `replace`를 사용할 수 있습니다.
 
+### 초기 클러스터 구성
+
+`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 별도 후속 구성 API인 `WithPools`/`CreatePool`로 적용할 수 있습니다.
+
+```go
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+    ceph.WithMonitorCount(3),
+    ceph.WithManagerCount(2),
+    ceph.WithOSDCount(3),
+    ceph.WithCephFS(ceph.CephFSConfig{
+        Name: "app-fs", ActiveMDS: 2, StandbyMDS: 1,
+    }),
+    ceph.WithRGW(
+        ceph.RGWConfig{Name: "gateway-a"},
+        ceph.RGWConfig{Name: "gateway-b", SkipUserCreation: true},
+    ),
+)
+if cluster != nil {
+    testcontainers.CleanupContainer(t, cluster)
+}
+if err != nil {
+    t.Fatal(err)
+}
+// cluster.Monitors(), cluster.Managers(), cluster.OSDs(), cluster.Filesystems(), cluster.Gateways()
+```
+
+각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
+
+`RemoveMonitor`는 quorum을, `RemoveManager`는 다른 실행 중 candidate의 승격 가능성을 확인한 뒤 해당 노드를 제거합니다. `CephFSContainer.ScaleMDS(ctx, active, standby)`는 같은 filesystem에서 rank handoff 후 남는 standby를 제거하며 pool과 파일을 유지합니다. `RemoveRGW`는 gateway만 제거하므로 같은 zone의 다른 gateway나 교체 노드가 기존 데이터를 계속 제공합니다. multisite의 gateway 주소를 바꿀 때는 period endpoint도 함께 변경해야 합니다.
+
 ## 애플리케이션 연결
 
 `cluster.WithClient()`를 애플리케이션 컨테이너의 `testcontainers.Run` 옵션으로 전달하면 클러스터 네트워크 연결과 `/etc/ceph/ceph.conf`, `/etc/ceph/ceph.client.admin.keyring` 복사를 함께 처리합니다. 해당 컨테이너에는 사용하려는 Ceph 클라이언트가 있어야 합니다. 이 옵션이 클라이언트 패키지를 설치하지는 않습니다.
@@ -115,7 +147,7 @@ _, _ = config, keyring
 
 `make hostnetwork`는 두 클러스터의 동시 기동·서로 다른 MON/MGR/OSD endpoint·같은 pool/object 이름의 데이터 분리·양쪽 OSD `2 → 3 → 2` 변경 후 Python `librados` I/O와 실제 MON 포트 충돌 후 재시도를 검사합니다. RGW는 기본 포트 7480을 점유한 상태에서 서로 다른 endpoint를 만들고 signed S3 데이터를 비교합니다. RBD snapshot/clone과 CephFS 파일 I/O도 OSD 교체 전후에 검사합니다. 이 테스트는 `integration,hostnetwork` 태그로 분리되어 기본 `make integration`에 추가되지 않습니다.
 
-`make hostnetwork-multicluster`는 host-mode 클러스터 간 RBD snapshot mirror와 CephFS mirror·backup을 검사합니다. 현재 RGW multisite는 bridge-mode 클러스터에서 제공하며 host mode는 구성 변경 전에 거절합니다. 실행 결과와 검증 범위는 [HOST_NETWORK_POC.md](docs/HOST_NETWORK_POC.md)에 기록합니다.
+`make hostnetwork-multicluster`는 host-mode 클러스터 간 RBD snapshot mirror, CephFS mirror·backup, RGW multisite를 검사합니다. RGW는 자동 선택한 daemon endpoint를 양쪽 최종 period에 반영하고 양방향 연결·gateway 재시작·metadata master 전환을 검증했습니다. 실행 결과와 검증 범위는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)와 [HOST_NETWORK_POC.md](docs/HOST_NETWORK_POC.md)에 기록합니다.
 
 Docker Desktop의 host networking은 4.34 이상에서 설정으로 활성화하는 기능이며 Linux Engine과 네트워크 동작이 다릅니다. 현재 macOS 환경의 Python RADOS 검증은 Desktop Linux VM의 host 네트워크 안에 있는 별도 클라이언트 컨테이너에서 수행합니다. macOS native Ceph 클라이언트의 인증된 RADOS I/O 자체를 검증한 결과는 아닙니다. RGW 테스트는 호스트 Go HTTP 클라이언트의 endpoint 도달 가능 여부를 별도로 확인하고, 연결되면 signed S3 읽기·쓰기를 추가 검증합니다. 연결되지 않으면 VM에서 통과한 범위와 호스트 HTTP 미검증 상태를 각각 로그에 남깁니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패도 테스트 실패로 처리합니다. 기본 suite timeout은 40분이며 `HOSTNETWORK_TIMEOUT`으로 바꿀 수 있습니다. [Docker host network 지원 범위](https://docs.docker.com/engine/network/drivers/host/), [Testcontainers networking](https://golang.testcontainers.org/features/networking/)을 참고합니다.
 
@@ -145,7 +177,7 @@ if err != nil {
 _ = endpoint
 ```
 
-RGW는 HTTP endpoint를 publish하므로 호스트 Go 프로세스에서 일반 S3 클라이언트를 사용할 수 있습니다. 검증 테스트는 표준 라이브러리의 HTTP와 SigV4 서명을 사용합니다. 클러스터당 RGW 1개와 일반 S3 테스트 사용자 1개를 생성합니다.
+RGW는 HTTP endpoint를 publish하므로 호스트 Go 프로세스에서 일반 S3 클라이언트를 사용할 수 있습니다. 검증 테스트는 표준 라이브러리의 HTTP와 SigV4 서명을 사용합니다. `StartRGW`의 기본 구성은 gateway 1개와 일반 S3 테스트 사용자 1개입니다. `WithRGW`/`StartRGWWithConfig`로 이름별 gateway를 추가하고 `RemoveRGW`로 제거할 수 있습니다. 같은 zone의 gateway들은 같은 저장 상태를 사용합니다.
 
 ### RBD / CephFS
 
@@ -183,7 +215,9 @@ Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 L
 | API | 역할 |
 | --- | --- |
 | `Run(ctx, image, opts...)` | 클러스터 부트스트랩, MGR 활성화, 초기 OSD up/in 확인 |
+| `WithMonitorCount(n)` / `WithManagerCount(n)` | 초기 MON quorum 후보와 active/standby MGR 수 |
 | `WithOSDCount(n)` | 초기 OSD 수, 기본 2개 |
+| `WithCephFS(configs...)` / `WithRGW(configs...)` | 초기 filesystem별 active/standby/replay MDS와 이름별 gateway 구성 |
 | `WithOSDBlockSize(bytes)` | OSD sparse 파일 크기, 기본/최소 1 GiB |
 | `WithStartupTimeout(duration)` | 부트스트랩 및 개별 토폴로지 작업 제한, 기본 3분 |
 | `WithHostNetwork()` | 모든 daemon과 클라이언트의 Docker host network, MON/RGW 자동 포트 선택 |
@@ -193,6 +227,11 @@ Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 L
 | `WithOSDImage(image)` | 초기 OSD와 이후 추가 OSD의 이미지 선택 |
 | `WithRGWImage(image)` | `StartRGW`의 이미지 선택 |
 | `WithMDSImage(image)` | `StartCephFS`의 MDS 이미지 선택 |
+| `AddMonitor(ctx, name)` / `RemoveMonitor(ctx, name)` | 같은 monmap의 MON 추가·제거 |
+| `AddManager(ctx, name)` / `RemoveManager(ctx, name)` | MGR candidate 추가·제거와 standby 승격 확인 |
+| `Monitors()` / `Managers()` | 이름순 소유 daemon handle 목록 |
+| `QuorumStatus(ctx)` / `ManagerStatus(ctx)` | native quorum·active/standby map 조회 |
+| `ControlContainer()` | 남은 quorum으로 관리하는 CLI handle |
 | `AddOSD(ctx)` | OSD 등록, 포맷, 컨테이너 실행, up/in 확인 |
 | `RemoveOSD(ctx, id)` | drain → safe-to-destroy → stop → down → purge → 컨테이너 제거 |
 | `OSDs()` | ID 순서로 정렬한 소유 OSD 목록 |
@@ -202,9 +241,12 @@ Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 L
 | `WaitForClean(ctx)` | 소유 OSD up/in, MGR 활성, 모든 PG active+clean 대기 |
 | `NetworkName()` / `WithClient()` | 애플리케이션 컨테이너 연결 |
 | `StartRGW(ctx)` / `RGWContainer.S3Endpoint(ctx)` | S3 gateway 기동, 테스트 자격 증명 및 호스트 HTTP endpoint |
+| `StartRGWWithConfig(ctx, config, opts...)` / `RemoveRGW(ctx, name)` | 이름별 gateway 추가·제거, zone의 기존 데이터 유지 |
 | `StartCephFS(ctx, opts...)` | 풀·파일시스템 생성, MDS 기동 및 active 대기 |
+| `StartCephFSWithConfig(ctx, config, opts...)` / `CephFSContainer.ScaleMDS(ctx, active, standby)` | filesystem 구성과 실행 중 MDS 수 변경 |
+| `Filesystems()` / `Gateways()` | 이름순 소유 filesystem·gateway descriptor 목록 |
 | `ServiceContainers()` | 소유 RGW/MDS 컨테이너 조회 |
-| `ManagerContainer()` | 소유 MGR 조회, 검사·장애 주입 및 테스트 네트워크 연결 |
+| `ManagerContainer()` | 초기 MGR의 호환 handle. active 조회와 전체 후보에는 `ManagerStatus`·`Managers` 사용 |
 | `Terminate(ctx)` | 소유 데몬과 네트워크 정리 |
 
 일반 `testcontainers.With*` 옵션은 MON 컨테이너에 적용합니다. `WithOSDCount` 등의 모듈 옵션은 클러스터 설정에 적용합니다. 일반 옵션으로 MON의 이미지, 네트워크, 시작 명령, 내부 경로를 교체하면 부트스트랩 계약이 깨질 수 있습니다. 추가 MGR/OSD에 대한 임의 옵션 전파는 현재 구현하지 않았습니다.
@@ -287,13 +329,19 @@ Linux ARM64에서 mirror 추가 이전 혼합/all 이미지의 전체 통합 테
 
 ## 다중 클러스터 구성과 PoC
 
-단일 클러스터 구성은 `ceph` 패키지에서, 기존 클러스터 사이의 multisite 구성·정책, mirroring, 백업·복원은 별도 `multicluster` 패키지에서 관리합니다. `RunRGWMultisite`, `RunRBDMirror`, `RunCephFSMirror`는 기존 두 클러스터를 받아 추가 데몬·client·네트워크 연결을 소유합니다. 연결을 먼저 종료하고 클러스터를 나중에 종료합니다. 백업·복원은 별도 archive helper로 실행합니다. 연결의 `Terminate`는 클러스터나 데이터를 삭제하지 않으며 Ceph 내부 peer/auth 등의 설정은 일회성 클러스터에 남깁니다. [API 구성과 사용 예](docs/MULTICLUSTER_API.md)를 확인합니다.
+단일 클러스터 구성은 `ceph` 패키지에서, 기존 클러스터 사이의 zone/peer 연결은 별도 `multicluster` 패키지에서 관리합니다. `RunRGWMultisite`, `RunRBDMirror`, `RunCephFSMirror`는 기존 두 클러스터를 받아 추가 데몬·client·네트워크 연결을 소유합니다. `RunRGWTopology`는 두 개 이상의 클러스터를 하나의 realm/zonegroup에 연결하며 `RGWTopologyConfig.Zones`와 `MetadataMaster`로 zone 배치와 초기 master를 선택합니다. 연결을 먼저 종료하고 클러스터를 나중에 종료합니다. 연결의 `Terminate`는 클러스터나 데이터를 삭제하지 않으며 Ceph 내부 peer/auth 등의 설정은 일회성 클러스터에 남깁니다. [API 구성과 사용 예](docs/MULTICLUSTER_API.md)를 확인합니다.
 
-`make multicluster`는 독립된 두 클러스터에서 다음 시나리오를 순차 검증합니다.
+RGW의 `Zones()`는 이름순 zone descriptor를, `ZoneAdmin(ctx, name, args...)`은 해당 zone의 관리 CLI를 제공합니다. `AddZone`으로 독립된 새 클러스터를 추가하면 활성 period와 secondary의 초기 metadata 준비를 확인한 뒤 기존 gateway에 최종 period를 적용합니다. **추가 완료나 gateway 재시작 뒤에는 각 `Gateway.S3Endpoint(ctx)`를 다시 조회**하여 S3 client를 갱신합니다. bridge mode의 host published port는 재시작 때 바뀔 수 있습니다. `PeerEndpoint`는 gateway 간 연결용 주소입니다.
 
-- RGW 양방향 복제·outage, bucket/prefix·방향 선택 정책과 live 변경, metadata master A → B → A 전환과 새 user/bucket 생성·복제
-- RBD 전체/증분 archive 복원, snapshot mirror·계획된 A → B → A 전환, split-brain 감지·명시적 resync, peer 제거·재등록
-- CephFS snapshot mirror·directory/peer 제거·재등록, archive 복원, mirror restart·삭제 전파·OSD 교체·source 정지 후 읽기
+CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새 MGR를 추가하면 `AttachManagers(ctx)`로 연결을 재조정할 수 있고 `RebootstrapPeer`도 자동으로 이를 확인합니다. 초기 MGR를 제거해도 남은 active와 standby로 연결 구성을 계속 사용할 수 있습니다.
+
+`make multicluster`는 독립된 두 개 또는 세 개의 클러스터에서 다음 구성을 순차 검증합니다.
+
+- RGW 2/3 zone, gateway 중단·복구, metadata master A → B → A 전환
+- RBD snapshot/journal mirror pair와 3 cluster fanout, receiver 중단·복구, peer 제거·재등록과 A → B → A 전환
+- CephFS snapshot mirror pair, daemon 재시작, peer 제거·재등록, OSD 교체와 source 정지 후 독립 읽기
+
+기존 suite에는 RGW 선택 복제 정책, RBD split-brain·전체/증분 archive 복원과 CephFS archive PoC도 포함되어 있습니다. 이들 기능의 확장은 토폴로지 작업의 완료 조건에서 제외합니다.
 
 일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 slim `control`과 `all`에 포함되어 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
 
@@ -301,4 +349,6 @@ Linux ARM64에서 mirror 추가 이전 혼합/all 이미지의 전체 통합 테
 
 ## 현재 범위
 
-OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 단일 서비스 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. 클러스터 간 PoC의 검증 범위는 위 보고서를 따릅니다. MON/MGR 수 변경, quorum 장애, MDS failover, kernel mapping/mount, 동일 daemon data directory를 재사용하는 전체 클러스터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
+현재 우선순위는 역할별 daemon 수, 노드 생명주기, 네트워크와 클러스터 간 연결입니다. MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 최신 상태와 실제 로그, 다음 토폴로지 후보는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. CRUSH·EC·권한·개별 client 기능의 확장은 후속 과제입니다.
+
+이번 단계는 대표 단일·HA·2/3 cluster 구성을 요청한 map identity로 생성하고, 변경·장애 뒤 통신과 owned resource cleanup을 확인하는 범위입니다. 5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 link partition은 다음 단계의 구성 후보입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. CRUSH·EC·권한·pool 정책은 후속 기능으로 두고, kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.

@@ -65,7 +65,7 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 	if a.FSID == "" || b.FSID == "" || a.FSID == b.FSID || sharedIsolatedNetwork {
 		t.Fatal("source and destination are not independent Ceph clusters")
 	}
-	t.Logf("independent clusters: source FSID=%s destination FSID=%s; two OSDs per cluster", a.FSID, b.FSID)
+	t.Logf("independent clusters: source FSID=%s OSDs=%d; destination FSID=%s OSDs=%d", a.FSID, a.OSDMap.NumOSDs, b.FSID, b.OSDMap.NumOSDs)
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
 		client, err := testcontainers.Run(t.Context(), image, cluster.WithClient(),

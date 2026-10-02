@@ -10,16 +10,49 @@ import (
 )
 
 type options struct {
-	osds           int
-	blockSize      int64
-	startupTimeout time.Duration
-	osdImage       string
-	rgwImage       string
-	mdsImage       string
-	controlImage   string
-	hostNetwork    bool
-	publicAddress  string
-	hostAddressSet bool
+	osds             int
+	initialOSDs      []OSDConfig
+	poolReplicas     int
+	poolMinSize      int
+	poolDefaultsSet  bool
+	defaultCRUSHRoot string
+	pools            []PoolConfig
+	filesystems      []CephFSConfig
+	gateways         []RGWConfig
+	monitors         int
+	managers         int
+	blockSize        int64
+	startupTimeout   time.Duration
+	osdImage         string
+	rgwImage         string
+	mdsImage         string
+	controlImage     string
+	hostNetwork      bool
+	publicAddress    string
+	hostAddressSet   bool
+}
+
+// WithMonitorCount selects the initial monitor count. Three enables quorum
+// failover tests; even counts are allowed for deliberate quorum-loss scenarios.
+func WithMonitorCount(count int) Option {
+	return func(o *options) error {
+		if count < 1 {
+			return fmt.Errorf("monitor count must be at least 1")
+		}
+		o.monitors = count
+		return nil
+	}
+}
+
+// WithManagerCount starts one active manager and the remaining standbys.
+func WithManagerCount(count int) Option {
+	return func(o *options) error {
+		if count < 1 {
+			return fmt.Errorf("manager count must be at least 1")
+		}
+		o.managers = count
+		return nil
+	}
 }
 
 const hostPortAttempts = 5
@@ -98,6 +131,61 @@ func WithOSDCount(count int) Option {
 			return fmt.Errorf("OSD count must be at least 1")
 		}
 		o.osds = count
+		o.initialOSDs = nil
+		return nil
+	}
+}
+
+// WithInitialOSDs selects the count and logical CRUSH locations of initial OSDs.
+// A subsequent WithOSDCount replaces this layout with default OSD locations.
+func WithInitialOSDs(configs ...OSDConfig) Option {
+	return func(o *options) error {
+		if len(configs) == 0 {
+			return fmt.Errorf("initial OSD layout must not be empty")
+		}
+		layout := make([]OSDConfig, len(configs))
+		for i, config := range configs {
+			var err error
+			layout[i], err = normalizeOSDConfig(config)
+			if err != nil {
+				return fmt.Errorf("initial OSD %d: %w", i, err)
+			}
+			// Resolve omitted roots only after all Run options are applied.
+			layout[i].Root = config.Root
+			for j := 0; j < i; j++ {
+				if layout[i].Host != "" && layout[i].Host == layout[j].Host && (layout[i].Rack != layout[j].Rack || (layout[i].Root != "" && layout[j].Root != "" && layout[i].Root != layout[j].Root)) {
+					return fmt.Errorf("host %q has conflicting CRUSH locations", layout[i].Host)
+				}
+			}
+		}
+		o.initialOSDs, o.osds = layout, len(layout)
+		return nil
+	}
+}
+
+// WithDefaultCRUSHRoot selects placement for pools that Ceph creates itself,
+// including .mgr, and for omitted PoolConfig.CRUSHRoot/OSDConfig.Root fields.
+// The initial layout must contain enough OSDs in this root for the default
+// replica count. Without this option the root is default.
+func WithDefaultCRUSHRoot(root string) Option {
+	return func(o *options) error {
+		if len(root) > 128 || !crushLocationName.MatchString(root) {
+			return fmt.Errorf("default CRUSH root must use letters, digits, underscores, dots or dashes")
+		}
+		o.defaultCRUSHRoot = root
+		return nil
+	}
+}
+
+// WithPoolDefaults selects size/min_size for pools created by Ceph or callers.
+// Without this option the fast fixture uses size=min(2, OSD count), min_size=1.
+// CreatePool can override these defaults for each explicitly configured pool.
+func WithPoolDefaults(replicas, minSize int) Option {
+	return func(o *options) error {
+		if replicas < 1 || replicas > 10 || minSize < 1 || minSize > replicas {
+			return fmt.Errorf("pool defaults require 1 <= min_size <= replicas <= 10")
+		}
+		o.poolReplicas, o.poolMinSize, o.poolDefaultsSet = replicas, minSize, true
 		return nil
 	}
 }

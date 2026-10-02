@@ -21,7 +21,7 @@ quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb
 
 Source outage 단계에서는 source MON/OSD와 해당 케이스의 RGW/MDS를 정지합니다. MGR과 네트워크는 cleanup까지 남아 있지만 source data daemon은 데이터를 제공할 수 없습니다. Destination의 새 CLI/libcephfs session으로 전체 payload를 다시 읽어 검증합니다. 종료 시 mirror·client와 추가 네트워크 연결을 먼저 정리하고 각 클러스터를 제거합니다.
 
-`ManagerContainer()`는 소유 MGR을 검사하거나 장애·네트워크 조건을 주입하기 위한 accessor입니다. 컨테이너의 수명은 여전히 클러스터가 관리합니다. `multicluster.RunCephFSMirror`가 Docker SDK로 source MGR의 remote network를 연결하고 cleanup 시 자신이 추가한 연결을 해제합니다.
+`ManagerContainer()`는 초기 MGR의 호환 accessor이며 현재 후보와 active 상태는 `Managers()`·`ManagerStatus()`로 조회합니다. 컨테이너의 수명은 클러스터가 관리합니다. 현재 `multicluster.RunCephFSMirror`는 Docker SDK로 owned source MGR 후보들의 remote network를 연결하고 cleanup 시 자신이 추가한 연결만 해제합니다. 새 후보 추가 뒤에는 `AttachManagers()`로 재조정합니다. MGR 교체와 결합한 최신 검증은 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다.
 
 ## 구성 API
 
