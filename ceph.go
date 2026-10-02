@@ -133,6 +133,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 // NetworkName returns the isolated network to which application containers connect.
 func (c *Container) NetworkName() string { return c.network.Name }
 
+// ManagerContainer returns the owned MGR for inspection and failure injection.
+// The cluster owns its cleanup; a partial or terminated cluster may return nil.
+func (c *Container) ManagerContainer() testcontainers.Container {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.manager
+}
+
 // WithClient connects another container to Ceph and copies its admin credentials.
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.

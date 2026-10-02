@@ -127,6 +127,7 @@ CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하�
 | `StartRGW(ctx)` / `RGWContainer.S3Endpoint(ctx)` | S3 gateway 기동, 테스트 자격 증명 및 호스트 HTTP endpoint |
 | `StartCephFS(ctx, opts...)` | 풀·파일시스템 생성, MDS 기동 및 active 대기 |
 | `ServiceContainers()` | 소유 RGW/MDS 컨테이너 조회 |
+| `ManagerContainer()` | 소유 MGR 조회, 검사·장애 주입 및 테스트 네트워크 연결 |
 | `Terminate(ctx)` | 소유 데몬과 네트워크 정리 |
 
 일반 `testcontainers.With*` 옵션은 MON 컨테이너에 적용합니다. `WithOSDCount` 등의 모듈 옵션은 클러스터 설정에 적용합니다. 일반 옵션으로 MON의 이미지, 네트워크, 시작 명령, 내부 경로를 교체하면 부트스트랩 계약이 깨질 수 있습니다. 추가 MGR/OSD에 대한 임의 옵션 전파는 현재 구현하지 않았습니다.
@@ -194,6 +195,10 @@ Linux ARM64에서 다섯 이미지의 smoke test와 혼합/all 이미지의 전�
 
 명령 옵션, 공유 layer, 측정값과 metadata 보존 범위는 [자동화 기록](docs/SLIM_IMAGE_AUTOMATION.md)에 있습니다. 초기 여섯 역할 분석의 `mon-mgr`와 `client`를 이번 구현에서 `control`로 합친 판단은 [이미지 구성 분석](docs/IMAGE_LAYOUT.md)과 함께 볼 수 있습니다. 기존 단일 slim 실험의 `make slim-image`, `make slim-smoke`, `make slim-integration`도 유지하며, 당시 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)에 기록했습니다.
 
+## 클러스터 간 복제와 백업 PoC
+
+`make multicluster`는 독립된 두 클러스터에서 RGW multisite, RBD snapshot mirroring과 전체/증분 백업 복원, CephFS snapshot mirroring과 별도 archive 복원을 순차 검증합니다. 일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬은 같은 버전의 원본 Quay 이미지로 실행하며, `CEPH_TEST_MIRROR_IMAGE`로 지정할 수도 있습니다. Go 호스트의 cgo나 kernel mount는 필요하지 않습니다. 구성과 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
+
 ## 현재 범위
 
-OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 각 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. MON/MGR 수 변경, quorum 장애, RGW/MDS failover, kernel mapping/mount, 영속 데이터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
+OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 단일 서비스 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. 클러스터 간 PoC의 검증 범위는 위 보고서를 따릅니다. MON/MGR 수 변경, quorum 장애, RGW metadata master 승격, MDS failover, kernel mapping/mount, 동일 daemon data directory를 재사용하는 전체 클러스터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
