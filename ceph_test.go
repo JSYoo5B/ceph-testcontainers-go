@@ -14,6 +14,15 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// Every wrapper must preserve the complete testcontainers.Container interface;
+// service-specific endpoint/name helpers must not shadow its methods.
+var (
+	_ testcontainers.Container = (*Container)(nil)
+	_ testcontainers.Container = (*OSDContainer)(nil)
+	_ testcontainers.Container = (*RGWContainer)(nil)
+	_ testcontainers.Container = (*CephFSContainer)(nil)
+)
+
 func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 	for _, opt := range []Option{WithOSDCount(0), WithOSDBlockSize(0), WithStartupTimeout(0)} {
 		cluster, err := Run(context.Background(), DefaultImage, opt)

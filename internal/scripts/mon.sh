@@ -21,7 +21,8 @@ mon cluster log to stderr = true
 osd pool default size = 2
 osd pool default min size = 1
 osd pool default pg num = 8
-osd pool default pgp num = 8
+osd pool default pgp num = 0
+osd pool default pg autoscale mode = off
 mon allow pool size one = true
 ms bind ipv6 = false
 [osd]

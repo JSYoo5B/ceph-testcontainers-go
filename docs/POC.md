@@ -48,6 +48,8 @@ Ceph MON의 Docker inspect에서 `Privileged=false`, host devices와 bind mounts
 
 최초 Squid 19.2.3 실험도 같은 객체 I/O 및 두 번의 topology cycle을 통과했습니다. 당시 HEALTH_WARN은 insecure global ID reclaim 허용 설정 때문이었습니다. 이를 명시적으로 비활성화한 최종 Tentacle 구성에서는 HEALTH_OK를 확인했습니다. Squid의 최신 패치 버전에 대한 지원을 검증했다는 의미는 아닙니다.
 
+이후 RGW/RBD/CephFS를 추가하고 전역 PG 설정을 조정한 뒤에도 `TestClusterLifecycle`(68.19초)과 `TestBootstrapFailureCleanup`(0.30초)을 다시 실행하여 통과했습니다. 해당 로그는 `artifacts/poc-services-regression.log`이며 서비스별 결과는 [SERVICES_POC.md](SERVICES_POC.md)에 정리했습니다.
+
 ## 기타 검증
 
 - `CGO_ENABLED=0 go test ./...`: 잘못된 설정의 사전 거부, CLI stdout/stderr 분리 검증 통과
@@ -65,6 +67,6 @@ Linux/Windows 항목은 교차 컴파일 검증입니다. Docker 런타임 통�
 
 OSD 노드를 개별 컨테이너로 다루는 생성/추가/삭제는 충분히 실현 가능하다고 판단합니다. 실제 Cephx 인증과 MON discovery 이후의 OSD 직접 I/O까지 수행했으므로 단순 CLI status 성공 이상의 근거가 있습니다. 제어용 Go 라이브러리의 네이티브 링킹을 없애는 방향도 검증했습니다.
 
-현재 node는 OSD daemon 1개에 대응합니다. MON/MGR의 동적 수 변경과 quorum, 여러 OSD를 가진 호스트, RGW/S3, RBD, CephFS/MDS, 실제 앱의 Ceph wire protocol 구현은 아직 검증하지 않았습니다. 사용 중인 Ceph 인터페이스가 정해지면 그 소비 경로를 다음 PoC의 대상으로 삼는 것이 맞습니다.
+현재 node는 OSD daemon 1개에 대응합니다. RGW/S3, RBD, CephFS/MDS는 별도 통합 테스트로 확장했으며 실제 실행과 소비 경로는 [SERVICES_POC.md](SERVICES_POC.md)에 기록합니다. MON/MGR의 동적 수 변경과 quorum, 여러 OSD를 가진 호스트, 서비스 failover, 소비 애플리케이션 자체의 Ceph wire protocol 구현은 아직 검증하지 않았습니다.
 
 macOS 호스트 프로세스의 직접 RADOS 연결, 다른 아키텍처의 실제 실행, 병렬 클러스터 대량 실행, 중간 단계 취소/네트워크 단절에 대한 완전한 복구도 별도 검증 대상입니다. `RemoveOSD`의 drain timeout은 자동 rollback하지 않습니다. 데이터 이동을 완료할 수 없는 복제/용량 구성에서는 제한 시간 내 제거 성공을 기대할 수 없습니다.

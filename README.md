@@ -2,9 +2,9 @@
 
 Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 testcontainers-go 모듈입니다. 실제 Ceph 데몬을 작은 일회성 클러스터로 실행하고, 컨테이너 내부 CLI로 구성과 상태를 제어합니다. Go 코드에는 `go-ceph`, 호스트 `librados`, cgo 의존성을 넣지 않습니다.
 
-현재 PoC는 MON 1개, MGR 1개, 기본 OSD 2개를 각각 별도 컨테이너로 실행합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
+현재 PoC는 MON 1개, MGR 1개, 기본 OSD 2개를 각각 별도 컨테이너로 실행합니다. RGW와 CephFS용 MDS는 필요할 때 추가합니다. RBD는 별도 데몬 없이 OSD 풀을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
-자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 실제 실행 결과와 한계는 [POC.md](docs/POC.md)에 정리했습니다.
+자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다.
 
 ## 요구사항
 
@@ -71,6 +71,40 @@ if err != nil {
 
 Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. 따라서 MON의 `MappedPort`만으로 macOS/Windows 호스트 프로세스에서 RADOS/RBD/CephFS 전체에 연결할 수 있다고 가정하면 안 됩니다. PoC는 애플리케이션을 같은 Docker 네트워크에 넣는 방식으로 검증했습니다. 근거: [Ceph 네트워크 문서](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
 
+### RGW / S3
+
+```go
+rgw, err := cluster.StartRGW(ctx)
+if err != nil {
+    t.Fatal(err) // 부분 생성 RGW도 cluster cleanup이 정리합니다.
+}
+endpoint, err := rgw.S3Endpoint(ctx)
+if err != nil {
+    t.Fatal(err)
+}
+// S3 SDK: endpoint, rgw.AccessKey, rgw.SecretKey, rgw.Region
+// path-style bucket addressing을 사용합니다.
+_ = endpoint
+```
+
+RGW는 HTTP endpoint를 publish하므로 호스트 Go 프로세스에서 일반 S3 클라이언트를 사용할 수 있습니다. 검증 테스트는 표준 라이브러리의 HTTP와 SigV4 서명을 사용합니다. 클러스터당 RGW 1개와 일반 S3 테스트 사용자 1개를 생성합니다.
+
+### RBD / CephFS
+
+RBD는 클라이언트 컨테이너에서 `rbd pool init`, `rbd create/import/export` 등 CLI로 제어합니다. 별도의 RBD 서버 컨테이너는 필요하지 않습니다. 실제 데이터와 snapshot/clone 검증은 [rbd_integration_test.go](rbd_integration_test.go)에 있습니다.
+
+```go
+fs, err := cluster.StartCephFS(ctx)
+if err != nil {
+    t.Fatal(err)
+}
+// WithClient()로 연결한 클라이언트에서 fs.FilesystemName을 사용합니다.
+// fs.MetadataPool과 fs.DataPool도 조회할 수 있습니다.
+_ = fs
+```
+
+CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하고 rank 0의 `up:active`를 기다립니다. 검증에는 공식 이미지 내부의 Python `libcephfs` 바인딩을 사용했습니다. 이 네이티브 라이브러리는 Linux 컨테이너 안에만 있으며 Go 호스트의 cgo 의존성을 추가하지 않습니다. RBD kernel mapping과 CephFS kernel/FUSE mount는 이번 검증 범위에 포함하지 않습니다.
+
 ## API
 
 | API | 역할 |
@@ -87,11 +121,16 @@ Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. �
 | `Status(ctx)` | readiness에 필요한 상태 JSON 일부 |
 | `WaitForClean(ctx)` | 소유 OSD up/in, MGR 활성, 모든 PG active+clean 대기 |
 | `NetworkName()` / `WithClient()` | 애플리케이션 컨테이너 연결 |
+| `StartRGW(ctx)` / `RGWContainer.S3Endpoint(ctx)` | S3 gateway 기동, 테스트 자격 증명 및 호스트 HTTP endpoint |
+| `StartCephFS(ctx, opts...)` | 풀·파일시스템 생성, MDS 기동 및 active 대기 |
+| `ServiceContainers()` | 소유 RGW/MDS 컨테이너 조회 |
 | `Terminate(ctx)` | 소유 데몬과 네트워크 정리 |
 
 일반 `testcontainers.With*` 옵션은 MON 컨테이너에 적용합니다. `WithOSDCount` 등의 모듈 옵션은 클러스터 설정에 적용합니다. 일반 옵션으로 MON의 이미지, 네트워크, 시작 명령, 내부 경로를 교체하면 부트스트랩 계약이 깨질 수 있습니다. 추가 MGR/OSD에 대한 임의 옵션 전파는 현재 구현하지 않았습니다.
 
-`Run`의 성공은 클러스터 제어와 OSD 등록 준비를 의미합니다. 애플리케이션용 풀은 호출자가 생성합니다. 풀을 만든 뒤, 혹은 토폴로지 변경 이후에는 `WaitForClean`으로 데이터 배치 완료를 기다릴 수 있습니다. 하나의 OSD만 사용할 경우 복제 수를 1로 설정해야 해당 풀의 `active+clean`을 기대할 수 있습니다.
+`Run`의 성공은 클러스터 제어와 OSD 등록 준비를 의미합니다. 일반 애플리케이션용 풀은 호출자가 생성하며, RGW와 CephFS는 시작할 때 필요한 풀을 생성합니다. 작은 테스트를 위해 기본 PG는 8개, autoscaler는 off, PGP는 PG에 맞춰 자동 설정합니다. 풀을 만든 뒤, 혹은 토폴로지 변경 이후에는 `WaitForClean`으로 데이터 배치 완료를 기다릴 수 있습니다. 하나의 OSD만 사용할 경우 복제 수를 1로 설정해야 해당 풀의 `active+clean`을 기대할 수 있습니다.
+
+RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지 않습니다. `cluster.Terminate`는 이 서비스들을 OSD보다 먼저 종료합니다. 오류와 함께 반환된 서비스도 클러스터 cleanup으로 정리합니다.
 
 마지막 OSD의 제거는 거부합니다. 복제 수나 잔여 용량 때문에 안전한 이동이 불가능하면 `RemoveOSD`는 timeout으로 끝납니다. 이미 out/reweight된 OSD를 자동으로 in 상태로 되돌리지는 않습니다. CLI로 상태를 확인하고 재시도하거나 테스트 클러스터 전체를 종료합니다.
 
@@ -101,6 +140,14 @@ Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. �
 make test
 make vet
 make integration
+```
+
+각 인터페이스만 실행할 수도 있습니다.
+
+```sh
+CGO_ENABLED=0 go test -tags=integration -run '^TestRGWS3$' -count=1 -v -timeout=15m ./...
+CGO_ENABLED=0 go test -tags=integration -run '^TestRBDLifecycle$' -count=1 -v -timeout=15m ./...
+CGO_ENABLED=0 go test -tags=integration -run '^TestCephFSFilesystem$' -count=1 -v -timeout=15m ./...
 ```
 
 통합 테스트는 `integration` build tag로 분리했습니다. Docker가 없을 때 조용히 skip하지 않으므로 PoC 실행 여부를 분명하게 알 수 있습니다. 다른 이미지로 같은 시나리오를 시험하려면:
@@ -119,4 +166,4 @@ make integration
 
 ## 현재 범위
 
-OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O까지 확인했습니다. MON/MGR 수 변경, quorum 장애, RGW/S3, RBD, MDS/CephFS, 영속 데이터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
+OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 각 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. MON/MGR 수 변경, quorum 장애, RGW/MDS failover, kernel mapping/mount, 영속 데이터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.

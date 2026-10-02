@@ -1,0 +1,191 @@
+//go:build integration
+
+package ceph_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"net/http"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestRGWS3(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster, _ := newServiceCluster(t)
+	rgw, err := cluster.StartRGW(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := rgw.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := s3HTTPClient{
+		endpoint: endpoint, accessKey: rgw.AccessKey, secretKey: rgw.SecretKey, region: rgw.Region,
+		http: &http.Client{Timeout: 45 * time.Second},
+	}
+	const bucket = "/tc-rgw-poc"
+	client.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
+	var buckets struct {
+		Buckets []struct {
+			Name string `xml:"Name"`
+		} `xml:"Buckets>Bucket"`
+	}
+	if err := xml.Unmarshal(client.request(t, ctx, http.MethodGet, "/", nil, http.StatusOK), &buckets); err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets.Buckets) != 1 || buckets.Buckets[0].Name != strings.TrimPrefix(bucket, "/") {
+		t.Fatalf("unexpected S3 bucket listing: %+v", buckets)
+	}
+
+	payload := bytes.Repeat([]byte("RGW signed S3 roundtrip\n"), 4096)
+	keys := []string{"payload-0", "payload-1", "nested/payload-2", "nested/payload-3"}
+	for _, key := range keys {
+		client.request(t, ctx, http.MethodPut, bucket+"/"+key, payload, http.StatusOK)
+	}
+	verify := func() {
+		t.Helper()
+		for _, key := range keys {
+			actual := client.request(t, ctx, http.MethodGet, bucket+"/"+key, nil, http.StatusOK)
+			if !bytes.Equal(actual, payload) {
+				t.Fatalf("S3 object %s payload changed: got %d bytes, want %d", key, len(actual), len(payload))
+			}
+		}
+		listed := client.listKeys(t, ctx, bucket)
+		if !slices.Equal(listed, keys) {
+			t.Fatalf("S3 list: got %v, want %v", listed, keys)
+		}
+	}
+	slices.Sort(keys)
+	verify()
+
+	// Private buckets must reject both unsigned and incorrectly signed requests.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+bucket+"/"+keys[0], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("unsigned private S3 read returned %d, want 403", response.StatusCode)
+	}
+	wrongKey := client
+	wrongKey.secretKey += "wrong"
+	wrongKey.request(t, ctx, http.MethodGet, bucket+"/"+keys[0], nil, http.StatusForbidden)
+	t.Logf("host HTTP S3 client: created bucket, signed PUT/GET/ListObjectsV2 for %d objects; invalid/absent credentials rejected", len(keys))
+
+	advanceServiceTopology(t, ctx, cluster)
+	verify()
+	client.request(t, ctx, http.MethodPut, bucket+"/after-topology", payload, http.StatusOK)
+	if actual := client.request(t, ctx, http.MethodGet, bucket+"/after-topology", nil, http.StatusOK); !bytes.Equal(actual, payload) {
+		t.Fatal("S3 write/read after topology change changed payload")
+	}
+	t.Log("S3 payloads survived OSD add/remove; new writes/read after replacement succeeded")
+
+	for _, key := range append(keys, "after-topology") {
+		client.request(t, ctx, http.MethodDelete, bucket+"/"+key, nil, http.StatusNoContent)
+	}
+	client.request(t, ctx, http.MethodGet, bucket+"/payload-0", nil, http.StatusNotFound)
+	if listed := client.listKeys(t, ctx, bucket); len(listed) != 0 {
+		t.Fatalf("S3 delete left objects: %v", listed)
+	}
+	client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
+	t.Log("S3 object deletion, missing-object 404, empty listing and bucket deletion succeeded")
+}
+
+// This deliberately small test-only SigV4 client avoids adding a native client
+// or an SDK dependency. Production consumers can use their ordinary S3 SDK.
+type s3HTTPClient struct {
+	endpoint  string
+	accessKey string
+	secretKey string
+	region    string
+	http      *http.Client
+}
+
+func (s s3HTTPClient) request(t *testing.T, ctx context.Context, method, path string, payload []byte, wantStatus int) []byte {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, method, s.endpoint+path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sign(req, payload, time.Now().UTC())
+	response, err := s.http.Do(req)
+	if err != nil {
+		t.Fatalf("S3 %s %s: %v", method, path, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != wantStatus {
+		t.Fatalf("S3 %s %s returned %d, want %d: %s", method, path, response.StatusCode, wantStatus, body)
+	}
+	return body
+}
+
+func (s s3HTTPClient) listKeys(t *testing.T, ctx context.Context, bucket string) []string {
+	t.Helper()
+	var listing struct {
+		IsTruncated bool `xml:"IsTruncated"`
+		Contents    []struct {
+			Key string `xml:"Key"`
+		} `xml:"Contents"`
+	}
+	if err := xml.Unmarshal(s.request(t, ctx, http.MethodGet, bucket+"?list-type=2", nil, http.StatusOK), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if listing.IsTruncated {
+		t.Fatal("small S3 test listing was unexpectedly truncated")
+	}
+	keys := make([]string, 0, len(listing.Contents))
+	for _, object := range listing.Contents {
+		keys = append(keys, object.Key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func (s s3HTTPClient) sign(req *http.Request, payload []byte, now time.Time) {
+	stamp, day := now.Format("20060102T150405Z"), now.Format("20060102")
+	payloadHash := s3Hash(payload)
+	req.Header.Set("X-Amz-Date", stamp)
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+	const signedHeaders = "host;x-amz-content-sha256;x-amz-date"
+	canonicalHeaders := "host:" + req.URL.Host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + stamp + "\n"
+	canonicalQuery := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
+	canonicalRequest := strings.Join([]string{req.Method, req.URL.EscapedPath(), canonicalQuery, canonicalHeaders, signedHeaders, payloadHash}, "\n")
+	scope := day + "/" + s.region + "/s3/aws4_request"
+	stringToSign := "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + s3Hash([]byte(canonicalRequest))
+	key := s3HMAC([]byte("AWS4"+s.secretKey), day)
+	key = s3HMAC(key, s.region)
+	key = s3HMAC(key, "s3")
+	key = s3HMAC(key, "aws4_request")
+	signature := hex.EncodeToString(s3HMAC(key, stringToSign))
+	req.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s", s.accessKey, scope, signedHeaders, signature))
+}
+
+func s3Hash(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+func s3HMAC(key []byte, value string) []byte {
+	hash := hmac.New(sha256.New, key)
+	hash.Write([]byte(value))
+	return hash.Sum(nil)
+}

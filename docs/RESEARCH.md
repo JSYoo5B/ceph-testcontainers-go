@@ -6,7 +6,7 @@
 
 컨테이너 내부의 공식 Ceph CLI와 파일 조회만으로 일회성 클러스터를 만들고 OSD를 추가·제거하는 방식은 실행 가능한 접근입니다. macOS ARM64의 Docker Desktop에서 실제 데몬, 인증, 객체 I/O, 재배치까지 확인했습니다. Go 코드에 `go-ceph`를 넣을 이유는 현재 제어 범위에서 발견되지 않았습니다.
 
-현재 애플리케이션을 같은 Docker 네트워크에서 실행하는 조건으로 판단했습니다. macOS 호스트에서 직접 Ceph wire protocol을 사용하는 경우에는 별도 네트워크 설계가 필요합니다. MON 연결 후 클라이언트가 OSD에 직접 연결하는 구조이므로 단일 MON 포트 프록시가 전체 연결을 해결하지 않습니다. [Ceph 네트워크 구성](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
+RADOS/RBD/CephFS 클라이언트는 같은 Docker 네트워크에서 실행하는 조건으로 판단했습니다. macOS 호스트에서 직접 Ceph wire protocol을 사용하는 경우에는 별도 네트워크 설계가 필요합니다. MON 연결 후 클라이언트가 OSD에 직접 연결하는 구조이므로 단일 MON 포트 프록시가 전체 연결을 해결하지 않습니다. RGW의 S3 HTTP endpoint는 publish한 포트로 호스트에서도 접근할 수 있습니다. [Ceph 네트워크 구성](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/), [RGW HTTP frontend](https://docs.ceph.com/en/tentacle/radosgw/frontends/).
 
 ## 기존 모듈과 구성 방법
 
@@ -63,4 +63,4 @@ CLI/JSON 관리 동작, 인증, 풀과 객체 기능, 실제 Ceph 프로토콜�
 
 파일 기반 BlueStore와 OSD failure domain, 적은 복제 수는 작은 fixture를 위한 설정입니다. 디스크 장애, 실제 호스트 failure domain, LVM, cephadm orchestration, 운영 성능/내구성은 이 구성의 검증 범위가 아닙니다.
 
-다음 단계는 소비 애플리케이션이 실제로 사용하는 인터페이스를 정하는 것입니다. MON 관리 명령이면 현 CLI 경로를 확장할 수 있습니다. RADOS/RBD/CephFS wire protocol이면 애플리케이션 컨테이너 연결을 먼저 정리하고, S3/Swift이면 RGW를 추가한 뒤 일반 HTTP endpoint를 노출하는 방식으로 확장할 수 있습니다. MON quorum 테스트는 독립된 후속 PoC가 필요합니다.
+RGW/S3는 일반 HTTP endpoint와 호스트 Go 클라이언트, RBD는 컨테이너 CLI, CephFS는 MDS와 컨테이너 내부 libcephfs 클라이언트로 확장했습니다. 각각 실제 저장 데이터와 OSD 토폴로지 변경을 검증하는 과정과 한계는 [SERVICES_POC.md](SERVICES_POC.md)를 기준으로 구분합니다. 소비 애플리케이션이 사용하는 SDK나 wire protocol 구현을 이 fixture에 연결하는 것이 다음 단계입니다. MON quorum 테스트는 독립된 후속 PoC가 필요합니다.

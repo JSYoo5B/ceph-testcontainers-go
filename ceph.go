@@ -27,7 +27,8 @@ const DefaultImage = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf8793894699
 //go:embed internal/scripts/*.sh
 var scripts embed.FS
 
-// Container embeds the MON/control container and owns the MGR, OSDs and network.
+// Container embeds the MON/control container and owns the MGR, OSDs, optional
+// RGW/MDS services and network.
 // Use Terminate to clean up the entire cluster. Generic Run options customize
 // the MON; module options configure the cluster. Do not change MON networking.
 type Container struct {
@@ -37,6 +38,7 @@ type Container struct {
 	image             string
 	network           *testcontainers.DockerNetwork
 	manager           testcontainers.Container
+	services          map[string]testcontainers.Container
 	osds              map[int]*OSDContainer
 	config            []byte
 	keyring           []byte
@@ -70,7 +72,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return nil, fmt.Errorf("create ceph network: %w", err)
 	}
-	c := &Container{settings: settings, image: img, network: nw, osds: make(map[int]*OSDContainer)}
+	c := &Container{settings: settings, image: img, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
 		testcontainers.WithCmd(),
@@ -274,6 +276,50 @@ func (c *Container) OSDs() []*OSDContainer {
 	return result
 }
 
+// ServiceContainers returns owned optional services (such as RGW or MDS),
+// sorted by service name. The cluster owns their cleanup.
+func (c *Container) ServiceContainers() []testcontainers.Container {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	names := make([]string, 0, len(c.services))
+	for name := range c.services {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	result := make([]testcontainers.Container, 0, len(names))
+	for _, name := range names {
+		result = append(result, c.services[name])
+	}
+	return result
+}
+
+// startService registers partial failures too, so callers can always terminate
+// the cluster after a failed RGW/MDS bootstrap. Services use the cluster image.
+func (c *Container) startService(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("ceph cluster is terminated")
+	}
+	if _, exists := c.services[name]; exists {
+		return nil, fmt.Errorf("ceph service %s already started", name)
+	}
+	if len(c.config) == 0 || len(c.keyring) == 0 {
+		return nil, errors.New("ceph cluster bootstrap is incomplete")
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
+	ctr, err := testcontainers.Run(ctx, c.image, moduleOpts...)
+	if ctr != nil {
+		c.services[name] = ctr
+	}
+	if err != nil {
+		return ctr, fmt.Errorf("run ceph %s: %w", name, err)
+	}
+	return ctr, nil
+}
+
 // Terminate removes all owned daemons before removing the isolated network.
 // It also works on a partially initialized cluster returned by Run.
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
@@ -281,6 +327,14 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	defer c.mu.Unlock()
 	c.closed = true
 	var errs []error
+	// Stop gateways and metadata servers while their backing OSDs are alive.
+	for name, ctr := range c.services {
+		if err := ctr.Terminate(ctx, opts...); err != nil {
+			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
+		} else {
+			delete(c.services, name)
+		}
+	}
 	for id, osd := range c.osds {
 		if osd.Container != nil {
 			if err := osd.Terminate(ctx, opts...); err != nil {
