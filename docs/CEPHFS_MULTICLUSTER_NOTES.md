@@ -24,11 +24,11 @@ source에서 이를 import하고 `/federation`을 mirror directory로 등록한�
 별도 `cephfs-mirror` daemon이 destination에 실제 snapshot을 만든다.
 source MGR도 peer 등록 시 destination filesystem에 연결하여 FSID와 filesystem
 ID를 확인하고 root의 `ceph.mirror.info`를 기록하므로 원격 network 접근이 필요하다.
-PoC는 Docker SDK로 기존 MGR에 destination network를 추가하고, cluster network
-삭제 전에 해당 연결을 별도로 해제한다.
-현재 slim image는 이 daemon을 포함하지 않으므로
-`CEPH_TEST_MIRROR_IMAGE`로 같은 Ceph 버전의 full image를 선택한다.
-기본값은 프로젝트의 digest로 고정한 `ceph.DefaultImage`다.
+`federation.RunCephFSMirror`가 Docker SDK로 기존 MGR에 destination network를
+추가하고, cluster network 삭제 전에 자신이 추가한 연결을 해제한다.
+현재 slim `control`과 `all`은 `cephfs-mirror`를 포함한다. 기본 mirror 이미지는
+테스트 control 이미지이며 `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수 있다.
+단일 클러스터와 복제 연결의 수명은 [API 계약](FEDERATION_API.md)처럼 구분한다.
 
 native 검증은 파일 bytes와 SHA-256, tree의 이름/삭제, symlink target,
 permission mode와 UID/GID를 엄격하게 비교한다. user xattr는 별도 비교하여

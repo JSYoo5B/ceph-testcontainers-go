@@ -11,7 +11,8 @@ import subprocess
 ROOT = Path("/runtime-rootfs")
 PACKAGES = (
     "ceph-mon", "ceph-mgr", "ceph-osd", "ceph-mds", "ceph-radosgw",
-    "ceph-common", "python3-cephfs", "bash", "coreutils-single", "hostname",
+    "ceph-common", "python3-cephfs", "rbd-mirror", "cephfs-mirror",
+    "bash", "coreutils-single", "hostname",
     "gawk", "ca-certificates", "filesystem",
 )
 OMIT = ("/usr/share/doc", "/usr/share/man", "/usr/share/info", "/dev", "/proc", "/sys")

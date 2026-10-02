@@ -170,11 +170,12 @@ make integration
 
 ## 경량 이미지
 
-원본 Ceph 이미지 하나를 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 동일한 Ceph 바이너리와 설치된 RPM 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR와 클라이언트 도구를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
+원본 Ceph 이미지 하나를 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 동일한 Ceph 바이너리와 설치된 RPM 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR, 클라이언트 도구, `rbd-mirror`·`cephfs-mirror`를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
 
 ```sh
 make slim-images         # 원본 pull, 다섯 이미지 빌드와 smoke test
 make slim-images-verify  # 위 과정 + 혼합 이미지 및 all 이미지 전체 통합 테스트
+make slim-images-multicluster # 위 과정 + 독립 두 클러스터의 복제/백업 검증
 ```
 
 Makefile의 기본 원본은 digest로 고정한 Ceph 20.2.4입니다. `CEPH_SOURCE_IMAGE`로 다른 원본을 지정할 수 있으며, 출력 tag는 원본의 실제 Ceph 버전에서 정합니다. 기본 repository에서는 `ceph-testcontainers:20.2.4-control` 등의 tag가 만들어집니다. 이미지 빌드에는 Python 3.9 이상, Docker API 1.49 이상과 호환 CLI, `ADD --link`를 지원하는 BuildKit/buildx가 필요하고, Go는 통합 테스트를 선택할 때 사용합니다.
@@ -191,13 +192,15 @@ cluster, err := ceph.Run(ctx, "ceph-testcontainers:20.2.4-control",
 
 기존 방식은 `Run(ctx, "ceph-testcontainers:20.2.4-all", ...)`로 유지할 수 있습니다. `DefaultImage`는 공식 Quay 이미지입니다. 빌드는 registry에 push하지 않으며, 결과·manifest·단계별 로그는 실행마다 새 `artifacts/slim-UTC-UUID/` 디렉터리에 저장합니다.
 
-Linux ARM64에서 다섯 이미지의 smoke test와 혼합/all 이미지의 전체 통합 테스트를 통과했습니다. 로컬 Docker `Size`는 공식 이미지 2,042,985,596 bytes, `control` 661,690,519 bytes, `all` 879,860,248 bytes입니다. 공통 layer는 `all`을 포함해 재사용합니다. 이 수치를 이미지별로 합쳐 물리 디스크 사용량이나 다운로드 크기로 해석하지 않으며, daemon RAM 감소를 보장하지 않습니다. AMD64와 다른 원본 버전은 별도 검증이 필요합니다.
+Linux ARM64에서 mirror 추가 이전 혼합/all 이미지의 전체 통합 테스트를 통과했고, mirror 포함 다섯 이미지의 smoke test를 다시 통과했습니다. 로컬 Docker `Size`는 공식 이미지 2,042,985,596 bytes, mirror를 포함한 `control` 676,867,079 bytes, `all` 895,036,802 bytes입니다. 공통 layer는 `all`을 포함해 재사용합니다. 이 수치를 이미지별로 합쳐 물리 디스크 사용량이나 다운로드 크기로 해석하지 않으며, daemon RAM 감소를 보장하지 않습니다. AMD64와 다른 원본 버전은 별도 검증이 필요합니다.
 
 명령 옵션, 공유 layer, 측정값과 metadata 보존 범위는 [자동화 기록](docs/SLIM_IMAGE_AUTOMATION.md)에 있습니다. 초기 여섯 역할 분석의 `mon-mgr`와 `client`를 이번 구현에서 `control`로 합친 판단은 [이미지 구성 분석](docs/IMAGE_LAYOUT.md)과 함께 볼 수 있습니다. 기존 단일 slim 실험의 `make slim-image`, `make slim-smoke`, `make slim-integration`도 유지하며, 당시 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)에 기록했습니다.
 
 ## 클러스터 간 복제와 백업 PoC
 
-`make multicluster`는 독립된 두 클러스터에서 RGW multisite, RBD snapshot mirroring과 전체/증분 백업 복원, CephFS snapshot mirroring과 별도 archive 복원을 순차 검증합니다. 일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬은 같은 버전의 원본 Quay 이미지로 실행하며, `CEPH_TEST_MIRROR_IMAGE`로 지정할 수도 있습니다. Go 호스트의 cgo나 kernel mount는 필요하지 않습니다. 구성과 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
+단일 클러스터 구성은 `ceph` 패키지에서, 기존 클러스터 사이의 복제 연결은 별도 `federation` 패키지에서 관리합니다. `RunRGWMultisite`, `RunRBDMirror`, `RunCephFSMirror`는 기존 두 클러스터를 받아 추가 데몬·client·네트워크 연결을 소유합니다. 연결을 먼저 종료하고 클러스터를 나중에 종료합니다. 연결의 `Terminate`는 클러스터나 데이터를 삭제하지 않으며 Ceph 내부 peer/auth 등의 설정은 일회성 클러스터에 남깁니다. [API 구성과 사용 예](docs/FEDERATION_API.md)를 확인합니다.
+
+`make multicluster`는 독립된 두 클러스터에서 RGW multisite, RBD snapshot mirroring과 전체/증분 백업 복원, CephFS snapshot mirroring과 별도 archive 복원을 순차 검증합니다. 일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트의 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 새 slim `control`과 `all`에 포함되어 있습니다. Go 호스트의 cgo나 kernel mount는 필요하지 않습니다. 분리 API와 mirror 포함 slim 조합으로 네 복제/백업 케이스를 다시 통과했습니다. CephFS native mirror의 user xattr 차이는 계속 관측되므로 완전한 metadata 보존으로 해석하지 않습니다. 구성과 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
 
 ## 현재 범위
 

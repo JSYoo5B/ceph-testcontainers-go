@@ -3,9 +3,7 @@
 package ceph_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -13,11 +11,9 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
-	mobycl "github.com/moby/moby/client"
+	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // This exercises two separate mechanisms: an application snapshot archive and
@@ -63,68 +59,30 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify", "/restored", "/tmp/cephfs-backup-1.json")
 	t.Log("CephFS snapshot backup: restored binary/empty/nested files, relative symlink, modes, owners and user xattrs into an independent filesystem")
 
-	// The slim runtime currently omits cephfs-mirror. Use the matching full
-	// image for this additional daemon, with no kernel mount or host cgo.
+	// Cluster/filesystem setup above stays separate from federation setup.
+	// Select a compatible runtime supplying the userspace mirror daemon.
 	mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
 	if mirrorImage == "" {
-		mirrorImage = ceph.DefaultImage
+		mirrorImage, _ = integrationImages(t)
 	}
-	for _, cluster := range []*ceph.Container{source, destination} {
-		cephCommand(t, ctx, cluster, "mgr", "module", "enable", "mirroring")
-	}
-	// The MGR validates a bootstrap peer by connecting to its CephFS and
-	// recording ceph.mirror.info on the remote root. Joining only the mirror
-	// daemon to both networks is therefore insufficient.
-	manager := source.ManagerContainer()
-	if manager == nil {
-		t.Fatal("source manager is unavailable")
-	}
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := docker.NetworkConnect(ctx, destination.NetworkName(), mobycl.NetworkConnectOptions{Container: manager.GetContainerID()}); err != nil {
-		docker.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		defer docker.Close()
-		if _, err := docker.NetworkDisconnect(cleanupCtx, destination.NetworkName(), mobycl.NetworkDisconnectOptions{Container: manager.GetContainerID()}); err != nil {
-			t.Errorf("disconnect source manager from destination network: %v", err)
-		}
+	mirror, err := federation.RunCephFSMirror(ctx, mirrorImage, federation.CephFSMirrorConfig{
+		Source: source, Destination: destination,
+		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
+		Directories: []string{"/federation"},
 	})
-	t.Log("source MGR also joined the destination network to validate the CephFS bootstrap peer")
-	keyring, err := source.Ceph(ctx, "auth", "get-or-create", "client.mirror", "mon", "profile cephfs-mirror", "mds", "allow r", "osd", "allow rw tag cephfs metadata=*, allow r tag cephfs data=*", "mgr", "allow r")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cephCommand(t, ctx, destination, "fs", "authorize", destinationFS.FilesystemName, "client.mirror_remote", "/", "rwps")
-	bootstrap, err := destination.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "create", destinationFS.FilesystemName, "client.mirror_remote", "destination")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var token struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(bootstrap, &token); err != nil || token.Token == "" {
-		t.Fatal("destination did not return a valid CephFS mirror bootstrap token")
-	}
-	cephCommand(t, ctx, source, "fs", "snapshot", "mirror", "enable", sourceFS.FilesystemName)
-	cephCommand(t, ctx, source, "fs", "snapshot", "mirror", "peer_bootstrap", "import", sourceFS.FilesystemName, token.Token)
-	cephCommand(t, ctx, source, "fs", "snapshot", "mirror", "add", sourceFS.FilesystemName, "/federation")
-	mirror, err := testcontainers.Run(ctx, mirrorImage,
-		source.WithClient(), network.WithNetworkName(nil, destination.NetworkName()),
-		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/ceph.client.mirror.keyring", FileMode: 0o600}),
-		testcontainers.WithEntrypoint("cephfs-mirror"),
-		testcontainers.WithCmd("--id", "mirror", "-f", "--admin-socket", "/run/ceph/mirror.asok", "--cephfs-mirror-directory-scan-interval", "1"),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/run/ceph/mirror.asok"}).WithStartupTimeout(2*time.Minute)),
-	)
 	if mirror != nil {
-		// Registered after the pair cleanup so the daemon closes before its
-		// connected networks and source cluster are removed.
-		cleanupMultiClusterContainer(t, mirror)
+		// A partial setup may have an owned network attachment but no daemon.
+		// Federation cleanup closes both before the pair's cluster cleanup.
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if t.Failed() && mirror.Container != nil {
+				multiClusterLogContainer(t, cleanupCtx, mirror.Container)
+			}
+			if err := mirror.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate CephFS federation: %v", err)
+			}
+		})
 	}
 	if err != nil {
 		t.Fatal(err)

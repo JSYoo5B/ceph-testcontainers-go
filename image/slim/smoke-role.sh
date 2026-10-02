@@ -71,11 +71,11 @@ if 'oci_architecture' in manifest:
     require(manifest['oci_architecture'] == actual_arch, 'OCI architecture differs from runtime')
 
 daemons = {
-    'control': ('ceph-mon', 'ceph-mgr'),
+    'control': ('ceph-mon', 'ceph-mgr', 'rbd-mirror', 'cephfs-mirror'),
     'osd': ('ceph-osd',),
     'rgw': ('radosgw',),
     'mds': ('ceph-mds',),
-    'all': ('ceph-mon', 'ceph-mgr', 'ceph-osd', 'radosgw', 'ceph-mds'),
+    'all': ('ceph-mon', 'ceph-mgr', 'ceph-osd', 'radosgw', 'ceph-mds', 'rbd-mirror', 'cephfs-mirror'),
 }
 utilities = 'sh mkdir cp cat rm test sleep hostname awk python3'.split()
 # The first role split deliberately retains the complete shared client closure.

@@ -17,6 +17,7 @@ BASE = ("bash", "coreutils-single", "hostname", "gawk", "ca-certificates", "file
 ALL_ROOTS = (
     "ceph-mon", "ceph-mgr", "ceph-osd", "ceph-mds", "ceph-radosgw",
     "ceph-common", "python3-cephfs",
+    "rbd-mirror", "cephfs-mirror",
 )
 PROFILES = {
     "full": ALL_ROOTS,
@@ -35,7 +36,7 @@ PROFILES = {
     ),
     # Keep historical profiles above while adding the requested image roles.
     # "all" is an aggregate image; it is not a sixth deployment role.
-    "mon-mgr": ("ceph-mon", "ceph-mgr", "ceph-common"),
+    "mon-mgr": ("ceph-mon", "ceph-mgr", "ceph-common", "rbd-mirror", "cephfs-mirror"),
     "client": ("ceph-common", "python3-cephfs"),
     "all": ALL_ROOTS,
 }

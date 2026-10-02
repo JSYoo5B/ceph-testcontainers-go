@@ -1,4 +1,4 @@
-.PHONY: test integration multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify
+.PHONY: test integration multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster
 
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
@@ -30,3 +30,6 @@ slim-images:
 
 slim-images-verify:
 	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --integration
+
+slim-images-multicluster:
+	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --multicluster

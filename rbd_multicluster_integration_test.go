@@ -16,10 +16,9 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
+	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // TestMultiClusterRBDBackup restores CLI-generated full and incremental archives
@@ -112,37 +111,25 @@ func TestMultiClusterRBDSnapshotMirror(t *testing.T) {
 	const imageSize = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	execCommand(t, ctx, sourceClient, "rbd", "mirror", "pool", "enable", "--site-name", "source", pool, "image")
-	execCommand(t, ctx, destinationClient, "rbd", "mirror", "pool", "enable", "--site-name", "destination", pool, "image")
-	token := rbdOutput(t, ctx, sourceClient, "mirror", "pool", "peer", "bootstrap", "create", "--site-name", "source", pool)
-	if len(bytes.TrimSpace(token)) == 0 {
-		t.Fatal("source mirroring bootstrap token is empty")
-	}
-	if err := destinationClient.CopyToContainer(ctx, token, "/tmp/rbd-peer-token", 0o600); err != nil {
-		t.Fatal(err)
-	}
-	execCommand(t, ctx, destinationClient, "rbd", "mirror", "pool", "peer", "bootstrap", "import", "--site-name", "destination", "--direction", "rx-only", pool, "/tmp/rbd-peer-token")
-	keyring, err := destination.Ceph(ctx, "auth", "get-or-create", "client.rbd-mirror.tc", "mon", "profile rbd-mirror", "osd", "profile rbd")
-	if err != nil {
-		t.Fatal(err)
-	}
 	mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
 	if mirrorImage == "" {
-		mirrorImage = ceph.DefaultImage
+		mirrorImage, _ = integrationImages(t)
 	}
-	t.Logf("native rbd-mirror daemon image=%s (the five slim roles do not include this optional daemon)", mirrorImage)
-	mirror, err := testcontainers.Run(ctx, mirrorImage, destination.WithClient(),
-		network.WithNetworkName(nil, source.NetworkName()),
-		testcontainers.WithFiles(testcontainers.ContainerFile{
-			Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/rbd-mirror.keyring", FileMode: 0o600,
-		}),
-		testcontainers.WithEntrypoint("rbd-mirror"),
-		testcontainers.WithCmd("-f", "--name", "client.rbd-mirror.tc", "--keyring", "/etc/ceph/rbd-mirror.keyring",
-			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false"),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/tmp/rbd-mirror.asok"}).WithStartupTimeout(time.Minute)),
-	)
+	t.Logf("native RBD federation runtime image=%s", mirrorImage)
+	mirror, err := federation.RunRBDMirror(ctx, mirrorImage, federation.RBDMirrorConfig{
+		Source: source, Destination: destination, Pool: pool,
+	})
 	if mirror != nil {
-		cleanupMultiClusterContainer(t, mirror)
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cleanupCancel()
+			if t.Failed() && mirror.Container != nil {
+				multiClusterLogContainer(t, cleanupCtx, mirror.Container)
+			}
+			if err := mirror.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate RBD federation runtime: %v", err)
+			}
+		})
 	}
 	if err != nil {
 		t.Fatal(err)

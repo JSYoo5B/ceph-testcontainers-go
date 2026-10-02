@@ -5,22 +5,15 @@ package ceph_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
-	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"github.com/testcontainers/testcontainers-go/network"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
+	"os"
 )
 
 // This exercises RGW's native HTTP multisite replication. It never copies an
@@ -28,78 +21,38 @@ import (
 func TestMultiClusterRGWMultisite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t)
-
-	// The gateways share an HTTP-only bridge. Each also keeps an alias on its
-	// own Ceph network, which the fixture's dual-network admin clients can use.
-	// Neither gateway joins the other cluster's MON/OSD network.
-	bridge, err := network.New(ctx)
+	source, destination, _, _ := newMultiClusterPair(t)
+	controlImage, _ := integrationImages(t)
+	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
+	if rgwImage == "" {
+		rgwImage = controlImage
+	}
+	multisite, err := federation.RunRGWMultisite(ctx, rgwImage, federation.RGWMultisiteConfig{
+		Source: source, Destination: destination, ControlImage: controlImage,
+	})
+	if multisite != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := multisite.Terminate(cleanupCtx); err != nil {
+				t.Errorf("terminate RGW multisite: %v", err)
+			}
+		})
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cleanupCancel()
-		if err := bridge.Remove(cleanupCtx); err != nil {
-			t.Errorf("remove RGW federation network: %v", err)
-		}
-	})
-	const realm, zonegroup, sourceZone, destinationZone = "tc-federation", "us-east-1", "tc-primary", "tc-secondary"
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	sourceAlias, destinationAlias := "rgw-primary-"+suffix, "rgw-secondary-"+suffix
-	sourceURL, destinationURL := "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
-	systemAccess := strings.ReplaceAll(uuid.NewString(), "-", "")
-	systemSecret := uuid.NewString() + uuid.NewString()
-
-	primaryAdmin := func(args ...string) []byte {
-		return rgwMultisiteAdmin(t, ctx, sourceClient, realm, zonegroup, sourceZone, args...)
+	sourceRGW := multisite.Source
+	sourceEndpoint, err := sourceRGW.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	secondaryAdmin := func(args ...string) []byte {
-		return rgwMultisiteAdmin(t, ctx, destinationClient, realm, zonegroup, destinationZone, args...)
+	destinationEndpoint, err := multisite.Destination.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	primaryAdmin("realm", "create", "--default")
-	primaryAdmin("zonegroup", "create", "--master", "--default", "--endpoints", sourceURL)
-	primaryAdmin("zone", "create", "--master", "--default", "--endpoints", sourceURL)
-	primaryAdmin("user", "create", "--uid", "tc-sync", "--display-name", "Testcontainers multisite sync", "--system",
-		"--access-key", systemAccess, "--secret-key", systemSecret)
-	primaryAdmin("zone", "modify", "--access-key", systemAccess, "--secret", systemSecret)
-	primaryAdmin("period", "update", "--commit")
-	sourceRGW, sourceEndpoint := startMultisiteRGW(t, ctx, source, bridge, sourceAlias, realm, zonegroup, sourceZone)
-
-	// realm pull also imports the master's current period. The secondary's
-	// period commit registers its new zone with the metadata master over HTTP.
-	secondaryAdmin("realm", "pull", "--url", sourceURL, "--access-key", systemAccess, "--secret", systemSecret)
-	secondaryAdmin("realm", "default")
-	secondaryAdmin("zone", "create", "--endpoints", destinationURL, "--access-key", systemAccess, "--secret", systemSecret)
-	secondaryAdmin("period", "update", "--commit")
-	_, destinationEndpoint := startMultisiteRGW(t, ctx, destination, bridge, destinationAlias, realm, zonegroup, destinationZone)
-
-	idFromJSON := func(data []byte) string {
-		t.Helper()
-		var document struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(data, &document); err != nil || document.ID == "" {
-			t.Fatalf("decode RGW realm/zone ID: %v", err)
-		}
-		return document.ID
-	}
-	sourceRealm := idFromJSON(primaryAdmin("realm", "get"))
-	destinationRealm := idFromJSON(secondaryAdmin("realm", "get"))
-	sourceZoneID := idFromJSON(primaryAdmin("zone", "get"))
-	destinationZoneID := idFromJSON(secondaryAdmin("zone", "get"))
-	if sourceRealm != destinationRealm || sourceZoneID == destinationZoneID {
-		t.Fatalf("multisite identity: realm %s/%s zone %s/%s", sourceRealm, destinationRealm, sourceZoneID, destinationZoneID)
-	}
-	t.Logf("independent clusters share realm=%s with distinct primary=%s and secondary=%s zones", sourceRealm, sourceZoneID, destinationZoneID)
-
-	// Create an ordinary user after both gateways start, so successful signed
-	// reads on the secondary prove metadata replication as well as object I/O.
-	access := strings.ReplaceAll(uuid.NewString(), "-", "")
-	secret := uuid.NewString() + uuid.NewString()
-	primaryAdmin("user", "create", "--uid", "tc-federated-user", "--display-name", "Testcontainers federated S3 user",
-		"--access-key", access, "--secret-key", secret)
-	sourceS3 := s3HTTPClient{endpoint: sourceEndpoint, accessKey: access, secretKey: secret, region: zonegroup, http: &http.Client{Timeout: 20 * time.Second}}
+	t.Logf("independent clusters share realm=%s with distinct primary=%s and secondary=%s zones", multisite.RealmID, multisite.SourceZoneID, multisite.DestinationZoneID)
+	sourceS3 := s3HTTPClient{endpoint: sourceEndpoint, accessKey: sourceRGW.AccessKey, secretKey: sourceRGW.SecretKey, region: sourceRGW.Region, http: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
 	const bucket = "/tc-federated-bucket"
@@ -133,8 +86,12 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 	destinationS3.request(t, ctx, http.MethodDelete, bucket+"/reverse", nil, http.StatusNoContent)
 	waitMultisiteObject(t, ctx, sourceS3, bucket+"/reverse", http.StatusNotFound, nil)
 	t.Log("secondary -> primary: object creation and deletion replicated in active-active mode")
-	primaryAdmin("sync", "status")
-	secondaryAdmin("sync", "status")
+	if _, err := multisite.SourceAdmin(ctx, "sync", "status"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := multisite.DestinationAdmin(ctx, "sync", "status"); err != nil {
+		t.Fatal(err)
+	}
 
 	stopTimeout := 5 * time.Second
 	if err := sourceRGW.Stop(ctx, &stopTimeout); err != nil {
@@ -166,58 +123,6 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 		t.Fatal("secondary read with the primary gateway, MON and OSDs stopped changed payload")
 	}
 	t.Log("secondary served its replicated payload with the primary gateway, MON and OSDs stopped")
-}
-
-func startMultisiteRGW(t *testing.T, ctx context.Context, cluster *ceph.Container, bridge *testcontainers.DockerNetwork, alias, realm, zonegroup, zone string) (testcontainers.Container, string) {
-	t.Helper()
-	image := os.Getenv("CEPH_TEST_RGW_IMAGE")
-	if image == "" {
-		image = os.Getenv("CEPH_TEST_IMAGE")
-	}
-	if image == "" {
-		image = ceph.DefaultImage
-	}
-	ctr, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-		network.WithNetwork([]string{alias}, bridge),
-		testcontainers.CustomizeRequestOption(func(req *testcontainers.GenericContainerRequest) error {
-			req.NetworkAliases[cluster.NetworkName()] = []string{alias}
-			return nil
-		}),
-		testcontainers.WithEntrypoint("/bin/sh", "-c", `mkdir -p /var/run/ceph; exec radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring --rgw-realm "$1" --rgw-zonegroup "$2" --rgw-zone "$3" --rgw-frontends 'beast port=7480' --rgw-thread-pool-size 4 --rgw-sync-obj-etag-verify true --osd-pool-default-pg-num 1 --osd-pool-default-pgp-num 0`, "rgw-multisite"),
-		testcontainers.WithCmd(realm, zonegroup, zone),
-		testcontainers.WithExposedPorts("7480/tcp"),
-		testcontainers.WithWaitStrategy(wait.ForHTTP("/").WithPort("7480/tcp").
-			WithStatusCodeMatcher(func(status int) bool { return status == http.StatusOK || status == http.StatusForbidden }).
-			WithStartupTimeout(3*time.Minute)),
-	)
-	if ctr != nil {
-		cleanupMultiClusterContainer(t, ctr)
-	}
-	if err != nil {
-		t.Fatalf("start %s RGW multisite gateway: %v", zone, err)
-	}
-	endpoint, err := ctr.PortEndpoint(ctx, "7480/tcp", "http")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ctr, endpoint
-}
-
-func rgwMultisiteAdmin(t *testing.T, ctx context.Context, client testcontainers.Container, realm, zonegroup, zone string, args ...string) []byte {
-	t.Helper()
-	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", realm, "--rgw-zonegroup", zonegroup, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
-	code, reader, err := client.Exec(ctx, append(command, args...), tcexec.Multiplexed())
-	if err != nil {
-		t.Fatalf("radosgw-admin %s %s: %v", args[0], args[1], err)
-	}
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 0 {
-		t.Fatalf("radosgw-admin %s %s in %s exited %d: %s", args[0], args[1], zone, code, output)
-	}
-	return output
 }
 
 func waitMultisiteObject(t *testing.T, ctx context.Context, client s3HTTPClient, path string, wantStatus int, payload []byte) {

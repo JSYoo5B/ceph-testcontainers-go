@@ -145,7 +145,8 @@ def arguments():
     parser.add_argument("--skip-pull", action="store_true", help="Use an already cached source image")
     parser.add_argument("--skip-smoke", action="store_true", help="Record smoke validation as skipped")
     parser.add_argument("--integration", action="store_true", help="Run Go integration suite with mixed role images and then all")
-    parser.add_argument("--go-command", default="go", help="Go executable used only with --integration")
+    parser.add_argument("--multicluster", action="store_true", help="Run multi-cluster Go tests with mixed roles and control mirror image")
+    parser.add_argument("--go-command", default="go", help="Go executable used only for integration checks")
     parser.add_argument("--keep-context", action="store_true", help="Keep generated tar build context in the output directory")
     return parser.parse_args()
 
@@ -155,7 +156,7 @@ def main():
     for name in ("docker",):
         if not shutil.which(name):
             raise BuildError(name + " is required")
-    if args.integration and not shutil.which(args.go_command):
+    if (args.integration or args.multicluster) and not shutil.which(args.go_command):
         raise BuildError("Go executable not found: " + args.go_command)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = (args.output_dir or PROJECT / "artifacts" / ("slim-" + timestamp + "-" + uuid.uuid4().hex[:8])).resolve()
@@ -167,6 +168,7 @@ def main():
                   "smoke": "skipped" if args.skip_smoke else "pending",
                   "mixed_integration": "pending" if args.integration else "not_requested",
                   "all_integration": "pending" if args.integration else "not_requested",
+                  "multicluster_integration": "pending" if args.multicluster else "not_requested",
               }}
     save_json(output / "build-report.json", report)
     container_id = None
@@ -268,6 +270,17 @@ def main():
             save_json(output / "build-report.json", report)
             run(test, env=env, cwd=PROJECT, log=output / "integration-all.log")
             report["checks"]["all_integration"] = "passed"
+        if args.multicluster:
+            env = dict(os.environ, CGO_ENABLED="0", CEPH_TEST_IMAGE=tags["control"],
+                       CEPH_TEST_OSD_IMAGE=tags["osd"], CEPH_TEST_RGW_IMAGE=tags["rgw"],
+                       CEPH_TEST_MDS_IMAGE=tags["mds"], CEPH_TEST_MIRROR_IMAGE=tags["control"])
+            test = [args.go_command, "test", "-tags=integration,multicluster", "-run", "^TestMultiCluster",
+                    "-count=1", "-v", "-timeout=40m", "./..."]
+            print("Testing multiple clusters with mixed roles and control mirror image...", flush=True)
+            report["checks"]["multicluster_integration"] = "running"
+            save_json(output / "build-report.json", report)
+            run(test, env=env, cwd=PROJECT, log=output / "integration-multicluster.log")
+            report["checks"]["multicluster_integration"] = "passed"
         report["status"] = "passed"
         print("Built five images; report: " + str(output / "build-report.json"), flush=True)
         print(json.dumps(tags, indent=2), flush=True)

@@ -13,13 +13,12 @@ import (
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // Both clusters own separate MON/MGR/OSDs, FSIDs, credentials and networks.
-// Transfer clients and mirroring daemons can join both networks; CephFS also
-// connects its MGR for peer validation. A client's FSID and credentials are
+// Data clients stay on their own cluster network. Federation links own the
+// additional networking needed by mirror daemons and CephFS MGR peer validation. A client's FSID and credentials are
 // checked so copying cannot succeed by accidentally reading the source's pool.
 func newMultiClusterPair(t *testing.T) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
@@ -67,7 +66,6 @@ func newMultiClusterPair(t *testing.T) (*ceph.Container, *ceph.Container, testco
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
 		client, err := testcontainers.Run(t.Context(), image, cluster.WithClient(),
-			network.WithNetworkName(nil, clusters[1-i].NetworkName()),
 			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 		)
@@ -158,7 +156,7 @@ func multiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.
 }
 
 // Stop source data/control daemons without removing its network, which is still
-// attached to the destination's transfer clients. The isolated MGR may remain
+// attached to federation link resources. The isolated MGR may remain
 // running, but no source MON, OSD, MDS or RGW can serve or replicate data.
 func stopMultiClusterSource(t *testing.T, ctx context.Context, source *ceph.Container) {
 	t.Helper()

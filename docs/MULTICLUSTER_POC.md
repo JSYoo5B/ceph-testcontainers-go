@@ -9,8 +9,8 @@
 - macOS ARM64 호스트, Docker Desktop Linux ARM64, 4 vCPU와 약 3916 MiB RAM에서 순차 실행했습니다.
 - 클러스터마다 MON 1개, MGR 1개, OSD 2개와 서로 다른 FSID·네트워크·admin keyring을 사용합니다. Client가 자신에게 배정된 FSID에 접속하는지도 확인합니다.
 - MON/MGR/client, OSD, RGW, MDS는 각각 기존 `20.2.4-control`, `20.2.4-osd`, `20.2.4-rgw`, `20.2.4-mds` slim 이미지를 사용했습니다.
-- 현재 다섯 slim 역할에는 `rbd-mirror`·`cephfs-mirror`가 없습니다. 두 선택 데몬만 같은 버전의 원본 Quay 이미지를 사용했습니다.
-- Mirror daemon과 transfer client는 양쪽 클러스터의 네트워크에 접속합니다. RGW끼리는 별도 HTTP bridge로 통신합니다. CephFS는 peer 등록 시 원격 filesystem을 검사하는 source MGR에도 destination 네트워크가 필요합니다.
+- 최초 PoC에서는 두 mirror 데몬만 원본 Quay 이미지를 사용했습니다. 현재는 mirror를 포함하도록 다시 빌드한 slim `control`로 실행하며 `all`에도 두 데몬이 있습니다.
+- 검증용 data client는 자기 클러스터에만 접속합니다. Federation API가 mirror daemon과 필요한 관리 client의 양쪽 클러스터 접속을 소유합니다. RGW끼리는 별도 HTTP bridge로 통신합니다. CephFS는 peer 등록 시 원격 filesystem을 검사하는 source MGR에도 destination 네트워크가 필요합니다.
 - 호스트에는 `go-ceph`, cgo, RBD kernel mapping이나 CephFS kernel/FUSE mount를 추가하지 않았습니다. 모든 Ceph 제어와 native client I/O는 컨테이너 안에서 실행하며 Go는 `CGO_ENABLED=0`입니다.
 
 원본은 다음 digest입니다.
@@ -21,9 +21,13 @@ quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb
 
 Source outage 단계에서는 source MON/OSD와 해당 케이스의 RGW/MDS를 정지합니다. MGR과 네트워크는 cleanup까지 남아 있지만 source data daemon은 데이터를 제공할 수 없습니다. Destination의 새 CLI/libcephfs session으로 전체 payload를 다시 읽어 검증합니다. 종료 시 mirror·client와 추가 네트워크 연결을 먼저 정리하고 각 클러스터를 제거합니다.
 
-`ManagerContainer()`는 소유 MGR을 검사하거나 장애·네트워크 조건을 주입하기 위한 accessor입니다. 컨테이너의 수명은 여전히 클러스터가 관리합니다. CephFS PoC는 Docker SDK로 source MGR의 remote network를 연결하고 cleanup 시 해제합니다.
+`ManagerContainer()`는 소유 MGR을 검사하거나 장애·네트워크 조건을 주입하기 위한 accessor입니다. 컨테이너의 수명은 여전히 클러스터가 관리합니다. `federation.RunCephFSMirror`가 Docker SDK로 source MGR의 remote network를 연결하고 cleanup 시 자신이 추가한 연결을 해제합니다.
 
-## 실제 결과
+## 구성 API
+
+단일 클러스터는 `ceph.Run`, 클러스터 사이의 구성은 별도 `federation.RunRGWMultisite`·`RunRBDMirror`·`RunCephFSMirror`로 분리했습니다. 테스트에 있던 bootstrap/peer/auth/daemon 조립을 API로 옮겼으며 backup archive 전달과 데이터 검증은 테스트에 남겼습니다. 연결의 cleanup은 클러스터보다 먼저 수행합니다. Ceph 내부 설정은 일회성 클러스터에 유지하며 데이터 삭제나 설정 롤백은 하지 않습니다. [책임·수명과 사용 예](FEDERATION_API.md)를 확인합니다.
+
+## 최초 PoC 결과
 
 | 케이스 | 확인한 동작 | 최종 결과와 실행 시간 |
 | --- | --- | --- |
@@ -60,6 +64,21 @@ Mirror를 정지한 동안 파일 변경·삭제·rename·추가와 두 번째 s
 
 Application archive는 JSON/base64의 작은 fixture format입니다. 일반 backup 제품이나 전체 filesystem backup을 구현한 것이 아니며 hardlink 관계, ACL, sparse extent, timestamps, layout/quota는 검증하지 않았습니다. [세부 구성](CEPHFS_MULTICLUSTER_NOTES.md).
 
+## mirror 포함 slim과 분리 API 재검증
+
+새 `control`/`all`에 mirror를 포함한 뒤 `federation` API를 사용하여 혼합 slim 역할을 다시 실행했습니다. 선택 daemon도 원본 Quay fallback 없이 `20.2.4-control`을 사용합니다. RGW 단독 실행과 나머지 세 케이스 실행, 총 두 Go 명령에서 네 케이스가 모두 PASS했습니다.
+
+| 케이스 | 결과 | 관측 시간 |
+| --- | --- | ---: |
+| `RunRGWMultisite` | 양방향 객체 복제·삭제, outage/restart, source 중단 후 읽기 PASS | 349.35초 |
+| RBD 전체/증분 backup | source 중단 후 archive 복원·읽기·쓰기 PASS | 62.41초 |
+| `RunRBDMirror` | 최초·변경 snapshot 복제, demote/promote, source 중단 후 읽기·쓰기 PASS | 92.55초 |
+| `RunCephFSMirror` + archive | mirror restart·삭제 전파, OSD 교체, source 중단 후 읽기 PASS | 137.16초 |
+
+CephFS native user xattr 차이는 앞의 두 경로에서 다시 관측됐고 별도 archive restore는 xattr까지 일치했습니다. 시간이 기존 실행과 다르므로 성능 개선/저하나 RPO 보장으로 해석하지 않습니다. `CGO_ENABLED=0` unit test, 전체 tag compile, vet, 다섯 image smoke와 layer 공유 검증도 통과했습니다. 생성한 컨테이너와 네트워크가 남지 않은 것을 확인했습니다. Cleanup의 재시도·이미 삭제된 리소스·실제 오류가 섞인 joined error 경로는 별도 단위 테스트로 확인했습니다.
+
+실행 로그와 이미지 ID·case 결과·resource audit는 `artifacts/federation-slim-20.2.4/{rgw.log,mirrors-backup.log,summary.json}`에 있습니다. Mirror 포함 빌드 기록은 `artifacts/slim-mirror-20.2.4/`입니다. 이 artifact 디렉터리들은 git에서 제외합니다.
+
 ## 재현
 
 기존 고정 Quay 이미지로 모든 역할을 실행할 때는 다음 명령을 사용합니다.
@@ -78,9 +97,9 @@ CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds \
 make multicluster
 ```
 
-별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./...`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 프로젝트의 고정된 `DefaultImage`입니다.
+별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./...`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
 
-일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
+`make slim-images-multicluster` 또는 빌더의 `--multicluster`는 새 이미지를 빌드하고 control을 mirror 이미지로 명시하여 이 suite를 실행합니다. 일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
 
 로컬 근거는 git에서 제외되는 `artifacts/multicluster-20.2.4/`에 있습니다. `suite.log`에는 RBD 두 경로와 RGW의 PASS 및 수정 전 CephFS 실패가, `cephfs-final.log`에는 수정 후 CephFS PASS와 실제 metadata 차이가 있습니다. 초기 RGW port 수정 전 실행은 `rgw.log`에 보존했습니다. 로그의 최종 케이스 결과를 정리한 `summary.json`도 남깁니다.
 

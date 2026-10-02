@@ -22,7 +22,7 @@ source를 demote한 뒤 destination을 강제 옵션 없이 promote합니다. mi
 
 ## 실행
 
-현재 다섯 slim 역할에는 선택 package인 `rbd-mirror` daemon이 포함되지 않습니다. Native mirror test는 기본적으로 고정된 원본 Quay image를 daemon에 사용하고, MON/MGR·client와 OSD에는 기존 이미지 환경변수를 적용합니다. 다른 Ceph 버전을 검증할 때는 그 버전의 daemon image를 `CEPH_TEST_MIRROR_IMAGE`에 지정합니다.
+`rbd-mirror`는 slim `control`과 `all`에 포함합니다. Native mirror test는 `federation.RunRBDMirror`로 bootstrap/auth/client/daemon을 구성하며 기본 mirror 이미지는 테스트 control 이미지입니다. `CEPH_TEST_MIRROR_IMAGE`로 다른 이미지를 지정할 수 있고 모든 역할의 Ceph 버전을 맞춥니다. 복제 연결의 수명은 클러스터와 분리합니다. [API 계약](FEDERATION_API.md)을 확인합니다.
 
 ```sh
 CGO_ENABLED=0 \
