@@ -41,9 +41,13 @@ type RGWMultisite struct {
 // opts customize both gateways and are applied last. Do not replace required
 // networking or commands. A non-nil result returned with an error must still
 // be terminated. The clusters must not already serve standalone RGW traffic.
+// Both clusters must use bridge mode; host-mode multisite is not supported.
 func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*RGWMultisite, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, err
+	}
+	if config.Source.UsesHostNetwork() {
+		return nil, fmt.Errorf("RGW multisite currently requires bridge-mode Ceph clusters; host-mode multisite gateway endpoints are not supported")
 	}
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	if config.Realm == "" {

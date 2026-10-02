@@ -49,6 +49,8 @@ type RBDMirror struct {
 // configuration in the disposable clusters; it never destroys pools or data.
 // Customizers apply to the daemon only and must preserve its networking, Ceph
 // configuration, credentials and entrypoint.
+// Both clusters must use the same network mode. Host-mode clusters share the
+// Docker host namespace; bridge-mode daemons attach to both cluster networks.
 func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*RBDMirror, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -91,7 +93,6 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 	}
 	daemonOpts := []testcontainers.ContainerCustomizer{
 		config.Destination.WithClient(),
-		network.WithNetworkName(nil, config.Source.NetworkName()),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/rbd-mirror.keyring", FileMode: 0o600,
 		}),
@@ -99,6 +100,9 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 		testcontainers.WithCmd("-f", "--name", clientName, "--keyring", "/etc/ceph/rbd-mirror.keyring",
 			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false"),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/tmp/rbd-mirror.asok"}).WithStartupTimeout(time.Minute)),
+	}
+	if !config.Source.UsesHostNetwork() {
+		daemonOpts = append(daemonOpts, network.WithNetworkName(nil, config.Source.NetworkName()))
 	}
 	daemonOpts = append(daemonOpts, opts...)
 	daemon, err := testcontainers.Run(ctx, image, daemonOpts...)

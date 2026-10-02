@@ -18,9 +18,14 @@ import (
 // TestRBDLifecycle verifies userspace RBD I/O via the image's CLI. It does not
 // map a kernel block device or mount a filesystem on an RBD image.
 func TestRBDLifecycle(t *testing.T) {
+	testRBDLifecycle(t)
+}
+
+func testRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t)
+	cluster, client := newServiceCluster(t, opts...)
 	const pool = "tc-rbd"
 	cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
 	cephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")

@@ -16,14 +16,16 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// Both clusters own separate MON/MGR/OSDs, FSIDs, credentials and networks.
-// Data clients stay on their own cluster network. Federation links own the
+// Both clusters own separate MON/MGR/OSDs, FSIDs and credentials. Bridge-mode
+// clusters have separate networks; host-mode clusters share the host namespace.
+// Federation links own the
 // additional networking needed by mirror daemons and CephFS MGR peer validation. A client's FSID and credentials are
 // checked so copying cannot succeed by accidentally reading the source's pool.
-func newMultiClusterPair(t *testing.T) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
+func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
 	image, opts := integrationImages(t)
 	opts = append(opts, ceph.WithOSDCount(2))
+	opts = append(opts, customizers...)
 	clusters := make([]*ceph.Container, 2)
 	for i := range clusters {
 		cluster, err := ceph.Run(t.Context(), image, opts...)
@@ -59,7 +61,8 @@ func newMultiClusterPair(t *testing.T) (*ceph.Container, *ceph.Container, testco
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.FSID == "" || b.FSID == "" || a.FSID == b.FSID || source.NetworkName() == destination.NetworkName() {
+	sharedIsolatedNetwork := source.NetworkName() == destination.NetworkName() && !(source.UsesHostNetwork() && destination.UsesHostNetwork())
+	if a.FSID == "" || b.FSID == "" || a.FSID == b.FSID || sharedIsolatedNetwork {
 		t.Fatal("source and destination are not independent Ceph clusters")
 	}
 	t.Logf("independent clusters: source FSID=%s destination FSID=%s; two OSDs per cluster", a.FSID, b.FSID)

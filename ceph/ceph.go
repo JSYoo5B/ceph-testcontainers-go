@@ -30,7 +30,8 @@ var scripts embed.FS
 // Container embeds the MON/control container and owns the MGR, OSDs, optional
 // RGW/MDS services and network.
 // Use Terminate to clean up the entire cluster. Generic Run options customize
-// the MON; module options configure the cluster. Do not change MON networking.
+// the MON; module options configure the cluster. Use WithHostNetwork to change
+// cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
 	mu                sync.Mutex
@@ -41,6 +42,7 @@ type Container struct {
 	osds              map[int]*OSDContainer
 	config            []byte
 	keyring           []byte
+	portLeases        []*hostPortLease
 	closed            bool
 	monitorTerminated bool
 	networkRemoved    bool
@@ -60,7 +62,7 @@ type OSDContainer struct {
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
 		osds: 2, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
-		osdImage: img, rgwImage: img, mdsImage: img,
+		osdImage: img, rgwImage: img, mdsImage: img, controlImage: img, publicAddress: "127.0.0.1",
 	}
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
@@ -69,26 +71,21 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			}
 		}
 	}
+	if settings.hostAddressSet && !settings.hostNetwork {
+		return nil, errors.New("WithHostAddress requires WithHostNetwork")
+	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
-	nw, err := network.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("create ceph network: %w", err)
+	var nw *testcontainers.DockerNetwork
+	var err error
+	if !settings.hostNetwork {
+		nw, err = network.New(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("create ceph network: %w", err)
+		}
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
-	moduleOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
-		testcontainers.WithCmd(),
-		testcontainers.WithEnv(map[string]string{
-			"CEPH_FSID": uuid.NewString(), "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(settings.blockSize, 10),
-		}),
-		testcontainers.WithExposedPorts("3300/tcp", "6789/tcp"),
-		network.WithNetwork([]string{"ceph-mon"}, nw),
-		testcontainers.WithFiles(scriptFile("mon")),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(settings.startupTimeout)),
-	}
-	moduleOpts = append(moduleOpts, opts...)
-	mon, err := testcontainers.Run(ctx, img, moduleOpts...)
+	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
@@ -130,8 +127,118 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	return c, nil
 }
 
-// NetworkName returns the isolated network to which application containers connect.
-func (c *Container) NetworkName() string { return c.network.Name }
+func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	attempts := 1
+	if c.settings.hostNetwork {
+		attempts = hostPortAttempts
+	}
+	for attempt := range attempts {
+		var lease *hostPortLease
+		var err error
+		if c.settings.hostNetwork {
+			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, 2, c.settings.startupTimeout)
+			c.trackHostPortLease(lease)
+			if err != nil {
+				return nil, err
+			}
+		}
+		moduleOpts := []testcontainers.ContainerCustomizer{
+			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
+			testcontainers.WithCmd(),
+			testcontainers.WithEnv(map[string]string{
+				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
+			}),
+			testcontainers.WithFiles(scriptFile("mon")),
+			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
+		}
+		if lease == nil {
+			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts("3300/tcp", "6789/tcp"), network.WithNetwork([]string{"ceph-mon"}, c.network))
+		} else {
+			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart(),
+				testcontainers.WithEnv(map[string]string{
+					"CEPH_PUBLIC_ADDRESS": c.settings.publicAddress,
+					"CEPH_MON_PORT_V2":    strconv.Itoa(lease.Ports[0]),
+					"CEPH_MON_PORT_V1":    strconv.Itoa(lease.Ports[1]),
+				}))
+		}
+		moduleOpts = append(moduleOpts, opts...)
+		if lease != nil {
+			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
+		}
+		mon, err := testcontainers.Run(ctx, image, moduleOpts...)
+		if lease != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			releaseErr := lease.Release(cleanupCtx)
+			cancel()
+			if err != nil || releaseErr != nil {
+				return mon, errors.Join(err, releaseErr)
+			}
+			err = mon.Start(ctx)
+		}
+		if err == nil {
+			return mon, nil
+		}
+		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
+			return mon, err
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		if !isPortConflict(cleanupCtx, mon) {
+			cancel()
+			return mon, err
+		}
+		cleanupErr := mon.Terminate(cleanupCtx)
+		cancel()
+		if !onlyMissingHostResource(cleanupErr) {
+			return mon, errors.Join(err, cleanupErr)
+		}
+	}
+	return nil, errors.New("monitor port attempts exhausted")
+}
+
+// NetworkName returns the cluster's bridge name, or "host" in host mode.
+func (c *Container) NetworkName() string {
+	if c.settings.hostNetwork {
+		return "host"
+	}
+	if c.network == nil {
+		return ""
+	}
+	return c.network.Name
+}
+
+// UsesHostNetwork reports whether the cluster shares Docker's host network.
+func (c *Container) UsesHostNetwork() bool { return c.settings.hostNetwork }
+
+// PublicAddress returns the advertised host-mode IPv4 address; empty in bridge mode.
+func (c *Container) PublicAddress() string {
+	if !c.settings.hostNetwork {
+		return ""
+	}
+	return c.settings.publicAddress
+}
+
+// ConnectionConfig returns independent copies of ceph.conf and the ephemeral
+// admin keyring for a native client. In host mode the MON ports are final.
+func (c *Container) ConnectionConfig() ([]byte, []byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, nil, errors.New("ceph cluster is terminated")
+	}
+	if len(c.config) == 0 || len(c.keyring) == 0 {
+		return nil, nil, errors.New("ceph cluster bootstrap is incomplete")
+	}
+	return bytes.Clone(c.config), bytes.Clone(c.keyring), nil
+}
+
+func (c *Container) trackHostPortLease(lease *hostPortLease) {
+	if lease == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.portLeases = append(c.portLeases, lease)
+}
 
 // ManagerContainer returns the owned MGR for inspection and failure injection.
 // The cluster owns its cleanup; a partial or terminated cluster may return nil.
@@ -146,8 +253,14 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // Caller owns and terminates that container before terminating the cluster.
 func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
-			return err
+		if c.settings.hostNetwork {
+			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
+				return err
+			}
+		} else {
+			if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
+				return err
+			}
 		}
 		return testcontainers.WithFiles(
 			textFile("/etc/ceph/ceph.conf", c.config, 0o644),
@@ -338,9 +451,14 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	defer c.mu.Unlock()
 	c.closed = true
 	var errs []error
+	for _, lease := range c.portLeases {
+		if err := lease.Release(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	for name, ctr := range c.services {
-		if err := ctr.Terminate(ctx, opts...); err != nil {
+		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
 		} else {
 			delete(c.services, name)
@@ -348,7 +466,7 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	}
 	for id, osd := range c.osds {
 		if osd.Container != nil {
-			if err := osd.Terminate(ctx, opts...); err != nil {
+			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 				errs = append(errs, err)
 				continue
 			}
@@ -356,14 +474,14 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		delete(c.osds, id)
 	}
 	if c.manager != nil {
-		if err := c.manager.Terminate(ctx, opts...); err != nil {
+		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {
 			c.manager = nil
 		}
 	}
 	if c.Container != nil && !c.monitorTerminated {
-		if err := c.Container.Terminate(ctx, opts...); err != nil {
+		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {
 			c.monitorTerminated = true

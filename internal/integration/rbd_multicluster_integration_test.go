@@ -104,9 +104,14 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 // TestMultiClusterRBDSnapshotMirror uses a real rbd-mirror daemon and rx-only
 // peer. Snapshot mirroring is asynchronous and needs explicit checkpoints.
 func TestMultiClusterRBDSnapshotMirror(t *testing.T) {
+	testMultiClusterRBDSnapshotMirror(t)
+}
+
+func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 16*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t)
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
 	const pool = "tc-rbd-mirror"
 	const image = pool + "/replicated"
 	const imageSize = 8 << 20

@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -15,13 +16,44 @@ type options struct {
 	osdImage       string
 	rgwImage       string
 	mdsImage       string
+	controlImage   string
+	hostNetwork    bool
+	publicAddress  string
+	hostAddressSet bool
 }
+
+const hostPortAttempts = 5
 
 // Option transfers cluster settings outside the monitor's container request.
 type Option func(*options) error
 
 // Customize implements testcontainers.ContainerCustomizer.
 func (Option) Customize(*testcontainers.GenericContainerRequest) error { return nil }
+
+// WithHostNetwork places every cluster daemon and WithClient container in the
+// Docker daemon's host network. MON and RGW ports are selected automatically.
+// The default advertised address is 127.0.0.1 for clients on that same host.
+func WithHostNetwork() Option {
+	return func(o *options) error {
+		o.hostNetwork = true
+		return nil
+	}
+}
+
+// WithHostAddress selects a local IPv4 address to bind and advertise in host
+// mode. Use an address reachable by remote clients when Docker is remote.
+// The address must exist on the Docker daemon host. Requires WithHostNetwork.
+func WithHostAddress(address string) Option {
+	return func(o *options) error {
+		ip := net.ParseIP(address)
+		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
+			return fmt.Errorf("host address must be a specific IPv4 address")
+		}
+		o.publicAddress = ip.String()
+		o.hostAddressSet = true
+		return nil
+	}
+}
 
 // WithOSDImage selects the image for initial and subsequently added OSDs.
 // If omitted, OSDs use the image passed to Run. Use matching Ceph versions.

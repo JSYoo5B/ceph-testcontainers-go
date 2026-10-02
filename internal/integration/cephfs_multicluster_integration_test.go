@@ -22,9 +22,14 @@ import (
 // the native cephfs-mirror daemon. The archive is deliberately a small fixture
 // format, not a general-purpose filesystem backup utility.
 func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
+	testMultiClusterCephFSSnapshotMirrorAndBackup(t)
+}
+
+func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t)
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
 	sourceFS, err := source.StartCephFS(ctx)
 	if err != nil {
 		t.Fatal(err)

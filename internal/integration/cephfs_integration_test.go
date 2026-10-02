@@ -9,12 +9,18 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestCephFSFilesystem(t *testing.T) {
+	testCephFSFilesystem(t)
+}
+
+func testCephFSFilesystem(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t)
+	cluster, client := newServiceCluster(t, opts...)
 	fs, err := cluster.StartCephFS(ctx)
 	if err != nil {
 		t.Fatal(err)

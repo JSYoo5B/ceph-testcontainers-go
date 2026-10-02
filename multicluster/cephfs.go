@@ -59,6 +59,8 @@ type cephFSPeerIdentity struct {
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
 // disposable clusters; it does not undo configuration or delete mirrored data.
+// Both clusters must use the same network mode. Host mode requires no extra
+// daemon or manager attachment; bridge mode joins the peer cluster network.
 func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*CephFSMirror, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, err
@@ -86,34 +88,37 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	}
 	// The manager mounts the peer filesystem during bootstrap import to verify
 	// its identity and record ceph.mirror.info. The daemon's network attachment
-	// alone cannot provide this control-plane connectivity.
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
-	if err != nil {
-		return mirror, fmt.Errorf("create Docker client for CephFS manager networking: %w", err)
-	}
-	ownedAttachment := false
-	mirror.owned.addCleanup("disconnect CephFS manager and close Docker client", func(cleanupCtx context.Context) error {
-		if ownedAttachment {
-			if _, err := docker.NetworkDisconnect(cleanupCtx, config.Destination.NetworkName(), mobycl.NetworkDisconnectOptions{Container: manager.GetContainerID()}); ignoreMissing(err) != nil {
-				// Keep the client available when disconnect must be retried.
-				return err
+	// alone cannot provide this control-plane connectivity. Host-mode clusters
+	// already share that namespace and do not need an extra attachment.
+	if !config.Source.UsesHostNetwork() {
+		docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+		if err != nil {
+			return mirror, fmt.Errorf("create Docker client for CephFS manager networking: %w", err)
+		}
+		ownedAttachment := false
+		mirror.owned.addCleanup("disconnect CephFS manager and close Docker client", func(cleanupCtx context.Context) error {
+			if ownedAttachment {
+				if _, err := docker.NetworkDisconnect(cleanupCtx, config.Destination.NetworkName(), mobycl.NetworkDisconnectOptions{Container: manager.GetContainerID()}); ignoreMissing(err) != nil {
+					// Keep the client available when disconnect must be retried.
+					return err
+				}
+				ownedAttachment = false
 			}
-			ownedAttachment = false
+			return docker.Close()
+		})
+		inspection, err := docker.ContainerInspect(ctx, manager.GetContainerID(), mobycl.ContainerInspectOptions{})
+		if err != nil {
+			return mirror, fmt.Errorf("inspect source CephFS manager: %w", err)
 		}
-		return docker.Close()
-	})
-	inspection, err := docker.ContainerInspect(ctx, manager.GetContainerID(), mobycl.ContainerInspectOptions{})
-	if err != nil {
-		return mirror, fmt.Errorf("inspect source CephFS manager: %w", err)
-	}
-	if inspection.Container.NetworkSettings == nil {
-		return mirror, errors.New("source CephFS manager has no Docker network settings")
-	}
-	if _, attached := inspection.Container.NetworkSettings.Networks[config.Destination.NetworkName()]; !attached {
-		if _, err := docker.NetworkConnect(ctx, config.Destination.NetworkName(), mobycl.NetworkConnectOptions{Container: manager.GetContainerID()}); err != nil {
-			return mirror, fmt.Errorf("connect source CephFS manager to destination network: %w", err)
+		if inspection.Container.NetworkSettings == nil {
+			return mirror, errors.New("source CephFS manager has no Docker network settings")
 		}
-		ownedAttachment = true
+		if _, attached := inspection.Container.NetworkSettings.Networks[config.Destination.NetworkName()]; !attached {
+			if _, err := docker.NetworkConnect(ctx, config.Destination.NetworkName(), mobycl.NetworkConnectOptions{Container: manager.GetContainerID()}); err != nil {
+				return mirror, fmt.Errorf("connect source CephFS manager to destination network: %w", err)
+			}
+			ownedAttachment = true
+		}
 	}
 	keyring, err := config.Source.Ceph(ctx, "auth", "get-or-create", mirror.SourceClientEntity,
 		"mon", "profile cephfs-mirror", "mds", "allow r",
@@ -137,13 +142,16 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	}
 	const socket = "/run/ceph/cephfs-mirror.asok"
 	moduleOpts := []testcontainers.ContainerCustomizer{
-		config.Source.WithClient(), network.WithNetworkName(nil, config.Destination.NetworkName()),
+		config.Source.WithClient(),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/ceph.client." + sourceID + ".keyring", FileMode: 0o600,
 		}),
 		testcontainers.WithEntrypoint("cephfs-mirror"),
 		testcontainers.WithCmd("--id", sourceID, "-f", "--admin-socket", socket, "--cephfs-mirror-directory-scan-interval", "1"),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", socket}).WithStartupTimeout(2 * time.Minute)),
+	}
+	if !config.Source.UsesHostNetwork() {
+		moduleOpts = append(moduleOpts, network.WithNetworkName(nil, config.Destination.NetworkName()))
 	}
 	moduleOpts = append(moduleOpts, opts...)
 	daemon, err := testcontainers.Run(ctx, image, moduleOpts...)

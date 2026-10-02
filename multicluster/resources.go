@@ -108,7 +108,10 @@ func validatePair(image string, source, destination *ceph.Container) error {
 	if source == nil || destination == nil || source.Container == nil || destination.Container == nil {
 		return errors.New("multicluster requires two initialized Ceph clusters")
 	}
-	if source == destination || source.GetContainerID() == destination.GetContainerID() || source.NetworkName() == destination.NetworkName() {
+	if source.UsesHostNetwork() != destination.UsesHostNetwork() {
+		return errors.New("multicluster requires both Ceph clusters to use the same network mode")
+	}
+	if source == destination || source.GetContainerID() == destination.GetContainerID() || (!source.UsesHostNetwork() && source.NetworkName() == destination.NetworkName()) {
 		return errors.New("multicluster requires independent Ceph clusters")
 	}
 	if source.NetworkName() == "" || destination.NetworkName() == "" || !source.IsRunning() || !destination.IsRunning() {
@@ -119,7 +122,7 @@ func validatePair(image string, source, destination *ceph.Container) error {
 
 func runClient(ctx context.Context, image string, cluster *ceph.Container, peerNetwork string, owned *resources) (testcontainers.Container, error) {
 	opts := []testcontainers.ContainerCustomizer{cluster.WithClient(), testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity")}
-	if peerNetwork != "" {
+	if peerNetwork != "" && !cluster.UsesHostNetwork() {
 		opts = append(opts, network.WithNetworkName(nil, peerNetwork))
 	}
 	ctr, err := testcontainers.Run(ctx, image, opts...)

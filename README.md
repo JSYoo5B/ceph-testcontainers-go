@@ -85,7 +85,45 @@ if err != nil {
 
 애플리케이션 컨테이너는 클러스터보다 나중에 cleanup을 등록하여 먼저 종료합니다. `WithClient`가 복사하는 admin 키는 신뢰할 수 있는 테스트 컨테이너용입니다. 자격 증명에는 현재 테스트 클러스터 전체에 대한 권한이 있습니다.
 
-Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. 따라서 MON의 `MappedPort`만으로 macOS/Windows 호스트 프로세스에서 RADOS/RBD/CephFS 전체에 연결할 수 있다고 가정하면 안 됩니다. PoC는 애플리케이션을 같은 Docker 네트워크에 넣는 방식으로 검증했습니다. 근거: [Ceph 네트워크 문서](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
+Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. 기본 bridge 모드에서는 애플리케이션 컨테이너에 `WithClient()`를 적용하여 광고된 주소에 접근합니다. MON의 `MappedPort`만으로 macOS/Windows 호스트 프로세스에서 RADOS/RBD/CephFS 전체에 연결할 수 있다고 가정하면 안 됩니다. 근거: [Ceph 네트워크 문서](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
+
+### Host network와 네이티브 클라이언트
+
+Linux Docker 호스트에서 실행하는 네이티브 RADOS 애플리케이션에는 host network 모드를 선택할 수 있습니다. MON/MGR/OSD와 `WithClient()`로 연결하는 컨테이너가 Docker daemon의 host 네트워크를 사용하고, Ceph가 광고하는 주소로 직접 통신합니다. 기본 public 주소는 `127.0.0.1`이며 원격 Docker를 사용하는 경우 클라이언트가 도달할 수 있는 Docker 호스트 주소를 지정합니다.
+
+```go
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+    ceph.WithHostNetwork(),
+    // ceph.WithHostAddress("192.0.2.10"), // 원격 Linux Docker 호스트의 실제 주소
+)
+if cluster != nil {
+    testcontainers.CleanupContainer(t, cluster)
+}
+if err != nil {
+    t.Fatal(err)
+}
+config, keyring, err := cluster.ConnectionConfig()
+if err != nil {
+    t.Fatal(err)
+}
+// 신뢰할 수 있는 테스트 애플리케이션에 config와 keyring을 전달합니다.
+// keyring은 이 테스트 클러스터의 admin 자격 증명입니다.
+_, _ = config, keyring
+```
+
+`UsesHostNetwork()`와 `PublicAddress()`로 선택된 모드를 조회합니다. `ConnectionConfig()`는 Ceph 설정과 admin keyring의 복사본을 반환합니다. host network에서는 Docker port publishing이 적용되지 않으므로 모든 데몬의 광고 주소와 실제 listener가 클라이언트에서 도달 가능해야 합니다. MON/RGW 포트는 Docker 호스트 안에서 열린 socket으로 예약한 뒤 실제 daemon 기동 직전에 해제합니다. 이 사이에 포트를 빼앗겨 실제 bind 오류가 발생하면 최대 5회 시도하며, MON은 새 컨테이너와 monmap으로 재구성합니다. MGR/OSD/MDS는 Ceph의 동적 포트 선택을 사용합니다.
+
+`make hostnetwork`는 두 클러스터의 동시 기동·서로 다른 MON/MGR/OSD endpoint·같은 pool/object 이름의 데이터 분리·양쪽 OSD `2 → 3 → 2` 변경 후 Python `librados` I/O와 실제 MON 포트 충돌 후 재시도를 검사합니다. RGW는 기본 포트 7480을 점유한 상태에서 서로 다른 endpoint를 만들고 signed S3 데이터를 비교합니다. RBD snapshot/clone과 CephFS 파일 I/O도 OSD 교체 전후에 검사합니다. 이 테스트는 `integration,hostnetwork` 태그로 분리되어 기본 `make integration`에 추가되지 않습니다.
+
+`make hostnetwork-multicluster`는 host-mode 클러스터 간 RBD snapshot mirror와 CephFS mirror·backup을 검사합니다. 현재 RGW multisite는 bridge-mode 클러스터에서 제공하며 host mode는 구성 변경 전에 거절합니다. 실행 결과와 검증 범위는 [HOST_NETWORK_POC.md](docs/HOST_NETWORK_POC.md)에 기록합니다.
+
+Docker Desktop의 host networking은 4.34 이상에서 설정으로 활성화하는 기능이며 Linux Engine과 네트워크 동작이 다릅니다. 현재 macOS 환경의 Python RADOS 검증은 Desktop Linux VM의 host 네트워크 안에 있는 별도 클라이언트 컨테이너에서 수행합니다. macOS 네이티브 프로세스에서 RADOS 전체 경로가 도달 가능하다는 검증으로 해석하지 않습니다. RGW 테스트는 호스트 Go HTTP 클라이언트의 endpoint 도달 가능 여부를 별도로 확인하고, 연결되면 signed S3 읽기·쓰기를 추가 검증합니다. 연결되지 않으면 VM에서 통과한 범위와 호스트 HTTP 미검증 상태를 각각 로그에 남깁니다. `CEPH_TEST_HOST_HTTP_REQUIRED=1`이면 호스트 HTTP 연결 실패도 테스트 실패로 처리합니다. 기본 suite timeout은 40분이며 `HOSTNETWORK_TIMEOUT`으로 바꿀 수 있습니다. [Docker host network 지원 범위](https://docs.docker.com/engine/network/drivers/host/), [Testcontainers networking](https://golang.testcontainers.org/features/networking/)을 참고합니다.
+
+```sh
+make hostnetwork
+make hostnetwork-multicluster
+# 다른 역할별 이미지는 기존 CEPH_TEST_IMAGE/CEPH_TEST_OSD_IMAGE 등의 변수를 사용합니다.
+```
 
 ### RGW / S3
 
@@ -129,6 +167,10 @@ CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하�
 | `WithOSDCount(n)` | 초기 OSD 수, 기본 2개 |
 | `WithOSDBlockSize(bytes)` | OSD sparse 파일 크기, 기본/최소 1 GiB |
 | `WithStartupTimeout(duration)` | 부트스트랩 및 개별 토폴로지 작업 제한, 기본 3분 |
+| `WithHostNetwork()` | 모든 daemon과 클라이언트의 Docker host network, MON/RGW 자동 포트 선택 |
+| `WithHostAddress(address)` | host mode의 실제 bind·광고 IPv4 주소, 기본 `127.0.0.1` |
+| `UsesHostNetwork()` / `PublicAddress()` | 네트워크 모드와 광고 주소 조회 |
+| `ConnectionConfig()` | native client에 전달할 설정·admin keyring 복사본 |
 | `WithOSDImage(image)` | 초기 OSD와 이후 추가 OSD의 이미지 선택 |
 | `WithRGWImage(image)` | `StartRGW`의 이미지 선택 |
 | `WithMDSImage(image)` | `StartCephFS`의 MDS 이미지 선택 |

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -34,6 +35,12 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"OSD image", WithOSDImage("")},
 		{"RGW image", WithRGWImage(" \t")},
 		{"MDS image", WithMDSImage("\n")},
+		{"host address requires host mode", WithHostAddress("127.0.0.1")},
+		{"host address empty", WithHostAddress("")},
+		{"host address unspecified", WithHostAddress("0.0.0.0")},
+		{"host address broadcast", WithHostAddress("255.255.255.255")},
+		{"host address multicast", WithHostAddress("224.0.0.1")},
+		{"host address IPv6", WithHostAddress("::1")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cluster, err := Run(context.Background(), DefaultImage, test.opt)
@@ -41,6 +48,47 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 				t.Fatalf("invalid setting allocated resources: cluster=%v error=%v", cluster, err)
 			}
 		})
+	}
+}
+
+func TestConnectionConfigCopiesCredentials(t *testing.T) {
+	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
+	config, keyring, err := cluster.ConnectionConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config[0], keyring[0] = 'x', 'x'
+	if string(cluster.config) != "config" || string(cluster.keyring) != "keyring" {
+		t.Fatal("exported credentials alias the cluster bootstrap data")
+	}
+	cluster.closed = true
+	if _, _, err := cluster.ConnectionConfig(); err == nil {
+		t.Fatal("terminated cluster exported credentials")
+	}
+	if _, _, err := (&Container{}).ConnectionConfig(); err == nil {
+		t.Fatal("incomplete bootstrap exported credentials")
+	}
+}
+
+func TestCleanupRetainsFailuresAndAcceptsMissingDaemons(t *testing.T) {
+	missing := &hostNetworkFixtureContainer{terminationErr: errdefs.ErrNotFound}
+	manager := &hostNetworkFixtureContainer{failTerminationOnce: true}
+	cluster := &Container{
+		Container: missing, manager: manager,
+		osds:     map[int]*OSDContainer{0: {Container: missing}},
+		services: map[string]testcontainers.Container{"rgw": missing},
+	}
+	if err := cluster.Terminate(t.Context()); err == nil || cluster.manager != manager {
+		t.Fatal("failed manager cleanup lost ownership")
+	}
+	if !cluster.monitorTerminated || len(cluster.osds) != 0 || len(cluster.services) != 0 {
+		t.Fatal("missing daemons remained owned after cleanup")
+	}
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.manager != nil {
+		t.Fatalf("failed manager cleanup did not recover: %v", err)
+	}
+	if missing.terminations != 3 || manager.terminations != 2 {
+		t.Fatal("cleanup repeated completed removals or skipped a failed removal")
 	}
 }
 

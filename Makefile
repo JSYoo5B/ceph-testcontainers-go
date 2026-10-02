@@ -1,4 +1,4 @@
-.PHONY: test integration multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
+.PHONY: test integration hostnetwork hostnetwork-multicluster multicluster vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
 
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
@@ -7,12 +7,19 @@ CEPH_DEB_DIRECTORY ?= artifacts/debs
 CEPH_DEB_BASE_IMAGE ?= ubuntu:24.04
 CEPH_DEB_TAG ?= local-deb
 MULTICLUSTER_TIMEOUT ?= 60m
+HOSTNETWORK_TIMEOUT ?= 40m
 
 test:
 	CGO_ENABLED=0 go test ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
+
+hostnetwork:
+	CGO_ENABLED=0 go test -tags=integration,hostnetwork -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork' ./internal/integration
+
+hostnetwork-multicluster:
+	CGO_ENABLED=0 go test -tags=integration,hostnetwork,multicluster -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork(RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup)$$' ./internal/integration
 
 multicluster:
 	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration
