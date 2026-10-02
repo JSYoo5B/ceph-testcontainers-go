@@ -93,6 +93,8 @@ dashboard, diskprediction-local, SciPy, scikit-learn 네 패키지의 선언 용
 
 ## 역할마다 독립 이미지를 만들면 생기는 중복
 
+이 절은 MON과 MGR를 별도 이미지로 보는 초기 모델입니다. 새로 제안한 `mon-mgr / osd / rgw / mds / client / all` 구성의 공통·부분 공통·고유 파일 분할은 [이미지 구성 분석](IMAGE_LAYOUT.md)을 기준으로 봅니다.
+
 | 역할 | 독립적으로 조립했을 때 선택 파일 총량 |
 | --- | ---: |
 | RADOS/client | 356.0 MB |

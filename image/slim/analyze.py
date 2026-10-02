@@ -14,11 +14,12 @@ import subprocess
 
 
 BASE = ("bash", "coreutils-single", "hostname", "gawk", "ca-certificates", "filesystem")
+ALL_ROOTS = (
+    "ceph-mon", "ceph-mgr", "ceph-osd", "ceph-mds", "ceph-radosgw",
+    "ceph-common", "python3-cephfs",
+)
 PROFILES = {
-    "full": (
-        "ceph-mon", "ceph-mgr", "ceph-osd", "ceph-mds", "ceph-radosgw",
-        "ceph-common", "python3-cephfs",
-    ),
+    "full": ALL_ROOTS,
     "rados-client": ("ceph-common",),
     "mon-control": ("ceph-mon", "ceph-common"),
     "mgr": ("ceph-mgr",),
@@ -32,8 +33,21 @@ PROFILES = {
     "cephfs-only-cluster": (
         "ceph-mon", "ceph-mgr", "ceph-osd", "ceph-common", "ceph-mds", "python3-cephfs",
     ),
+    # Keep historical profiles above while adding the requested image roles.
+    # "all" is an aggregate image; it is not a sixth deployment role.
+    "mon-mgr": ("ceph-mon", "ceph-mgr", "ceph-common"),
+    "client": ("ceph-common", "python3-cephfs"),
+    "all": ALL_ROOTS,
 }
 ROLES = ("rados-client", "mon-control", "mgr", "osd", "rgw", "mds")
+DEPLOYMENT_ROLES = ("mon-mgr", "osd", "rgw", "mds", "client")
+DEPLOYMENT_SCENARIOS = {
+    "rbd": ("mon-mgr", "osd", "client"),
+    "rgw": ("mon-mgr", "osd", "rgw"),
+    "rgw-with-client": ("mon-mgr", "osd", "rgw", "client"),
+    "cephfs": ("mon-mgr", "osd", "mds", "client"),
+    "all": DEPLOYMENT_ROLES,
+}
 CLUSTERS = ("rados-rbd-cluster", "rgw-only-cluster", "cephfs-only-cluster")
 OMIT = ("/usr/share/doc", "/usr/share/man", "/usr/share/info", "/dev", "/proc", "/sys")
 EXTRA_FILES = (
@@ -135,7 +149,7 @@ def measure(paths, licenses):
     }
 
 
-def own_regular_files(package, licenses):
+def package_regular_inodes(package, licenses):
     """Attribute package-owned payload only; link targets belong to their owner."""
     inodes = {}
     for path in package["files"]:
@@ -144,7 +158,151 @@ def own_regular_files(package, licenses):
         info = os.lstat(path)
         if stat.S_ISREG(info.st_mode):
             inodes[(info.st_dev, info.st_ino)] = info.st_size
+    return inodes
+
+
+def own_regular_files(package, licenses):
+    inodes = package_regular_inodes(package, licenses)
     return sum(inodes.values()), len(inodes)
+
+
+def deployment_partition(measured, closures, inventory):
+    """Partition source inodes by exact membership in the five requested roles."""
+    union = {}
+    for role in DEPLOYMENT_ROLES:
+        union.update(measured[role]["inodes"])
+    role_sets = {role: set(measured[role]["inodes"]) for role in DEPLOYMENT_ROLES}
+    common = set.intersection(*(role_sets[role] for role in DEPLOYMENT_ROLES))
+    common_bytes = sum(union[inode] for inode in common)
+    all_inodes = measured["all"]["inodes"]
+    all_bytes = measured["all"]["bytes"]
+
+    # Package attribution is supplementary: the partition itself is disjoint,
+    # while RPM ownership can overlap for a hardlinked file.
+    selected_packages = set().union(*(closures[role] for role in DEPLOYMENT_ROLES))
+    licenses = set().union(*(inventory[p]["licenses"] for p in selected_packages))
+    owners = {}
+    for name in sorted(selected_packages):
+        for inode in package_regular_inodes(inventory[name], licenses):
+            owners.setdefault(inode, set()).add(name)
+    representative_paths = {}
+    for role in DEPLOYMENT_ROLES:
+        for path in measured[role]["regular_paths"]:
+            info = os.stat(path)
+            inode = (info.st_dev, info.st_ino)
+            canonical = os.path.realpath(path)
+            if inode not in representative_paths or canonical < representative_paths[inode]:
+                representative_paths[inode] = canonical
+
+    membership_groups = {}
+    for inode, size in union.items():
+        membership = tuple(role for role in DEPLOYMENT_ROLES if inode in role_sets[role])
+        membership_groups.setdefault(membership, {})[inode] = size
+    groups = []
+    for membership, inodes in membership_groups.items():
+        package_bytes = {}
+        unattributed = 0
+        for inode, size in inodes.items():
+            inode_owners = owners.get(inode, set())
+            if not inode_owners:
+                unattributed += size
+            for name in inode_owners:
+                package_bytes[name] = package_bytes.get(name, 0) + size
+        groups.append({
+            "roles": list(membership),
+            "kind": "common" if len(membership) == len(DEPLOYMENT_ROLES) else (
+                "exclusive" if len(membership) == 1 else "shared-subset"
+            ),
+            "regular_file_bytes": sum(inodes.values()),
+            "unique_regular_file_inode_count": len(inodes),
+            "unattributed_regular_file_bytes": unattributed,
+            "top_10_owning_packages": [
+                {"package": name, "regular_file_bytes": size}
+                for name, size in sorted(package_bytes.items(), key=lambda entry: (-entry[1], entry[0]))[:10]
+            ],
+            "top_10_files": [
+                {"path": representative_paths[inode], "regular_file_bytes": size}
+                for inode, size in sorted(inodes.items(), key=lambda entry: (-entry[1], representative_paths[entry[0]]))[:10]
+            ],
+        })
+    groups.sort(key=lambda group: (-len(group["roles"]), -group["regular_file_bytes"], group["roles"]))
+    partition_bytes = sum(group["regular_file_bytes"] for group in groups)
+    if partition_bytes != sum(union.values()):
+        raise RuntimeError("Deployment membership partition is not disjoint")
+
+    per_role = {}
+    for role in DEPLOYMENT_ROLES:
+        others = set().union(*(role_sets[other] for other in DEPLOYMENT_ROLES if other != role))
+        exclusive = role_sets[role] - others
+        extra = role_sets[role] - common
+        per_role[role] = {
+            "regular_file_bytes": measured[role]["bytes"],
+            "common_regular_file_bytes": common_bytes,
+            "extra_vs_common_regular_file_bytes": sum(union[inode] for inode in extra),
+            "exclusive_vs_other_roles_regular_file_bytes": sum(union[inode] for inode in exclusive),
+            "shared_subset_extra_regular_file_bytes": sum(union[inode] for inode in extra - exclusive),
+        }
+
+    scenarios = {}
+    for name, roles in DEPLOYMENT_SCENARIOS.items():
+        included = set().union(*(role_sets[role] for role in roles))
+        excluded = set(all_inodes) - included
+        added = included - set(all_inodes)
+        scenario_packages = set().union(*(closures[role] for role in roles))
+        excluded_bytes = sum(all_inodes[inode] for inode in excluded)
+        used_groups = [group for group in groups if included.intersection(membership_groups[tuple(group["roles"])])]
+        common_base_model = common_bytes + sum(measured[role]["bytes"] - common_bytes for role in roles)
+        scenario_union_bytes = sum(union[inode] for inode in included)
+        scenarios[name] = {
+            "roles": list(roles),
+            "client_optional": name in ("rgw", "rgw-with-client"),
+            "package_count": len(scenario_packages),
+            "unique_regular_file_inode_count": len(included),
+            "union_regular_file_bytes": scenario_union_bytes,
+            "excluded_vs_all_regular_file_bytes": excluded_bytes,
+            "excluded_percent_of_all_payload": round(100.0 * excluded_bytes / all_bytes, 3),
+            "additional_vs_all_regular_file_bytes": sum(union[inode] for inode in added),
+            "separate_flattened_role_images_payload_bytes": sum(measured[role]["bytes"] for role in roles),
+            "common_base_plus_independent_role_extras_payload_bytes": common_base_model,
+            "duplicated_subset_shared_payload_bytes_with_common_base": common_base_model - scenario_union_bytes,
+            "ideal_disjoint_shared_layers_payload_bytes": sum(group["regular_file_bytes"] for group in used_groups),
+            "required_membership_groups": [group["roles"] for group in used_groups],
+        }
+
+    client_delta = measured["client"]["inodes"].keys() - measured["rados-client"]["inodes"].keys()
+    binding_names = ("python3-cephfs", "python3-rados", "python3-rbd")
+    memberships = [set(membership) for membership in membership_groups]
+    laminar = all(
+        not left.intersection(right) or left.issubset(right) or right.issubset(left)
+        for index, left in enumerate(memberships) for right in memberships[index + 1:]
+    )
+    common_base_model = common_bytes + sum(measured[role]["bytes"] - common_bytes for role in DEPLOYMENT_ROLES)
+    return {
+        "roles": list(DEPLOYMENT_ROLES),
+        "aggregate_profile": "all",
+        "model": "logical source-file partition; potential layer reuse, not a built Docker image layout",
+        "union_regular_file_bytes": sum(union.values()),
+        "partition_regular_file_bytes": partition_bytes,
+        "common_regular_file_bytes": common_bytes,
+        "separate_flattened_role_images_payload_bytes": sum(measured[role]["bytes"] for role in DEPLOYMENT_ROLES),
+        "common_base_plus_independent_role_extras_payload_bytes": common_base_model,
+        "duplicated_subset_shared_payload_bytes_with_common_base": common_base_model - sum(union.values()),
+        "membership_groups_are_nested_or_disjoint": laminar,
+        "common_package_names": sorted(set.intersection(*(closures[role] for role in DEPLOYMENT_ROLES))),
+        "union_matches_all_payload": set(union) == set(all_inodes),
+        "union_missing_from_all_regular_file_bytes": sum(union[inode] for inode in set(union) - set(all_inodes)),
+        "all_missing_from_union_regular_file_bytes": sum(all_inodes[inode] for inode in set(all_inodes) - set(union)),
+        "roles_payload": per_role,
+        "disjoint_membership_groups": groups,
+        "scenarios": scenarios,
+        "client_binding_check": {
+            "ceph_common_already_includes_python3_cephfs": "python3-cephfs" in closures["rados-client"],
+            "rados_client_bindings": [name for name in binding_names if name in closures["rados-client"]],
+            "client_bindings": [name for name in binding_names if name in closures["client"]],
+            "additional_packages_vs_rados_client": sorted(closures["client"] - closures["rados-client"]),
+            "additional_regular_file_bytes_vs_rados_client": sum(measured["client"]["inodes"][inode] for inode in client_delta),
+        },
+    }
 
 
 def main():
@@ -153,9 +311,13 @@ def main():
     measured = {}
     profiles = {}
     closures = {}
+    closure_cache = {}
     for name, packages in PROFILES.items():
         roots = tuple(dict.fromkeys(packages + BASE))
-        selected = closure(roots)
+        cache_key = tuple(sorted(roots))
+        if cache_key not in closure_cache:
+            closure_cache[cache_key] = closure(roots)
+        selected = closure_cache[cache_key]
         missing = selected.difference(inventory)
         if missing:
             raise RuntimeError("Uninstalled closure packages: " + ", ".join(sorted(missing)))
@@ -270,6 +432,7 @@ def main():
             "shared_by_all_roles_payload_bytes": sum(role_union[inode] for inode in intersection),
             "exclusive_payload_bytes_by_role": role_exclusive,
         },
+        "requested_role_partition": deployment_partition(measured, closures, inventory),
         "unvalidated_trimming_candidates": candidates,
         "top_20_selected_runtime_packages": sorted(selected_packages, key=lambda p: p["regular_file_bytes"], reverse=True)[:20],
         "top_30_selected_runtime_files": sorted(

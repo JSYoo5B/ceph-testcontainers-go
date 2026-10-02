@@ -178,6 +178,8 @@ make slim-integration
 
 이미지는 여러 컨테이너가 공유합니다. 이 PoC는 이미지 저장 용량 감소를 확인했습니다. 동일한 Ceph 데몬의 RAM 사용량과 registry 전송 크기는 별도 측정이 필요합니다. 측정값과 검증 범위는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)를 확인합니다.
 
+`mon-mgr`, `osd`, `rgw`, `mds`, `client`, `all`의 역할 경계와 공통/서버 공통/고유 파일 용량은 [이미지 구성 분석](docs/IMAGE_LAYOUT.md)에 정리했습니다. 역할별 이미지의 빌드 및 혼합 실행은 후속 검증 대상입니다.
+
 ## 현재 범위
 
 OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 각 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. MON/MGR 수 변경, quorum 장애, RGW/MDS failover, kernel mapping/mount, 영속 데이터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
