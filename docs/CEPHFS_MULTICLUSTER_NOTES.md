@@ -1,8 +1,8 @@
 # CephFS 클러스터 간 snapshot 복제와 backup PoC
 
 `TestMultiClusterCephFSSnapshotMirrorAndBackup`은 서로 다른 FSID, MON/MGR,
-OSD, MDS와 CephX 자격 증명을 가진 두 클러스터를 만든다. 두 개의 userspace
-client, source MGR와 하나의 mirror daemon이 두 Docker network에 접속한다. 호스트의
+OSD, MDS와 CephX 자격 증명을 가진 두 클러스터를 만든다. 데이터 검증용 userspace
+client는 각각 자기 클러스터에 접속하고 source MGR와 하나의 mirror daemon은 두 Docker network에 접속한다. 호스트의
 kernel/FUSE mount, go-ceph, cgo는 사용하지 않는다.
 
 ## 서로 다른 두 가지 경로
@@ -24,11 +24,11 @@ source에서 이를 import하고 `/federation`을 mirror directory로 등록한�
 별도 `cephfs-mirror` daemon이 destination에 실제 snapshot을 만든다.
 source MGR도 peer 등록 시 destination filesystem에 연결하여 FSID와 filesystem
 ID를 확인하고 root의 `ceph.mirror.info`를 기록하므로 원격 network 접근이 필요하다.
-`federation.RunCephFSMirror`가 Docker SDK로 기존 MGR에 destination network를
+`multicluster.RunCephFSMirror`가 Docker SDK로 기존 MGR에 destination network를
 추가하고, cluster network 삭제 전에 자신이 추가한 연결을 해제한다.
 현재 slim `control`과 `all`은 `cephfs-mirror`를 포함한다. 기본 mirror 이미지는
 테스트 control 이미지이며 `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수 있다.
-단일 클러스터와 복제 연결의 수명은 [API 계약](FEDERATION_API.md)처럼 구분한다.
+단일 클러스터와 복제 연결의 수명은 [API 계약](MULTICLUSTER_API.md)처럼 구분한다.
 
 native 검증은 파일 bytes와 SHA-256, tree의 이름/삭제, symlink target,
 permission mode와 UID/GID를 엄격하게 비교한다. user xattr는 별도 비교하여
@@ -42,12 +42,20 @@ permission mode와 UID/GID를 엄격하게 비교한다. user xattr는 별도 �
 2. mirror daemon을 정지한 동안 파일 수정/삭제/이름 변경/추가와 두 번째 snapshot을 만든다.
 3. daemon을 재시작해 두 번째 snapshot의 catch-up과 첫 snapshot의 불변성을 검사한다.
 4. source에서 첫 snapshot을 삭제하고 destination에서도 삭제되는지 기다린다.
-5. destination OSD를 추가/제거한 뒤 source MON/MDS/OSDs와 mirror를 정지한다.
-6. 새로운 destination `libcephfs` session으로 두 번째 mirrored snapshot과
+5. mirror directory를 제거하고 daemon의 directory count 반영을 확인한다. 새 snapshot이
+   10초 관측 동안 도착하지 않고 기존 snapshot이 유지되는지 확인한 뒤 directory를 다시 등록해 catch-up을 검증한다.
+6. peer를 제거해 API와 daemon에서 UUID가 사라진 것을 확인한다. 새 snapshot이
+   10초 관측 동안 도착하지 않고 기존 데이터가 유지되는지 확인한 뒤 새 UUID로 peer를 재등록해 catch-up을 검증한다.
+7. destination OSD를 추가/제거한 뒤 source MON/MDS/OSDs와 mirror를 정지한다.
+8. 새로운 destination `libcephfs` session으로 두 번째·네 번째 mirrored snapshot과
    첫 snapshot에서 별도로 복구한 `/restored`를 읽는다.
 
 첫 번째 native snapshot `backup-1`은 source에서 삭제하면 destination에서도 삭제된다. 따라서 이
 경로의 복제본과 별도 보존 정책을 가진 backup archive를 구분해야 한다.
+
+`RebootstrapPeer`는 제거한 동일 destination을 다시 연결한다. Import의 결과가 불확실할 때는
+이 연결에 pending import가 있는 경우에만 client/site/filesystem identity가 정확히 일치하는
+하나의 peer UUID를 채택한다. 다른 연결이 이미 만든 peer를 임의로 소유하지 않는다.
 
 ## 실행
 

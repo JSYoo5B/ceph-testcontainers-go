@@ -85,7 +85,7 @@ CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./...
 
 ## 조립과 공유 layer
 
-`control`과 `all`에는 `rbd-mirror`·`cephfs-mirror` RPM과 필요한 의존성을 추가합니다. 해당 데몬은 다른 세 역할에 없습니다. 실행은 federation API에서 선택하며 일반 클러스터 생성 시에는 기동하지 않습니다. 두 RPM 추가는 기존 215개에서 217개 package로, 논리 파일은 11,087,734 bytes 증가했습니다. 공통 그룹의 논리 용량과 OSD/RGW/MDS의 Docker `Size`는 이전과 같습니다. 같은 빌드에서 공유하는 layer DiffID를 확인하며, 추출 컨테이너의 hostname/hosts 등 동적 입력 때문에 서로 다른 빌드의 common DiffID가 항상 같다고 보장하지는 않습니다.
+`control`과 `all`에는 `rbd-mirror`·`cephfs-mirror` RPM과 필요한 의존성을 추가합니다. 해당 데몬은 다른 세 역할에 없습니다. 실행은 multicluster API에서 선택하며 일반 클러스터 생성 시에는 기동하지 않습니다. 두 RPM 추가는 기존 215개에서 217개 package로, 논리 파일은 11,087,734 bytes 증가했습니다. 공통 그룹의 논리 용량과 OSD/RGW/MDS의 Docker `Size`는 이전과 같습니다. 같은 빌드에서 공유하는 layer DiffID를 확인하며, 추출 컨테이너의 hostname/hosts 등 동적 입력 때문에 서로 다른 빌드의 common DiffID가 항상 같다고 보장하지는 않습니다.
 
 [package_roles.py](../image/slim/package_roles.py)는 설치된 RPM의 의존성·파일·license를 조사하고, 실제 파일 membership으로 겹치지 않는 tar 그룹을 만듭니다. `all`은 네 역할의 파일 합집합입니다. `ceph-common`의 보수적인 RPM closure를 따르므로 native daemon이 직접 사용하지 않는 Python/client 파일도 공통 그룹에 남습니다. 절대 최소 runtime을 계산한 결과는 아닙니다.
 

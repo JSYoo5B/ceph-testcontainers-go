@@ -16,7 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
-	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
+	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -42,8 +42,11 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 		"--object-size", "1M", "--image-feature", "layering", "--no-progress")
 	execCommand(t, ctx, sourceClient, "rbd", "snap", "create", original+"@baseline")
 	execCommand(t, ctx, sourceClient, "rbd", "image-meta", "set", original, "backup-fixture", "format-2")
-	execCommand(t, ctx, sourceClient, "rbd", "export", original, "/tmp/rbd-full.backup", "--export-format", "2", "--no-progress")
-	full := multiClusterReadFile(t, ctx, sourceClient, "/tmp/rbd-full.backup")
+	var fullArchive bytes.Buffer
+	if err := multicluster.ExportRBDBackup(ctx, sourceClient, original, &fullArchive); err != nil {
+		t.Fatal(err)
+	}
+	full := fullArchive.Bytes()
 
 	// Change exactly one 1 MiB object. This local write fixture uses the public
 	// RBD diff stream; Ceph's export-diff command produces the actual backup.
@@ -54,36 +57,34 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	verifyRBDBytes(t, ctx, sourceClient, original, after)
 	verifyRBDBytes(t, ctx, sourceClient, original+"@baseline", before)
 	execCommand(t, ctx, sourceClient, "rbd", "snap", "create", original+"@next")
-	execCommand(t, ctx, sourceClient, "rbd", "export-diff", "--from-snap", "baseline", original+"@next", "/tmp/rbd-next.diff", "--no-progress")
-	delta := multiClusterReadFile(t, ctx, sourceClient, "/tmp/rbd-next.diff")
+	var deltaArchive bytes.Buffer
+	if err := multicluster.ExportRBDIncremental(ctx, sourceClient, original+"@next", "baseline", &deltaArchive); err != nil {
+		t.Fatal(err)
+	}
+	delta := deltaArchive.Bytes()
 	if len(full) < imageSize || len(delta) == 0 || len(delta) >= len(full)/2 {
 		t.Fatalf("unexpected archive sizes: full=%d incremental=%d", len(full), len(delta))
-	}
-	for path, data := range map[string][]byte{"/tmp/rbd-full.backup": full, "/tmp/rbd-next.diff": delta} {
-		if err := destinationClient.CopyToContainer(ctx, data, path, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(data, multiClusterReadFile(t, ctx, destinationClient, path)) {
-			t.Fatalf("archive changed while transferring %s", path)
-		}
 	}
 	stopMultiClusterSource(t, ctx, source)
 
 	// Incremental restore must reject an unrelated image without its baseline.
 	execCommand(t, ctx, destinationClient, "rbd", "create", pool+"/missing-baseline", "--size", "8M", "--image-feature", "layering")
-	code, out, err := rbdMultiClusterExec(ctx, destinationClient, "rbd", "import-diff", "/tmp/rbd-next.diff", pool+"/missing-baseline", "--no-progress")
-	if err != nil || code == 0 || !bytes.Contains(out, []byte("baseline")) {
-		t.Fatalf("missing baseline should reject incremental restore: exit=%d error=%v output=%s", code, err, out)
+	if err := multicluster.RestoreRBDIncremental(ctx, destinationClient, pool+"/missing-baseline", bytes.NewReader(delta)); err == nil || !strings.Contains(err.Error(), "baseline") {
+		t.Fatalf("missing baseline should reject incremental restore: %v", err)
 	}
 	execCommand(t, ctx, destinationClient, "rbd", "rm", pool+"/missing-baseline", "--no-progress")
-	execCommand(t, ctx, destinationClient, "rbd", "import", "/tmp/rbd-full.backup", restored, "--export-format", "2", "--no-progress")
+	if err := multicluster.RestoreRBDBackup(ctx, destinationClient, restored, bytes.NewReader(full)); err != nil {
+		t.Fatal(err)
+	}
 	verifyRBDInfo(t, ctx, destinationClient, restored, imageSize)
 	verifyRBDBytes(t, ctx, destinationClient, restored, before)
 	verifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
 	if got := strings.TrimSpace(string(rbdOutput(t, ctx, destinationClient, "image-meta", "get", restored, "backup-fixture"))); got != "format-2" {
 		t.Fatalf("full backup lost image metadata: %q", got)
 	}
-	execCommand(t, ctx, destinationClient, "rbd", "import-diff", "/tmp/rbd-next.diff", restored, "--no-progress")
+	if err := multicluster.RestoreRBDIncremental(ctx, destinationClient, restored, bytes.NewReader(delta)); err != nil {
+		t.Fatal(err)
+	}
 	verifyRBDBytes(t, ctx, destinationClient, restored, after)
 	verifyRBDBytes(t, ctx, destinationClient, restored+"@baseline", before)
 	verifyRBDBytes(t, ctx, destinationClient, restored+"@next", after)
@@ -115,8 +116,8 @@ func TestMultiClusterRBDSnapshotMirror(t *testing.T) {
 	if mirrorImage == "" {
 		mirrorImage, _ = integrationImages(t)
 	}
-	t.Logf("native RBD federation runtime image=%s", mirrorImage)
-	mirror, err := federation.RunRBDMirror(ctx, mirrorImage, federation.RBDMirrorConfig{
+	t.Logf("native RBD multicluster runtime image=%s", mirrorImage)
+	mirror, err := multicluster.RunRBDMirror(ctx, mirrorImage, multicluster.RBDMirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
 	})
 	if mirror != nil {
@@ -127,7 +128,7 @@ func TestMultiClusterRBDSnapshotMirror(t *testing.T) {
 				multiClusterLogContainer(t, cleanupCtx, mirror.Container)
 			}
 			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate RBD federation runtime: %v", err)
+				t.Errorf("terminate RBD multicluster runtime: %v", err)
 			}
 		})
 	}

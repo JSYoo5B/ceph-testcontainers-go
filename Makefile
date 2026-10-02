@@ -3,6 +3,7 @@
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
 SLIM_REPOSITORY ?= ceph-testcontainers
+MULTICLUSTER_TIMEOUT ?= 60m
 
 test:
 	CGO_ENABLED=0 go test ./...
@@ -11,7 +12,7 @@ integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./...
 
 multicluster:
-	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=40m -run '^TestMultiCluster' ./...
+	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./...
 
 vet:
 	go vet ./...

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
+	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
 	"os"
 )
 
@@ -27,7 +27,7 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 	if rgwImage == "" {
 		rgwImage = controlImage
 	}
-	multisite, err := federation.RunRGWMultisite(ctx, rgwImage, federation.RGWMultisiteConfig{
+	multisite, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{
 		Source: source, Destination: destination, ControlImage: controlImage,
 	})
 	if multisite != nil {
@@ -55,7 +55,7 @@ func TestMultiClusterRGWMultisite(t *testing.T) {
 	sourceS3 := s3HTTPClient{endpoint: sourceEndpoint, accessKey: sourceRGW.AccessKey, secretKey: sourceRGW.SecretKey, region: sourceRGW.Region, http: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
-	const bucket = "/tc-federated-bucket"
+	const bucket = "/tc-multicluster-bucket"
 	sourceS3.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 	payload := bytes.Repeat([]byte("native RGW cross-cluster replication\n"), 1024)
 	keys := []string{"keep", "nested/payload", "remove"}

@@ -1,4 +1,4 @@
-package federation
+package multicluster
 
 import (
 	"context"
@@ -32,6 +32,8 @@ type RGWMultisite struct {
 	RealmID, SourceZoneID, DestinationZoneID string
 	config                                   RGWMultisiteConfig
 	sourceClient, destinationClient          testcontainers.Container
+	sourceURL, destinationURL                string
+	systemAccess, systemSecret               string
 	owned                                    resources
 }
 
@@ -45,7 +47,7 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	}
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	if config.Realm == "" {
-		config.Realm = "tc-federation-" + suffix
+		config.Realm = "tc-multicluster-" + suffix
 	}
 	if config.Zonegroup == "" {
 		config.Zonegroup = "us-east-1"
@@ -91,6 +93,8 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	sourceAlias, destinationAlias := "rgw-primary-"+suffix, "rgw-secondary-"+suffix
 	sourceURL, destinationURL := "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
 	systemAccess, systemSecret := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
+	f.sourceURL, f.destinationURL = sourceURL, destinationURL
+	f.systemAccess, f.systemSecret = systemAccess, systemSecret
 	primaryCommands := [][]string{
 		{"realm", "create", "--default"},
 		{"zonegroup", "create", "--master", "--default", "--endpoints", sourceURL},
@@ -154,7 +158,7 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	if err := json.Unmarshal(data, &destinationRealm); err != nil || destinationRealm.ID != f.RealmID || f.SourceZoneID == f.DestinationZoneID {
 		return f, fmt.Errorf("RGW multisite realm/zone identities do not match the requested topology")
 	}
-	user, err := f.SourceAdmin(ctx, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers federated S3 user")
+	user, err := f.SourceAdmin(ctx, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers multicluster S3 user")
 	if err != nil {
 		return f, err
 	}
@@ -198,14 +202,43 @@ func (f *RGWMultisite) admin(ctx context.Context, client testcontainers.Containe
 	return exec(ctx, client, append(command, args...)...)
 }
 
-// SourceAdmin executes radosgw-admin in the metadata master's realm and zone.
+// SourceAdmin executes radosgw-admin in the source cluster's realm and zone.
+// The source starts as metadata master, but a caller can explicitly change it.
 func (f *RGWMultisite) SourceAdmin(ctx context.Context, args ...string) ([]byte, error) {
 	return f.admin(ctx, f.sourceClient, f.config.SourceZone, args...)
 }
 
-// DestinationAdmin executes radosgw-admin in the secondary's realm and zone.
+// DestinationAdmin executes radosgw-admin in the destination cluster's realm
+// and zone, including after the destination has become metadata master.
 func (f *RGWMultisite) DestinationAdmin(ctx context.Context, args ...string) ([]byte, error) {
 	return f.admin(ctx, f.destinationClient, f.config.DestinationZone, args...)
+}
+
+// PullSourcePeriod imports the destination's realm and current committed
+// period into the source cluster, using private system-user credentials.
+// Native realm pull updates the realm's current-period pointer and reflects
+// its zonegroups; period pull alone only stores the fetched period. After a
+// metadata master change, fence the former master before calling this method
+// and restart its gateway afterwards. This does not promote a zone or restart
+// a gateway automatically.
+func (f *RGWMultisite) PullSourcePeriod(ctx context.Context) error {
+	if f.systemAccess == "" || f.systemSecret == "" || f.destinationURL == "" {
+		return fmt.Errorf("RGW multisite system credentials are unavailable")
+	}
+	_, err := f.SourceAdmin(ctx, "realm", "pull", "--url", f.destinationURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
+	return err
+}
+
+// PullDestinationPeriod imports the source's realm and current committed
+// period into the destination cluster, including the current-period pointer
+// and reflected zonegroups. Use it to recover a fenced destination after a
+// planned failback; promotion and gateway restart remain caller decisions.
+func (f *RGWMultisite) PullDestinationPeriod(ctx context.Context) error {
+	if f.systemAccess == "" || f.systemSecret == "" || f.sourceURL == "" {
+		return fmt.Errorf("RGW multisite system credentials are unavailable")
+	}
+	_, err := f.DestinationAdmin(ctx, "realm", "pull", "--url", f.sourceURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
+	return err
 }
 
 // Terminate removes owned gateways, CLI clients and the HTTP bridge. Realm,

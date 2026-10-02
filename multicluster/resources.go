@@ -1,4 +1,4 @@
-package federation
+package multicluster
 
 import (
 	"bytes"
@@ -103,16 +103,16 @@ func (r *resources) terminate(ctx context.Context, opts ...testcontainers.Termin
 
 func validatePair(image string, source, destination *ceph.Container) error {
 	if strings.TrimSpace(image) == "" {
-		return errors.New("federation image must not be empty")
+		return errors.New("multicluster image must not be empty")
 	}
 	if source == nil || destination == nil || source.Container == nil || destination.Container == nil {
-		return errors.New("federation requires two initialized Ceph clusters")
+		return errors.New("multicluster requires two initialized Ceph clusters")
 	}
 	if source == destination || source.GetContainerID() == destination.GetContainerID() || source.NetworkName() == destination.NetworkName() {
-		return errors.New("federation requires independent Ceph clusters")
+		return errors.New("multicluster requires independent Ceph clusters")
 	}
 	if source.NetworkName() == "" || destination.NetworkName() == "" || !source.IsRunning() || !destination.IsRunning() {
-		return errors.New("federation requires two running Ceph clusters")
+		return errors.New("multicluster requires two running Ceph clusters")
 	}
 	return nil
 }
@@ -125,14 +125,14 @@ func runClient(ctx context.Context, image string, cluster *ceph.Container, peerN
 	ctr, err := testcontainers.Run(ctx, image, opts...)
 	owned.addContainer(ctr)
 	if err != nil {
-		return ctr, fmt.Errorf("run federation CLI client: %w", err)
+		return ctr, fmt.Errorf("run multicluster CLI client: %w", err)
 	}
 	return ctr, nil
 }
 
 func exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if len(args) == 0 {
-		return nil, errors.New("empty federation command")
+		return nil, errors.New("empty multicluster command")
 	}
 	code, reader, err := ctr.Exec(ctx, args)
 	if err != nil {

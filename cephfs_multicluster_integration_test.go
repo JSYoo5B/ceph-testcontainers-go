@@ -4,6 +4,8 @@ package ceph_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -11,7 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go"
-	"github.com/jsyoo5b/ceph-testcontainers-go/federation"
+	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -59,13 +61,13 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify", "/restored", "/tmp/cephfs-backup-1.json")
 	t.Log("CephFS snapshot backup: restored binary/empty/nested files, relative symlink, modes, owners and user xattrs into an independent filesystem")
 
-	// Cluster/filesystem setup above stays separate from federation setup.
+	// Cluster/filesystem setup above stays separate from multicluster setup.
 	// Select a compatible runtime supplying the userspace mirror daemon.
 	mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
 	if mirrorImage == "" {
 		mirrorImage, _ = integrationImages(t)
 	}
-	mirror, err := federation.RunCephFSMirror(ctx, mirrorImage, federation.CephFSMirrorConfig{
+	mirror, err := multicluster.RunCephFSMirror(ctx, mirrorImage, multicluster.CephFSMirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
@@ -80,7 +82,7 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 				multiClusterLogContainer(t, cleanupCtx, mirror.Container)
 			}
 			if err := mirror.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate CephFS federation: %v", err)
+				t.Errorf("terminate CephFS multicluster runtime: %v", err)
 			}
 		})
 	}
@@ -101,7 +103,7 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-2.json", 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-2", false)
+	cephFSAssertSnapshotRemainsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-2", 10*time.Second)
 	if err := mirror.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +114,66 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "remove-snapshot", "backup-1")
 	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-1", false)
 	t.Log("native CephFS snapshot deletion propagated to the destination")
+
+	// Remove directory membership while the daemon stays running. Wait for the
+	// daemon to consume the policy update before creating new source work.
+	if err := mirror.RemoveDirectory(ctx, "/federation"); err != nil {
+		t.Fatal(err)
+	}
+	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 0, "")
+	fsCommand(sourceClient, sourceFS.FilesystemName, "membership-checkpoint", "directory-removed", "backup-3")
+	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
+	archive = multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-3.json")
+	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-3.json", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cephFSAssertSnapshotRemainsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-3", 10*time.Second)
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-2", "/tmp/cephfs-backup-2.json")
+	if err := mirror.AddDirectory(ctx, "/federation"); err != nil {
+		t.Fatal(err)
+	}
+	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, "")
+	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-3", true)
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
+	t.Log("native CephFS directory membership: unregister stopped new snapshot delivery for 10s, existing destination data survived, re-register caught up snapshot and new bytes")
+
+	// Removing the peer is independent of directory membership. The old UUID
+	// must disappear from both manager policy and the running daemon before a
+	// fresh token is imported for the same source filesystem.
+	peers, err := mirror.PeerIDs(ctx)
+	if err != nil || len(peers) != 1 {
+		t.Fatalf("CephFS mirror peers: got %v, error %v; want one", peers, err)
+	}
+	removedPeer := peers[0]
+	if err := mirror.RemovePeer(ctx, removedPeer); err != nil {
+		t.Fatal(err)
+	}
+	peers, err = mirror.PeerIDs(ctx)
+	if err != nil || len(peers) != 0 {
+		t.Fatalf("CephFS mirror retained removed peer: got %v, error %v", peers, err)
+	}
+	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, removedPeer)
+	fsCommand(sourceClient, sourceFS.FilesystemName, "membership-checkpoint", "peer-removed", "backup-4")
+	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
+	archive = multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-4.json")
+	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-4.json", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cephFSAssertSnapshotRemainsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-4", 10*time.Second)
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-2", "/tmp/cephfs-backup-2.json")
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
+	newPeer, err := mirror.RebootstrapPeer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peers, err = mirror.PeerIDs(ctx)
+	if err != nil || len(peers) != 1 || peers[0] != newPeer {
+		t.Fatalf("CephFS rebootstrap peers: got %v, error %v; want %s", peers, err, newPeer)
+	}
+	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-4", true)
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
+	t.Logf("native CephFS peer membership: removed %s, new snapshot remained absent for 10s, retained destination snapshots readable; fresh bootstrap %s caught up new snapshot and bytes", removedPeer, newPeer)
 	advanceServiceTopology(t, ctx, destination)
 
 	if err := mirror.Stop(ctx, &stopTimeout); err != nil {
@@ -119,8 +181,81 @@ func TestMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T) {
 	}
 	stopMultiClusterSource(t, ctx, source)
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-2", "/tmp/cephfs-backup-2.json")
+	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify", "/restored", "/tmp/cephfs-backup-1.json")
 	t.Log("source MON/MDS/OSDs stopped: fresh destination userspace sessions still read the mirrored snapshot and separately restored backup after destination OSD replacement")
+}
+
+// A single absent response would also pass before a pending asynchronous sync
+// starts. Observe absence continuously across several daemon scan cycles and
+// fail immediately on either an unexpected snapshot or a client/transport error.
+func cephFSAssertSnapshotRemainsAbsent(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	checks := 0
+	for {
+		code, r, err := client.Exec(ctx, []string{"python3", "/tmp/cephfs-intercluster.py", filesystem, "snapshot-state", snapshot, "absent"}, tcexec.Multiplexed())
+		if err != nil {
+			t.Fatalf("check CephFS blocked snapshot %s: %v", snapshot, err)
+		}
+		out, err := io.ReadAll(r)
+		if err != nil || code != 0 {
+			t.Fatalf("CephFS snapshot %s did not remain absent: code=%d output=%s error=%v", snapshot, code, out, err)
+		}
+		checks++
+		if time.Now().After(deadline) {
+			t.Logf("CephFS blocked snapshot %s remained absent for %s across %d fresh client sessions", snapshot, duration, checks)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("check blocked CephFS snapshot: %v", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func cephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.Container, mirror *multicluster.CephFSMirror, directoryCount int, removedPeer string) {
+	t.Helper()
+	data, err := source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filesystem struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(data, &filesystem); err != nil || filesystem.ID <= 0 {
+		t.Fatalf("decode CephFS filesystem ID: output=%s error=%v", data, err)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var last string
+	for {
+		code, r, err := mirror.Exec(waitCtx, []string{"ceph", "--admin-daemon", "/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, filesystem.ID)}, tcexec.Multiplexed())
+		if err != nil {
+			last = err.Error()
+		} else {
+			output, err := io.ReadAll(r)
+			last = string(output)
+			var state struct {
+				Peers    map[string]json.RawMessage `json:"peers"`
+				SnapDirs *struct {
+					Count int `json:"dir_count"`
+				} `json:"snap_dirs"`
+			}
+			if err == nil && code == 0 && json.Unmarshal(output, &state) == nil {
+				_, peerPresent := state.Peers[removedPeer]
+				if state.SnapDirs != nil && state.Peers != nil && state.SnapDirs.Count == directoryCount && (removedPeer == "" || !peerPresent) {
+					return
+				}
+			}
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf("CephFS daemon did not consume membership change: directories=%d removedPeer=%s last=%s", directoryCount, removedPeer, last)
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func cephFSWaitForRemoteSnapshot(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, snapshot string, present bool) {
@@ -265,6 +400,11 @@ try:
         write('/federation/new-after-outage', b'written while mirror was stopped', 0o600)
         fs.sync_fs()
         fs.mkdir('/federation/.snap/backup-2', 0o755)
+    elif phase == 'membership-checkpoint':
+        label, snapshot = args
+        write('/federation/membership-' + label, ('new bytes while ' + label + '\n').encode() * 2048, 0o600)
+        fs.sync_fs()
+        fs.mkdir('/federation/.snap/' + snapshot, 0o755)
     elif phase == 'archive':
         root, archive_path = args
         entries = capture(root)

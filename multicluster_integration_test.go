@@ -156,7 +156,7 @@ func multiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.
 }
 
 // Stop source data/control daemons without removing its network, which is still
-// attached to federation link resources. The isolated MGR may remain
+// attached to multicluster link resources. The isolated MGR may remain
 // running, but no source MON, OSD, MDS or RGW can serve or replicate data.
 func stopMultiClusterSource(t *testing.T, ctx context.Context, source *ceph.Container) {
 	t.Helper()

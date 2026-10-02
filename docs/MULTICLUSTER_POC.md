@@ -1,8 +1,8 @@
-# 클러스터 간 복제와 백업 PoC
+# 다중 클러스터 구성·전환·복제·백업 PoC
 
-검증일: 2026-10-02, Asia/Seoul. Ceph 20.2.4의 **독립된 두 클러스터**에서 RGW multisite, RBD snapshot mirroring·전체/증분 백업 복원, CephFS snapshot mirroring·별도 archive 복원을 실제로 실행했습니다. 최종 케이스별 검증은 모두 통과했습니다. Native CephFS mirroring의 user xattr 불일치는 아래와 같이 별도 제한으로 기록합니다.
+검증일: 2026-10-02, Asia/Seoul. Ceph 20.2.4의 **독립된 두 클러스터**에서 RGW multisite, RBD snapshot mirroring·전체/증분 백업 복원, CephFS snapshot mirroring·별도 archive 복원을 실행하고, 선택 정책과 연결 변경·site 전환·복구 시나리오를 추가했습니다. 이전 복제·백업 검증과 확장 검증의 결과를 구분하여 기록합니다. Native CephFS mirroring의 user xattr 불일치는 별도 제한입니다.
 
-여기서 federation은 RGW realm/zone을 연결하는 multisite입니다. 두 클러스터의 MON quorum이나 RADOS pool을 하나로 합치는 기능을 검증한 것은 아닙니다. RBD와 CephFS는 각자의 snapshot 복제 기능을 사용합니다. [RGW multisite](https://docs.ceph.com/en/tentacle/radosgw/multisite/), [RBD mirroring](https://docs.ceph.com/en/tentacle/rbd/rbd-mirroring/), [CephFS snapshot mirroring](https://docs.ceph.com/en/tentacle/cephfs/cephfs-mirroring/).
+상위 API 이름을 `federation`에서 `multicluster`로 바꿨습니다. RGW realm/zone의 multisite·정책·metadata master 전환, RBD/CephFS mirroring·관계 변경, archive 백업·복원을 서비스별 책임으로 다룹니다. 두 클러스터의 MON quorum이나 RADOS pool을 합치는 공통 control plane은 구현하지 않습니다. RBD와 CephFS는 각자의 snapshot 복제 기능을 사용합니다. [RGW multisite](https://docs.ceph.com/en/tentacle/radosgw/multisite/), [RBD mirroring](https://docs.ceph.com/en/tentacle/rbd/rbd-mirroring/), [CephFS snapshot mirroring](https://docs.ceph.com/en/tentacle/cephfs/cephfs-mirroring/).
 
 ## 구성과 독립성
 
@@ -10,7 +10,7 @@
 - 클러스터마다 MON 1개, MGR 1개, OSD 2개와 서로 다른 FSID·네트워크·admin keyring을 사용합니다. Client가 자신에게 배정된 FSID에 접속하는지도 확인합니다.
 - MON/MGR/client, OSD, RGW, MDS는 각각 기존 `20.2.4-control`, `20.2.4-osd`, `20.2.4-rgw`, `20.2.4-mds` slim 이미지를 사용했습니다.
 - 최초 PoC에서는 두 mirror 데몬만 원본 Quay 이미지를 사용했습니다. 현재는 mirror를 포함하도록 다시 빌드한 slim `control`로 실행하며 `all`에도 두 데몬이 있습니다.
-- 검증용 data client는 자기 클러스터에만 접속합니다. Federation API가 mirror daemon과 필요한 관리 client의 양쪽 클러스터 접속을 소유합니다. RGW끼리는 별도 HTTP bridge로 통신합니다. CephFS는 peer 등록 시 원격 filesystem을 검사하는 source MGR에도 destination 네트워크가 필요합니다.
+- 검증용 data client는 자기 클러스터에만 접속합니다. Multicluster API가 mirror daemon과 필요한 관리 client의 양쪽 클러스터 접속을 소유합니다. RGW끼리는 별도 HTTP bridge로 통신합니다. CephFS는 peer 등록 시 원격 filesystem을 검사하는 source MGR에도 destination 네트워크가 필요합니다.
 - 호스트에는 `go-ceph`, cgo, RBD kernel mapping이나 CephFS kernel/FUSE mount를 추가하지 않았습니다. 모든 Ceph 제어와 native client I/O는 컨테이너 안에서 실행하며 Go는 `CGO_ENABLED=0`입니다.
 
 원본은 다음 digest입니다.
@@ -21,11 +21,11 @@ quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb
 
 Source outage 단계에서는 source MON/OSD와 해당 케이스의 RGW/MDS를 정지합니다. MGR과 네트워크는 cleanup까지 남아 있지만 source data daemon은 데이터를 제공할 수 없습니다. Destination의 새 CLI/libcephfs session으로 전체 payload를 다시 읽어 검증합니다. 종료 시 mirror·client와 추가 네트워크 연결을 먼저 정리하고 각 클러스터를 제거합니다.
 
-`ManagerContainer()`는 소유 MGR을 검사하거나 장애·네트워크 조건을 주입하기 위한 accessor입니다. 컨테이너의 수명은 여전히 클러스터가 관리합니다. `federation.RunCephFSMirror`가 Docker SDK로 source MGR의 remote network를 연결하고 cleanup 시 자신이 추가한 연결을 해제합니다.
+`ManagerContainer()`는 소유 MGR을 검사하거나 장애·네트워크 조건을 주입하기 위한 accessor입니다. 컨테이너의 수명은 여전히 클러스터가 관리합니다. `multicluster.RunCephFSMirror`가 Docker SDK로 source MGR의 remote network를 연결하고 cleanup 시 자신이 추가한 연결을 해제합니다.
 
 ## 구성 API
 
-단일 클러스터는 `ceph.Run`, 클러스터 사이의 구성은 별도 `federation.RunRGWMultisite`·`RunRBDMirror`·`RunCephFSMirror`로 분리했습니다. 테스트에 있던 bootstrap/peer/auth/daemon 조립을 API로 옮겼으며 backup archive 전달과 데이터 검증은 테스트에 남겼습니다. 연결의 cleanup은 클러스터보다 먼저 수행합니다. Ceph 내부 설정은 일회성 클러스터에 유지하며 데이터 삭제나 설정 롤백은 하지 않습니다. [책임·수명과 사용 예](FEDERATION_API.md)를 확인합니다.
+단일 클러스터는 `ceph.Run`, 클러스터 사이의 구성은 별도 `multicluster.RunRGWMultisite`·`RunRBDMirror`·`RunCephFSMirror`로 분리했습니다. Bootstrap/peer/auth/daemon 조립은 연결 API가, RBD full/incremental archive 전달은 백업·복원 helper가 담당합니다. 보관처와 데이터 검증, 전환·복구 순서는 호출자가 소유합니다. 연결의 cleanup은 클러스터보다 먼저 수행합니다. Ceph 내부 설정은 일회성 클러스터에 유지하며 데이터 삭제나 설정 롤백은 하지 않습니다. [책임·수명과 사용 예](MULTICLUSTER_API.md)를 확인합니다.
 
 ## 최초 PoC 결과
 
@@ -78,6 +78,31 @@ Application archive는 JSON/base64의 작은 fixture format입니다. 일반 bac
 CephFS native user xattr 차이는 앞의 두 경로에서 다시 관측됐고 별도 archive restore는 xattr까지 일치했습니다. 시간이 기존 실행과 다르므로 성능 개선/저하나 RPO 보장으로 해석하지 않습니다. `CGO_ENABLED=0` unit test, 전체 tag compile, vet, 다섯 image smoke와 layer 공유 검증도 통과했습니다. 생성한 컨테이너와 네트워크가 남지 않은 것을 확인했습니다. Cleanup의 재시도·이미 삭제된 리소스·실제 오류가 섞인 joined error 경로는 별도 단위 테스트로 확인했습니다.
 
 실행 로그와 이미지 ID·case 결과·resource audit는 `artifacts/federation-slim-20.2.4/{rgw.log,mirrors-backup.log,summary.json}`에 있습니다. Mirror 포함 빌드 기록은 `artifacts/slim-mirror-20.2.4/`입니다. 이 artifact 디렉터리들은 git에서 제외합니다.
+
+## Multicluster 시나리오 확장
+
+상위 패키지 이름을 바꾸면서 복제 외의 정책·관계 변경·전환·복구를 추가했습니다. 같은 Ceph 20.2.4 slim 역할을 사용하고 추가 daemon은 `control`로 실행합니다. 기존 RGW 양방향 복제 케이스는 앞 절의 결과를 유지하며, 다음 확장 및 회귀 검증은 케이스별 Go 명령으로 순차 실행했습니다.
+
+| 케이스 | 확인한 동작 | 결과·관측 시간 |
+| --- | --- | --- |
+| RGW 선택 정책 | 특정 bucket/prefix와 source → destination만 복제, 다른 bucket/prefix·반대 방향 제외, live prefix 변경, 선택된 삭제 전파·기존 객체 유지 | PASS, 338.12초 |
+| RGW metadata master 전환·복귀 | metadata period/epoch·64 incremental shard와 catch-up 확인, 이전 gateway fencing, A → B → A 승격·realm 복귀, 각 master의 새 user/bucket/private object 복제, 기존 데이터 유지 | PASS, 406.88초 |
+| RBD 백업 API | format-2 full·native incremental helper, source 정지 후 restore, head·두 snapshot·image metadata 일치, baseline 없는 restore 거부, 복원 후 쓰기 | PASS, 66.88초 |
+| RBD 기본 snapshot mirror | 최초·변경 checkpoint의 전체 8 MiB, 강제 옵션 없는 demote/promote, source 정지 후 destination 읽기·쓰기 | PASS, 98.77초 |
+| RBD planned failback | A → B → A, B-only 데이터·user snapshot의 A 복제 완료 후 강제 옵션 없는 A 재승격, 이후 A 변경의 B 복제, 양쪽 과거 snapshot의 전체 내용 유지 | PASS, 148.69초 |
+| RBD split-brain 복구 | 양쪽 primary의 상충 이력, native `up+error / split-brain`, A 선택·B demote/resync, B branch 폐기·A snapshot 보존, 다음 checkpoint 복제 | PASS, 163.47초 |
+| RBD peer lifecycle | peer 제거 후 기존 데이터 유지·새 checkpoint 중단, 새 UUID로 rebootstrap·명시적 resync, 후속 checkpoint 복제 | PASS, 151.40초 |
+| CephFS directory·peer lifecycle + archive | directory 제거·재등록, peer 제거·새 UUID로 재등록, 기존 snapshot 보존·새 snapshot catch-up, 기존 restart·삭제·OSD 교체·source 정지·archive 복원 회귀 | PASS, 188.49초; native user xattr 차이 유지 |
+
+선택되지 않은 RGW 객체는 positive 객체가 실제 도착한 뒤 35초 동안 반복 GET으로 `NoSuchKey`를 확인했습니다. CephFS는 daemon 정책 제거가 반영된 뒤 새 snapshot의 부재를 10초 동안 확인했습니다. RBD는 peer 목록이 빈 상태에서 기존 전체 image를 세 차례 비교하고 각 비교 뒤 2초씩 대기했습니다. 이 제한된 관측을 영구 부재나 WAN partition 보장으로 해석하지 않습니다.
+
+RBD split-brain 복구는 상충된 데이터의 merge가 아닙니다. 테스트가 A를 authoritative로 선택하고 B의 변경과 `discarded-b` snapshot을 폐기하도록 요청합니다. 전체 8 MiB와 A snapshot을 비교한 뒤 새 checkpoint가 정상 복제되는 것까지 확인했습니다. Snapshot mirror는 애플리케이션의 지속적인 write를 자동으로 quiesce하거나 최신 checkpoint 이후 변경을 보호하지 않습니다.
+
+RGW 전환은 애플리케이션 write가 없는 계획된 변경입니다. 승격 전 current period·realm epoch·incremental shard와 master의 metadata 상태를 비교하고 이전 gateway를 정지합니다. Ceph 20.2.4에서는 승격의 `period update`와 `period commit`을 분리해야 native guard가 이전 committed topology의 실제 sync 상태를 읽습니다. 복귀에는 `realm pull`로 활성 period 포인터와 local zonegroup을 함께 갱신합니다. `period pull`만으로는 이 갱신이 되지 않았습니다. 강제 승격 옵션은 사용하지 않았습니다. 두 번의 복귀 후 새 user의 private 객체가 도착하는 데 각각 약 2분 1.7초가 걸렸습니다. 이는 한 번의 관측값이며 자동 routing·자동 failover·RPO 보장이 아닙니다.
+
+초기 RGW 승격은 combined period 명령의 빈 sync 상태 때문에 거부됐고, 다음 시도는 period 저장만으로 이전 site를 복귀시키지 못했습니다. RBD 초기 왕복 전환은 bootstrap이 재사용한 tx-only peer에 client 이름이 없어 실패했습니다. Native 명령의 실제 동작에 맞춰 수정하고 실패 케이스를 각각 재실행했습니다. API의 세부 절차는 [구성 문서](MULTICLUSTER_API.md)에 기록했습니다.
+
+실행 로그와 최종 `summary.json`은 `artifacts/multicluster-scenarios-20.2.4/`에 보존합니다. 8개 케이스가 개별 최종 실행에서 PASS했고, 7개 Go 실행의 테스트 session label로 잔여 컨테이너·네트워크가 0개임을 확인했습니다. 실패한 시도도 별도 로그로 남기며, 최종 케이스 결과의 PASS는 같은 단일 전체 suite 실행에서 모든 케이스가 통과했다는 뜻이 아닙니다. `CGO_ENABLED=0` unit test·전체 integration tag vet, builder Python 문법·local Markdown link 검사도 통과했습니다. Native CephFS xattr 차이와 작은 archive fixture의 지원 범위는 앞 절과 같습니다.
 
 ## 재현
 

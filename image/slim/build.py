@@ -275,7 +275,7 @@ def main():
                        CEPH_TEST_OSD_IMAGE=tags["osd"], CEPH_TEST_RGW_IMAGE=tags["rgw"],
                        CEPH_TEST_MDS_IMAGE=tags["mds"], CEPH_TEST_MIRROR_IMAGE=tags["control"])
             test = [args.go_command, "test", "-tags=integration,multicluster", "-run", "^TestMultiCluster",
-                    "-count=1", "-v", "-timeout=40m", "./..."]
+                    "-count=1", "-v", "-timeout=60m", "./..."]
             print("Testing multiple clusters with mixed roles and control mirror image...", flush=True)
             report["checks"]["multicluster_integration"] = "running"
             save_json(output / "build-report.json", report)

@@ -196,12 +196,20 @@ Linux ARM64에서 mirror 추가 이전 혼합/all 이미지의 전체 통합 테
 
 명령 옵션, 공유 layer, 측정값과 metadata 보존 범위는 [자동화 기록](docs/SLIM_IMAGE_AUTOMATION.md)에 있습니다. 초기 여섯 역할 분석의 `mon-mgr`와 `client`를 이번 구현에서 `control`로 합친 판단은 [이미지 구성 분석](docs/IMAGE_LAYOUT.md)과 함께 볼 수 있습니다. 기존 단일 slim 실험의 `make slim-image`, `make slim-smoke`, `make slim-integration`도 유지하며, 당시 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)에 기록했습니다.
 
-## 클러스터 간 복제와 백업 PoC
+## 다중 클러스터 구성과 PoC
 
-단일 클러스터 구성은 `ceph` 패키지에서, 기존 클러스터 사이의 복제 연결은 별도 `federation` 패키지에서 관리합니다. `RunRGWMultisite`, `RunRBDMirror`, `RunCephFSMirror`는 기존 두 클러스터를 받아 추가 데몬·client·네트워크 연결을 소유합니다. 연결을 먼저 종료하고 클러스터를 나중에 종료합니다. 연결의 `Terminate`는 클러스터나 데이터를 삭제하지 않으며 Ceph 내부 peer/auth 등의 설정은 일회성 클러스터에 남깁니다. [API 구성과 사용 예](docs/FEDERATION_API.md)를 확인합니다.
+단일 클러스터 구성은 `ceph` 패키지에서, 기존 클러스터 사이의 multisite 구성·정책, mirroring, 백업·복원은 별도 `multicluster` 패키지에서 관리합니다. `RunRGWMultisite`, `RunRBDMirror`, `RunCephFSMirror`는 기존 두 클러스터를 받아 추가 데몬·client·네트워크 연결을 소유합니다. 연결을 먼저 종료하고 클러스터를 나중에 종료합니다. 백업·복원은 별도 archive helper로 실행합니다. 연결의 `Terminate`는 클러스터나 데이터를 삭제하지 않으며 Ceph 내부 peer/auth 등의 설정은 일회성 클러스터에 남깁니다. [API 구성과 사용 예](docs/MULTICLUSTER_API.md)를 확인합니다.
 
-`make multicluster`는 독립된 두 클러스터에서 RGW multisite, RBD snapshot mirroring과 전체/증분 백업 복원, CephFS snapshot mirroring과 별도 archive 복원을 순차 검증합니다. 일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트의 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 새 slim `control`과 `all`에 포함되어 있습니다. Go 호스트의 cgo나 kernel mount는 필요하지 않습니다. 분리 API와 mirror 포함 slim 조합으로 네 복제/백업 케이스를 다시 통과했습니다. CephFS native mirror의 user xattr 차이는 계속 관측되므로 완전한 metadata 보존으로 해석하지 않습니다. 구성과 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
+`make multicluster`는 독립된 두 클러스터에서 다음 시나리오를 순차 검증합니다.
+
+- RGW 양방향 복제·outage, bucket/prefix·방향 선택 정책과 live 변경, metadata master A → B → A 전환과 새 user/bucket 생성·복제
+- RBD 전체/증분 archive 복원, snapshot mirror·계획된 A → B → A 전환, split-brain 감지·명시적 resync, peer 제거·재등록
+- CephFS snapshot mirror·directory/peer 제거·재등록, archive 복원, mirror restart·삭제 전파·OSD 교체·source 정지 후 읽기
+
+일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 slim `control`과 `all`에 포함되어 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
+
+전환은 writer fencing·동기화 완료 확인·명시적 승격을 수행하는 계획된 절차입니다. RBD split-brain resync는 선택하지 않은 branch를 폐기합니다. CephFS native mirror의 user xattr 차이는 계속 관측되므로 완전한 metadata 보존으로 해석하지 않습니다. 구성과 케이스별 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
 
 ## 현재 범위
 
-OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 단일 서비스 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. 클러스터 간 PoC의 검증 범위는 위 보고서를 따릅니다. MON/MGR 수 변경, quorum 장애, RGW metadata master 승격, MDS failover, kernel mapping/mount, 동일 daemon data directory를 재사용하는 전체 클러스터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
+OSD 추가·삭제와 장애 주입, Cephx 인증, 실제 RADOS 객체 I/O를 확인했습니다. RGW/S3, RBD 이미지 및 snapshot/clone, MDS를 통한 CephFS 파일 I/O도 확인했습니다. 단일 서비스 테스트는 OSD `2 → 3 → 2` 변경 후 기존 데이터를 비교합니다. 클러스터 간 PoC의 검증 범위는 위 보고서를 따릅니다. MON/MGR 수 변경, quorum 장애, MDS failover, kernel mapping/mount, 동일 daemon data directory를 재사용하는 전체 클러스터 복원은 후속 검증 대상입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며, 여러 OSD를 묶는 호스트 모델은 없습니다. 이 PoC의 OSD failure domain은 `osd`입니다.
