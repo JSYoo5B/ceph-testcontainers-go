@@ -140,7 +140,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err != nil {
 			t.Fatal(err)
 		}
-		cleanupRGWTranslationSyncGroup(t, link, selected)
+		cleanupRGWTranslationSyncGroup(t, link, selected, "low-standard", "high-ia")
 		base := multicluster.RGWSyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*ceph.RGWPlacement{"destination": secondaryPlacement}}
 		low := base
 		low.ID = "low-standard"
@@ -213,7 +213,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err != nil {
 			t.Fatal(err)
 		}
-		cleanupRGWTranslationSyncGroup(t, link, selected)
+		cleanupRGWTranslationSyncGroup(t, link, selected, "tag-ia")
 		pipe := multicluster.RGWSyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multicluster.RGWSyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*ceph.RGWPlacement{"destination": secondaryPlacement}}
 		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 			t.Fatal(err)
@@ -266,14 +266,21 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err != nil {
 			t.Fatal(err)
 		}
-		cleanupRGWTranslationSyncGroup(t, link, modeGroup)
+		cleanupRGWTranslationSyncGroup(t, link, modeGroup, "authorized-principal")
 		modePipe := multicluster.RGWSyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
 		if err := link.CreateSyncPipe(ctx, modeGroup, modePipe); err != nil {
 			t.Fatal(err)
 		}
+		// Permit the native replication GET's mandatory ACL check while still
+		// denying the actual source payload read. This separates GetObject
+		// authorization from an earlier GetObjectAcl failure.
+		aclOnlyPolicy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": "s3:GetObjectAcl", "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
+		s3FeatureRequest(t, ctx, a, http.MethodPut, modeInput+"?policy", aclOnlyPolicy, nil, http.StatusNoContent)
 		modePayload := bytes.Repeat([]byte("user-mode read authorization\n"), 2048)
 		a.request(t, ctx, http.MethodPut, modeInput+"/auth/before-grant", modePayload, http.StatusOK)
-		b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant", nil, http.StatusForbidden)
+		b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant?acl", nil, http.StatusOK)
+		denied := b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant", nil, http.StatusForbidden)
+		requireRGWUserPlacementDenied(t, denied)
 		if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 			t.Fatal(err)
 		}
@@ -282,7 +289,9 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		// A worker that merely paused must not satisfy the exclusion proof.
 		waitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
 		requireRGWObjectsAbsent(t, ctx, time.Second, rgwAbsentObject{destB, modeOutput + "/auth/before-grant"})
-		policy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": "s3:GetObject", "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
+		// Native impersonated replication GET first requires GetObjectAcl,
+		// then GetObject for this unversioned source, unlike an ordinary GET.
+		policy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": []string{"s3:GetObject", "s3:GetObjectAcl"}, "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
 		s3FeatureRequest(t, ctx, a, http.MethodPut, modeInput+"?policy", policy, nil, http.StatusNoContent)
 		if got := b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {
 			t.Fatal("granted principal read wrong bytes")
@@ -322,7 +331,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err != nil {
 			t.Fatal(err)
 		}
-		cleanupRGWTranslationSyncGroup(t, link, tenantGroup)
+		cleanupRGWTranslationSyncGroup(t, link, tenantGroup, "tenant-system", "tenant-user")
 		tenantPipe := multicluster.RGWSyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
 		if err := link.CreateSyncPipe(ctx, tenantGroup, tenantPipe); err != nil {
 			t.Fatal(err)
@@ -364,9 +373,20 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 // Child cleanups run before the next sequential t.Run, including after Fatal.
 // The public removal guard verifies the owned bucket instance and unchanged
 // group, and successful explicit removals make this cleanup idempotent.
-func cleanupRGWTranslationSyncGroup(t *testing.T, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup) {
+func cleanupRGWTranslationSyncGroup(t *testing.T, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipeIDs ...string) {
 	t.Helper()
+	pipeIDs = append([]string(nil), pipeIDs...)
 	t.Cleanup(func() {
+		if t.Failed() {
+			inspect, stop := context.WithTimeout(context.Background(), time.Minute)
+			for _, pipeID := range pipeIDs {
+				attempt, cancel := context.WithTimeout(inspect, 20*time.Second)
+				state, err := link.BucketSyncStatus(attempt, group, pipeID, "source", "destination")
+				cancel()
+				t.Logf("translation bucket diagnostic group=%s pipe=%s realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", group.ID(), pipeID, state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, rgwSyncDiagnosticError(err))
+			}
+			stop()
+		}
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer stop()
 		if err := link.RemoveSyncGroup(cleanup, group); err != nil {
