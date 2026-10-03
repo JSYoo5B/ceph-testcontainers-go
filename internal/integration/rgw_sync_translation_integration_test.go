@@ -188,6 +188,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err := link.RemoveSyncPipe(ctx, selected, high.ID); err != nil {
 			t.Fatal(err)
 		}
+		waitRGWTranslationPolicyReady(t, ctx, link, selected)
 		fallback := bytes.Repeat([]byte("new write after priority pipe removal\n"), 2048)
 		putTagged(a, input+"/published/fallback", "blue", fallback)
 		waitOwnedSyncObject(t, ctx, destB, output+"/published/fallback", http.StatusOK, fallback)
