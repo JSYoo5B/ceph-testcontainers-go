@@ -9,7 +9,7 @@ Ceph client fixture의 unchanged native 검증에서 발견한 두 실패를 재
 
 Owned Go fixture에서 tag/owner/class와 same-tenant system/user의 import·bytes·checkpoint·제외·cleanup은 unpatched image의 bridge/host에서 통과했습니다. Numeric priority와 ordinary user의 source payload 거부는 실패했으며, 이를 우회하는 pipe ID 변경이나 느슨한 판정은 사용하지 않습니다. [실행 기록과 native 근거](../../../docs/RGW_SYNC_POLICY.md)를 참고합니다.
 
-현재 확인한 범위는 pinned 원본 파일 일치, fuzz 없이 patch 적용, 실제 Ubuntu Noble ARM64 CMake 구성, GNU linker의 librados 링크 및 selector test 소스 컴파일입니다. 전체 RGW 바이너리·9개 gtest 실행·수정 이미지의 client 효과 검증은 진행 중입니다. 이 패치가 들어 있다는 사실만으로 G05/G07을 완료로 표시하지 않습니다.
+2026-10-04 실제 Ubuntu Noble ARM64 빌드에서 네 target과 selector gtest 9개가 통과했습니다. 같은 빌드의 RGW binary와 private library는 relocated DT_RPATH 및 `ldd -r` 검사를 통과했으며, 전역 Ceph library를 교체하지 않는 23개 Debian package를 생성했습니다. 최초 lld 실패와 GNU linker 재개 이력은 보존합니다. 수정된 role image의 smoke와 client 효과 검증은 진행 중이며 G05/G07은 아직 완료가 아닙니다.
 
 Native 검증은 다음 순서가 필요합니다.
 
