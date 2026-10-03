@@ -54,7 +54,7 @@ func TestNamedRGWOptionsPreserveScopeAndHostListener(t *testing.T) {
 		cluster := &Container{settings: options{startupTimeout: time.Second, hostNetwork: host, publicAddress: "127.0.0.1"}}
 		config := RGWConfig{Name: "gateway-b", Realm: "fixture-realm", Zonegroup: "fixture-zonegroup", Zone: "fixture-zone"}
 		var request testcontainers.GenericContainerRequest
-		for _, option := range cluster.namedRGWDaemonOptions(port, config) {
+		for _, option := range cluster.namedRGWDaemonOptions(port, 0, config) {
 			if err := option.Customize(&request); err != nil {
 				t.Fatal(err)
 			}

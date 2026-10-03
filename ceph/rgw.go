@@ -27,6 +27,7 @@ type RGWContainer struct {
 	SecretKey     string
 	Region        string
 	port          int
+	tlsPort       int
 	publicAddress string
 	networkName   string
 	owner         *Container
@@ -41,6 +42,7 @@ type RGWContainer struct {
 type RGWConfig struct {
 	Name, Realm, Zonegroup, Zone, Region string
 	SkipUserCreation                     bool
+	TLS                                  *RGWTLSConfig
 }
 
 // StartRGW starts a gateway using the cluster's Ceph CLI credentials, waits for
@@ -88,10 +90,10 @@ func (c *Container) StartRGWWithConfig(ctx context.Context, config RGWConfig, op
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	ctr, port, err := c.startNamedRGWDaemon(ctx, config, opts...)
+	ctr, port, tlsPort, err := c.startNamedRGWDaemon(ctx, config, opts...)
 	var rgw *RGWContainer
 	if ctr != nil {
-		rgw = &RGWContainer{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, publicAddress: c.PublicAddress(), networkName: c.NetworkName(), owner: c, config: config}
+		rgw = &RGWContainer{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, publicAddress: c.PublicAddress(), networkName: c.NetworkName(), owner: c, config: config}
 		// Publish after credential initialization, including partial error
 		// returns. Gateways readers then see an immutable descriptor. The
 		// generic service already owns the container during initialization.
@@ -157,6 +159,13 @@ func normalizeRGWConfig(config RGWConfig) (RGWConfig, error) {
 			return RGWConfig{}, errors.New("invalid RGW realm, zonegroup, zone or region")
 		}
 	}
+	if config.TLS != nil {
+		var err error
+		config.TLS, err = normalizeRGWTLSConfig(config.TLS)
+		if err != nil {
+			return RGWConfig{}, err
+		}
+	}
 	return config, nil
 }
 
@@ -167,26 +176,41 @@ func rgwServiceName(config RGWConfig) string {
 	return "rgw:" + config.Name
 }
 
-func (c *Container) namedRGWDaemonOptions(port int, config RGWConfig) []testcontainers.ContainerCustomizer {
+func (c *Container) namedRGWDaemonOptions(port, tlsPort int, config RGWConfig) []testcontainers.ContainerCustomizer {
 	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/rgw.sh"),
 		testcontainers.WithCmd(),
 		testcontainers.WithFiles(scriptFile("rgw")),
 		testcontainers.WithEnv(map[string]string{"CEPH_RGW_PORT": strconv.Itoa(port), "CEPH_RGW_REALM": config.Realm, "CEPH_RGW_ZONEGROUP": config.Zonegroup, "CEPH_RGW_ZONE": config.Zone}),
 	}
+	if config.TLS != nil {
+		opts = append(opts, rgwTLSOptions(tlsPort, config.TLS)...)
+	}
 	if !c.UsesHostNetwork() {
-		return append(opts, testcontainers.WithExposedPorts("7480/tcp"),
+		if config.TLS != nil {
+			opts = append(opts, testcontainers.WithExposedPorts("7481/tcp"))
+		}
+		opts = append(opts, testcontainers.WithExposedPorts("7480/tcp"),
 			testcontainers.WithWaitStrategy(wait.ForHTTP("/").WithPort("7480/tcp").
 				WithStatusCodeMatcher(func(status int) bool { return status == http.StatusOK || status == http.StatusForbidden }).
 				WithStartupTimeout(c.settings.startupTimeout)))
+		if config.TLS != nil {
+			opts = append(opts, testcontainers.WithAdditionalWaitStrategy(c.rgwTLSReadiness(tlsPort, config.TLS)))
+		}
+		return opts
 	}
 	endpoint := net.JoinHostPort(c.PublicAddress(), strconv.Itoa(port))
 	// The control image supplies Python; slim RGW images need only the shell
 	// and core utilities already used by their bootstrap scripts.
-	return append(opts,
+	opts = append(opts,
 		testcontainers.WithEnv(map[string]string{"CEPH_RGW_ENDPOINT": endpoint}),
 		testcontainers.WithWaitStrategy(c.hostRGWReadiness(port, endpoint)),
 	)
+	if config.TLS != nil {
+		opts = append(opts, testcontainers.WithEnv(map[string]string{"CEPH_RGW_TLS_ENDPOINT": net.JoinHostPort(c.PublicAddress(), strconv.Itoa(tlsPort))}),
+			testcontainers.WithAdditionalWaitStrategy(c.rgwTLSReadiness(tlsPort, config.TLS)))
+	}
+	return opts
 }
 
 // A shared host port could already serve another RGW. Verify that the daemon
@@ -251,48 +275,60 @@ func (c *Container) hostRGWReadiness(port int, endpoint string) *wait.NopStrateg
 	}).WithStartupTimeout(c.settings.startupTimeout)
 }
 
-func (c *Container) startNamedRGWDaemon(ctx context.Context, config RGWConfig, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, error) {
+func (c *Container) startNamedRGWDaemon(ctx context.Context, config RGWConfig, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
 	serviceName := rgwServiceName(config)
 	if !c.UsesHostNetwork() {
-		opts := append(c.namedRGWDaemonOptions(7480, config), customizers...)
+		tlsPort := 0
+		if config.TLS != nil {
+			tlsPort = 7481
+		}
+		opts := append(c.namedRGWDaemonOptions(7480, tlsPort, config), customizers...)
 		ctr, err := c.startService(ctx, serviceName, c.settings.rgwImage, opts...)
-		return ctr, 7480, err
+		return ctr, 7480, tlsPort, err
 	}
 	for attempt := 0; attempt < hostPortAttempts; attempt++ {
-		lease, err := reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), 1, c.settings.startupTimeout)
+		count := 1
+		if config.TLS != nil {
+			count = 2
+		}
+		lease, err := reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), count, c.settings.startupTimeout)
 		c.trackHostPortLease(lease)
 		if err != nil {
-			return nil, 0, fmt.Errorf("reserve RGW host port: %w", err)
+			return nil, 0, 0, fmt.Errorf("reserve RGW host port: %w", err)
 		}
 		port := lease.Ports[0]
+		tlsPort := 0
+		if config.TLS != nil {
+			tlsPort = lease.Ports[1]
+		}
 		// Create the target while the reservation still holds its socket. Only
 		// release immediately before Start, minimizing the unavoidable bind race.
-		opts := append(c.namedRGWDaemonOptions(port, config), customizers...)
+		opts := append(c.namedRGWDaemonOptions(port, tlsPort, config), customizers...)
 		opts = append(opts, testcontainers.WithNoStart())
 		ctr, createErr := c.startService(ctx, serviceName, c.settings.rgwImage, opts...)
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseErr := lease.Release(cleanupCtx)
 		cancel()
 		if createErr != nil || releaseErr != nil {
-			return ctr, port, errors.Join(createErr, releaseErr)
+			return ctr, port, tlsPort, errors.Join(createErr, releaseErr)
 		}
 		if err := ctr.Start(ctx); err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			conflict := isPortConflict(cleanupCtx, ctr)
 			if !conflict || attempt+1 == hostPortAttempts || ctx.Err() != nil {
 				cancel()
-				return ctr, port, fmt.Errorf("start RGW on host port %d: %w", port, err)
+				return ctr, port, tlsPort, fmt.Errorf("start RGW on host port %d: %w", port, err)
 			}
 			cleanupErr := c.discardNamedRGWAttempt(cleanupCtx, serviceName, ctr)
 			cancel()
 			if cleanupErr != nil {
-				return ctr, port, errors.Join(err, cleanupErr)
+				return ctr, port, tlsPort, errors.Join(err, cleanupErr)
 			}
 			continue
 		}
-		return ctr, port, nil
+		return ctr, port, tlsPort, nil
 	}
-	return nil, 0, errors.New("RGW host port attempts exhausted")
+	return nil, 0, 0, errors.New("RGW host port attempts exhausted")
 }
 
 func (c *Container) discardRGWAttempt(ctx context.Context, ctr testcontainers.Container) error {

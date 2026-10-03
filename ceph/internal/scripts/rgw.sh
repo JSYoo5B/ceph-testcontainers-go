@@ -7,6 +7,14 @@ frontend="beast port=${CEPH_RGW_PORT:-7480}"
 if [ -n "${CEPH_RGW_ENDPOINT:-}" ]; then
     frontend="beast endpoint=${CEPH_RGW_ENDPOINT}"
 fi
+if [ -n "${CEPH_RGW_TLS_PORT:-}" ]; then
+    if [ -n "${CEPH_RGW_TLS_ENDPOINT:-}" ]; then
+        frontend="$frontend ssl_endpoint=${CEPH_RGW_TLS_ENDPOINT}"
+    else
+        frontend="$frontend ssl_port=${CEPH_RGW_TLS_PORT}"
+    fi
+    frontend="$frontend ssl_certificate=/tc/rgw-tls.pem"
+fi
 set -- radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring \
     --rgw-frontends "$frontend" --rgw-thread-pool-size 4
 if [ -n "${CEPH_RGW_REALM:-}" ]; then
