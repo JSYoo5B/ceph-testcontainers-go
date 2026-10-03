@@ -146,3 +146,13 @@ Ubuntu 24.04 ARM64의 공식 Ceph `.deb` 21개를 로컬 파일로 전달했습�
 
 
 APT local file 설치는 [Debian Reference](https://www.debian.org/doc/manuals/debian-reference/ch02.en.html)를, 의존성 해석은 [Debian Policy](https://www.debian.org/doc/debian-policy/ch-relationships.html)를 따릅니다. 같은 버전의 서로 다른 artifact를 구별하기 위해 version pin에 더해 SHA256과 정확한 로컬 재설치를 기록합니다. [APT preferences](https://manpages.debian.org/bookworm/apt/apt_preferences.5.en.html).
+
+## Native RGW 패키지의 추가 검증
+
+2026-10-04 Ceph 20.2.4 Noble ARM64의 signed source에 두 native RGW 패치를 적용한 빌드에서 23개 Debian package를 만들고 동일 입력 경로로 다섯 slim role을 생성했습니다. 공식 22개 runtime 입력 중 RGW 실행 파일이 있는 두 package만 교체했고 같은 빌드의 Ceph libraries는 별도 private package에 넣었습니다. [패치·native 빌드 및 ABI 경계](../image/native/README.md)를 참고합니다.
+
+첫 all-role smoke는 원본 official MON의 libgcc/gperftools unwind pointer-auth fault로 실패했습니다. 이후 `--runtime-env TCMALLOC_STACKTRACE_METHOD=generic_fp`를 명시한 별도 build는 다섯 role의 실제 Config.Env·전체 smoke를 통과했습니다. 환경을 생략한 기본 경로의 성공으로 해석하지 않습니다. `$`·quote·backslash·빈 값의 literal 보존도 실제 Docker inspect로 확인했습니다.
+
+그 새 다섯 role의 역할별 조합은 `TestClusterLifecycle`, `TestCephFSFilesystem`, `TestRBDLifecycle`, `TestRGWS3`를 245.330초에, 같은 네 조건의 `all` 단일 이미지 방식은 237.315초에 통과했습니다. 노드 변경·복구와 RADOS, userspace RBD snapshot, CephFS/POSIX, signed S3 및 credential 거부를 `CGO_ENABLED=0`으로 검증했고 테스트 소유 container/session network도 정리됐습니다. 모든 parameter와 multi-cluster scenario를 이 새 Debian 역할 조합에서 실행한 결과는 아닙니다.
+
+이미지 ID·package SHA·runtime 환경은 `artifacts/rgw-native-runtime-env-role-images-20261004/build-report.json`, 실제 cluster 로그는 `artifacts/rgw-native-role-baseline-{mixed,all}.log`, 연결된 source snapshot·named PASS·cleanup은 `artifacts/rgw-native-proof-20261004/role-baseline-proof.json`에 있습니다. 원본 실패 report와 prototype C++ 빌드/새 repository wrapper 검증의 구분도 유지합니다.

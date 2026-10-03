@@ -57,8 +57,10 @@ docker cp ceph-tc-native-rgw-20.2.4:/native/packages/. \
 
 python3 image/slim/build.py \
   --deb-directory artifacts/native-packages-20.2.4-arm64/debs \
-  --base-image ubuntu:24.04 --platform linux/arm64 \
+  --base-image ubuntu@sha256:a853f94d226358a79c740cfc7bce0c289748f3fe3488d921d038ccd752c61b60 \
+  --platform linux/arm64 \
   --repository ceph-testcontainers-native --tag 20.2.4-rgw-patched \
+  --runtime-env TCMALLOC_STACKTRACE_METHOD=generic_fp \
   --output-dir artifacts/slim-native-20.2.4-arm64
 ```
 
@@ -76,12 +78,37 @@ Dockerfile의 기본 bootstrap base digest는 recipe와 일치합니다. CLI는 
 
 동일 snapshot 재개는 `--build` 대신 `--resume-build`로 실행합니다. recipe/input/source/patch manifest, 지정 원본·패치 결과 파일, `src/.git_version`, 설치 inventory, compiler와 선언 CMake cache를 다시 확인합니다. 이전 report·실패·XML은 attempt history에 보존하고 네 target 빌드와 native test를 실제로 다시 실행합니다. 명시적인 초기 lld→bfd 전환만 추가 허용하며 다른 설정 변경은 거부합니다. 검사 범위는 지정 source 파일과 선언한 CMake 설정이며 전체 tree·모든 내부 cache 변수는 아닙니다. fresh prepare/build로 이전 native 증거를 덮어쓰지 않습니다.
 
-이 wrapper의 recipe SHA/XML SHA/artifact manifest SHA는 별도 report 계약입니다. 임시 prototype의 기존 report를 수정해서 성공 상태를 채택하지 않습니다. 기존 prototype에서 확인한 native build·9개 gtest·ELF stage 성공과, repository wrapper의 호스트 경계 테스트 성공을 구분해야 합니다. 패키지 설치·slim smoke·실제 bridge/host 클라이언트 복제 회귀는 각각 추가 실행 증거가 필요합니다. 특히 source GetObject 거부/미복제/권한 grant 후 복제와 numeric priority/OR/fallback payload 회귀를 완화하지 않습니다.
+이 wrapper의 recipe SHA/XML SHA/artifact manifest SHA는 별도 report 계약입니다. 임시 prototype의 기존 report를 수정해서 성공 상태를 채택하지 않습니다. 기존 prototype에서 확인한 native build·9개 gtest·ELF stage 성공과, repository wrapper의 호스트 경계 테스트 성공을 구분해야 합니다. 패키지 설치·slim smoke·실제 bridge/host 클라이언트 복제 회귀는 각각 별도 실행 증거로 기록합니다. 아래 runtime 결과는 동일 native build/패키지 core를 사용한 고정 prototype의 산출물이며 repository wrapper 전체 C++ 실행의 증거로 채택하지 않습니다. 특히 source GetObject 거부/미복제/권한 grant 후 복제와 numeric priority/OR/fallback payload 회귀를 완화하지 않습니다.
 
 호스트 경계 테스트:
 
 ```sh
 python3 -m unittest discover -s image/native/tests -v
 ```
+
+## 실제 검증 결과와 실행 이미지
+
+2026-10-04 Linux ARM64에서 같은 source에 두 패치를 적용한 native 네 target과 selector gtest 9개, relocated ELF/`ldd -r`, 23개 Debian package 설치 및 수정 RGW smoke를 통과했습니다. 원본 Quay-derived `ceph-testcontainers:20.2.4-control/osd/mds`와 patched `ceph-testcontainers-native:20.2.4-rgw-proof-rgw` 조합에서 translation 네 subtest는 bridge 535.21초·host 750.98초, account-root/cross-tenant 회귀는 bridge 407.90초·host 624.63초로 통과했습니다. Strict priority/OR/fallback, owner/class, ordinary-user source deny/grant, tenant 및 account IAM·replication Deny를 실제 bytes·native identity/checkpoint·제외·cleanup으로 확인했습니다. [상세 실행 기록](../../docs/RGW_SYNC_POLICY.md)을 참고합니다.
+
+해당 multisite 검증 조합을 사용하는 환경 설정은 다음과 같습니다. Linux Go runner 안에서 실행하면 host/bridge 두 fixture를 같은 Docker host에 만들 수 있습니다. Docker socket 접근과 host networking을 지원하는 Linux Engine 또는 설정을 켠 Docker Desktop이 필요합니다.
+
+```sh
+export CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control
+export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd
+export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds
+export CEPH_TEST_RGW_IMAGE=ceph-testcontainers-native:20.2.4-rgw-proof-rgw
+CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
+  -tags=integration,features,multicluster \
+  -run '^Test(HostNetwork)?MultiClusterRGW(SyncTranslationFiltering|AccountRootSync)$' \
+  -timeout=60m ./internal/integration
+```
+
+새 Noble-derived 전체 다섯 역할의 첫 smoke는 official MON의 stack unwinder에서 SIGILL로 실패했습니다. MON과 전역 libceph-common은 signed package 그대로였고 private RGW library를 사용하지 않았습니다. libgcc/gperftools의 AUTIA1716 pointer-auth fault를 관측했으며 근본 원인은 확정하지 않습니다. `--runtime-env TCMALLOC_STACKTRACE_METHOD=generic_fp`를 명시한 별도 build는 실제 다섯 이미지 `Config.Env` 검사와 전체 smoke를 통과했습니다. 이 환경은 최종 역할 이미지의 stack trace 수집 방법을 선택하며 native source build와 library ABI를 바꾸지 않습니다. Slim builder는 이를 기본값으로 넣지 않습니다.
+
+그 결과인 `ceph-testcontainers-native:20.2.4-rgw-generic-fp-{control,osd,rgw,mds,all}`에서 역할별 조합의 `TestClusterLifecycle`, `TestCephFSFilesystem`, `TestRBDLifecycle`, `TestRGWS3`는 245.330초로 통과했습니다. 이 네 baseline은 노드 변경·복구와 RADOS, userspace RBD, CephFS/POSIX, signed S3 및 credential 거부를 검증합니다. 같은 네 테스트를 `all` 이미지 하나로 구성한 방식도 237.315초로 통과했습니다. 두 방식 모두 `CGO_ENABLED=0`이며 owned container 및 전용 session network 잔존이 없음을 확인했습니다. 이 결과를 새 Debian control/OSD/MDS 조합의 multisite 전체 suite 통과로 확대하지 않습니다.
+
+실제 prototype 증거는 `artifacts/rgw-native-proof-20261004/`의 native report/XML/attempt history·package report·`.deb`와 `runtime-proof.json`, 첫 all-role 실패는 `artifacts/rgw-native-role-images-20261004/build-report.json`, 명시 환경의 다섯 role 성공은 `artifacts/rgw-native-runtime-env-role-images-20261004/build-report.json`에 있습니다. Source·ordered patch·package payload·image ID·Go source snapshot을 연결해 같은 version 문자열의 custom artifact를 구분합니다. `artifacts/`는 Git에 포함하지 않습니다.
+
+Repository wrapper는 실제 `--prepare-only --offline` signature/index/source·22개 package 입력 검증과 호스트 경계 테스트 16개를 통과했습니다. Slim builder 경계 테스트 47개와 실제 runtime environment literal 보존도 통과했습니다. Repository wrapper로 새 C++ 전체 빌드를 실행한 결과는 아직 없습니다. 고정 prototype native 결과와 wrapper 준비/호스트 검증을 구분합니다.
 
 공식 source: [RGW CMake](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/CMakeLists.txt), [Boost build](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/cmake/modules/BuildBoost.cmake), [native gtest target 정의](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/rgw/CMakeLists.txt). 패치와 upstream 범위는 [20.2.4 패치 설명](../patches/ceph-20.2.4/README.md)을 참조합니다.
