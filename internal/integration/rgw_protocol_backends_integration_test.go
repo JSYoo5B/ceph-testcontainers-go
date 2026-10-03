@@ -112,7 +112,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 		}
 		clients[i] = s3HTTPClient{endpoint: endpoints[0], accessKey: access, secretKey: secret, region: gateways[0].Region, http: &http.Client{Timeout: 20 * time.Second}}
 	}
-	t.Run("sts", func(t *testing.T) { rgwBackendSTS(t, ctx, gateways, endpoints, users, clients) })
+	t.Run("sts", func(t *testing.T) { rgwBackendSTS(t, ctx, cluster, gateways, endpoints, users, clients) })
 	t.Run("swift", func(t *testing.T) { rgwBackendSwift(t, ctx, gateways[0], endpoints, users[0], clients[0]) })
 	t.Run("sse-kms", func(t *testing.T) { rgwBackendKMS(t, ctx, gateways, endpoints, clients[0], vault) })
 	for _, user := range users {
@@ -122,7 +122,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 	}
 }
 
-func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContainer, endpoints []string, users []*ceph.RGWUser, clients []s3HTTPClient) {
+func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, gateways []*ceph.RGWContainer, endpoints []string, users []*ceph.RGWUser, clients []s3HTTPClient) {
 	t.Helper()
 	const roleName, policyName, bucket = "tc-backend-read", "read-owned", "/tc-backend-sts"
 	trust := rgwBackendJSON(t, map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
@@ -131,42 +131,95 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 	allow := rgwBackendJSON(t, map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
 		"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::tc-backend-sts/allowed",
 	}}})
-	listing := rgwBackendAdmin(t, ctx, gateways[0], "role", "list", "--format", "json")
-	var roles []struct {
-		Name string `json:"name"`
-	}
-	if json.Unmarshal(listing, &roles) != nil {
-		t.Fatal("decode native role listing")
-	}
-	for _, role := range roles {
-		if role.Name == roleName {
-			t.Fatal("role recipe refuses to adopt an existing role")
-		}
-	}
+	deny := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:*","Resource":"*"}]}`
+	denyTrust := rgwBackendJSON(t, map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
+		"Effect": "Deny", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + users[1].ID()}, "Action": "sts:AssumeRole",
+	}}})
+	// A brand-new RGW role metadata pool does not yet exist. Native role
+	// list returns ENOENT before its formatter flushes; probe the exact role
+	// instead and preserve the exit code through the public container API.
+	rgwBackendRequireRoleAbsent(t, ctx, cluster, roleName)
 	created := rgwBackendAdmin(t, ctx, gateways[0], "role", "create", "--role-name", roleName, "--path", "/fixture/", "--assume-role-policy-doc", trust, "--format", "json")
-	var role struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-		ARN  string `json:"arn"`
-	}
+	var role rgwBackendRole
 	if json.Unmarshal(created, &role) != nil || role.ID == "" || role.Name != roleName || !strings.HasSuffix(role.ARN, "role/fixture/"+roleName) {
 		t.Fatal("native fresh role ID/ARN unavailable")
 	}
+	owner, assumer := clients[0], clients[1]
+	roleRemoved, bucketRemoved, bucketID := false, false, ""
+	// Register immediately after native identity capture. A failed AssumeRole
+	// probe must not leave this role or its bucket behind for the later user
+	// removal. Refuse foreign identity/policy changes rather than purging them.
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if !roleRemoved {
+			data, err := gateways[0].Admin(cleanup, "role", "get", "--role-name", roleName, "--format", "json")
+			var current rgwBackendRole
+			if err != nil || json.Unmarshal(data, &current) != nil {
+				t.Error("STS cleanup role get failed (output redacted)")
+			} else if err := rgwBackendOwnedRole(current, role, policyName, []string{trust, denyTrust}, []string{allow, deny}); err != nil {
+				t.Error(err)
+			} else {
+				if len(current.Policies) != 0 {
+					_, err = gateways[0].Admin(cleanup, "role-policy", "delete", "--role-name", roleName, "--policy-name", policyName)
+				}
+				if err == nil {
+					_, err = gateways[0].Admin(cleanup, "role", "delete", "--role-name", roleName)
+				}
+				if err != nil {
+					t.Error("STS cleanup owned role deletion failed (output redacted)")
+				}
+			}
+		}
+		if bucketRemoved || bucketID == "" {
+			return
+		}
+		if _, err := gateways[0].UserInfo(cleanup, users[0]); err != nil {
+			t.Error("STS cleanup owned bucket user identity changed (output redacted)")
+			return
+		}
+		data, err := gateways[0].Admin(cleanup, "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
+		var current rgwBackendBucket
+		if err != nil || json.Unmarshal(data, &current) != nil || current.ID != bucketID || current.Name != strings.TrimPrefix(bucket, "/") || current.Owner != users[0].ID() {
+			t.Error("STS cleanup bucket native identity changed or unavailable (output redacted)")
+			return
+		}
+		// Delete only the fixture's explicit keys. An unexpected object makes
+		// the final bucket DELETE fail; there is no purge of foreign contents.
+		for _, key := range []string{"allowed", "excluded", "denied-write", ""} {
+			path := bucket
+			if key != "" {
+				path += "/" + key
+			}
+			if err := rgwBackendCleanupDelete(cleanup, owner, path); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	})
+	t.Log("STS fresh owned role identity captured; failure cleanup registered")
 	verifyIdentity := func() {
 		t.Helper()
-		var current struct {
-			ID string `json:"id"`
-		}
+		var current rgwBackendRole
 		data := rgwBackendAdmin(t, ctx, gateways[0], "role", "get", "--role-name", roleName, "--format", "json")
-		if json.Unmarshal(data, &current) != nil || current.ID != role.ID {
+		if json.Unmarshal(data, &current) != nil {
 			t.Fatal("role fixture native identity changed")
+		}
+		if err := rgwBackendOwnedRole(current, role, policyName, []string{trust, denyTrust}, []string{allow, deny}); err != nil {
+			t.Fatal(err)
 		}
 	}
 	verifyIdentity()
 	rgwBackendAdmin(t, ctx, gateways[0], "role-policy", "put", "--role-name", roleName, "--policy-name", policyName, "--policy-doc", allow)
-	owner, assumer := clients[0], clients[1]
+	t.Log("STS owned trust and resource permission prepared")
 	payload := bytes.Repeat([]byte("temporary-role-authorized-data\n"), 4096)
 	rgwBackendRequire(t, rgwBackendSigned(t, ctx, owner, "s3", http.MethodPut, bucket, nil, nil), http.StatusOK)
+	var nativeBucket rgwBackendBucket
+	data := rgwBackendAdmin(t, ctx, gateways[0], "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
+	if json.Unmarshal(data, &nativeBucket) != nil || nativeBucket.ID == "" || nativeBucket.Name != strings.TrimPrefix(bucket, "/") || nativeBucket.Owner != users[0].ID() {
+		t.Fatal("STS fresh owned bucket native identity unavailable")
+	}
+	bucketID = nativeBucket.ID
 	for _, key := range []string{"allowed", "excluded"} {
 		rgwBackendRequire(t, rgwBackendSigned(t, ctx, owner, "s3", http.MethodPut, bucket+"/"+key, payload, nil), http.StatusOK)
 	}
@@ -176,7 +229,9 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 	}
 	// Owner is deliberately outside the trust policy; ownership of the S3
 	// bucket must not grant the right to assume this role.
+	t.Log("STS untrusted owner AssumeRole negative control")
 	rgwBackendRequire(t, assume(ctx, owner, "untrusted"), http.StatusForbidden)
+	t.Log("STS trusted principal AssumeRole credential issuance")
 	response := assume(ctx, assumer, "trusted-consumer")
 	rgwBackendRequire(t, response, http.StatusOK)
 	var assumed struct {
@@ -201,6 +256,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 	temporary := owner
 	temporary.accessKey, temporary.secretKey = assumed.Result.Credentials.Access, assumed.Result.Credentials.Secret
 	token := http.Header{"X-Amz-Security-Token": {assumed.Result.Credentials.Token}}
+	t.Log("STS temporary credentials exact bytes and permission denials on both gateways")
 	for _, endpoint := range endpoints {
 		temporary.endpoint = endpoint
 		read := rgwBackendSigned(t, ctx, temporary, "s3", http.MethodGet, bucket+"/allowed", nil, token)
@@ -213,7 +269,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 		rgwBackendAuthDenied(t, rgwBackendSigned(t, ctx, temporary, "s3", http.MethodGet, bucket+"/allowed", nil, nil))
 	}
 	verifyIdentity()
-	deny := `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:*","Resource":"*"}]}`
+	t.Log("STS existing-session resource permission revocation on both gateways")
 	rgwBackendAdmin(t, ctx, gateways[0], "role-policy", "put", "--role-name", roleName, "--policy-name", policyName, "--policy-doc", deny)
 	for _, endpoint := range endpoints {
 		temporary.endpoint = endpoint
@@ -222,9 +278,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 		}, http.StatusForbidden)
 	}
 	verifyIdentity()
-	denyTrust := rgwBackendJSON(t, map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
-		"Effect": "Deny", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + users[1].ID()}, "Action": "sts:AssumeRole",
-	}}})
+	t.Log("STS future-session trust revocation on both gateways")
 	rgwBackendAdmin(t, ctx, gateways[0], "role-trust-policy", "modify", "--role-name", roleName, "--assume-role-policy-doc", denyTrust)
 	for _, endpoint := range endpoints {
 		assumer.endpoint = endpoint
@@ -233,6 +287,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 	// Restore both policies, then prove the previously issued token once again
 	// reads exact bytes. This tests native policy mutation, not token expiry.
 	verifyIdentity()
+	t.Log("STS trust and permission restore recovers existing-session exact bytes")
 	rgwBackendAdmin(t, ctx, gateways[0], "role-trust-policy", "modify", "--role-name", roleName, "--assume-role-policy-doc", trust)
 	rgwBackendAdmin(t, ctx, gateways[0], "role-policy", "put", "--role-name", roleName, "--policy-name", policyName, "--policy-doc", allow)
 	for _, endpoint := range endpoints {
@@ -247,10 +302,12 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, gateways []*ceph.RGWContai
 	verifyIdentity()
 	rgwBackendAdmin(t, ctx, gateways[0], "role-policy", "delete", "--role-name", roleName, "--policy-name", policyName)
 	rgwBackendAdmin(t, ctx, gateways[0], "role", "delete", "--role-name", roleName)
+	roleRemoved = true
 	for _, key := range []string{"allowed", "excluded"} {
 		rgwBackendRequire(t, rgwBackendSigned(t, ctx, owner, "s3", http.MethodDelete, bucket+"/"+key, nil, nil), http.StatusNoContent)
 	}
 	rgwBackendRequire(t, rgwBackendSigned(t, ctx, owner, "s3", http.MethodDelete, bucket, nil, nil), http.StatusNoContent)
+	bucketRemoved = true
 	t.Log("STS: shared-key two-gateway temporary credentials, exact allowed bytes, trust/action/resource denial, existing-session role-policy revoke/restore and future-session trust revoke; owned role and bucket removed")
 }
 
@@ -274,8 +331,10 @@ func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *ceph.RGWContain
 	if json.Unmarshal(data, &info) != nil || len(info.SwiftKeys) != 1 || info.SwiftKeys[0].User != subuser || info.SwiftKeys[0].Secret != secret || len(info.Subusers) != 1 || info.Subusers[0].ID != subuser || info.Subusers[0].Permissions != "full-control" {
 		t.Fatal("native fresh Swift subuser/key readback mismatch")
 	}
+	t.Log("Swift wrong-key auth control")
 	bad := rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[0]+"/auth", nil, http.Header{"X-Auth-User": {subuser}, "X-Auth-Key": {"wrong-key"}})
 	rgwBackendRequire(t, bad, http.StatusUnauthorized)
+	t.Log("Swift valid-key auth control")
 	auth := rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[0]+"/auth", nil, http.Header{"X-Auth-User": {subuser}, "X-Auth-Key": {secret}})
 	rgwBackendRequire(t, auth, http.StatusOK, http.StatusNoContent)
 	token, storageURL := auth.headers.Get("X-Auth-Token"), auth.headers.Get("X-Storage-Url")
@@ -301,7 +360,15 @@ func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *ceph.RGWContain
 			t.Fatal("Swift token read changed exact bytes")
 		}
 	}
-	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[1]+path+"/swift-object", nil, nil), http.StatusUnauthorized)
+	// Missing-token requests are anonymous and, with account-in-URL enabled,
+	// may fail tenant-name validation before authorization. An unrecognized
+	// token scheme must instead be denied by the configured native auth
+	// engines. Avoid HMAC mismatch: native debug logs can print a recomputed
+	// valid token on that particular failure path.
+	badToken := headers.Clone()
+	badToken.Set("X-Auth-Token", "tc-unrecognized-token")
+	t.Log("Swift unrecognized-token object control")
+	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[1]+path+"/swift-object", nil, badToken), http.StatusUnauthorized)
 	read := rgwBackendSigned(t, ctx, owner, "s3", http.MethodGet, "/"+bucket+"/swift-object", nil, nil)
 	rgwBackendRequire(t, read, http.StatusOK)
 	if !bytes.Equal(read.body, payload) {
@@ -318,14 +385,29 @@ func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *ceph.RGWContain
 		rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodDelete, endpoints[0]+path+"/"+key, nil, headers), http.StatusNoContent)
 	}
 	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodDelete, endpoints[0]+path, nil, headers), http.StatusNoContent)
+	// Account listing exists independently of the now-removed bucket. Record
+	// a successful authenticated request before revoking its credential.
+	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[1]+storage.Path, nil, headers), http.StatusOK, http.StatusNoContent)
 	rgwBackendAdmin(t, ctx, gateway, "subuser", "rm", "--uid", user.ID(), "--subuser", subuser, "--purge-keys")
-	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[0]+"/auth", nil, http.Header{"X-Auth-User": {subuser}, "X-Auth-Key": {secret}}), http.StatusUnauthorized)
-	rgwBackendWaitStatus(t, ctx, func(callCtx context.Context) rgwBackendResponse {
+	data = rgwBackendAdmin(t, ctx, gateway, "user", "info", "--uid", user.ID(), "--format", "json")
+	info.Subusers, info.SwiftKeys = nil, nil
+	if json.Unmarshal(data, &info) != nil || len(info.Subusers) != 0 || len(info.SwiftKeys) != 0 {
+		t.Fatal("Swift purge did not remove the owned subuser/key")
+	}
+	t.Log("Swift removed-key auth control")
+	// Removing the native Swift index causes get_user_by_swift to fail with
+	// EACCES; native Swift maps that to 403 (wrong-key EPERM maps to 401).
+	rgwBackendRequire(t, rgwBackendUnsigned(t, ctx, http.MethodGet, endpoints[0]+"/auth", nil, http.Header{"X-Auth-User": {subuser}, "X-Auth-Key": {secret}}), http.StatusForbidden)
+	t.Log("Swift previously issued token after key removal")
+	revoked := rgwBackendWaitStatus(t, ctx, func(callCtx context.Context) rgwBackendResponse {
 		return rgwBackendUnsigned(t, callCtx, http.MethodGet, endpoints[1]+storage.Path, nil, headers)
 	}, http.StatusUnauthorized)
+	if rgwBackendErrorCode(revoked.body) != "AccessDenied" {
+		t.Fatal("Swift revoked token did not fail native authorization")
+	}
 	// Removing a Swift subuser must not revoke this user's independent S3 key.
 	rgwBackendRequire(t, rgwBackendSigned(t, ctx, owner, "s3", http.MethodGet, "/", nil, nil), http.StatusOK)
-	t.Log("Swift: fresh native subuser/key/token, wrong-key and missing-token denial, two-gateway token use, S3/Swift shared object bytes both directions, explicit container/subuser/key cleanup")
+	t.Log("Swift: fresh native subuser/key/token, wrong-key and unrecognized-token denial, two-gateway token use, S3/Swift shared object bytes both directions, exact revoked-key lookup and explicit cleanup")
 }
 
 type rgwBackendVault struct {
@@ -430,6 +512,19 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*ceph.RGWContainer, en
 	if put.headers.Get("X-Amz-Server-Side-Encryption") != "aws:kms" || put.headers.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id") != "allowed" {
 		t.Fatal("native KMS response lacks selected encryption/key identity")
 	}
+	readIdentity := func() rgwBackendListedObject {
+		t.Helper()
+		response := rgwBackendSigned(t, ctx, owner, "s3", http.MethodGet, bucket+"?list-type=2", nil, nil)
+		rgwBackendRequire(t, response, http.StatusOK)
+		var listing struct {
+			Contents []rgwBackendListedObject `xml:"Contents"`
+		}
+		if xml.Unmarshal(response.body, &listing) != nil || len(listing.Contents) != 1 || listing.Contents[0].Key != "encrypted" || listing.Contents[0].ETag == "" || listing.Contents[0].Size != int64(len(payload)) {
+			t.Fatal("KMS owned object listing identity/size unavailable")
+		}
+		return listing.Contents[0]
+	}
+	objectIdentity := readIdentity()
 	for _, endpoint := range endpoints {
 		owner.endpoint = endpoint
 		read := rgwBackendSigned(t, ctx, owner, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
@@ -449,7 +544,13 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*ceph.RGWContainer, en
 	for _, endpoint := range endpoints {
 		owner.endpoint = endpoint
 		failed := rgwBackendSigned(t, ctx, owner, "s3", http.MethodGet, bucket+"/encrypted", nil, nil)
-		rgwBackendRequire(t, failed, http.StatusBadRequest, http.StatusForbidden, http.StatusInternalServerError)
+		// Vault's missing-key response propagates ENOENT through native KMS
+		// and maps to S3 NoSuchKey. The object itself must still be listed
+		// under the same key, ETag and size; 404 alone is not dependency proof.
+		rgwBackendRequire(t, failed, http.StatusNotFound)
+		if rgwBackendErrorCode(failed.body) != "NoSuchKey" || readIdentity() != objectIdentity {
+			t.Fatal("KMS missing backend key did not retain owned S3 object identity")
+		}
 	}
 	vault.call(t, ctx, http.MethodPost, "/v1/tc/data/allowed", map[string]any{"data": map[string]string{"key": vault.key}}, http.StatusOK)
 	for _, endpoint := range endpoints {
@@ -458,6 +559,9 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*ceph.RGWContainer, en
 		rgwBackendRequire(t, read, http.StatusOK)
 		if !bytes.Equal(read.body, payload) {
 			t.Fatal("restoring original Vault key did not recover exact object bytes")
+		}
+		if readIdentity() != objectIdentity {
+			t.Fatal("restoring original Vault key changed owned S3 object identity")
 		}
 	}
 	reader, err := vault.container.CopyFileFromContainer(ctx, "/tmp/tc-rgw-vault-audit.json")
@@ -485,9 +589,16 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*ceph.RGWContainer, en
 }
 
 type rgwBackendResponse struct {
-	code    int
-	body    []byte
-	headers http.Header
+	code      int
+	body      []byte
+	headers   http.Header
+	operation string
+}
+
+type rgwBackendListedObject struct {
+	Key  string `xml:"Key"`
+	ETag string `xml:"ETag"`
+	Size int64  `xml:"Size"`
 }
 
 func rgwBackendSigned(t *testing.T, ctx context.Context, client s3HTTPClient, service, method, path string, payload []byte, headers http.Header) rgwBackendResponse {
@@ -526,20 +637,34 @@ func rgwBackendDo(t *testing.T, client *http.Client, request *http.Request) rgwB
 	if err != nil {
 		t.Fatal(err)
 	}
-	return rgwBackendResponse{response.StatusCode, body, response.Header.Clone()}
+	return rgwBackendResponse{code: response.StatusCode, body: body, headers: response.Header.Clone(), operation: request.Method + " " + request.URL.EscapedPath()}
+}
+
+func rgwBackendErrorCode(body []byte) string {
+	var failure struct {
+		Code  string `xml:"Code" json:"Code"`
+		Error struct {
+			Code string `xml:"Code" json:"Code"`
+		} `xml:"Error" json:"Error"`
+	}
+	if xml.Unmarshal(body, &failure) != nil {
+		_ = json.Unmarshal(body, &failure)
+	}
+	if failure.Code != "" {
+		return failure.Code
+	}
+	// Swift's default formatter is plain text. Only these known native codes
+	// may become diagnostics; arbitrary bodies can contain sensitive data.
+	if plain := strings.TrimSpace(string(body)); slices.Contains([]string{"AccessDenied", "NoSuchKey", "InvalidTenantName"}, plain) {
+		return plain
+	}
+	return failure.Error.Code
 }
 
 func rgwBackendRequire(t *testing.T, response rgwBackendResponse, allowed ...int) {
 	t.Helper()
 	if !slices.Contains(allowed, response.code) {
-		var failure struct {
-			Code  string `xml:"Code"`
-			Error struct {
-				Code string `xml:"Code"`
-			} `xml:"Error"`
-		}
-		_ = xml.Unmarshal(response.body, &failure)
-		t.Fatalf("native protocol status=%d want=%v code=%s/%s (body redacted)", response.code, allowed, failure.Code, failure.Error.Code)
+		t.Fatalf("native protocol %s status=%d want=%v code=%s (body redacted)", response.operation, response.code, allowed, rgwBackendErrorCode(response.body))
 	}
 }
 
@@ -643,9 +768,83 @@ func rgwBackendAdmin(t *testing.T, ctx context.Context, gateway *ceph.RGWContain
 	t.Helper()
 	result, err := gateway.Admin(ctx, args...)
 	if err != nil {
-		t.Fatal(err)
+		// Only command/subcommand are safe: later arguments can be role
+		// policies or secret keys. Native output remains redacted by Admin.
+		t.Fatalf("RGW backend native %s: %v", strings.Join(args[:min(2, len(args))], " "), err)
 	}
 	return result
+}
+
+type rgwBackendRole struct {
+	ID          string `json:"RoleId"`
+	Name        string `json:"RoleName"`
+	ARN         string `json:"Arn"`
+	Path        string `json:"Path"`
+	Account     string `json:"AccountId"`
+	Description string `json:"Description"`
+	Duration    uint64 `json:"MaxSessionDuration"`
+	Trust       string `json:"AssumeRolePolicyDocument"`
+	Policies    []struct {
+		Name  string `json:"PolicyName"`
+		Value string `json:"PolicyValue"`
+	} `json:"PermissionPolicies"`
+	Managed []json.RawMessage `json:"ManagedPermissionPolicies"`
+	Tags    []json.RawMessage `json:"Tags"`
+}
+
+type rgwBackendBucket struct {
+	ID    string `json:"id"`
+	Name  string `json:"bucket"`
+	Owner string `json:"owner"`
+}
+
+func rgwBackendOwnedRole(current, owned rgwBackendRole, policy string, trusts, permissions []string) error {
+	if owned.ID == "" || current.ID != owned.ID || current.Name != owned.Name || current.ARN != owned.ARN || current.Path != owned.Path || current.Account != owned.Account || current.Description != owned.Description || current.Duration != owned.Duration {
+		return errors.New("STS role fixture native identity or metadata changed (output redacted)")
+	}
+	if !slices.Contains(trusts, current.Trust) || len(current.Managed) != 0 || len(current.Tags) != 0 || len(current.Policies) > 1 {
+		return errors.New("STS role fixture has an unrelated native policy or tag change (output redacted)")
+	}
+	if len(current.Policies) == 1 && (current.Policies[0].Name != policy || !slices.Contains(permissions, current.Policies[0].Value)) {
+		return errors.New("STS role fixture inline policy changed outside this recipe (output redacted)")
+	}
+	return nil
+}
+
+func rgwBackendCleanupDelete(ctx context.Context, client s3HTTPClient, path string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, client.endpoint+path, nil)
+	if err != nil {
+		return errors.New("STS cleanup request construction failed")
+	}
+	s3FeatureSign(request, client, nil, time.Now().UTC(), "s3")
+	response, err := client.http.Do(request)
+	if err != nil {
+		return errors.New("STS cleanup owned S3 DELETE transport failed (output redacted)")
+	}
+	defer response.Body.Close()
+	if _, err := io.Copy(io.Discard, response.Body); err != nil || ctx.Err() != nil {
+		return errors.New("STS cleanup owned S3 DELETE response failed (output redacted)")
+	}
+	if response.StatusCode != http.StatusNoContent {
+		return errors.New("STS cleanup owned S3 DELETE rejected (output redacted)")
+	}
+	return nil
+}
+
+func rgwBackendRequireRoleAbsent(t *testing.T, parent context.Context, cluster *ceph.Container, name string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	// This recipe uses a fresh standalone default zone. CLI belongs to the
+	// control image; the separate RGW role is not required to contain it.
+	code, reader, err := cluster.Container.Exec(ctx, []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--format", "json", "role", "get", "--role-name", name}, tcexec.Multiplexed())
+	if err != nil || ctx.Err() != nil {
+		t.Fatal("RGW backend native role get failed (output redacted)")
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil || ctx.Err() != nil || code != 2 || len(bytes.TrimSpace(data)) != 0 {
+		t.Fatalf("role recipe refuses adoption or uncertain native role absence: exit=%d (output redacted)", code)
+	}
 }
 
 func rgwBackendJSON(t *testing.T, value any) string {

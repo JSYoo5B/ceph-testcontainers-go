@@ -4,13 +4,13 @@ RGW는 S3 외에도 STS·Swift endpoint와 외부 KMS 연결을 제공합니다.
 
 테스트는 같은 cluster/zone의 gateway 두 개를 bridge와 host networking에서 각각 실행합니다. STS session-token CryptoKey와 KMS 설정은 **gateway를 시작하기 전에** `client.admin` section에 적용합니다. 현재 bootstrap의 RGW daemon identity가 `client.admin`이기 때문입니다. `TemporaryConfig`의 exact stored-entry readback은 설정 DB의 증거이고, 아래 실제 credential·Vault 동작이 runtime 적용의 증거입니다. 설정은 각 override의 `Restore`로 복원하며, 실패한 partial fixture는 disposable cluster 종료로 정리합니다.
 
-이 문서를 추가한 단계에서는 tag compile을 확인했습니다. 실제 Docker의 통과 여부는 [fixture 완료 기준](CLIENT_FIXTURE_COVERAGE.md)의 G09 상태로 관리합니다. backend/protocol의 모든 조합이 검증되었다는 뜻은 아닙니다.
+STS·Swift와 실제 Vault KV-v2 SSE-KMS 경로는 Ceph 20.2.4 control/OSD/RGW slim image에서 bridge·host 모두 native probe와 cleanup을 통과했습니다. Bridge 68.33초, host 64.64초이며, STS 임시 session의 정책 revoke/restore와 두 gateway의 credential 공유, Swift key 제거 후 인증 거부, KMS key 제거 후 decrypt 실패와 복원 후 bytes 회복, completed Vault audit를 확인했습니다. 로그는 ignored `artifacts/rgw-protocol-sync-retest.log`에 있으며 [fixture 완료 기준](CLIENT_FIXTURE_COVERAGE.md)의 G09를 완료로 표시합니다. Backend/protocol의 모든 조합을 검증했다는 뜻은 아닙니다.
 
 ## STS와 두 gateway의 credential 공유
 
 `ceph-authtool --gen-print-key`로 생성한 CryptoKey를 `rgw_sts_key`에 저장하고 `rgw_s3_auth_use_sts=true`를 적용합니다. 같은 zone의 모든 gateway가 같은 키를 사용해야 다른 gateway에서도 session token을 해독할 수 있습니다. realm의 여러 zone까지 조합한다면 같은 키를 별도 cluster에도 명시적으로 준비해야 합니다. 이 테스트는 같은 cluster/zone의 두 gateway 범위입니다. [Ceph STS 설정](https://docs.ceph.com/en/tentacle/radosgw/STS/).
 
-role은 이름이 이미 있으면 adopt하지 않습니다. `gateway.Admin("role", "list", ...)`로 확인하고 fresh `role create` 후 native ID·ARN을 캡처합니다. 이후 trust/permission 변경과 제거 전에 같은 ID인지 다시 확인합니다. API 인자는 shell interpolation 없이 각각 전달합니다.
+role은 이름이 이미 있으면 adopt하지 않습니다. control container의 공개 `Container.Exec`로 exact-name `role get`을 실행해 **native exit 2와 빈 출력만** absence로 처리합니다. fresh default zone에서 role metadata pool이 아직 없으면 `role list`도 ENOENT를 반환하기 때문입니다. context 취소·다른 exit·존재하는 role은 중단합니다. 그 후 `gateway.Admin`의 fresh `role create`로 native `RoleId`·`RoleName`·`Arn`을 캡처하고, trust/permission 변경과 제거 전에 같은 ID인지 다시 확인합니다. API 인자는 shell interpolation 없이 각각 전달합니다. [v20.2.4 role CLI](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc), [정확한 native role formatter](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_role.cc).
 
 ```go
 trust := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam:::user/ASSUMER"},"Action":"sts:AssumeRole"}]}`
@@ -24,11 +24,11 @@ _, err = gateway.Admin(ctx, "role-policy", "put",
     "--policy-doc", permission)
 ```
 
-위 정책의 `ASSUMER`와 bucket 이름은 public `CreateUser` 및 consumer가 생성한 fresh resource의 이름으로 바꿉니다. 신뢰된 사용자만 SigV4 service `sts`로 `AssumeRole`을 호출합니다. 반환된 access key·secret·session token과 expiration을 확인하고 S3 요청에 `X-Amz-Security-Token`을 넣습니다. 모든 `x-amz-*` header를 서명합니다.
+위 정책의 `ASSUMER`와 bucket 이름은 public `CreateUser` 및 consumer가 생성한 fresh resource의 이름으로 바꿉니다. 신뢰된 사용자만 SigV4 service `sts`로 `AssumeRole`을 호출합니다. form POST의 `Content-Type: application/x-www-form-urlencoded`도 canonical `SignedHeaders`에 포함합니다. Ceph의 기본 secure SigV4 verifier는 이 header가 제공되었으나 서명되지 않았으면 trust policy를 평가하기 전에 요청을 거부합니다. 모든 `x-amz-*` header도 서명합니다. 반환된 access key·secret·session token과 expiration을 확인하고 S3 요청에 `X-Amz-Security-Token`을 넣습니다. [v20.2.4 SigV4 verifier](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc).
 
 native probe는 gateway A에서 받은 credential로 A/B에서 정확한 object bytes를 읽습니다. bucket owner는 trust policy에서 제외하여 AssumeRole 거부를 확인하고, temporary credential의 write·다른 object read·session-token 없는 요청도 거부해야 합니다. 같은 role ID에 explicit deny permission을 적용해 기존 token의 read를 A/B에서 막고, trust deny로 새 AssumeRole도 막습니다. policy를 원래 값으로 복원하면 기존 token의 read와 bytes가 복구되어야 합니다. trust 변경이 발급된 token을 암호적으로 없앤다는 가정은 하지 않습니다. role과 정책의 native grammar는 [Ceph role 관리](https://docs.ceph.com/en/tentacle/radosgw/role/)를 따릅니다.
 
-성공 후 owned object/bucket, role inline policy, role, 두 ordinary user를 제거합니다. S3 요청별로 role을 다시 읽는 동작은 [v20.2.4 STS auth source](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc)의 `STSEngine::authenticate`와 연결됩니다. OIDC/WebIdentity, 외부 Keycloak, LDAP/Keystone STSLite는 별도의 identity-provider fixture가 필요하며 이 AssumeRole probe에 포함되지 않습니다.
+성공 후 owned object/bucket, role inline policy, role, 두 ordinary user를 제거합니다. role identity 캡처 직후 실패 cleanup도 등록합니다. cleanup은 같은 native RoleId·RoleName·Arn과 metadata를 확인하고, 이 recipe가 적용한 trust/inline policy만 허용합니다. 다른 inline/managed policy나 tag가 추가되면 role을 제거하지 않습니다. S3 bucket은 생성 직후 캡처한 native ID·owner와 owned user key를 다시 확인하고, 명시적으로 쓴 object key만 삭제합니다. 다른 object를 purge하지 않으며 identity를 확인할 수 없는 partial resource는 disposable cluster 종료에 맡깁니다. STS 단계별 로그에는 credential·trust 문서·HTTP body를 출력하지 않습니다. S3 요청별로 role을 다시 읽는 동작은 [v20.2.4 STS auth source](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc)의 `STSEngine::authenticate`와 연결됩니다. OIDC/WebIdentity, 외부 Keycloak, LDAP/Keystone STSLite는 별도의 identity-provider fixture가 필요하며 이 AssumeRole probe에 포함되지 않습니다.
 
 ## Swift auth와 S3 공존
 
@@ -44,7 +44,9 @@ _, err := gateway.Admin(ctx, "subuser", "create",
 
 `user info`에서 subuser ID·full-control permission·swift key가 정확히 일치하는지 확인합니다. `/auth`에 `X-Auth-User`/`X-Auth-Key`를 전달해 token과 서버가 반환한 `X-Storage-Url`의 account path를 얻습니다. Go orchestrator가 macOS에 있을 때 내부 bridge URL 전체를 그대로 쓰는 대신, 반환된 account path와 `S3Endpoint`가 제공한 외부 접근 주소를 조합합니다. [Swift auth v1](https://docs.ceph.com/en/tentacle/radosgw/swift/auth/).
 
-probe는 wrong key·missing token을 거부하고, 같은 Swift token으로 두 gateway에서 object를 읽습니다. Swift PUT → S3 GET 및 S3 PUT → Swift GET이 같은 exact bytes를 반환해야 합니다. container/object를 제거하고 `subuser rm --purge-keys`로 Swift credential을 정리한 뒤 새 auth와 이미 받은 Swift token의 사용이 거부되는지 확인합니다. 원래 ordinary user의 S3 key는 계속 동작해야 합니다. 외부 Keystone catalog·auth와 Swift large-object/temp-URL의 모든 기능은 이 native auth/S3 coexistence 증거 범위 밖입니다.
+probe는 wrong key와 native auth engine이 인식하지 않는 token scheme을 401로 거부하고, 원래 Swift token으로 같은 object를 두 gateway에서 읽습니다. token 없는 account-in-URL 요청은 native anonymous 경로에서 UID를 tenant 이름으로 해석해 먼저 400을 반환할 수 있으므로 인증 거부의 증거로 사용하지 않습니다. HMAC mismatch 경로는 native debug log에 재계산된 token을 남길 수 있어 사용하지 않습니다. Swift PUT → S3 GET 및 S3 PUT → Swift GET이 같은 exact bytes를 반환해야 합니다.
+
+container/object를 제거한 뒤 account listing이 유효 token으로 성공하는지 확인합니다. `subuser rm --purge-keys` 후 native subuser/key가 모두 사라져야 하고 새 auth는 403이어야 합니다. 이미 발급된 token도 두 번째 gateway에서 401 `AccessDenied`로 실패해야 합니다. 이 확인은 제거된 bucket의 404와 구분하며, 원래 ordinary user의 S3 key가 계속 동작해야 합니다. [native Swift auth](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_swift_auth.cc), [Swift/S3 native error mapping](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc). 외부 Keystone catalog·auth와 Swift large-object/temp-URL의 모든 기능은 이 native auth/S3 coexistence 증거 범위 밖입니다.
 
 ## 실제 Vault KV-v2를 연결한 SSE-KMS
 
@@ -66,7 +68,7 @@ S3 PUT의 `x-amz-server-side-encryption=aws:kms`와 key ID `allowed`를 확인�
 
 real Vault audit는 scoped token의 정확한 allowed/denied read path를 확인합니다. `request.id`로 request와 response를 연결하고, 서로 다른 completed response만 셉니다. allowed read는 top-level `error`가 없고 `response.data.data.key`가 있어야 합니다(HMAC 처리된 값도 유효). denied read는 permission-denied response여야 하며, audit에 `auth.policy_results.allowed`가 있으면 그 결정과도 일치해야 합니다. 요청 기록만 있거나 같은 응답을 중복한 로그는 성공 증거가 아닙니다. [Vault 1.21 audit schema](https://developer.hashicorp.com/vault/docs/v1.21.x/audit/schema).
 
-실제 `allowed` key를 Vault에서 삭제하면 두 gateway의 object decrypt가 실패해야 합니다. 원래 key material을 새 KV version으로 복원하면 기존 object bytes가 다시 읽혀야 합니다. 그 후 object/bucket, 두 key의 모든 metadata/version, RGW의 scoped Vault token을 제거합니다. dev server/root token/audit는 owned container 종료와 함께 소멸합니다. 테스트는 Vault key·S3 key·STS/Swift token을 출력하지 않습니다.
+실제 `allowed` key를 Vault에서 삭제하면 두 gateway의 object decrypt가 native ENOENT에 해당하는 404 `NoSuchKey`로 실패해야 합니다. 이때 S3 listing에는 같은 object key·ETag·size가 그대로 남아 있어야 합니다. 원래 key material을 새 KV version으로 복원하면 기존 object bytes가 다시 읽히고 listing identity도 유지되어야 합니다. 404만으로 객체가 보존되었거나 KMS가 적용되었다고 판단하지 않습니다. 그 후 object/bucket, 두 key의 모든 metadata/version, RGW의 scoped Vault token을 제거합니다. dev server/root token/audit는 owned container 종료와 함께 소멸합니다. 테스트는 Vault key·S3 key·STS/Swift token을 출력하지 않습니다.
 
 이 경로는 production Vault HA·seal/unseal·agent renewal·Transit/KMIP/Barbican의 계약을 입증하지 않습니다. TLS/CA, transit key rotation 및 agent token refresh는 해당 backend별 추가 recipe가 필요합니다. [Ceph Vault integration](https://docs.ceph.com/en/tentacle/radosgw/vault/)과 [v20.2.4 native KMS 구현](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_kms.cc)을 따릅니다. Vault API의 준비/cleanup은 [KV-v2](https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2), [token](https://developer.hashicorp.com/vault/api-docs/auth/token), [audit](https://developer.hashicorp.com/vault/api-docs/system/audit) 계약을 사용합니다.
 

@@ -3,12 +3,62 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRGWBackendSTSFormContentTypeIsSigned(t *testing.T) {
+	payload := []byte("Action=AssumeRole&Version=2011-06-15")
+	request, err := http.NewRequest(http.MethodPost, "http://rgw.invalid/", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s3FeatureSign(request, s3HTTPClient{accessKey: "fixture-access", secretKey: "fixture-secret", region: "default"}, payload, time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC), "sts")
+	// Ceph's secure SigV4 verifier requires CONTENT_TYPE in the canonical
+	// signed headers whenever this form header is present. Omitting it denies
+	// even a principal explicitly granted AssumeRole by the role trust policy.
+	if !strings.Contains(request.Header.Get("Authorization"), "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,") {
+		t.Fatal("STS form Content-Type is absent from the canonical SigV4 signed headers")
+	}
+}
+
+func TestRGWBackendRoleCleanupRefusesForeignPolicy(t *testing.T) {
+	const native = `{"RoleId":"owned-id","RoleName":"owned-role","Arn":"owned-arn","Path":"/fixture/","AssumeRolePolicyDocument":"owned-trust","MaxSessionDuration":3600}`
+	var owned rgwBackendRole
+	if err := json.Unmarshal([]byte(native), &owned); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, delta string
+		allowed     bool
+	}{
+		{name: "captured native identity", delta: `{}`, allowed: true},
+		{name: "owned inline policy", delta: `{"PermissionPolicies":[{"PolicyName":"owned-policy","PolicyValue":"owned-permission"}]}`, allowed: true},
+		{name: "replacement role", delta: `{"RoleId":"replacement-id"}`},
+		{name: "changed trust", delta: `{"AssumeRolePolicyDocument":"foreign-trust"}`},
+		{name: "foreign inline policy", delta: `{"PermissionPolicies":[{"PolicyName":"foreign-policy","PolicyValue":"owned-permission"}]}`},
+		{name: "changed owned permission", delta: `{"PermissionPolicies":[{"PolicyName":"owned-policy","PolicyValue":"foreign-permission"}]}`},
+		{name: "managed policy", delta: `{"ManagedPermissionPolicies":[{"PolicyArn":"foreign-arn"}]}`},
+		{name: "foreign tags", delta: `{"Tags":[{"Key":"foreign","Value":"tag"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := owned
+			if err := json.Unmarshal([]byte(test.delta), &current); err != nil {
+				t.Fatal(err)
+			}
+			err := rgwBackendOwnedRole(current, owned, "owned-policy", []string{"owned-trust"}, []string{"owned-permission"})
+			if (err == nil) != test.allowed {
+				t.Fatalf("identity-guarded cleanup admission: allowed=%v error=%v", test.allowed, err)
+			}
+		})
+	}
+}
 
 func TestRGWBackendAuditProofRequiresCompletedVaultTransactions(t *testing.T) {
 	event := func(kind, id, path, failure string, allowed bool, key bool) []byte {

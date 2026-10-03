@@ -243,6 +243,7 @@ make cluster-feature-extensions
 | RGW S3 client features | PASS, 51.35s | PASS, 50.37s | frozen versions·multipart bytes·ACL/policy grant/revoke, scoped lifecycle, retention/hold 거부·명시적 bypass cleanup |
 | RGW native TLS | PASS, 44.79s | PASS, 44.69s | Beast의 분리된 HTTP/HTTPS, 실제 CA/SAN/TLS12 검증·unknown CA 거부, 동일 S3 bytes·cleanup |
 | RGW usage/rate-limit | PASS, 51.70s | PASS, 51.41s | 실제 usage category·bytes 기록, AdminOps caps 거부·UID trim 격리, bucket별 503 SlowDown·정책 복원·bytes 복구 |
+| RGW STS/Swift/Vault KMS | PASS, 68.33s | PASS, 64.64s | 두 gateway의 임시 credentials·정책 revoke/restore, Swift/S3 동일 bytes와 key revoke, 실제 KMS key 삭제·복원·completed audit·owned cleanup |
 
 CephFS 데이터 검증은 Linux client container의 libcephfs로 수행했습니다. pending clone은 native clone delay로 유지해 helper와 native CLI 양쪽의 source 보호를 확인했습니다. RGW는 S3 GET만으로 판단하지 않고 각 지정 data pool의 native object에서 96 KiB payload를 읽어 SHA256까지 비교했습니다. RGW shadow object의 이름은 S3 key를 그대로 포함하지 않을 수 있습니다.
 

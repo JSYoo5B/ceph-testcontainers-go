@@ -51,7 +51,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G06 | 기존 bucket 유지보수 조건 | 개별 bucket quota, reshard/queue·readiness; 실제 S3 payload 보존·quota 거부 | 완료: `TestRGWBucketMaintenance`, bridge/host |
 | G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 개발 중: `SyncStatus`, `WaitSyncReady` |
 | G08 | S3 client 기능의 서버 조건 | versioning/multipart/lifecycle/object-lock/bucket policy/ACL client recipe와 필요한 daemon 옵션, 대표 동작 | 완료: `TestRGWS3ClientFeatures`, bridge/host; IAM role은 G09 |
-| G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 검증 중: `TestRGWNativeTLS` bridge/host 완료; protocol/backend recipe native 응답 보강 후 재실행 |
+| G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 완료: `TestRGWNativeTLS`, [STS·Swift·Vault recipe](RGW_PROTOCOL_BACKENDS.md)의 `TestRGWProtocolBackends`, bridge/host |
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
 | G11 | AdminOps usage log와 bucket rate-limit 준비 | pre-start usage log·flush 조건, scoped admin caps·owned log trim과 별도 request rate 거부·복구 | 완료: [실행 recipe](RGW_ADMIN_RECORDS.md), `TestRGWAdminRecordsAndRateLimit`, bridge/host |
 | D01 | runtime 설정·OSD out/in·global 장애 flag·PG 복구 | `TemporaryConfig`, `SetOSDIn`, `TemporaryOSDFlag`, `WaitForPGClean`; native 상태와 I/O·restore | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |

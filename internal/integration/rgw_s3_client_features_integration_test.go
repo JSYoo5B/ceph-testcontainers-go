@@ -247,7 +247,7 @@ func s3FeatureSign(req *http.Request, client s3HTTPClient, payload []byte, now t
 	names := []string{"host"}
 	for name := range req.Header {
 		name = strings.ToLower(name)
-		if strings.HasPrefix(name, "x-amz-") || name == "content-md5" {
+		if strings.HasPrefix(name, "x-amz-") || name == "content-md5" || name == "content-type" {
 			names = append(names, name)
 		}
 	}
