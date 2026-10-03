@@ -54,9 +54,10 @@ type RGWSyncFlowConfig struct {
 // RGWSyncPipeConfig selects owned zone names or a sole "*" on each side.
 // Nil bucket selectors use the current bucket; an empty Prefix selects all keys.
 // Source tags are ORed; when a prefix is also supplied both must match. User
-// mode uses a confirmed ordinary user to validate source read/destination write
-// permissions. Principal and selected bucket tenants must match. Account and
-// cross-tenant translation remain unproven and are refused by this helper.
+// mode uses a confirmed ordinary user, or a confirmed account root with concrete
+// source/destination buckets owned by that same account and no DestinationOwner.
+// Principal and selected bucket tenants must match. IAM nonroot, cross-account
+// and cross-tenant principal translation remain unproven and are refused.
 // This helper never creates S3 buckets or grants access.
 type RGWSyncPipeConfig struct {
 	ID                              string

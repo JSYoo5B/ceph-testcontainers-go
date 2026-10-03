@@ -48,7 +48,7 @@ func (f *RGWMultisite) syncPipeConfig(ctx context.Context, master *rgwZoneState,
 	}
 	src := map[string]any{"bucket": "*", "zones": syncStrings(source)}
 	dst := map[string]any{"bucket": "*", "zones": syncStrings(dest)}
-	var destinationInfo map[string]any
+	var sourceInfo, destinationInfo map[string]any
 	for _, side := range []struct {
 		selector *RGWSyncBucketSelector
 		native   map[string]any
@@ -70,7 +70,9 @@ func (f *RGWMultisite) syncPipeConfig(ctx context.Context, master *rgwZoneState,
 		if side.selector.Tenant != "" {
 			args = append(args, side.flag+"-tenant", side.selector.Tenant)
 		}
-		if side.flag == "--dest" {
+		if side.flag == "--source" {
+			sourceInfo = info
+		} else {
 			destinationInfo = info
 		}
 	}
@@ -103,11 +105,11 @@ func (f *RGWMultisite) syncPipeConfig(ctx context.Context, master *rgwZoneState,
 		args = append(args, "--dest-owner", info.ID)
 	}
 	if config.User != nil {
-		info, err := f.syncOrdinaryPrincipal(ctx, g, config.User)
+		info, err := f.syncOwnedPrincipal(ctx, g, config.User)
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := checkSyncPrincipalTenants(g.scope, config, info.Tenant); err != nil {
+		if err := checkSyncUserModePrincipal(g.scope, config, info, sourceInfo, destinationInfo); err != nil {
 			return nil, nil, err
 		}
 		if destinationInfo == nil {
@@ -181,6 +183,17 @@ func (f *RGWMultisite) syncSelectedBucket(ctx context.Context, master *rgwZoneSt
 }
 
 func (f *RGWMultisite) syncOrdinaryPrincipal(ctx context.Context, g *RGWSyncGroup, user *ceph.RGWUser) (ceph.RGWUserInfo, error) {
+	info, err := f.syncOwnedPrincipal(ctx, g, user)
+	if err != nil {
+		return ceph.RGWUserInfo{}, err
+	}
+	if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
+		return ceph.RGWUserInfo{}, errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven")
+	}
+	return info, nil
+}
+
+func (f *RGWMultisite) syncOwnedPrincipal(ctx context.Context, g *RGWSyncGroup, user *ceph.RGWUser) (ceph.RGWUserInfo, error) {
 	// UserInfo enforces private creation/key identity and actual gateway scope.
 	// A replicated user handle retains its creating cluster's ownership, so
 	// inspect through the owning attached gateway rather than adopting a remote UID.
@@ -195,12 +208,30 @@ func (f *RGWMultisite) syncOrdinaryPrincipal(ctx context.Context, g *RGWSyncGrou
 			}
 			continue
 		}
-		if info.ID != user.ID() || info.Namespace != "" || info.AccountID != "" || info.Admin || info.System || (info.Type != "" && info.Type != "rgw") {
-			return ceph.RGWUserInfo{}, errors.New("RGW sync principal requires a confirmed ordinary user; account principal translation is unproven")
+		if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
+			return ceph.RGWUserInfo{}, errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions")
 		}
 		return info, nil
 	}
 	return ceph.RGWUserInfo{}, errors.New("RGW sync principal was not confirmed as created through an attached owned gateway")
+}
+
+func checkSyncUserModePrincipal(scope RGWSyncPolicyScope, config RGWSyncPipeConfig, info ceph.RGWUserInfo, source, destination map[string]any) error {
+	if err := checkSyncPrincipalTenants(scope, config, info.Tenant); err != nil {
+		return err
+	}
+	if info.AccountID == "" {
+		if info.Type != "" && info.Type != "rgw" {
+			return errors.New("RGW sync user-mode principal is not an ordinary owned user")
+		}
+		return nil
+	}
+	// Native --uid is the canonical root user's ID, never the account ID.
+	// UserInfo has already checked its private creation account and lifetime.
+	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || source["owner"] != info.AccountID || destination["owner"] != info.AccountID {
+		return errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven")
+	}
+	return nil
 }
 
 func (f *RGWMultisite) syncDestinationClass(ctx context.Context, g *RGWSyncGroup, config RGWSyncPipeConfig, info map[string]any) error {

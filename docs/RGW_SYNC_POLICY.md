@@ -35,11 +35,13 @@ Zonegroup의 `ApplySyncGroup`은 정확한 current period와 모든 stored zoneg
 
 ## 선택·변환과 소유권
 
-`RGWSyncPipeConfig`는 prefix, OR로 결합한 exact object tag pairs, priority, 별도 source/destination bucket, destination owner/storage class 및 ordinary user mode를 제공합니다. Prefix와 tags를 함께 지정하면 두 조건을 모두 만족해야 합니다. CLI의 comma 구분자 때문에 comma를 포함하는 tag key/value는 거부합니다. Tag를 삭제하거나 ACL을 부여하는 object CRUD는 S3 client의 역할입니다.
+`RGWSyncPipeConfig`는 prefix, OR로 결합한 exact object tag pairs, priority, 별도 source/destination bucket, destination owner/storage class 및 user mode를 제공합니다. Prefix와 tags를 함께 지정하면 두 조건을 모두 만족해야 합니다. CLI의 comma 구분자 때문에 comma를 포함하는 tag key/value는 거부합니다. Tag를 삭제하거나 ACL을 부여하는 object CRUD는 S3 client의 역할입니다.
 
-Bucket selector는 이름뿐 아니라 native instance ID를 캡처합니다. 같은 이름을 삭제·재생성하면 stale handle의 변경·제거·checkpoint를 거부합니다. Owner/user는 fixture가 생성해 key identity를 확인한 ordinary principal이며, 선택한 bucket과 tenant가 일치해야 합니다. Account owner 및 cross-tenant principal translation은 현재 helper의 검증 범위에 포함되지 않아 거부합니다. 이를 Ceph 자체의 지원 여부에 대한 주장으로 해석하지 않습니다.
+Bucket selector는 이름뿐 아니라 native instance ID를 캡처합니다. 같은 이름을 삭제·재생성하면 stale handle의 변경·제거·checkpoint를 거부합니다. Owner/user는 fixture가 생성해 key identity와 생성 시 account 연결을 확인한 principal이며, 선택한 bucket과 tenant가 일치해야 합니다. `DestinationOwner`는 ordinary principal만 허용합니다. `User`는 ordinary principal 또는 `CreateAccountRootUser`가 생성한 root principal을 받습니다. Account root는 양쪽의 concrete bucket이 같은 생성 소유 account에 속하고 owner translation이 없는 경우만 허용합니다. IAM non-root, cross-account 및 cross-tenant principal translation은 현재 helper의 검증 범위에 포함되지 않아 거부합니다. 이를 Ceph 자체의 지원 여부에 대한 주장으로 해석하지 않습니다.
 
-Ceph 20.2.4의 S3 `ReplicationConfiguration` 변환 경로는 account-owned 요청을 `NotImplemented`로 거부합니다. CLI의 account user mode는 별도 native permission 경로이므로 같은 제한이라고 단정하지 않으며 현재 대표 recipe로 검증했다는 주장도 하지 않습니다. [S3 account-owner 검사](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1355-L1406), [native user-mode permission 평가](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_data_sync.cc#L2654-L2742).
+Ceph 20.2.4의 S3 `ReplicationConfiguration` 변환 경로는 account-owned 요청을 `NotImplemented`로 거부합니다. CLI의 account user mode는 별도 native permission 경로입니다. Account root helper는 위의 좁은 조건으로 구현했으며 native 대표 recipe 결과는 아래 coverage 문서에서 별도로 추적합니다. [S3 account-owner 검사](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1355-L1406), [native user-mode permission 평가](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L2649-L2742).
+
+System mode에서 concrete source/destination bucket selector의 tenant를 서로 다르게 지정할 수 있습니다. 이때 account/user나 destination owner 변환을 함께 지정하지 않습니다. Native replication은 source object ACL을 보존하므로 destination bucket의 owner와 복사된 object를 읽을 수 있는 principal이 다를 수 있습니다. 대표 recipe는 명시적 tenant 경로와 source principal로 replica bytes를 확인합니다.
 
 Storage class 변환은 concrete destination bucket과 각 concrete destination zone의 confirmed placement handle을 요구합니다. 양쪽 zone의 pool/class mapping을 만들고 master publish·secondary pull·reload를 먼저 수행합니다. 저장된 mapping만으로 실제 replica class를 확인하지 않으며 S3 listing과 destination RADOS pool payload를 함께 검증합니다.
 
@@ -53,12 +55,12 @@ Status 조회는 최대 30초, wait는 최대 4분이며 caller context가 더 �
 
 Native bucket checkpoint는 같은 source/destination tuple의 여러 pipe를 합쳐 관측할 수 있습니다. 따라서 caught-up만으로 선택한 pipe의 filter·user mode·실제 데이터 성공을 증명하지 않습니다. Test client의 writes를 동기화하고 destination의 exact bytes와 제외 대상의 absence를 별도로 확인합니다. Policy 변경이 이전 데이터의 backfill 또는 이미 복사된 object 삭제를 보장하지 않습니다.
 
-실행 가능한 대표 recipe는 [기본 선택·lifecycle](../internal/integration/rgw_sync_policy_integration_test.go)과 [tag·priority·owner/class·user mode·tenant](../internal/integration/rgw_sync_translation_integration_test.go)입니다. Unit/tag compile과 Docker 통과 여부는 [G05/G07 진행 상태](CLIENT_FIXTURE_COVERAGE.md)에서 구분합니다.
+실행 가능한 대표 recipe는 [기본 선택·lifecycle](../internal/integration/rgw_sync_policy_integration_test.go), [tag·priority·owner/class·user mode·tenant](../internal/integration/rgw_sync_translation_integration_test.go), [account root 권한 거부·복구 및 cross-tenant system mode](../internal/integration/rgw_sync_accounts_integration_test.go)입니다. Unit/tag compile과 Docker 통과 여부는 [G05/G07 진행 상태](CLIENT_FIXTURE_COVERAGE.md)에서 구분합니다.
 
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
-  -run '^Test(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|SyncTranslationFiltering)$' \
+  -run '^Test(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|SyncTranslationFiltering|AccountRootSync)$' \
   -timeout 60m
 ```
 
