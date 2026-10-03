@@ -26,7 +26,10 @@ func TestHostNetworkMultiClusterRGWSyncTranslationFiltering(t *testing.T) {
 }
 
 func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
+	// Four independent scenarios share realm/storage bootstrap. Reserve bounded
+	// fixture time for strict four-minute observations and child cleanup after
+	// a failing scenario; per-object/checkpoint and exclusion windows stay fixed.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
 	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
 	image, _ := integrationImages(t)
@@ -197,6 +200,61 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 			t.Fatal(err)
 		}
 		t.Log("captured cross-bucket instances; prefix AND (blue OR red), owner translation, priority winner and fallback classes verified with S3 bytes and exact native data pools")
+	})
+	t.Run("tag_owner_class", func(t *testing.T) {
+		// A single pipe proves tag/owner/class provisioning independently of
+		// the overlapping native priority selection tested above.
+		const input, output, other = "/tc-sync-tags-input", "/tc-sync-tags-output", "/tc-sync-tags-other"
+		for _, bucket := range []string{input, other} {
+			a.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
+		}
+		b.request(t, ctx, http.MethodPut, output, body, http.StatusOK)
+		selected, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multicluster.RGWSyncGroupConfig{ID: "tags-owner-class", Status: multicluster.RGWSyncEnabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cleanupRGWTranslationSyncGroup(t, link, selected)
+		pipe := multicluster.RGWSyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multicluster.RGWSyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*ceph.RGWPlacement{"destination": secondaryPlacement}}
+		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
+			t.Fatal(err)
+		}
+		putTagged := func(c s3HTTPClient, path, color string, payload []byte) {
+			var headers http.Header
+			if color != "" {
+				headers = http.Header{"X-Amz-Tagging": []string{"color=" + color}}
+			}
+			s3FeatureRequest(t, ctx, c, http.MethodPut, path, payload, headers, http.StatusOK)
+		}
+		payload := bytes.Repeat([]byte("single-pipe tag and ordinary owner storage-class translation\n"), 2048)
+		for _, object := range []struct{ path, color string }{{input + "/published/blue", "blue"}, {input + "/published/red", "red"}, {input + "/published/green", "green"}, {input + "/published/untagged", ""}, {input + "/private/blue", "blue"}, {other + "/published/from-other-bucket", "blue"}} {
+			putTagged(a, object.path, object.color, payload)
+		}
+		if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"published/blue", "published/red"} {
+			waitOwnedSyncObject(t, ctx, destB, output+"/"+key, http.StatusOK, payload)
+			assertRGWSyncClass(t, ctx, destB, output, key, "STANDARD_IA")
+		}
+		waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
+		rgwPlacementPoolPayload(t, ctx, destination, "tc-sync-ia", "single-pipe translated STANDARD_IA", payload)
+		// The old source owner must lose object access; a missing principal or
+		// signing error must not count as the owner-translation denial.
+		denied := destA.request(t, ctx, http.MethodGet, output+"/published/blue", nil, http.StatusForbidden)
+		requireRGWUserPlacementDenied(t, denied)
+		putTagged(destB, output+"/published/reverse", "blue", payload)
+		requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destB, output + "/published/green"}, rgwAbsentObject{destB, output + "/published/untagged"}, rgwAbsentObject{destB, output + "/private/blue"}, rgwAbsentObject{destB, output + "/published/from-other-bucket"}, rgwAbsentObject{b, output + "/published/reverse"})
+		waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
+		if err := link.RemoveSyncGroup(ctx, selected); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"published/blue", "published/red"} {
+			if got := destB.request(t, ctx, http.MethodGet, output+"/"+key, nil, http.StatusOK); !bytes.Equal(got, payload) {
+				t.Fatal("single-pipe group removal changed previously replicated bytes")
+			}
+			assertRGWSyncClass(t, ctx, destB, output, key, "STANDARD_IA")
+		}
+		t.Log("single captured pipe copied prefix AND (blue OR red) to the ordinary destination owner and STANDARD_IA native pool; green/untagged/private/other-bucket/reverse paths stayed NoSuchKey, exact checkpoints completed, and owned group removal retained both replicas")
 	})
 	t.Run("ordinary_user_denial_grant", func(t *testing.T) {
 		// User mode executes as B: B can write its destination, but initially has
