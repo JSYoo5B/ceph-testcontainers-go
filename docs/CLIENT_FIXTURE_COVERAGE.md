@@ -28,7 +28,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | T07 | OSD object class 실행 환경과 slim closure | OSD의 `rados-classes` 및 native `Exec`; `cls_hello` 실제 호출·결과 검증 | 완료: `TestRADOSClientFixtures`, 실제 `Hello, fixture!` 반환 |
 | T08 | 정확한 client nonce fencing과 TTL | `TemporaryBlocklist`, `BlocklistEntries`, `Restore`; 같은 host의 다른 session 유지, ESHUTDOWN·해제·만료 | 완료: `TestClientFencing`, bridge/host |
 | R01 | RBD metadata 초기화·namespace | `InitRBDPool`, `CreateRBDNamespace`; image/namespace 분리와 RO/RW client 효과 | 완료: `TestRBDNamespaces` |
-| R02 | RBD image 기능을 테스트할 기본 구성 | R01 + client recipe: layering/clone/flatten, trash/migration/group, encryption 및 lock 테스트 | 검증 중: [client recipe](RBD_CLIENT_FIXTURES.md), `TestRBDClientFeatures` |
+| R02 | RBD image 기능을 테스트할 기본 구성 | R01 + client recipe: layering/clone/flatten, trash/migration/group, encryption 및 lock 테스트 | 완료: [client recipe](RBD_CLIENT_FIXTURES.md), `TestRBDClientFeatures`, bridge/host |
 | R03 | MGR module membership·dependency·readiness·restore | `MGRModules`, `TemporaryMGRModule`, `WaitMGRModuleReady`; always-on/사용 중 보호·native command probe | 완료: `TestMGRModules`, bridge/host |
 | R04 | RBD task queue와 mirror snapshot schedule | `rbd_support` + initialized pool/mirrored image; task 완료와 실제 자동 mirror snapshot·destination bytes | 완료: `TestMGRModules`, `TestRBDAutomaticSnapshotSchedule`, bridge/host |
 | R05 | snapshot/journal mirror, peer/daemon HA, fanout/failback/split-brain/resync, backup | `multicluster` mirror/backup API + client checkpoint; peer fault 복구와 destination data | 완료: [다중 cluster](MULTICLUSTER_POC.md), topology 추가 검증 |

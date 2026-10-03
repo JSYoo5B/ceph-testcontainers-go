@@ -2,7 +2,7 @@
 
 RBD image의 clone·flatten·trash·migration·group snapshot·암호화·lock은 소비하는 client의 API입니다. 이 모듈은 그 CRUD를 다시 감싸지 않고, replicated metadata pool·RBD 초기화·namespace·Cephx 권한·native client의 네트워크와 설정을 제공합니다. 공개 Go module에는 go-ceph나 cgo 의존성이 없습니다.
 
-참고 범위는 [go-ceph v0.41.0의 RBD](https://github.com/ceph/go-ceph/tree/v0.41.0/rbd)와 Ceph Tentacle입니다. [실행 가능한 public API 조합과 native client probe](../internal/integration/rbd_client_features_integration_test.go)의 selector는 `TestRBDClientFeatures`입니다. bridge와 host networking에서 같은 시나리오를 실행합니다. 이 문서를 추가한 단계의 검증은 CGO=0 tag compile과 Python script syntax 검사입니다. 실제 Docker 통과 여부는 [전체 완료 기준](CLIENT_FIXTURE_COVERAGE.md)의 R02 상태로 확인합니다.
+참고 범위는 [go-ceph v0.41.0의 RBD](https://github.com/ceph/go-ceph/tree/v0.41.0/rbd)와 Ceph Tentacle입니다. [실행 가능한 public API 조합과 native client probe](../internal/integration/rbd_client_features_integration_test.go)의 selector는 `TestRBDClientFeatures`입니다. Ceph 20.2.4와 Docker Linux ARM64에서 아래 8개 phase 모두 bridge 119.24초·host 118.69초로 통과했습니다. 로그는 ignored `artifacts/rgw-sync-admin-protocol-rbd-final.log`에 있으며 [전체 완료 기준](CLIENT_FIXTURE_COVERAGE.md)의 R02 상태와 연결됩니다.
 
 ## 공개 API 조합
 
@@ -72,7 +72,7 @@ host mode에서는 `Run`에 `ceph.WithHostNetwork()`를 추가합니다. `WithCl
 | `migration-commit` | MigrationPrepare/Execute/Commit; closed source writer, replicated initialized pool, source/destination layering | prepared/executed native state와 양쪽 namespace/ID, materialization 전 destination write 포함, commit 후 source와 source trash 없음, 새 destination ID와 정확한 bytes |
 | `migration-abort` | MigrationPrepare/Abort; 같은 fixture 조건 | destination 제거, 원래 source ID와 bytes 복구 |
 | `group-snapshot` | GroupCreate/ImageAdd/SnapCreate/GetInfo/Rollback; 두 format 2 image, flushed/closed writers | native complete 상태와 두 image membership·pool/snapshot ID, 두 image 변경 뒤 rollback으로 각 원래 bytes 복구, group ID 보존 |
-| `exclusive-lock` | LockAcquire/GetOwners/IsExclusiveOwner/Release; `exclusive-lock`, 독립된 두 RADOS session | held owner 한 명과 경쟁 client의 거부, release 뒤 다른 session이 실제 owner가 됨, write/flush와 같은 image ID·bytes |
+| `exclusive-lock` | LockAcquire/GetOwners/IsExclusiveOwner/Release; `exclusive-lock`, 독립된 두 RADOS session | native EROFS/EBUSY의 정확한 contention 오류·기존 owner 유지, release 뒤 다른 session이 실제 owner가 됨, write/flush와 같은 image ID·bytes |
 | `encryption-format-load` | EncryptionFormat/Load/Load2 계열의 대표 단일 image; LUKS1/LUKS2, AES256, `librbd`·`libcryptsetup`, journaling 없음 | 틀린 key 거부, generic LUKS load의 양쪽 format 감지, raw LUKS header/ciphertext, fresh loaded client의 exact bytes와 native ID |
 | `encryption-rekey` | RBD 자체에 rekey API 없음; 같은 native client에 외부 `cryptsetup` 실행 파일 추가 | 원래 image ID·size 유지, 변경이 raw header에만 한정됨, 새 fresh load 성공·old key 실패, 원래 encrypted payload의 exact bytes 보존 |
 

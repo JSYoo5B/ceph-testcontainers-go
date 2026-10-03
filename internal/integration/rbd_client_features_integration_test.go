@@ -86,9 +86,21 @@ func TestRBDClientFeatures(t *testing.T) {
 				"layering-flatten", "trash-restore-purge", "migration-commit", "migration-abort",
 				"group-snapshot", "exclusive-lock", "encryption-format-load", "encryption-rekey",
 			} {
-				t.Run(phase, func(t *testing.T) {
+				if !t.Run(phase, func(t *testing.T) {
 					args := []string{"python3", "-c", `import subprocess, sys
-subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=180, check=True)`,
+phase = sys.argv[2]
+try:
+    result = subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=180, check=False, stderr=subprocess.PIPE)
+except subprocess.TimeoutExpired:
+    print('native phase timeout: phase=' + phase + ' exit=124', file=sys.stderr)
+    sys.exit(124)
+if result.returncode != 0:
+    print('native phase failed: phase=' + phase + ' exit=' + str(result.returncode), file=sys.stderr)
+    if result.stderr:
+        # Expected lock/key denials also log on native stderr. Only failed
+        # phases forward a bounded tail; successful stdout stays exact JSON.
+        sys.stderr.write(result.stderr[-8192:].decode('utf-8', errors='replace'))
+sys.exit(result.returncode)`,
 						rbdClientFeatureScript, phase, pool, namespace, identity.Name(), identity.KeyringPath(), status.FSID, fmt.Sprint(state.ID)}
 					code, reader, err := client.Exec(ctx, args, tcexec.Multiplexed())
 					if err != nil {
@@ -107,7 +119,12 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=180, 
 						t.Fatalf("unexpected native proof: %s error=%v", output, err)
 					}
 					t.Logf("native proof: %s", output)
-				})
+				}) {
+					// A failed native phase may leave owned partial images or trash.
+					// Preserve its first error and let this fixture's cleanup remove
+					// the cluster, instead of cascading unrelated empty-list failures.
+					return
+				}
 			}
 			execCommand(t, ctx, admin, "python3", "-c", rbdClientFeatureSentinelScript, pool, "verify-and-remove")
 			after, err := cluster.PoolStatus(ctx, pool)
@@ -354,11 +371,21 @@ elif phase == "exclusive-lock":
             first_owner = owners[0]["owner"]
             try:
                 second.lock_acquire(rbd.RBD_LOCK_MODE_EXCLUSIVE)
-            except rbd.ImageBusy:
-                pass
+            except rbd.Error as error:
+                # RBD_LOCK_MODE_EXCLUSIVE installs StandardPolicy, whose peer
+                # release refusal is -EROFS in Ceph v20.2.4. A native busy lock
+                # may also report -EBUSY. Reject every other class/errno pair.
+                actual = getattr(error, 'errno', None)
+                valid = ((isinstance(error, rbd.ReadOnlyImage) and actual == errno.EROFS) or
+                         (isinstance(error, rbd.ImageBusy) and actual == errno.EBUSY))
+                if not valid:
+                    raise AssertionError('unexpected native lock contention: type=%s errno=%s' % (type(error).__name__, actual)) from None
+                proof['contention'] = {'type': type(error).__name__, 'errno': actual}
             else:
                 raise AssertionError("competing client acquired held exclusive lock")
-            assert not second.is_exclusive_lock_owner()
+            assert first.is_exclusive_lock_owner() and not second.is_exclusive_lock_owner()
+            owners = list(second.lock_get_owners())
+            assert len(owners) == 1 and owners[0]['mode'] == rbd.RBD_LOCK_MODE_EXCLUSIVE and owners[0]['owner'] == first_owner, 'contention changed the original owner'
             first.lock_release()
             assert not first.is_exclusive_lock_owner()
             second.lock_acquire(rbd.RBD_LOCK_MODE_EXCLUSIVE)

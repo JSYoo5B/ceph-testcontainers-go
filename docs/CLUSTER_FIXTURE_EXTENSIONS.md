@@ -237,6 +237,7 @@ make cluster-feature-extensions
 | CephFS subvolume authorization | PASS, 114.56s | PASS, 112.73s | native RO/RW·path/namespace 격리, revoke 후 strict permission denial·neighbor bytes/동일 key 보존, held session eviction |
 | RBD mirror scope/namespace mapping | PASS, 357.32s | PASS, 353.97s | pool/image scope 및 default/named namespace 각 5조합, 신규 journal image 자동 편입·실제 bytes, sibling namespace 보존 |
 | RBD automatic mirror snapshot schedule | PASS, 126.05s | PASS, 119.25s | MGR schedule만으로 source snapshot 증가·변경 destination bytes, 좁은 schedule 삭제와 기존 policy/head 보존 |
+| RBD native client features | PASS, 119.24s | PASS, 118.69s | native layering/trash/migration/group/lock·LUKS1/2 format/load/rekey, exact bytes·IDs·strict key denial·namespace cleanup |
 | RGW tenant/account quota | PASS, 66.28s | PASS, 68.28s | 같은 uid/bucket의 tenant 격리, account root 간 aggregate quota 실제 거부, nonpurge 보호·명시적 cleanup |
 | RGW bucket quota/reshard | PASS, 46.47s | PASS, 46.37s | 개별 quota 거부·해제 후 복구, queue 처리·11→17 idle shard, 네 payload와 sibling 정책 보존 |
 | RGW S3 client features | PASS, 51.35s | PASS, 50.37s | frozen versions·multipart bytes·ACL/policy grant/revoke, scoped lifecycle, retention/hold 거부·명시적 bypass cleanup |
