@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -257,6 +258,23 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 	if err := link.CreateSyncPipe(ctx, group, pipe); err != nil {
 		t.Fatal(err)
 	}
+	// Register after the owned pipe exists: Cleanup runs before the multisite
+	// fixture's earlier Terminate, using a fresh bounded context after failure.
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		inspect, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		attempt, cancel := context.WithTimeout(inspect, 20*time.Second)
+		state, err := link.BucketSyncStatus(attempt, group, pipe.ID, "source", "destination")
+		cancel()
+		t.Logf("cross-tenant bucket diagnostic realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, rgwSyncDiagnosticError(err))
+		rgwCrossTenantObjectStatDiagnostic(t, inspect, link.Destination, state.DestinationBucket)
+		const path = "/system_beta:tc-system-tenant-output/system/selected"
+		rgwCrossTenantS3Diagnostic(t, inspect, "alpha", secondaryAlpha, path)
+		rgwCrossTenantS3Diagnostic(t, inspect, "beta", secondaryBeta, path)
+	})
 	payload := bytes.Repeat([]byte("system mode exact cross-tenant bucket selector\n"), 1024)
 	primaryAlpha.request(t, ctx, http.MethodPut, input+"/system/selected", payload, http.StatusOK)
 	// System mode preserves the source object's ACL when no owner translation
@@ -273,4 +291,90 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		t.Fatal("cross-tenant system policy removal changed previous replica")
 	}
 	t.Log("system mode with no principal/owner translation copied exact bytes between captured buckets in different tenants and retained source object access; another prefix remained absent")
+}
+
+// Diagnostic failures never replace the test's original failure. Native output,
+// credentials, sync markers and S3 error bodies are deliberately not logged.
+func rgwSyncDiagnosticError(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "read_failed_redacted"
+	}
+}
+
+func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, identity multicluster.RGWSyncBucketIdentity) {
+	t.Helper()
+	attempt, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	args := []string{"object", "stat", "--bucket", "system_beta/tc-system-tenant-output", "--object", "system/selected"}
+	scope := "name_only"
+	if identity.Tenant == "system_beta" && identity.Name == "tc-system-tenant-output" && identity.ID != "" {
+		args = append(args, "--bucket-id", identity.ID)
+		scope = "captured_instance"
+	}
+	data, err := gateway.Admin(attempt, args...)
+	if err == nil {
+		err = attempt.Err()
+	}
+	if err != nil {
+		t.Logf("cross-tenant native object stat scope=%s command_success=false object_exists=unconfirmed status_error=%s", scope, rgwSyncDiagnosticError(err))
+		return
+	}
+	// Native v20.2.4 opens its first JSON section as object_metadata. The
+	// JSONFormatter suppresses the first section's name, so name/size are root
+	// fields (radosgw-admin.cc 9028–9030; Formatter.cc 193–229).
+	var native struct {
+		Name string  `json:"name"`
+		Size *uint64 `json:"size"`
+	}
+	decodeErr := json.Unmarshal(data, &native)
+	if decodeErr != nil || native.Name != "system/selected" || native.Size == nil {
+		t.Logf("cross-tenant native object stat scope=%s command_success=true object_exists=unconfirmed status_error=invalid_safe_fields", scope)
+		return
+	}
+	t.Logf("cross-tenant native object stat scope=%s incarnation_confirmed=%t command_success=true object_exists=true size=%d status_error=none", scope, scope == "captured_instance", *native.Size)
+}
+
+func rgwCrossTenantS3Diagnostic(t *testing.T, ctx context.Context, principal string, client s3HTTPClient, path string) {
+	t.Helper()
+	attempt, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(attempt, http.MethodGet, client.endpoint+path, nil)
+	if err != nil {
+		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, rgwSyncDiagnosticError(err))
+		return
+	}
+	client.sign(request, nil, time.Now().UTC())
+	response, err := client.http.Do(request)
+	if err != nil {
+		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, rgwSyncDiagnosticError(err))
+		return
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err := attempt.Err(); err != nil {
+		readErr = err
+	}
+	code := "none"
+	if response.StatusCode != http.StatusOK {
+		var native struct {
+			Code string `xml:"Code"`
+		}
+		code = "unrecognized_redacted"
+		if readErr == nil && xml.Unmarshal(body, &native) == nil {
+			// Only known protocol codes are printable; an unexpected upstream
+			// response cannot inject body text into diagnostic logs.
+			switch native.Code {
+			case "NoSuchKey", "NoSuchBucket", "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "RequestTimeTooSkewed", "InternalError", "ServiceUnavailable":
+				code = native.Code
+			}
+		}
+	}
+	t.Logf("cross-tenant S3 diagnostic principal=%s status=%d code=%s response_bytes=%d status_error=%s", principal, response.StatusCode, code, len(body), rgwSyncDiagnosticError(readErr))
 }
