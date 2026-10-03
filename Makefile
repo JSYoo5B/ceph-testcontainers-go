@@ -13,11 +13,16 @@ TOPOLOGY_EXTENSIONS_TIMEOUT ?= 90m
 CLUSTER_FEATURES_TIMEOUT ?= 40m
 CLUSTER_FEATURE_EXTENSIONS_TIMEOUT ?= 40m
 CLIENT_FIXTURES_TIMEOUT ?= 70m
+RGW_CLIENT_FIXTURES_TIMEOUT ?= 40m
 
 .PHONY: topology-extensions
 .PHONY: cluster-features
 .PHONY: cluster-feature-extensions
 .PHONY: client-fixtures
+.PHONY: rgw-s3-fixtures
+
+rgw-s3-fixtures:
+	CGO_ENABLED=0 go test -tags=integration,features -count=1 -v -timeout=$(RGW_CLIENT_FIXTURES_TIMEOUT) -run '^TestRGW(BucketMaintenance|S3ClientFeatures|NativeTLS)$$' ./internal/integration
 
 client-fixtures:
 	CGO_ENABLED=0 go test -tags=integration,features,multicluster -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement|CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|(HostNetwork)?RGWUserPlacementPolicy|(HostNetwork)?RGWTenantsAndAccounts|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces)$$' ./internal/integration
