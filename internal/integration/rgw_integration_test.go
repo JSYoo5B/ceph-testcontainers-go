@@ -161,6 +161,7 @@ func (s s3HTTPClient) listKeys(t *testing.T, ctx context.Context, bucket string)
 }
 
 func (s s3HTTPClient) sign(req *http.Request, payload []byte, now time.Time) {
+	now = now.UTC()
 	stamp, day := now.Format("20060102T150405Z"), now.Format("20060102")
 	payloadHash := s3Hash(payload)
 	req.Header.Set("X-Amz-Date", stamp)

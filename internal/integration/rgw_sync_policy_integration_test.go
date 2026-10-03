@@ -224,7 +224,7 @@ func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multiclust
 	var lastErr error
 	for {
 		status, lastErr = link.BucketSyncStatus(wait, group, pipe, "source", "destination")
-		if lastErr == nil && !status.CaughtUp && (status.State == "stopped" || status.State == "disabled_or_no_sources") {
+		if wait.Err() == nil && lastErr == nil && !status.CaughtUp && (status.State == "stopped" || status.State == "disabled_or_no_sources") {
 			t.Logf("native forbidden bucket policy observed before excluded write: elapsed=%s state=%s", time.Since(started).Round(time.Millisecond), status.State)
 			return
 		}
@@ -250,11 +250,13 @@ func waitOwnedSyncObject(t *testing.T, ctx context.Context, client s3HTTPClient,
 			if err == nil {
 				body, readErr := io.ReadAll(response.Body)
 				response.Body.Close()
-				if readErr == nil && response.StatusCode == status && (status == http.StatusNotFound || bytes.Equal(body, payload)) {
+				code := rgwBackendErrorCode(body)
+				matches := (status == http.StatusNotFound && code == "NoSuchKey") || (status != http.StatusNotFound && bytes.Equal(body, payload))
+				if wait.Err() == nil && readErr == nil && response.StatusCode == status && matches {
 					t.Logf("strict replica path=%s status=%d bytes=%d elapsed=%s", path, status, len(payload), time.Since(started).Round(time.Millisecond))
 					return
 				}
-				last = fmt.Sprintf("status=%d bytes=%d read_error=%v", response.StatusCode, len(body), readErr)
+				last = fmt.Sprintf("status=%d code=%s bytes=%d read_error=%v", response.StatusCode, code, len(body), readErr)
 			} else {
 				last = "HTTP request failed"
 			}
