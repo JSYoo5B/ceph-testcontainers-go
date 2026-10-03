@@ -38,6 +38,8 @@ type Container struct {
 	cephfsSetupMu         sync.Mutex
 	controlMu             sync.RWMutex
 	configMu              sync.RWMutex
+	configOverrides       map[string]*ConfigOverride
+	flagOverrides         map[string]*OSDFlagOverride
 	controlPlane          testcontainers.Container
 	settings              options
 	network               *testcontainers.DockerNetwork
@@ -65,9 +67,10 @@ type Container struct {
 // Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
-	ID        int
-	placement OSDConfig
-	purged    bool
+	ID         int
+	nativeUUID string
+	placement  OSDConfig
+	purged     bool
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
@@ -388,7 +391,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if config.Host == "" {
 		config.Host = fmt.Sprintf("osd-%d", id)
 	}
-	osd := &OSDContainer{ID: id, placement: config}
+	osd := &OSDContainer{ID: id, nativeUUID: osdUUID, placement: config}
 	c.osds[id] = osd
 	// A generated host name is known only after registration. Preserve the
 	// partial OSD descriptor if it conflicts, without moving any CRUSH bucket.

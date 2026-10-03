@@ -11,12 +11,17 @@ HOSTNETWORK_TIMEOUT ?= 40m
 TOPOLOGY_TIMEOUT ?= 40m
 TOPOLOGY_EXTENSIONS_TIMEOUT ?= 90m
 CLUSTER_FEATURES_TIMEOUT ?= 40m
+CLUSTER_FEATURE_EXTENSIONS_TIMEOUT ?= 40m
 
 .PHONY: topology-extensions
 .PHONY: cluster-features
+.PHONY: cluster-feature-extensions
 
 cluster-features:
 	CGO_ENABLED=0 go test -tags=integration,auth,features -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '^Test(PoolPolicies|ClientIdentities|RBDNamespaces|CephFSSubvolumes|(HostNetwork)?RGWUserAdministration)$$' ./internal/integration
+
+cluster-feature-extensions:
+	CGO_ENABLED=0 go test -tags=integration,features -count=1 -v -timeout=$(CLUSTER_FEATURE_EXTENSIONS_TIMEOUT) -run '^Test(ConfigurationOverrides|OSDPolicies|CephFSSubvolumeSnapshotsAndClones|(HostNetwork)?RGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$' ./internal/integration
 
 test:
 	CGO_ENABLED=0 go test ./...

@@ -353,6 +353,8 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 ## 현재 범위
 
-MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 상태와 실제 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 후속 내부 설정 API는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 별도로 정리합니다.
+MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 상태와 실제 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 서버 측 pool·Cephx·namespace·subvolume·사용자 정책은 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
+
+CephFS subvolume snapshot·비동기 clone, RGW placement·storage class, 임시 중앙 config·OSD flag와 in/out 제어도 제공합니다. 클라이언트 테스트에 필요한 서버 조건을 준비하고 원래 설정을 복원하는 API입니다. `make cluster-feature-extensions`로 실제 Linux 클라이언트와 함께 검증하며, 사용법과 복원·부분 실패 계약은 [CLUSTER_FIXTURE_EXTENSIONS.md](docs/CLUSTER_FIXTURE_EXTENSIONS.md)를 확인합니다.
 
 5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 선택적 endpoint 단절·복구도 대표 검증을 완료했습니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. 객체·image·파일 CRUD와 프로토콜 기능 검증은 소비자 클라이언트가 수행합니다. kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.

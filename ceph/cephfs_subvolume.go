@@ -616,7 +616,7 @@ func (fs *CephFSContainer) RemoveSubvolumeGroup(ctx context.Context, group *Ceph
 
 // RemoveSubvolume removes this owned directory tree and its contents without
 // --force or --retain-snapshots. Native Ceph refuses subvolumes with snapshots;
-// this first API does not manage snapshots or clones. Trash purging is async.
+// use the snapshot helpers to remove owned snapshots first. Trash purging is async.
 // Repeat removal after confirmed success is a no-op; external edits must not
 // race this operation. Its filesystem, groups and pools remain available.
 func (fs *CephFSContainer) RemoveSubvolume(ctx context.Context, subvolume *CephFSSubvolume) error {

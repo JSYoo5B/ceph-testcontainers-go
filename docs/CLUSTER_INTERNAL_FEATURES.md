@@ -69,7 +69,7 @@ if err != nil { return err }
 return fs.ResizeSubvolume(ctx, volume, 32 << 20)
 ```
 
-기존 filesystem/MDS/pool을 사용하며 새 filesystem이나 orchestrator service를 만들지 않습니다. `DataPool`은 해당 filesystem에 등록된 data pool 중에서 선택합니다. namespace isolation만으로 접근 권한이 생기거나 제한되는 것은 아니므로 Cephx caps도 함께 구성해야 합니다. quota resize의 0은 unlimited이고, `--no_shrink`로 현재 사용량 아래의 축소를 거부합니다. group은 비어 있어야 제거되며, subvolume 제거는 그 directory tree와 내용을 삭제합니다. snapshots가 있으면 native 제거가 거부되고 trash purge는 비동기입니다. snapshot/clone 관리 API는 후속 기능입니다.
+기존 filesystem/MDS/pool을 사용하며 새 filesystem이나 orchestrator service를 만들지 않습니다. `DataPool`은 해당 filesystem에 등록된 data pool 중에서 선택합니다. namespace isolation만으로 접근 권한이 생기거나 제한되는 것은 아니므로 Cephx caps도 함께 구성해야 합니다. quota resize의 0은 unlimited이고, `--no_shrink`로 현재 사용량 아래의 축소를 거부합니다. group은 비어 있어야 제거되며, subvolume 제거는 그 directory tree와 내용을 삭제합니다. snapshots가 있으면 native 제거가 거부되고 trash purge는 비동기입니다. snapshot/clone 관리 API는 [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md)에 정리합니다.
 
 ## RGW 사용자 정책
 
@@ -112,6 +112,6 @@ RGW quota의 -1은 해당 제한 해제이고 0은 실제 0 제한입니다. `En
 
 최종 Go 단위 테스트는 `CGO_ENABLED=0`으로 통과했고, 전체 단위 테스트 `-race`, 모든 integration/features/auth/hostnetwork/topology/multicluster tag의 컴파일과 `go vet`가 통과했습니다. CephFS MDS 설정 교체와 subvolume preflight의 동시 접근은 별도 race 테스트로 확인했습니다. 실패·응답 유실·복사한 handle·교체된 identity·secret redaction은 단위 테스트에서 확인하며, 실제 Docker의 실패 주입을 전수 수행한 것은 아닙니다.
 
-마지막 실행 뒤 Docker의 running/stopped container 목록은 비어 있었으며 임시 network가 남지 않았습니다. 기존 `kind` network는 유지했습니다. snapshot/clone 관리, RGW placement/storage class, 임시 daemon config·OSD flag 제어는 이 첫 내부 설정 단계에 포함하지 않습니다.
+마지막 실행 뒤 Docker의 running/stopped container 목록은 비어 있었으며 임시 network가 남지 않았습니다. 기존 `kind` network는 유지했습니다. snapshot/clone 관리, RGW placement/storage class, 임시 daemon config·OSD flag 제어는 다음 [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) 단계로 구분합니다.
 
 공식 계약: [pool 설정·quota](https://docs.ceph.com/en/tentacle/rados/operations/pools/), [Cephx capability 교체](https://docs.ceph.com/en/tentacle/rados/operations/user-management/), [RBD namespace](https://docs.ceph.com/en/tentacle/man/8/rbd/), [CephFS volumes](https://docs.ceph.com/en/tentacle/cephfs/fs-volumes/), [RGW 관리](https://docs.ceph.com/en/tentacle/radosgw/admin/).
