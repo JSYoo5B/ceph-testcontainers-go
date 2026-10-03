@@ -63,6 +63,10 @@ Forbidden에서 enabled로 바꾼 뒤 새 object는 복제되어도 이전에 �
 
 2026-10-03 Ceph 20.2.4 role slim 이미지의 Linux Docker 검증에서 기본 선택·lifecycle recipe는 bridge 584.99초, host 715.96초로 cleanup까지 통과했습니다. 두 모드 모두 exact 67,584 bytes와 11 shard checkpoint, forbidden 동안 제외·enabled 복구, prefix 변경·삭제 복제, group 제거 후 기존 bytes 및 재생성 bucket 보존을 확인했습니다. 정책 재개 후 이전 로그가 남는 구간은 recipe 안의 명시적 native replay로 처리했으며 외부 수동 조작은 하지 않았습니다. 증거는 `artifacts/client-quota-auth-sync-reconcile-native.log`의 두 named PASS입니다. 이 로그 전체는 수정 전 RBD RO probe 실패도 포함하므로 전체 PASS로 해석하지 않습니다.
 
+같은 날짜의 추가 검증에서 `TestHostNetworkMultiClusterRGWAccountRootSync`는 568.68초로 cleanup까지 통과했습니다. Same-account root의 58,368 bytes, 복제 action만 거부하는 destination `s3:ReplicateObject` Deny 동안의 native checkpoint 진행과 새 key의 absence, 정책 복원 후 새 bytes를 확인했습니다. 이어서 source tenant `system_alpha`의 object를 destination tenant `system_beta`로 복제하여 source owner의 명시적 tenant 주소로 48,128 bytes와 정확한 두 bucket instance의 11 shard checkpoint를 확인했습니다. 다른 prefix의 absence와 group 제거 후 기존 replica 보존도 통과했습니다. Bridge variant는 same-account 부분 이후 cross-tenant GET의 403 AccessDenied로 실패했습니다. 403은 object 부재를 가릴 수도 있어 원인을 확정하지 않으며, 실패 전에 exact destination instance의 native object 상태와 두 principal의 S3 응답을 수집하는 진단으로 재검증합니다.
+
+`TestMultiClusterRGWSyncTranslationFiltering`과 host variant는 모두 red object의 404 NoSuchKey로 실패했습니다. Native policy에는 같은 `published/` prefix에 priority 1의 blue→STANDARD와 priority 7의 blue OR red→STANDARD_IA가 정확히 저장되어 있었지만, Ceph 20.2.4의 tagged-object 선택 함수는 matching prefix 후보 하나에서 반복을 시작하여 앞의 동일 prefix 후보를 비교하지 않습니다. Pipe ID 순 재구성으로 blue-only pipe가 마지막에 들어가는 현재 관측과 일치합니다. [Native object parameter 선택](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket_sync.cc#L397-L446), [pipe 재구성](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket_sync.cc#L850-L867). ID 순서 변경만으로 PASS를 만들면 numeric priority의 효과를 증명하지 못하므로 해당 기준은 열어 둡니다. 이 실패 뒤에 있던 ordinary user와 same-tenant 조건도 아직 native 통과로 표시하지 않습니다. 증거는 `artifacts/client-native-final-gates.log`의 named 결과이며, 이 batch 전체는 실패했습니다.
+
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
