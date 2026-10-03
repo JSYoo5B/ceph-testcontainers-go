@@ -234,7 +234,7 @@ make cluster-feature-extensions
 | RADOS client recipe | PASS, 27.36s | PASS, 27.47s | compound atomicity, xattr/omap, cls_hello 실행, watch/notify, snapshot, 3-object striper payload |
 | CephFS 동적 data pool | PASS, 108.91s | PASS, 103.16s | live replicated/EC 등록·2 MiB 데이터/clone, unused detach, native pool 7→8 재생성 시 stale add/remove identity 거부·replacement sentinel와 전체 FSMap IDs·기존 bytes 보존 |
 | CephFS canceled/failed clone | PASS, 204.58s | PASS, 209.80s | 실제 FAILED/EISDIR 주입과 cancel, source 보호 해제, partial 명시적 정리, 같은 이름 재생성 보존, frozen bytes와 독립 clone I/O |
-| CephFS quiesce | PASS, 79.48s | PASS, 77.41s | 두 native client 쓰기 정지, outside I/O 유지, snapshot bytes·해제 후 head 비교, TTL 만료 복구·version guard |
+| CephFS quiesce | PASS, 77.45s | PASS, 77.35s | 두 client 쓰기 정지·snapshot/head·release·EXPIRED 복구, exact PID SIGSTOP의 acquisition TIMEDOUT·SIGCONT 후 held/fresh durable I/O 복구, neighbor·외부 version 보존·owned cleanup |
 | RGW user placement | PASS, 81.47s | PASS, 81.65s | required tags 거부·허용·취소, header 없는 class 선택과 실제 pool bytes, 기존 bucket/key/policy 유지 |
 | CephFS metadata/retained snapshot | PASS, 64.54s | PASS, 72.35s | metadata 덮어쓰기·제거, source 삭제 후 snapshot 보존·복구, frozen bytes와 stale handle 거부 |
 | CephFS export/distributed/random pin | PASS, 191.55s | PASS, 171.57s | export rank 선택·두 rank의 실제 group dirfrag/child subtree 분산, 16 file bytes 유지·원래 정책 복원 |
@@ -264,5 +264,7 @@ pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 
 같은 로그의 `TestMultiClusterRGWOwnedSyncPolicy`와 host variant도 각각 PASS입니다. 외부 수동 개입 없이 recipe 자체의 `bucket sync run`이 enabled 상태에서 남은 로그를 처리한 뒤 strict checkpoint를 확인했습니다. tag/priority/owner/class·user/account·cross-tenant 확장 검증은 이 기본 시나리오의 결과에 포함하지 않습니다.
 
 CephFS 동적 data pool의 보강 결과는 `artifacts/client-native-final-gates.log`의 `TestCephFSDynamicDataPools/bridge`와 `/host` named PASS입니다. 원래 세 data pool의 이름·양수 ID·default flag를 재생성 전후 정확히 비교했고, 이전 handle의 거부가 단순 detach/nonempty 오류가 아니라 native identity 변경 때문인지 확인했습니다. 다른 후속 시나리오의 결과는 이 두 PASS와 구분합니다.
+
+같은 로그의 `TestCephFSQuiesceCheckpoints`도 bridge/host 각각 PASS입니다. held libcephfs client의 정확한 PID·start ticks·argv를 확인한 뒤 SIGSTOP하여 timeout=3초, expiration=20초인 native set의 acquisition `TIMEDOUT`을 확인했습니다. 해당 상태는 consistent checkpoint로 release되지 않으며, neighbor I/O를 보존한 채 같은 process를 SIGCONT한 뒤 held session과 fresh session 모두 durable 쓰기/읽기를 복구했습니다. 이 proof는 정상 `QUIESCED`의 자연 `EXPIRED` TTL 복구와 별도로 실행합니다.
 
 위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 진행 중인 후속 native 검증의 리소스 정리는 해당 실행이 끝난 뒤 별도로 확인합니다.
