@@ -71,6 +71,12 @@ Forbidden에서 enabled로 바꾼 뒤 새 object는 복제되어도 이전에 �
 
 후속 recipe는 `priority_tags_owner_class`, `ordinary_user_denial_grant`, `tenant_system_user_isolation`의 순차 subtest로 나눴습니다. 각 subtest의 owned bucket-scoped group을 다음 subtest 전에 bounded cleanup하며 판정·pipe ID·numeric priority는 그대로 유지합니다. 특정 조건만 다시 실행하려면 `-run` 뒤에 `/ordinary_user_denial_grant` 또는 `/tenant_system_user_isolation`을 추가할 수 있습니다. 선택하지 않은 조건의 통과를 주장하지 않습니다.
 
+분리한 user·tenant 조건의 수정 전 native 실행은 bridge와 host 모두 실패했습니다. Ordinary user는 거부 동안 bucket checkpoint가 완료되지 않았으며 host 관측은 incremental/11 shards/behind 1이었습니다. Tenant system은 selected object의 404 NoSuchKey였고, 종료 전 destination metadata는 caught-up이 아니었습니다. Source GET의 EACCES는 native object sync에서 skip될 수 있으므로 checkpoint timeout을 권한 거부 proof로 처리하지 않습니다. [Native HTTP mapping](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_http_errors.h#L18-L44), [object skip와 marker](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L4479-L4517). 증거는 `artifacts/rgw-user-tenant-independent-native.log`이며 이 batch는 전체 실패입니다.
+
+User-mode source replication GET는 일반 GetObject 외에 GetObjectAcl도 요구합니다. Recipe는 처음에 ACL 권한만 부여하여 ACL GET 200과 payload GET 403 AccessDenied를 확인한 뒤, payload와 ACL 권한을 함께 허용하도록 보완했습니다. Native 거부 동안 35초 absence와 checkpoint 진행 조건은 유지합니다. 실패 시 owned group을 제거하기 전에 exact pipe/bucket checkpoint를 bounded readonly 진단으로 남깁니다. [Native replication GET 권한](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1166-L1208). 이 보완은 compile/vet 검증만 끝났으며 native 재검증 전에는 통과로 표시하지 않습니다.
+
+Native peer discovery는 destination-local source bucket policy를 사용합니다. Global data caught-up만으로 새 bucket의 정책이 local metadata에 준비됐다는 것을 증명하지 않습니다. 정확한 native bucket ID와 owned policy import를 쓰기 전에 확인하는 observer를 보강하며, metadata 준비가 위 실패의 실제 원인이었는지는 후속 실행으로 확인합니다. [Local peer discovery](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L5582-L5673).
+
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
