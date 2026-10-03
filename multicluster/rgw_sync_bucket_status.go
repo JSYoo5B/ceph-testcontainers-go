@@ -265,7 +265,9 @@ func (f *RGWMultisite) syncBucketStatus(ctx context.Context, checkpoint *rgwSync
 			return result, errors.New("RGW bucket checkpoint endpoint has not imported the exact committed period")
 		}
 	}
-	args := []string{"bucket", "sync", "status", "--bucket", syncScopedBucketName(RGWSyncPolicyScope{Bucket: checkpoint.destBucket.Name, Tenant: checkpoint.destBucket.Tenant}), "--bucket-id", checkpoint.destBucket.ID, "--source-zone-id", checkpoint.source.ID, "--source-bucket", checkpoint.sourceBucket.Name, "--source-bucket-id", checkpoint.sourceBucket.ID}
+	// Bucket sync commands use the legacy source_zone field populated by
+	// --source-zone (name or ID), not sync-policy's --source-zone-id option.
+	args := []string{"bucket", "sync", "status", "--bucket", syncScopedBucketName(RGWSyncPolicyScope{Bucket: checkpoint.destBucket.Name, Tenant: checkpoint.destBucket.Tenant}), "--bucket-id", checkpoint.destBucket.ID, "--source-zone", checkpoint.source.ID, "--source-bucket", checkpoint.sourceBucket.Name, "--source-bucket-id", checkpoint.sourceBucket.ID}
 	if checkpoint.sourceBucket.Tenant != "" {
 		args = append(args, "--source-tenant", checkpoint.sourceBucket.Tenant)
 	}

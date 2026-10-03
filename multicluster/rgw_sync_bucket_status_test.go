@@ -37,7 +37,7 @@ func TestRGWBucketSyncStatusUsesOwnedPipeInstancesAndRemoteCheckpoint(t *testing
 			native = args
 		}
 	}
-	if syncTestFlag(native, "--bucket-id") != "bucket-original" || syncTestFlag(native, "--source-bucket-id") != "bucket-original" || syncTestFlag(native, "--source-zone-id") != "source-id" || syncTestFlag(native, "--zone-id") != "dest-id" {
+	if syncTestFlag(native, "--bucket-id") != "bucket-original" || syncTestFlag(native, "--source-bucket-id") != "bucket-original" || syncTestFlag(native, "--source-zone") != "source-id" || syncTestFlag(native, "--source-zone-id") != "" || syncTestFlag(native, "--zone-id") != "dest-id" {
 		t.Fatal("checkpoint used a guessed bucket or native zone")
 	}
 	cli.bucketStatusOutput = strings.Replace(rgwReadyBucketStatus, `"behind_shards":[]`, `"behind_shards":[{"shard_id":0,"shard_marker":"secret-marker"}]`, 1)

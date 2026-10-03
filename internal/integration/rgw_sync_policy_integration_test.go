@@ -139,7 +139,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/published/after-enabled", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/published/after-enabled", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
+	reconcileOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
 	t.Log("dynamic forbidden status stopped selected future writes during 35 seconds; enabled restored exact future bytes/checkpoint and retained earlier copies")
 	// A bucket update changes future selection without committing/restarting
 	// the realm. Preserve copied objects while checking the new positive path.
@@ -149,7 +149,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/reports/after-update", payload, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/published/after-update", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusOK, payload)
-	waitOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
+	reconcileOwnedBucketCheckpoint(t, ctx, link, bucket, "prefix")
 	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/published/after-update"})
 	sourceS3.request(t, ctx, http.MethodDelete, selected+"/reports/after-update", nil, http.StatusNoContent)
 	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusNotFound, nil)
@@ -199,7 +199,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	t.Log("dynamic prefix update/deletion and owned group removal retained old replicas; recreated native bucket instance refused stale-handle removal")
 }
 
-func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipe string) {
+func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipe string) multicluster.RGWBucketSyncStatus {
 	t.Helper()
 	started := time.Now()
 	status, err := link.WaitBucketSyncReady(ctx, group, pipe, "source", "destination")
@@ -210,6 +210,36 @@ func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multiclu
 		t.Fatalf("selected native bucket checkpoint is incomplete: %+v", status)
 	}
 	t.Logf("native bucket checkpoint after exact bytes: elapsed=%s period=%s source=%s/%s:%s destination=%s/%s:%s state=%s shards=%d behind=%d", time.Since(started).Round(time.Millisecond), status.PeriodID, status.SourceBucket.Tenant, status.SourceBucket.Name, status.SourceBucket.ID, status.DestinationBucket.Tenant, status.DestinationBucket.Name, status.DestinationBucket.ID, status.State, status.Shards, status.BehindShards)
+	return status
+}
+
+func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipe string) {
+	t.Helper()
+	before, err := link.BucketSyncStatus(ctx, group, pipe, "source", "destination")
+	if err != nil || before.State != "incremental" || before.Shards <= 0 {
+		t.Fatalf("explicit bucket reconciliation requires its exact enabled incremental checkpoint: state=%s error=%v", before.State, err)
+	}
+	destination := before.DestinationBucket.Name
+	if before.DestinationBucket.Tenant != "" {
+		destination = before.DestinationBucket.Tenant + "/" + destination
+	}
+	args := []string{"bucket", "sync", "run", "--bucket", destination, "--bucket-id", before.DestinationBucket.ID, "--source-zone", before.SourceZoneID, "--source-bucket", before.SourceBucket.Name, "--source-bucket-id", before.SourceBucket.ID}
+	if before.SourceBucket.Tenant != "" {
+		args = append(args, "--source-tenant", before.SourceBucket.Tenant)
+	}
+	// Policy reactivation need not revisit every previously disabled shard.
+	// Explicitly resume existing native logs with the current policy. Do not
+	// initialize/reset markers or override filters, permissions or lock leases.
+	run, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	defer cancel()
+	if _, err := link.ZoneAdmin(run, before.Zone, args...); err != nil {
+		t.Fatalf("run exact owned bucket reconciliation: %v", err)
+	}
+	after := waitOwnedBucketCheckpoint(t, ctx, link, group, pipe)
+	if after.RealmID != before.RealmID || after.PeriodID != before.PeriodID || after.SourceZoneID != before.SourceZoneID || after.ZoneID != before.ZoneID || after.SourceBucket != before.SourceBucket || after.DestinationBucket != before.DestinationBucket {
+		t.Fatal("bucket reconciliation changed the captured zone/period/bucket identities")
+	}
+	t.Logf("explicit native bucket sync run preserved current policy/identities and caught up previous logs: prior_behind=%d", before.BehindShards)
 }
 
 func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipe string) {

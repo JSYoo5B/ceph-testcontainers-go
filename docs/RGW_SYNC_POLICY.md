@@ -55,6 +55,10 @@ Status 조회는 최대 30초, wait는 최대 4분이며 caller context가 더 �
 
 Native bucket checkpoint는 같은 source/destination tuple의 여러 pipe를 합쳐 관측할 수 있습니다. 따라서 caught-up만으로 선택한 pipe의 filter·user mode·실제 데이터 성공을 증명하지 않습니다. Test client의 writes를 동기화하고 destination의 exact bytes와 제외 대상의 absence를 별도로 확인합니다. Policy 변경이 이전 데이터의 backfill 또는 이미 복사된 object 삭제를 보장하지 않습니다.
 
+Forbidden에서 enabled로 바꾼 뒤 새 object는 복제되어도 이전에 중단한 shard 로그가 남을 수 있습니다. 이 경우 quiet fixture에서 `BucketSyncStatus`로 같은 period·source/destination bucket instance를 확인하고, `ZoneAdmin`으로 destination의 `bucket sync run`을 명시적으로 실행한 뒤 `WaitBucketSyncReady`와 실제 bytes를 다시 확인합니다. [실행 recipe](../internal/integration/rgw_sync_policy_integration_test.go)의 `reconcileOwnedBucketCheckpoint`가 이 순서를 제공합니다. Ceph 20.2.4 bucket sync 명령에는 `--source-zone`으로 캡처한 native ID를 전달합니다. `--source-zone-id`는 sync-policy 옵션이며 bucket sync의 legacy 입력을 채우지 않습니다. [Pinned CLI 입력·실행](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L10413-L10439).
+
+이 명령은 현재 matching pipe들의 기존 로그를 재생하므로 delete도 처리하며, forbidden 기간의 쓰기가 재활성화된 policy로 복제될 수 있습니다. `bucket sync init`, marker 편집, log trim, 강제 unlock을 사용하지 않습니다. Stopped 상태의 exit 0은 no-op일 수 있어 readiness 증거가 아닙니다. [Native replay](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L6260-L6513), [삭제 권한·처리](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc#L912-L978). Docker Exec의 context 취소는 실행 중인 native worker 종료를 보장하지 않습니다. 불확실한 action을 자동 재시도하지 않고 disposable fixture를 정리합니다.
+
 실행 가능한 대표 recipe는 [기본 선택·lifecycle](../internal/integration/rgw_sync_policy_integration_test.go), [tag·priority·owner/class·user mode·tenant](../internal/integration/rgw_sync_translation_integration_test.go), [account root 권한 거부·복구 및 cross-tenant system mode](../internal/integration/rgw_sync_accounts_integration_test.go)입니다. Unit/tag compile과 Docker 통과 여부는 [G05/G07 진행 상태](CLIENT_FIXTURE_COVERAGE.md)에서 구분합니다.
 
 ```sh
