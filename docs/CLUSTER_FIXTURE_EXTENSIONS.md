@@ -190,6 +190,8 @@ nil Tags는 기존 tags를 유지합니다. nonempty 목록은 정확히 교체�
 
 native CLI는 기본 `STANDARD` class를 빈 문자열로 정규화합니다. `UserInfo`는 실제 문자열을 반환하고 policy readback 비교는 두 값을 같은 기본 class로 취급합니다. tenant 사용자 CLI의 `user_id`는 `tenant$uid` 전체이며 REST AdminOps serializer의 별도 tenant/local user ID 형식과 다릅니다. user handle은 canonical identity로 모든 이후 native 작업을 수행합니다.
 
+User handle은 생성한 key와 원래 native user type/account 연결을 함께 고정합니다. 외부 CLI가 key를 유지한 채 ordinary user를 account root로 이동하거나 account 연결을 바꾸면 조회·suspend·quota·placement·제거를 거부합니다. `CreateAccountRootUser`의 handle은 생성 당시 owned account의 metadata lifetime tag와 공유 lifecycle도 확인합니다. Account를 같은 ID로 재생성하거나 제거한 뒤 이전 root handle로 새 account를 adopt하지 않습니다. 불확실한 생성 응답에서 ownership을 확인하지 못한 handle도 이후 coherent 응답만으로 소유권을 얻지 않습니다.
+
 ## CephFS quiesce checkpoint
 
 ```go

@@ -129,10 +129,6 @@ func TestRGWUserPlacementGrantsDefaultsPreservesTagsAndNativePolicy(t *testing.T
 		}
 	}
 	before := rgwUserUnrelatedPlacementPolicy(native.document)
-	// An externally changed user type is not silently reset to ordinary RGW.
-	f.user["type"] = "root"
-	f.user["account_id"] = "RGW12345678901234567"
-	before["type"], before["account_id"] = "root", "RGW12345678901234567"
 	if err := g.SetUserPlacement(t.Context(), user, p, RGWUserPlacementConfig{}); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +142,24 @@ func TestRGWUserPlacementGrantsDefaultsPreservesTagsAndNativePolicy(t *testing.T
 	after, _ = decodeRGWUser(mustRGWUserPlacementJSON(t, f.user))
 	if !slices.Equal(after.info.PlacementTags, []string{"unmatched"}) {
 		t.Fatal("old grant tags survived exact nonmatching replacement")
+	}
+}
+
+func TestRGWUserPlacementRejectsMigratedAccountIdentity(t *testing.T) {
+	g, f, p, user := newRGWUserPlacementFixture(t)
+	f.user["type"], f.user["account_id"] = "root", "RGW12345678901234567"
+	before := mustRGWUserPlacementJSON(t, f.user)
+	f.calls = nil
+	if err := g.SetUserPlacement(t.Context(), user, p, RGWUserPlacementConfig{Tags: []string{"premium"}}); err == nil {
+		t.Fatal("ordinary user's original key adopted an externally migrated account root")
+	}
+	for _, args := range f.calls {
+		if slices.Contains(args, "modify") {
+			t.Fatal("account migration reached native placement mutation")
+		}
+	}
+	if !bytes.Equal(before, mustRGWUserPlacementJSON(t, f.user)) {
+		t.Fatal("rejected account migration changed native user policy")
 	}
 }
 

@@ -25,6 +25,8 @@ type rgwAccountTestContainer struct {
 	missingTag     bool
 	failRemove     bool
 	unrelatedQuota bool
+	onUserCreate   func(map[string]any)
+	lostUserCreate bool
 }
 
 func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -44,6 +46,10 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 	code := 0
 	switch {
 	case slices.Contains(args, "metadata"):
+		if f.account == nil {
+			code, result = 2, "PRIVATE-SECRET missing account"
+			break
+		}
 		tag := f.versionTag
 		if f.missingTag {
 			tag = ""
@@ -123,7 +129,13 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 		}
 		user["display_name"] = flag("--display-name")
 		f.users[id] = user
+		if f.onUserCreate != nil {
+			f.onUserCreate(user)
+		}
 		result = user
+		if f.lostUserCreate {
+			code, result = 13, "PRIVATE-SECRET lost user creation response"
+		}
 	default:
 		id := flag("--uid")
 		user := f.users[id]
@@ -411,6 +423,149 @@ func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 	}
 	if err := g.RemoveAccount(t.Context(), a); err == nil {
 		t.Fatal("unconfirmed account deleted")
+	}
+}
+
+func TestRGWCreatedOrdinaryUserRejectsExternalAccountMigration(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(map[string]any)
+	}{
+		{"ordinary migrated to account root", func(user map[string]any) { user["type"], user["account_id"] = "root", "RGW12345678901234567" }},
+		{"ordinary associated with account", func(user map[string]any) { user["account_id"] = "RGW12345678901234567" }},
+		{"native type changed", func(user map[string]any) { user["type"] = "none" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g, f := newRGWAccountTestGateway()
+			user, err := g.CreateUser(t.Context(), RGWUserConfig{ID: "original", Tenant: "team"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.edit(f.users[user.ID()])
+			assertRGWUserAssociationRefusesOperations(t, g, f, user)
+		})
+	}
+}
+
+func TestRGWAccountRootRejectsChangedAssociationAndAccountLifetime(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*RGWAccount, *RGWUser, *rgwAccountTestContainer)
+	}{
+		{"different account", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) {
+			f.users[user.ID()]["account_id"] = "RGW76543210987654321"
+		}},
+		{"association cleared", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) { f.users[user.ID()]["account_id"] = "" }},
+		{"root converted to IAM user", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) { f.users[user.ID()]["type"] = "rgw" }},
+		{"account recreated with same ID", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) {
+			f.versionTag = "different-account-lifetime"
+		}},
+		{"account tag missing", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.missingTag = true }},
+		{"account absent", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.account = nil }},
+		{"account tenant changed", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.account["tenant"] = "other" }},
+		{"account removed through copied handle", func(a *RGWAccount, _ *RGWUser, _ *rgwAccountTestContainer) { copied := *a; copied.state.removed = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g, f := newRGWAccountTestGateway()
+			a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "original-root"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			copy := *user
+			if _, err := g.UserInfo(t.Context(), &copy); err != nil {
+				t.Fatalf("original account association was not usable: %v", err)
+			}
+			test.edit(a, user, f)
+			assertRGWUserAssociationRefusesOperations(t, g, f, &copy)
+		})
+	}
+}
+
+func assertRGWUserAssociationRefusesOperations(t *testing.T, g *RGWContainer, f *rgwAccountTestContainer, user *RGWUser) {
+	t.Helper()
+	before := mustRGWUserPlacementJSON(t, f.users[user.ID()])
+	f.calls = nil
+	if _, err := g.UserInfo(t.Context(), user); err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("changed user/account identity accepted or secret leaked: %v", err)
+	}
+	if err := g.SuspendUser(t.Context(), user, true); err == nil {
+		t.Fatal("changed user/account identity reached suspension")
+	}
+	if err := g.RemoveUser(t.Context(), user); err == nil || user.state.removed {
+		t.Fatal("changed user/account identity reached deletion or lost its handle")
+	}
+	for _, args := range f.calls {
+		if slices.Contains(args, "suspend") || slices.Contains(args, "rm") {
+			t.Fatal("failed identity check issued native mutation")
+		}
+	}
+	if !bytes.Equal(before, mustRGWUserPlacementJSON(t, f.users[user.ID()])) {
+		t.Fatal("failed identity check changed native user keys or policy")
+	}
+}
+
+func TestRGWAccountRootCapturesImmutableDescriptorAndSharedLifecycle(t *testing.T) {
+	g, f := newRGWAccountTestGateway()
+	a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Package-private descriptor mutation stands in for future public view
+	// fields: it must not redirect a user to a different account identity.
+	a.id, a.config.Tenant, a.scope.zoneID = "RGW76543210987654321", "foreign", "foreign"
+	if info, err := g.UserInfo(t.Context(), user); err != nil || info.AccountID != "RGW12345678901234567" || info.Tenant != "team" {
+		t.Fatalf("mutable account descriptor redirected the confirmed root: %v", err)
+	}
+	f.calls = nil
+	a.state.removed = true
+	if _, err := g.UserInfo(t.Context(), user); err == nil {
+		t.Fatal("copied account descriptor did not share removal state")
+	}
+}
+
+func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*rgwAccountTestContainer)
+	}{
+		{"wrong association in successful reply", func(f *rgwAccountTestContainer) {
+			f.onUserCreate = func(user map[string]any) { user["account_id"] = "RGW76543210987654321" }
+		}},
+		{"wrong type in successful reply", func(f *rgwAccountTestContainer) { f.onUserCreate = func(user map[string]any) { user["type"] = "rgw" } }},
+		{"native creation applied but reply lost", func(f *rgwAccountTestContainer) { f.lostUserCreate = true }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			g, f := newRGWAccountTestGateway()
+			a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.edit(f)
+			user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "root"})
+			if err == nil || user == nil || user.state.identity != nil {
+				t.Fatal("unconfirmed root creation adopted a native identity")
+			}
+			if _, _, err := user.Credentials(); err == nil {
+				t.Fatal("unconfirmed root creation exposed unconfirmed credentials")
+			}
+			// A later coherent reply cannot retroactively establish ownership.
+			f.users[user.ID()]["type"], f.users[user.ID()]["account_id"] = "root", a.ID()
+			f.calls = nil
+			if _, err := g.UserInfo(t.Context(), user); err == nil || len(f.calls) != 0 {
+				t.Fatal("unconfirmed creation adopted later native root credentials")
+			}
+			if err := g.RemoveUser(t.Context(), user); err == nil || len(f.calls) != 0 {
+				t.Fatal("unconfirmed creation attempted native root removal")
+			}
+		})
 	}
 }
 

@@ -49,6 +49,17 @@ type rgwUserState struct {
 	created     bool
 	removed     bool
 	nativeScope *rgwPlacementScope
+	identity    *rgwUserCreationIdentity
+}
+
+// The original native user type and account association are immutable after a
+// successful creation. An account descriptor is copied, while its lifecycle
+// state remains shared with the caller's account handle.
+type rgwUserCreationIdentity struct {
+	originalType      string
+	account           *RGWAccount
+	accountID         string
+	accountVersionTag string
 }
 
 // ID returns the canonical native ID, tenant$localID for a tenanted user.
@@ -267,8 +278,11 @@ func (g *RGWContainer) createUser(ctx context.Context, config RGWUserConfig, acc
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
 	var nativeScope *rgwPlacementScope
+	var creationAccount *RGWAccount
+	var accountVersionTag string
 	if account != nil {
-		if _, err := g.ownedAccount(ctx, account); err != nil {
+		nativeAccount, err := g.ownedAccount(ctx, account)
+		if err != nil {
 			return nil, err
 		}
 		if config.Tenant != account.config.Tenant || !rgwIAMUserName.MatchString(config.DisplayName) {
@@ -276,6 +290,8 @@ func (g *RGWContainer) createUser(ctx context.Context, config RGWUserConfig, acc
 		}
 		value := account.scope
 		nativeScope = &value
+		accountCopy := *account
+		creationAccount, accountVersionTag = &accountCopy, nativeAccount.tag
 	} else if config.Tenant != "" {
 		value, err := g.placementRuntimeScope(ctx)
 		if err != nil {
@@ -320,6 +336,7 @@ func (g *RGWContainer) createUser(ctx context.Context, config RGWUserConfig, acc
 	if account == nil && (native.info.AccountID != "" || (native.info.Type != "" && native.info.Type != "rgw")) {
 		return user, errors.New("RGW did not create an ordinary non-account identity")
 	}
+	user.state.identity = &rgwUserCreationIdentity{originalType: native.info.Type, account: creationAccount, accountID: native.info.AccountID, accountVersionTag: accountVersionTag}
 	user.accessKey, user.secretKey = native.keys[0].AccessKey, native.keys[0].SecretKey
 	if config.AdminCaps != "" {
 		if _, err := g.userCommand(ctx, user, "caps", "add", "--uid", user.id, "--caps", config.AdminCaps); err != nil {
@@ -360,7 +377,7 @@ func (g *RGWContainer) userCommand(ctx context.Context, user *RGWUser, args ...s
 }
 
 func (g *RGWContainer) ownedUser(ctx context.Context, user *RGWUser) (*rgwNativeUser, error) {
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.accessKey == "" || user.secretKey == "" {
+	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
 		return nil, errors.New("RGW user must be an active identity created in this cluster and gateway scope")
 	}
 	data, err := g.userCommand(ctx, user, "user", "info", "--uid", user.id)
@@ -376,7 +393,42 @@ func (g *RGWContainer) ownedUser(ctx context.Context, user *RGWUser) (*rgwNative
 	}) {
 		return nil, errors.New("RGW user has different credentials; refusing owned-user operation")
 	}
+	if err := g.validateUserCreationIdentity(ctx, user, native); err != nil {
+		return nil, err
+	}
 	return native, nil
+}
+
+// validateUserCreationIdentity is called with the owning cluster mutex held.
+// Use the private account lookup, since AccountInfo would acquire it again.
+func (g *RGWContainer) validateUserCreationIdentity(ctx context.Context, user *RGWUser, native *rgwNativeUser) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if user.state.identity == nil {
+		return errors.New("RGW user creation identity was not confirmed")
+	}
+	identity := user.state.identity
+	if native.info.Type != identity.originalType || native.info.AccountID != identity.accountID || native.info.Namespace != "" {
+		return errors.New("RGW user's original type or account association changed")
+	}
+	if identity.account == nil {
+		if identity.accountID != "" || (identity.originalType != "" && identity.originalType != "rgw") {
+			return errors.New("RGW ordinary user creation identity is invalid")
+		}
+		return nil
+	}
+	if identity.originalType != "root" || identity.accountID == "" || identity.accountVersionTag == "" || identity.account.id != identity.accountID {
+		return errors.New("RGW account root creation identity is invalid")
+	}
+	account, err := g.ownedAccount(ctx, identity.account)
+	if err != nil {
+		return err
+	}
+	if account.info.ID != identity.accountID || account.tag != identity.accountVersionTag || native.info.Tenant != account.info.Tenant {
+		return errors.New("RGW account root's original account lifetime or tenant changed")
+	}
+	return nil
 }
 
 func (g *RGWContainer) withOwnedUser(ctx context.Context, user *RGWUser, fn func(context.Context, *rgwNativeUser) error) error {
@@ -399,7 +451,9 @@ func (g *RGWContainer) withOwnedUser(ctx context.Context, user *RGWUser, fn func
 
 // UserInfo reads an owned user's quota, capabilities, suspension and placement
 // defaults/tags. Placement tags control new bucket placement, not object access.
-// It verifies the created key remains present before returning the policy.
+// It verifies the created key, original native user type and original account
+// association remain present before returning the policy. Account roots also
+// require the creation-owned account's native metadata lifetime to remain valid.
 func (g *RGWContainer) UserInfo(ctx context.Context, user *RGWUser) (RGWUserInfo, error) {
 	var info RGWUserInfo
 	err := g.withOwnedUser(ctx, user, func(_ context.Context, native *rgwNativeUser) error {
@@ -504,7 +558,7 @@ func (g *RGWContainer) RemoveUser(ctx context.Context, user *RGWUser) error {
 	}
 	g.owner.mu.Lock()
 	defer g.owner.mu.Unlock()
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.accessKey == "" || user.secretKey == "" {
+	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
 		return errors.New("RGW user was not created in this cluster and gateway scope")
 	}
 	if user.state.removed {

@@ -90,7 +90,7 @@ func (g *RGWContainer) SetUserPlacement(ctx context.Context, user *RGWUser, p *R
 	if !p.confirmed {
 		return errors.New("RGW placement creation has not been confirmed")
 	}
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.accessKey == "" || user.secretKey == "" {
+	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
 		return errors.New("RGW user must be an active identity created in this cluster and gateway scope")
 	}
 	if user.state.nativeScope != nil && *user.state.nativeScope != p.scope {
@@ -158,6 +158,9 @@ func (g *RGWContainer) placementOwnedUser(ctx context.Context, user *RGWUser, sc
 	}
 	if native.info.ID != user.id || !slices.ContainsFunc(native.keys, func(key rgwNativeKey) bool { return key.AccessKey == user.accessKey && key.SecretKey == user.secretKey }) {
 		return nil, errors.New("RGW user has different credentials in the actual native scope; refusing placement update")
+	}
+	if err := g.validateUserCreationIdentity(ctx, user, native); err != nil {
+		return nil, err
 	}
 	return native, nil
 }

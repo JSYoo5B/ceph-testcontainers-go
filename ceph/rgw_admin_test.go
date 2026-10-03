@@ -67,11 +67,11 @@ func rgwAdminFixture(id, secret string, suspended bool, quota RGWQuota) string {
 	if suspended {
 		suspendedInt = 1
 	}
-	return fmt.Sprintf(`{"user_id":%q,"display_name":"Testcontainers","email":"test@example.org","suspended":%d,"admin":false,"system":false,"max_buckets":1000,"caps":[],"keys":[{"access_key":"PRIVATE-ACCESS","secret_key":%q}],"user_quota":{"enabled":%t,"max_size":%d,"max_objects":%d},"bucket_quota":{"enabled":false,"max_size":-1,"max_objects":-1}}`, id, suspendedInt, secret, quota.Enabled, quota.MaxSizeBytes, quota.MaxObjects)
+	return fmt.Sprintf(`{"user_id":%q,"type":"rgw","display_name":"Testcontainers","email":"test@example.org","suspended":%d,"admin":false,"system":false,"max_buckets":1000,"caps":[],"keys":[{"access_key":"PRIVATE-ACCESS","secret_key":%q}],"user_quota":{"enabled":%t,"max_size":%d,"max_objects":%d},"bucket_quota":{"enabled":false,"max_size":-1,"max_objects":-1}}`, id, suspendedInt, secret, quota.Enabled, quota.MaxSizeBytes, quota.MaxObjects)
 }
 
 func rgwAdminOwnedTestUser(gateway *RGWContainer) *RGWUser {
-	return &RGWUser{owner: gateway.owner, scope: gateway.config, id: "test-user", accessKey: "PRIVATE-ACCESS", secretKey: "PRIVATE-SECRET", state: &rgwUserState{created: true}}
+	return &RGWUser{owner: gateway.owner, scope: gateway.config, id: "test-user", accessKey: "PRIVATE-ACCESS", secretKey: "PRIVATE-SECRET", state: &rgwUserState{created: true, identity: &rgwUserCreationIdentity{originalType: "rgw"}}}
 }
 
 func TestRGWAdminPreservesDeclaredScopeAndConnection(t *testing.T) {
