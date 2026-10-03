@@ -296,17 +296,49 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 			return err
 		}
 	}
+	// Removing a MON can elect a new leader after the membership command has
+	// committed. Keep cleanup ownership until a fresh native view confirms the
+	// remaining quorum and the control client's bootstrap addresses are copied.
+	if err := c.refreshMonitorConfigAfterRemoval(ctx, name); err != nil {
+		return fmt.Errorf("refresh control configuration after removing monitor %s: %w", name, err)
+	}
 	if name == "a" {
 		c.monitorTerminated = true
 	} else {
 		delete(c.monitors, name)
 	}
-	return c.refreshMonitorConfig(ctx)
+	return nil
 }
 
 func (c *Container) refreshMonitorConfig(ctx context.Context) error {
-	status, err := c.QuorumStatus(ctx)
-	if err != nil {
+	return c.refreshMonitorConfigAfterRemoval(ctx, "")
+}
+
+// The topology caller supplies its existing operation deadline. Only native
+// reads are retried here; membership mutation and config copying are not.
+func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
+	var status QuorumStatus
+	if err := c.poll(ctx, func() (bool, error) {
+		current, err := c.QuorumStatus(ctx)
+		if err != nil {
+			return false, err
+		}
+		if len(current.MonMap.Mons) == 0 || len(current.QuorumNames) <= len(current.MonMap.Mons)/2 {
+			return false, errors.New("monitor membership has no majority quorum")
+		}
+		if removedName != "" {
+			if slices.Contains(current.QuorumNames, removedName) {
+				return false, fmt.Errorf("removed monitor %s remains in native quorum", removedName)
+			}
+			for _, member := range current.MonMap.Mons {
+				if member.Name == removedName {
+					return false, fmt.Errorf("removed monitor %s remains in native monmap", removedName)
+				}
+			}
+		}
+		status = current
+		return true, nil
+	}); err != nil {
 		return err
 	}
 	var endpoints []string
@@ -319,16 +351,19 @@ func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 		endpoints = append(endpoints, "["+strings.Join(addresses, ",")+"]")
 	}
 	c.configMu.Lock()
+	defer c.configMu.Unlock()
 	lines := strings.Split(string(c.config), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "mon host = ") {
 			lines[i] = "mon host = " + strings.Join(endpoints, " ")
 		}
 	}
-	c.config = []byte(strings.Join(lines, "\n"))
-	config := append([]byte(nil), c.config...)
-	c.configMu.Unlock()
-	return c.cliContainer().CopyToContainer(ctx, config, "/etc/ceph/ceph.conf", 0o644)
+	config := []byte(strings.Join(lines, "\n"))
+	if err := c.cliContainer().CopyToContainer(ctx, config, "/etc/ceph/ceph.conf", 0o644); err != nil {
+		return err
+	}
+	c.config = config
+	return nil
 }
 
 // AddManager creates a named active/standby candidate and waits for its mgrmap
