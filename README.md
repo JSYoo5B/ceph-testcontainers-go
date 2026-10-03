@@ -8,6 +8,8 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 작업의 완료 기준은 testcontainers로 필요한 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지를 구성하고, 노드 추가·제거·교체·장애·복구와 실제 통신을 검증하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 클라이언트 기능은 후속 확장으로 두며 완료 기준에 포함하지 않습니다. 구성별 상태와 다음 검증 대상은 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다.
 
+여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.
+
 ## 프로젝트 구성
 
 공개 API는 `ceph/`와 `multicluster/`에 나란히 두고, 루트의 `go.mod` 하나로 관리합니다. 각 패키지의 단위 테스트·godoc 예제는 구현 옆에 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
@@ -118,6 +120,8 @@ if err != nil {
 애플리케이션 컨테이너는 클러스터보다 나중에 cleanup을 등록하여 먼저 종료합니다. `WithClient`가 복사하는 admin 키는 신뢰할 수 있는 테스트 컨테이너용입니다. 자격 증명에는 현재 테스트 클러스터 전체에 대한 권한이 있습니다.
 
 Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. 기본 bridge 모드에서는 애플리케이션 컨테이너에 `WithClient()`를 적용하여 광고된 주소에 접근합니다. MON의 `MappedPort`만으로 macOS/Windows 호스트 프로세스에서 RADOS/RBD/CephFS 전체에 연결할 수 있다고 가정하면 안 됩니다. 근거: [Ceph 네트워크 문서](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
+
+`WithSeparateClusterNetwork()`는 public bridge 외에 OSD replication·recovery용 bridge를 생성합니다. OSD만 두 network에 연결되고 `WithClient`와 MON/MGR/MDS/RGW는 public bridge를 사용합니다. `NetworkName()`과 `ClusterNetworkName()`으로 각각 조회합니다. `InterruptNetwork(ctx, container, ceph.PublicNetworkPlane)` 또는 `ceph.ClusterNetworkPlane`으로 한 endpoint를 끊고 반환된 handle의 `Restore(ctx)`로 원래 IP를 복구할 수 있습니다. host mode와 분리 옵션은 함께 사용할 수 없습니다. 계약과 검증 범위는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다.
 
 ### Host network와 네이티브 클라이언트
 

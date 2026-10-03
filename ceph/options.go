@@ -10,26 +10,27 @@ import (
 )
 
 type options struct {
-	osds             int
-	initialOSDs      []OSDConfig
-	poolReplicas     int
-	poolMinSize      int
-	poolDefaultsSet  bool
-	defaultCRUSHRoot string
-	pools            []PoolConfig
-	filesystems      []CephFSConfig
-	gateways         []RGWConfig
-	monitors         int
-	managers         int
-	blockSize        int64
-	startupTimeout   time.Duration
-	osdImage         string
-	rgwImage         string
-	mdsImage         string
-	controlImage     string
-	hostNetwork      bool
-	publicAddress    string
-	hostAddressSet   bool
+	osds                   int
+	initialOSDs            []OSDConfig
+	poolReplicas           int
+	poolMinSize            int
+	poolDefaultsSet        bool
+	defaultCRUSHRoot       string
+	pools                  []PoolConfig
+	filesystems            []CephFSConfig
+	gateways               []RGWConfig
+	monitors               int
+	managers               int
+	blockSize              int64
+	startupTimeout         time.Duration
+	osdImage               string
+	rgwImage               string
+	mdsImage               string
+	controlImage           string
+	hostNetwork            bool
+	separateClusterNetwork bool
+	publicAddress          string
+	hostAddressSet         bool
 }
 
 // WithMonitorCount selects the initial monitor count. Three enables quorum
@@ -69,6 +70,16 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
+		return nil
+	}
+}
+
+// WithSeparateClusterNetwork creates a second owned bridge for OSD replication,
+// recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
+// public bridge. Docker selects both subnets. This option requires bridge mode.
+func WithSeparateClusterNetwork() Option {
+	return func(o *options) error {
+		o.separateClusterNetwork = true
 		return nil
 	}
 }

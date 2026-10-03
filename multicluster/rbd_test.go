@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -24,7 +25,7 @@ func TestRunRBDMirrorRejectsMissingClusters(t *testing.T) {
 
 func TestRBDMirrorConfigDefaultsAndRejectsAmbiguousPool(t *testing.T) {
 	config, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: " rbd "})
-	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" || config.Mode != RBDMirrorModeSnapshot {
+	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" || config.Mode != RBDMirrorModeSnapshot || config.DaemonCount != 1 {
 		t.Fatalf("unexpected normalized configuration: %+v error=%v", config, err)
 	}
 	for _, pool := range []string{"", " ", "-rbd", "rbd/namespace", "rbd images"} {
@@ -36,6 +37,80 @@ func TestRBDMirrorConfigDefaultsAndRejectsAmbiguousPool(t *testing.T) {
 	}
 	if _, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", SourceSite: "same", DestinationSite: "same"}); err == nil {
 		t.Fatal("identical source and destination site names accepted")
+	}
+}
+
+func TestRBDMirrorDaemonConfigurationRejectsInvalidTopologyBeforeAllocation(t *testing.T) {
+	if _, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", DaemonCount: -1}); err == nil {
+		t.Fatal("negative daemon count accepted")
+	}
+	config, err := normalizeRBDMirrorConfig(RBDMirrorConfig{Pool: "rbd", DaemonCount: 3})
+	if err != nil || config.DaemonCount != 3 {
+		t.Fatalf("explicit daemon count was not preserved: %+v error=%v", config, err)
+	}
+	for _, name := range []string{"", "--flag", "has space", "path/name", "name\x00", strings.Repeat("a", 64)} {
+		if _, err := (&RBDMirror{}).AddDaemon(t.Context(), name); err == nil || strings.Contains(err.Error(), "unavailable") {
+			t.Fatalf("invalid daemon name %q was not rejected before allocation: %v", name, err)
+		}
+	}
+	for _, name := range []string{"a", "standby-1", "receiver_B", "node-27"} {
+		if err := validateRBDMirrorDaemonName(name); err != nil {
+			t.Fatalf("valid daemon name %q rejected: %v", name, err)
+		}
+	}
+}
+
+func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.T) {
+	initialContainer := &cleanupContainer{}
+	initial := &RBDMirrorDaemon{Container: initialContainer, DaemonName: "a"}
+	failedContainer := &cleanupContainer{err: errors.New("temporary cleanup failure")}
+	standby := &RBDMirrorDaemon{Container: failedContainer, DaemonName: "b"}
+	link := &RBDMirror{Container: initial, daemons: []*RBDMirrorDaemon{standby, initial}, initialDaemonName: "a"}
+	link.owned.addContainer(initial)
+	link.owned.addContainer(standby)
+	members := link.Daemons()
+	if len(members) != 2 || members[0] != initial || members[1] != standby {
+		t.Fatalf("daemon membership is not sorted: %+v", members)
+	}
+	members[0] = nil
+	if link.Daemons()[0] != initial {
+		t.Fatal("membership snapshot changed fixture membership")
+	}
+	if err := link.RemoveDaemon(t.Context(), "foreign"); err == nil || initialContainer.calls != 0 || failedContainer.calls != 0 {
+		t.Fatal("foreign daemon removal mutated owned resources")
+	}
+	if err := link.RemoveDaemon(t.Context(), "b"); err == nil || len(link.Daemons()) != 2 {
+		t.Fatal("failed removal lost tracked daemon")
+	}
+	failedContainer.err = nil
+	if err := link.RemoveDaemon(t.Context(), "b"); err != nil || len(link.Daemons()) != 1 || link.Container != initial {
+		t.Fatalf("retry did not remove only standby: %v", err)
+	}
+	if err := link.RemoveDaemon(t.Context(), "a"); err != nil || link.Container != nil || len(link.Daemons()) != 0 {
+		t.Fatalf("last daemon removal did not pause topology and clear initial handle: %v", err)
+	}
+	if err := link.Terminate(t.Context()); err != nil || initialContainer.calls != 1 || failedContainer.calls != 2 {
+		t.Fatalf("fixture cleanup repeated completed removal: initial=%d standby=%d error=%v", initialContainer.calls, failedContainer.calls, err)
+	}
+	if _, err := link.AddDaemon(t.Context(), "replacement"); err == nil {
+		t.Fatal("terminated fixture accepted daemon allocation")
+	}
+}
+
+func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
+	ctr := &cleanupContainer{err: errors.New("temporary cleanup failure")}
+	daemon := &RBDMirrorDaemon{Container: ctr, DaemonName: "a"}
+	link := &RBDMirror{Container: daemon, initialDaemonName: "a", daemons: []*RBDMirrorDaemon{daemon}}
+	link.owned.addContainer(daemon)
+	if err := link.Terminate(t.Context()); err == nil || len(link.Daemons()) != 1 {
+		t.Fatal("failed fixture cleanup lost retained membership")
+	}
+	if _, err := link.AddDaemon(t.Context(), "new"); err == nil {
+		t.Fatal("fixture cleanup failure allowed new allocation")
+	}
+	ctr.err = nil
+	if err := link.Terminate(t.Context()); err != nil || ctr.calls != 2 || link.Container != nil || len(link.Daemons()) != 0 {
+		t.Fatalf("fixture cleanup retry failed: calls=%d error=%v", ctr.calls, err)
 	}
 }
 
@@ -53,20 +128,53 @@ func TestRBDMirrorModeRejectsAmbiguousValues(t *testing.T) {
 
 type rbdEnableFixture struct {
 	testcontainers.Container
-	info  string
-	calls [][]string
+	info   string
+	status string
+	calls  [][]string
 }
 
 func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	c.calls = append(c.calls, slices.Clone(args))
 	var stream bytes.Buffer
+	data := ""
 	if len(args) > 1 && args[1] == "info" {
+		data = c.info
+	} else if len(args) > 1 && args[1] == "--admin-daemon" {
+		data = c.status
+	}
+	if data != "" {
 		header := [8]byte{byte(stdcopy.Stdout)}
-		binary.BigEndian.PutUint32(header[4:], uint32(len(c.info)))
+		binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
 		_, _ = stream.Write(header[:])
-		_, _ = stream.WriteString(c.info)
+		_, _ = stream.WriteString(data)
 	}
 	return 0, bytes.NewReader(stream.Bytes()), nil
+}
+
+func TestRBDMirrorDaemonStatusUsesNativeElectionFields(t *testing.T) {
+	ctr := &rbdEnableFixture{status: `{"pool_replayers":[{"pool":"rbd","peer":"native-peer","state":"running","instance_id":"123","leader_instance_id":"123","leader":true,"instances":["123","456"]}]}`}
+	daemon := &RBDMirrorDaemon{Container: ctr, DaemonName: "a"}
+	status, err := daemon.Status(t.Context())
+	if err != nil || len(status.PoolReplayers) != 1 {
+		t.Fatalf("native daemon status unavailable: %+v %v", status, err)
+	}
+	pool := status.PoolReplayers[0]
+	if pool.Pool != "rbd" || pool.Peer != "native-peer" || pool.State != "running" || pool.InstanceID != "123" || pool.LeaderInstanceID != "123" || !pool.Leader || !slices.Equal(pool.Instances, []string{"123", "456"}) {
+		t.Fatalf("native election state was not retained: %+v", pool)
+	}
+	if !slices.Equal(ctr.calls[0], []string{"ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status"}) {
+		t.Fatalf("status did not query owned daemon admin socket: %v", ctr.calls)
+	}
+	for _, data := range []string{`{`, `{}`, `{"pool_replayers":null}`} {
+		ctr.status = data
+		if _, err := daemon.Status(t.Context()); err == nil {
+			t.Fatalf("malformed native status %s accepted", data)
+		}
+	}
+	ctr.status = `{"pool_replayers":[]}`
+	if status, err := daemon.Status(t.Context()); err != nil || len(status.PoolReplayers) != 0 {
+		t.Fatalf("native discovery transition rejected: %+v error=%v", status, err)
+	}
 }
 
 func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {

@@ -9,6 +9,9 @@ CEPH_DEB_TAG ?= local-deb
 MULTICLUSTER_TIMEOUT ?= 60m
 HOSTNETWORK_TIMEOUT ?= 40m
 TOPOLOGY_TIMEOUT ?= 40m
+TOPOLOGY_EXTENSIONS_TIMEOUT ?= 90m
+
+.PHONY: topology-extensions
 
 test:
 	CGO_ENABLED=0 go test ./...
@@ -18,6 +21,9 @@ integration:
 
 topology:
 	CGO_ENABLED=0 go test -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '^Test(MonitorManagerTopology|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$' ./internal/integration
+
+topology-extensions:
+	CGO_ENABLED=0 go test -tags=integration,topology,multicluster,hostnetwork -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$' ./internal/integration
 
 # All tests and native go-ceph clients execute on the Docker Linux host.
 # The fixture's nested module does not add go-ceph to this library's deps.

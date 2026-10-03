@@ -22,6 +22,7 @@ type RGWMultisiteConfig struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
 	ControlImage                                  string
+	destinationZonegroup                          string
 }
 
 // RGWMultisite owns two gateways and their CLI clients. Bridge mode adds a
@@ -38,6 +39,12 @@ type RGWMultisite struct {
 	topologyMu                               sync.Mutex
 	httpNetwork                              *testcontainers.DockerNetwork
 	additionalZones                          map[string]*rgwZoneState
+	zoneGroups                               map[string]string
+	scopeMu                                  sync.RWMutex
+	groupIDs                                 map[string]string
+	groupMasters                             map[string]string
+	removedZones                             map[string]*rgwZoneRemoval
+	reloadNeeded                             map[string]bool
 	closed                                   bool
 }
 
@@ -50,6 +57,11 @@ type RGWMultisite struct {
 func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*RGWMultisite, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, err
+	}
+	for _, cluster := range []*ceph.Container{config.Source, config.Destination} {
+		if err := ensureFreshRGWCluster(ctx, cluster); err != nil {
+			return nil, err
+		}
 	}
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	if config.Realm == "" {
@@ -75,12 +87,20 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	if config.ControlImage == "" {
 		config.ControlImage = image
 	}
+	if config.destinationZonegroup == "" {
+		config.destinationZonegroup = config.Zonegroup
+	}
 	if strings.TrimSpace(config.ControlImage) == "" {
 		return nil, fmt.Errorf("RGW control image must not be empty")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
-	f := &RGWMultisite{config: config}
+	f := &RGWMultisite{config: config,
+		zoneGroups: map[string]string{config.SourceZone: config.Zonegroup, config.DestinationZone: config.destinationZonegroup},
+		groupIDs:   make(map[string]string), groupMasters: map[string]string{config.Zonegroup: config.SourceZone}}
+	if config.destinationZonegroup != config.Zonegroup {
+		f.groupMasters[config.destinationZonegroup] = config.DestinationZone
+	}
 	var bridge *testcontainers.DockerNetwork
 	var err error
 	peerNetwork := ""
@@ -149,9 +169,15 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	secondaryCommands := [][]string{
 		{"realm", "pull", "--url", sourceURL, "--access-key", systemAccess, "--secret", systemSecret},
 		{"realm", "default"},
-		rgwEndpointArgs([]string{"zone", "create", "--access-key", systemAccess, "--secret", systemSecret}, destinationURL),
-		{"period", "update", "--commit"},
 	}
+	if config.destinationZonegroup != config.Zonegroup {
+		secondaryCommands = append(secondaryCommands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", config.destinationZonegroup}, destinationURL))
+	}
+	zoneCreate := []string{"zone", "create", "--access-key", systemAccess, "--secret", systemSecret}
+	if config.destinationZonegroup != config.Zonegroup {
+		zoneCreate = append(zoneCreate, "--master")
+	}
+	secondaryCommands = append(secondaryCommands, rgwEndpointArgs(zoneCreate, destinationURL), []string{"period", "update", "--commit"})
 	for _, cmd := range secondaryCommands {
 		if _, err := f.DestinationAdmin(ctx, cmd...); err != nil {
 			return f, err
@@ -167,7 +193,12 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 			return f, err
 		}
 		f.destinationURL = destinationURL
-		for _, cmd := range [][]string{{"zone", "modify", "--endpoints", destinationURL}, {"period", "update", "--commit"}} {
+		commands := [][]string{{"zone", "modify", "--endpoints", destinationURL}}
+		if config.destinationZonegroup != config.Zonegroup {
+			commands = append(commands, []string{"zonegroup", "modify", "--endpoints", destinationURL})
+		}
+		commands = append(commands, []string{"period", "update", "--commit"})
+		for _, cmd := range commands {
 			if _, err := f.DestinationAdmin(ctx, cmd...); err != nil {
 				return f, err
 			}
@@ -204,21 +235,31 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	if err := json.Unmarshal(data, &destinationRealm); err != nil || destinationRealm.ID != f.RealmID || f.SourceZoneID == f.DestinationZoneID {
 		return f, fmt.Errorf("RGW multisite realm/zone identities do not match the requested topology")
 	}
-	if err := f.waitCommittedEndpoints(ctx); err != nil {
+	for _, zone := range f.zoneStates() {
+		data, err := f.admin(ctx, zone.client, zone.Name, "zonegroup", "get")
+		if err != nil {
+			return f, err
+		}
+		var group struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(data, &group); err != nil || group.ID == "" {
+			return f, fmt.Errorf("invalid RGW zonegroup identity")
+		}
+		f.groupIDs[zone.Zonegroup] = group.ID
+	}
+	if err := f.waitZonePeriods(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
 		return f, err
 	}
-	if config.Source.UsesHostNetwork() {
+	if config.Source.UsesHostNetwork() || config.destinationZonegroup != config.Zonegroup {
 		// Both gateways started against an earlier bootstrap period before
 		// allocated endpoints were committed. Load the verified final period
 		// before admitting S3 operations instead of racing asynchronous reload.
-		for _, gateway := range []*ceph.RGWContainer{f.Source, f.Destination} {
-			stop := 3 * time.Second
-			if err := gateway.Stop(ctx, &stop); err != nil {
-				return f, fmt.Errorf("stop RGW before final-period restart: %w", err)
-			}
-			if err := gateway.Start(ctx); err != nil {
-				return f, fmt.Errorf("restart RGW with final committed endpoints: %w", err)
-			}
+		if err := f.waitZoneMetadataBootstrap(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
+			return f, err
+		}
+		if err := f.reloadZoneGateways(ctx, f.zoneStates(), nil); err != nil {
+			return f, err
 		}
 	}
 	user, err := f.SourceAdmin(ctx, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers multicluster S3 user")
@@ -247,8 +288,8 @@ func (f *RGWMultisite) runGateway(ctx context.Context, image string, cluster *ce
 		moduleOpts = append(moduleOpts, network.WithNetwork([]string{alias}, bridge))
 	}
 	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{
-		Name: alias, Realm: f.config.Realm, Zonegroup: f.config.Zonegroup, Zone: zone,
-		Region: f.config.Zonegroup, SkipUserCreation: true,
+		Name: alias, Realm: f.config.Realm, Zonegroup: f.zoneGroupName(zone), Zone: zone,
+		Region: f.zoneGroupName(zone), SkipUserCreation: true,
 	}, append(moduleOpts, opts...)...)
 	if gateway != nil {
 		f.owned.addContainer(gateway.Container)
@@ -351,8 +392,39 @@ func (f *RGWMultisite) validatePeriodEndpoints(data []byte) error {
 }
 
 func (f *RGWMultisite) admin(ctx context.Context, client testcontainers.Container, zone string, args ...string) ([]byte, error) {
-	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", f.config.Realm, "--rgw-zonegroup", f.config.Zonegroup, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
+	return f.adminInGroup(ctx, client, f.zoneGroupName(zone), zone, args...)
+}
+
+func (f *RGWMultisite) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
+	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", f.config.Realm, "--rgw-zonegroup", group, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
 	return exec(ctx, client, append(command, args...)...)
+}
+
+func (f *RGWMultisite) zoneGroupName(zone string) string {
+	f.scopeMu.RLock()
+	defer f.scopeMu.RUnlock()
+	if group := f.zoneGroups[zone]; group != "" {
+		return group
+	}
+	return f.config.Zonegroup
+}
+
+func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
+	if len(cluster.Gateways()) != 0 {
+		return fmt.Errorf("RGW topology requires fresh storage clusters without existing gateways")
+	}
+	data, err := cluster.Ceph(ctx, "osd", "pool", "ls", "--format", "json")
+	if err != nil {
+		return fmt.Errorf("inspect RGW storage cluster: %w", err)
+	}
+	var pools []string
+	if err := json.Unmarshal(data, &pools); err != nil {
+		return fmt.Errorf("invalid RGW storage pool list: %w", err)
+	}
+	if slices.Contains(pools, ".rgw.root") {
+		return fmt.Errorf("RGW topology requires fresh storage clusters without existing RGW configuration")
+	}
+	return nil
 }
 
 // SourceAdmin executes radosgw-admin in the source cluster's realm and zone.

@@ -65,7 +65,7 @@
 
 단순히 `HEALTH_OK`인지보다 요청한 토폴로지가 만들어졌는지가 중요합니다. bootstrap에 필요한 최소 pool/auth 설정은 생성 코드에 포함하지만 정책 조합의 전수 검증은 하지 않습니다.
 
-위 대표 토폴로지의 구성·변경·연결 검증 단계는 완료했습니다. 5 MON, RGW 여러 zonegroup·zone 탈퇴, 복수 mirror daemon, 별도의 cluster/public network와 제한된 link partition은 다음 단계의 토폴로지 후보로 추적합니다. 숫자 조합 전체나 모든 네트워크 장애를 검증했다는 의미는 아닙니다. CRUSH rule, EC profile, pool replica 정책, namespace·권한·layout 등은 별도 후속 기능 과제입니다. 이미 작성한 정책 API와 PoC는 유지하되 토폴로지 작업의 완료 기준으로 삼지 않습니다.
+위 첫 대표 토폴로지에 이어 RGW 여러 zonegroup·zone 탈퇴, 복수 mirror daemon, 별도의 cluster/public network와 제한된 endpoint 단절·복구의 구성 API와 대표 PoC를 완료했습니다. 5 MON quorum, 분리 네트워크, RBD/CephFS daemon 증감·HA, RGW group 추가·zone 탈퇴와 세 서비스의 peer endpoint 복구가 통과했습니다. CephFS 20.2.4의 자동 증설 재분배 오류와 검증된 명시적 재분배 경로는 [TOPOLOGY_EXTENSIONS.md](TOPOLOGY_EXTENSIONS.md)에 구분합니다. 숫자 조합 전체나 모든 네트워크 장애를 검증했다는 의미는 아닙니다. CRUSH rule, EC profile, pool replica 정책, namespace·권한·layout 등은 별도 후속 기능 과제입니다. 이미 작성한 정책 API와 PoC는 유지하되 토폴로지 작업의 완료 기준으로 삼지 않습니다.
 
 CRUSH host/rack은 같은 Docker 엔진에서 만든 논리적 배치 도메인입니다. 실제 물리 노드나 디스크의 장애 내성을 입증하지 않습니다. CSI가 필요로 하는 pool·identity·filesystem·MDS 구성은 이 fixture의 범위에 들어가지만, krbd/NBD, kernel CephFS/FUSE, Kubernetes NodeStage/NodePublish는 별도 Linux/Kubernetes harness의 구성 과제로 둡니다.
 

@@ -34,26 +34,31 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu                sync.Mutex
-	cephfsSetupMu     sync.Mutex
-	controlMu         sync.RWMutex
-	configMu          sync.RWMutex
-	controlPlane      testcontainers.Container
-	settings          options
-	network           *testcontainers.DockerNetwork
-	manager           testcontainers.Container
-	monitors          map[string]*MonitorContainer
-	managers          map[string]*ManagerContainer
-	services          map[string]testcontainers.Container
-	filesystems       map[string]*CephFSContainer
-	gateways          map[string]*RGWContainer
-	osds              map[int]*OSDContainer
-	config            []byte
-	keyring           []byte
-	portLeases        []*hostPortLease
-	closed            bool
-	monitorTerminated bool
-	networkRemoved    bool
+	mu                    sync.Mutex
+	cephfsSetupMu         sync.Mutex
+	controlMu             sync.RWMutex
+	configMu              sync.RWMutex
+	controlPlane          testcontainers.Container
+	settings              options
+	network               *testcontainers.DockerNetwork
+	clusterNetwork        *testcontainers.DockerNetwork
+	publicSubnet          string
+	clusterSubnet         string
+	clusterNetworkRemoved bool
+	interruptions         map[string]*NetworkInterruption
+	manager               testcontainers.Container
+	monitors              map[string]*MonitorContainer
+	managers              map[string]*ManagerContainer
+	services              map[string]testcontainers.Container
+	filesystems           map[string]*CephFSContainer
+	gateways              map[string]*RGWContainer
+	osds                  map[int]*OSDContainer
+	config                []byte
+	keyring               []byte
+	portLeases            []*hostPortLease
+	closed                bool
+	monitorTerminated     bool
+	networkRemoved        bool
 }
 
 // OSDContainer is one storage daemon backed by a container-local sparse file.
@@ -83,6 +88,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.hostAddressSet && !settings.hostNetwork {
 		return nil, errors.New("WithHostAddress requires WithHostNetwork")
 	}
+	if settings.hostNetwork && settings.separateClusterNetwork {
+		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
+	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
@@ -101,6 +109,14 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer), gateways: make(map[string]*RGWContainer)}
+	if settings.separateClusterNetwork {
+		if c.clusterNetwork, err = network.New(ctx); err != nil {
+			return c, fmt.Errorf("create Ceph replication network: %w", err)
+		}
+		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
+			return c, err
+		}
+	}
 	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
@@ -181,6 +197,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithEnv(map[string]string{
 				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
 				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
+				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
 			}),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
@@ -379,7 +396,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		return osd, fmt.Errorf("place registered osd.%d: %w", id, err)
 	}
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
-	ctr, err := testcontainers.Run(ctx, c.settings.osdImage,
+	osdOptions := []testcontainers.ContainerCustomizer{
 		c.WithClient(), testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{
 			"CEPH_OSD_ID": strconv.Itoa(id), "CEPH_OSD_UUID": osdUUID, "CEPH_OSD_HOST": config.Host,
@@ -387,7 +404,11 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		}),
 		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", keyring, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", fmt.Sprintf("/var/run/ceph/ceph-osd.%d.asok", id)}).WithStartupTimeout(c.settings.startupTimeout)),
-	)
+	}
+	if c.clusterNetwork != nil {
+		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
+	}
+	ctr, err := testcontainers.Run(ctx, c.settings.osdImage, osdOptions...)
 	if ctr != nil {
 		osd.Container = ctr
 	}
@@ -528,6 +549,15 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	defer c.mu.Unlock()
 	c.closed = true
 	var errs []error
+	blockedNetworks := make(map[string]bool)
+	// Restore caller-owned clients as well as owned daemons before removing any
+	// network. A failed restore remains retryable through its interruption handle.
+	for _, interruption := range c.interruptions {
+		if err := interruption.Restore(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("restore interrupted network: %w", err))
+			blockedNetworks[interruption.NetworkName] = true
+		}
+	}
 	for _, lease := range c.portLeases {
 		if err := lease.Release(ctx); err != nil {
 			errs = append(errs, err)
@@ -597,7 +627,14 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
-	if c.network != nil && !c.networkRemoved {
+	if c.clusterNetwork != nil && !c.clusterNetworkRemoved && !blockedNetworks[c.clusterNetwork.Name] {
+		if err := c.clusterNetwork.Remove(ctx); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			c.clusterNetworkRemoved = true
+		}
+	}
+	if c.network != nil && !c.networkRemoved && !blockedNetworks[c.network.Name] {
 		if err := c.network.Remove(ctx); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {

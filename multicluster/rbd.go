@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,8 +28,8 @@ const (
 	RBDMirrorModeJournal  RBDMirrorMode = "journal"
 )
 
-// RBDMirrorConfig connects two existing clusters through one destination-side
-// rbd-mirror daemon. Both clusters must already contain an initialized RBD Pool.
+// RBDMirrorConfig connects two existing clusters through destination-side
+// rbd-mirror daemons. Both clusters must already contain an initialized RBD Pool.
 // SourceSite and DestinationSite default to "source" and "destination".
 type RBDMirrorConfig struct {
 	Source          *ceph.Container
@@ -39,15 +40,98 @@ type RBDMirrorConfig struct {
 	// Mode defaults to snapshot and is used by EnableImage. Both modes keep
 	// pool scope=image so unrelated images are not automatically mirrored.
 	Mode RBDMirrorMode
+	// DaemonCount defaults to one. Multiple daemons share the pool's receiving
+	// peer and participate in Ceph's native leader election and image assignment.
+	DaemonCount int
 }
 
-// RBDMirror owns its daemon and setup CLI containers, not the Ceph clusters.
-// Stop and Start control the daemon; Terminate removes all owned containers.
+// RBDMirror owns its daemons and setup CLI containers, not the Ceph clusters.
+// The embedded Container is the initial daemon's compatibility handle. Its
+// Stop and Start affect only that daemon. Removing it clears the handle without
+// assigning another daemon. Use Daemons for current membership. Terminate
+// removes all owned runtime containers, including partially created or
+// previously removed daemons.
 type RBDMirror struct {
 	testcontainers.Container
 	sourceClient, destinationClient testcontainers.Container
 	config                          RBDMirrorConfig
 	owned                           resources
+	mu                              sync.Mutex
+	closed                          bool
+	image                           string
+	daemonOpts                      []testcontainers.ContainerCustomizer
+	daemons                         []*RBDMirrorDaemon
+	initialDaemonName               string
+}
+
+// RBDMirrorDaemon is one destination-side rbd-mirror process. Every daemon has
+// a distinct Ceph user; receiving peer credentials remain in the destination's
+// config-key store. Stop and Start retain its identity and native pool state.
+type RBDMirrorDaemon struct {
+	testcontainers.Container
+	DaemonName string
+	ClientName string
+	mu         sync.Mutex
+	terminated bool
+}
+
+// RBDMirrorDaemonStatus is the native daemon admin socket's pool membership and
+// election state. A running container can report no pool replayers until Ceph
+// completes discovery; callers must inspect the intended pool and peer.
+type RBDMirrorDaemonStatus struct {
+	PoolReplayers []RBDMirrorPoolReplayerStatus `json:"pool_replayers"`
+}
+
+// RBDMirrorPoolReplayerStatus describes one pool/peer replayer. Image replay is
+// distributed among instances; being a pool leader does not mean replaying all
+// images locally.
+type RBDMirrorPoolReplayerStatus struct {
+	Pool             string   `json:"pool"`
+	Peer             string   `json:"peer"`
+	State            string   `json:"state"`
+	InstanceID       string   `json:"instance_id"`
+	LeaderInstanceID string   `json:"leader_instance_id"`
+	Leader           bool     `json:"leader"`
+	Instances        []string `json:"instances"`
+}
+
+// Status queries native rbd-mirror election state through this daemon's admin
+// socket. It fails when the process is stopped or its socket is unavailable.
+func (d *RBDMirrorDaemon) Status(ctx context.Context) (*RBDMirrorDaemonStatus, error) {
+	if d == nil || d.Container == nil {
+		return nil, errors.New("RBD mirror daemon is unavailable")
+	}
+	data, err := exec(ctx, d.Container, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
+	if err != nil {
+		return nil, fmt.Errorf("read RBD mirror daemon %s status: %w", d.DaemonName, err)
+	}
+	var status RBDMirrorDaemonStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return nil, fmt.Errorf("decode RBD mirror daemon %s status: %w", d.DaemonName, err)
+	}
+	if status.PoolReplayers == nil {
+		return nil, fmt.Errorf("RBD mirror daemon %s returned no pool_replayers status array", d.DaemonName)
+	}
+	return &status, nil
+}
+
+// Terminate removes this daemon's container. Successful removals are remembered
+// so fixture cleanup does not repeat hooks; failed removals remain retryable.
+// Peer, CephX and image configuration belongs to the disposable clusters.
+func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.terminated || d.Container == nil {
+		return nil
+	}
+	if err := ignoreMissing(d.Container.Terminate(ctx, opts...)); err != nil {
+		return err
+	}
+	d.terminated = true
+	return nil
 }
 
 // RunRBDMirror enables image-mode mirroring on both pools, imports a receiving
@@ -65,6 +149,9 @@ type RBDMirror struct {
 // configuration, credentials and entrypoint.
 // Both clusters must use the same network mode. Host-mode clusters share the
 // Docker host namespace; bridge-mode daemons attach to both cluster networks.
+// Initial daemon names are a through z, then node-27 and onward. A process's
+// socket readiness does not guarantee pool discovery or leader convergence;
+// query the daemon Status for native election state.
 func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*RBDMirror, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -73,7 +160,7 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 	if err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
-	mirror := &RBDMirror{config: config}
+	mirror := &RBDMirror{config: config, image: image, daemonOpts: slices.Clone(opts)}
 	sourceClient, err := runClient(ctx, image, config.Source, config.Destination.NetworkName(), &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
@@ -99,14 +186,61 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 		return mirror, err
 	}
 
+	for index := range config.DaemonCount {
+		name := fmt.Sprintf("node-%d", index+1)
+		if index < 26 {
+			name = string(rune('a' + index))
+		}
+		if _, err := mirror.AddDaemon(ctx, name); err != nil {
+			return mirror, err
+		}
+	}
+	return mirror, nil
+}
+
+// Daemons returns a membership snapshot of this fixture's current daemons,
+// including stopped containers. It does not discover daemons owned by another
+// fixture, even if they replay the same pool.
+func (m *RBDMirror) Daemons() []*RBDMirrorDaemon {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	daemons := slices.Clone(m.daemons)
+	slices.SortFunc(daemons, func(a, b *RBDMirrorDaemon) int { return strings.Compare(a.DaemonName, b.DaemonName) })
+	return daemons
+}
+
+// AddDaemon adds another process using the existing receiving peer, without
+// rebootstrap or image mutation. Construction customizers apply to every daemon;
+// opts are appended for this daemon only. A non-nil result on error is tracked
+// for RemoveDaemon or fixture Terminate, including partial startup failures.
+func (m *RBDMirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*RBDMirrorDaemon, error) {
+	if m == nil {
+		return nil, errors.New("RBD mirror fixture is unavailable")
+	}
+	if err := validateRBDMirrorDaemonName(name); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.sourceClient == nil || m.destinationClient == nil || m.config.Destination == nil {
+		return nil, errors.New("RBD mirror fixture is unavailable or terminated")
+	}
+	for _, daemon := range m.daemons {
+		if daemon.DaemonName == name {
+			return nil, fmt.Errorf("RBD mirror daemon %q already exists", name)
+		}
+	}
 	clientName := "client.rbd-mirror.tc-" + uuid.NewString()
-	keyring, err := config.Destination.Ceph(ctx, "auth", "get-or-create", clientName,
+	keyring, err := m.config.Destination.Ceph(ctx, "auth", "get-or-create", clientName,
 		"mon", "profile rbd-mirror", "osd", "profile rbd")
 	if err != nil {
-		return mirror, fmt.Errorf("create RBD mirror daemon credentials: %w", err)
+		return nil, fmt.Errorf("create RBD mirror daemon credentials: %w", err)
 	}
 	daemonOpts := []testcontainers.ContainerCustomizer{
-		config.Destination.WithClient(),
+		m.config.Destination.WithClient(),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader: bytes.NewReader(keyring), ContainerFilePath: "/etc/ceph/rbd-mirror.keyring", FileMode: 0o600,
 		}),
@@ -115,19 +249,67 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false"),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/tmp/rbd-mirror.asok"}).WithStartupTimeout(time.Minute)),
 	}
-	if !config.Source.UsesHostNetwork() {
-		daemonOpts = append(daemonOpts, network.WithNetworkName(nil, config.Source.NetworkName()))
+	if !m.config.Source.UsesHostNetwork() {
+		daemonOpts = append(daemonOpts, network.WithNetworkName(nil, m.config.Source.NetworkName()))
 	}
+	daemonOpts = append(daemonOpts, m.daemonOpts...)
 	daemonOpts = append(daemonOpts, opts...)
-	daemon, err := testcontainers.Run(ctx, image, daemonOpts...)
-	if daemon != nil {
-		mirror.Container = daemon
-		mirror.owned.addContainer(daemon)
+	ctr, err := testcontainers.Run(ctx, m.image, daemonOpts...)
+	var daemon *RBDMirrorDaemon
+	if ctr != nil {
+		daemon = &RBDMirrorDaemon{Container: ctr, DaemonName: name, ClientName: clientName}
+		m.daemons = append(m.daemons, daemon)
+		m.owned.addContainer(daemon)
+		if m.initialDaemonName == "" {
+			m.initialDaemonName = name
+			m.Container = daemon
+		}
 	}
 	if err != nil {
-		return mirror, fmt.Errorf("run destination RBD mirror daemon: %w", err)
+		return daemon, fmt.Errorf("run destination RBD mirror daemon: %w", err)
 	}
-	return mirror, nil
+	return daemon, nil
+}
+
+// RemoveDaemon terminates a daemon owned by this fixture. Removing the last
+// process deliberately pauses replication while retaining peer and image state;
+// AddDaemon can resume it. Failed cleanup retains membership for a retry. The
+// legacy embedded handle is cleared when the initial daemon is removed.
+func (m *RBDMirror) RemoveDaemon(ctx context.Context, name string, opts ...testcontainers.TerminateOption) error {
+	if m == nil {
+		return errors.New("RBD mirror fixture is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return errors.New("RBD mirror fixture is terminated")
+	}
+	for i, daemon := range m.daemons {
+		if daemon.DaemonName != name {
+			continue
+		}
+		if err := daemon.Terminate(ctx, opts...); err != nil {
+			return fmt.Errorf("remove RBD mirror daemon %s: %w", name, err)
+		}
+		m.daemons = slices.Delete(m.daemons, i, i+1)
+		if name == m.initialDaemonName {
+			m.Container = nil
+		}
+		return nil
+	}
+	return fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name)
+}
+
+func validateRBDMirrorDaemonName(name string) error {
+	if name == "" || len(name) > 63 || name[0] == '-' {
+		return errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen")
+	}
+	for _, char := range name {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens")
+		}
+	}
+	return nil
 }
 
 // Rebootstrap creates or refreshes this link's destination receiving peer using
@@ -137,7 +319,12 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 // but does not populate an existing peer's client name or receiving direction.
 // The caller owns the policy for quiescing writes and resynchronizing images.
 func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
-	if m == nil || m.sourceClient == nil || m.destinationClient == nil {
+	if m == nil {
+		return errors.New("RBD mirror setup clients are unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
 	config := m.config
@@ -352,10 +539,27 @@ func (m *RBDMirror) EnableImage(ctx context.Context, imageName string) error {
 // Terminate removes the daemon and setup clients while preserving both clusters,
 // their image data, and the mirroring/auth configuration written during setup.
 func (m *RBDMirror) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	return m.owned.terminate(ctx, opts...)
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	if err := m.owned.terminate(ctx, opts...); err != nil {
+		return err
+	}
+	m.daemons = nil
+	m.Container = nil
+	return nil
 }
 
 func normalizeRBDMirrorConfig(config RBDMirrorConfig) (RBDMirrorConfig, error) {
+	if config.DaemonCount < 0 {
+		return config, errors.New("RBD mirror daemon count must not be negative")
+	}
+	if config.DaemonCount == 0 {
+		config.DaemonCount = 1
+	}
 	config.Pool = strings.TrimSpace(config.Pool)
 	config.SourceSite = strings.TrimSpace(config.SourceSite)
 	config.DestinationSite = strings.TrimSpace(config.DestinationSite)

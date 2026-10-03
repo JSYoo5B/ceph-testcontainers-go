@@ -6,6 +6,11 @@ mon_ip=${CEPH_PUBLIC_ADDRESS:-$(hostname -i | awk '{print $1}')}
 mon_v2=${CEPH_MON_PORT_V2:-3300}
 mon_v1=${CEPH_MON_PORT_V1:-6789}
 public_config=
+network_config=
+if [ -n "${CEPH_PUBLIC_NETWORK:-}" ]; then
+    network_config="public network = ${CEPH_PUBLIC_NETWORK}
+cluster network = ${CEPH_CLUSTER_NETWORK}"
+fi
 if [ -n "${CEPH_PUBLIC_ADDRESS:-}" ]; then
     public_config="public addr = ${mon_ip}
 cluster addr = ${mon_ip}"
@@ -17,6 +22,7 @@ fsid = ${CEPH_FSID}
 mon host = [v2:${mon_ip}:${mon_v2},v1:${mon_ip}:${mon_v1}]
 mon initial members = a
 ${public_config}
+${network_config}
 auth cluster required = cephx
 auth service required = cephx
 auth client required = cephx
