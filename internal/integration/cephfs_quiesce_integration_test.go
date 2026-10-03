@@ -131,21 +131,105 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 		t.Fatal("outside version edit was adopted by release")
 	}
 	cephCommand(t, ctx, cluster, "fs", "quiesce", filesystem, "--set-id", changed.ID(), "--release", "--if-version", strconv.FormatUint(native.Version, 10), "--await-for", "20")
+	// Acquisition timeout is distinct from EXPIRED TTL. This process keeps an
+	// owned RW file descriptor mounted, then stops itself before native cap
+	// revocation. MDS and all other client processes remain live.
+	quiescePhase(t, ctx, client, "timeout")
+	held := quiesceWait(t, ctx, client, "timeout-ready")
+	if held.PID <= 1 || held.StartTicks == "" {
+		t.Fatalf("held native process lacks an immutable identity: %+v", held)
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		if err := quiesceHeldProcess(cleanup, client, held, filesystem, volumes[0].Path, "CONT"); err != nil {
+			t.Errorf("resume owned native client during cleanup: %v", err)
+		}
+	})
+	stoppedCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+	for {
+		if err := quiesceHeldProcess(stoppedCtx, client, held, filesystem, volumes[0].Path, "STOPPED"); err == nil {
+			break
+		}
+		select {
+		case <-stoppedCtx.Done():
+			stop()
+			t.Fatal("owned native client did not enter SIGSTOP", stoppedCtx.Err())
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+	stop()
+	requestCtx, stop := context.WithTimeout(ctx, 20*time.Second)
+	timedOut, requestErr := fs.QuiesceSubvolumes(requestCtx, volumes[:1], ceph.CephFSQuiesceConfig{Timeout: 3 * time.Second, Expiration: 20 * time.Second})
+	stop()
+	if requestErr == nil || timedOut == nil {
+		t.Fatalf("unresponsive native client did not refuse a consistent checkpoint: handle=%v error=%v", timedOut, requestErr)
+	}
+	timeoutCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+	for {
+		native, err = timedOut.Status(timeoutCtx)
+		if err == nil && native.State == "TIMEDOUT" {
+			break
+		}
+		if err == nil && native.State != "QUIESCING" {
+			stop()
+			t.Fatalf("native acquisition reached %s instead of TIMEDOUT", native.State)
+		}
+		select {
+		case <-timeoutCtx.Done():
+			stop()
+			t.Fatalf("native TIMEDOUT state missing: %+v error=%v", native, err)
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+	stop()
+	if native.Version == 0 || native.Timeout != 3 || native.Expiration != 20 || !slices.Equal(native.Members, []string{"file:" + volumes[0].Path}) {
+		t.Fatalf("native timeout did not preserve the exact owned set: %+v", native)
+	}
+	if err := timedOut.Release(ctx); err == nil {
+		t.Fatal("TIMEDOUT checkpoint accepted consistent release")
+	}
+	if err := quiesceHeldProcess(ctx, client, held, filesystem, volumes[0].Path, "STOPPED"); err != nil {
+		t.Fatal("timed-out client unexpectedly resumed before the controlled recovery", err)
+	}
+	fencingExec(t, ctx, client, []string{"python3", "-c", cephFSQuiesceTimeoutVerifyScript, filesystem, volumes[0].Path, volumes[1].Path, volumes[2].Path, "neighbor"})
+	if err := quiesceHeldProcess(ctx, client, held, filesystem, volumes[0].Path, "CONT"); err != nil {
+		t.Fatal(err)
+	}
+	if resumed := quiesceWait(t, ctx, client, "timeout-resumed"); resumed.Completed != 1 || !resumed.OutsideOK {
+		t.Fatalf("held native session did not recover durable I/O: %+v", resumed)
+	}
 	quiescePhase(t, ctx, client, "finish")
 	quiesceWait(t, ctx, client, "finish")
+	fencingExec(t, ctx, client, []string{"python3", "-c", cephFSQuiesceTimeoutVerifyScript, filesystem, volumes[0].Path, volumes[1].Path, volumes[2].Path, "recovery"})
 	for _, volume := range volumes {
 		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Log("two independent native clients: durable writes paused, outside subvolume I/O retained, frozen snapshot bytes and changed heads verified, explicit versioned release and natural TTL recovery, outside version edit preserved, owned cleanup")
+	t.Log("two independent native clients: durable writes paused, outside subvolume I/O retained, frozen snapshot bytes and changed heads verified, explicit versioned release and natural EXPIRED TTL recovery; exact held-process SIGSTOP caused native acquisition TIMEDOUT, neighbor stayed healthy, SIGCONT and fresh durable I/O recovered; outside version edit preserved, owned cleanup")
 }
 
 type quiesceIOState struct {
-	Phase     string `json:"phase"`
-	Completed int    `json:"completed"`
-	OutsideOK bool   `json:"outside_ok"`
-	Error     string `json:"error"`
+	Phase      string `json:"phase"`
+	Completed  int    `json:"completed"`
+	OutsideOK  bool   `json:"outside_ok"`
+	Error      string `json:"error"`
+	PID        int    `json:"pid"`
+	StartTicks string `json:"start_ticks"`
+}
+
+func quiesceHeldProcess(ctx context.Context, client testcontainers.Container, held quiesceIOState, filesystem, root, action string) error {
+	code, reader, err := client.Exec(ctx, []string{"python3", "-c", cephFSQuiesceProcessControlScript,
+		strconv.Itoa(held.PID), held.StartTicks, filesystem, root, action}, tcexec.Multiplexed())
+	if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil || code != 0 {
+		return fmt.Errorf("native process %s: exit=%d error=%v output=%s", action, code, err, data)
+	}
+	return nil
 }
 
 func quiescePhase(t *testing.T, ctx context.Context, client testcontainers.Container, phase string) {
@@ -184,14 +268,14 @@ func quiesceWait(t *testing.T, parent context.Context, client testcontainers.Con
 	}
 }
 
-const cephFSQuiesceIOScript = `import cephfs, json, os, sys, threading, time, traceback
+const cephFSQuiesceIOScript = `import cephfs, json, os, signal, sys, threading, time, traceback
 filesystem, root_a, root_b, outside = sys.argv[1:]
 deadline=threading.Timer(250, lambda: os._exit(124)); deadline.daemon=True; deadline.start()
 def session():
     fs=cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id='admin')
     fs.conf_set('client_mount_timeout','20'); fs.mount(filesystem_name=filesystem.encode()); return fs
-def emit(phase,completed=0,outside_ok=False,error=''):
-    with open('/tmp/tc-quiesce-state.new','w') as f: json.dump(dict(phase=phase,completed=completed,outside_ok=outside_ok,error=error),f)
+def emit(phase,completed=0,outside_ok=False,error='',pid=0,start_ticks=''):
+    with open('/tmp/tc-quiesce-state.new','w') as f: json.dump(dict(phase=phase,completed=completed,outside_ok=outside_ok,error=error,pid=pid,start_ticks=start_ticks),f)
     os.replace('/tmp/tc-quiesce-state.new','/tmp/tc-quiesce-state')
 def command(expected):
     while True:
@@ -231,11 +315,81 @@ try:
         for thread in threads: thread.join(35)
         assert not errors,str(errors); assert len(completed)==2,'writes did not resume'
         emit(finished,len(completed),True)
+    command('timeout')
+    # Keep the fault scoped to the source session. In particular, a stopped
+    # observer must not retain unrelated neighbor directory capabilities.
+    sessions[1].shutdown(); observer.shutdown(); sessions=sessions[:1]
+    held=sessions[0].open(root_a+'/held-data',os.O_CREAT|os.O_EXCL|os.O_RDWR,0o600)
+    try:
+        assert sessions[0].write(held,original,0)==len(original); sessions[0].fsync(held,0)
+        with open('/proc/self/stat') as f: start_ticks=f.read().rsplit(')',1)[1].split()[19]
+        emit('timeout-ready',pid=os.getpid(),start_ticks=start_ticks)
+        os.kill(os.getpid(),signal.SIGSTOP)
+        assert sessions[0].read(held,0,len(original)+1)==original,'held pre-timeout bytes changed'
+        assert sessions[0].write(held,changed,0)==len(changed); sessions[0].fsync(held,0)
+        assert sessions[0].read(held,0,len(changed)+1)==changed,'held session failed post-timeout write'
+    finally: sessions[0].close(held)
+    observer=session()
+    fd=observer.open(outside+'/timeout-control',os.O_RDONLY)
+    try: assert observer.read(fd,0,1024)==b'live independent neighbor'
+    finally: observer.close(fd)
+    emit('timeout-resumed',1,True)
     command('finish')
     for fs in sessions+[observer]: fs.shutdown()
     emit('finish')
 except BaseException:
     error=traceback.format_exc(); print(error,flush=True); emit('error',error=error); raise
+`
+
+// Native quiesce acquires cap-related locks; an open RW descriptor in a stopped
+// client cannot acknowledge their revocation. Exact PID/start time/argv guards
+// prevent signaling an unrelated process, including after PID reuse.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mds/MDCache.cc#L13968-L14034
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mds/QuiesceDbManager.cc#L1042-L1050
+const cephFSQuiesceProcessControlScript = `import os, signal, sys
+pid,start_ticks,filesystem,root,action=sys.argv[1:]
+assert int(pid)>1 and action in ('CONT','STOPPED')
+try:
+    with open('/proc/'+pid+'/stat') as f: fields=f.read().rsplit(')',1)[1].split()
+except FileNotFoundError:
+    assert action=='CONT','stopped process disappeared'
+else:
+    assert fields[19]==start_ticks,'native process PID was reused'
+    if fields[0]=='Z':
+        assert action=='CONT','stopped process terminated'
+    else:
+        with open('/proc/'+pid+'/cmdline','rb') as f: args=f.read().split(b'\0')
+        assert len(args)>=5 and args[1]==b'/tmp/tc-quiesce.py' and args[2]==filesystem.encode() and args[3]==root.encode(),'native process argv ownership changed'
+        if action=='STOPPED': assert fields[0] in ('T','t'),'native process is not stopped'
+        else: os.kill(int(pid),signal.SIGCONT)
+print(action)
+`
+
+const cephFSQuiesceTimeoutVerifyScript = `import cephfs, hashlib, json, os, sys, threading
+filesystem,root_a,root_b,outside,phase=sys.argv[1:]
+deadline=threading.Timer(40,lambda:os._exit(124)); deadline.daemon=True; deadline.start()
+fs=cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf',auth_id='admin')
+fs.conf_set('client_mount_timeout','15'); fs.conf_set('rados_osd_op_timeout','10'); fs.mount(filesystem_name=filesystem.encode())
+def read(path,expected):
+    fd=fs.open(path,os.O_RDONLY)
+    try: assert fs.read(fd,0,len(expected)+1)==expected,'native timeout recovery bytes differ'
+    finally: fs.close(fd)
+def write(path,data):
+    fd=fs.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+    try: assert fs.write(fd,data,0)==len(data); fs.fsync(fd,0)
+    finally: fs.close(fd)
+try:
+    control=b'live independent neighbor'
+    if phase=='neighbor': write(outside+'/timeout-control',control)
+    elif phase=='recovery':
+        original=bytes(range(256))*256; changed=bytes(x^0x5a for x in range(256))*256
+        read(root_a+'/data',original); read(root_b+'/data',original); read(root_a+'/held-data',changed)
+        recovered=bytes(x^0xa5 for x in range(256))*256
+        write(root_a+'/after-timeout',recovered); read(root_a+'/after-timeout',recovered)
+    else: raise AssertionError('unknown timeout verification phase')
+    read(outside+'/timeout-control',control)
+    print(json.dumps({'phase':phase,'neighbor_sha256':hashlib.sha256(control).hexdigest(),'recovery_bytes':65536 if phase=='recovery' else 0}))
+finally: fs.shutdown(); deadline.cancel()
 `
 
 const cephFSQuiesceVerifyScript = `import cephfs, hashlib, os, sys, threading
