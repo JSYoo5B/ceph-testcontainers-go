@@ -146,8 +146,12 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_mon_op_timeout": "
 print("foreign/default expired trash and exact bytes preserved")
 `
 
-const rbdClientFeatureScript = `import contextlib, datetime, hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile
+const rbdClientFeatureScript = `import contextlib, datetime, errno, hashlib, json, os, pathlib, shutil, subprocess, sys, tempfile, time
 import rados, rbd
+# The native binding converts UTC-labelled expiry through local time.mktime.
+# Pin this consumer's local timezone before any deferred-trash operation.
+os.environ["TZ"] = "UTC"
+time.tzset()
 phase, pool, namespace, entity, keyring, expected_fsid, expected_pool_id = sys.argv[1:]
 expected_pool_id = int(expected_pool_id)
 api = rbd.RBD()
@@ -155,6 +159,22 @@ features = rbd.RBD_FEATURE_LAYERING | rbd.RBD_FEATURE_EXCLUSIVE_LOCK
 payload = bytes((i * 37 + 17) % 251 + 1 for i in range(2 << 20))
 patch = b"changed-child-and-migration-data" * 4096
 proof = {"phase": phase, "fsid": expected_fsid, "pool_id": expected_pool_id}
+
+def require_passphrase_denied(image, fmt, passphrase, label, stage):
+    # Ceph v20.2.4 test_mock_LoadRequest.cc::WrongPassphrase requires -EPERM.
+    # LUKS Header passes crypt_volume_key_get's errno through unchanged; the
+    # Python binding maps it to PermissionError with positive errno.EPERM.
+    # Invalid format/header, timeout, I/O and unsupported algorithms are not
+    # evidence that a passphrase was denied. Never print key/error text.
+    try:
+        image.encryption_load(fmt, passphrase)
+    except rbd.Error as error:
+        error_type, actual = type(error).__name__, getattr(error, "errno", None)
+        if not isinstance(error, rbd.PermissionError) or actual != errno.EPERM:
+            raise AssertionError("unexpected native key rejection: type=%s errno=%s" % (error_type, actual)) from None
+        proof.setdefault("key_denials", []).append({"format": label, "stage": stage, "type": error_type, "errno": actual})
+        return
+    raise AssertionError("native passphrase unexpectedly loaded: " + stage)
 
 @contextlib.contextmanager
 def session():
@@ -377,12 +397,7 @@ elif phase in ["encryption-format-load", "encryption-rekey"]:
                 image.flush()
         with session() as (_, io):
             with rbd.Image(io, name) as image:
-                try:
-                    image.encryption_load(fmt, "wrong-fixture-key")
-                except rbd.Error:
-                    pass
-                else:
-                    raise AssertionError("wrong LUKS passphrase loaded")
+                require_passphrase_denied(image, fmt, "wrong-fixture-key", label, "wrong-passphrase")
             with rbd.Image(io, name) as image:
                 # Generic LUKS auto-detection must identify both header versions.
                 image.encryption_load(rbd.RBD_ENCRYPTION_FORMAT_LUKS, old_pass)
@@ -435,12 +450,7 @@ elif phase in ["encryption-format-load", "encryption-rekey"]:
             with session() as (_, io):
                 with rbd.Image(io, name) as image:
                     assert image.id() == image_id
-                    try:
-                        image.encryption_load(fmt, old_pass)
-                    except rbd.Error:
-                        pass
-                    else:
-                        raise AssertionError("old LUKS key survived passphrase change")
+                    require_passphrase_denied(image, fmt, old_pass, label, "old-passphrase-after-change")
                 with rbd.Image(io, name) as image:
                     image.encryption_load(rbd.RBD_ENCRYPTION_FORMAT_LUKS, new_pass)
                     assert image.id() == image_id and image.size() == raw_size - header_size

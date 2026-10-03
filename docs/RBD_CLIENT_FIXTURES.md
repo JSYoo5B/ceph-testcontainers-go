@@ -78,6 +78,8 @@ host mode에서는 `Run`에 `ceph.WithHostNetwork()`를 추가합니다. `WithCl
 
 group snapshot probe의 writers는 checkpoint 전에 flush하고 닫습니다. 이 증거는 두 image의 native group checkpoint/rollback을 확인합니다. 임의의 distributed application transaction이나 파일시스템 freeze의 일관성까지 입증하지 않습니다. lock probe는 수동 acquire/release와 협력 client의 ownership을 확인합니다. 죽은 client의 강제 lock break·blocklist fencing은 [별도 fencing fixture](../internal/integration/fencing_integration_test.go)에서 검증합니다.
 
+trash expiry의 native binding은 UTC-labelled datetime에도 local `time.mktime`을 사용하므로 probe process의 timezone을 UTC로 고정합니다. 암호화의 wrong/old passphrase는 native `PermissionError/EPERM`만 인정합니다. timeout·I/O·unsupported·invalid-header 오류는 key 거부의 증거가 되지 않으며 실패로 처리합니다.
+
 migration은 이 테스트에서 같은 metadata pool·namespace 안의 image 이름을 바꿉니다. native/external source-spec import, 연결된 다른 cluster의 import 또는 HTTP/S3 source의 credential fixture는 이 probe의 증거 범위에 포함되지 않습니다. encrypted clone chain의 `EncryptionLoad2`, encryption payload 전체의 새 volume key로 재암호화도 이 단일 image passphrase 변경과 별개입니다. client 기능의 모든 parameter 조합을 검증했다는 뜻은 아닙니다.
 
 ## cryptsetup이 있는 native client 이미지
