@@ -183,7 +183,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 					t.Fatal(err)
 				}
 			}
-			t.Log("native librbd namespaces: independent bytes; RW principal remains healthy after profile rbd-read-only reads and write/create/foreign-namespace denials; nonempty removal preserves images; owned identities and namespaces removed")
+			t.Log("native librbd namespaces: independent bytes; RW principal remains healthy after profile rbd-read-only reads and writable-open/create/RADOS-write/foreign-namespace denials; nonempty removal preserves images; owned identities and namespaces removed")
 		})
 	}
 }
@@ -259,13 +259,18 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", name=entity,
     with cluster.open_ioctx(pool) as io:
         io.set_namespace("blue")
         api = rbd.RBD()
-        # Do not set read_only=True: permission must come from the native
-        # Cephx profile, rather than a client-side read-only image handle.
-        with rbd.Image(io, "shared") as image:
+        # A default writable open registers an image watch, which requires
+        # native write permission. The RO profile denies that open itself.
+        # Use the RO open to verify reads; its local EROFS write guard is not
+        # evidence of server authorization, so do not call image.write here.
+        def open_writable():
+            with rbd.Image(io, "shared"):
+                pass
+        denied(open_writable)
+        with rbd.Image(io, "shared", read_only=True) as image:
             image_id = image.id()
             assert image_id == expected_image_id, "native image identity differs from owned source"
             assert image.read(0, len(expected)) == expected
-            denied(lambda: image.write(b"must-not-change", 0))
             assert image.id() == image_id and image.read(0, len(expected)) == expected
         denied(lambda: api.create(io, "reader-denied-create", 8 << 20, old_format=False,
                                   features=rbd.RBD_FEATURE_LAYERING))
@@ -273,11 +278,12 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", name=entity,
         denied(lambda: io.write_full("reader-denied-object", b"denied"))
         io.set_namespace("red")
         def open_foreign():
-            with rbd.Image(io, "shared"):
+            with rbd.Image(io, "shared", read_only=True):
                 pass
         denied(open_foreign)
         denied(lambda: io.write_full("reader-denied-foreign", b"denied"))
         print(json.dumps({"principal":entity,"fsid":cluster.get_fsid(),"pool_id":cluster.pool_lookup(pool),
                           "namespace":"blue","image_id":image_id,"read_bytes":len(expected),
-                          "sha256":hashlib.sha256(expected).hexdigest(),"write_create_foreign_denied":True}))
+                          "sha256":hashlib.sha256(expected).hexdigest(),"readonly_open_exact_bytes":True,
+                          "writable_open_create_rados_write_foreign_denied":True}))
 `
