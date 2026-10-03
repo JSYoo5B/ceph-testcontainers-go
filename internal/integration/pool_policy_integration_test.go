@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -43,13 +44,35 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			probe("seed")
 			initial, err := cluster.PoolStatus(ctx, "tc-policy")
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || initial.ID <= 0 {
+				t.Fatalf("positive native policy pool ID unavailable: %+v error=%v", initial, err)
 			}
 			other, err := cluster.PoolStatus(ctx, "tc-unaffected")
-			if err != nil {
-				t.Fatal(err)
+			if err != nil || other.ID <= 0 || other.ID == initial.ID {
+				t.Fatalf("native pool identities are not distinct: policy=%d other=%+v error=%v", initial.ID, other, err)
 			}
+			var osdMap struct {
+				Pools []struct {
+					ID   int64  `json:"pool"`
+					Name string `json:"pool_name"`
+				} `json:"pools"`
+			}
+			data, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
+			if err != nil || json.Unmarshal(data, &osdMap) != nil {
+				t.Fatal("independent native pool identity unavailable", err)
+			}
+			for _, state := range []ceph.PoolState{initial, other} {
+				found := false
+				for _, native := range osdMap.Pools {
+					if native.Name == state.Name && native.ID == state.ID {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("pool ID differs from authoritative OSD map: %+v", state)
+				}
+			}
+			t.Logf("native policy pool ID=%d; unrelated pool ID=%d", initial.ID, other.ID)
 			for _, size := range []struct{ size, min int }{{3, 2}, {2, 1}} {
 				if err := cluster.SetPoolReplication(ctx, "tc-policy", size.size, size.min); err != nil {
 					t.Fatal(err)
@@ -71,7 +94,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 				t.Fatal("zero-weight native placement accepted three replicas")
 			}
 			unchanged, err := cluster.PoolStatus(ctx, "tc-policy")
-			if err != nil || unchanged.Size != 2 || unchanged.MinSize != 1 {
+			if err != nil || unchanged.ID != initial.ID || unchanged.Size != 2 || unchanged.MinSize != 1 {
 				t.Fatalf("rejected replication still changed policy: %+v %v", unchanged, err)
 			}
 			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", osdName, "1")
@@ -86,8 +109,8 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 				deadline := time.Now().Add(90 * time.Second)
 				for {
 					state, err := cluster.PoolStatus(ctx, "tc-policy")
-					if err != nil {
-						t.Fatal(err)
+					if err != nil || state.ID != initial.ID {
+						t.Fatalf("pool identity changed while observing quota: %+v error=%v", state, err)
 					}
 					if slices.Contains(strings.Split(state.Flags, ","), "full") == full {
 						return
@@ -104,7 +127,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			waitFull(true)
 			state, err := cluster.PoolStatus(ctx, "tc-policy")
-			if err != nil || state.Quota.MaxBytes != 1 || state.Quota.MaxObjects != 1 {
+			if err != nil || state.ID != initial.ID || state.Quota.MaxBytes != 1 || state.Quota.MaxObjects != 1 {
 				t.Fatalf("quota not native: %+v %v", state, err)
 			}
 			probe("full")
@@ -113,6 +136,10 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			waitFull(false)
 			probe("resumed")
+			final, err := cluster.PoolStatus(ctx, "tc-policy")
+			if err != nil || final.ID != initial.ID || final.Quota != (ceph.PoolQuota{}) || final.Size != 2 || final.MinSize != 1 {
+				t.Fatalf("restored quota changed native pool identity/policy: %+v error=%v", final, err)
+			}
 			state, err = cluster.PoolStatus(ctx, "tc-unaffected")
 			if err != nil || state != other {
 				t.Fatalf("unrelated policy changed: %+v %v", state, err)
@@ -121,7 +148,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if err != nil || len(pools) < 2 {
 				t.Fatal("pool listing unavailable", err)
 			}
-			t.Log("native RADOS: replicas 2→3→2 preserve bytes/IDs/CRUSH, native zero-weight placement rejects infeasible replicas, reported full quota blocks writes, clearing quota resumes writes; other pool unaffected")
+			t.Logf("native RADOS: replicas 2→3→2 and quota denial/recovery retain positive native pool ID %d→%d and unrelated pool ID=%d; bytes/CRUSH preserved; zero-weight placement refused; quota restored", initial.ID, final.ID, other.ID)
 		})
 	}
 }
