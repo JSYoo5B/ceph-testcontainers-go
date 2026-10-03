@@ -167,7 +167,7 @@ func TestRGWBucketMaintenance(t *testing.T) {
 				bucket string
 				keys   []string
 			}{{limited, []string{"kept", "after-disable"}}, {outside, []string{"unaffected-a", "unaffected-b"}}} {
-				keys := client.listKeys(t, ctx, site.bucket)
+				keys := client.listKeys(t, ctx, "/"+site.bucket)
 				if len(keys) != len(site.keys) {
 					t.Fatalf("reshard listing lost or added entries: %v", keys)
 				}

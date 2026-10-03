@@ -20,6 +20,6 @@ gateway 시작 전에 `TemporaryConfig`로 `client.admin/rgw_dynamic_resharding=
 
 서버 설정은 gateway를 시작하기 전에 적용하며 `ConfigOverride.Restore`로 복원합니다. S3 요청에는 실제 서명을 사용하고 status만으로 판단하지 않고 native ID·policy와 client payload를 확인합니다. 실패 시 cluster 정리로 owned resource를 회수합니다.
 
-2026-10-03 현재 unit·전체 integration tag compile은 통과했으며 두 recipe의 native bridge/host Docker 실행은 대기 중입니다. 실행 결과는 [coverage matrix](CLIENT_FIXTURE_COVERAGE.md)에 별도로 기록합니다. TLS는 [native TLS fixture](RGW_TLS_FIXTURE.md), STS·Swift·실제 KMS backend는 coverage의 G09 조건으로 구분합니다. `make rgw-s3-fixtures`는 이 두 recipe와 TLS 검증을 순차 실행합니다.
+2026-10-03 Ceph 20.2.4 Docker Linux ARM64에서 `TestRGWS3ClientFeatures`는 bridge 51.35초·host 50.37초, `TestRGWBucketMaintenance`는 bridge 46.47초·host 46.37초로 모두 통과했습니다. 실행 결과는 [coverage matrix](CLIENT_FIXTURE_COVERAGE.md)에 별도로 기록합니다. TLS는 [native TLS fixture](RGW_TLS_FIXTURE.md), STS·Swift·실제 KMS backend는 coverage의 G09 조건으로 구분합니다. `make rgw-s3-fixtures`는 이 두 recipe와 TLS 검증을 순차 실행합니다.
 
 [RGW quota](https://docs.ceph.com/en/tentacle/radosgw/admin/#quota-management), [dynamic resharding](https://docs.ceph.com/en/tentacle/radosgw/dynamicresharding/), [S3 bucket API](https://docs.ceph.com/en/tentacle/radosgw/s3/bucketops/).
