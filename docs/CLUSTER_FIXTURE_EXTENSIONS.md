@@ -223,6 +223,8 @@ make cluster-feature-extensions
 | --- | --- | --- | --- |
 | 중앙 config | PASS, 65.39s | PASS, 67.28s | absence·상속·mask·기존 entry 복원, native 숫자 정규화, 외부 변경 보존, runtime 조회와 RADOS I/O |
 | OSD 정책 | PASS, 117.99s | PASS, 111.44s | explicit out/in 후 PG 복구, 같은 stopped OSD의 noout 유지와 flag 복원 후 자동 out, 재시작 후 동일 UUID·데이터 유지 |
+| pool replica/quota 정책 | PASS, 74.47s | PASS, 74.30s | 독립 OSD map과 양수 pool ID 교차 확인, replicas 2→3→2·quota 거부/복구 후 원래 ID·bytes·CRUSH와 unrelated pool 보존 |
+| CephFS subvolume/group quota | PASS, 78.89s | PASS, 78.17s | 각각 native EDQUOT(122) 쓰기 거부, 기존 256 KiB·unlimited neighbor 보존, quota 확장 후 fresh session의 2 MiB 쓰기 복구·owned cleanup |
 | CephFS snapshot/clone | PASS, 133.49s | PASS, 132.58s | frozen bytes, source·clone 독립 쓰기, pending source 보호, wait timeout 재시도, quota·namespace 상속과 data pool override |
 | RGW standalone placement | PASS, 87.71s | PASS, 87.37s | named bucket, STANDARD replicated·STANDARD_IA EC pool, S3 class 목록과 실제 RADOS payload, 기존/default bucket 정책 유지 |
 | RGW realm placement | PASS, 279.51s | 이번 단계 미실행 | zone-local mapping, master publish·destination pull·reload, secondary publish 거부, unrelated staging 보존, 복제 class·bytes·실제 destination pool |
@@ -241,6 +243,7 @@ make cluster-feature-extensions
 | RBD automatic mirror snapshot schedule | PASS, 126.05s | PASS, 119.25s | MGR schedule만으로 source snapshot 증가·변경 destination bytes, 좁은 schedule 삭제와 기존 policy/head 보존 |
 | RBD native client features | PASS, 119.24s | PASS, 118.69s | native layering/trash/migration/group/lock·LUKS1/2 format/load/rekey, exact bytes·IDs·strict key denial·namespace cleanup |
 | RGW tenant/account quota | PASS, 66.28s | PASS, 68.28s | 같은 uid/bucket의 tenant 격리, account root 간 aggregate quota 실제 거부, nonpurge 보호·명시적 cleanup |
+| RGW ordinary user quota/AdminOps | PASS, 52.31s | PASS, 53.31s | 개별 bucket quota가 꺼진 두 bucket의 aggregate 403 QuotaExceeded, sibling principal 쓰기 유지, 원래 quota·keys·bucket ID 복원과 동일 bytes 복구·명시적 cleanup |
 | RGW bucket quota/reshard | PASS, 46.47s | PASS, 46.37s | 개별 quota 거부·해제 후 복구, queue 처리·11→17 idle shard, 네 payload와 sibling 정책 보존 |
 | RGW S3 client features | PASS, 51.35s | PASS, 50.37s | frozen versions·multipart bytes·ACL/policy grant/revoke, scoped lifecycle, retention/hold 거부·명시적 bypass cleanup |
 | RGW native TLS | PASS, 44.79s | PASS, 44.69s | Beast의 분리된 HTTP/HTTPS, 실제 CA/SAN/TLS12 검증·unknown CA 거부, 동일 S3 bytes·cleanup |
@@ -254,5 +257,7 @@ realm 복제는 native 설정 `lease=120`, metadata/data `poll=20`초를 유지�
 결과 로그는 `artifacts/cluster-config-cephfs-verified.log`, `artifacts/cluster-osd-policies.log`, `artifacts/cluster-rgw-placement-payload-final.log`, `artifacts/cluster-rgw-placement-realm-lease-final.log`에 남깁니다. native lock 관측은 `artifacts/rgw-placement-restart-lease-proof.json`에 기록합니다. artifacts는 Git에 포함하지 않습니다. 공개 모듈의 `CGO_ENABLED=0 go test ./...`, `go test -race ./...`, integration·features·auth·hostnetwork·topology·multicluster·goceph 전체 tag 컴파일과 vet도 통과했습니다. tag 컴파일은 기존 모든 Docker 시나리오의 재실행을 의미하지 않습니다.
 
 client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/cephfs-client-fixtures-final.log`, `artifacts/cephfs-pins-auth-rbd-schedule-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`, `artifacts/rbd-scope-schedule-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. 전체 제공 기준은 [진행 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
+
+pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 보강 검증은 `artifacts/client-quota-auth-sync-reconcile-native.log`의 개별 PASS 결과입니다. 같은 batch의 RBD RO probe는 writable open에 필요한 watch 권한을 잘못 가정해 실패했으며 수정 후 별도로 재검증합니다. 이 batch 전체를 PASS로 표시하지 않습니다.
 
 최종 실행 후 running/stopped Docker container는 모두 정리됐고 전용 network도 남지 않았습니다. 기존 `kind` network는 유지했습니다.

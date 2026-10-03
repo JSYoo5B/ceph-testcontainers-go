@@ -21,7 +21,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | --- | --- | --- | --- |
 | T01 | Linux native client 설정·key·namespace 연결 | `WithClient`, `WithClientIdentity`, `ConnectionConfig`; 별도 go-ceph 소비자 module에서 실제 RADOS/RBD/CephFS I/O | 완료: [Linux client](HOST_NETWORK_POC.md), `TestGoCephLinux` |
 | T02 | 단일·독립 다중 cluster, MON quorum·MGR HA, public/cluster/peer network, 노드 lifecycle | `Run` topology options와 daemon API; advertised address, failover, 기존 데이터 유지 | 완료: [구성 기준](CLUSTER_SCENARIOS.md), [추가 topology](TOPOLOGY_EXTENSIONS.md) |
-| T03 | replicated pool, CRUSH host/rack/root/device class, replica/quota 정책 | `CreatePool`, OSD placement, pool policy; 실제 분산 배치·read/write·quota 거부 | 검증 중: 기존 배치·replica/quota PoC 통과; `TestPoolPolicies`의 양수 native pool ID·독립 OSD map 교차 검증 보강 후 재실행 |
+| T03 | replicated pool, CRUSH host/rack/root/device class, replica/quota 정책 | `CreatePool`, OSD placement, pool policy; 실제 분산 배치·read/write·quota 거부 | 완료: 기존 배치 PoC와 `TestPoolPolicies`, bridge/host; 양수 native pool ID를 독립 OSD map과 교차 확인하며 replica·quota 거부/복구 후 identity·bytes 보존 |
 | T04 | EC RADOS/RBD/CephFS data pool | `CreatePool` EC/overwrite policy와 서비스별 pool 선택; 실제 데이터·metadata pool 분리 | 완료: `TestErasureCodedPools`, `TestCephFSAdditionalErasureCodedDataPool`; 새 동적 경로는 F05 |
 | T05 | Cephx 읽기/쓰기/revoke와 RADOS namespace 격리 | owned `ClientIdentity` caps·key·client config; 두 principal의 허용·거부 | 완료: `TestClientIdentities`; subvolume 특화는 F06 |
 | T06 | RADOS compound/xattr/omap/watch-notify/striper/object snapshot 테스트 환경 | 기존 pool·namespace·둘 이상의 client 조합 recipe; native compound atomicity, notification, snapshot/striped payload | 완료: `TestRADOSClientFixtures`, 아래 실행 recipe |
@@ -34,7 +34,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | R05 | snapshot/journal mirror, peer/daemon HA, fanout/failback/split-brain/resync, backup | `multicluster` mirror/backup API + client checkpoint; peer fault 복구와 destination data | 완료: [다중 cluster](MULTICLUSTER_POC.md), topology 추가 검증 |
 | R06 | pool 전체 mirror와 local/remote namespace mapping | pool mode의 journal image 자동 편입, ns-a→ns-b와 default namespace 조합, 다른 namespace 제외 | 완료: `TestMultiClusterRBDMirrorScopeAndNamespaces`, bridge/host 각 5조합 |
 | F01 | named/multiple FS, multi-active MDS·standby/replay, failover | `WithCephFS`, `StartCephFSWithConfig`, `ScaleMDS`; rank/native map·POSIX 데이터 유지 | 완료: topology 검증 |
-| F02 | group/subvolume quota·layout·RADOS namespace | owned provisioning API; native quota/layout와 client 쓰기 거부·격리 | 검증 중: 기존 layout·격리·quota 설정 PoC 통과; subvolume/group의 실제 client EDQUOT 거부·확장 복구 보강 후 재실행 |
+| F02 | group/subvolume quota·layout·RADOS namespace | owned provisioning API; native quota/layout와 client 쓰기 거부·격리 | 완료: `TestCephFSSubvolumes`, bridge/host; subvolume/group 각각 실제 EDQUOT 거부, 기존 bytes·독립 neighbor 보존, quota 확장 후 fresh session 쓰기 복구·owned cleanup |
 | F03 | subvolume snapshot·async clone·wait 재시도 | owned snapshot/clone API; frozen bytes, quota·namespace 상속, pending source 보호 | 완료: `TestCephFSSubvolumeSnapshotsAndClones` |
 | F04 | canceled/failed clone의 명시적 lifecycle | cancel·partial cleanup·pending source reference 해제, source bytes 보존, identity/readback | 완료: `TestCephFSCloneCancellationAndPartialCleanup`, bridge/host canceled·failed 모두 |
 | F05 | 실행 중 FS data pool 추가와 provisioning 연동 | `AddDataPool`, `DataPools`, `RemoveUnusedDataPool`; replicated/EC에 subvolume·clone, native detach/replacement 거부 | 검증 중: 기존 bridge/host data pool PoC 통과; native pool replacement 거부는 unit 외 실제 fixture proof 추가 중 |
@@ -43,7 +43,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | F08 | export/distributed/random pin | group/subvolume pin; multi-active MDS의 실제 subtree ownership과 정책 복원 | 완료: `TestCephFSPins`, bridge/host |
 | F09 | subvolume/snapshot metadata와 retained snapshot provisioning | native metadata recipe·snapshot retention 후 source cleanup/recovery | 완료: `TestCephFSRetainedSnapshotAndMetadataRecipe`, bridge/host |
 | F10 | snapshot mirror·directory peer·daemon 분산·backup | `multicluster` CephFS mirror API와 archive/restore 공개 조합 recipe; 실제 remote frozen bytes와 daemon fault 복구 | 완료: 기존 multicluster/topology PoC |
-| G01 | RGW 사용자·AdminOps caps·quota·suspend·safe cleanup | owned user API; S3/AdminOps 허용·거부, quota, key 보존, bucket가 있는 user 삭제 거부 | 검증 중: 기존 user/caps/suspend PoC 통과; ordinary user의 aggregate quota 실제 거부·복구 보강 후 재실행 |
+| G01 | RGW 사용자·AdminOps caps·quota·suspend·safe cleanup | owned user API; S3/AdminOps 허용·거부, quota, key 보존, bucket가 있는 user 삭제 거부 | 완료: `TestRGWUserAdministration`와 host variant; ordinary user aggregate quota의 실제 403 QuotaExceeded, sibling 쓰기 유지·quota 복원 후 동일 bytes 복구·owned cleanup |
 | G02 | named placement/storage class, replicated/EC data, realm activation | `CreatePlacement`, `ApplyPlacement`, `ReloadPlacement` + destination period pull; 실제 class와 RADOS pool payload | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 | G03 | user default target/class와 placement tags | `SetUserPlacement`; 새 bucket 허용·거부·기존 bucket 유지·실제 선택 pool | 완료: `TestRGWUserPlacementPolicy`, host variant |
 | G04 | tenant 및 account-root fixture/account quota | 같은 uid·bucket 이름의 tenant 격리, fresh account/root credentials·aggregate quota·cleanup | 완료: `TestRGWTenantsAndAccounts`, host variant |
