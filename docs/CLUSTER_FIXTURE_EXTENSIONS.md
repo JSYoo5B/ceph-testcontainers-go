@@ -258,9 +258,9 @@ realm 복제는 native 설정 `lease=120`, metadata/data `poll=20`초를 유지�
 
 결과 로그는 `artifacts/cluster-config-cephfs-verified.log`, `artifacts/cluster-osd-policies.log`, `artifacts/cluster-rgw-placement-payload-final.log`, `artifacts/cluster-rgw-placement-realm-lease-final.log`에 남깁니다. native lock 관측은 `artifacts/rgw-placement-restart-lease-proof.json`에 기록합니다. artifacts는 Git에 포함하지 않습니다. 공개 모듈의 `CGO_ENABLED=0 go test ./...`, `go test -race ./...`, integration·features·auth·hostnetwork·topology·multicluster·goceph 전체 tag 컴파일과 vet도 통과했습니다. tag 컴파일은 기존 모든 Docker 시나리오의 재실행을 의미하지 않습니다.
 
-client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/cephfs-client-fixtures-final.log`, `artifacts/cephfs-pins-auth-rbd-schedule-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`, `artifacts/rbd-scope-schedule-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. 전체 제공 기준은 [진행 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
+client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/cephfs-client-fixtures-final.log`, `artifacts/cephfs-pins-auth-rbd-schedule-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`, `artifacts/rbd-scope-schedule-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. 전체 제공 기준은 [제공 기준 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
 
-pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 보강 검증은 `artifacts/client-quota-auth-sync-reconcile-native.log`의 개별 PASS 결과입니다. 같은 batch의 RBD RO probe는 writable open에 필요한 watch 권한을 잘못 가정해 실패했으며 수정 후 별도로 재검증합니다. 이 batch 전체를 PASS로 표시하지 않습니다.
+pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 보강 검증은 `artifacts/client-quota-auth-sync-reconcile-native.log`의 개별 PASS 결과입니다. 같은 batch의 RBD RO probe는 writable open에 필요한 watch 권한을 잘못 가정해 실패했으며 수정 후 별도 재검증한 PASS 결과는 아래에 기록합니다. 이 batch 전체를 PASS로 표시하지 않습니다.
 
 같은 로그의 `TestMultiClusterRGWOwnedSyncPolicy`와 host variant도 각각 PASS입니다. 외부 수동 개입 없이 recipe 자체의 `bucket sync run`이 enabled 상태에서 남은 로그를 처리한 뒤 strict checkpoint를 확인했습니다. tag/priority/owner/class·user/account·cross-tenant 확장 검증은 이 기본 시나리오의 결과에 포함하지 않습니다.
 
@@ -270,4 +270,4 @@ CephFS 동적 data pool의 보강 결과는 `artifacts/client-native-final-gates
 
 수정한 `TestRBDNamespaces`도 같은 로그에서 bridge/host 모두 PASS입니다. Cephx RO principal은 기본 writable open의 native watch 등록을 거부하므로 positive read는 read-only open으로 확인합니다. 이 handle의 local EROFS를 서버 권한 증거로 사용하지 않고, 기본 writable open·native image create·직접 RADOS write·다른 namespace의 read-only open에서 정확한 native EPERM/EACCES를 확인합니다. 기존 image ID·bytes와 RW principal 동작을 보존한 뒤 owned namespace/principal을 제거했습니다.
 
-위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 진행 중인 후속 native 검증의 리소스 정리는 해당 실행이 끝난 뒤 별도로 확인합니다.
+위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 후속 RGW native 패치 검증의 bridge/host·account-root 조건도 owned cleanup까지 통과했으며 최종 결과는 [선택적 복제 실행 기록](RGW_SYNC_POLICY.md)과 [제공 기준 matrix](CLIENT_FIXTURE_COVERAGE.md)에 연결합니다.

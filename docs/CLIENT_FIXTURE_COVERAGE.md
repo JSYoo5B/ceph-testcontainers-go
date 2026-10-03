@@ -15,7 +15,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 
 ## 제공 기준과 진행 상태
 
-`완료`는 연결된 기존 PoC의 대표 조건을 충족한 항목입니다. 모든 parameter 조합을 실행했다는 뜻은 아닙니다. `검증 중`은 API·테스트 구현 후 실제 Docker 검증을 진행 중이며, `개발 중`과 `미완료`는 목표에 남아 있습니다. 현재 전체 목표는 진행 중입니다.
+`완료`는 연결된 기존 PoC의 대표 조건을 충족한 항목입니다. 모든 parameter 조합을 실행했다는 뜻은 아닙니다. `검증 중`은 API·테스트 구현 후 실제 Docker 검증을 진행 중이며, `개발 중`과 `미완료`는 목표에 남아 있습니다. 2026-10-04 아래에 정의한 모든 대표 제공 기준을 충족했습니다. G05/G07의 numeric priority 및 ordinary-user source 권한 검증에는 두 native 패치를 적용한 Ceph 20.2.4 Ubuntu Noble ARM64 RGW와 기존 Quay-derived control/OSD/MDS 조합을 사용했습니다. 원본 Quay 20.2.4에서 같은 두 조건이 실패한 기록은 유지하며, 원본 이미지까지 지원된다는 의미는 아닙니다. [패치·이미지·실행 범위](RGW_SYNC_POLICY.md)를 확인합니다.
 
 | ID | client 테스트에 필요한 서버 준비 | 공개 제공 경로 / 검증 기준 | 상태 |
 | --- | --- | --- | --- |
@@ -47,9 +47,9 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G02 | named placement/storage class, replicated/EC data, realm activation | `CreatePlacement`, `ApplyPlacement`, `ReloadPlacement` + destination period pull; 실제 class와 RADOS pool payload | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 | G03 | user default target/class와 placement tags | `SetUserPlacement`; 새 bucket 허용·거부·기존 bucket 유지·실제 선택 pool | 완료: `TestRGWUserPlacementPolicy`, host variant |
 | G04 | tenant 및 account-root fixture/account quota | 같은 uid·bucket 이름의 tenant 격리, fresh account/root credentials·aggregate quota·cleanup | 완료: `TestRGWTenantsAndAccounts`, host variant |
-| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 검증 중: [기본 recipe](RGW_SYNC_POLICY.md)와 account-root/cross-tenant system은 bridge/host 통과; 앞선 bridge 간헐 실패 원인은 미확정; import wait 이후 tag/owner/class 및 same-tenant system/user도 bridge/host 통과; numeric priority 선택과 ordinary user source GET 거부 중 실제 복제는 양쪽 native 실패, 수정 native 빌드·9개 gtest·private Debian package·RGW role smoke 및 네 translation 조건의 bridge/host 통과, source 인증 변경의 account-root 회귀 검증 중 |
+| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 완료: [실행 recipe·이미지 조건](RGW_SYNC_POLICY.md); 기본 lifecycle 및 patched RGW의 numeric priority/OR/fallback·tag·owner/class·ordinary user deny/grant·same-tenant system/user·account-root·cross-tenant system 모두 bridge/host에서 실제 bytes·제외·권한 복구·owned cleanup 통과 |
 | G06 | 기존 bucket 유지보수 조건 | 개별 bucket quota, reshard/queue·readiness; 실제 S3 payload 보존·quota 거부 | 완료: `TestRGWBucketMaintenance`, bridge/host |
-| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 검증 중: 기본 및 account/cross-tenant bridge/host 통과; `WaitBucketSyncPolicyReady`의 period/group/참조 bucket import와 tag·same-tenant exact instance/checkpoint/bytes도 bridge/host 통과; priority·ordinary user의 전체 효과는 미완료, 오류·deadline guard는 unit/race 통과 |
+| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 완료: `WaitBucketSyncPolicyReady`의 exact period/group/참조 bucket import 후 destination bucket instance·11 shard checkpoint·실제 bytes를 bridge/host에서 확인; patched RGW의 priority fallback·ordinary user 및 account-root 거부 중 checkpoint 진행/absence와 grant 후 복제·cleanup 통과; 오류·deadline guard unit/race 통과 |
 | G08 | S3 client 기능의 서버 조건 | versioning/multipart/lifecycle/object-lock/bucket policy/ACL client recipe와 필요한 daemon 옵션, 대표 동작 | 완료: `TestRGWS3ClientFeatures`, bridge/host; IAM role은 G09 |
 | G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 완료: `TestRGWNativeTLS`, [STS·Swift·Vault recipe](RGW_PROTOCOL_BACKENDS.md)의 `TestRGWProtocolBackends`, bridge/host |
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
