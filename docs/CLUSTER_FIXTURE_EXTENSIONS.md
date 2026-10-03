@@ -232,7 +232,7 @@ make cluster-feature-extensions
 | MGR module | PASS, 73.92s | PASS, 74.12s | 실제 task 완료, module readiness·membership 복원, always-on/사용 중 mirror·volumes 보호 |
 | native pool 재생성 guard | PASS, 35.39s | PASS, 35.32s | 같은 이름의 pool ID 변경 검출, stale namespace handle 거부, 새 namespace 보존 |
 | RADOS client recipe | PASS, 27.36s | PASS, 27.47s | compound atomicity, xattr/omap, cls_hello 실행, watch/notify, snapshot, 3-object striper payload |
-| CephFS 동적 data pool | PASS, 93.52s | PASS, 93.14s | live replicated/EC pool 등록, native layout·namespace, 실제 2 MiB 데이터·clone, unused detach |
+| CephFS 동적 data pool | PASS, 108.91s | PASS, 103.16s | live replicated/EC 등록·2 MiB 데이터/clone, unused detach, native pool 7→8 재생성 시 stale add/remove identity 거부·replacement sentinel와 전체 FSMap IDs·기존 bytes 보존 |
 | CephFS canceled/failed clone | PASS, 204.58s | PASS, 209.80s | 실제 FAILED/EISDIR 주입과 cancel, source 보호 해제, partial 명시적 정리, 같은 이름 재생성 보존, frozen bytes와 독립 clone I/O |
 | CephFS quiesce | PASS, 79.48s | PASS, 77.41s | 두 native client 쓰기 정지, outside I/O 유지, snapshot bytes·해제 후 head 비교, TTL 만료 복구·version guard |
 | RGW user placement | PASS, 81.47s | PASS, 81.65s | required tags 거부·허용·취소, header 없는 class 선택과 실제 pool bytes, 기존 bucket/key/policy 유지 |
@@ -262,5 +262,7 @@ client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts
 pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 보강 검증은 `artifacts/client-quota-auth-sync-reconcile-native.log`의 개별 PASS 결과입니다. 같은 batch의 RBD RO probe는 writable open에 필요한 watch 권한을 잘못 가정해 실패했으며 수정 후 별도로 재검증합니다. 이 batch 전체를 PASS로 표시하지 않습니다.
 
 같은 로그의 `TestMultiClusterRGWOwnedSyncPolicy`와 host variant도 각각 PASS입니다. 외부 수동 개입 없이 recipe 자체의 `bucket sync run`이 enabled 상태에서 남은 로그를 처리한 뒤 strict checkpoint를 확인했습니다. tag/priority/owner/class·user/account·cross-tenant 확장 검증은 이 기본 시나리오의 결과에 포함하지 않습니다.
+
+CephFS 동적 data pool의 보강 결과는 `artifacts/client-native-final-gates.log`의 `TestCephFSDynamicDataPools/bridge`와 `/host` named PASS입니다. 원래 세 data pool의 이름·양수 ID·default flag를 재생성 전후 정확히 비교했고, 이전 handle의 거부가 단순 detach/nonempty 오류가 아니라 native identity 변경 때문인지 확인했습니다. 다른 후속 시나리오의 결과는 이 두 PASS와 구분합니다.
 
 위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 진행 중인 후속 native 검증의 리소스 정리는 해당 실행이 끝난 뒤 별도로 확인합니다.
