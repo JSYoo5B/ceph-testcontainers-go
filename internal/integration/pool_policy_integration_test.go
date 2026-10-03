@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -88,8 +89,55 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			// A completed native placement edit must override cached fixture
 			// placement when deciding whether a new replica count is feasible.
-			osdName := fmt.Sprintf("osd.%d", cluster.OSDs()[2].ID)
+			osdID := cluster.OSDs()[2].ID
+			osdName := fmt.Sprintf("osd.%d", osdID)
+			// CRUSH dump exposes the exact 16.16 item weight. Tree output's
+			// rounded crush_weight is unsuitable for an exact restoration; a
+			// 1 GiB fixture OSD has a much smaller weight than one TiB.
+			nativeWeight := func() uint32 {
+				t.Helper()
+				data, err := cluster.Ceph(ctx, "osd", "crush", "dump", "--format", "json")
+				if err != nil {
+					t.Fatal("read native CRUSH weight", err)
+				}
+				var dump struct {
+					Buckets []struct {
+						Items []struct {
+							ID     int     `json:"id"`
+							Weight *uint32 `json:"weight"`
+						} `json:"items"`
+					} `json:"buckets"`
+				}
+				if err := json.Unmarshal(data, &dump); err != nil {
+					t.Fatal("decode native CRUSH weight", err)
+				}
+				var weight *uint32
+				for _, bucket := range dump.Buckets {
+					for _, item := range bucket.Items {
+						if item.ID != osdID {
+							continue
+						}
+						if item.Weight == nil || (weight != nil && *weight != *item.Weight) {
+							t.Fatalf("missing or inconsistent native CRUSH weight for %s", osdName)
+						}
+						weight = item.Weight
+					}
+				}
+				if weight == nil {
+					t.Fatalf("native CRUSH item %s is missing", osdName)
+				}
+				return *weight
+			}
+			originalWeight := nativeWeight()
+			if originalWeight == 0 {
+				t.Fatalf("native CRUSH item %s has no initial weight", osdName)
+			}
+			restoreWeight := strconv.FormatFloat(float64(originalWeight)/(1<<16), 'f', -1, 64)
+			t.Logf("native %s CRUSH weight=%d/65536 (%s); restore exact original after zero-weight fault", osdName, originalWeight, restoreWeight)
 			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", osdName, "0")
+			if weight := nativeWeight(); weight != 0 {
+				t.Fatalf("zero-weight native fault was not applied: %s weight=%d", osdName, weight)
+			}
 			if err := cluster.SetPoolReplication(ctx, "tc-policy", 3, 2); err == nil {
 				t.Fatal("zero-weight native placement accepted three replicas")
 			}
@@ -97,7 +145,10 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if err != nil || unchanged.ID != initial.ID || unchanged.Size != 2 || unchanged.MinSize != 1 {
 				t.Fatalf("rejected replication still changed policy: %+v %v", unchanged, err)
 			}
-			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", osdName, "1")
+			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", osdName, restoreWeight)
+			if weight := nativeWeight(); weight != originalWeight {
+				t.Fatalf("native CRUSH restoration differs: %s before=%d after=%d", osdName, originalWeight, weight)
+			}
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
