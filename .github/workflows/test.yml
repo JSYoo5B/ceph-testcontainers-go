@@ -100,7 +100,12 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - run: make quay-topology-extensions
+      - name: Run make quay-topology-extensions
+        shell: bash
+        run: make quay-topology-extensions 2>&1 | tee "$RUNNER_TEMP/quay-topology-extensions.log"
+      - name: Identify failed topology cases
+        if: failure()
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-topology-extensions.log" --profile quay-topology-extensions
 
   rgw-native-regressions:
     if: github.event_name == 'workflow_dispatch' && inputs.rgw_native_regressions
