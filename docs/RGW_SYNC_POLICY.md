@@ -2,7 +2,9 @@
 
 `multicluster.RunRGWMultisite`로 독립된 Ceph cluster를 같은 realm의 zone으로 연결한 뒤, `CreateSyncGroup`·`CreateSyncFlow`·`CreateSyncPipe`로 복제 조건을 준비합니다. S3 bucket·object·ACL·bucket policy는 소비자 client가 생성합니다. 공개 fixture는 container 내부 `radosgw-admin`을 사용하며 go-ceph 의존성을 추가하지 않습니다.
 
-2026-10-04 제공 기준 G05/G07을 충족했습니다. 아래 대표 조건은 두 native 패치를 적용한 Ceph 20.2.4 Ubuntu Noble ARM64 RGW와 Quay-derived control/OSD/MDS 조합으로 bridge/host 모두 통과했습니다. 원본 Quay 20.2.4의 numeric priority 및 ordinary-user source 권한 실패는 아래 이력에 남깁니다. 패치 준비·빌드·private Debian 패키징은 [native workflow](../image/native/README.md)를 사용합니다.
+기본 지원과 필수 검증은 digest로 고정한 원본 Quay Ceph 20.2.4를 기준으로 합니다. 기존 Quay-derived unpatched role 이미지에서는 기본 선택·lifecycle, single tag·owner/class 및 same-tenant system/user 조건을 bridge/host에서 실제 데이터와 cleanup으로 확인했습니다. 이 기록은 해당 이미지 조합의 증거이며 원본 전체 이미지의 새 필수 suite 실행을 대신하지 않습니다. Numeric priority와 ordinary-user source 권한 거부는 원본 Ceph 20.2.4에서 실패한 native 한계이며, 정책 저장 또는 checkpoint 성공만으로 이 조건을 지원한다고 표시하지 않습니다.
+
+G05/G07은 이 한계를 포함해 부분 제공으로 추적합니다. 아래의 두 native 패치를 적용한 Ubuntu Noble ARM64 RGW와 Quay-derived control/OSD/MDS의 전체 성공 기록은 선택적 custom-image 실험입니다. 이 결과를 기본 Quay 성공으로 채택하거나 프로젝트 사용에 native build·새 서버 이미지 생성을 요구하지 않습니다. 선택적 패치 재현에는 [native workflow](../image/native/README.md)를 사용할 수 있습니다.
 
 ## 저장과 활성화
 
@@ -102,6 +104,21 @@ Pinned Ceph 20.2.4에서는 인증 전 `rgwx-perm-check-uid`가 system argument 
 수정 RGW role image를 기존 Quay-derived control/OSD/MDS와 조합한 Linux bridge `TestMultiClusterRGWSyncTranslationFiltering`은 535.21초로 네 subtest와 owned cleanup까지 통과했습니다. 원래 pipe ID/priority 1·7을 유지한 92,160 bytes의 blue/red 및 STANDARD_IA pool, 상위 pipe 제거·import 후 77,824 bytes의 STANDARD fallback을 확인했습니다. Ordinary user는 source payload 거부 동안 35초 destination absence와 11 shard checkpoint 진행을 확인했고, grant 후 새 59,392 bytes 및 group 제거 후 replica 보존을 통과했습니다. Single tag/owner/class와 same-tenant system/user 격리도 회귀 통과했습니다. `artifacts/rgw-native-patched-translation-bridge.log`와 소유 리소스 잔존이 없는 `artifacts/rgw-native-proof-20261004/bridge-cleanup.json`에 기록합니다. 동일 Go snapshot과 role 조합의 host variant도 750.98초로 네 subtest 및 cleanup을 통과했습니다. Host의 priority·single tag·ordinary deny/grant·tenant 조건은 각각 100.74·76.81·63.24·96.04초였으며 원래 판정과 제외 window를 유지했습니다. 두 run에서 소유 container 및 session network 잔존이 없음을 확인했습니다. 같은 인증 경로의 fresh account-root 회귀도 bridge 407.90초·host 624.63초로 통과했습니다. Account root의 native identity를 확인하고, source implicit IAM으로 58,368 bytes 복제·checkpoint, destination `s3:ReplicateObject` Deny 동안 일반 S3 정상 동작과 35초 absence·checkpoint 진행, Deny 제거 후 새 bytes 복제를 확인했습니다. 각 variant의 cross-tenant system alpha→beta 복제도 48,128 bytes·정확한 tenant/bucket ID의 11 shard checkpoint·다른 prefix 제외·group 제거 후 replica 보존을 통과했습니다. Account recipe에는 initial write 전에 owned policy import와 aggregate readiness를 확인하는 barrier를 추가했으며 권한·bytes·거부 판정은 유지합니다. 증거는 `artifacts/rgw-native-patched-account-root.log`의 두 named PASS와 `artifacts/rgw-native-proof-20261004/account-cleanup.json`이며 owned container 및 session network 잔존이 없습니다.
 
 다섯 Noble-derived role의 첫 자동 smoke는 official `ceph-mon --version` SIGILL로 실패했습니다. MON과 전역 libceph-common은 signed package 추출본과 byte 동일이며 patched private RGW library를 사용하지 않습니다. 진단은 libgcc/gperftools stack unwind의 AUTIA1716 pointer-auth fault를 확인했지만 근본 원인은 확정하지 않습니다. 해당 run을 전체 PASS로 표시하지 않습니다. 수정 RGW role의 독립 smoke는 통과하여 위 mixed-role 검증에 사용했습니다. Image ID·23개 package SHA·ordered patch·Go snapshot의 연결은 `artifacts/rgw-native-proof-20261004/runtime-proof.json`에 보존합니다. 이어서 명시적인 `--runtime-env TCMALLOC_STACKTRACE_METHOD=generic_fp`로 새 tag를 만든 run은 다섯 role의 실제 Config.Env 검사와 전체 smoke를 통과했습니다. `$`·quote·backslash·빈 값의 literal 보존도 같은 run의 Config.Env에서 확인했습니다. 기본값을 바꾸거나 첫 실패 report를 덮어쓰지 않았으며 `artifacts/rgw-native-runtime-env-role-images-20261004/build-report.json`에 별도 기록합니다. 이 다섯 새 tag를 역할별로 조합한 cluster baseline도 `TestClusterLifecycle`, `TestCephFSFilesystem`, `TestRBDLifecycle`, `TestRGWS3` 모두 245.330초로 통과했습니다. 실제 MON/MGR/OSD 구성·노드 추가/제거/복구와 RADOS 데이터, MDS/POSIX I/O, userspace RBD snapshot/I/O, signed S3 쓰기·읽기·credential 거부를 확인했습니다. 같은 네 테스트를 `all` 이미지 하나로 구성한 방식도 237.315초로 통과했습니다. 두 방식의 owned container와 전용 session network 잔존이 없습니다. 로그는 `artifacts/rgw-native-role-baseline-mixed.log`와 `artifacts/rgw-native-role-baseline-all.log`입니다. 이 baseline은 새 Debian 역할 조합의 대표 검증이며 위 multisite 전체 suite를 Debian control/OSD/MDS로 다시 실행했다는 뜻은 아닙니다.
+
+원본 이미지의 기본 선택·lifecycle recipe:
+
+```sh
+env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE \
+  -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE \
+  CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
+  -tags=integration,features,multicluster ./internal/integration \
+  -run '^Test(HostNetwork)?MultiClusterRGWOwnedSyncPolicy$' \
+  -timeout 60m
+```
+
+다음 전체 recipe는 원본 서버의 한계 회귀도 포함합니다. 원본 Quay에서 numeric priority와 ordinary-user source deny/grant까지 모두 PASS할 것으로 기대하지 않으며, 선택적 patched RGW 실행 이미지와 증거는 [native workflow](../image/native/README.md#실제-검증-결과와-실행-이미지)에서 지정합니다.
+
+`make rgw-sync-fixtures-quay`는 원본 Quay에서 기본 lifecycle/account-root 및 독립된 `tag_owner_class`·`tenant_system_user_isolation` subtest를 선택하며 daemon/mirror override 다섯 개를 해제합니다. 새 실행의 실제 결과는 기존 patched 증거와 별도로 확인합니다. `make rgw-sync-native-regressions`는 numeric priority·ordinary-user source deny/grant의 엄격한 한계 회귀를 명시적으로 실행합니다. 이미 준비한 이미지 override를 받을 수 있지만 이미지를 빌드하거나 실패를 예상 성공으로 바꾸지 않습니다.
 
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \

@@ -12,6 +12,8 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 client 테스트를 위한 서버 fixture의 전체 제공 기준과 항목별 검증 결과는 [CLIENT_FIXTURE_COVERAGE.md](docs/CLIENT_FIXTURE_COVERAGE.md)에서 추적합니다. 각 항목은 공개 구성 경로, native 상태, 실제 client 효과, 복원·정리까지 확인해야 완료로 표시합니다.
 
+기본 지원과 필수 통합 검증은 digest로 고정한 원본 Quay Ceph 20.2.4 이미지를 기준으로 합니다. 클러스터를 사용하기 위해 Ceph source를 빌드하거나 새 서버 이미지를 만들 필요가 없습니다. RGW selective replication의 numeric priority와 ordinary-user source 권한 거부는 원본 이미지에서 확인한 native 한계이며 기본 지원으로 표시하지 않습니다. API로 해당 정책을 저장할 수 있다는 사실과 실제 복제 효과를 구분합니다. [지원 범위와 실행 증거](docs/RGW_SYNC_POLICY.md)를 확인합니다.
+
 ## 프로젝트 구성
 
 공개 API는 `ceph/`와 `multicluster/`에 나란히 두고, 루트의 `go.mod` 하나로 관리합니다. 각 패키지의 단위 테스트·godoc 예제는 구현 옆에 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
@@ -265,11 +267,19 @@ RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지
 
 ## 실행
 
+원본 pinned Quay를 기준으로 하는 필수 경로는 다음과 같습니다. `check`는 호스트 검증만 수행하며, 나머지는 기존 서버 이미지를 직접 실행합니다. 이미지 빌드가 필요하지 않습니다.
+
 ```sh
-make test
-make vet
-make integration
+make check
+make quay-default
+make quay-topology
+make quay-multicluster-topology
+make quay-topology-extensions
 ```
+
+`quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
+
+`make integration`, `make topology`, `make topology-extensions`, `make cluster-features`, `make client-fixtures`는 선택한 이미지 환경 변수를 사용하는 기존 별도 실행 경로로 유지합니다. 전체 client recipe에는 알려진 원본 서버 한계와 consumer 도구 조건이 있으므로 기본 Quay suite 전체 통과로 해석하지 않습니다.
 
 각 인터페이스만 실행할 수도 있습니다.
 
@@ -294,6 +304,8 @@ make integration
 ```
 
 ## 경량 이미지
+
+역할별 slim, 회사 `.deb` 입력, native 패치 빌드는 별도로 선택하는 도구입니다. 원본 Quay를 사용하는 모듈의 필수 실행·검증 경로에 포함하지 않습니다.
 
 원본 Ceph RPM 이미지 또는 로컬 Debian 패키지 묶음을 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 입력의 Ceph 바이너리와 설치된 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR, 클라이언트 도구, `rbd-mirror`·`cephfs-mirror`를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
 

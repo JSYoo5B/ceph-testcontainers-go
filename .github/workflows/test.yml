@@ -3,14 +3,29 @@ name: test
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      rgw_native_regressions:
+        description: Run strict optional RGW native defect regressions
+        type: boolean
+        default: false
+      rgw_image:
+        description: Existing RGW image for optional regressions (empty uses default Quay; no build)
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
+# Tests and Docker share the Linux runner host. These jobs consume existing
+# Quay/prebuilt images and never compile Ceph or generate/publish role images.
+env:
+  TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
+
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       CGO_ENABLED: '0'
     steps:
@@ -21,6 +36,86 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - run: make test
-      - run: make vet
-      - run: make integration
+      - run: make check
+
+  quay-default:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - run: make quay-default
+
+  quay-topology:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - run: make quay-topology
+
+  quay-multicluster-topology:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - run: make quay-multicluster-topology
+
+  quay-topology-extensions:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - run: make quay-topology-extensions
+
+  rgw-native-regressions:
+    if: github.event_name == 'workflow_dispatch' && inputs.rgw_native_regressions
+    needs: [quay-topology, quay-multicluster-topology, quay-topology-extensions]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CGO_ENABLED: '0'
+      CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - run: make rgw-sync-native-regressions

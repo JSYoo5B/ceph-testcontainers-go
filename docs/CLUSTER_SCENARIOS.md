@@ -1,12 +1,34 @@
 # 테스트용 클러스터 구성 목표와 검증
 
-이 문서는 완료된 토폴로지 단계의 기준과 증거를 기록합니다. 이후 클러스터 내부 리소스·정책 API의 제공 범위와 검증은 [CLUSTER_INTERNAL_FEATURES.md](CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
+이 문서는 기존 토폴로지 단계의 기준·증거와 현재 원본 Quay 검증 목표를 기록합니다. 클러스터 내부 리소스·정책 API의 제공 범위와 검증은 [CLUSTER_INTERNAL_FEATURES.md](CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
 
 목표는 **클라이언트 테스트에 필요한 Ceph 토폴로지를 testcontainers로 생성하고, 구성 요소의 추가·교체·중단·복구와 클러스터 간 연결이 가능한지** 확인하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 RADOS/RBD/CephFS/S3 기능은 후속 확장으로 둡니다. 이들 기능의 제공 여부는 완료 조건에 포함하지 않습니다. go-ceph와 다른 native client의 읽기·쓰기는 구성의 연결성을 확인하는 증거로 사용합니다.
 
 공개 모듈은 CLI/파일로 제어하며 cgo에 의존하지 않습니다. go-ceph 소비자 테스트는 별도 Linux 전용 모듈에 둡니다. 기본 bridge에서는 클러스터별 전용 네트워크를 생성하고, 애플리케이션은 `WithClient`로 해당 네트워크에 연결합니다. host mode에서는 서로 다른 FSID·키와 자동 선택 MON/RGW 포트를 사용합니다. RADOS/RBD/CephFS 클라이언트는 MON뿐 아니라 광고된 OSD/MDS 주소에도 도달해야 합니다.
 
-## 구성별 제공 상태
+## 원본 pinned Quay 검증 목표
+
+현재 필수 기준은 `ceph.DefaultImage`의 원본 Ceph 20.2.4입니다. Slim·회사 `.deb`·native 패치 빌드는 선택 도구이며 이 검증의 사전 조건이 아닙니다. 아래의 기존 성공 기록은 대부분 Quay-derived 역할별 slim 이미지와 Docker Desktop Linux ARM64의 관측입니다. 같은 source에서 추출했다는 사실만으로 원본 전체 이미지의 새 실행을 PASS 처리하지 않습니다.
+
+새 검증은 다음 대표 범위를 유지합니다. `topology-smoke`의 3 MON/2 MGR 및 RGW 2 zone만으로 전체 목표를 닫지 않습니다.
+
+| 필수 실행 경로 | 대표 구성·변경 기준 | 새 원본 Quay 실행 상태 |
+|---|---|---|
+| `make check` | unit·race·vet·전체 tag compile, Python 이미지 도구의 host guard. Ceph native build나 이미지 생성은 실행하지 않음 | runtime 증거와 별도 |
+| `make quay-default` | 기본 MON/MGR/OSD와 OSD 추가·제거·데이터 유지, RGW/RBD/CephFS 연결, bootstrap 실패 cleanup | 실행 결과 추가 전 |
+| `make quay-topology` | 3 MON quorum 상실·복구·교체와 active MGR failover, 동적 MGR 증감, 여러 FS/multi-active MDS/standby/replay와 MDS scale, 초기 Run composition과 같은 zone의 RGW 증감·교체 | 실행 결과 추가 전 |
+| `make quay-multicluster-topology` | 독립 host cluster 두 개·MON 포트 충돌 재시도·RGW endpoint 분리, RBD snapshot pair·journal 전환·3-cluster fanout·peer 제거/재등록·backup/restore, CephFS pair·MGR HA 연결, RGW 2/3 zone 및 metadata master 전환·복귀. 실제 FSID·key·peer/zone graph와 데이터 유지 | 실행 결과 추가 전 |
+| `make quay-topology-extensions` | 5 MON quorum, public/backend 분리·endpoint 단절/복구, RBD/CephFS 복수 mirror daemon 증감·HA, RGW 초기/동적 여러 zonegroup·zone 탈퇴, 세 서비스의 peer 단절·catch-up | 실행 결과 추가 전 |
+
+각 runtime profile은 daemon/mirror 이미지 환경 변수 다섯 개를 해제하여 원본 Quay를 직접 선택하며, 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 이 절에 추가합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
+
+현재 [Makefile](../Makefile)의 finite selector는 core topology 8개, multicluster 18개, extensions 12개 named test입니다. 내부 bridge/host subtest가 있는 함수도 있어 named selector 수를 실행 횟수로 해석하지 않습니다. Metadata master 전환은 일반 `TestMultiClusterRGWMultisite`와 별도인 `TestMultiClusterRGWMetadataMasterFailover`로, RBD peer 제거·재등록은 daemon HA와 별도인 `TestMultiClusterRBDPeerLifecycle`로 확인합니다. CephFS MGR HA와 mirror daemon 재분배도 별도 representative를 유지합니다.
+
+서로 다른 배치·네트워크 모드를 한 번의 전체 suite PASS로 합치지 않습니다. 일반 MDS scale·standby/replay와 fanout 등 기존 bridge-only 대표는 그 범위를 유지하고, bridge/host wrapper가 있는 topology는 두 모드를 실행합니다. Docker bridge endpoint interruption은 host namespace에서 제공되는 동작이 아니므로 host-mode 단절을 새로 주장하지 않습니다.
+
+CephFS mirror 증설은 기본 20.2.4의 자동 shuffle 오류와 검증 가능한 `RebalanceDirectories` 명시적 경로를 구분합니다. RGW numeric priority 및 ordinary-user source 권한 거부도 원본 서버의 한계로 별도 회귀를 유지합니다. 이 조건을 PASS로 만들기 위해 필수 경로에서 서버를 패치하거나 판정을 완화하지 않습니다. 개별 CRUD·pool/EC/권한 정책 전수 검증과 모든 split-brain/backup parameter 조합은 topology 완료 조건으로 확대하지 않습니다.
+
+## 기존 구성별 제공 상태
 
 2026-10-03 작업 중 기록입니다. “구현”과 실제 Docker PoC 통과를 구분합니다. 이 문서는 검증 결과에 맞춰 갱신합니다.
 

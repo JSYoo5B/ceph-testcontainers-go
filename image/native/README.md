@@ -2,6 +2,8 @@
 
 `native_build.py`는 공식 source와 runtime `.deb`를 검증하고 실제 Ceph CMake 빌드·gtest를 실행합니다. `debian_runtime.py`는 같은 빌드의 RGW 실행 파일과 private 라이브러리를 Debian 패키지로 묶습니다. 결과는 기존 `image/slim/build.py --deb-directory`로 전달합니다. Go fixture와 slim 조립기는 Ceph를 직접 컴파일하지 않습니다.
 
+이 workflow는 native 결함 조사와 custom-image 재현을 위한 선택 도구입니다. 프로젝트의 기본 지원·필수 검증은 원본 pinned Quay 이미지를 기준으로 하며, 모듈 사용에 Ceph 빌드 또는 새 서버 이미지 생성을 요구하지 않습니다. 아래 patched-image 성공은 원본 Quay의 numeric priority·ordinary-user source 권한 한계를 해결한 기본 지원 증거로 채택하지 않습니다.
+
 현재 recipe는 **Ceph 20.2.4 / Ubuntu Noble 24.04 / Linux ARM64**만 지원합니다. 다른 버전·배포판·아키텍처를 지원한다고 가정하지 않습니다. 명령은 repository root에서 실행합니다.
 
 ## 입력 준비

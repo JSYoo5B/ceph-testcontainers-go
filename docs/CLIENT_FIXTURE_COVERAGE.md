@@ -2,6 +2,8 @@
 
 목표는 RADOS·RBD·CephFS·RGW client가 필요로 하는 서버 상태를 testcontainers로 준비하고, 장애·복구·복제 조건을 재현하는 것입니다. 공개 모듈은 go-ceph/cgo를 사용하지 않습니다. 서버 준비는 container의 CLI·파일로 수행하고, 실제 client 동작은 Linux container의 native library 또는 S3 SDK로 검증합니다.
 
+기본 지원과 필수 검증 기준은 `ceph.DefaultImage`의 digest로 고정한 원본 Quay Ceph 20.2.4입니다. 프로젝트 사용이나 기본 검증을 위해 Ceph native build 또는 새 서버 이미지 생성을 요구하지 않습니다. Slim·회사 `.deb`·native 패치 빌더는 선택 기능으로 분리합니다. 원본 서버에서 동작하지 않는 조건은 native 한계로 기록하며, custom image의 통과를 원본 이미지의 완료 증거로 채택하지 않습니다. Linux native client나 cryptsetup 등 소비자 테스트에 필요한 도구는 서버 이미지 빌드 요구와 구분합니다.
+
 참고 범위는 [go-ceph v0.41.0](https://github.com/ceph/go-ceph/tree/v0.41.0)의 rados, rbd, cephfs 및 admin package와 Ceph Tentacle의 서버 관리 API입니다. client의 object/image/file CRUD마다 동일한 Go wrapper를 만드는 것은 완료 조건이 아닙니다. 그 API를 테스트할 수 있도록 인증·pool·namespace·daemon·module·policy를 구성할 수 있는지가 조건입니다. client operation도 대표 동작을 실행해 서버 준비가 충분한지 확인합니다.
 
 각 항목은 다음 네 조건을 모두 충족해야 완료로 표시합니다.
@@ -15,7 +17,9 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 
 ## 제공 기준과 진행 상태
 
-`완료`는 연결된 기존 PoC의 대표 조건을 충족한 항목입니다. 모든 parameter 조합을 실행했다는 뜻은 아닙니다. `검증 중`은 API·테스트 구현 후 실제 Docker 검증을 진행 중이며, `개발 중`과 `미완료`는 목표에 남아 있습니다. 2026-10-04 아래에 정의한 모든 대표 제공 기준을 충족했습니다. G05/G07의 numeric priority 및 ordinary-user source 권한 검증에는 두 native 패치를 적용한 Ceph 20.2.4 Ubuntu Noble ARM64 RGW와 기존 Quay-derived control/OSD/MDS 조합을 사용했습니다. 원본 Quay 20.2.4에서 같은 두 조건이 실패한 기록은 유지하며, 원본 이미지까지 지원된다는 의미는 아닙니다. [패치·이미지·실행 범위](RGW_SYNC_POLICY.md)를 확인합니다.
+`완료`는 연결된 기존 PoC의 대표 조건을 충족한 항목이며 모든 parameter 조합의 전수 검증을 뜻하지 않습니다. 기존 Quay-derived slim 및 Debian 실행 기록은 명시된 이미지 조합의 증거로 유지합니다. `부분 제공 / native 한계`는 API 구성과 일부 실제 동작은 검증했지만 원본 Quay에서 해당 전체 조건을 지원한다고 표시할 수 없는 항목입니다. `검증 중`은 실제 Docker 검증을 진행 중이며, `개발 중`과 `미완료`는 구현·검증에 남아 있습니다.
+
+2026-10-04 G05/G07의 numeric priority와 ordinary-user source 권한 거부는 원본 Quay 20.2.4에서 실패했습니다. 두 native 패치를 적용한 Ubuntu Noble ARM64 RGW와 기존 Quay-derived control/OSD/MDS의 bridge/host 성공은 선택적 custom-image 검증으로 보존하며, 기본 이미지의 이 두 한계를 해결한 것으로 표시하지 않습니다. [원본 한계·선택적 패치 실행 범위](RGW_SYNC_POLICY.md)를 확인합니다.
 
 | ID | client 테스트에 필요한 서버 준비 | 공개 제공 경로 / 검증 기준 | 상태 |
 | --- | --- | --- | --- |
@@ -47,9 +51,9 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G02 | named placement/storage class, replicated/EC data, realm activation | `CreatePlacement`, `ApplyPlacement`, `ReloadPlacement` + destination period pull; 실제 class와 RADOS pool payload | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 | G03 | user default target/class와 placement tags | `SetUserPlacement`; 새 bucket 허용·거부·기존 bucket 유지·실제 선택 pool | 완료: `TestRGWUserPlacementPolicy`, host variant |
 | G04 | tenant 및 account-root fixture/account quota | 같은 uid·bucket 이름의 tenant 격리, fresh account/root credentials·aggregate quota·cleanup | 완료: `TestRGWTenantsAndAccounts`, host variant |
-| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 완료: [실행 recipe·이미지 조건](RGW_SYNC_POLICY.md); 기본 lifecycle 및 patched RGW의 numeric priority/OR/fallback·tag·owner/class·ordinary user deny/grant·same-tenant system/user·account-root·cross-tenant system 모두 bridge/host에서 실제 bytes·제외·권한 복구·owned cleanup 통과 |
+| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 부분 제공 / native 한계: unpatched 기본 lifecycle·single tag·owner/class·same-tenant system/user는 bridge/host 실제 bytes·제외·cleanup 통과. 원본 Quay의 numeric priority와 ordinary-user source deny/grant는 지원으로 표시하지 않음. 전체 translation 및 account-root/cross-tenant의 patched-image 성공은 [선택적 실행 증거](RGW_SYNC_POLICY.md)로 별도 보존 |
 | G06 | 기존 bucket 유지보수 조건 | 개별 bucket quota, reshard/queue·readiness; 실제 S3 payload 보존·quota 거부 | 완료: `TestRGWBucketMaintenance`, bridge/host |
-| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 완료: `WaitBucketSyncPolicyReady`의 exact period/group/참조 bucket import 후 destination bucket instance·11 shard checkpoint·실제 bytes를 bridge/host에서 확인; patched RGW의 priority fallback·ordinary user 및 account-root 거부 중 checkpoint 진행/absence와 grant 후 복제·cleanup 통과; 오류·deadline guard unit/race 통과 |
+| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 부분 제공 / native 한계: unpatched 기본 lifecycle·single tag·owner/class·tenant의 exact period/group/bucket import·11 shard checkpoint·bytes를 bridge/host 확인. Observer의 오류·deadline guard unit/race 통과. Caught-up은 원본 Quay의 numeric priority나 ordinary-user source 거부 효과를 보장하지 않으며 해당 end-to-end 조건의 patched-image PASS는 선택적 증거 |
 | G08 | S3 client 기능의 서버 조건 | versioning/multipart/lifecycle/object-lock/bucket policy/ACL client recipe와 필요한 daemon 옵션, 대표 동작 | 완료: `TestRGWS3ClientFeatures`, bridge/host; IAM role은 G09 |
 | G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 완료: `TestRGWNativeTLS`, [STS·Swift·Vault recipe](RGW_PROTOCOL_BACKENDS.md)의 `TestRGWProtocolBackends`, bridge/host |
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
@@ -70,7 +74,7 @@ NFS·SMB·NVMe-oF gateway, cephadm/systemd/LVM/실제 disk, kernel-only mount, h
 
 ## 조사와 실행 경로
 
-새 대표 시나리오는 `make client-fixtures`로 순차 실행합니다. role 이미지 환경 변수는 [fixture 확장 문서](CLUSTER_FIXTURE_EXTENSIONS.md)의 실행 설정을 사용합니다. RBD encryption recipe는 cryptsetup과 동일 Ceph ABI의 native client library를 포함한 consumer image가 필요합니다. Slim control image를 쓰는 경우 [RBD client image](RBD_CLIENT_FIXTURES.md)의 빌드 후 `CEPH_TEST_RBD_CLIENT_IMAGE`로 지정합니다. 이 consumer 전용 의존성이 공개 Go module이나 daemon role image에 추가되지는 않습니다.
+필수 원본 Quay 경로는 `make check`, `make quay-default`, `make quay-topology`, `make quay-multicluster-topology`, `make quay-topology-extensions`입니다. [대표 topology 기준](CLUSTER_SCENARIOS.md)에서 범위와 실제 실행 결과를 추적합니다. `make cluster-features`와 `make client-fixtures`는 별도로 선택하는 내부 기능·client recipe입니다. 전체 client recipe에는 알려진 native 한계 회귀가 포함되므로 원본 Quay에서 전체 PASS를 보장하는 기본 suite로 표시하지 않습니다. 역할별 이미지를 선택하는 경우에는 [fixture 확장 문서](CLUSTER_FIXTURE_EXTENSIONS.md)의 환경 변수를 사용합니다. RBD encryption recipe는 cryptsetup과 동일 Ceph ABI의 native client library를 포함한 consumer image가 필요합니다. Slim control image를 쓰는 경우 [RBD client image](RBD_CLIENT_FIXTURES.md)의 빌드 후 `CEPH_TEST_RBD_CLIENT_IMAGE`로 지정합니다. 이 consumer 전용 의존성이 공개 Go module이나 daemon role image에 추가되지는 않습니다.
 
 RADOS client fixture의 [실행 가능한 public composition](../internal/integration/rados_client_fixtures_integration_test.go)은 `Run` → `CreatePool(Application: "rados")` → `WithClient`로 연결한 Linux consumer 두 개 → 각 consumer의 namespace 선택 순서입니다. 하나의 pool에 SDK에서 namespace를 선택하면 compound/xattr/omap/watch-notify/pool snapshot을 테스트할 수 있습니다. striper는 consumer의 `rados --striper`와 native libradosstriper가 추가로 필요하고 OSD role에는 실제 object class shared libraries가 있어야 합니다. 이 recipe는 같은 namespace의 두 client로 compound 비교 실패 후 데이터 유지, 실제 notification, snapshot frozen bytes, 3개의 stripe object와 SHA256, `cls_hello` 결과 및 object cleanup까지 실행합니다. 다른 namespace의 격리와 권한 거부는 T05의 `TestClientIdentities`에서 별도로 검증합니다. 명령을 구현한 새 CRUD wrapper는 필요하지 않습니다.
 

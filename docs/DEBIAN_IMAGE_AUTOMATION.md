@@ -2,6 +2,8 @@
 
 [build.py](../image/slim/build.py)는 회사에서 패치한 Ceph `.deb` 묶음과 호환되는 Debian/Ubuntu 기반 이미지를 받아 `control`, `osd`, `rgw`, `mds`, `all`을 빌드합니다. 기존 Quay RPM 입력과 같은 역할·공유 layer·Go API를 사용합니다. 호스트에는 Docker와 Python 3.9 이상만 필요하며 `dpkg`, APT, Ceph native 라이브러리는 Linux 컨테이너 안에서 실행합니다.
 
+이 빌더는 회사 패키지와 별도 이미지 실험을 위한 선택 도구입니다. 모듈의 기본 지원·필수 검증은 원본 pinned Quay 이미지를 사용하며 `.deb` 입력이나 새 서버 이미지 빌드를 요구하지 않습니다. 아래 custom-image 성공은 해당 이미지 조합의 증거로 보존합니다.
+
 ## 사용
 
 ```sh
