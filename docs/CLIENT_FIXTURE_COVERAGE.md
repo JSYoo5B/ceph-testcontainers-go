@@ -27,7 +27,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | T06 | RADOS compound/xattr/omap/watch-notify/striper/object snapshot 테스트 환경 | 기존 pool·namespace·둘 이상의 client 조합 recipe; native compound atomicity, notification, snapshot/striped payload | 완료: `TestRADOSClientFixtures`, 아래 실행 recipe |
 | T07 | OSD object class 실행 환경과 slim closure | OSD의 `rados-classes` 및 native `Exec`; `cls_hello` 실제 호출·결과 검증 | 완료: `TestRADOSClientFixtures`, 실제 `Hello, fixture!` 반환 |
 | T08 | 정확한 client nonce fencing과 TTL | `TemporaryBlocklist`, `BlocklistEntries`, `Restore`; 같은 host의 다른 session 유지, ESHUTDOWN·해제·만료 | 완료: `TestClientFencing`, bridge/host |
-| R01 | RBD metadata 초기화·namespace | `InitRBDPool`, `CreateRBDNamespace`; image/namespace 분리와 RO/RW client 효과 | 검증 중: 기존 namespace RW·격리 PoC 통과; 별도 Cephx RO principal의 실제 write/create 거부 보강 후 재실행 |
+| R01 | RBD metadata 초기화·namespace | `InitRBDPool`, `CreateRBDNamespace`; image/namespace 분리와 RO/RW client 효과 | 완료: `TestRBDNamespaces`, bridge/host; RO open exact bytes, 기본 writable open·image create·직접 RADOS write·foreign namespace read의 native EPERM/EACCES, RW 유지·owned cleanup |
 | R02 | RBD image 기능을 테스트할 기본 구성 | R01 + client recipe: layering/clone/flatten, trash/migration/group, encryption 및 lock 테스트 | 완료: [client recipe](RBD_CLIENT_FIXTURES.md), `TestRBDClientFeatures`, bridge/host |
 | R03 | MGR module membership·dependency·readiness·restore | `MGRModules`, `TemporaryMGRModule`, `WaitMGRModuleReady`; always-on/사용 중 보호·native command probe | 완료: `TestMGRModules`, bridge/host |
 | R04 | RBD task queue와 mirror snapshot schedule | `rbd_support` + initialized pool/mirrored image; task 완료와 실제 자동 mirror snapshot·destination bytes | 완료: `TestMGRModules`, `TestRBDAutomaticSnapshotSchedule`, bridge/host |

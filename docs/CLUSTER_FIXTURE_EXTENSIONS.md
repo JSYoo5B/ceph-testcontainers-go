@@ -242,6 +242,7 @@ make cluster-feature-extensions
 | RBD mirror scope/namespace mapping | PASS, 357.32s | PASS, 353.97s | pool/image scope 및 default/named namespace 각 5조합, 신규 journal image 자동 편입·실제 bytes, sibling namespace 보존 |
 | RBD automatic mirror snapshot schedule | PASS, 126.05s | PASS, 119.25s | MGR schedule만으로 source snapshot 증가·변경 destination bytes, 좁은 schedule 삭제와 기존 policy/head 보존 |
 | RBD native client features | PASS, 119.24s | PASS, 118.69s | native layering/trash/migration/group/lock·LUKS1/2 format/load/rekey, exact bytes·IDs·strict key denial·namespace cleanup |
+| RBD namespace/Cephx RO | PASS, 63.30s | PASS, 63.32s | 독립 namespace bytes·native image ID, RO open 읽기와 writable open/create/직접 RADOS write/foreign RO read 거부, RW client 유지·nonempty 보호·owned cleanup |
 | RGW tenant/account quota | PASS, 66.28s | PASS, 68.28s | 같은 uid/bucket의 tenant 격리, account root 간 aggregate quota 실제 거부, nonpurge 보호·명시적 cleanup |
 | RGW ordinary user quota/AdminOps | PASS, 52.31s | PASS, 53.31s | 개별 bucket quota가 꺼진 두 bucket의 aggregate 403 QuotaExceeded, sibling principal 쓰기 유지, 원래 quota·keys·bucket ID 복원과 동일 bytes 복구·명시적 cleanup |
 | RGW bucket quota/reshard | PASS, 46.47s | PASS, 46.37s | 개별 quota 거부·해제 후 복구, queue 처리·11→17 idle shard, 네 payload와 sibling 정책 보존 |
@@ -266,5 +267,7 @@ pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 
 CephFS 동적 data pool의 보강 결과는 `artifacts/client-native-final-gates.log`의 `TestCephFSDynamicDataPools/bridge`와 `/host` named PASS입니다. 원래 세 data pool의 이름·양수 ID·default flag를 재생성 전후 정확히 비교했고, 이전 handle의 거부가 단순 detach/nonempty 오류가 아니라 native identity 변경 때문인지 확인했습니다. 다른 후속 시나리오의 결과는 이 두 PASS와 구분합니다.
 
 같은 로그의 `TestCephFSQuiesceCheckpoints`도 bridge/host 각각 PASS입니다. held libcephfs client의 정확한 PID·start ticks·argv를 확인한 뒤 SIGSTOP하여 timeout=3초, expiration=20초인 native set의 acquisition `TIMEDOUT`을 확인했습니다. 해당 상태는 consistent checkpoint로 release되지 않으며, neighbor I/O를 보존한 채 같은 process를 SIGCONT한 뒤 held session과 fresh session 모두 durable 쓰기/읽기를 복구했습니다. 이 proof는 정상 `QUIESCED`의 자연 `EXPIRED` TTL 복구와 별도로 실행합니다.
+
+수정한 `TestRBDNamespaces`도 같은 로그에서 bridge/host 모두 PASS입니다. Cephx RO principal은 기본 writable open의 native watch 등록을 거부하므로 positive read는 read-only open으로 확인합니다. 이 handle의 local EROFS를 서버 권한 증거로 사용하지 않고, 기본 writable open·native image create·직접 RADOS write·다른 namespace의 read-only open에서 정확한 native EPERM/EACCES를 확인합니다. 기존 image ID·bytes와 RW principal 동작을 보존한 뒤 owned namespace/principal을 제거했습니다.
 
 위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 진행 중인 후속 native 검증의 리소스 정리는 해당 실행이 끝난 뒤 별도로 확인합니다.

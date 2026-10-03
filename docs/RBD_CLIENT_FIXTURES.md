@@ -61,6 +61,8 @@ if err != nil {
 
 host mode에서는 `Run`에 `ceph.WithHostNetwork()`를 추가합니다. `WithClientIdentity`가 같은 network mode와 현재 MON 주소를 client에 전달합니다. macOS에서 위 native client는 Docker의 Linux container 안에서 실행하며, go-ceph를 사용하는 실제 애플리케이션 빌드·테스트는 Linux에서 수행합니다. 직접 MON/OSD 접속을 하는 client를 macOS host의 임의 mapped port로 옮기지는 않습니다.
 
+읽기 전용 namespace fixture는 같은 `Mon: "profile rbd"`와 MGR/OSD의 `profile rbd-read-only pool=<pool> namespace=<namespace>`로 별도 owned principal을 생성합니다. [실행 recipe](../internal/integration/rbd_namespace_integration_test.go)의 `TestRBDNamespaces`는 Ceph 20.2.4에서 bridge 63.30초·host 63.32초로 cleanup까지 통과했습니다. 기본 writable image open은 native watch 등록에 write 권한이 필요해 거부되므로 positive read는 native read-only open으로 수행합니다. local read-only handle의 EROFS는 서버 권한 proof로 세지 않으며, image create와 직접 RADOS write 및 다른 namespace의 read-only open에서 EPERM/EACCES를 확인합니다. native FSID·양수 pool ID·image ID·exact bytes, RW principal의 정상 동작과 owned cleanup을 함께 확인했습니다. 증거는 `artifacts/client-native-final-gates.log`의 R01 named PASS입니다.
+
 ## client probe와 서버 조건
 
 각 probe는 연결한 FSID·native pool ID를 확인하고, 선택한 namespace에서 생성한 native image ID와 실제 bytes를 검증합니다. 성공 후 image·snapshot·group·trash를 정리하고, 다른 namespace의 expired trash와 데이터도 보존하는지 확인합니다. 모든 native 호출은 별도 subprocess deadline으로 제한합니다.
