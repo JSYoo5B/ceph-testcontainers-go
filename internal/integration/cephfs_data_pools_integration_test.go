@@ -148,6 +148,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil || len(states) != 3 {
 		t.Fatalf("unexpected final registered pools=%+v error=%v", states, err)
 	}
+	beforeReplacement := slices.Clone(states)
 	// Only a newly attached, empty pool is replaced through native commands.
 	// No external writers/layouts or managed provisioning have used this pool.
 	// The live replicated/EC volume data must remain intact throughout the fault.
@@ -164,8 +165,8 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	}
 	cephCommand(t, ctx, cluster, "fs", "rm_data_pool", filesystem, strconv.FormatInt(stale.ID, 10))
 	states, err = fs.DataPools(ctx)
-	if err != nil || slices.Contains(states, ceph.CephFSDataPoolState{Name: replaced, ID: stale.ID}) {
-		t.Fatalf("empty replacement candidate remained FS-attached: %+v error=%v", states, err)
+	if err != nil || !slices.Equal(states, beforeReplacement) {
+		t.Fatalf("empty replacement candidate detach changed native registrations: before=%+v after=%+v error=%v", beforeReplacement, states, err)
 	}
 	if original, err := cluster.PoolStatus(ctx, replaced); err != nil || original.ID != stale.ID {
 		t.Fatal("empty candidate pool changed before the owned native replacement", err)
@@ -195,11 +196,13 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", replaced, "-N", "replacement", "put", "owned-marker", "/tmp/tc-dynamic-replacement")
-	if err := fs.RemoveUnusedDataPool(ctx, stale); err == nil {
-		t.Fatal("stale FS attachment accepted the replacement pool incarnation")
+	removeErr := fs.RemoveUnusedDataPool(ctx, stale)
+	if removeErr == nil || !strings.Contains(removeErr.Error(), "attached pool was replaced or renamed") {
+		t.Fatalf("stale FS attachment did not refuse the replacement's native identity: %v", removeErr)
 	}
-	if _, err := fs.AddDataPool(ctx, replaced); err == nil {
-		t.Fatal("previously confirmed attachment adopted the replacement pool")
+	_, addErr := fs.AddDataPool(ctx, replaced)
+	if addErr == nil || !strings.Contains(addErr.Error(), "previously attempted data pool was replaced") {
+		t.Fatalf("previously confirmed attachment did not refuse the replacement's native identity: %v", addErr)
 	}
 	if current, err := cluster.PoolStatus(ctx, replaced); err != nil || current.ID != replacement.ID {
 		t.Fatal("stale attachment altered the replacement pool identity", err)
@@ -209,14 +212,14 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 		t.Fatal("stale attachment changed the replacement's native RADOS payload")
 	}
 	states, err = fs.DataPools(ctx)
-	if err != nil || len(states) != 3 {
-		t.Fatalf("replacement fault altered live filesystem data registrations: %+v error=%v", states, err)
+	if err != nil || !slices.Equal(states, beforeReplacement) {
+		t.Fatalf("replacement fault altered live filesystem data registrations: before=%+v after=%+v error=%v", beforeReplacement, states, err)
 	}
 	if err := permission.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", replaced, "-N", "replacement", "rm", "owned-marker")
-	t.Logf("native formerly FS-attached empty pool ID %d → %d: stale remove/add refused, replacement sentinel and live FS registrations preserved, owned sentinel removed", stale.ID, replacement.ID)
+	t.Logf("native formerly FS-attached empty pool ID %d → %d: remove=%v; add=%v; exact native registrations=%+v; replacement sentinel preserved and owned sentinel removed", stale.ID, replacement.ID, removeErr, addErr, states)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "verify", "dynamic-data", 0)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, clonedInfo, "verify", "dynamic-data", 0)
 	if err := fs.RemoveSubvolume(ctx, cloned); err != nil {
