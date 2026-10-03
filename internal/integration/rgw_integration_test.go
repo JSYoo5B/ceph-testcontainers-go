@@ -169,7 +169,7 @@ func (s s3HTTPClient) sign(req *http.Request, payload []byte, now time.Time) {
 	const signedHeaders = "host;x-amz-content-sha256;x-amz-date"
 	canonicalHeaders := "host:" + req.URL.Host + "\nx-amz-content-sha256:" + payloadHash + "\nx-amz-date:" + stamp + "\n"
 	canonicalQuery := strings.ReplaceAll(req.URL.Query().Encode(), "+", "%20")
-	canonicalRequest := strings.Join([]string{req.Method, req.URL.EscapedPath(), canonicalQuery, canonicalHeaders, signedHeaders, payloadHash}, "\n")
+	canonicalRequest := strings.Join([]string{req.Method, s3CanonicalURI(req.URL.Path), canonicalQuery, canonicalHeaders, signedHeaders, payloadHash}, "\n")
 	scope := day + "/" + s.region + "/s3/aws4_request"
 	stringToSign := "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + s3Hash([]byte(canonicalRequest))
 	key := s3HMAC([]byte("AWS4"+s.secretKey), day)
@@ -178,6 +178,31 @@ func (s s3HTTPClient) sign(req *http.Request, payload []byte, now time.Time) {
 	key = s3HMAC(key, "aws4_request")
 	signature := hex.EncodeToString(s3HMAC(key, stringToSign))
 	req.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s", s.accessKey, scope, signedHeaders, signature))
+}
+
+// AWS4 encodes decoded UTF-8 path bytes using only unreserved characters and
+// literal slashes. Go's URL.EscapedPath also permits reserved characters such
+// as colon, so it cannot serve as the signed URI. Do not normalize S3 paths or
+// encode URL.RawPath a second time; Ceph v20.2.4 rgw_auth_s3.h decodes once and
+// applies these same encoding rules to its canonical URI.
+func s3CanonicalURI(path string) string {
+	if path == "" {
+		return "/"
+	}
+	const uppercaseHex = "0123456789ABCDEF"
+	var canonical strings.Builder
+	canonical.Grow(len(path))
+	for i := range len(path) {
+		c := path[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' {
+			canonical.WriteByte(c)
+		} else {
+			canonical.WriteByte('%')
+			canonical.WriteByte(uppercaseHex[c>>4])
+			canonical.WriteByte(uppercaseHex[c&15])
+		}
+	}
+	return canonical.String()
 }
 
 func s3Hash(data []byte) string {
