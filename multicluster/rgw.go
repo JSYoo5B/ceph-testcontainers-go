@@ -45,6 +45,7 @@ type RGWMultisite struct {
 	groupMasters                             map[string]string
 	removedZones                             map[string]*rgwZoneRemoval
 	reloadNeeded                             map[string]bool
+	bootstrapStagingPending                  bool
 	closed                                   bool
 }
 
@@ -95,7 +96,7 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	}
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
-	f := &RGWMultisite{config: config,
+	f := &RGWMultisite{config: config, bootstrapStagingPending: true,
 		zoneGroups: map[string]string{config.SourceZone: config.Zonegroup, config.DestinationZone: config.destinationZonegroup},
 		groupIDs:   make(map[string]string), groupMasters: map[string]string{config.Zonegroup: config.SourceZone}}
 	if config.destinationZonegroup != config.Zonegroup {
@@ -249,6 +250,13 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 		f.groupIDs[zone.Zonegroup] = group.ID
 	}
 	if err := f.waitZonePeriods(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
+		return f, err
+	}
+	// A secondary commits its own staging object remotely. The master can
+	// retain its earlier source-only staging object after the final current
+	// period includes both zones. Finish the fresh bootstrap with a canonical
+	// unpublished staging snapshot so later guarded policy updates can proceed.
+	if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
 		return f, err
 	}
 	if config.Source.UsesHostNetwork() || config.destinationZonegroup != config.Zonegroup {

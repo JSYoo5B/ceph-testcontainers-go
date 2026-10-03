@@ -92,12 +92,23 @@ func RunRGWTopology(ctx context.Context, image string, config RGWTopologyConfig,
 	if err != nil {
 		return f, err
 	}
+	if len(zones) > 2 {
+		// The outer constructor still owns fresh initialization and has not
+		// exposed f. Additional remote commits need a final master-local
+		// staging snapshot of the complete graph before returning it.
+		f.bootstrapStagingPending = true
+	}
 	for _, zone := range zones[2:] {
 		f.topologyMu.Lock()
 		_, exists := f.groupIDs[zone.Zonegroup]
 		_, err := f.addZone(ctx, image, zone, !exists, opts...)
 		f.topologyMu.Unlock()
 		if err != nil {
+			return f, err
+		}
+	}
+	if len(zones) > 2 {
+		if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
 			return f, err
 		}
 	}

@@ -205,7 +205,7 @@ func TestRGWPlacementUsesRuntimeIDsAndRetainsDefault(t *testing.T) {
 		t.Fatalf("unexpected placement descriptor %+v", p)
 	}
 	state, err := g.PlacementStatus(t.Context(), p)
-	if err != nil || state.DefaultPlacement != "default-placement" || len(state.StorageClasses) != 2 {
+	if err != nil || !state.Confirmed || state.DefaultPlacement != "default-placement" || len(state.StorageClasses) != 2 {
 		t.Fatalf("placement status: %+v %v", state, err)
 	}
 	p.LocationConstraint = "caller-mutated:foreign"
@@ -216,6 +216,15 @@ func TestRGWPlacementUsesRuntimeIDsAndRetainsDefault(t *testing.T) {
 	if state, err := g.PlacementStatus(t.Context(), p); err != nil || state.StorageClasses[0].DataPool != "data" {
 		t.Fatal("native policy snapshot aliases the owned placement configuration")
 	}
+	state.Confirmed = false
+	if current, err := g.PlacementStatus(t.Context(), p); err != nil || !current.Confirmed {
+		t.Fatal("public status changed private creation confirmation")
+	}
+	p.confirmed = false
+	if partial, err := g.PlacementStatus(t.Context(), p); err != nil || partial.Confirmed {
+		t.Fatal("complete partial mapping was misreported as confirmed creation")
+	}
+	p.confirmed = true
 	for _, args := range f.calls {
 		if args[0] == "radosgw-admin" && (slices.Contains(args, "--rgw-zone") || slices.Contains(args, "--rgw-zonegroup")) {
 			t.Fatal("native default names were used instead of exact runtime IDs")

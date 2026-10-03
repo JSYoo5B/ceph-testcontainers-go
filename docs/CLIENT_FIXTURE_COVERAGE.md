@@ -47,9 +47,9 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G02 | named placement/storage class, replicated/EC data, realm activation | `CreatePlacement`, `ApplyPlacement`, `ReloadPlacement` + destination period pull; 실제 class와 RADOS pool payload | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 | G03 | user default target/class와 placement tags | `SetUserPlacement`; 새 bucket 허용·거부·기존 bucket 유지·실제 선택 pool | 완료: `TestRGWUserPlacementPolicy`, host variant |
 | G04 | tenant 및 account-root fixture/account quota | 같은 uid·bucket 이름의 tenant 격리, fresh account/root credentials·aggregate quota·cleanup | 완료: `TestRGWTenantsAndAccounts`, host variant |
-| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 검증 중: owned same-bucket/system-mode API 준비; translation/tag/user recipe는 추가 예정 |
+| G05 | multisite selective replication의 owned 구성 | group/flow/pipe 구성·제거, bucket/prefix/tag 허용·거부, bucket/owner translation과 user mode | 검증 중: [기본 및 확장 recipe](RGW_SYNC_POLICY.md), 초기 period/staging 정합성 보강 후 native 재실행 |
 | G06 | 기존 bucket 유지보수 조건 | 개별 bucket quota, reshard/queue·readiness; 실제 S3 payload 보존·quota 거부 | 완료: `TestRGWBucketMaintenance`, bridge/host |
-| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 개발 중: `SyncStatus`, `WaitSyncReady` |
+| G07 | period 및 metadata/data/bucket sync 관측·bounded readiness | exact local committed period, 실제 destination checkpoint·bytes와 native sync 상태 조합 | 검증 중: `SyncStatus`/`WaitSyncReady`, `BucketSyncStatus`/`WaitBucketSyncReady`; 두 endpoint identity·오류·deadline guard |
 | G08 | S3 client 기능의 서버 조건 | versioning/multipart/lifecycle/object-lock/bucket policy/ACL client recipe와 필요한 daemon 옵션, 대표 동작 | 완료: `TestRGWS3ClientFeatures`, bridge/host; IAM role은 G09 |
 | G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 완료: `TestRGWNativeTLS`, [STS·Swift·Vault recipe](RGW_PROTOCOL_BACKENDS.md)의 `TestRGWProtocolBackends`, bridge/host |
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
@@ -70,7 +70,7 @@ NFS·SMB·NVMe-oF gateway, cephadm/systemd/LVM/실제 disk, kernel-only mount, h
 
 ## 조사와 실행 경로
 
-새 대표 시나리오는 `make client-fixtures`로 순차 실행합니다. role 이미지 환경 변수는 [fixture 확장 문서](CLUSTER_FIXTURE_EXTENSIONS.md)의 실행 설정을 사용합니다.
+새 대표 시나리오는 `make client-fixtures`로 순차 실행합니다. role 이미지 환경 변수는 [fixture 확장 문서](CLUSTER_FIXTURE_EXTENSIONS.md)의 실행 설정을 사용합니다. RBD encryption recipe는 cryptsetup과 동일 Ceph ABI의 native client library를 포함한 consumer image가 필요합니다. Slim control image를 쓰는 경우 [RBD client image](RBD_CLIENT_FIXTURES.md)의 빌드 후 `CEPH_TEST_RBD_CLIENT_IMAGE`로 지정합니다. 이 consumer 전용 의존성이 공개 Go module이나 daemon role image에 추가되지는 않습니다.
 
 RADOS client fixture의 [실행 가능한 public composition](../internal/integration/rados_client_fixtures_integration_test.go)은 `Run` → `CreatePool(Application: "rados")` → `WithClient`로 연결한 Linux consumer 두 개 → 각 consumer의 namespace 선택 순서입니다. 하나의 pool에 SDK에서 namespace를 선택하면 compound/xattr/omap/watch-notify/pool snapshot을 테스트할 수 있습니다. striper는 consumer의 `rados --striper`와 native libradosstriper가 추가로 필요하고 OSD role에는 실제 object class shared libraries가 있어야 합니다. 테스트는 다른 namespace가 섞이지 않는지와 compound 비교 실패 후 데이터 유지, 실제 notification, snapshot frozen bytes, 3개의 stripe object와 SHA256, `cls_hello` 결과 및 object cleanup까지 실행합니다. 명령을 구현한 새 CRUD wrapper는 필요하지 않습니다.
 

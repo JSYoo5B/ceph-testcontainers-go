@@ -67,6 +67,9 @@ func (p RGWPlacement) GoString() string { return p.String() }
 type RGWPlacementState struct {
 	RGWPlacementConfig
 	RealmID, ZonegroupID, ZoneID, LocationConstraint, DefaultPlacement string
+	// Confirmed reports successful creation/readback of this owned handle.
+	// It does not assert that a gateway reloaded the policy or a realm published it.
+	Confirmed bool
 }
 
 type rgwPlacementScope struct {
@@ -758,7 +761,7 @@ func rgwPlacementState(p *RGWPlacement, group, zone map[string]any) (RGWPlacemen
 	if !ok || defaultName == "" {
 		return RGWPlacementState{}, errors.New("RGW zonegroup default placement is missing")
 	}
-	return RGWPlacementState{RGWPlacementConfig: config, RealmID: p.scope.realmID, ZonegroupID: p.scope.groupID, ZoneID: p.scope.zoneID, LocationConstraint: apiName + ":" + p.config.Name, DefaultPlacement: defaultName}, nil
+	return RGWPlacementState{RGWPlacementConfig: config, RealmID: p.scope.realmID, ZonegroupID: p.scope.groupID, ZoneID: p.scope.zoneID, LocationConstraint: apiName + ":" + p.config.Name, DefaultPlacement: defaultName, Confirmed: p.confirmed}, nil
 }
 
 // Period changes are compared structurally after inserting only the new target
