@@ -97,6 +97,10 @@ Pinned Ceph 20.2.4에서는 인증 전 `rgwx-perm-check-uid`가 system argument 
 
 2026-10-04 두 패치를 동일 source에 적용한 Ubuntu Noble ARM64 native 빌드의 네 target과 selector gtest 9개가 통과했습니다. Build tree에 의존하지 않는 relocated binary/library의 `ldd -r`도 통과했으며, RGW process에만 같은 빌드의 private library를 연결하는 23개 `.deb`를 생성했습니다. Ordered patch manifest SHA는 `eee526e5442002aa19ed7d6a7c8eeacf00270d7e7db5dc45e87a0562a946cee8`입니다. 실제 XML과 최초 lld 실패·bfd 재개 기록은 `artifacts/rgw-native-proof-20261004/`, package provenance는 그 아래 `package/package-report.json`에 보존합니다. Role image smoke와 unchanged client 재검증이 끝나기 전에는 G05/G07을 완료로 표시하지 않습니다.
 
+수정 RGW role image를 기존 Quay-derived control/OSD/MDS와 조합한 Linux bridge `TestMultiClusterRGWSyncTranslationFiltering`은 535.21초로 네 subtest와 owned cleanup까지 통과했습니다. 원래 pipe ID/priority 1·7을 유지한 92,160 bytes의 blue/red 및 STANDARD_IA pool, 상위 pipe 제거·import 후 77,824 bytes의 STANDARD fallback을 확인했습니다. Ordinary user는 source payload 거부 동안 35초 destination absence와 11 shard checkpoint 진행을 확인했고, grant 후 새 59,392 bytes 및 group 제거 후 replica 보존을 통과했습니다. Single tag/owner/class와 same-tenant system/user 격리도 회귀 통과했습니다. `artifacts/rgw-native-patched-translation-bridge.log`와 소유 리소스 잔존이 없는 `artifacts/rgw-native-proof-20261004/bridge-cleanup.json`에 기록합니다. Host variant 및 같은 인증 경로의 account-root 재검증은 진행 중입니다.
+
+다섯 Noble-derived role의 첫 자동 smoke는 official `ceph-mon --version` SIGILL로 실패했습니다. MON과 전역 libceph-common은 signed package 추출본과 byte 동일이며 patched private RGW library를 사용하지 않습니다. 진단은 libgcc/gperftools stack unwind의 AUTIA1716 pointer-auth fault를 확인했지만 근본 원인은 확정하지 않습니다. 해당 run을 전체 PASS로 표시하지 않습니다. 수정 RGW role의 독립 smoke는 통과하여 위 mixed-role 검증에 사용했습니다. Image ID·23개 package SHA·ordered patch·Go snapshot의 연결은 `artifacts/rgw-native-proof-20261004/runtime-proof.json`에 보존합니다.
+
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
