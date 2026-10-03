@@ -20,7 +20,7 @@
 | 실행 중 MDS 증감 | `CephFSContainer.ScaleMDS` | bridge 통과. 일반 standby의 1/0→2/1→1/1→1/0과 replay follower의 1/1→2/1→1/1→1/0 확인. rank handoff·남는 standby 제거, 실제 FSMap/컨테이너 수 확인. 같은 filesystem/pool ID와 기존 파일, 다른 filesystem MDS의 GID 유지 |
 | RGW 단독 / 같은 zone의 여러 gateway | `WithRGW`, `StartRGWWithConfig`, `Gateways`, `RemoveRGW` | bridge/host 통과. 초기 Run의 gateway, 동적 추가, 2→1→2 제거·교체, 중단·재시작 뒤 같은 zone의 기존 데이터 확인 |
 | 독립 클러스터 2개 동시 사용 | 독립 `Run`과 `WithClient`/`ConnectionConfig` | bridge/host 통과. 동일 pool/object 이름의 서로 다른 데이터, 양쪽 OSD 교체, Linux go-ceph의 실제 session 확인 |
-| RGW multisite 2 zone | `multicluster.RunRGWMultisite` | bridge/host 통과. host의 자동 선택 gateway endpoint를 양쪽 최종 period에서 확인. 양방향 연결·gateway 중단/복구·metadata master 전환/복귀 |
+| RGW multisite 2 zone | `multicluster.RunRGWMultisite` | 복제·gateway 중단/복구는 bridge/host 통과. host의 자동 선택 gateway endpoint를 양쪽 최종 period에서 확인. metadata master 전환/복귀는 bridge에서 검증 |
 | RGW multisite 여러 zone | `RunRGWTopology`, `RGWTopologyConfig.Zones/MetadataMaster`, `AddZone`, `Zones`, `ZoneAdmin` | 3 zone bridge/host 통과. 초기 MON a 제거 후 남은 quorum으로 구성, 입력 순서와 다른 metadata master 지정, 실제 zone ID/endpoint, secondary 중단·재가입과 각 zone의 통신, master gateway 중단 후 보조 zone의 독립 읽기 확인 |
 | RBD snapshot mirror / journal mirror | `multicluster.RunRBDMirror`, `RBDMirrorConfig.Mode` | snapshot은 bridge/host 통과. journal의 receiver 재시작·A→B→A 구성도 통과 |
 | RBD 3 cluster fanout | 기존 pair API를 A→B, A→C로 조합 | bridge 통과. 서로 다른 FSID/네트워크/키, 실제 tx/rx peer graph, 한 receiver 중단 중 다른 receiver 유지, 재시작 후 catch-up. source MON/OSD와 두 receiver 중단 후 B/C의 독립 읽기 확인 |
