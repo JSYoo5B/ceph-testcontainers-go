@@ -97,6 +97,7 @@ type cephFSVolumeIdentity struct {
 	name, group, path, createdAt string
 	ready, removed               bool
 	removalAttempted             bool
+	authorizations               map[*cephFSAuthorizationIdentity]struct{}
 }
 
 var cephFSVolumeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -124,23 +125,12 @@ func (fs *CephFSContainer) validateSubvolumeConfig(name, group, dataPool string,
 	if dataPool == "" {
 		return nil
 	}
-	// ScaleMDS replaces the entire config under owner.mu. Validation precedes
-	// cephfsSetupMu, so capture the relevant fields under the same lock rather
-	// than reading unrelated struct fields concurrently with that assignment.
-	fs.cluster.mu.Lock()
-	filesystemName, defaultPool := fs.config.Name, fs.config.DataPool.Name
-	additionalPools := make([]string, len(fs.config.AdditionalDataPools))
-	for i, pool := range fs.config.AdditionalDataPools {
-		additionalPools[i] = pool.Name
+	if err := validateExistingPoolName(dataPool); err != nil {
+		return err
 	}
-	fs.cluster.mu.Unlock()
-	if dataPool == defaultPool {
-		return nil
-	}
-	if slices.Contains(additionalPools, dataPool) {
-		return nil
-	}
-	return fmt.Errorf("data pool %q is not configured for filesystem %q", dataPool, filesystemName)
+	// Native membership is checked after acquiring cephfsSetupMu. Initial
+	// config names cannot describe dynamically attached or detached pools.
+	return nil
 }
 
 // beginSubvolumeOperation holds the existing filesystem setup lock until done.
@@ -148,13 +138,20 @@ func (fs *CephFSContainer) validateSubvolumeConfig(name, group, dataPool string,
 // filesystem; using fs volume create would invoke an orchestrator and create
 // resources outside this fixture's ownership.
 func (fs *CephFSContainer) beginSubvolumeOperation(ctx context.Context) (context.Context, int64, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, 0, func() {}, err
+	}
 	if fs == nil || fs.cluster == nil {
 		return ctx, 0, func() {}, errors.New("CephFS filesystem is unavailable")
 	}
 	c := fs.cluster
 	c.cephfsSetupMu.Lock()
+	if err := ctx.Err(); err != nil {
+		c.cephfsSetupMu.Unlock()
+		return ctx, 0, func() {}, err
+	}
 	c.mu.Lock()
-	valid := !c.closed && c.filesystems[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && c.cliContainer() != nil
+	valid := !c.closed && c.filesystems[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && c.cliContainer() != nil && fs.nativeIdentity != nil
 	timeout := c.settings.startupTimeout
 	c.mu.Unlock()
 	if !valid {
@@ -163,16 +160,16 @@ func (fs *CephFSContainer) beginSubvolumeOperation(ctx context.Context) (context
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	done := func() { cancel(); c.cephfsSetupMu.Unlock() }
-	if err := fs.ensureVolumesModule(ctx); err != nil {
-		done()
-		return ctx, 0, func() {}, err
-	}
-	status, err := fs.MDSStatus(ctx)
+	state, err := fs.readNativePools(ctx)
 	if err != nil {
 		done()
 		return ctx, 0, func() {}, err
 	}
-	return ctx, status.FilesystemID, done, nil
+	if err := fs.ensureVolumesModule(ctx); err != nil {
+		done()
+		return ctx, 0, func() {}, err
+	}
+	return ctx, state.id, done, nil
 }
 
 func (fs *CephFSContainer) ensureVolumesModule(ctx context.Context) error {
@@ -277,6 +274,9 @@ func (fs *CephFSContainer) CreateSubvolumeGroup(ctx context.Context, config Ceph
 		return nil, err
 	}
 	defer done()
+	if err := fs.checkSubvolumeDataPool(ctx, config.DataPool); err != nil {
+		return nil, err
+	}
 	names, err := fs.subvolumeGroupNames(ctx)
 	if err != nil {
 		return nil, err
@@ -315,6 +315,9 @@ func (fs *CephFSContainer) CreateSubvolume(ctx context.Context, config CephFSSub
 		return nil, err
 	}
 	defer done()
+	if err := fs.checkSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
+		return nil, err
+	}
 	names, err := fs.subvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
@@ -633,6 +636,11 @@ func (fs *CephFSContainer) RemoveSubvolume(ctx context.Context, subvolume *CephF
 	defer done()
 	if subvolume.identity.removed {
 		return nil
+	}
+	for authorization := range subvolume.identity.authorizations {
+		if !authorization.deauthorized {
+			return errors.New("subvolume has an owned or partial authorization; deauthorize it before removing data")
+		}
 	}
 	if subvolume.identity.filesystemID != fsID {
 		return errors.New("CephFS filesystem was replaced outside this fixture; refusing removal")

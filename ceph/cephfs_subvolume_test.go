@@ -12,14 +12,16 @@ func subvolumeFixture() (*CephFSContainer, *poolFixtureContainer) {
 	ctr := &poolFixtureContainer{output: map[string]string{
 		"mgr module ls --format json":                                       `{"enabled_modules":["volumes"],"always_on_modules":[]}`,
 		"fs volume ls --format json":                                        `[{"name":"fixture"}]`,
-		"fs dump --format json":                                             `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":1,"info":{}}}],"standbys":[]}`,
+		"fs dump --format json":                                             `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":1,"metadata_pool":1,"data_pools":[2,3],"info":{}}}],"standbys":[]}`,
+		"osd pool ls detail --format json":                                  `[{"pool_id":1,"pool_name":"metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"data","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":3,"pool_name":"additional","type":1,"size":2,"min_size":1,"pg_num":8}]`,
 		"fs subvolumegroup info fixture group --format json":                `{"bytes_quota":65536,"bytes_used":0,"data_pool":"additional","created_at":"2026-10-03 00:00:00.123456"}`,
 		"fs subvolumegroup getpath fixture group":                           "/volumes/group\n",
 		"fs subvolume info fixture volume --group_name group --format json": `{"path":"/volumes/group/volume/unique-id","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"fsvolumens_group_volume","created_at":"2026-10-03 00:00:01.123456","state":"complete","type":"subvolume"}`,
 	}}
 	cluster := poolFixtureCluster(ctr, 2)
-	fs := &CephFSContainer{FilesystemName: "fixture", DataPool: "data", AdditionalDataPools: []string{"additional"}, cluster: cluster,
-		config: CephFSConfig{Name: "fixture", DataPool: PoolConfig{Name: "data"}, AdditionalDataPools: []PoolConfig{{Name: "additional"}}}}
+	fs := &CephFSContainer{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", AdditionalDataPools: []string{"additional"}, cluster: cluster,
+		config:         CephFSConfig{Name: "fixture", MetadataPool: PoolConfig{Name: "metadata"}, DataPool: PoolConfig{Name: "data"}, AdditionalDataPools: []PoolConfig{{Name: "additional"}}},
+		nativeIdentity: &cephFSNativeIdentity{id: 41, metadataPool: 1, defaultPool: 2, attachments: make(map[string]*cephFSDataPoolIdentity)}}
 	cluster.filesystems = map[string]*CephFSContainer{"fixture": fs}
 	return fs, ctr
 }
@@ -28,7 +30,7 @@ func TestCephFSSubvolumeValidationPreventsCommands(t *testing.T) {
 	for _, config := range []CephFSSubvolumeConfig{
 		{}, {Name: "_nogroup"}, {Name: ".."}, {Name: "--option"}, {Name: "bad/path"},
 		{Name: "name", GroupName: "_nogroup"}, {Name: "name", SizeBytes: -1},
-		{Name: "name", DataPool: "foreign"}, {Name: strings.Repeat("a", 129)},
+		{Name: "name", DataPool: "--option"}, {Name: strings.Repeat("a", 129)},
 	} {
 		fs, ctr := subvolumeFixture()
 		if subvolume, err := fs.CreateSubvolume(t.Context(), config); err == nil || subvolume != nil || len(ctr.calls) != 0 {

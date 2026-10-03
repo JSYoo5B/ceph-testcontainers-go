@@ -20,7 +20,8 @@ import (
 )
 
 // RBDMirrorMode selects the per-image replication mechanism, independently of
-// the pool's image scope. Images are enabled explicitly with EnableImage.
+// the pool/namespace scope. Image scope enables images explicitly; pool scope
+// automatically enrolls images carrying the journaling feature.
 type RBDMirrorMode string
 
 const (
@@ -37,8 +38,15 @@ type RBDMirrorConfig struct {
 	Pool            string
 	SourceSite      string
 	DestinationSite string
-	// Mode defaults to snapshot and is used by EnableImage. Both modes keep
-	// pool scope=image so unrelated images are not automatically mirrored.
+	// Scope defaults to image. Pool scope automatically mirrors every journaled
+	// image in the selected namespace, including existing images.
+	Scope RBDMirrorScope
+	// Each empty namespace means the unnamed default namespace. Both named
+	// namespaces must already exist; they are never created or removed here.
+	// Different names, including named/default pairs, are mapped explicitly.
+	SourceNamespace, DestinationNamespace string
+	// Mode defaults to snapshot for image scope and journal for pool scope.
+	// Pool scope supports journal only; it never creates mirror checkpoints.
 	Mode RBDMirrorMode
 	// DaemonCount defaults to one. Multiple daemons share the pool's receiving
 	// peer and participate in Ceph's native leader election and image assignment.
@@ -62,6 +70,8 @@ type RBDMirror struct {
 	daemonOpts                      []testcontainers.ContainerCustomizer
 	daemons                         []*RBDMirrorDaemon
 	initialDaemonName               string
+	poolIdentities                  *rbdMirrorPoolIdentities
+	policyIdentities                *rbdMirrorPolicyIdentities
 }
 
 // RBDMirrorDaemon is one destination-side rbd-mirror process. Every daemon has
@@ -134,12 +144,13 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 	return nil
 }
 
-// RunRBDMirror enables image-mode mirroring on both pools, imports a receiving
+// RunRBDMirror enables the selected scope on both pool/namespaces, imports a receiving
 // peer into the destination, and starts a daemon connected to both clusters.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
 // image must contain the RBD CLI and rbd-mirror. Enable each intended source
-// image through EnableImage or the RBD CLI. Snapshot images need subsequent
+// image through EnableImage or the RBD CLI in image scope. Pool scope
+// automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.
 //
 // The caller must Terminate a non-nil result even when setup returns an error.
@@ -152,6 +163,15 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 // Initial daemon names are a through z, then node-27 and onward. A process's
 // socket readiness does not guarantee pool discovery or leader convergence;
 // query the daemon Status for native election state.
+// Named namespace setup initializes a disabled default namespace as init-only,
+// preserving an existing active default policy. Existing target scope, remote
+// namespace mapping and configured site names must match; this method does not
+// silently reconfigure them. Site names are cluster-wide and must agree across
+// links. External pool/namespace/mirror edits must not race setup; native named
+// namespaces have no separate generation. Quiesce existing writers before
+// enabling pool scope. PolicyStatus reports the current native mapping.
+// Successful setup captures default/selected namespace mirror UUIDs, scopes and
+// mappings. Later typed mutations reject replacement or changed policies.
 func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*RBDMirror, error) {
 	if err := validatePair(image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -160,7 +180,11 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 	if err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
-	mirror := &RBDMirror{config: config, image: image, daemonOpts: slices.Clone(opts)}
+	identities, err := preflightRBDMirrorPools(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("preflight RBD mirror pools/namespaces: %w", err)
+	}
+	mirror := &RBDMirror{config: config, image: image, daemonOpts: slices.Clone(opts), poolIdentities: identities}
 	sourceClient, err := runClient(ctx, image, config.Source, config.Destination.NetworkName(), &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
@@ -171,16 +195,8 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 		return mirror, fmt.Errorf("run destination RBD setup client: %w", err)
 	}
 	mirror.destinationClient = destinationClient
-	for _, site := range []struct {
-		client testcontainers.Container
-		name   string
-	}{
-		{sourceClient, config.SourceSite},
-		{destinationClient, config.DestinationSite},
-	} {
-		if _, err := exec(ctx, site.client, "rbd", "mirror", "pool", "enable", "--site-name", site.name, config.Pool, "image"); err != nil {
-			return mirror, fmt.Errorf("enable %s RBD pool mirroring: %w", site.name, err)
-		}
+	if err := mirror.provisionRBDMirrorPolicies(ctx); err != nil {
+		return mirror, err
 	}
 	if err := mirror.Rebootstrap(ctx); err != nil {
 		return mirror, err
@@ -232,6 +248,9 @@ func (m *RBDMirror) AddDaemon(ctx context.Context, name string, opts ...testcont
 		if daemon.DaemonName == name {
 			return nil, fmt.Errorf("RBD mirror daemon %q already exists", name)
 		}
+	}
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return nil, err
 	}
 	clientName := "client.rbd-mirror.tc-" + uuid.NewString()
 	keyring, err := m.config.Destination.Ceph(ctx, "auth", "get-or-create", clientName,
@@ -328,6 +347,9 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
 	config := m.config
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return err
+	}
 	token, err := m.SourceRBD(ctx, "mirror", "pool", "peer", "bootstrap", "create", "--site-name", config.SourceSite, config.Pool)
 	if err != nil {
 		return fmt.Errorf("create RBD mirror peer token: %w", err)
@@ -349,6 +371,9 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	}()
 	if err := m.destinationClient.CopyToContainer(ctx, token, tokenPath, 0o600); err != nil {
 		return fmt.Errorf("copy RBD mirror peer token: %w", err)
+	}
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return err
 	}
 	if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "bootstrap", "import",
 		"--site-name", config.DestinationSite, "--direction", "rx-only", config.Pool, tokenPath); err != nil {
@@ -384,16 +409,22 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 		return fmt.Errorf("identify imported RBD mirror peer: %w", err)
 	}
 	if peer.ClientName != bootstrap.ClientName {
+		if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+			return err
+		}
 		if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "set", config.Pool, peer.UUID, "client", bootstrap.ClientName); err != nil {
 			return fmt.Errorf("configure imported RBD mirror peer client: %w", err)
 		}
 	}
 	if peer.Direction == "tx-only" {
+		if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+			return err
+		}
 		if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "set", config.Pool, peer.UUID, "direction", "rx-tx"); err != nil {
 			return fmt.Errorf("enable receiving on imported RBD mirror peer: %w", err)
 		}
 	}
-	return nil
+	return m.checkRBDMirrorPolicyIdentities(ctx)
 }
 
 type rbdMirrorPeer struct {
@@ -484,7 +515,7 @@ func (m *RBDMirror) DestinationRBD(ctx context.Context, args ...string) ([]byte,
 }
 
 // EnableImage enables the configured snapshot or journal mode on an existing
-// source image in this link's Pool. imageName is a name, without pool, namespace
+// source image in this link's Pool and SourceNamespace. imageName is a name, without pool, namespace
 // or snapshot syntax. A matching enabled image is left unchanged; a different
 // enabled mode is rejected before any mutation.
 //
@@ -493,17 +524,28 @@ func (m *RBDMirror) DestinationRBD(ctx context.Context, args ...string) ([]byte,
 // image's other features or broaden the pool's mirroring scope. Callers must
 // quiesce their application before changing an existing image's mirroring.
 func (m *RBDMirror) EnableImage(ctx context.Context, imageName string) error {
-	if m == nil || m.sourceClient == nil {
+	if m == nil {
 		return errors.New("RBD mirror source setup client is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.sourceClient == nil {
+		return errors.New("RBD mirror source setup client is unavailable or terminated")
 	}
 	if imageName == "" || strings.TrimSpace(imageName) != imageName || strings.HasPrefix(imageName, "-") || strings.ContainsAny(imageName, "/@\x00\t\r\n") {
 		return errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax")
+	}
+	if m.config.Scope == RBDMirrorScopePool {
+		return errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope")
+	}
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return err
 	}
 	mode, err := normalizeRBDMirrorMode(m.config.Mode)
 	if err != nil {
 		return err
 	}
-	image := m.config.Pool + "/" + imageName
+	image := rbdMirrorImageSpec(m.config.Pool, m.config.SourceNamespace, imageName)
 	data, err := m.SourceRBD(ctx, "info", image, "--format", "json")
 	if err != nil {
 		return fmt.Errorf("read source RBD image: %w", err)
@@ -525,15 +567,18 @@ func (m *RBDMirror) EnableImage(ctx context.Context, imageName string) error {
 		if info.Mirroring.Mode != string(mode) {
 			return fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode)
 		}
-		return nil
+		return m.checkRBDMirrorPolicyIdentities(ctx)
 	}
 	if mode == RBDMirrorModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
 		return errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring")
 	}
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return err
+	}
 	if _, err := m.SourceRBD(ctx, "mirror", "image", "enable", image, string(mode)); err != nil {
 		return fmt.Errorf("enable source %s RBD mirroring: %w", mode, err)
 	}
-	return nil
+	return m.checkRBDMirrorPolicyIdentities(ctx)
 }
 
 // Terminate removes the daemon and setup clients while preserving both clusters,
@@ -563,6 +608,10 @@ func normalizeRBDMirrorConfig(config RBDMirrorConfig) (RBDMirrorConfig, error) {
 	config.Pool = strings.TrimSpace(config.Pool)
 	config.SourceSite = strings.TrimSpace(config.SourceSite)
 	config.DestinationSite = strings.TrimSpace(config.DestinationSite)
+	config, err := normalizeRBDMirrorScopeAndNamespaces(config)
+	if err != nil {
+		return config, err
+	}
 	mode, err := normalizeRBDMirrorMode(config.Mode)
 	if err != nil {
 		return config, err

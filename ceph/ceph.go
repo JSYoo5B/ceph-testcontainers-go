@@ -40,6 +40,8 @@ type Container struct {
 	configMu              sync.RWMutex
 	configOverrides       map[string]*ConfigOverride
 	flagOverrides         map[string]*OSDFlagOverride
+	blocklistOverrides    map[string]*BlocklistOverride
+	moduleOverrides       map[string]*MGRModuleOverride
 	controlPlane          testcontainers.Container
 	settings              options
 	network               *testcontainers.DockerNetwork

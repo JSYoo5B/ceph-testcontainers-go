@@ -259,8 +259,8 @@ func (ctr *mdsScaleFixtureContainer) Terminate(context.Context, ...testcontainer
 }
 
 func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T) {
-	const before = `{"standbys":[{"name":"tenant-0","gid":20,"rank":-1,"state":"up:standby","join_fscid":7},{"name":"other-1","gid":31,"rank":-1,"state":"up:standby","join_fscid":9}],"filesystems":[{"id":7,"mdsmap":{"fs_name":"tenant","max_mds":1,"info":{"21":{"name":"tenant-1","gid":21,"rank":0,"state":"up:active","join_fscid":7}}}},{"id":9,"mdsmap":{"fs_name":"other","max_mds":1,"info":{"30":{"name":"other-0","gid":30,"rank":0,"state":"up:active","join_fscid":9}}}}]}`
-	const after = `{"standbys":[{"name":"other-1","gid":31,"rank":-1,"state":"up:standby","join_fscid":9}],"filesystems":[{"id":7,"mdsmap":{"fs_name":"tenant","max_mds":1,"info":{"21":{"name":"tenant-1","gid":21,"rank":0,"state":"up:active","join_fscid":7}}}},{"id":9,"mdsmap":{"fs_name":"other","max_mds":1,"info":{"30":{"name":"other-0","gid":30,"rank":0,"state":"up:active","join_fscid":9}}}}]}`
+	const before = `{"standbys":[{"name":"tenant-0","gid":20,"rank":-1,"state":"up:standby","join_fscid":7},{"name":"other-1","gid":31,"rank":-1,"state":"up:standby","join_fscid":9}],"filesystems":[{"id":7,"mdsmap":{"fs_name":"tenant","max_mds":1,"metadata_pool":1,"data_pools":[2],"info":{"21":{"name":"tenant-1","gid":21,"rank":0,"state":"up:active","join_fscid":7}}}},{"id":9,"mdsmap":{"fs_name":"other","max_mds":1,"info":{"30":{"name":"other-0","gid":30,"rank":0,"state":"up:active","join_fscid":9}}}}]}`
+	const after = `{"standbys":[{"name":"other-1","gid":31,"rank":-1,"state":"up:standby","join_fscid":9}],"filesystems":[{"id":7,"mdsmap":{"fs_name":"tenant","max_mds":1,"metadata_pool":1,"data_pools":[2],"info":{"21":{"name":"tenant-1","gid":21,"rank":0,"state":"up:active","join_fscid":7}}}},{"id":9,"mdsmap":{"fs_name":"other","max_mds":1,"info":{"30":{"name":"other-0","gid":30,"rank":0,"state":"up:active","join_fscid":9}}}}]}`
 	failure := errors.New("Docker removal uncertain")
 	for _, tc := range []struct {
 		name      string
@@ -275,7 +275,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 		{"credential cleanup failure", nil, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			control := &poolFixtureContainer{output: map[string]string{"fs dump --format json": before}}
+			control := &poolFixtureContainer{output: map[string]string{"fs dump --format json": before, "osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"data","type":1,"size":2,"min_size":1,"pg_num":8}]`}}
 			if tc.authFail {
 				control.fail = "auth del mds.tenant-0"
 			}
@@ -283,7 +283,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 			idle := &mdsScaleFixtureContainer{id: "idle", control: control, afterStop: after, removeErr: tc.removeErr}
 			active := &mdsScaleFixtureContainer{id: "active"}
 			other := &mdsScaleFixtureContainer{id: "other"}
-			fs := &CephFSContainer{Container: idle, cluster: cluster, FilesystemName: "tenant", config: CephFSConfig{Name: "tenant", ActiveMDS: 1, StandbyMDS: 1}, nextMDSIndex: 2,
+			fs := &CephFSContainer{Container: idle, cluster: cluster, FilesystemName: "tenant", config: CephFSConfig{Name: "tenant", MetadataPool: PoolConfig{Name: "metadata"}, DataPool: PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, nextMDSIndex: 2, nativeIdentity: &cephFSNativeIdentity{id: 7, metadataPool: 1, defaultPool: 2},
 				mdss: []*MDSContainer{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}},
 			}
 			cluster.filesystems = map[string]*CephFSContainer{"tenant": fs}
@@ -304,7 +304,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 				if slices.Contains(call, "fail") && !slices.Equal(call, []string{"mds", "fail", "20"}) {
 					t.Fatalf("retirement failed an active or reusable daemon identity: %v", call)
 				}
-				if slices.Contains(call, "new") || slices.Contains(call, "pool") || slices.Contains(call, "rm") {
+				if slices.Contains(call, "new") || (slices.Contains(call, "pool") && !slices.Equal(call, []string{"osd", "pool", "ls", "detail", "--format", "json"})) || slices.Contains(call, "rm") {
 					t.Fatalf("MDS scale-down modified filesystem storage: %v", call)
 				}
 			}

@@ -131,9 +131,79 @@ _ = destinationEndpoint
 
 HTTP readiness와 sync 완료는 별개입니다. gateway reload/재시작 뒤에는 기존 sync lease의 만료와 metadata/data 복구를 기다려야 할 수 있습니다. Ceph 20.2.4의 기본 lease는 120초이며, sync coroutine의 abort 경로는 unlock을 건너뛸 수 있습니다. 복제 검증은 native lease·poll 범위를 고려한 deadline 안에서 실제 destination bytes를 확인합니다. [기본 sync 설정](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in), [native lease 종료 경로](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc).
 
-기존 target, zonegroup default, 사용자 default, 기존 bucket placement를 변경하지 않습니다. pool ID와 실제 runtime scope를 확인하며 sequential command의 partial 실패를 자동 rollback하지 않습니다. `PlacementStatus`는 incomplete mapping도 오류로 표시하므로 partial 생성의 자세한 조사는 `Admin`으로 수행합니다. confirmed creation만 활성화할 수 있습니다. restart/period commit 응답이 불확실하면 native 상태를 확인하고 처리해야 하며 policy/pool/bucket/data를 자동 삭제하지 않습니다.
+placement 생성·활성화는 기존 target, zonegroup default, 사용자 default, 기존 bucket placement를 변경하지 않습니다. 사용자 default 변경은 아래 `SetUserPlacement`의 명시적인 요청으로 수행합니다. pool ID와 실제 runtime scope를 확인하며 sequential command의 partial 실패를 자동 rollback하지 않습니다. `PlacementStatus`는 incomplete mapping도 오류로 표시하므로 partial 생성의 자세한 조사는 `Admin`으로 수행합니다. confirmed creation만 활성화할 수 있습니다. restart/period commit 응답이 불확실하면 native 상태를 확인하고 처리해야 하며 policy/pool/bucket/data를 자동 삭제하지 않습니다.
 
-`LocationConstraint`는 zonegroup API name과 target을 결합한 native 값입니다. bucket placement는 생성 이후 바꿀 수 없습니다. 사용자별 target 권한, S3 lifecycle transition, object CRUD와 SDK storage class 호환성은 소비자 client에서 설정·검증합니다. [RGW placement/storage class와 활성화 절차](https://docs.ceph.com/en/tentacle/radosgw/placement/).
+`LocationConstraint`는 zonegroup API name과 target을 결합한 native 값입니다. bucket placement는 생성 이후 바꿀 수 없습니다. 사용자별 target 권한은 `SetUserPlacement`, S3 lifecycle transition, object CRUD와 SDK storage class 호환성은 소비자 client에서 설정·검증합니다. [RGW placement/storage class와 활성화 절차](https://docs.ceph.com/en/tentacle/radosgw/placement/).
+
+## 정확한 client session 차단
+
+native librados의 연결 후 `GetAddrs`에 해당하는 session 주소를 `TemporaryBlocklist(ctx, address, duration)`에 전달합니다. `IP:port/nonzero-nonce`를 요구하므로 같은 host의 다른 client를 함께 차단하지 않습니다. 동일 session을 나타내는 v1/v2 vector도 허용하며 bare IP·CIDR·nonce zero·이미 존재하는 entry는 쓰기 전에 거부합니다.
+
+```go
+fence, err := cluster.TemporaryBlocklist(ctx, nativeClientAddress, time.Minute)
+if err != nil {
+    if fence != nil { err = errors.Join(err, fence.Restore(context.WithoutCancel(ctx))) }
+    return err
+}
+// 해당 session의 native I/O 실패와 다른 session의 정상 I/O를 확인합니다.
+return fence.Restore(ctx)
+```
+
+`BlocklistEntries`는 외부 exact entry와 CIDR range까지 조회하지만 제거 소유권을 부여하지 않습니다. handle은 native expiration을 캡처하며 외부 TTL 갱신을 덮어쓰지 않습니다. unknown readback의 present entry는 자동 제거를 거부하고 natural expiry는 absence로 수렴시킵니다. 복사한 handle도 제거 상태를 공유합니다. blocklist 해제 후 세션 복구 방식은 client library에 따릅니다. Ceph 20.2.4 librados에서는 기존 세션의 write/read 복구와 새 nonce 연결 모두 실제 검증했습니다.
+
+## MGR module 제어와 readiness
+
+`MGRModules`는 enabled/always-on/force-disabled membership과 active MGR의 available/can-run/dependency 진단을 함께 조회합니다. `TemporaryMGRModule(ctx, name, enabled)`의 `Restore`는 이전 membership을 복원하며 readback 과도기를 기다립니다. always-on disable, unavailable dependency enable, overlapping handle, 사용 중인 filesystem의 volumes 또는 native mirror policy가 있는 mirroring disable은 거부합니다.
+
+Ceph 20.2.4의 `rbd_support`와 `volumes`는 always-on입니다. enable true의 no-op lease는 허용하지만 임의 force-disable로 조건을 가장하지 않습니다. `WaitMGRModuleReady(ctx, "rbd_support")`는 실제 `ceph rbd task list`와 snapshot schedule list를, `volumes`는 `fs volume ls`를 probe합니다. 다른 module은 intended command를 caller가 확인합니다. configured membership과 작업 완료는 별도입니다. [MGR 관리 계약](https://docs.ceph.com/en/tentacle/mgr/administrator/).
+
+## 실행 중 CephFS data pool 추가
+
+```go
+attachment, err := fs.AddDataPool(ctx, "app-ec-data")
+if err != nil { return err }
+subvolume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{
+    Name: "dynamic-data", DataPool: attachment.Name, NamespaceIsolated: true,
+})
+if err != nil { return err }
+_ = subvolume
+pools, err := fs.DataPools(ctx)
+_ = pools
+return err
+```
+
+pool은 미리 만들며 EC에는 `AllowOverwrites`가 필요합니다. `DataPools`는 native FSMap의 현재 membership을 조회합니다. subvolume/group/clone의 pool 검증도 live membership을 사용하며 초기 옵션의 whitelist에 제한되지 않습니다. filesystem 생성 때 native FSID·metadata/default pool ID를 캡처하고 모든 이후 provisioning에서 재생성을 거부합니다.
+
+`RemoveUnusedDataPool`은 이번 helper가 추가한 attachment 중 provisioning에 사용한 적 없고 native group/subvolume/clone 참조와 모든 RADOS namespace의 데이터가 없는 것만 해제합니다. default pool을 제거하지 않습니다. raw POSIX layout reference를 native MON이 전부 검사하는 것은 아니므로 외부 writer/layout 변경은 caller가 중지해야 합니다. native application tag는 남으며 pool/data를 삭제하지 않습니다. 사용한 pool은 subvolume가 제거된 뒤에도 이 좁은 API로 제거하지 않습니다.
+
+## RGW user placement 정책
+
+새 placement의 `RGWPlacementConfig.Tags`에 required tags를 지정하고 활성화한 뒤, owned 사용자에 기본 target/class와 허용 tags를 지정합니다.
+
+```go
+err := gateway.SetUserPlacement(ctx, user, placement, ceph.RGWUserPlacementConfig{
+    StorageClass: "STANDARD_IA", Tags: []string{"app-tier"},
+})
+```
+
+nil Tags는 기존 tags를 유지합니다. nonempty 목록은 정확히 교체합니다. native CLI의 빈 tags 값은 clearing이 아니므로 empty non-nil 목록은 거부합니다. target 접근을 취소하려면 matching tags를 nonmatching tags로 교체합니다. 이 정책은 새 bucket placement 권한이며 기존 bucket의 object 권한·placement를 취소하는 API가 아닙니다. 기본 class는 class header가 없는 새 object의 data pool 선택에 영향을 줍니다. 관련 없는 user caps/quota/flags/keys는 native readback으로 유지 여부를 확인합니다.
+
+native CLI는 기본 `STANDARD` class를 빈 문자열로 정규화합니다. `UserInfo`는 실제 문자열을 반환하고 policy readback 비교는 두 값을 같은 기본 class로 취급합니다. tenant 사용자 CLI의 `user_id`는 `tenant$uid` 전체이며 REST AdminOps serializer의 별도 tenant/local user ID 형식과 다릅니다. user handle은 canonical identity로 모든 이후 native 작업을 수행합니다.
+
+## CephFS quiesce checkpoint
+
+```go
+pause, err := fs.QuiesceSubvolumes(ctx, []*ceph.CephFSSubvolume{first, second},
+    ceph.CephFSQuiesceConfig{Timeout: 20*time.Second, Expiration: time.Minute})
+if err != nil { return err }
+// 여러 client의 durable writes가 멈춘 동안 snapshot을 만듭니다.
+snapshot, err := fs.CreateSubvolumeSnapshot(ctx, first, "checkpoint")
+if err != nil { return err } // native expiration이 I/O를 자동 복구합니다.
+_ = snapshot
+return pause.Release(ctx)
+```
+
+`QuiesceSubvolumes`는 confirmed owned subvolume들의 FSID·pool ID·UUID path와 생성 시간을 다시 확인하고 고유 set을 `--if-version=0`으로 생성합니다. finite timeout/expiration은 필수입니다. `Status`는 readonly query로 TTL을 연장하지 않습니다. `Release`는 캡처한 QUIESCED version에 native optimistic concurrency를 적용하고 복사한 handle과 완료 상태를 공유합니다. 외부 변경·EXPIRED·TIMEDOUT은 consistent checkpoint로 간주하지 않습니다. uncertain create의 non-nil handle을 유지하거나 native TTL 복구 후 cluster를 정리합니다. 다른 overlapping set을 취소하지 않습니다. [native quiesce 계약](https://docs.ceph.com/en/tentacle/cephfs/fs-volumes/#subvolume-quiesce).
 
 ## 실행
 
@@ -154,11 +224,21 @@ make cluster-feature-extensions
 | CephFS snapshot/clone | PASS, 133.49s | PASS, 132.58s | frozen bytes, source·clone 독립 쓰기, pending source 보호, wait timeout 재시도, quota·namespace 상속과 data pool override |
 | RGW standalone placement | PASS, 87.71s | PASS, 87.37s | named bucket, STANDARD replicated·STANDARD_IA EC pool, S3 class 목록과 실제 RADOS payload, 기존/default bucket 정책 유지 |
 | RGW realm placement | PASS, 279.51s | 이번 단계 미실행 | zone-local mapping, master publish·destination pull·reload, secondary publish 거부, unrelated staging 보존, 복제 class·bytes·실제 destination pool |
+| client nonce fencing | PASS, 47.66s | PASS, 47.05s | 두 session 중 한 nonce만 ESHUTDOWN, 기존·새 session 복구, TTL 만료, unrelated exact/range 보존 |
+| MGR module | PASS, 73.92s | PASS, 74.12s | 실제 task 완료, module readiness·membership 복원, always-on/사용 중 mirror·volumes 보호 |
+| native pool 재생성 guard | PASS, 35.39s | PASS, 35.32s | 같은 이름의 pool ID 변경 검출, stale namespace handle 거부, 새 namespace 보존 |
+| RADOS client recipe | PASS, 27.36s | PASS, 27.47s | compound atomicity, xattr/omap, cls_hello 실행, watch/notify, snapshot, 3-object striper payload |
+| CephFS 동적 data pool | PASS, 93.52s | PASS, 93.14s | live replicated/EC pool 등록, native layout·namespace, 실제 2 MiB 데이터·clone, unused detach |
+| CephFS canceled clone | PASS, 132.86s | PASS, 132.35s | source 보호 해제, partial 명시적 정리, 같은 이름 재생성 보존, frozen bytes와 독립 clone I/O |
+| CephFS quiesce | PASS, 79.48s | PASS, 77.41s | 두 native client 쓰기 정지, outside I/O 유지, snapshot bytes·해제 후 head 비교, TTL 만료 복구·version guard |
+| RGW user placement | PASS, 81.47s | PASS, 81.65s | required tags 거부·허용·취소, header 없는 class 선택과 실제 pool bytes, 기존 bucket/key/policy 유지 |
 
 CephFS 데이터 검증은 Linux client container의 libcephfs로 수행했습니다. pending clone은 native clone delay로 유지해 helper와 native CLI 양쪽의 source 보호를 확인했습니다. RGW는 S3 GET만으로 판단하지 않고 각 지정 data pool의 native object에서 96 KiB payload를 읽어 SHA256까지 비교했습니다. RGW shadow object의 이름은 S3 key를 그대로 포함하지 않을 수 있습니다.
 
 realm 복제는 native 설정 `lease=120`, metadata/data `poll=20`초를 유지한 채 100.452초 후 118,784 bytes가 일치했습니다. destination의 S3 listing에서 `STANDARD_IA`를 확인하고 실제 `tc-realm-ia` data pool의 payload SHA256까지 비교했습니다. 재시작 후 읽기 전용 native probe에서는 이전 locker `client.4248`의 `sync_lock`이 남아 있었고 새 RGW service ID는 `4425`였습니다. 기존 lock 만료 시각 `06:49:28.591 UTC` 뒤에 복제된 데이터가 조회되었습니다. HTTP readiness 직후 1분짜리 대기로 실패했던 경우와 구분해, 최종 테스트는 4분 안에 실제 복구를 확인합니다.
 
 결과 로그는 `artifacts/cluster-config-cephfs-verified.log`, `artifacts/cluster-osd-policies.log`, `artifacts/cluster-rgw-placement-payload-final.log`, `artifacts/cluster-rgw-placement-realm-lease-final.log`에 남깁니다. native lock 관측은 `artifacts/rgw-placement-restart-lease-proof.json`에 기록합니다. artifacts는 Git에 포함하지 않습니다. 공개 모듈의 `CGO_ENABLED=0 go test ./...`, `go test -race ./...`, integration·features·auth·hostnetwork·topology·multicluster·goceph 전체 tag 컴파일과 vet도 통과했습니다. tag 컴파일은 기존 모든 Docker 시나리오의 재실행을 의미하지 않습니다.
+
+client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/clone-tenant-account-fixtures-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. canceled clone 통과가 failed clone 주입 검증 완료를 뜻하지 않습니다. 전체 제공 기준은 [진행 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
 
 최종 실행 후 running/stopped Docker container는 모두 정리됐고 전용 network도 남지 않았습니다. 기존 `kind` network는 유지했습니다.

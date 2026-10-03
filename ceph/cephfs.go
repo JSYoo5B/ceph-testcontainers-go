@@ -55,6 +55,8 @@ type CephFSContainer struct {
 	mdss                []*MDSContainer
 	mdsOpts             []testcontainers.ContainerCustomizer
 	nextMDSIndex        int
+	nativeIdentity      *cephFSNativeIdentity
+	pinOverrides        map[string]*CephFSPinOverride
 }
 
 // MDSStatus records a metadata daemon's current native FSMap identity. GID
@@ -163,6 +165,9 @@ func (c *Container) StartCephFSWithConfig(ctx context.Context, config CephFSConf
 			return fs, fmt.Errorf("set cephfs %s: %w", setting[0], err)
 		}
 	}
+	if err := fs.captureNativePoolIdentity(ctx); err != nil {
+		return fs, fmt.Errorf("capture created cephfs identity: %w", err)
+	}
 	for _, pool := range fs.AdditionalDataPools {
 		if _, err := c.Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
 			return fs, fmt.Errorf("add cephfs data pool %q: %w", pool, err)
@@ -214,7 +219,7 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 	c.cephfsSetupMu.Lock()
 	defer c.cephfsSetupMu.Unlock()
 	c.mu.Lock()
-	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil {
+	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		c.mu.Unlock()
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
@@ -223,6 +228,9 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 	c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	if _, err := fs.readNativePools(ctx); err != nil {
+		return err
+	}
 	status, err := fs.MDSStatus(ctx)
 	if err != nil {
 		return err
@@ -525,9 +533,11 @@ type cephFSMap struct {
 	Filesystems []struct {
 		ID     int64 `json:"id"`
 		MDSMap struct {
-			Name   string                   `json:"fs_name"`
-			MaxMDS int                      `json:"max_mds"`
-			Info   map[string]cephFSMDSInfo `json:"info"`
+			Name         string                   `json:"fs_name"`
+			MaxMDS       int                      `json:"max_mds"`
+			Info         map[string]cephFSMDSInfo `json:"info"`
+			MetadataPool int64                    `json:"metadata_pool"`
+			DataPools    []int64                  `json:"data_pools"`
 		} `json:"mdsmap"`
 	} `json:"filesystems"`
 }

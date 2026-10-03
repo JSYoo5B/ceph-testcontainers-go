@@ -186,7 +186,7 @@ func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
 		return nil, err
 	}
 	var native []struct {
-		ID                 int64  `json:"pool"`
+		ID                 *int64 `json:"pool_id"`
 		Name               string `json:"pool_name"`
 		Type               int    `json:"type"`
 		Size               int    `json:"size"`
@@ -203,6 +203,8 @@ func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
 		return nil, errors.New("decode native pool policies")
 	}
 	states := make([]PoolState, 0, len(native))
+	seenIDs := make(map[int64]bool)
+	seenNames := make(map[string]bool)
 	for _, pool := range native {
 		kind := "replicated"
 		if pool.Type == 3 {
@@ -210,10 +212,11 @@ func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
 		} else if pool.Type != 1 {
 			return nil, fmt.Errorf("unsupported native pool type %d", pool.Type)
 		}
-		if pool.Name == "" || pool.ID < 0 || pool.Size < 1 || pool.MinSize < 1 || pool.PGNum < 1 {
+		if pool.Name == "" || pool.ID == nil || *pool.ID < 0 || pool.Size < 1 || pool.MinSize < 1 || pool.PGNum < 1 || seenIDs[*pool.ID] || seenNames[pool.Name] {
 			return nil, errors.New("incomplete native pool policy")
 		}
-		states = append(states, PoolState{ID: pool.ID, Name: pool.Name, Type: kind, Size: pool.Size, MinSize: pool.MinSize, PGNum: pool.PGNum, CRUSHRule: pool.CRUSHRule, AutoscaleMode: pool.AutoscaleMode, ErasureCodeProfile: pool.ErasureCodeProfile, Flags: pool.Flags, Quota: PoolQuota{MaxBytes: pool.MaxBytes, MaxObjects: pool.MaxObjects}})
+		seenIDs[*pool.ID], seenNames[pool.Name] = true, true
+		states = append(states, PoolState{ID: *pool.ID, Name: pool.Name, Type: kind, Size: pool.Size, MinSize: pool.MinSize, PGNum: pool.PGNum, CRUSHRule: pool.CRUSHRule, AutoscaleMode: pool.AutoscaleMode, ErasureCodeProfile: pool.ErasureCodeProfile, Flags: pool.Flags, Quota: PoolQuota{MaxBytes: pool.MaxBytes, MaxObjects: pool.MaxObjects}})
 	}
 	return states, nil
 }

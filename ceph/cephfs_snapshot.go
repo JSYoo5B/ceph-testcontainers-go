@@ -70,12 +70,14 @@ type cephFSSnapshotIdentity struct {
 }
 
 type cephFSCloneIdentity struct {
-	filesystem            *CephFSContainer
-	filesystemID          int64
-	source                *cephFSSnapshotIdentity
-	name, group, dataPool string
-	submitted             bool
-	subvolume             *CephFSSubvolume
+	filesystem                *CephFSContainer
+	filesystemID              int64
+	source                    *cephFSSnapshotIdentity
+	name, group, dataPool     string
+	submitted                 bool
+	subvolume                 *CephFSSubvolume
+	incarnation               *cephFSCloneIncarnation
+	removed, removalAttempted bool
 }
 
 func (fs *CephFSContainer) checkSnapshotSubvolume(ctx context.Context, fsID int64, identity *cephFSVolumeIdentity) error {
@@ -308,11 +310,13 @@ func (fs *CephFSContainer) RemoveSubvolumeSnapshot(ctx context.Context, snapshot
 }
 
 // CloneSubvolumeSnapshot submits an asynchronous copy to a fresh subvolume.
-// Duplicate targets are rejected; the source snapshot is retained. External
-// commands must not race submission or replace an incomplete clone: native
-// clone status has no generation ID before completion. A failed or canceled
-// clone remains for inspection; explicit CLI --force or cluster termination
-// handles its cleanup.
+// Duplicate targets are rejected; the source snapshot is retained. Immediately
+// after submission it captures the target UUID, inode and birth time from
+// version-checked native volumes metadata inside the control container. External
+// edits must not race submission. A failed command or identity read returns a
+// non-nil descriptor for inspection, but cannot be adopted or mutated through
+// this API. Failed/canceled targets are retained until explicit
+// RemovePartialSubvolumeClone or raw Ceph cleanup.
 func (fs *CephFSContainer) CloneSubvolumeSnapshot(ctx context.Context, snapshot *CephFSSubvolumeSnapshot, config CephFSCloneConfig) (*CephFSSubvolumeClone, error) {
 	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, 0); err != nil {
 		return nil, err
@@ -325,6 +329,13 @@ func (fs *CephFSContainer) CloneSubvolumeSnapshot(ctx context.Context, snapshot 
 		return nil, err
 	}
 	defer done()
+	selectedPool := config.DataPool
+	if selectedPool == "" {
+		selectedPool = snapshot.identity.dataPool
+	}
+	if err := fs.checkSubvolumeDataPool(ctx, selectedPool); err != nil {
+		return nil, err
+	}
 	if _, err := fs.checkSnapshotIdentity(ctx, fsID, snapshot.identity); err != nil {
 		return nil, err
 	}
@@ -349,6 +360,10 @@ func (fs *CephFSContainer) CloneSubvolumeSnapshot(ctx context.Context, snapshot 
 		return clone, err
 	}
 	identity.submitted = true
+	identity.incarnation, err = fs.readCloneIncarnation(ctx, identity)
+	if err != nil {
+		return clone, err
+	}
 	return clone, nil
 }
 
@@ -400,8 +415,11 @@ func decodeCephFSCloneStatus(data []byte) (*CephFSSubvolumeCloneStatus, error) {
 }
 
 func (fs *CephFSContainer) validateCloneHandle(clone *CephFSSubvolumeClone) error {
-	if clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
+	if fs == nil || fs.cluster == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted || clone.identity.removed {
 		return errors.New("clone must be a successfully submitted resource created by this filesystem")
+	}
+	if clone.identity.incarnation == nil {
+		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
 	return nil
 }
@@ -439,8 +457,8 @@ func (fs *CephFSContainer) subvolumeCloneStatus(ctx context.Context, fsID int64,
 }
 
 // SubvolumeCloneStatus inspects this owned request. Native status is read-only;
-// failed and canceled targets are preserved. After successful adoption, every
-// query verifies the captured UUID path and birth time too.
+// failed and canceled targets are preserved. Every query verifies the captured
+// native UUID, inode and birth time too.
 func (fs *CephFSContainer) SubvolumeCloneStatus(ctx context.Context, clone *CephFSSubvolumeClone) (*CephFSSubvolumeCloneStatus, error) {
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return nil, err
@@ -450,6 +468,9 @@ func (fs *CephFSContainer) SubvolumeCloneStatus(ctx context.Context, clone *Ceph
 		return nil, err
 	}
 	defer done()
+	if err := fs.checkCloneIncarnation(ctx, clone.identity); err != nil {
+		return nil, err
+	}
 	return fs.subvolumeCloneStatus(ctx, fsID, clone.identity)
 }
 
@@ -488,6 +509,9 @@ func (fs *CephFSContainer) advanceSubvolumeClone(ctx context.Context, identity *
 		return nil, false, err
 	}
 	defer done()
+	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+		return nil, false, err
+	}
 	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
 	if err != nil {
 		return nil, false, err
@@ -505,6 +529,9 @@ func (fs *CephFSContainer) advanceSubvolumeClone(ctx context.Context, identity *
 		}
 		if info.Type != "clone" || info.State != "complete" || (identity.dataPool != "" && info.DataPool != identity.dataPool) {
 			return nil, false, errors.New("completed subvolume clone does not match requested native type, state or pool")
+		}
+		if identity.incarnation != nil && info.Path != identity.incarnation.Path {
+			return nil, false, errors.New("completed clone incarnation differs from its submission identity")
 		}
 		identity.subvolume = &CephFSSubvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.config.Name, Path: info.Path,
 			identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}

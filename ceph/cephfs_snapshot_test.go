@@ -13,6 +13,9 @@ func snapshotFixture(t *testing.T) (*CephFSContainer, *poolFixtureContainer, *Ce
 	fs, ctr := subvolumeFixture()
 	ctr.output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"no"}`
 	ctr.output["fs subvolume snapshot getpath fixture volume checkpoint --group_name group"] = "/volumes/group/volume/.snap/checkpoint/unique-id\n"
+	for _, group := range []string{"_nogroup", "restores"} {
+		ctr.output["fixture /volumes/"+group+"/copy"] = `{"version":2,"type":"clone","state":"pending","path":"/volumes/` + group + `/copy/10000000-0000-4000-8000-000000000001","inode":71,"birth_time":"2026-10-03T00:02:00.123456","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"}}`
+	}
 	volume, err := fs.CreateSubvolume(t.Context(), CephFSSubvolumeConfig{Name: "volume", GroupName: "group", SizeBytes: 32768})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +64,9 @@ func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
 	if err := fs.RemoveSubvolumeSnapshot(t.Context(), &copyBefore); err != nil {
 		t.Fatal(err)
 	}
-	if len(ctr.calls) != 3 || !snapshot.identity.removed {
+	if slices.ContainsFunc(ctr.calls, func(call []string) bool {
+		return len(call) > 3 && slices.Equal(call[:4], []string{"fs", "subvolume", "snapshot", "rm"})
+	}) || !snapshot.identity.removed {
 		t.Fatalf("copied descriptor repeated removal or lost shared state: %v", ctr.calls)
 	}
 	if _, err := fs.CloneSubvolumeSnapshot(t.Context(), &copyBefore, CephFSCloneConfig{Name: "copy"}); err == nil {
@@ -148,7 +153,7 @@ func TestCephFSCloneSubmissionStatusAndCompletionOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"fs", "subvolume", "snapshot", "clone", "fixture", "volume", "checkpoint", "copy", "--group_name", "group", "--target_group_name", "restores", "--pool_layout", "data"}
-	if !slices.Equal(ctr.calls[len(ctr.calls)-1], want) {
+	if !slices.ContainsFunc(ctr.calls, func(call []string) bool { return slices.Equal(call, want) }) {
 		t.Fatalf("clone layout or source/target group arguments changed: %v", ctr.calls)
 	}
 	ctr.output["fs clone status fixture copy --group_name restores --format json"] = `{"status":{"state":"pending","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"}}}`
@@ -164,9 +169,9 @@ func TestCephFSCloneSubmissionStatusAndCompletionOwnership(t *testing.T) {
 	}
 	clone.Name, clone.GroupName, clone.FilesystemName = "foreign", "foreign", "foreign"
 	ctr.output["fs clone status fixture copy --group_name restores --format json"] = `{"status":{"state":"complete"}}`
-	ctr.output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/clone-id","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
+	ctr.output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
 	adopted, err := fs.WaitForSubvolumeClone(t.Context(), clone)
-	if err != nil || adopted.Path != "/volumes/restores/copy/clone-id" || adopted.Name != "copy" || adopted.GroupName != "restores" {
+	if err != nil || adopted.Path != "/volumes/restores/copy/10000000-0000-4000-8000-000000000001" || adopted.Name != "copy" || adopted.GroupName != "restores" {
 		t.Fatalf("completed clone not adopted safely: %+v error=%v", adopted, err)
 	}
 	copyClone := *clone
@@ -177,7 +182,7 @@ func TestCephFSCloneSubmissionStatusAndCompletionOwnership(t *testing.T) {
 	if err := fs.ResizeSubvolume(t.Context(), adopted, 0); err != nil {
 		t.Fatal(err)
 	}
-	ctr.output["fs subvolume info fixture copy --group_name restores --format json"] = strings.ReplaceAll(ctr.output["fs subvolume info fixture copy --group_name restores --format json"], "clone-id", "replacement-id")
+	ctr.output["fs subvolume info fixture copy --group_name restores --format json"] = strings.ReplaceAll(ctr.output["fs subvolume info fixture copy --group_name restores --format json"], "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002")
 	if _, err := fs.WaitForSubvolumeClone(t.Context(), &copyClone); err == nil {
 		t.Fatal("replaced completed target was adopted")
 	}

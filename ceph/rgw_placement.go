@@ -35,6 +35,10 @@ type RGWPlacementConfig struct {
 	Name, IndexPool, DataExtraPool string
 	StorageClasses                 []RGWStorageClassConfig
 	InlineData                     *bool
+	// Tags restrict creation of new buckets using this target to users with
+	// at least one matching placement tag. An empty list permits every user.
+	// These tags do not grant access to existing buckets or their objects.
+	Tags []string
 }
 
 // RGWPlacement identifies a newly created native policy and its exact runtime
@@ -86,6 +90,11 @@ func normalizeRGWPlacementConfig(config RGWPlacementConfig) (RGWPlacementConfig,
 		}
 	}
 	config.StorageClasses = slices.Clone(config.StorageClasses)
+	var err error
+	config.Tags, err = normalizeRGWPlacementTags(config.Tags)
+	if err != nil {
+		return config, err
+	}
 	seen := make(map[string]bool)
 	for _, class := range config.StorageClasses {
 		if !rgwStorageClassName.MatchString(class.Name) || seen[class.Name] {
@@ -199,7 +208,11 @@ func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementC
 		if err := g.checkPlacementResources(ctx, p); err != nil {
 			return p, err
 		}
-		if _, err := g.placementCommand(ctx, scope, "zonegroup", "placement", "add", "--placement-id", config.Name, "--storage-class", class.Name); err != nil {
+		groupArgs := []string{"zonegroup", "placement", "add", "--placement-id", config.Name, "--storage-class", class.Name}
+		if len(config.Tags) > 0 {
+			groupArgs = append(groupArgs, "--tags", strings.Join(config.Tags, ","))
+		}
+		if _, err := g.placementCommand(ctx, scope, groupArgs...); err != nil {
 			return p, err
 		}
 		if err := g.checkPlacementResources(ctx, p); err != nil {
@@ -707,6 +720,10 @@ func rgwPlacementState(p *RGWPlacement, group, zone map[string]any) (RGWPlacemen
 	target, mapping := rgwPlacementTarget(group, p.config.Name), rgwZonePlacement(zone, p.config.Name)
 	if target == nil || mapping == nil {
 		return RGWPlacementState{}, errors.New("RGW placement has no complete zonegroup target and zone mapping")
+	}
+	tags, err := rgwPlacementNativeTags(target["tags"])
+	if err != nil || !slices.Equal(tags, p.config.Tags) {
+		return RGWPlacementState{}, errors.New("RGW placement target tags differ from its creation policy")
 	}
 	classes, ok := mapping["storage_classes"].(map[string]any)
 	if !ok {

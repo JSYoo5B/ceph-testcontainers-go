@@ -12,7 +12,7 @@ import (
 
 func policyFixture(size, minSize, kind string) *poolFixtureContainer {
 	return &poolFixtureContainer{output: map[string]string{
-		"osd pool ls detail --format json":  `[{"pool":7,"pool_name":"fixture","type":` + kind + `,"size":` + size + `,"min_size":` + minSize + `,"pg_num":8,"crush_rule":3,"quota_max_bytes":100,"quota_max_objects":4}]`,
+		"osd pool ls detail --format json":  `[{"pool_id":7,"pool_name":"fixture","type":` + kind + `,"size":` + size + `,"min_size":` + minSize + `,"pg_num":8,"crush_rule":3,"quota_max_bytes":100,"quota_max_objects":4}]`,
 		"osd crush rule dump --format json": `[{"rule_id":3,"steps":[{"op":"take","item_name":"default"},{"op":"chooseleaf_firstn","type":"osd","num":0},{"op":"emit"}]}]`,
 		"osd crush dump --format json":      `{"devices":[{"id":0,"class":"ssd"},{"id":1,"class":"ssd"},{"id":2,"class":"ssd"}],"buckets":[{"id":-1,"name":"default","type_name":"root","items":[{"id":0,"weight":1},{"id":1,"weight":1},{"id":2,"weight":1}]}]}`,
 	}}
@@ -101,6 +101,25 @@ func TestPoolQuotaZeroClearsBothLimitsAndStatusIncludesNativeIDs(t *testing.T) {
 	}
 }
 
+func TestPoolNativeIdentityRequiresPoolIDField(t *testing.T) {
+	base := `{"pool_id":7,"pool_name":"fixture","type":1,"size":2,"min_size":1,"pg_num":8}`
+	for name, data := range map[string]string{
+		"old wrong field":       "[" + strings.Replace(base, `"pool_id"`, `"pool"`, 1) + "]",
+		"missing identity":      "[" + strings.Replace(base, `"pool_id":7,`, "", 1) + "]",
+		"null identity":         "[" + strings.Replace(base, `"pool_id":7`, `"pool_id":null`, 1) + "]",
+		"duplicate native id":   "[" + base + "," + strings.Replace(base, "fixture", "another", 1) + "]",
+		"duplicate native name": "[" + base + "," + strings.Replace(base, `"pool_id":7`, `"pool_id":8`, 1) + "]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctr := policyFixture("2", "1", "1")
+			ctr.output["osd pool ls detail --format json"] = data
+			if _, err := poolFixtureCluster(ctr, 3).Pools(t.Context()); err == nil {
+				t.Fatal("unknown or ambiguous native pool identity accepted")
+			}
+		})
+	}
+}
+
 type replacedPoolFixture struct {
 	*poolFixtureContainer
 	reads int
@@ -110,7 +129,7 @@ func (ctr *replacedPoolFixture) Exec(ctx context.Context, args []string, opts ..
 	if slices.Contains(args, "detail") {
 		ctr.reads++
 		if ctr.reads > 1 {
-			ctr.output["osd pool ls detail --format json"] = strings.ReplaceAll(ctr.output["osd pool ls detail --format json"], `"pool":7`, `"pool":9`)
+			ctr.output["osd pool ls detail --format json"] = strings.ReplaceAll(ctr.output["osd pool ls detail --format json"], `"pool_id":7`, `"pool_id":9`)
 		}
 	}
 	return ctr.poolFixtureContainer.Exec(ctx, args, opts...)

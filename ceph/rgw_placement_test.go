@@ -64,10 +64,10 @@ func (f *rgwPlacementTestContainer) Exec(_ context.Context, args []string, _ ...
 		result = map[string]any{"services": map[string]any{"rgw": map[string]any{"daemons": map[string]any{"summary": "", "10": map[string]any{"metadata": map[string]any{"hostname": "test-gateway", "pid": "1", "frontend_config#0": "beast port=7480", "zonegroup_id": "group-id", "zonegroup_name": "active-group", "zone_id": "zone-id", "zone_name": "active-zone", "realm_id": f.group["realm_id"], "realm_name": ""}}}}}}
 	case args[0] == "ceph" && slices.Contains(args, "pool"):
 		result = []map[string]any{
-			{"pool": f.poolID, "pool_name": "index", "type": f.poolType, "size": 2, "min_size": 1, "pg_num": 1},
-			{"pool": 2, "pool_name": "extra", "type": 1, "size": 2, "min_size": 1, "pg_num": 1},
-			{"pool": 3, "pool_name": "data", "type": 1, "size": 2, "min_size": 1, "pg_num": 1},
-			{"pool": 4, "pool_name": "ec-data", "type": 3, "size": 3, "min_size": 3, "pg_num": 1},
+			{"pool_id": f.poolID, "pool_name": "index", "type": f.poolType, "size": 2, "min_size": 1, "pg_num": 1},
+			{"pool_id": 2, "pool_name": "extra", "type": 1, "size": 2, "min_size": 1, "pg_num": 1},
+			{"pool_id": 3, "pool_name": "data", "type": 1, "size": 2, "min_size": 1, "pg_num": 1},
+			{"pool_id": 4, "pool_name": "ec-data", "type": 3, "size": 3, "min_size": 3, "pg_num": 1},
 		}
 	case args[0] == "radosgw-admin":
 		if flag("--zonegroup-id") != "" && (flag("--zonegroup-id") != "group-id" || flag("--zone-id") != "zone-id") {

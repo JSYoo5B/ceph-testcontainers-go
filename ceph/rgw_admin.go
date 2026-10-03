@@ -20,9 +20,11 @@ import (
 // expression such as "users=read;usage=read" for the RGW Admin Ops REST API.
 // Neither the global admin nor the multisite system flag is granted. MaxBuckets
 // nil preserves Ceph's default; zero allows unlimited buckets and -1 forbids
-// creating buckets. This helper currently creates users without a tenant.
+// creating buckets. Tenant selects a native namespace; empty preserves the
+// legacy namespace. ID is the local user ID, without a tenant prefix.
 type RGWUserConfig struct {
 	ID, DisplayName, Email string
+	Tenant                 string
 	AdminCaps              string
 	MaxBuckets             *int
 }
@@ -44,10 +46,13 @@ type RGWUser struct {
 // Copies of a user handle share lifecycle state, which is accessed only while
 // holding its owning cluster's mutex. Credentials themselves are immutable.
 type rgwUserState struct {
-	created bool
-	removed bool
+	created     bool
+	removed     bool
+	nativeScope *rgwPlacementScope
 }
 
+// ID returns the canonical native ID, tenant$localID for a tenanted user.
+// Empty-tenant identities retain their existing unprefixed IDs.
 func (u *RGWUser) ID() string {
 	if u == nil {
 		return ""
@@ -84,12 +89,17 @@ type RGWAdminCapability struct {
 
 // RGWUserInfo is a current native policy snapshot, deliberately excluding keys.
 // BucketQuota applies individually to every bucket owned by this user.
+// DefaultStorageClass preserves native representation: STANDARD on a named
+// default placement is persisted and later read back as an empty string.
 type RGWUserInfo struct {
-	ID, DisplayName, Email   string
-	Suspended, Admin, System bool
-	MaxBuckets               int
-	AdminCaps                []RGWAdminCapability
-	UserQuota, BucketQuota   RGWQuota
+	ID, DisplayName, Email                      string
+	Tenant, LocalID, Namespace, Type, AccountID string
+	Suspended, Admin, System                    bool
+	MaxBuckets                                  int
+	AdminCaps                                   []RGWAdminCapability
+	UserQuota, BucketQuota                      RGWQuota
+	DefaultPlacement, DefaultStorageClass       string
+	PlacementTags                               []string
 }
 
 // Admin invokes radosgw-admin inside this running gateway, preserving its
@@ -191,6 +201,9 @@ func normalizeRGWUserConfig(config RGWUserConfig) (RGWUserConfig, error) {
 	if !clientIDPattern.MatchString(config.ID) {
 		return config, errors.New("RGW user ID must use letters, digits, dots, underscores or hyphens")
 	}
+	if err := validateRGWTenant(config.Tenant); err != nil {
+		return config, err
+	}
 	if config.DisplayName == "" {
 		config.DisplayName = "Testcontainers"
 	}
@@ -232,6 +245,13 @@ func normalizeRGWUserConfig(config RGWUserConfig) (RGWUserConfig, error) {
 // rather than adopting native keys or blindly retrying the same ID.
 // Native user edits from external clients must not race this operation.
 func (g *RGWContainer) CreateUser(ctx context.Context, config RGWUserConfig) (*RGWUser, error) {
+	return g.createUser(ctx, config, nil)
+}
+
+func (g *RGWContainer) createUser(ctx context.Context, config RGWUserConfig, account *RGWAccount) (*RGWUser, error) {
+	if account != nil && config.Tenant == "" {
+		config.Tenant = account.config.Tenant
+	}
 	config, err := normalizeRGWUserConfig(config)
 	if err != nil {
 		return nil, err
@@ -246,22 +266,43 @@ func (g *RGWContainer) CreateUser(ctx context.Context, config RGWUserConfig) (*R
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
-	exists, err := g.userExists(ctx, config.ID)
+	var nativeScope *rgwPlacementScope
+	if account != nil {
+		if _, err := g.ownedAccount(ctx, account); err != nil {
+			return nil, err
+		}
+		if config.Tenant != account.config.Tenant || !rgwIAMUserName.MatchString(config.DisplayName) {
+			return nil, errors.New("account root requires its account's tenant and an IAM-compatible display name")
+		}
+		value := account.scope
+		nativeScope = &value
+	} else if config.Tenant != "" {
+		value, err := g.placementRuntimeScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		nativeScope = &value
+	}
+	id := rgwFullUserID(config.Tenant, "", config.ID)
+	user := &RGWUser{owner: g.owner, scope: g.config, id: id, state: &rgwUserState{nativeScope: nativeScope}}
+	exists, err := g.userExistsForHandle(ctx, user)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, fmt.Errorf("RGW user %q already exists", config.ID)
+		return nil, fmt.Errorf("RGW user %q already exists", id)
 	}
-	user := &RGWUser{owner: g.owner, scope: g.config, id: config.ID, state: &rgwUserState{}}
-	args := []string{"user", "create", "--uid", config.ID, "--display-name", config.DisplayName}
+	args := []string{"user", "create", "--uid", id, "--display-name", config.DisplayName}
+	if account != nil {
+		args = append(args, "--account-id", account.id, "--account-root", "--gen-secret", "--gen-access-key")
+	}
 	if config.Email != "" {
 		args = append(args, "--email", config.Email)
 	}
 	if config.MaxBuckets != nil {
 		args = append(args, "--max-buckets", strconv.Itoa(*config.MaxBuckets))
 	}
-	data, err := g.adminCommand(ctx, args...)
+	data, err := g.userCommand(ctx, user, args...)
 	if err != nil {
 		return user, err
 	}
@@ -273,9 +314,15 @@ func (g *RGWContainer) CreateUser(ctx context.Context, config RGWUserConfig) (*R
 	if native.info.ID != user.id || len(native.keys) != 1 || native.keys[0].AccessKey == "" || native.keys[0].SecretKey == "" || native.info.Admin || native.info.System {
 		return user, errors.New("RGW did not create an ordinary user with one S3 key pair")
 	}
+	if account != nil && (native.info.AccountID != account.id || native.info.Type != "root") {
+		return user, errors.New("RGW did not create the requested account root identity")
+	}
+	if account == nil && (native.info.AccountID != "" || (native.info.Type != "" && native.info.Type != "rgw")) {
+		return user, errors.New("RGW did not create an ordinary non-account identity")
+	}
 	user.accessKey, user.secretKey = native.keys[0].AccessKey, native.keys[0].SecretKey
 	if config.AdminCaps != "" {
-		if _, err := g.adminCommand(ctx, "caps", "add", "--uid", user.id, "--caps", config.AdminCaps); err != nil {
+		if _, err := g.userCommand(ctx, user, "caps", "add", "--uid", user.id, "--caps", config.AdminCaps); err != nil {
 			return user, err
 		}
 	}
@@ -286,23 +333,37 @@ func sameRGWScope(a, b RGWConfig) bool {
 	return a.Realm == b.Realm && a.Zonegroup == b.Zonegroup && a.Zone == b.Zone
 }
 
-func (g *RGWContainer) userExists(ctx context.Context, id string) (bool, error) {
-	data, err := g.adminCommand(ctx, "user", "list")
+func (g *RGWContainer) userExistsForHandle(ctx context.Context, user *RGWUser) (bool, error) {
+	data, err := g.userCommand(ctx, user, "user", "list")
 	if err != nil {
 		return false, err
 	}
 	var users []string
-	if err := json.Unmarshal(data, &users); err != nil || users == nil {
+	if json.Unmarshal(data, &users) != nil || users == nil {
 		return false, errors.New("decode RGW user listing")
 	}
-	return slices.Contains(users, id), nil
+	return slices.Contains(users, user.id), nil
+}
+
+func (g *RGWContainer) userCommand(ctx context.Context, user *RGWUser, args ...string) ([]byte, error) {
+	if user.state.nativeScope != nil {
+		scope, err := g.placementRuntimeScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if scope != *user.state.nativeScope {
+			return nil, errors.New("RGW user's native runtime scope changed")
+		}
+		return g.placementCommand(ctx, scope, args...)
+	}
+	return g.adminCommand(ctx, args...)
 }
 
 func (g *RGWContainer) ownedUser(ctx context.Context, user *RGWUser) (*rgwNativeUser, error) {
 	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.accessKey == "" || user.secretKey == "" {
 		return nil, errors.New("RGW user must be an active identity created in this cluster and gateway scope")
 	}
-	data, err := g.adminCommand(ctx, "user", "info", "--uid", user.id)
+	data, err := g.userCommand(ctx, user, "user", "info", "--uid", user.id)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +397,8 @@ func (g *RGWContainer) withOwnedUser(ctx context.Context, user *RGWUser, fn func
 	return fn(ctx, native)
 }
 
-// UserInfo reads an owned user's current quota, capabilities and suspension.
+// UserInfo reads an owned user's quota, capabilities, suspension and placement
+// defaults/tags. Placement tags control new bucket placement, not object access.
 // It verifies the created key remains present before returning the policy.
 func (g *RGWContainer) UserInfo(ctx context.Context, user *RGWUser) (RGWUserInfo, error) {
 	var info RGWUserInfo
@@ -360,24 +422,33 @@ func (g *RGWContainer) SetBucketQuota(ctx context.Context, user *RGWUser, quota 
 	return g.setUserQuota(ctx, user, "bucket", quota)
 }
 
+func rgwQuotaSizeArgument(bytes int64) string {
+	if bytes == -1 {
+		// Account CLI quota rounds signed sizes before max(-1, rounded_size).
+		// -1 byte and -1 KiB truncate to zero; -2 KiB retains the disabled
+		// limit. Ordinary user/bucket quota accepts this negative value too.
+		return "-2K"
+	}
+	return strconv.FormatInt(bytes, 10) + "B"
+}
+
 func (g *RGWContainer) setUserQuota(ctx context.Context, user *RGWUser, scope string, quota RGWQuota) error {
 	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
 		return errors.New("RGW quota limits must be -1, zero or positive")
 	}
-	return g.withOwnedUser(ctx, user, func(ctx context.Context, _ *rgwNativeUser) error {
-		size := strconv.FormatInt(quota.MaxSizeBytes, 10)
-		if quota.MaxSizeBytes >= 0 {
-			size += "B"
+	return g.withOwnedUser(ctx, user, func(ctx context.Context, native *rgwNativeUser) error {
+		if native.info.AccountID != "" {
+			return errors.New("account-owned storage requires SetAccountQuota or SetAccountBucketQuota")
 		}
-		if _, err := g.adminCommand(ctx, "quota", "set", "--quota-scope", scope, "--uid", user.id,
-			"--max-size", size, "--max-objects", strconv.FormatInt(quota.MaxObjects, 10)); err != nil {
+		if _, err := g.userCommand(ctx, user, "quota", "set", "--quota-scope", scope, "--uid", user.id,
+			"--max-size", rgwQuotaSizeArgument(quota.MaxSizeBytes), "--max-objects", strconv.FormatInt(quota.MaxObjects, 10)); err != nil {
 			return err
 		}
 		action := "disable"
 		if quota.Enabled {
 			action = "enable"
 		}
-		if _, err := g.adminCommand(ctx, "quota", action, "--quota-scope", scope, "--uid", user.id); err != nil {
+		if _, err := g.userCommand(ctx, user, "quota", action, "--quota-scope", scope, "--uid", user.id); err != nil {
 			return err
 		}
 		native, err := g.ownedUser(ctx, user)
@@ -404,7 +475,7 @@ func (g *RGWContainer) SuspendUser(ctx context.Context, user *RGWUser, suspended
 		if suspended {
 			action = "suspend"
 		}
-		if _, err := g.adminCommand(ctx, "user", action, "--uid", user.id); err != nil {
+		if _, err := g.userCommand(ctx, user, "user", action, "--uid", user.id); err != nil {
 			return err
 		}
 		native, err := g.ownedUser(ctx, user)
@@ -421,8 +492,10 @@ func (g *RGWContainer) SuspendUser(ctx context.Context, user *RGWUser, suspended
 // RemoveUser removes an owned identity without purging buckets or objects.
 // The handle must contain its confirmed generated credentials; an incomplete
 // creation response never permits adopting keys from a later native query.
-// Ceph refuses users that still own buckets; remove those through the S3 client
-// first. Success is idempotent across copies of a handle. After an uncertain
+// Ceph refuses ordinary users that still own buckets; remove those through the
+// S3 client first. Account buckets belong to the account and may outlive a root
+// user's removal; RemoveAccount independently refuses a nonempty account.
+// Success is idempotent across copies of a handle. After an uncertain
 // native failure, an absent user is accepted as completed removal; a user still
 // present remains tracked and its created key is verified before retrying.
 func (g *RGWContainer) RemoveUser(ctx context.Context, user *RGWUser) error {
@@ -442,7 +515,7 @@ func (g *RGWContainer) RemoveUser(ctx context.Context, user *RGWUser) error {
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
-	exists, err := g.userExists(ctx, user.id)
+	exists, err := g.userExistsForHandle(ctx, user)
 	if err != nil {
 		return err
 	}
@@ -453,10 +526,10 @@ func (g *RGWContainer) RemoveUser(ctx context.Context, user *RGWUser) error {
 	if _, err := g.ownedUser(ctx, user); err != nil {
 		return err
 	}
-	if _, err := g.adminCommand(ctx, "user", "rm", "--uid", user.id); err != nil {
+	if _, err := g.userCommand(ctx, user, "user", "rm", "--uid", user.id); err != nil {
 		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		exists, checkErr := g.userExists(checkCtx, user.id)
+		exists, checkErr := g.userExistsForHandle(checkCtx, user)
 		if checkErr != nil || exists {
 			return errors.Join(err, checkErr)
 		}
@@ -471,26 +544,66 @@ type rgwNativeKey struct {
 }
 
 type rgwNativeUser struct {
-	info RGWUserInfo
-	keys []rgwNativeKey
+	info     RGWUserInfo
+	keys     []rgwNativeKey
+	document map[string]any
 }
 
 func decodeRGWUser(data []byte) (*rgwNativeUser, error) {
 	var raw struct {
-		ID          string               `json:"user_id"`
-		DisplayName string               `json:"display_name"`
-		Email       string               `json:"email"`
-		Suspended   json.RawMessage      `json:"suspended"`
-		Admin       json.RawMessage      `json:"admin"`
-		System      json.RawMessage      `json:"system"`
-		MaxBuckets  int                  `json:"max_buckets"`
-		Caps        []RGWAdminCapability `json:"caps"`
-		Keys        []rgwNativeKey       `json:"keys"`
-		UserQuota   json.RawMessage      `json:"user_quota"`
-		BucketQuota json.RawMessage      `json:"bucket_quota"`
+		ID                  string               `json:"user_id"`
+		FullID              string               `json:"full_user_id"`
+		Tenant              *string              `json:"tenant"`
+		Namespace           *string              `json:"namespace"`
+		Type                string               `json:"type"`
+		AccountID           string               `json:"account_id"`
+		DisplayName         string               `json:"display_name"`
+		Email               string               `json:"email"`
+		Suspended           json.RawMessage      `json:"suspended"`
+		Admin               json.RawMessage      `json:"admin"`
+		System              json.RawMessage      `json:"system"`
+		MaxBuckets          int                  `json:"max_buckets"`
+		Caps                []RGWAdminCapability `json:"caps"`
+		Keys                []rgwNativeKey       `json:"keys"`
+		UserQuota           json.RawMessage      `json:"user_quota"`
+		BucketQuota         json.RawMessage      `json:"bucket_quota"`
+		DefaultPlacement    string               `json:"default_placement"`
+		DefaultStorageClass string               `json:"default_storage_class"`
+		PlacementTags       []string             `json:"placement_tags"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil || raw.ID == "" {
 		return nil, errors.New("decode RGW user information")
+	}
+	// The native CLI's RGWUserInfo::dump emits canonical user_id alone.
+	// Admin Ops dump_user_info emits local user_id plus tenant/namespace and
+	// full_user_id instead. Preserve both forms and reject contradictory fields.
+	tenant, namespace, localID := "", "", raw.ID
+	canonicalID := strings.Contains(raw.ID, "$")
+	if canonicalID {
+		parts := strings.SplitN(raw.ID, "$", 3)
+		tenant, localID = parts[0], parts[1]
+		if len(parts) == 3 {
+			namespace, localID = parts[1], parts[2]
+		}
+	}
+	if raw.Tenant != nil {
+		if canonicalID && tenant != *raw.Tenant {
+			return nil, errors.New("RGW canonical user ID differs from separate tenant")
+		}
+		tenant = *raw.Tenant
+	}
+	if raw.Namespace != nil {
+		if canonicalID && namespace != *raw.Namespace {
+			return nil, errors.New("RGW canonical user ID differs from separate namespace")
+		}
+		namespace = *raw.Namespace
+	}
+	if localID == "" {
+		return nil, errors.New("RGW user information has an empty local ID")
+	}
+	fullID := rgwFullUserID(tenant, namespace, localID)
+	if raw.FullID != "" && raw.FullID != fullID {
+		return nil, errors.New("RGW full user ID differs from tenant, namespace or local ID")
 	}
 	suspended, err := rgwFlag(raw.Suspended)
 	if err != nil {
@@ -512,10 +625,17 @@ func decodeRGWUser(data []byte) (*rgwNativeUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &rgwNativeUser{keys: raw.Keys, info: RGWUserInfo{
-		ID: raw.ID, DisplayName: raw.DisplayName, Email: raw.Email, Suspended: suspended,
+	tags := slices.Clone(raw.PlacementTags)
+	slices.Sort(tags)
+	document, err := decodeRGWPlacementObject(data)
+	if err != nil {
+		return nil, errors.New("decode RGW user information")
+	}
+	return &rgwNativeUser{keys: raw.Keys, document: document, info: RGWUserInfo{
+		ID: fullID, LocalID: localID, Tenant: tenant, Namespace: namespace, Type: raw.Type, AccountID: raw.AccountID, DisplayName: raw.DisplayName, Email: raw.Email, Suspended: suspended,
 		Admin: admin, System: system, MaxBuckets: raw.MaxBuckets, AdminCaps: raw.Caps,
 		UserQuota: userQuota, BucketQuota: bucketQuota,
+		DefaultPlacement: raw.DefaultPlacement, DefaultStorageClass: raw.DefaultStorageClass, PlacementTags: tags,
 	}}, nil
 }
 

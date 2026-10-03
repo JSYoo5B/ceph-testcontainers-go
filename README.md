@@ -10,6 +10,8 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.
 
+client 테스트를 위한 서버 fixture의 전체 제공 기준과 남은 개발 항목은 [CLIENT_FIXTURE_COVERAGE.md](docs/CLIENT_FIXTURE_COVERAGE.md)에서 추적합니다. 각 항목은 공개 구성 경로, native 상태, 실제 client 효과, 복원·정리까지 확인해야 완료로 표시합니다.
+
 ## 프로젝트 구성
 
 공개 API는 `ceph/`와 `multicluster/`에 나란히 두고, 루트의 `go.mod` 하나로 관리합니다. 각 패키지의 단위 테스트·godoc 예제는 구현 옆에 둡니다. Docker로 실행하는 통합 테스트와 PoC는 공개 API를 사용하는 별도 테스트 패키지로 모았습니다.
