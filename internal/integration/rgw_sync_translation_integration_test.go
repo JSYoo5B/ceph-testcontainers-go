@@ -211,6 +211,10 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		t.Fatal(err)
 	}
 	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destB, modeOutput + "/auth/before-grant"})
+	// Require native progress while the source still denies this principal.
+	// A worker that merely paused must not satisfy the exclusion proof.
+	waitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
+	requireRGWObjectsAbsent(t, ctx, time.Second, rgwAbsentObject{destB, modeOutput + "/auth/before-grant"})
 	policy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": "s3:GetObject", "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
 	s3FeatureRequest(t, ctx, a, http.MethodPut, modeInput+"?policy", policy, nil, http.StatusNoContent)
 	if got := b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {
@@ -221,6 +225,9 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 	waitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
 	if err := link.RemoveSyncGroup(ctx, modeGroup); err != nil {
 		t.Fatal(err)
+	}
+	if got := destB.request(t, ctx, http.MethodGet, modeOutput+"/auth/after-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {
+		t.Fatal("user-mode policy removal changed previously replicated bytes")
 	}
 	if err := link.RemoveSyncGroup(ctx, selected); err != nil {
 		t.Fatal(err)
