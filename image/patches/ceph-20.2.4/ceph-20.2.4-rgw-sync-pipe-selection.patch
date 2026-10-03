@@ -1,0 +1,360 @@
+diff --git a/src/rgw/driver/rados/rgw_bucket_sync.cc b/src/rgw/driver/rados/rgw_bucket_sync.cc
+--- a/src/rgw/driver/rados/rgw_bucket_sync.cc
++++ b/src/rgw/driver/rados/rgw_bucket_sync.cc
+@@ -306,19 +306,11 @@
+     return false;
+   }
+ 
+-  auto end = prefix_refs.upper_bound(key.name);
+-  auto iter = end;
+-  if (iter != prefix_refs.begin()) {
+-    --iter;
+-  }
+-  if (iter == prefix_refs.end()) {
+-    return false;
+-  }
+-
+-  if (iter != prefix_refs.begin()) {
+-    iter = prefix_refs.find(iter->first); /* prefix_refs is multimap, find first element
+-                                             holding that key */
+-  }
++  // Every matching prefix is lexicographically <= the object name. Include
++  // all of them in priority selection, including duplicate and nested
++  // prefixes; the last prefix before upper_bound() need not match at all.
++  auto iter = prefix_refs.begin();
++  const auto end = prefix_refs.upper_bound(key.name);
+ 
+   std::vector<decltype(iter)> iters;
+ 
+@@ -402,15 +394,10 @@
+     return false;
+   }
+ 
+-  auto iter = prefix_refs.upper_bound(key.name);
+-  if (iter != prefix_refs.begin()) {
+-    --iter;
+-  }
+-  if (iter == prefix_refs.end()) {
+-    return false;
+-  }
+-
+-  auto end = prefix_refs.upper_bound(key.name);
++  // Tag matching may select a lower-priority fallback from any matching
++  // prefix, so inspect the same complete range as the tag-free lookup.
++  auto iter = prefix_refs.begin();
++  const auto end = prefix_refs.upper_bound(key.name);
+   auto max = end;
+ 
+   std::optional<int> priority;
+diff --git a/src/test/rgw/CMakeLists.txt b/src/test/rgw/CMakeLists.txt
+--- a/src/test/rgw/CMakeLists.txt
++++ b/src/test/rgw/CMakeLists.txt
+@@ -106,6 +106,11 @@
+ add_executable(unittest_rgw_bucket_sync_cache test_rgw_bucket_sync_cache.cc)
+ add_ceph_unittest(unittest_rgw_bucket_sync_cache)
+ target_link_libraries(unittest_rgw_bucket_sync_cache ${rgw_libs})
++
++# unittest_rgw_bucket_sync_pipe_rules
++add_executable(unittest_rgw_bucket_sync_pipe_rules test_rgw_bucket_sync_pipe_rules.cc)
++add_ceph_unittest(unittest_rgw_bucket_sync_pipe_rules)
++target_link_libraries(unittest_rgw_bucket_sync_pipe_rules ${rgw_libs})
+ 
+ #unittest_rgw_period_history
+ add_executable(unittest_rgw_period_history test_rgw_period_history.cc)
+diff --git a/src/test/rgw/test_rgw_bucket_sync_pipe_rules.cc b/src/test/rgw/test_rgw_bucket_sync_pipe_rules.cc
+new file mode 100644
+--- /dev/null
++++ b/src/test/rgw/test_rgw_bucket_sync_pipe_rules.cc
+@@ -0,0 +1,292 @@
++// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
++// vim: ts=8 sw=2 smarttab ft=cpp
++
++#include "rgw_bucket_sync.h"
++#include <gtest/gtest.h>
++
++#include <cstdint>
++#include <optional>
++#include <string>
++#include <utility>
++
++namespace {
++
++using PipeRules = RGWBucketSyncFlowManager::pipe_rules;
++
++rgw_sync_bucket_pipe make_pipe(std::string id,
++                              std::optional<std::string> prefix,
++                              int32_t priority,
++                              std::string storage_class)
++{
++  rgw_sync_bucket_pipe pipe;
++  pipe.id = std::move(id);
++  pipe.params.source.filter.prefix = std::move(prefix);
++  pipe.params.priority = priority;
++  pipe.params.dest.storage_class = std::move(storage_class);
++  return pipe;
++}
++
++void insert_pair(PipeRules& rules, const rgw_sync_bucket_pipe& first,
++                 const rgw_sync_bucket_pipe& second, bool reverse)
++{
++  rules.insert(reverse ? second : first);
++  rules.insert(reverse ? first : second);
++}
++
++struct BasicInfo {
++  bool found;
++  std::optional<rgw_user> user;
++  std::optional<rgw_user> owner;
++  std::optional<std::string> storage_class;
++  rgw_sync_pipe_params::Mode mode{rgw_sync_pipe_params::MODE_SYSTEM};
++  bool need_more_info{false};
++};
++
++BasicInfo find_basic(const PipeRules& rules, const std::string& name)
++{
++  rgw_obj_key key;
++  key.name = name;
++  BasicInfo info;
++  info.found = rules.find_basic_info_without_tags(
++      key, &info.user, &info.owner, &info.storage_class, &info.mode,
++      &info.need_more_info);
++  return info;
++}
++
++bool find_params(const PipeRules& rules, const std::string& name,
++                 const RGWObjTags& tags, rgw_sync_pipe_params* params)
++{
++  rgw_obj_key key;
++  key.name = name;
++  return rules.find_obj_params(key, tags.get_tags(), params);
++}
++
++} // anonymous namespace
++
++TEST(BucketSyncPipeRules, SamePrefixPriorityIgnoresInsertionAndIDs)
++{
++  // Reflection can rebuild pipes in ID order. Neither ID order nor insertion
++  // order may override a distinct numeric priority for the same endpoints.
++  for (bool high_id_first : {false, true}) {
++    auto low = make_pipe(high_id_first ? "z-low" : "a-low",
++                         "published/", 1, "STANDARD");
++    auto high = make_pipe(high_id_first ? "a-high" : "z-high",
++                          "published/", 7, "STANDARD_IA");
++    high.params.mode = rgw_sync_pipe_params::MODE_USER;
++    high.params.user = rgw_user("winner");
++    high.params.dest.set_owner(rgw_user("translated"));
++
++    for (bool reverse : {false, true}) {
++      SCOPED_TRACE(high_id_first);
++      SCOPED_TRACE(reverse);
++      PipeRules rules;
++      insert_pair(rules, low, high, reverse);
++
++      const auto basic = find_basic(rules, "published/object");
++      ASSERT_TRUE(basic.found);
++      EXPECT_FALSE(basic.need_more_info);
++      EXPECT_EQ(high.params.user, basic.user);
++      ASSERT_TRUE(basic.owner);
++      EXPECT_EQ(rgw_user("translated"), *basic.owner);
++      EXPECT_EQ(high.params.dest.storage_class, basic.storage_class);
++      EXPECT_EQ(high.params.mode, basic.mode);
++
++      rgw_sync_pipe_params params;
++      ASSERT_TRUE(find_params(rules, "published/object", RGWObjTags{}, &params));
++      EXPECT_EQ(7, params.priority);
++      EXPECT_EQ(high.params.user, params.user);
++      EXPECT_EQ(high.params.dest.acl_translation, params.dest.acl_translation);
++      EXPECT_EQ(high.params.dest.storage_class, params.dest.storage_class);
++      EXPECT_EQ(high.params.mode, params.mode);
++    }
++  }
++}
++
++TEST(BucketSyncPipeRules, SameKeyORTagsWinAndRemovalExposesFallback)
++{
++  auto low = make_pipe("low-standard", "published/", 1, "STANDARD");
++  low.params.source.filter.tags.emplace("color", "blue");
++  auto high = make_pipe("high-ia", "published/", 7, "STANDARD_IA");
++  high.params.source.filter.tags.emplace("color", "blue");
++  high.params.source.filter.tags.emplace("color", "red");
++  ASSERT_EQ(2u, high.params.source.filter.tags.size());
++
++  for (bool reverse : {false, true}) {
++    SCOPED_TRACE(reverse);
++    PipeRules rules;
++    insert_pair(rules, low, high, reverse);
++    EXPECT_TRUE(find_basic(rules, "published/object").need_more_info);
++
++    for (const std::string color : {"blue", "red"}) {
++      SCOPED_TRACE(color);
++      RGWObjTags tags;
++      tags.add_tag("color", color);
++      rgw_sync_pipe_params params;
++      ASSERT_TRUE(find_params(rules, "published/object", tags, &params));
++      EXPECT_EQ(7, params.priority);
++      EXPECT_EQ(high.params.dest.storage_class, params.dest.storage_class);
++    }
++
++    RGWObjTags green;
++    green.add_tag("color", "green");
++    rgw_sync_pipe_params params;
++    EXPECT_FALSE(find_params(rules, "published/object", green, &params));
++    EXPECT_FALSE(find_params(rules, "published/object", RGWObjTags{}, &params));
++  }
++
++  // pipe_rules is rebuilt after removing a pipe; exercise that native state.
++  PipeRules fallback;
++  fallback.insert(low);
++  RGWObjTags blue;
++  blue.add_tag("color", "blue");
++  rgw_sync_pipe_params params;
++  ASSERT_TRUE(find_params(fallback, "published/object", blue, &params));
++  EXPECT_EQ(1, params.priority);
++  EXPECT_EQ(low.params.dest.storage_class, params.dest.storage_class);
++  RGWObjTags red;
++  red.add_tag("color", "red");
++  EXPECT_FALSE(find_params(fallback, "published/object", red, &params));
++}
++
++TEST(BucketSyncPipeRules, HigherPriorityTagMismatchUsesMatchingFallback)
++{
++  auto low = make_pipe("low-blue", "published/", 1, "STANDARD");
++  low.params.source.filter.tags.emplace("color", "blue");
++  auto high = make_pipe("high-red", "published/", 7, "STANDARD_IA");
++  high.params.source.filter.tags.emplace("color", "red");
++  RGWObjTags blue;
++  blue.add_tag("color", "blue");
++
++  for (bool reverse : {false, true}) {
++    SCOPED_TRACE(reverse);
++    PipeRules rules;
++    insert_pair(rules, low, high, reverse);
++    EXPECT_TRUE(find_basic(rules, "published/object").need_more_info);
++    rgw_sync_pipe_params params;
++    ASSERT_TRUE(find_params(rules, "published/object", blue, &params));
++    EXPECT_EQ(1, params.priority);
++    EXPECT_EQ(low.params.dest.storage_class, params.dest.storage_class);
++  }
++}
++
++TEST(BucketSyncPipeRules, NestedPrefixesUsePriorityBeforePrefixLength)
++{
++  for (int32_t ancestor_priority : {1, 8}) {
++    auto ancestor = make_pipe("ancestor", "published/", ancestor_priority,
++                              "STANDARD_IA");
++    auto child = make_pipe("child", "published/nested/", 7, "STANDARD");
++    const auto& expected = ancestor_priority > 7 ? ancestor : child;
++
++    for (bool reverse : {false, true}) {
++      SCOPED_TRACE(ancestor_priority);
++      SCOPED_TRACE(reverse);
++      PipeRules rules;
++      insert_pair(rules, ancestor, child, reverse);
++      const auto basic = find_basic(rules, "published/nested/object");
++      ASSERT_TRUE(basic.found);
++      EXPECT_FALSE(basic.need_more_info);
++      EXPECT_EQ(expected.params.dest.storage_class, basic.storage_class);
++      rgw_sync_pipe_params params;
++      ASSERT_TRUE(find_params(rules, "published/nested/object", RGWObjTags{}, &params));
++      EXPECT_EQ(expected.params.priority, params.priority);
++      EXPECT_EQ(expected.params.dest.storage_class, params.dest.storage_class);
++    }
++  }
++}
++
++TEST(BucketSyncPipeRules, UnrelatedLexicalPrefixCannotHideMatchingPrefix)
++{
++  PipeRules rules;
++  const auto matching = make_pipe("match", "published/", 7, "STANDARD_IA");
++  rules.insert(matching);
++  // This nonmatching prefix sorts after the valid prefix and before the key.
++  rules.insert(make_pipe("intervening", "published/unrelated/", 99, "STANDARD"));
++  rules.insert(make_pipe("later", "zzzz/", 100, "STANDARD"));
++  const auto basic = find_basic(rules, "published/zebra");
++  ASSERT_TRUE(basic.found);
++  EXPECT_FALSE(basic.need_more_info);
++  EXPECT_EQ(matching.params.dest.storage_class, basic.storage_class);
++  rgw_sync_pipe_params params;
++  ASSERT_TRUE(find_params(rules, "published/zebra", RGWObjTags{}, &params));
++  EXPECT_EQ(7, params.priority);
++  EXPECT_EQ(matching.params.dest.storage_class, params.dest.storage_class);
++}
++
++TEST(BucketSyncPipeRules, TaggedAncestorRequiresTagsBeforeSelectingChild)
++{
++  auto ancestor = make_pipe("ancestor-red", "published/", 8, "STANDARD_IA");
++  ancestor.params.source.filter.tags.emplace("color", "red");
++  auto child = make_pipe("child-any-tag", "published/nested/", 7, "STANDARD");
++  for (bool reverse : {false, true}) {
++    SCOPED_TRACE(reverse);
++    PipeRules rules;
++    insert_pair(rules, ancestor, child, reverse);
++    // The ancestor may win, so returning the untagged child without a source
++    // attribute lookup would not determine the correct user/destination tuple.
++    EXPECT_TRUE(find_basic(rules, "published/nested/object").need_more_info);
++    RGWObjTags red;
++    red.add_tag("color", "red");
++    rgw_sync_pipe_params params;
++    ASSERT_TRUE(find_params(rules, "published/nested/object", red, &params));
++    EXPECT_EQ(8, params.priority);
++    EXPECT_EQ(ancestor.params.dest.storage_class, params.dest.storage_class);
++    ASSERT_TRUE(find_params(rules, "published/nested/object", RGWObjTags{}, &params));
++    EXPECT_EQ(7, params.priority);
++    EXPECT_EQ(child.params.dest.storage_class, params.dest.storage_class);
++  }
++}
++
++TEST(BucketSyncPipeRules, LowerPriorityTaggedChildDoesNotForceTagLookup)
++{
++  auto ancestor = make_pipe("ancestor-any-tag", "published/", 8, "STANDARD_IA");
++  auto child = make_pipe("child-red", "published/nested/", 7, "STANDARD");
++  child.params.source.filter.tags.emplace("color", "red");
++  PipeRules rules;
++  insert_pair(rules, ancestor, child, true);
++  const auto basic = find_basic(rules, "published/nested/object");
++  ASSERT_TRUE(basic.found);
++  EXPECT_FALSE(basic.need_more_info);
++  EXPECT_EQ(ancestor.params.dest.storage_class, basic.storage_class);
++  RGWObjTags red;
++  red.add_tag("color", "red");
++  rgw_sync_pipe_params params;
++  ASSERT_TRUE(find_params(rules, "published/nested/object", red, &params));
++  EXPECT_EQ(8, params.priority);
++  EXPECT_EQ(ancestor.params.dest.storage_class, params.dest.storage_class);
++}
++
++TEST(BucketSyncPipeRules, MatchAllPrefixParticipatesInPrioritySelection)
++{
++  PipeRules rules;
++  const auto all = make_pipe("all", std::nullopt, 8, "STANDARD_IA");
++  rules.insert(all);
++  rules.insert(make_pipe("nested", "published/", 7, "STANDARD"));
++  for (const std::string name : {"", "published/object", "unrelated/object"}) {
++    SCOPED_TRACE(name);
++    const auto basic = find_basic(rules, name);
++    ASSERT_TRUE(basic.found);
++    EXPECT_FALSE(basic.need_more_info);
++    EXPECT_EQ(all.params.dest.storage_class, basic.storage_class);
++    rgw_sync_pipe_params params;
++    ASSERT_TRUE(find_params(rules, name, RGWObjTags{}, &params));
++    EXPECT_EQ(8, params.priority);
++    EXPECT_EQ(all.params.dest.storage_class, params.dest.storage_class);
++  }
++}
++
++TEST(BucketSyncPipeRules, NoMatchingPrefixReturnsNoRule)
++{
++  PipeRules rules;
++  rgw_sync_pipe_params params;
++  EXPECT_FALSE(find_basic(rules, "zebra/object").found);
++  EXPECT_FALSE(find_params(rules, "zebra/object", RGWObjTags{}, &params));
++  rules.insert(make_pipe("first", "aardvark/", 1, "STANDARD"));
++  rules.insert(make_pipe("middle", "middle/", 7, "STANDARD_IA"));
++  for (const std::string name : {"aaa", "zebra/object"}) {
++    SCOPED_TRACE(name);
++    const auto basic = find_basic(rules, name);
++    EXPECT_FALSE(basic.found);
++    EXPECT_FALSE(basic.need_more_info);
++    EXPECT_FALSE(find_params(rules, name, RGWObjTags{}, &params));
++  }
++}

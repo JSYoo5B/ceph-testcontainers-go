@@ -1,0 +1,54 @@
+{
+  "source_ref": "v20.2.4",
+  "source_commit": "7f793731f1b39eb4f465e960113d2363c311b964",
+  "files": [
+    {
+      "path": "src/rgw/driver/rados/rgw_bucket_sync.cc",
+      "sha256": "2517f3fa3c066c999f3b809b03d6e9f986817192136b592cbe3e742287620bb3",
+      "bytes": 34116,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/driver/rados/rgw_bucket_sync.cc"
+    },
+    {
+      "path": "src/rgw/driver/rados/rgw_bucket_sync.h",
+      "sha256": "372f29bf016f336908763ea62fe544e85bea7dcefb2c70c964622d14ee9b4c40",
+      "bytes": 15656,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/driver/rados/rgw_bucket_sync.h"
+    },
+    {
+      "path": "src/rgw/rgw_sync_policy.h",
+      "sha256": "da0a88fa1c3af5f0cff7d7575a090f7ea20e6829f81e4eb84977ea628617b79b",
+      "bytes": 18362,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/rgw_sync_policy.h"
+    },
+    {
+      "path": "src/rgw/rgw_sync_policy.cc",
+      "sha256": "5fbf34592029ad1b40e063e465e7be4ca17902e31875d174d7bd64c9b54db0d5",
+      "bytes": 17809,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/rgw_sync_policy.cc"
+    },
+    {
+      "path": "src/test/rgw/CMakeLists.txt",
+      "sha256": "79a50e3522d5856830de19a20c04619b172afe8f2226c5031ac33ebd229d9cdc",
+      "bytes": 13133,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/test/rgw/CMakeLists.txt"
+    },
+    {
+      "path": "src/test/rgw/test_rgw_bucket_sync_cache.cc",
+      "sha256": "c24358e7557247f439481ea8525bba18128f463f67a90f722b9a764bef320bd8",
+      "bytes": 5163,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/test/rgw/test_rgw_bucket_sync_cache.cc"
+    },
+    {
+      "path": "src/test/rgw/test_rgw_tag.cc",
+      "sha256": "5ebf72e7a0ebe9fce6a9cc9753002b1eb44452f3cee83f3b68a35132120cd215",
+      "bytes": 5537,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/test/rgw/test_rgw_tag.cc"
+    },
+    {
+      "path": "src/rgw/rgw_rest_s3.cc",
+      "sha256": "ee043745411feb2941e697f212ebb3374c92f090b308b4b84e0fff76593210db",
+      "bytes": 230491,
+      "source": "https://raw.githubusercontent.com/ceph/ceph/7f793731f1b39eb4f465e960113d2363c311b964/src/rgw/rgw_rest_s3.cc"
+    }
+  ]
+}
