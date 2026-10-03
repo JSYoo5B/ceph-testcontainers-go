@@ -28,7 +28,13 @@ if err := fixture.CreateSyncPipe(ctx, selected, multicluster.RGWSyncPipeConfig{
     ID: "published", SourceZones: []string{"source"}, DestinationZones: []string{"destination"},
     Prefix: "published/",
 }); err != nil { return err }
-return fixture.ApplySyncGroup(ctx, selected)
+if err := fixture.ApplySyncGroup(ctx, selected); err != nil { return err }
+if _, err := fixture.WaitBucketSyncPolicyReady(ctx, selected, "destination"); err != nil {
+    return err
+}
+// 이제 S3 client로 published/ 아래 새 object를 씁니다.
+// 이후 destination bytes와 bucket checkpoint를 별도로 검증합니다.
+return nil
 ```
 
 Zonegroup의 `ApplySyncGroup`은 정확한 current period와 모든 stored zonegroup을 비교하고, unrelated pending/staging 변경을 덮어쓰지 않습니다. Owned 변경만 publish한 뒤 attached zone에 period를 전달하고 gateway를 reload합니다. Bucket 변경은 native metadata에 동적으로 적용하므로 period commit과 gateway 재시작이 필요 없습니다. 새 multisite bootstrap은 secondary가 commit한 최종 topology와 source의 staging을 맞춥니다. `Run`이 fresh fixture를 구성하는 동안 RGW 설정은 constructor가 독점하며 외부 CLI의 concurrent configuration을 지원하지 않습니다. 반환 후 외부 staging 변경을 일반 apply에서 지우는 경로는 제공하지 않습니다.
@@ -48,6 +54,10 @@ Storage class 변환은 concrete destination bucket과 각 concrete destination 
 동일 ID의 기존 group을 adopt하지 않습니다. Handle 복사는 lifecycle 상태를 공유합니다. Confirmed mutation의 응답이 유실되면 pending intent와 native before/after 상태를 비교해 재시도하며 unrelated 변화가 있으면 거부합니다. 초기 생성의 readback이 불확실하면 unconfirmed handle로 자동 제거하지 않으며 native 조사 또는 disposable fixture 종료가 필요합니다. Group 제거는 이미 복사된 bucket/object를 삭제하지 않습니다. 외부 CLI와 fixture mutation이 동시에 같은 policy를 변경하면 안 됩니다.
 
 ## 관측과 데이터 검증
+
+`WaitBucketSyncPolicyReady`는 source traffic 전에 destination-local metadata import를 확인하는 읽기 전용 prerequisite입니다. 생성·확인된 bucket-scoped group과 그 pipe가 선택한 explicit attached destination zone을 받으며, master의 unchanged owned group·committed period와 destination의 같은 period, source-scope group snapshot 및 필요한 concrete source/destination bucket instance ID를 비교합니다. `RGWBucketSyncPolicyStatus`의 `PeriodImported`·`PolicyImported`·`BucketsImported`가 모두 참이면 `Imported`가 참입니다. Wildcard bucket selector는 group이 캡처한 scope instance로 해석하며, 새 instance를 같은 이름으로 adopt하지 않습니다. Pending mutation, 제거된 handle, zonegroup-scoped group 또는 선택 범위 밖의 zone은 거부합니다.
+
+이 wait는 mutex 대기를 포함해 최대 4분, 각 native read는 최대 30초이며 더 짧은 caller context를 따릅니다. Local metadata lag는 기다리지만 master policy 변경, 다른 realm/namespace 또는 재생성된 bucket은 거부합니다. Period pull·gateway restart·replay·marker 변경은 하지 않습니다. `Imported`는 effective peer-discovery hints, checkpoint, payload 또는 authorization의 성공을 증명하지 않으므로 아래 data 관측과 client 검증이 여전히 필요합니다.
 
 `SyncStatus`·`WaitSyncReady`는 owned zone의 committed period, metadata shard 진행률 및 요청한 source의 native remote-log 비교를 확인합니다. Source 목록을 생략하면 metadata만 기다립니다. `BucketSyncStatus`·`WaitBucketSyncReady`는 owned group/pipe가 선택한 두 native bucket instance를 고정하고 두 endpoint의 exact imported period와 per-bucket checkpoint를 확인합니다. 반환값은 identity·state·shard count를 포함하고 native marker·secret·오류 본문은 제외합니다.
 
@@ -75,7 +85,7 @@ Forbidden에서 enabled로 바꾼 뒤 새 object는 복제되어도 이전에 �
 
 User-mode source replication GET는 일반 GetObject 외에 GetObjectAcl도 요구합니다. Recipe는 처음에 ACL 권한만 부여하여 ACL GET 200과 payload GET 403 AccessDenied를 확인한 뒤, payload와 ACL 권한을 함께 허용하도록 보완했습니다. Native 거부 동안 35초 absence와 checkpoint 진행 조건은 유지합니다. 실패 시 owned group을 제거하기 전에 exact pipe/bucket checkpoint를 bounded readonly 진단으로 남깁니다. [Native replication GET 권한](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1166-L1208). 이 보완은 compile/vet 검증만 끝났으며 native 재검증 전에는 통과로 표시하지 않습니다.
 
-Native peer discovery는 destination-local source bucket policy를 사용합니다. Global data caught-up만으로 새 bucket의 정책이 local metadata에 준비됐다는 것을 증명하지 않습니다. 정확한 native bucket ID와 owned policy import를 쓰기 전에 확인하는 observer를 보강하며, metadata 준비가 위 실패의 실제 원인이었는지는 후속 실행으로 확인합니다. [Local peer discovery](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L5582-L5673).
+Native peer discovery는 destination-local source bucket policy를 사용합니다. Global data caught-up만으로 새 bucket의 정책이 local metadata에 준비됐다는 것을 증명하지 않습니다. `WaitBucketSyncPolicyReady`로 정확한 native bucket ID와 owned policy import를 쓰기 전에 확인하도록 보강했으며 unit·race·tag compile·vet 검증을 통과했습니다. 이를 적용한 native 재검증은 진행 중이고, metadata 준비가 위 실패의 실제 원인이었는지는 아직 확정하지 않습니다. [Local peer discovery](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L5582-L5673).
 
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
