@@ -18,6 +18,20 @@ python3 image/slim/build.py \
 
 파일 인자 대신 `--deb-directory DIR`로 디렉터리 바로 아래의 `*.deb`를 전달할 수 있습니다. 두 입력 옵션과 기존 `--source-image` 중 하나만 선택합니다. `.deb` 입력에는 `--base-image`가 필수입니다.
 
+최종 이미지의 runtime 환경은 반복 가능한 `--runtime-env NAME=VALUE`로 명시합니다. 생략하면 기존 기본값을 유지합니다. 값은 생성 Dockerfile의 공통 `ENV`에 들어가므로 다섯 역할에 모두 적용되며, source 패키지 설치·호스트 환경에는 적용하지 않습니다.
+
+```sh
+python3 image/slim/build.py \
+  --deb-directory /path/to/packages --base-image ubuntu:24.04 \
+  --platform linux/arm64 --repository ceph-company-test \
+  --tag patched-build-generic-fp \
+  --runtime-env TCMALLOC_STACKTRACE_METHOD=generic_fp
+```
+
+`TCMALLOC_STACKTRACE_METHOD=generic_fp`는 tcmalloc의 stack trace 수집 방법을 명시적으로 선택하는 예입니다. 이 선택의 적용 여부와 runtime 결과는 image inspect·smoke·클러스터 테스트로 각각 확인합니다. CPU 지원 여부나 패키지 ABI 호환성 판정은 별도입니다. 자동으로 이 값을 넣거나 다른 기본 환경을 바꾸지 않습니다.
+
+이름은 `[A-Za-z_][A-Za-z0-9_]*`를 따르며 중복 이름·제어문자는 거부합니다. `NAME=`으로 빈 값도 전달할 수 있습니다. `$`, 따옴표, 역슬래시는 값 그대로 보존합니다. shell의 사전 치환을 피하려면 `--runtime-env 'NAME=$literal'`처럼 인자를 작은따옴표로 감쌉니다. 빌드 후 각 이미지의 실제 `Config.Env`가 요청값과 정확히 일치하지 않으면 실패합니다. 요청한 설정·역할별 확인값·검증 상태는 `build-report.json`에 기록합니다.
+
 ```sh
 make slim-images-deb \
   CEPH_DEB_DIRECTORY=/path/to/packages \
@@ -70,7 +84,7 @@ make slim-images-deb-verify \
 | `source-packages.json` | 검증된 package/version/architecture/source/SHA256 |
 | `Dockerfile.source.generated`, `deb-install.log` | 임시 설치 이미지 recipe와 APT·검증 로그 |
 | `source-image.json`, `plan.json` | 설치 이미지 inspect, 역할 package·license·파일 그룹 |
-| `build-report.json` | provenance, 실제 버전, 이미지 ID/Size, 공유 layer·검증 상태 |
+| `build-report.json` | provenance, 실제 버전, 이미지 ID/Size, 공유 layer·검증 상태, 명시한 runtime 환경과 역할별 inspect 확인값 |
 | `build-ROLE.log`, `smoke-ROLE.log`, `integration-*.log` | 빌드와 선택한 테스트 결과 |
 
 각 최종 이미지의 `/usr/share/ceph-testcontainers/image-manifest.json`에도 입력 provenance와 runtime package 버전이 들어갑니다. `.deb` 파일은 최종 역할 이미지에 넣지 않습니다. 임시 image tag 정리 후 Docker build cache는 남을 수 있습니다. [Metadata 보존 한계](SLIM_IMAGE_AUTOMATION.md#기록과-검증-경계)는 기존 방식과 동일합니다.

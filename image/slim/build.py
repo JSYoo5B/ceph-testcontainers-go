@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import uuid
 
 
@@ -161,7 +162,61 @@ def archive_path(value, prefix):
     return path.as_posix()
 
 
-def dockerfile(plan):
+def validate_runtime_env_entry(name, value):
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise BuildError("Invalid runtime environment name: " + str(name))
+    if not isinstance(value, str) or any(unicodedata.category(char) in ("Cc", "Cf", "Cs") or
+                                         char in "\u2028\u2029" for char in value):
+        raise BuildError("Runtime environment values cannot contain control characters: " + name)
+
+
+def parse_runtime_env(specifications):
+    supplied = {}
+    for specification in specifications:
+        name, separator, value = specification.partition("=")
+        if not separator:
+            raise BuildError("Runtime environment requires NAME=VALUE")
+        validate_runtime_env_entry(name, value)
+        if name in supplied:
+            raise BuildError("Runtime environment name supplied twice: " + name)
+        supplied[name] = value
+    return supplied
+
+
+def runtime_env_lines(supplied):
+    lines = []
+    for name, value in supplied.items():
+        validate_runtime_env_entry(name, value)
+        # Dockerfile ENV has its own lexer/variable expansion, not JSON string
+        # semantics. Escape backslash first, then quote and dollar explicitly.
+        encoded = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+        lines.append('ENV ' + name + '="' + encoded + '"')
+    return lines
+
+
+def check_runtime_env(image, supplied):
+    if not supplied:
+        return {}
+    config = image.get("Config")
+    entries = config.get("Env") if isinstance(config, dict) else None
+    if not isinstance(entries, list):
+        raise BuildError("Built image has no inspectable runtime environment")
+    observed = {}
+    for entry in entries:
+        if not isinstance(entry, str):
+            raise BuildError("Malformed built image runtime environment")
+        name, separator, value = entry.partition("=")
+        if name in supplied:
+            if not separator or name in observed:
+                raise BuildError("Ambiguous built image runtime environment: " + name)
+            observed[name] = value
+    for name, expected in supplied.items():
+        if name not in observed or observed[name] != expected:
+            raise BuildError("Built image runtime environment differs from requested value: " + name)
+    return observed
+
+
+def dockerfile(plan, runtime_env=None):
     """Reuse identical independent tar layers across every target, including all."""
     groups = plan["groups"]
     ordered = plan["ordered_groups"]
@@ -179,6 +234,7 @@ def dockerfile(plan):
         'CMD ["/bin/bash"]',
         "LABEL org.opencontainers.image.base.name=" + json.dumps(plan["source_image"]),
     ]
+    lines += runtime_env_lines(runtime_env or {})
     for role in ROLES:
         selected = plan["roles"][role]["groups"]
         if selected != [group for group in ordered if group in selected] or selected[0] != "common":
@@ -235,9 +291,15 @@ def arguments(argv=None):
     parser.add_argument("--multicluster", action="store_true", help="Run multi-cluster Go tests with mixed roles and control mirror image")
     parser.add_argument("--go-command", default="go", help="Go executable used only for integration checks")
     parser.add_argument("--keep-context", action="store_true", help="Keep generated tar build context in the output directory")
+    parser.add_argument("--runtime-env", action="append", default=[], metavar="NAME=VALUE",
+                        help="Explicit runtime ENV for every role image; repeatable, no default overrides")
     args = parser.parse_args(argv)
     if bool(args.base_image) != bool(args.deb_packages or args.deb_directory):
         parser.error("--base-image is required with .deb inputs and cannot be used with --source-image")
+    try:
+        args.runtime_env = parse_runtime_env(args.runtime_env)
+    except BuildError as error:
+        parser.error(str(error))
     return args
 
 
@@ -255,7 +317,9 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "source_input": args.source_image or args.base_image,
               "package_manager": "rpm" if args.source_image else "dpkg", "started_at_utc": timestamp,
+              "runtime_env": args.runtime_env,
               "output_directory": str(output), "checks": {
+                  "runtime_env": "pending" if args.runtime_env else "not_requested",
                   "smoke": "skipped" if args.skip_smoke else "pending",
                   "mixed_integration": "pending" if args.integration else "not_requested",
                   "all_integration": "pending" if args.integration else "not_requested",
@@ -327,19 +391,25 @@ def main():
                 run(["docker", "cp", container_id + ":/role-output/" + archive, str(target)])
             run(["docker", "rm", container_id])
             container_id = None
-            generated = dockerfile(plan)
+            generated = dockerfile(plan, args.runtime_env)
             (context / "Dockerfile").write_text(generated)
             (output / "Dockerfile.generated").write_text(generated)
             report["images"] = {}
+            if args.runtime_env:
+                report["checks"]["runtime_env"] = "running"
             for role in ROLES:
                 print("Building " + tags[role], flush=True)
                 run(["docker", "buildx", "build", "--load", "--network=none", "--platform", platform,
                      "--provenance=false", "--target", role, "-t", tags[role], str(context)], log=output / ("build-" + role + ".log"))
                 built = inspect_image(tags[role], platform)
+                observed_runtime_env = check_runtime_env(built, args.runtime_env)
                 report["images"][role] = {"tag": tags[role], "image_id": built["Id"], "architecture": built["Architecture"],
                                            "local_size_bytes": built["Size"], "rootfs_diff_ids": built["RootFS"]["Layers"],
+                                           "runtime_env": observed_runtime_env,
                                            "logical_regular_file_bytes": plan["roles"][role]["logical_regular_file_bytes"]}
                 save_json(output / "build-report.json", report)
+            if args.runtime_env:
+                report["checks"]["runtime_env"] = "passed"
             report["layer_sharing"] = check_layers(plan, report["images"])
             if args.keep_context:
                 shutil.copytree(context, output / "context")
