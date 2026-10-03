@@ -158,6 +158,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err := link.CreateSyncPipe(ctx, selected, high); err != nil {
 			t.Fatal(err)
 		}
+		waitRGWTranslationPolicyReady(t, ctx, link, selected)
 		putTagged := func(c s3HTTPClient, path, color string, payload []byte) {
 			var headers http.Header
 			if color != "" {
@@ -218,6 +219,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 			t.Fatal(err)
 		}
+		waitRGWTranslationPolicyReady(t, ctx, link, selected)
 		putTagged := func(c s3HTTPClient, path, color string, payload []byte) {
 			var headers http.Header
 			if color != "" {
@@ -276,6 +278,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		// authorization from an earlier GetObjectAcl failure.
 		aclOnlyPolicy, _ := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam:::user/" + ownerB.ID()}, "Action": "s3:GetObjectAcl", "Resource": "arn:aws:s3:::" + strings.TrimPrefix(modeInput, "/") + "/*"}}})
 		s3FeatureRequest(t, ctx, a, http.MethodPut, modeInput+"?policy", aclOnlyPolicy, nil, http.StatusNoContent)
+		waitRGWTranslationPolicyReady(t, ctx, link, modeGroup)
 		modePayload := bytes.Repeat([]byte("user-mode read authorization\n"), 2048)
 		a.request(t, ctx, http.MethodPut, modeInput+"/auth/before-grant", modePayload, http.StatusOK)
 		b.request(t, ctx, http.MethodGet, modeInput+"/auth/before-grant?acl", nil, http.StatusOK)
@@ -346,6 +349,7 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		if err := link.CreateSyncPipe(ctx, tenantGroup, crossTenant); err == nil {
 			t.Fatal("unproven cross-tenant principal translation was accepted")
 		}
+		waitRGWTranslationPolicyReady(t, ctx, link, tenantGroup)
 		tenantPayload := bytes.Repeat([]byte("same-tenant canonical user and exact bucket instance\n"), 1024)
 		for _, prefix := range []string{"system", "user"} {
 			tenantSources[0].request(t, ctx, http.MethodPut, "/tc-sync-tenant-input/"+prefix+"/selected", tenantPayload, http.StatusOK)
@@ -368,6 +372,15 @@ func testRGWSyncTranslationFiltering(t *testing.T, opts ...testcontainers.Contai
 		}
 		t.Log("same canonical local UID/bucket names in two tenants remained isolated; selected tenant system/owned ordinary user modes copied exact bytes and native bucket checkpoints; cross-tenant principal translation refused and old replicas retained")
 	})
+}
+
+func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup) {
+	t.Helper()
+	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
+	if err != nil || !status.Imported || !status.PeriodImported || !status.PolicyImported || !status.BucketsImported || status.Bucket.ID == "" || len(status.Buckets) == 0 {
+		t.Fatalf("wait owned bucket policy import: group=%s period=%s zone=%s/%s bucket=%s/%s:%s period_imported=%t policy_imported=%t buckets_imported=%t error=%s", group.ID(), status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID, status.PeriodImported, status.PolicyImported, status.BucketsImported, rgwSyncDiagnosticError(err))
+	}
+	t.Logf("owned bucket policy imported before writes: group=%s period=%s zone=%s/%s scope=%s/%s:%s referenced_buckets=%+v", group.ID(), status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID, status.Buckets)
 }
 
 // Child cleanups run before the next sequential t.Run, including after Fatal.
