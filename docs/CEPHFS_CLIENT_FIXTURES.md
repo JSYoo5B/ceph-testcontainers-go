@@ -65,7 +65,7 @@ if err := fs.RemoveSubvolume(ctx, volume); err != nil { return err }
 
 권한 회수는 이미 발급된 ticket이나 기존 mount의 즉시 종료를 뜻하지 않습니다. `EvictSubvolumeClients`는 성공한 deauthorize 뒤에만 허용하며, native auth ID와 **원래 UUID mount root가 모두 일치하는** session을 대상으로 합니다. 다른 mount root나 별도 권한으로 허용되는 미래 연결을 포괄하지 않습니다. eviction은 client connection address를 blocklist할 수 있고, 여러 MDS rank 중 일부만 처리한 오류는 같은 범위로 재시도합니다. client container는 cluster보다 먼저 종료합니다.
 
-새 mount의 거부 errno는 native 권한 상태에 따라 달라질 수 있습니다. MDS 권한이 모두 사라진 client는 bounded mount timeout으로도 거부될 수 있으므로 timeout 하나를 회수 증거로 쓰지 않습니다. [실행 probe](../internal/integration/cephfs_authorization_integration_test.go)는 원래 native cap/list 부재, 같은 시간대의 fresh admin mount·bytes·namespace 읽기 성공, 직접 RADOS의 `PermissionError`를 함께 요구합니다.
+권한을 전부 없앤 client는 native mount/RADOS service 인증 단계에서 timeout을 반환할 수 있으므로 timeout 하나를 회수 증거로 쓰지 않습니다. [실행 probe](../internal/integration/cephfs_authorization_integration_test.go)는 source-only RO/RW·namespace 격리를 먼저 검증한 뒤, 별도 neighbor의 RO 권한을 추가합니다. 원래 grant를 회수한 뒤 source mount의 `EPERM`/`EACCES`, 직접 source RADOS의 `PermissionError`, native cap/list 부재를 엄격히 요구하며 같은 key의 neighbor mount·namespace bytes 읽기와 fresh admin 연결도 성공해야 합니다. 이 recipe는 한 grant의 회수와 다른 권한의 보존을 검증하며, 모든 service 권한이 사라진 principal의 거부 errno를 규정하지 않습니다.
 
 ## clone 취소와 partial target 정리
 
@@ -126,6 +126,16 @@ CGO_ENABLED=0 go test -mod=readonly -count=1 -tags=integration,features \
 ```
 
 실행 결과와 완료 범위는 [coverage matrix](CLIENT_FIXTURE_COVERAGE.md)에서 관리합니다. 회사/새 release 이미지는 환경변수로 교체하고 native CLI·volumes metadata grammar를 다시 검증합니다.
+
+Ceph 20.2.4와 Docker의 Linux native client로 다음 selector의 실제 실행을 확인했습니다.
+
+| selector | bridge | host | 실제 확인한 범위 |
+| --- | --- | --- | --- |
+| `TestCephFSCloneCancellationAndPartialCleanup` | PASS · 204.58초 | PASS · 209.80초 | native canceled 및 실제 failed 상태, source protection 해제, 명시적 partial target 정리, source/snapshot bytes 보존, 완료·교체 target 보호 |
+| `TestCephFSRetainedSnapshotAndMetadataRecipe` | PASS · 64.54초 | PASS · 72.35초 | retained snapshot의 frozen bytes와 clone quota/layout, 같은 이름의 새 UUID, 기존 typed handle의 mutation 거부, custom metadata의 독립성과 raw 정리 |
+| `TestCephFSSubvolumeClientAuthorization` | PASS · 114.56초 | PASS · 112.73초 | source-only RO/RW·namespace 격리, 두 principal의 source revoke 후 strict permission 오류·neighbor bytes/동일 key 보존, held native session eviction |
+
+failed clone은 owned target의 `data` 경로를 directory로 만들어 source의 regular file copy가 native `EISDIR`로 실패하도록 주입했습니다. 원래 source/snapshot을 바꾸지 않았고, failed 상태와 source reference 해제를 확인한 뒤 명시적으로 target을 제거했습니다. 이 증거는 해당 취소·실패 조건과 논리적 cleanup을 다루며 모든 I/O 장애 원인이나 trash의 물리적 purge 완료를 포괄하지 않습니다. retention 검증은 외부 writer를 fence한 단일 source/snapshot의 native v2 lifecycle과 custom metadata 계약을 확인합니다. 실제 애플리케이션의 POSIX 작업이나 여러 writer의 transaction 일관성은 consumer 테스트에서 별도로 검증합니다.
 
 - [Ceph Tentacle fs-volumes](https://docs.ceph.com/en/tentacle/cephfs/fs-volumes/): authorization, snapshot/clone, retention, custom metadata.
 - [CephFS client authentication](https://docs.ceph.com/en/tentacle/cephfs/client-auth/): path, pool/namespace, `p`/`s`, root-squash의 별도 권한.

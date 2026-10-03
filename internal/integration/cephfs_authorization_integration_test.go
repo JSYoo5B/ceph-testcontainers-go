@@ -113,10 +113,9 @@ finally:
 		t.Helper()
 		var adminResult chan sessionResult
 		if phase == "revoked" {
-			// With no MDS caps, a native fresh mount can time out while MON
-			// withholds the usable FS view. A timeout alone proves nothing:
-			// require authoritative absent grants and concurrently successful
-			// fresh admin mounts and namespace reads over the bounded window.
+			// Both principals retain valid MDS/OSD access to the neighbor.
+			// Require strict source denial, authoritative absent grants and
+			// concurrently healthy fresh admin mounts/namespace reads.
 			caps, err := cluster.ClientCapabilities(ctx, identity)
 			if err != nil || strings.Contains(caps.MDS, "path="+own.Path) || strings.Contains(caps.OSD, "namespace="+ownInfo.PoolNamespace) {
 				t.Fatalf("revoked principal still has original native clauses: %+v error=%v", caps, err)
@@ -154,22 +153,42 @@ finally:
 	probe(writerClient, writer.Client, source, neighbor, sourceInfo, neighborInfo, "rw")
 	probe(readerClient, reader.Client, source, neighbor, sourceInfo, neighborInfo, "r")
 
-	// Add separately managed read-only access to the other subvolume and an MGR
-	// capability. Native deauthorize must remove exactly its own clauses, retain
-	// these rights and keep the same key.
-	caps, err := cluster.ClientCapabilities(ctx, writer.Client)
-	if err != nil {
-		t.Fatal(err)
+	// Add independently managed neighbor RO and MGR rights only after each
+	// principal's source-only isolation proof. Keeping a usable OSD cap avoids
+	// testing an absent-service-ticket timeout after the last grant is removed;
+	// the source namespace must instead return native PermissionError while the
+	// same principal/key still reads the neighbor. Deauthorize must preserve
+	// these unrelated rights exactly for both the original RO and RW grants.
+	originalKeyrings := make(map[*ceph.CephFSSubvolumeAuthorization][]byte)
+	for _, grant := range []*ceph.CephFSSubvolumeAuthorization{writer, reader} {
+		caps, err := cluster.ClientCapabilities(ctx, grant.Client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		caps.MGR = "allow r"
+		caps.MDS += ", allow r path=" + neighbor.Path
+		caps.OSD += ", allow r pool=" + neighborInfo.DataPool + " namespace=" + neighborInfo.PoolNamespace
+		if err := cluster.UpdateClientCaps(ctx, grant.Client, caps); err != nil {
+			t.Fatal(err)
+		}
+		_, keyring, err := grant.Client.ConnectionConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		originalKeyrings[grant] = keyring
 	}
-	caps.MGR = "allow r"
-	caps.MDS += ", allow r path=" + neighbor.Path
-	caps.OSD += ", allow r pool=" + neighborInfo.DataPool + " namespace=" + neighborInfo.PoolNamespace
-	if err := cluster.UpdateClientCaps(ctx, writer.Client, caps); err != nil {
-		t.Fatal(err)
-	}
-	_, originalKeyring, err := writer.Client.ConnectionConfig()
-	if err != nil {
-		t.Fatal(err)
+	probe(writerClient, writer.Client, neighbor, source, neighborInfo, sourceInfo, "r-both")
+	probe(readerClient, reader.Client, neighbor, source, neighborInfo, sourceInfo, "r-both")
+	assertPreserved := func(grant *ceph.CephFSSubvolumeAuthorization) {
+		t.Helper()
+		currentCaps, err := cluster.ClientCapabilities(ctx, grant.Client)
+		if err != nil || currentCaps.MDS != "allow r path="+neighbor.Path || currentCaps.OSD != "allow r pool="+neighborInfo.DataPool+" namespace="+neighborInfo.PoolNamespace || currentCaps.MGR != "allow r" {
+			t.Fatalf("unrelated rights were not preserved: %+v error=%v", currentCaps, err)
+		}
+		_, currentKeyring, err := grant.Client.ConnectionConfig()
+		if err != nil || !bytes.Equal(originalKeyrings[grant], currentKeyring) {
+			t.Fatal("deauthorization changed client credentials", err)
+		}
 	}
 	const ready, trigger = "/tmp/owned-cephfs-session.ready", "/tmp/owned-cephfs-session.evict"
 	result := make(chan sessionResult, 1)
@@ -190,14 +209,7 @@ finally:
 	if err := fs.DeauthorizeSubvolume(ctx, &copy); err != nil {
 		t.Fatal(err)
 	}
-	currentCaps, err := cluster.ClientCapabilities(ctx, writer.Client)
-	if err != nil || currentCaps.MDS != "allow r path="+neighbor.Path || currentCaps.OSD != "allow r pool="+neighborInfo.DataPool+" namespace="+neighborInfo.PoolNamespace || currentCaps.MGR != "allow r" {
-		t.Fatalf("unrelated rights were not preserved: %+v error=%v", currentCaps, err)
-	}
-	_, currentKeyring, err := writer.Client.ConnectionConfig()
-	if err != nil || !bytes.Equal(originalKeyring, currentKeyring) {
-		t.Fatal("deauthorization changed client credentials", err)
-	}
+	assertPreserved(writer)
 	probe(writerClient, writer.Client, source, neighbor, sourceInfo, neighborInfo, "revoked")
 	probe(writerClient, writer.Client, neighbor, source, neighborInfo, sourceInfo, "r")
 	if err := fs.EvictSubvolumeClients(ctx, writer); err != nil {
@@ -218,7 +230,9 @@ finally:
 	if err := fs.DeauthorizeSubvolume(ctx, reader); err != nil {
 		t.Fatal(err)
 	}
+	assertPreserved(reader)
 	probe(readerClient, reader.Client, source, neighbor, sourceInfo, neighborInfo, "revoked")
+	probe(readerClient, reader.Client, neighbor, source, neighborInfo, sourceInfo, "r")
 	listing, err = fs.SubvolumeAuthorizedClients(ctx, source.Name, source.GroupName)
 	if err != nil || len(listing) != 0 {
 		t.Fatalf("native deauthorization metadata remains: %+v error=%v", listing, err)
@@ -251,15 +265,15 @@ def make_fs():
     fs.conf_set('client_mount_timeout', '10')
     fs.conf_set('rados_osd_op_timeout', '5')
     return fs
-def denied(operation, revoked_mount=False):
+def denied(operation, record_mount=False):
     global mount_refusal_errno
     try:
         operation()
     except cephfs.Error as error:
         actual = abs(error.args[0])
         allowed = (errno.EPERM, errno.EACCES, errno.EROFS)
-        if revoked_mount:
-            allowed += (errno.ETIMEDOUT,)
+        if record_mount:
+            allowed = (errno.EPERM, errno.EACCES)
             mount_refusal_errno = actual
         assert actual in allowed, str(error)
         return
@@ -267,7 +281,7 @@ def denied(operation, revoked_mount=False):
 fs = make_fs()
 try:
     if phase == 'revoked':
-        denied(lambda: fs.mount(mount_root=root.encode(), filesystem_name=filesystem.encode()), revoked_mount=True)
+        denied(lambda: fs.mount(mount_root=root.encode(), filesystem_name=filesystem.encode()), record_mount=True)
     else:
         fs.mount(mount_root=root.encode(), filesystem_name=filesystem.encode())
         fd = fs.open('/data', os.O_RDONLY)
@@ -291,7 +305,15 @@ finally:
 if phase != 'revoked':
     other_fs = make_fs()
     try:
-        denied(lambda: other_fs.mount(mount_root=other.encode(), filesystem_name=filesystem.encode()))
+        if phase == 'r-both':
+            other_fs.mount(mount_root=other.encode(), filesystem_name=filesystem.encode())
+            fd = other_fs.open('/data', os.O_RDONLY)
+            try:
+                assert other_fs.read(fd, 0, 524289) == bytes(range(256)) * 2048
+            finally:
+                other_fs.close(fd)
+        else:
+            denied(lambda: other_fs.mount(mount_root=other.encode(), filesystem_name=filesystem.encode()))
     finally:
         other_fs.shutdown()
 c = rados.Rados(conffile='/etc/ceph/ceph.conf', name=entity)
@@ -322,7 +344,10 @@ try:
             else:
                 rados_denied(lambda: io.write_full('direct-denied', b'forbidden'))
             io.set_namespace(other_namespace)
-            rados_denied(lambda: io.read('authorization-probe', 64))
+            if phase == 'r-both':
+                assert io.read('authorization-probe', 64) == b'native namespace data'
+            else:
+                rados_denied(lambda: io.read('authorization-probe', 64))
             io.set_namespace('')
             rados_denied(lambda: io.write_full('unscoped-denied', b'forbidden'))
 finally:

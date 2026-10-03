@@ -30,7 +30,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | R01 | RBD metadata 초기화·namespace | `InitRBDPool`, `CreateRBDNamespace`; image/namespace 분리와 RO/RW client 효과 | 완료: `TestRBDNamespaces` |
 | R02 | RBD image 기능을 테스트할 기본 구성 | R01 + client recipe: layering/clone/flatten, trash/migration/group, encryption 및 lock 테스트 | 검증 중: [client recipe](RBD_CLIENT_FIXTURES.md), `TestRBDClientFeatures` |
 | R03 | MGR module membership·dependency·readiness·restore | `MGRModules`, `TemporaryMGRModule`, `WaitMGRModuleReady`; always-on/사용 중 보호·native command probe | 완료: `TestMGRModules`, bridge/host |
-| R04 | RBD task queue와 mirror snapshot schedule | `rbd_support` + initialized pool/mirrored image; task 완료와 실제 자동 mirror snapshot·destination bytes | 검증 중: 자동 destination bytes 양쪽 확인, schedule 정리 명령 수정 후 재실행 예정 |
+| R04 | RBD task queue와 mirror snapshot schedule | `rbd_support` + initialized pool/mirrored image; task 완료와 실제 자동 mirror snapshot·destination bytes | 완료: `TestMGRModules`, `TestRBDAutomaticSnapshotSchedule`, bridge/host |
 | R05 | snapshot/journal mirror, peer/daemon HA, fanout/failback/split-brain/resync, backup | `multicluster` mirror/backup API + client checkpoint; peer fault 복구와 destination data | 완료: [다중 cluster](MULTICLUSTER_POC.md), topology 추가 검증 |
 | R06 | pool 전체 mirror와 local/remote namespace mapping | pool mode의 journal image 자동 편입, ns-a→ns-b와 default namespace 조합, 다른 namespace 제외 | 완료: `TestMultiClusterRBDMirrorScopeAndNamespaces`, bridge/host 각 5조합 |
 | F01 | named/multiple FS, multi-active MDS·standby/replay, failover | `WithCephFS`, `StartCephFSWithConfig`, `ScaleMDS`; rank/native map·POSIX 데이터 유지 | 완료: topology 검증 |
@@ -38,10 +38,10 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | F03 | subvolume snapshot·async clone·wait 재시도 | owned snapshot/clone API; frozen bytes, quota·namespace 상속, pending source 보호 | 완료: `TestCephFSSubvolumeSnapshotsAndClones` |
 | F04 | canceled/failed clone의 명시적 lifecycle | cancel·partial cleanup·pending source reference 해제, source bytes 보존, identity/readback | 완료: `TestCephFSCloneCancellationAndPartialCleanup`, bridge/host canceled·failed 모두 |
 | F05 | 실행 중 FS data pool 추가와 provisioning 연동 | `AddDataPool`, `DataPools`, `RemoveUnusedDataPool`; replicated/EC에 subvolume·clone, native detach/replacement 거부 | 완료: `TestCephFSDynamicDataPools`, bridge/host |
-| F06 | subvolume authorize/deauthorize·authorized list·session eviction | fresh 제한 principal; filesystem path와 OSD pool/namespace 모두 제한, RO/RW/revoke와 다른 subvolume 거부 | 검증 중: `TestCephFSSubvolumeClientAuthorization`, mount 거부 관측 보강 후 재실행 예정 |
+| F06 | subvolume authorize/deauthorize·authorized list·session eviction | fresh 제한 principal; filesystem path와 OSD pool/namespace 모두 제한, RO/RW/revoke와 다른 subvolume 거부 | 완료: `TestCephFSSubvolumeClientAuthorization`, bridge/host |
 | F07 | 일관된 checkpoint용 quiesce/release | owned set/version/members·deadline/TTL; 두 client의 쓰기 정지·해제·timeout 복구 | 완료: `TestCephFSQuiesceCheckpoints`, bridge/host |
-| F08 | export/distributed/random pin | group/subvolume pin; multi-active MDS의 실제 subtree ownership과 정책 복원 | 검증 중: `TestCephFSPins` |
-| F09 | subvolume/snapshot metadata와 retained snapshot provisioning | native metadata recipe·snapshot retention 후 source cleanup/recovery | 검증 중: `TestCephFSRetainedSnapshotAndMetadataRecipe` |
+| F08 | export/distributed/random pin | group/subvolume pin; multi-active MDS의 실제 subtree ownership과 정책 복원 | 완료: `TestCephFSPins`, bridge/host |
+| F09 | subvolume/snapshot metadata와 retained snapshot provisioning | native metadata recipe·snapshot retention 후 source cleanup/recovery | 완료: `TestCephFSRetainedSnapshotAndMetadataRecipe`, bridge/host |
 | F10 | snapshot mirror·directory peer·daemon 분산·backup | `multicluster` CephFS mirror/backup API; 실제 remote frozen bytes와 daemon fault 복구 | 완료: 기존 multicluster/topology PoC |
 | G01 | RGW 사용자·AdminOps caps·quota·suspend·safe cleanup | owned user API; S3/AdminOps 허용·거부, quota, key 보존, bucket가 있는 user 삭제 거부 | 완료: `TestRGWUserAdministration` |
 | G02 | named placement/storage class, replicated/EC data, realm activation | `CreatePlacement`, `ApplyPlacement`, `ReloadPlacement` + destination period pull; 실제 class와 RADOS pool payload | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
@@ -53,6 +53,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G08 | S3 client 기능의 서버 조건 | versioning/multipart/lifecycle/object-lock/IAM/ACL client recipe와 필요한 daemon 옵션, 대표 동작 | 검증 중: `TestRGWS3ClientFeatures`, IAM role은 G09와 연동 |
 | G09 | STS/Swift 및 암호화 backend 테스트 조건 | STS shared key와 role credential, Swift principal/endpoint, TLS·KMS endpoint 조합과 실제 consumer effect | 개발 중: native TLS API·`TestRGWNativeTLS`, protocol/backend recipe |
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
+| G11 | AdminOps usage log와 bucket rate-limit 준비 | pre-start usage log·flush 조건, scoped admin caps·owned log trim과 별도 request rate 거부·복구 | 개발 중: 공개 설정·user API 조합 recipe |
 | D01 | runtime 설정·OSD out/in·global 장애 flag·PG 복구 | `TemporaryConfig`, `SetOSDIn`, `TemporaryOSDFlag`, `WaitForPGClean`; native 상태와 I/O·restore | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 
 ## 책임과 실제 제한

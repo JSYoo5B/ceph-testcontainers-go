@@ -81,7 +81,7 @@ return fs.RemoveSubvolumeSnapshot(ctx, snapshot)
 
 동일 이름의 기존 snapshot과 clone target을 거부합니다. `CephFSCloneConfig.GroupName`은 기존 target group을 선택하며 비어 있으면 default group입니다. `DataPool`은 filesystem에 등록된 data pool 중에서 선택합니다. 기본 clone은 snapshot의 quota·layout·RADOS namespace를 상속합니다. pool을 명시해서 override하면 native Ceph가 상속된 namespace를 비웁니다. clone quota는 복사 완료 후 적용됩니다. [native clone 생성 구현](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/volumes/fs/operations/versions/subvolume_v2.py).
 
-`SubvolumeCloneStatus`는 `pending`, `in-progress`, `complete`, `failed`, `canceled`를 조회합니다. wait timeout은 복사를 취소하지 않으며 같은 handle로 다시 기다릴 수 있습니다. 실패·취소 상태는 오류를 즉시 반환하고 partial data를 보존합니다. 완료한 handle은 기존 `ResizeSubvolume`·`RemoveSubvolume`에 사용할 수 있습니다. 명시적 clone cancel과 실패 target의 `--force` 삭제는 `Ceph` escape hatch 또는 cluster 정리로 처리합니다.
+`SubvolumeCloneStatus`는 `pending`, `in-progress`, `complete`, `failed`, `canceled`를 조회합니다. wait timeout은 복사를 취소하지 않으며 같은 handle로 다시 기다릴 수 있습니다. 실패·취소 상태는 오류를 즉시 반환하고 partial data를 보존합니다. 완료한 handle은 기존 `ResizeSubvolume`·`RemoveSubvolume`에 사용할 수 있습니다. `CancelSubvolumeClone`은 owned clone만 취소하며 `RemovePartialSubvolumeClone`은 native canceled/failed 상태와 target identity를 다시 확인한 뒤 명시적으로 정리합니다. source나 성공한 clone은 삭제하지 않습니다.
 
 `RemoveSubvolumeSnapshot`은 pending/orphan clone이 있는 source를 제거하지 않으며 `--force`를 사용하지 않습니다. snapshot 제거는 source data와 완료된 clone을 유지합니다. snapshot이 남은 source subvolume 자체의 제거도 native Ceph가 거부합니다. snapshot 복사 handle은 제거 상태를 공유하고, 불확실한 제거 응답은 목록과 identity를 다시 확인해 수렴시킵니다.
 
@@ -229,9 +229,14 @@ make cluster-feature-extensions
 | native pool 재생성 guard | PASS, 35.39s | PASS, 35.32s | 같은 이름의 pool ID 변경 검출, stale namespace handle 거부, 새 namespace 보존 |
 | RADOS client recipe | PASS, 27.36s | PASS, 27.47s | compound atomicity, xattr/omap, cls_hello 실행, watch/notify, snapshot, 3-object striper payload |
 | CephFS 동적 data pool | PASS, 93.52s | PASS, 93.14s | live replicated/EC pool 등록, native layout·namespace, 실제 2 MiB 데이터·clone, unused detach |
-| CephFS canceled clone | PASS, 132.86s | PASS, 132.35s | source 보호 해제, partial 명시적 정리, 같은 이름 재생성 보존, frozen bytes와 독립 clone I/O |
+| CephFS canceled/failed clone | PASS, 204.58s | PASS, 209.80s | 실제 FAILED/EISDIR 주입과 cancel, source 보호 해제, partial 명시적 정리, 같은 이름 재생성 보존, frozen bytes와 독립 clone I/O |
 | CephFS quiesce | PASS, 79.48s | PASS, 77.41s | 두 native client 쓰기 정지, outside I/O 유지, snapshot bytes·해제 후 head 비교, TTL 만료 복구·version guard |
 | RGW user placement | PASS, 81.47s | PASS, 81.65s | required tags 거부·허용·취소, header 없는 class 선택과 실제 pool bytes, 기존 bucket/key/policy 유지 |
+| CephFS metadata/retained snapshot | PASS, 64.54s | PASS, 72.35s | metadata 덮어쓰기·제거, source 삭제 후 snapshot 보존·복구, frozen bytes와 stale handle 거부 |
+| CephFS export/distributed/random pin | PASS, 191.55s | PASS, 171.57s | export rank 선택·두 rank의 실제 group dirfrag/child subtree 분산, 16 file bytes 유지·원래 정책 복원 |
+| CephFS subvolume authorization | PASS, 114.56s | PASS, 112.73s | native RO/RW·path/namespace 격리, revoke 후 strict permission denial·neighbor bytes/동일 key 보존, held session eviction |
+| RBD mirror scope/namespace mapping | PASS, 357.32s | PASS, 353.97s | pool/image scope 및 default/named namespace 각 5조합, 신규 journal image 자동 편입·실제 bytes, sibling namespace 보존 |
+| RBD automatic mirror snapshot schedule | PASS, 126.05s | PASS, 119.25s | MGR schedule만으로 source snapshot 증가·변경 destination bytes, 좁은 schedule 삭제와 기존 policy/head 보존 |
 
 CephFS 데이터 검증은 Linux client container의 libcephfs로 수행했습니다. pending clone은 native clone delay로 유지해 helper와 native CLI 양쪽의 source 보호를 확인했습니다. RGW는 S3 GET만으로 판단하지 않고 각 지정 data pool의 native object에서 96 KiB payload를 읽어 SHA256까지 비교했습니다. RGW shadow object의 이름은 S3 key를 그대로 포함하지 않을 수 있습니다.
 
@@ -239,6 +244,6 @@ realm 복제는 native 설정 `lease=120`, metadata/data `poll=20`초를 유지�
 
 결과 로그는 `artifacts/cluster-config-cephfs-verified.log`, `artifacts/cluster-osd-policies.log`, `artifacts/cluster-rgw-placement-payload-final.log`, `artifacts/cluster-rgw-placement-realm-lease-final.log`에 남깁니다. native lock 관측은 `artifacts/rgw-placement-restart-lease-proof.json`에 기록합니다. artifacts는 Git에 포함하지 않습니다. 공개 모듈의 `CGO_ENABLED=0 go test ./...`, `go test -race ./...`, integration·features·auth·hostnetwork·topology·multicluster·goceph 전체 tag 컴파일과 vet도 통과했습니다. tag 컴파일은 기존 모든 Docker 시나리오의 재실행을 의미하지 않습니다.
 
-client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/clone-tenant-account-fixtures-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. canceled clone 통과가 failed clone 주입 검증 완료를 뜻하지 않습니다. 전체 제공 기준은 [진행 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
+client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts/mgr-rados-fixtures-final.log`, `artifacts/client-dynamic-fs-rgw-rados-final.log`, `artifacts/cephfs-client-fixtures-final.log`, `artifacts/cephfs-pins-auth-rbd-schedule-final.log`, `artifacts/cephfs-quiesce-fixtures-final.log`, `artifacts/rgw-tenant-placement-fixtures-final.log`, `artifacts/rbd-scope-schedule-fixtures-final.log`에 있습니다. 일부 batch는 다른 미완료 시나리오의 실패도 포함하며 위 표는 각 이름의 개별 PASS 결과를 기록합니다. 전체 제공 기준은 [진행 matrix](CLIENT_FIXTURE_COVERAGE.md)에서 별도로 관리합니다.
 
 최종 실행 후 running/stopped Docker container는 모두 정리됐고 전용 network도 남지 않았습니다. 기존 `kind` network는 유지했습니다.
