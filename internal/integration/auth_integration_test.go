@@ -40,7 +40,7 @@ func TestClientIdentities(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			writer, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue"})
+			writer, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue", MGR: "allow r"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,12 +89,33 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			// Positive I/O after negative probes proves that caps were neither
 			// broadened by the duplicate request nor damaged by authentication failure.
 			probe(writerClient, writer, "verify", writer.KeyringPath())
+			_, keyBefore, err := writer.ConnectionConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			readOnlyCaps := ceph.ClientCaps{Mon: "allow r", OSD: "allow r pool=tc-auth namespace=blue"}
+			if err := cluster.UpdateClientCaps(ctx, writer, readOnlyCaps); err != nil {
+				t.Fatal(err)
+			}
+			caps, err := cluster.ClientCapabilities(ctx, writer)
+			if err != nil || caps != readOnlyCaps {
+				t.Fatalf("writer caps did not narrow exactly: %+v %v", caps, err)
+			}
+			probe(writerClient, writer, "readonly", writer.KeyringPath())
+			if err := cluster.UpdateClientCaps(ctx, writer, ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue"}); err != nil {
+				t.Fatal(err)
+			}
+			probe(writerClient, writer, "verify", writer.KeyringPath())
+			_, keyAfter, err := writer.ConnectionConfig()
+			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+				t.Fatal("capability change replaced client credentials")
+			}
 			if err := cluster.DeleteClient(ctx, writer); err != nil {
 				t.Fatal(err)
 			}
 			probe(writerClient, writer, "bad-auth", writer.KeyringPath())
 			probe(readerClient, reader, "readonly", reader.KeyringPath())
-			t.Log("native librados: scoped read/write, readonly and cross-boundary denials; wrong-key and revoked fresh connections failed")
+			t.Log("native librados: scoped read/write and cross-boundary denials; writer→reader→writer retained its key and dropped omitted mgr caps; wrong-key and revoked fresh connections failed")
 		})
 	}
 }

@@ -6,7 +6,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 경량화의 초기 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 현재 역할별 빌드와 검증은 [SLIM_IMAGE_AUTOMATION.md](docs/SLIM_IMAGE_AUTOMATION.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)를 확인합니다.
 
-작업의 완료 기준은 testcontainers로 필요한 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지를 구성하고, 노드 추가·제거·교체·장애·복구와 실제 통신을 검증하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 클라이언트 기능은 후속 확장으로 두며 완료 기준에 포함하지 않습니다. 구성별 상태와 다음 검증 대상은 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다.
+역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구의 대표 검증을 완료했습니다. 구성별 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
 여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.
 
@@ -70,7 +70,7 @@ func TestTopology(t *testing.T) {
 
 ### 초기 클러스터 구성
 
-`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 별도 후속 구성 API인 `WithPools`/`CreatePool`로 적용할 수 있습니다.
+`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다.
 
 ```go
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
@@ -185,7 +185,7 @@ RGW는 HTTP endpoint를 publish하므로 호스트 Go 프로세스에서 일반 
 
 ### RBD / CephFS
 
-RBD는 클라이언트 컨테이너에서 `rbd pool init`, `rbd create/import/export` 등 CLI로 제어합니다. 별도의 RBD 서버 컨테이너는 필요하지 않습니다. 실제 데이터와 snapshot/clone 검증은 [rbd_integration_test.go](internal/integration/rbd_integration_test.go)에 있습니다.
+RBD metadata pool은 `InitRBDPool`로 초기화하고 `CreateRBDNamespace`로 분리할 수 있습니다. image 생성·읽기·쓰기·snapshot은 소비자 librbd 또는 클라이언트 컨테이너의 `rbd` CLI로 수행합니다. 별도의 RBD 서버 컨테이너는 필요하지 않습니다. 실제 데이터와 snapshot/clone 검증은 [rbd_integration_test.go](internal/integration/rbd_integration_test.go)에 있습니다.
 
 ```go
 fs, err := cluster.StartCephFS(ctx)
@@ -353,6 +353,6 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 ## 현재 범위
 
-현재 우선순위는 역할별 daemon 수, 노드 생명주기, 네트워크와 클러스터 간 연결입니다. MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 최신 상태와 실제 로그, 다음 토폴로지 후보는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. CRUSH·EC·권한·개별 client 기능의 확장은 후속 과제입니다.
+MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 상태와 실제 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 후속 내부 설정 API는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 별도로 정리합니다.
 
-이번 단계는 대표 단일·HA·2/3 cluster 구성을 요청한 map identity로 생성하고, 변경·장애 뒤 통신과 owned resource cleanup을 확인하는 범위입니다. 5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 link partition은 다음 단계의 구성 후보입니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. CRUSH·EC·권한·pool 정책은 후속 기능으로 두고, kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.
+5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 선택적 endpoint 단절·복구도 대표 검증을 완료했습니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. 객체·image·파일 CRUD와 프로토콜 기능 검증은 소비자 클라이언트가 수행합니다. kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.

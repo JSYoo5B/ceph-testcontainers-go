@@ -1,5 +1,7 @@
 # 테스트용 클러스터 구성 목표와 검증
 
+이 문서는 완료된 토폴로지 단계의 기준과 증거를 기록합니다. 이후 클러스터 내부 리소스·정책 API의 제공 범위와 검증은 [CLUSTER_INTERNAL_FEATURES.md](CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
+
 목표는 **클라이언트 테스트에 필요한 Ceph 토폴로지를 testcontainers로 생성하고, 구성 요소의 추가·교체·중단·복구와 클러스터 간 연결이 가능한지** 확인하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 RADOS/RBD/CephFS/S3 기능은 후속 확장으로 둡니다. 이들 기능의 제공 여부는 완료 조건에 포함하지 않습니다. go-ceph와 다른 native client의 읽기·쓰기는 구성의 연결성을 확인하는 증거로 사용합니다.
 
 공개 모듈은 CLI/파일로 제어하며 cgo에 의존하지 않습니다. go-ceph 소비자 테스트는 별도 Linux 전용 모듈에 둡니다. 기본 bridge에서는 클러스터별 전용 네트워크를 생성하고, 애플리케이션은 `WithClient`로 해당 네트워크에 연결합니다. host mode에서는 서로 다른 FSID·키와 자동 선택 MON/RGW 포트를 사용합니다. RADOS/RBD/CephFS 클라이언트는 MON뿐 아니라 광고된 OSD/MDS 주소에도 도달해야 합니다.
@@ -71,7 +73,7 @@ CRUSH host/rack은 같은 Docker 엔진에서 만든 논리적 배치 도메인�
 
 ## 후속 기능 작업의 기록
 
-이번 조사 중 작성한 `CreatePool`/`WithPools`, `WithPoolDefaults`, CRUSH placement 및 default-root 옵션, EC 설정, `CreateClient`/`WithClientIdentity`는 후속 기능 확장의 출발점입니다. EC RADOS/RBD와 제한된 identity의 bridge/host PoC는 통과했습니다. 이 결과로 daemon·network·peer 토폴로지가 모두 제공됐다고 판단하지 않으며, 추가 정책 시나리오는 현재 우선순위에서 제외합니다.
+이번 조사 중 작성한 `CreatePool`/`WithPools`, `WithPoolDefaults`, CRUSH placement 및 default-root 옵션, EC 설정, `CreateClient`/`WithClientIdentity`는 후속 기능 확장의 출발점입니다. EC RADOS/RBD와 제한된 identity의 bridge/host PoC는 통과했습니다. 이들은 토폴로지 단계의 완료 조건과 별개였으며, 다음 내부 설정 단계에서 pool 정책·caps 변경·RBD namespace·CephFS subvolume·RGW 사용자 API를 확장합니다. [내부 설정 API](CLUSTER_INTERNAL_FEATURES.md)
 
 CephFS는 native mirror module의 filesystem당 single peer 제한을 따릅니다. 같은 filesystem의 A→B/C fanout은 API 일반화만으로 제공할 수 있는 구성으로 분류하지 않습니다. 여러 독립 filesystem을 각각 다른 peer에 연결하는 방식은 별도 구성으로 검토합니다. [CephFS mirror peer 제한](https://docs.ceph.com/en/tentacle/cephfs/cephfs-mirroring/#mirroring-module)
 

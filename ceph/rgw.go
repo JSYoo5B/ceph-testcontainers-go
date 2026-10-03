@@ -29,6 +29,8 @@ type RGWContainer struct {
 	port          int
 	publicAddress string
 	networkName   string
+	owner         *Container
+	config        RGWConfig
 }
 
 // RGWConfig selects a gateway instance and optional native RGW multisite scope.
@@ -89,7 +91,7 @@ func (c *Container) StartRGWWithConfig(ctx context.Context, config RGWConfig, op
 	ctr, port, err := c.startNamedRGWDaemon(ctx, config, opts...)
 	var rgw *RGWContainer
 	if ctr != nil {
-		rgw = &RGWContainer{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, publicAddress: c.PublicAddress(), networkName: c.NetworkName()}
+		rgw = &RGWContainer{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, publicAddress: c.PublicAddress(), networkName: c.NetworkName(), owner: c, config: config}
 		// Publish after credential initialization, including partial error
 		// returns. Gateways readers then see an immutable descriptor. The
 		// generic service already owns the container during initialization.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -174,6 +175,7 @@ type authFixtureContainer struct {
 	copied   []byte
 	copyPath string
 	copyMode int64
+	caps     map[string]string
 }
 
 func (ctr *authFixtureContainer) CopyToContainer(_ context.Context, content []byte, path string, mode int64) error {
@@ -201,6 +203,19 @@ func (ctr *authFixtureContainer) Exec(_ context.Context, args []string, _ ...tce
 			key = "PRIVATE-KEY"
 		}
 		output = "[" + args[2] + "]\n\tkey = " + key + "\n"
+		if slices.Contains(args, "json") {
+			caps := ctr.caps
+			if caps == nil {
+				caps = map[string]string{"mon": "allow r", "osd": "allow rw pool=tenant", "mgr": "allow *"}
+			}
+			data, _ := json.Marshal([]any{map[string]any{"entity": args[2], "key": key, "caps": caps}})
+			output = string(data)
+		}
+	} else if len(args) >= 3 && args[0] == "auth" && args[1] == "caps" && strings.Join(args, " ") != ctr.fail {
+		ctr.caps = map[string]string{}
+		for i := 3; i+1 < len(args); i += 2 {
+			ctr.caps[args[i]] = args[i+1]
+		}
 	}
 	var header [8]byte
 	header[0] = byte(stdcopy.Stdout)

@@ -10,8 +10,13 @@ MULTICLUSTER_TIMEOUT ?= 60m
 HOSTNETWORK_TIMEOUT ?= 40m
 TOPOLOGY_TIMEOUT ?= 40m
 TOPOLOGY_EXTENSIONS_TIMEOUT ?= 90m
+CLUSTER_FEATURES_TIMEOUT ?= 40m
 
 .PHONY: topology-extensions
+.PHONY: cluster-features
+
+cluster-features:
+	CGO_ENABLED=0 go test -tags=integration,auth,features -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '^Test(PoolPolicies|ClientIdentities|RBDNamespaces|CephFSSubvolumes|(HostNetwork)?RGWUserAdministration)$$' ./internal/integration
 
 test:
 	CGO_ENABLED=0 go test ./...
