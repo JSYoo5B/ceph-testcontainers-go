@@ -107,6 +107,10 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 		t.Fatal(err)
 	}
+	waitRGWTranslationPolicyReady(t, ctx, link, selected)
+	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
+		t.Fatal(err)
+	}
 	payload := bytes.Repeat([]byte("creation-owned account root native user-mode replication\n"), 1024)
 	primary.request(t, ctx, http.MethodPut, input+"/replica/initial", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, secondary, output+"/replica/initial", http.StatusOK, payload)
@@ -275,6 +279,10 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		rgwCrossTenantS3Diagnostic(t, inspect, "alpha", secondaryAlpha, path)
 		rgwCrossTenantS3Diagnostic(t, inspect, "beta", secondaryBeta, path)
 	})
+	waitRGWTranslationPolicyReady(t, ctx, link, group)
+	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
+		t.Fatal(err)
+	}
 	payload := bytes.Repeat([]byte("system mode exact cross-tenant bucket selector\n"), 1024)
 	primaryAlpha.request(t, ctx, http.MethodPut, input+"/system/selected", payload, http.StatusOK)
 	// System mode preserves the source object's ACL when no owner translation
