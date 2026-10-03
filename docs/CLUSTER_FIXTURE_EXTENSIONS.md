@@ -249,6 +249,7 @@ make cluster-feature-extensions
 | RGW native TLS | PASS, 44.79s | PASS, 44.69s | Beast의 분리된 HTTP/HTTPS, 실제 CA/SAN/TLS12 검증·unknown CA 거부, 동일 S3 bytes·cleanup |
 | RGW usage/rate-limit | PASS, 51.70s | PASS, 51.41s | 실제 usage category·bytes 기록, AdminOps caps 거부·UID trim 격리, bucket별 503 SlowDown·정책 복원·bytes 복구 |
 | RGW STS/Swift/Vault KMS | PASS, 68.33s | PASS, 64.64s | 두 gateway의 임시 credentials·정책 revoke/restore, Swift/S3 동일 bytes와 key revoke, 실제 KMS key 삭제·복원·completed audit·owned cleanup |
+| RGW owned selective sync 기본 | PASS, 584.99s | PASS, 715.96s | exact 67,584 bytes·11 shard checkpoint, bucket/prefix/reverse 제외, forbidden→enabled·prefix 변경 후 native replay, 삭제 복제·기존 bytes 보존·stale bucket guard·owned cleanup |
 
 CephFS 데이터 검증은 Linux client container의 libcephfs로 수행했습니다. pending clone은 native clone delay로 유지해 helper와 native CLI 양쪽의 source 보호를 확인했습니다. RGW는 S3 GET만으로 판단하지 않고 각 지정 data pool의 native object에서 96 KiB payload를 읽어 SHA256까지 비교했습니다. RGW shadow object의 이름은 S3 key를 그대로 포함하지 않을 수 있습니다.
 
@@ -260,4 +261,6 @@ client fixture 확장 로그는 `artifacts/client-fencing-final.log`, `artifacts
 
 pool replica/quota, CephFS subvolume/group quota 및 ordinary RGW user quota의 보강 검증은 `artifacts/client-quota-auth-sync-reconcile-native.log`의 개별 PASS 결과입니다. 같은 batch의 RBD RO probe는 writable open에 필요한 watch 권한을 잘못 가정해 실패했으며 수정 후 별도로 재검증합니다. 이 batch 전체를 PASS로 표시하지 않습니다.
 
-최종 실행 후 running/stopped Docker container는 모두 정리됐고 전용 network도 남지 않았습니다. 기존 `kind` network는 유지했습니다.
+같은 로그의 `TestMultiClusterRGWOwnedSyncPolicy`와 host variant도 각각 PASS입니다. 외부 수동 개입 없이 recipe 자체의 `bucket sync run`이 enabled 상태에서 남은 로그를 처리한 뒤 strict checkpoint를 확인했습니다. tag/priority/owner/class·user/account·cross-tenant 확장 검증은 이 기본 시나리오의 결과에 포함하지 않습니다.
+
+위 완료 시나리오의 종료 시점에는 작업 소유 running/stopped Docker container와 전용 network가 정리됐습니다. 기존 `kind` network는 유지했습니다. 진행 중인 후속 native 검증의 리소스 정리는 해당 실행이 끝난 뒤 별도로 확인합니다.

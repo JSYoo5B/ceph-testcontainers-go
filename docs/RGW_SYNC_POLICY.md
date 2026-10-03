@@ -61,6 +61,8 @@ Forbidden에서 enabled로 바꾼 뒤 새 object는 복제되어도 이전에 �
 
 실행 가능한 대표 recipe는 [기본 선택·lifecycle](../internal/integration/rgw_sync_policy_integration_test.go), [tag·priority·owner/class·user mode·tenant](../internal/integration/rgw_sync_translation_integration_test.go), [account root 권한 거부·복구 및 cross-tenant system mode](../internal/integration/rgw_sync_accounts_integration_test.go)입니다. Unit/tag compile과 Docker 통과 여부는 [G05/G07 진행 상태](CLIENT_FIXTURE_COVERAGE.md)에서 구분합니다.
 
+2026-10-03 Ceph 20.2.4 role slim 이미지의 Linux Docker 검증에서 기본 선택·lifecycle recipe는 bridge 584.99초, host 715.96초로 cleanup까지 통과했습니다. 두 모드 모두 exact 67,584 bytes와 11 shard checkpoint, forbidden 동안 제외·enabled 복구, prefix 변경·삭제 복제, group 제거 후 기존 bytes 및 재생성 bucket 보존을 확인했습니다. 정책 재개 후 이전 로그가 남는 구간은 recipe 안의 명시적 native replay로 처리했으며 외부 수동 조작은 하지 않았습니다. 증거는 `artifacts/client-quota-auth-sync-reconcile-native.log`의 두 named PASS입니다. 이 로그 전체는 수정 전 RBD RO probe 실패도 포함하므로 전체 PASS로 해석하지 않습니다.
+
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
