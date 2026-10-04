@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
@@ -107,15 +108,18 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	var nw *testcontainers.DockerNetwork
 	var err error
 	if !settings.hostNetwork {
-		nw, err = network.New(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("create ceph network: %w", err)
-		}
+		nw, err = dockerbridge.New(ctx)
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer), gateways: make(map[string]*RGWContainer)}
+	if err != nil {
+		if nw == nil {
+			return nil, fmt.Errorf("create ceph network: %w", err)
+		}
+		return c, fmt.Errorf("create ceph network: %w", err)
+	}
 	if settings.separateClusterNetwork {
-		if c.clusterNetwork, err = network.New(ctx); err != nil {
+		if c.clusterNetwork, err = dockerbridge.New(ctx); err != nil {
 			return c, fmt.Errorf("create Ceph replication network: %w", err)
 		}
 		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {

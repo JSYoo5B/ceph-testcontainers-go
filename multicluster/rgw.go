@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 )
@@ -106,15 +107,17 @@ func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfi
 	var err error
 	peerNetwork := ""
 	if !config.Source.UsesHostNetwork() {
-		bridge, err = network.New(ctx)
+		bridge, err = dockerbridge.New(ctx)
+		if bridge != nil {
+			f.httpNetwork = bridge
+			f.owned.addCleanup("remove RGW HTTP bridge", func(cleanupCtx context.Context) error {
+				return ignoreMissing(bridge.Remove(cleanupCtx))
+			})
+		}
 		if err != nil {
 			return f, fmt.Errorf("create RGW HTTP bridge: %w", err)
 		}
 		peerNetwork = bridge.Name
-		f.httpNetwork = bridge
-		f.owned.addCleanup("remove RGW HTTP bridge", func(cleanupCtx context.Context) error {
-			return ignoreMissing(bridge.Remove(cleanupCtx))
-		})
 	}
 	f.sourceClient, err = runClient(ctx, config.ControlImage, config.Source, peerNetwork, &f.owned)
 	if err != nil {
