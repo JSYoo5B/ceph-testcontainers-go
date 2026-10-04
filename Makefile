@@ -1,6 +1,7 @@
 .PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
 .PHONY: check race tag-compile image-test native-test quay-default topology-smoke rgw-sync-fixtures-quay rgw-sync-native-regressions
 .PHONY: quay-topology quay-multicluster-topology quay-topology-extensions
+.PHONY: quay-cluster-fixtures quay-cephfs-fixtures quay-rados-fixtures quay-rbd-fixtures quay-rgw-fixtures quay-rgw-sync-fixtures quay-goceph-linux
 
 SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
 CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
@@ -30,6 +31,18 @@ MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflict
 # Consumer-only overrides (e.g. the cryptsetup RBD image) are outside the required
 # baseline; full client-fixtures remains an explicit optional target.
 QUAY_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE CGO_ENABLED=0
+
+# Required fixture profiles also select the original Quay native RBD consumer
+# and the default real Vault backend, independent of custom-image sessions.
+QUAY_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE -u CEPH_TEST_VAULT_IMAGE $(QUAY_TEST_ENV)
+QUAY_FIXTURE_TAGS = integration,auth,features,topology,hostnetwork,multicluster
+QUAY_CLUSTER_FIXTURE_TESTS = ^Test(ClientIdentities|CephFSSubvolumes|ConfigurationOverrides|OSDPolicies|CephFSSubvolumeSnapshotsAndClones|RGWPlacementStorageClasses|HostNetworkRGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$
+QUAY_CEPHFS_FIXTURE_TESTS = ^Test(CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$
+QUAY_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
+QUAY_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
+QUAY_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
+QUAY_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
+QUAY_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
 
 .PHONY: topology-extensions
 .PHONY: cluster-features
@@ -117,6 +130,34 @@ quay-multicluster-topology:
 
 quay-topology-extensions:
 	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
+
+# Supported cluster/client fixtures consume the pinned Quay server directly.
+# These profiles run every planned case, including bridge/host child scenarios.
+quay-cluster-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '$(QUAY_CLUSTER_FIXTURE_TESTS)' ./internal/integration
+
+quay-cephfs-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_CEPHFS_FIXTURE_TESTS)' ./internal/integration
+
+quay-rados-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RADOS_FIXTURE_TESTS)' ./internal/integration
+
+quay-rbd-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RBD_FIXTURE_TESTS)' ./internal/integration
+
+quay-rgw-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RGW_FIXTURE_TESTS)' ./internal/integration
+
+# Supported translation children stay separate from strict optional native
+# priority/source-authorization regressions in rgw-sync-native-regressions.
+quay-rgw-sync-fixtures:
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
+	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
+
+# Prepare only the Linux native client probe/runner images, then run the SDK
+# fixture against pinned Quay servers; no Ceph server image/native Ceph build.
+quay-goceph-linux:
+	$(QUAY_TEST_ENV) python3 internal/integration/goceph/run.py --repository ceph-testcontainers-goceph-quay
 
 topology:
 	CGO_ENABLED=0 go test -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration

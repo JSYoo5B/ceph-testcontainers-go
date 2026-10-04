@@ -109,6 +109,162 @@ jobs:
         if: failure()
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-topology-extensions.log" --profile quay-topology-extensions
 
+  quay-cluster-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-cluster-fixtures
+        shell: bash
+        run: make quay-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-cluster-fixtures.log"
+      - name: Identify failed cluster fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-cluster-fixtures.log" --profile quay-cluster-fixtures
+
+  quay-cephfs-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-cephfs-fixtures
+        shell: bash
+        run: make quay-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-cephfs-fixtures.log"
+      - name: Identify failed CephFS fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-cephfs-fixtures.log" --profile quay-cephfs-fixtures
+
+  quay-rados-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-rados-fixtures
+        shell: bash
+        run: make quay-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rados-fixtures.log"
+      - name: Identify failed RADOS fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rados-fixtures.log" --profile quay-rados-fixtures
+
+  quay-rbd-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-rbd-fixtures
+        shell: bash
+        run: make quay-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rbd-fixtures.log"
+      - name: Identify failed RBD fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rbd-fixtures.log" --profile quay-rbd-fixtures
+
+  quay-rgw-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-rgw-fixtures
+        shell: bash
+        run: make quay-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rgw-fixtures.log"
+      - name: Identify failed RGW fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rgw-fixtures.log" --profile quay-rgw-fixtures
+
+  quay-rgw-sync-fixtures:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run make quay-rgw-sync-fixtures
+        shell: bash
+        run: make quay-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rgw-sync-fixtures.log"
+      - name: Identify failed RGW sync fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rgw-sync-fixtures.log" --profile quay-rgw-sync-fixtures
+
+  quay-goceph-linux:
+    needs: quay-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      # Build only the Linux go-ceph consumer probe/runner, never Ceph itself.
+      # All cluster daemon images remain the original pinned Quay image.
+      - name: Run make quay-goceph-linux
+        shell: bash
+        run: make quay-goceph-linux 2>&1 | tee "$RUNNER_TEMP/quay-goceph-linux.log"
+      - name: Identify failed Linux go-ceph cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-goceph-linux.log" --profile quay-goceph-linux
+
   rgw-native-regressions:
     if: github.event_name == 'workflow_dispatch' && inputs.rgw_native_regressions
     needs: [quay-topology, quay-multicluster-topology, quay-topology-extensions]
