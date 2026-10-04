@@ -1,0 +1,30 @@
+name: Check Testcontainers resource cleanup
+description: Record or verify resource ownership without deleting Docker resources
+inputs:
+  phase:
+    description: snapshot before tests or check after tests
+    required: true
+  directory:
+    description: Directory for the resource identity reports
+    default: artifacts/runtime-cleanup
+  artifact_name:
+    description: Unique cleanup report artifact name for this job
+    default: runtime-cleanup
+runs:
+  using: composite
+  steps:
+    - name: Inspect Testcontainers resources
+      shell: bash
+      env:
+        CLEANUP_PHASE: ${{ inputs.phase }}
+        CLEANUP_DIRECTORY: ${{ inputs.directory }}
+      run: >-
+        python3 "$GITHUB_ACTION_PATH/../../scripts/check_runtime_cleanup.py"
+        "$CLEANUP_PHASE" --directory "$CLEANUP_DIRECTORY"
+    - name: Save resource identities and cleanup result
+      if: ${{ always() && inputs.phase == 'check' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ inputs.directory }}/
+        if-no-files-found: error

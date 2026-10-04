@@ -41,6 +41,8 @@ jobs:
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
       - name: Check image matrix selection without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_run_image_matrix.py -v
+      - name: Check cleanup observations without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_check_runtime_cleanup.py -v
 
   image-compatibility:
     name: image / ${{ matrix.variant }} / ${{ matrix.layout }} / ${{ matrix.architecture.name }}
@@ -67,6 +69,11 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Verify published images with the Go module
         run: >-
           python3 .github/scripts/run_image_matrix.py
@@ -74,6 +81,12 @@ jobs:
           --layout '${{ matrix.layout }}'
           --platform 'linux/${{ matrix.architecture.name }}'
           --output-dir artifacts/image-matrix
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
       - name: Save image identities and test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -96,7 +109,18 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - run: make scenario-default
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-default
 
   scenario-topology:
     needs: scenario-default
@@ -112,7 +136,18 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - run: make scenario-topology
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-topology
 
   scenario-multicluster-topology:
     needs: scenario-default
@@ -128,7 +163,18 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - run: make scenario-multicluster-topology
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-multicluster-topology
 
   scenario-topology-extensions:
     needs: scenario-default
@@ -144,11 +190,22 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Verify Docker bridge endpoint recovery
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
       - name: Run make scenario-topology-extensions
         shell: bash
         run: make scenario-topology-extensions 2>&1 | tee "$RUNNER_TEMP/scenario-topology-extensions.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-topology-extensions
       - name: Identify failed topology cases
         if: failure()
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-topology-extensions.log" --profile scenario-topology-extensions
@@ -167,9 +224,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-cluster-fixtures
         shell: bash
         run: make scenario-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cluster-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-cluster-fixtures
       - name: Identify failed cluster fixture cases
         if: failure()
         continue-on-error: true
@@ -189,9 +257,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-cephfs-fixtures
         shell: bash
         run: make scenario-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cephfs-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-cephfs-fixtures
       - name: Identify failed CephFS fixture cases
         if: failure()
         continue-on-error: true
@@ -211,9 +290,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-rados-fixtures
         shell: bash
         run: make scenario-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rados-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-rados-fixtures
       - name: Identify failed RADOS fixture cases
         if: failure()
         continue-on-error: true
@@ -233,9 +323,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-rbd-fixtures
         shell: bash
         run: make scenario-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rbd-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-rbd-fixtures
       - name: Identify failed RBD fixture cases
         if: failure()
         continue-on-error: true
@@ -255,9 +356,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-rgw-fixtures
         shell: bash
         run: make scenario-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-rgw-fixtures
       - name: Identify failed RGW fixture cases
         if: failure()
         continue-on-error: true
@@ -277,9 +389,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - name: Run make scenario-rgw-sync-fixtures
         shell: bash
         run: make scenario-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log"
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-rgw-sync-fixtures
       - name: Identify failed RGW sync fixture cases
         if: failure()
         continue-on-error: true
@@ -304,4 +427,15 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
       - run: make rgw-sync-native-regressions
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-rgw-sync-native-regressions

@@ -59,6 +59,8 @@ make scenario-goceph-linux
 
 Go CI의 각 새 job은 `shell: bash`의 pipefail로 `make` 실패를 유지하면서 `$RUNNER_TEMP/<profile>.log`에 출력을 저장합니다. 실패한 job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며, 완료된 Go 실패 test/subtest 이름만 annotation으로 노출합니다. Reporter에만 `continue-on-error`를 적용하므로 reporter 오류가 원래 테스트 결과를 덮지 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면 원인을 추정하지 않고 미확인 notice를 남깁니다.
 
+Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID를 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 ID가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. `runtime-cleanup-scenario-*` 또는 matrix의 `runtime-cleanup-image-<variant>-<layout>-<architecture>` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
+
 ## 이미지 호환성 matrix
 
 위의 원본 Quay 상세 101개 경로에 더해 [workflow](../.github/workflows/test.yml)의 `image-compatibility` job이 공식·GHCR Debian·Ubuntu 이미지에 같은 대표 9개 Go 테스트를 적용합니다. 세 계열 × `all`/`roles` × Linux AMD64/ARM64, 총 12개 조합입니다. `fail-fast: false`로 한 조합의 실패가 다른 조합의 결과 수집을 취소하지 않으며 각 job의 제한은 50분입니다. AMD64는 `ubuntu-24.04`, ARM64는 `ubuntu-24.04-arm`의 native Docker 엔진에서 실행하고 에뮬레이션 성공으로 다른 architecture를 지원한다고 표시하지 않습니다.
