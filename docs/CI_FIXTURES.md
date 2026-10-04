@@ -14,11 +14,21 @@ Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2
 
 2026-10-05 확인한 [run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)은 source `be58018d23efe0738c668e407075b556e4a09fd3`로 2026-10-04 19:05:23–20:32:00 UTC에 실행됐으며 terminal 결과는 **FAILURE**입니다. 원본 Quay Ceph 20.2.4의 Linux AMD64 필수 runtime job 10개 중 9개가 SUCCESS이고, 그 9개에서 기대한 parent 94개가 모두 RUN/PASS했습니다. Docker bridge SDK 2개는 이 94개에 포함됩니다.
 
-남은 `quay-rgw-sync-fixtures` job은 기대 parent 7개 중 5개를 실행해 3개 PASS·2개 FAIL했습니다. `TestMultiClusterRGWSelectivePolicy`는 prefix를 변경한 뒤 새 객체 `/tc-policy-selected/reports/after-policy-change`가 HTTP 404/`NoSuchKey`로 남아 기다림이 종료됐습니다. `TestHostNetworkMultiClusterRGWOwnedSyncPolicy`도 prefix 변경 뒤 `/tc-owned-selected/reports/after-update`의 새 bytes가 도착하지 않아 같은 404 상태로 deadline에 도달했습니다. 이는 정책 변경 뒤 미래 객체의 실제 복제가 실패한 관측이며, 단순 CLI 성공이나 이전 checkpoint로 통과 처리하지 않습니다. 해당 경로의 수정과 새 native 검증을 진행 중이며 아직 수정 후 PASS를 기록하지 않습니다.
+남은 `quay-rgw-sync-fixtures` job은 기대 parent 7개 중 5개를 실행해 3개 PASS·2개 FAIL했습니다. `TestMultiClusterRGWSelectivePolicy`는 prefix를 변경한 뒤 새 객체 `/tc-policy-selected/reports/after-policy-change`가 HTTP 404/`NoSuchKey`로 남아 기다림이 종료됐습니다. `TestHostNetworkMultiClusterRGWOwnedSyncPolicy`도 prefix 변경 뒤 `/tc-owned-selected/reports/after-update`의 새 bytes가 도착하지 않아 같은 404 상태로 deadline에 도달했습니다. 이는 정책 변경 뒤 미래 객체의 실제 복제가 실패한 관측이며, 단순 CLI 성공이나 이전 checkpoint로 통과 처리하지 않습니다. 이 run은 수정 전 실패 증거이며 다음 절의 후속 focused 실행과 구분합니다.
 
 첫 Go 명령의 실패로 Make의 두 번째 translation 명령은 실행되지 않았습니다. 따라서 `TestMultiClusterRGWSyncTranslationFiltering`와 `TestHostNetworkMultiClusterRGWSyncTranslationFiltering`의 필수 child도 이 run에서는 미실행입니다. 전체 기대 101개 중 **99개 RUN·97개 PASS·2개 FAIL·2개 미실행**이며 parent SKIP은 0개입니다. 관측한 child 117개는 모두 PASS이고 child SKIP/FAIL은 0개입니다. 이 child 성공을 실행되지 않은 translation 범위의 증거로 사용하지 않습니다.
 
 Job ID·source head·raw log SHA-256·각 RUN/PASS/FAIL·child 및 package completion은 `artifacts/scenario-fixture-completion-20261005/previous-runtime-audit.json`에 연결했으며 raw 로그는 같은 디렉터리의 `previous-logs/`에 보관합니다. 당시 job 이름은 `quay-*`이고 아래 표는 같은 selector의 현재 `scenario-*` 이름을 사용합니다. 이름 변경이나 이후 source 변경을 이 이전 runtime의 새 PASS로 표시하지 않습니다. 대표 이미지 matrix 12개와 선택적 `rgw-native-regressions`는 위 101개 수에 합산하지 않습니다.
+
+## RGW policy barrier 수정 후 focused 검증
+
+`0caff38`은 정책 생성·상태·prefix 변경 후 destination의 bucket policy metadata import를 확인한 다음 미래 객체를 쓰도록 fixture를 수정했습니다. Import는 쓰기 전 준비 조건이며 실제 복제 bytes·제외·삭제 판정을 대신하지 않습니다.
+
+2026-10-05 이 수정이 포함된 로컬 Go snapshot을 준비된 원본 Quay 이미지와 Docker Desktop Linux ARM64에서 실행했습니다. `TestMultiClusterRGWSelectivePolicy`, `TestMultiClusterRGWOwnedSyncPolicy`, `TestHostNetworkMultiClusterRGWOwnedSyncPolicy` 3개가 모두 PASS했고 FAIL/SKIP은 0개, Go test binary의 exit code는 0, 실행은 1580.965초였습니다. 종료 후 owned container와 새 network는 각각 0개이며 기존 network는 보존했습니다. 이미지 빌드·pull은 0회입니다.
+
+`artifacts/scenario-fixture-completion-20261005/focused/summary.json`의 strict 결과는 **`source_unchanged: false`, `passed: false` 그대로 보존**합니다. 실행 중 선택되지 않은 `cephfs_multicluster_integration_test.go`의 주석 한 줄이 `// Select a compatible runtime supplying the userspace mirror daemon.`에서 `// The source control runtime supplies the userspace mirror daemon.`으로 바뀌었습니다. `comment-only-source-change.json`은 이 주석을 되돌려 재구성한 SHA-256이 시작 시 manifest와 일치함을 기록합니다. `post-runtime-audit.json`은 원본 로그·summary의 해시와 native 실행·잔존 관측 결과를 별도로 연결합니다. 이 설명으로 strict summary를 PASS로 바꾸거나 실행 당시 source와 현재 source가 동일하다고 표시하지 않습니다.
+
+후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 기록 시점 진행 중입니다. 위 focused 3개 결과는 상세 101개, 이미지 matrix 12개 또는 필수 runtime cleanup 22개 전체의 PASS 증거가 아닙니다.
 
 ## 실행 경로와 시간 제한
 

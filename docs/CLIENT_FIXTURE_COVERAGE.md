@@ -6,7 +6,7 @@
 
 참고 범위는 [go-ceph v0.41.0](https://github.com/ceph/go-ceph/tree/v0.41.0)의 rados, rbd, cephfs 및 admin package와 Ceph Tentacle의 서버 관리 API입니다. client의 object/image/file CRUD마다 동일한 Go wrapper를 만드는 것은 완료 조건이 아닙니다. 그 API를 테스트할 수 있도록 인증·pool·namespace·daemon·module·policy를 구성할 수 있는지가 조건입니다. client operation도 대표 동작을 실행해 서버 준비가 충분한지 확인합니다.
 
-2026-10-05의 진행 목표는 기존 토폴로지와 client용 서버 fixture를 합한 필수 상세 CI **101개 named test를 Linux native에서 실제 통과시키고**, 실패에서 확인한 문제를 공개 API와 fixture 구현에 반영하는 것입니다. 각 source의 서버 상태·identity, 실제 client 효과, 원래 상태 복원·owned cleanup과 CI의 terminal 결과를 기록합니다. 고정된 이미지 요구사항을 유지하며 준비된 서버 이미지를 사용하고, 구현과 검증을 단계별로 main에 커밋·푸시합니다. source `be58018`의 전체 CI는 실행됐으며 terminal FAILURE입니다. 필수 101개 중 97개 PASS·RGW sync 2개 FAIL·translation 2개 미실행으로 전체 PASS는 아직 달성하지 못했습니다. 정확한 시나리오 선택과 이전 증거는 [CI 실행 기준](CI_FIXTURES.md)을 따릅니다.
+2026-10-05의 진행 목표는 기존 토폴로지와 client용 서버 fixture를 합한 필수 상세 CI **101개 named test를 Linux native에서 실제 통과시키고**, 실패에서 확인한 문제를 공개 API와 fixture 구현에 반영하는 것입니다. 각 source의 서버 상태·identity, 실제 client 효과, 원래 상태 복원·owned cleanup과 CI의 terminal 결과를 기록합니다. 고정된 이미지 요구사항을 유지하며 준비된 서버 이미지를 사용하고, 구현과 검증을 단계별로 main에 커밋·푸시합니다. source `be58018`의 전체 CI는 실행됐으며 terminal FAILURE입니다. 필수 101개 중 97개 PASS·RGW sync 2개 FAIL·translation 2개 미실행으로 전체 PASS는 아직 달성하지 못했습니다. 정확한 시나리오 선택과 이전 CI 증거, RGW barrier 수정 후 focused 3개 PASS 및 source 검증 제한은 [CI 실행 기준](CI_FIXTURES.md#rgw-policy-barrier-수정-후-focused-검증)을 따릅니다.
 
 각 항목은 다음 네 조건을 모두 충족해야 완료로 표시합니다.
 
