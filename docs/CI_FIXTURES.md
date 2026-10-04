@@ -147,7 +147,9 @@ TestGoCephLinux
 
 `quay-goceph-linux`는 [Linux 전용 runner](../internal/integration/goceph/run.py)로 소비자 probe와 integration runner 이미지를 준비합니다. 같은 Ceph release의 공개 header와 runtime library로 별도 `go-ceph v0.41.0` probe를 cgo 빌드하고, 공개 모듈의 runner는 cgo 없이 빌드합니다. Ceph C++·서버 데몬을 다시 빌드하지 않습니다. Probe/runner 준비와 실제 RADOS/RBD/CephFS I/O 모두 성공해야 profile 성공입니다. macOS native go-ceph 빌드를 지원하는 경로로 해석하지 않습니다.
 
-새 local go-ceph 준비의 첫 실행은 runtime 이전에 실패했습니다. 소비자 Dockerfile이 module build context의 `internal/dockerbridge`를 복사하지 않아 Go runner를 컴파일할 수 없었습니다. 해당 package의 `COPY`를 추가한 `73cc4ae`의 local 재실행은 소비자 build를 성공하고 `TestGoCephLinux`의 bridge pair runtime을 검증 중입니다. 준비 성공은 native I/O의 PASS가 아니며 `efa5ee3`의 go-ceph 성공 증거로도 사용하지 않습니다.
+새 local go-ceph 준비의 첫 실행은 runtime 이전에 실패했습니다. 소비자 Dockerfile이 module build context의 `internal/dockerbridge`를 복사하지 않아 Go runner를 컴파일할 수 없었습니다. 해당 package의 `COPY`를 추가한 `73cc4ae`의 재실행은 소비자 build와 `TestGoCephLinux`의 bridge/host runtime을 모두 PASS했습니다. 이 수정 후 결과를 `efa5ee3`의 성공 증거로 사용하지 않습니다.
+
+2026-10-04 05:40 UTC의 로컬 실행은 Docker Desktop Linux ARM64에서 각각 두 독립 cluster의 RADOS/RBD/userspace CephFS를 검증했습니다. OSD 2 → 3 → 2 변경 전후 데이터·RBD snapshot 격리와 head 복원·fresh session·owned object/image/file 삭제를 확인한 native proof는 26개이며, 그중 Docker host namespace의 Linux native process 검증은 6개입니다. Test는 241.23초였고, 소비자 probe/runner 두 이미지만 준비했으며 새 Ceph 서버 이미지 빌드는 0회입니다. `summary.json`과 `post-runtime-audit.json`에서 실제 PASS와 최종 owned container/network 0개를 확인했습니다. 증거는 `artifacts/quay-goceph-local-20261004-r2/`에 보관합니다. 전체 Linux AMD64 필수 CI의 완료와는 별도 결과입니다.
 
 회사 `.deb` 또는 다른 이미지 선택은 이 필수 CI와 독립적입니다. [Debian 이미지 builder](DEBIAN_IMAGE_AUTOMATION.md)는 패키지를 받아 로컬 역할 이미지를 만들고, 그 결과를 `Run`의 image와 역할별 image option으로 명시적으로 소비합니다. 일반 `integration`·`client-fixtures` 등의 기존 image override 경로는 유지합니다. `.deb` builder 실행이나 native 패치 이미지를 기본 Quay 완료 조건에 넣지 않습니다.
 
