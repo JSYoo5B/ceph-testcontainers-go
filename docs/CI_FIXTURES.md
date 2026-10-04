@@ -2,13 +2,23 @@
 
 Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 기본·토폴로지 52개, 추가 서버/client fixture 47개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 101개**를 실행합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
-분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 profile·47개이며 go-ceph 1개는 선택 실행입니다. **현재 확대된 Go 필수 CI 전체의 runtime 완료는 아직 확인하지 않았습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 기존 완료 기록을 새 profile의 PASS로 대체하지 않습니다.
+분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 profile·47개이며 go-ceph 1개는 선택 실행입니다. **확대된 전체 CI는 실행했으며, source `be58018`에서 RGW sync의 실패 2개와 미실행 translation 2개가 남았습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 전체 실행의 실제 terminal 결과는 다음 절에 기록합니다. 기존 완료 기록이나 다른 source의 PASS로 남은 실패를 대체하지 않습니다.
 
 첫 확대 CI는 source `efa5ee3655173c496cc00f8c3e0f78baa7bbedf0`의 [run 37179959997](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37179959997)로 2026-10-04 05:27:55 UTC에 시작했습니다. 05:30 UTC 관측에서는 `make check` job이 SUCCESS, `quay-default`는 실행 중이며 새 fixture runtime job은 모두 대기 상태였습니다. 이 중간 관측은 terminal 성공 증거가 아닙니다.
 
-소비자 Dockerfile의 package 복사 누락을 수정한 source `73cc4ae34ed165bd1438d88fa0e62cbbc9aef296`의 [후속 전체 CI 37180395289](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37180395289)는 2026-10-04 05:36:43 UTC에 시작했으며 첫 관측은 queued 상태였습니다. 첫 run과 별도 실행으로 추적하며 새 fixture 전체의 terminal 결과는 아직 대기 중입니다.
+소비자 Dockerfile의 package 복사 누락을 수정한 source `73cc4ae34ed165bd1438d88fa0e62cbbc9aef296`의 [후속 전체 CI 37180395289](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37180395289)는 2026-10-04 05:36:43 UTC에 시작했으며 첫 관측은 queued 상태였습니다. 첫 run과 별도로 추적한 당시의 중간 관측이며, 새 fixture 전체의 terminal 성공 증거가 아닙니다.
 
-앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 전체 필수 CI 완료는 아직 확인하지 않았습니다.
+앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 이 시작 기록만으로 전체 필수 CI 성공을 판정하지 않습니다.
+
+## 확인된 전체 CI 결과
+
+2026-10-05 확인한 [run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)은 source `be58018d23efe0738c668e407075b556e4a09fd3`로 2026-10-04 19:05:23–20:32:00 UTC에 실행됐으며 terminal 결과는 **FAILURE**입니다. 원본 Quay Ceph 20.2.4의 Linux AMD64 필수 runtime job 10개 중 9개가 SUCCESS이고, 그 9개에서 기대한 parent 94개가 모두 RUN/PASS했습니다. Docker bridge SDK 2개는 이 94개에 포함됩니다.
+
+남은 `quay-rgw-sync-fixtures` job은 기대 parent 7개 중 5개를 실행해 3개 PASS·2개 FAIL했습니다. `TestMultiClusterRGWSelectivePolicy`는 prefix를 변경한 뒤 새 객체 `/tc-policy-selected/reports/after-policy-change`가 HTTP 404/`NoSuchKey`로 남아 기다림이 종료됐습니다. `TestHostNetworkMultiClusterRGWOwnedSyncPolicy`도 prefix 변경 뒤 `/tc-owned-selected/reports/after-update`의 새 bytes가 도착하지 않아 같은 404 상태로 deadline에 도달했습니다. 이는 정책 변경 뒤 미래 객체의 실제 복제가 실패한 관측이며, 단순 CLI 성공이나 이전 checkpoint로 통과 처리하지 않습니다. 해당 경로의 수정과 새 native 검증을 진행 중이며 아직 수정 후 PASS를 기록하지 않습니다.
+
+첫 Go 명령의 실패로 Make의 두 번째 translation 명령은 실행되지 않았습니다. 따라서 `TestMultiClusterRGWSyncTranslationFiltering`와 `TestHostNetworkMultiClusterRGWSyncTranslationFiltering`의 필수 child도 이 run에서는 미실행입니다. 전체 기대 101개 중 **99개 RUN·97개 PASS·2개 FAIL·2개 미실행**이며 parent SKIP은 0개입니다. 관측한 child 117개는 모두 PASS이고 child SKIP/FAIL은 0개입니다. 이 child 성공을 실행되지 않은 translation 범위의 증거로 사용하지 않습니다.
+
+Job ID·source head·raw log SHA-256·각 RUN/PASS/FAIL·child 및 package completion은 `artifacts/scenario-fixture-completion-20261005/previous-runtime-audit.json`에 연결했으며 raw 로그는 같은 디렉터리의 `previous-logs/`에 보관합니다. 당시 job 이름은 `quay-*`이고 아래 표는 같은 selector의 현재 `scenario-*` 이름을 사용합니다. 이름 변경이나 이후 source 변경을 이 이전 runtime의 새 PASS로 표시하지 않습니다. 대표 이미지 matrix 12개와 선택적 `rgw-native-regressions`는 위 101개 수에 합산하지 않습니다.
 
 ## 실행 경로와 시간 제한
 
@@ -16,15 +26,15 @@ Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2
 
 [workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
-| 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | 현재 runtime 상태 |
+| 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | `be58018` runtime 결과 |
 |---|---:|---|---|---|
-| `scenario-cluster-fixtures` | 8 | 40분 | 50분 | 검증 대기 |
-| `scenario-cephfs-fixtures` | 8 | 120분 | 130분 | 검증 대기 |
-| `scenario-rados-fixtures` | 4 | 120분 | 130분 | 검증 대기 |
-| `scenario-rbd-fixtures` | 6 | 120분 | 130분 | 검증 대기 |
-| `scenario-rgw-fixtures` | 14 | 120분 | 130분 | 검증 대기 |
-| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | 검증 대기 |
-| Go CI 합계 | 47 | | | |
+| `scenario-cluster-fixtures` | 8 | 40분 | 50분 | SUCCESS · 8/8 PASS · skip 0 |
+| `scenario-cephfs-fixtures` | 8 | 120분 | 130분 | SUCCESS · 8/8 PASS · skip 0 |
+| `scenario-rados-fixtures` | 4 | 120분 | 130분 | SUCCESS · 4/4 PASS · skip 0 |
+| `scenario-rbd-fixtures` | 6 | 120분 | 130분 | SUCCESS · 6/6 PASS · skip 0 |
+| `scenario-rgw-fixtures` | 14 | 120분 | 130분 | SUCCESS · 14/14 PASS · skip 0 |
+| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | FAILURE · RUN 5 / PASS 3 / FAIL 2 / 미실행 2 · skip 0 |
+| 추가 필수 합계 | 47 | | | 43 PASS / 2 FAIL / 2 미실행 · skip 0 |
 | `scenario-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 |
 
 로컬에서는 [Makefile](../Makefile)의 같은 target을 사용합니다. Host network 경로를 container runner에서 실행하면 Docker daemon의 host 주소가 필요합니다. CI는 `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`을 지정합니다.
@@ -172,7 +182,7 @@ TestGoCephLinux
 
 ## 원본 서버와 소비자 도구의 경계
 
-새 profile은 Ceph source를 컴파일하거나 MON/MGR/OSD/MDS/RGW/mirror 서버 이미지를 생성하지 않습니다. Daemon/mirror override 다섯 개를 해제하여 기존 원본 Quay 서버를 직접 소비합니다. `ceph.Run`은 호출자가 선택한 이미지를 실행하며 이미지 builder를 호출하지 않습니다.
+새 profile은 Ceph source를 컴파일하거나 MON/MGR/OSD/MDS/RGW/mirror 서버 이미지를 생성하지 않습니다. Control/OSD/RGW/MDS override 네 개를 해제하여 기존 원본 Quay 서버를 직접 소비하며 mirror는 source 클러스터의 control 이미지를 사용합니다. `ceph.Run`은 호출자가 선택한 이미지를 실행하며 이미지 builder를 호출하지 않습니다.
 
 일반 fixture profile은 `CEPH_TEST_RBD_CLIENT_IMAGE`와 `CEPH_TEST_VAULT_IMAGE`도 해제합니다. RBD native consumer는 기본 Quay의 Python bindings·cryptsetup을 사용합니다. ARM64 원본 이미지의 사전 도구 조회에서 bindings와 cryptsetup 2.8.6이 확인됐지만, 이 관측은 cluster I/O 또는 새 AMD64 CI 통과가 아닙니다. Slim consumer에 cryptsetup이 없다면 기존 [RBD client 준비 경로](RBD_CLIENT_FIXTURES.md)를 별도로 선택합니다.
 

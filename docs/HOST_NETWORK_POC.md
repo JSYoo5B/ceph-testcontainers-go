@@ -68,7 +68,7 @@ export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw
 export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds
 make hostnetwork
 
-# 위 이미지 변수와 동일하게, mirror image 기본값은 control 이미지입니다.
+# Mirror daemon도 source 클러스터의 control 이미지를 사용합니다.
 make hostnetwork-multicluster
 ```
 

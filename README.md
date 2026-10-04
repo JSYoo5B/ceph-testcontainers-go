@@ -280,9 +280,9 @@ make scenario-multicluster-topology
 make scenario-topology-extensions
 ```
 
-`scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
+`scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다. 확대된 Go 필수 CI 전체 runtime의 완료는 아직 확인하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다. 확대된 전체 CI [run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)은 실행했으며 source `be58018`에서 97개 PASS·RGW sync 2개 FAIL·translation 2개 미실행으로 종료됐습니다. 관측한 skip은 0개이며 실패 경로의 수정과 native 재검증을 진행합니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
 
 RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 
@@ -346,7 +346,7 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 기존 suite에는 RGW 선택 복제 정책, RBD split-brain·전체/증분 archive 복원과 CephFS archive PoC도 포함되어 있습니다. 이들 기능의 확장은 토폴로지 작업의 완료 조건에서 제외합니다.
 
-일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 `control`과 `all`의 필수 구성입니다. RGW multisite 관리 client는 각 클러스터의 `ControlImage()`를 기본으로 사용하며 `ControlImage` 설정으로 공용 이미지를 명시할 수 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
+일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬은 `control`과 `all`의 필수 구성입니다. 통합 테스트는 두 연결 API에 source 클러스터의 `ControlImage()`를 전달하며 mirror 전용 이미지 환경 변수는 사용하지 않습니다. RGW multisite 관리 client는 각 클러스터의 `ControlImage()`를 기본으로 사용하며 `ControlImage` 설정으로 공용 이미지를 명시할 수 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
 
 전환은 writer fencing·동기화 완료 확인·명시적 승격을 수행하는 계획된 절차입니다. RBD split-brain resync는 선택하지 않은 branch를 폐기합니다. CephFS native mirror의 user xattr 차이는 계속 관측되므로 완전한 metadata 보존으로 해석하지 않습니다. 구성과 케이스별 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
 
