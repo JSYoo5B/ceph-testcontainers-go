@@ -6,7 +6,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 경량화의 초기 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 현재 역할별 빌드와 검증은 [SLIM_IMAGE_AUTOMATION.md](docs/SLIM_IMAGE_AUTOMATION.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)를 확인합니다.
 
-역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구의 대표 검증을 완료했습니다. 구성별 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
+역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구 API를 제공합니다. 구성별 제공 범위와 원본 Quay 이미지의 필수 검증 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
 여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.
 
@@ -70,7 +70,7 @@ func TestTopology(t *testing.T) {
 }
 ```
 
-모듈 경로는 배포 전 프로젝트 이름으로 설정되어 있으며 아직 원격 저장소나 릴리스를 만들지는 않았습니다. 같은 체크아웃에서 테스트를 실행하거나 소비 프로젝트에서 로컬 `replace`를 사용할 수 있습니다.
+모듈 경로는 `github.com/jsyoo5b/ceph-testcontainers-go`이며 원격 저장소의 `main`에서 관리합니다. 아직 버전 릴리스 tag는 만들지 않았습니다. 같은 체크아웃에서 테스트를 실행하거나 소비 프로젝트에서 로컬 `replace`를 사용할 수 있습니다.
 
 ### 초기 클러스터 구성
 
@@ -279,6 +279,8 @@ make quay-topology-extensions
 
 `quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
+`43099aa`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37165945276)에서 원본 Quay 기본 14개와 topology 38개 전체가 통과했습니다. 후속 RGW 공개망 우선순위 수정은 별도 재검증하며, Docker Desktop의 peer 단절 중 공개 포트 경로 한계도 구성별 기록에 구분합니다.
+
 `make integration`, `make topology`, `make topology-extensions`, `make cluster-features`, `make client-fixtures`는 선택한 이미지 환경 변수를 사용하는 기존 별도 실행 경로로 유지합니다. 전체 client recipe에는 알려진 원본 서버 한계와 consumer 도구 조건이 있으므로 기본 Quay suite 전체 통과로 해석하지 않습니다.
 
 각 인터페이스만 실행할 수도 있습니다.
@@ -367,8 +369,8 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 ## 현재 범위
 
-MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 실제로 검증했습니다. RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결도 bridge/host PoC가 통과했습니다. 구성별 상태와 실제 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 서버 측 pool·Cephx·namespace·subvolume·사용자 정책은 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
+MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 구성할 수 있습니다. 기존 역할별 slim 이미지의 PoC에서는 RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결까지 bridge/host에서 검증했습니다. 원본 Quay 이미지의 실행 결과와 각 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 서버 측 pool·Cephx·namespace·subvolume·사용자 정책은 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
 
 CephFS subvolume snapshot·비동기 clone, RGW placement·storage class, 임시 중앙 config·OSD flag와 in/out 제어도 제공합니다. 클라이언트 테스트에 필요한 서버 조건을 준비하고 원래 설정을 복원하는 API입니다. `make cluster-feature-extensions`로 실제 Linux 클라이언트와 함께 검증하며, 사용법과 복원·부분 실패 계약은 [CLUSTER_FIXTURE_EXTENSIONS.md](docs/CLUSTER_FIXTURE_EXTENSIONS.md)를 확인합니다.
 
-5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 선택적 endpoint 단절·복구도 대표 검증을 완료했습니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. 객체·image·파일 CRUD와 프로토콜 기능 검증은 소비자 클라이언트가 수행합니다. kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.
+5 MON, 여러 zonegroup·zone 탈퇴, 여러 mirror daemon, public/cluster 네트워크 분리와 선택적 endpoint 단절·복구 API도 제공합니다. 기존 역할별 slim 검증과 원본 Quay 필수 실행은 구성별 기록에서 구분합니다. OSD 컨테이너 1개를 테스트상의 저장 노드 1개로 취급하며 물리 호스트 장애 내성을 입증하지 않습니다. 객체·image·파일 CRUD와 프로토콜 기능 검증은 소비자 클라이언트가 수행합니다. kernel mapping/mount와 동일 daemon data directory를 재사용하는 전체 복원은 별도 harness 과제입니다.
