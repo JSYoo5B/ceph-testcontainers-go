@@ -145,6 +145,8 @@ TestGoCephLinux
 
 `TestRGWProtocolBackends`는 기본 `hashicorp/vault:1.21.4`의 실제 KV-v2 backend를 기동합니다. 허용·거부 audit transaction, STS/Swift 및 암호화 데이터를 확인하며 모의 backend로 성공을 대신하지 않습니다. [Backend recipe](RGW_PROTOCOL_BACKENDS.md)에 조건을 기록합니다.
 
+2026-10-04 로컬 Docker Desktop Linux ARM64 실행에서 원본 Quay RGW의 STS/Swift/SSE-KMS가 bridge/host 각 3개, 총 6개 phase를 skip 없이 PASS했습니다. 두 gateway의 STS trust/action/resource 거부와 기존 session의 정책 복원, Swift key/token·공유 object bytes, 실제 Vault의 allowed/denied audit read와 key 삭제·복원 후 decrypt 결과를 확인했습니다. Test는 136.39초, harness·cleanup 포함 151.158초이며 새 서버 이미지 빌드 0회와 최종 owned container/network 0개입니다. `artifacts/quay-rgw-backends-20261004-r1/summary.json`과 `post-runtime-audit.json`이 증거이며, RGW profile 14개 전체나 AMD64 CI 완료를 의미하지 않습니다.
+
 `quay-goceph-linux`는 [Linux 전용 runner](../internal/integration/goceph/run.py)로 소비자 probe와 integration runner 이미지를 준비합니다. 같은 Ceph release의 공개 header와 runtime library로 별도 `go-ceph v0.41.0` probe를 cgo 빌드하고, 공개 모듈의 runner는 cgo 없이 빌드합니다. Ceph C++·서버 데몬을 다시 빌드하지 않습니다. Probe/runner 준비와 실제 RADOS/RBD/CephFS I/O 모두 성공해야 profile 성공입니다. macOS native go-ceph 빌드를 지원하는 경로로 해석하지 않습니다.
 
 새 local go-ceph 준비의 첫 실행은 runtime 이전에 실패했습니다. 소비자 Dockerfile이 module build context의 `internal/dockerbridge`를 복사하지 않아 Go runner를 컴파일할 수 없었습니다. 해당 package의 `COPY`를 추가한 `73cc4ae`의 재실행은 소비자 build와 `TestGoCephLinux`의 bridge/host runtime을 모두 PASS했습니다. 이 수정 후 결과를 `efa5ee3`의 성공 증거로 사용하지 않습니다.
