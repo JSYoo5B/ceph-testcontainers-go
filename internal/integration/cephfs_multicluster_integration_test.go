@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -67,11 +66,8 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	t.Log("CephFS snapshot backup: restored binary/empty/nested files, relative symlink, modes, owners and user xattrs into an independent filesystem")
 
 	// Cluster/filesystem setup above stays separate from multicluster setup.
-	// Select a compatible runtime supplying the userspace mirror daemon.
-	mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-	if mirrorImage == "" {
-		mirrorImage, _ = integrationImages(t)
-	}
+	// The source control runtime supplies the userspace mirror daemon.
+	mirrorImage := source.ControlImage()
 	mirror, err := multicluster.RunCephFSMirror(ctx, mirrorImage, multicluster.CephFSMirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,

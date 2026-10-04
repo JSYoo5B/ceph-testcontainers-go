@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -47,10 +46,7 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 			if err := source.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
 				t.Fatal(err)
 			}
-			runtimeImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-			if runtimeImage == "" {
-				runtimeImage, _ = integrationImages(t)
-			}
+			runtimeImage := source.ControlImage()
 			mirror, err := multicluster.RunRBDMirror(ctx, runtimeImage, multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool})
 			if mirror != nil {
 				t.Cleanup(func() {

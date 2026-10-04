@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"testing"
 	"time"
@@ -101,10 +100,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					// A plain image in pool scope is intentionally not eligible for
 					// journal enrollment, even while journaling images are mirrored.
 					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "plain", false)
-					mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-					if mirrorImage == "" {
-						mirrorImage, _ = integrationImages(t)
-					}
+					mirrorImage := source.ControlImage()
 					link, err := multicluster.RunRBDMirror(ctx, mirrorImage, multicluster.RBDMirrorConfig{
 						Source: source, Destination: destination, Pool: pool, Scope: tc.scope,
 						SourceNamespace: tc.sourceNamespace, DestinationNamespace: tc.destinationNamespace,

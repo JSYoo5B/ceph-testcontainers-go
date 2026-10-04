@@ -110,7 +110,9 @@ class MatrixTests(unittest.TestCase):
     def summary(self):
         return json.loads((self.output / "summary.json").read_text())
 
-    def test_default_matches_public_quay_image_and_all_pins_five_roles(self):
+    def test_default_matches_official_image_and_all_pins_four_components(self):
+        self.assertEqual(runner.ROLE_ENV, {"control": "CEPH_TEST_IMAGE", "osd": "CEPH_TEST_OSD_IMAGE",
+                                          "rgw": "CEPH_TEST_RGW_IMAGE", "mds": "CEPH_TEST_MDS_IMAGE"})
         original = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
         self.assertIn('const DefaultImage = "' + runner.OFFICIAL_IMAGE + '"', original)
         self.assertEqual(self.invoke(env={name: "unrelated:mutable" for name in runner.ROLE_ENV.values()}), 0)
@@ -142,7 +144,7 @@ class MatrixTests(unittest.TestCase):
                         for role, reference in refs.items():
                             self.assertEqual(reference, runner.REGISTRY + ":" + variant + "-20.2.4-" + role)
 
-    def test_roles_freeze_four_ids_and_mirror_is_control_not_quay(self):
+    def test_roles_freeze_four_component_ids(self):
         self.assertEqual(self.invoke(["--variant", "official", "--layout", "roles", "--platform", "linux/arm64"],
                                      env={"MAKEFLAGS": "-n OTHER=wrong", "MFLAGS": "-s", "GNUMAKEFLAGS": "-n",
                                           "MAKEFILES": "/unrelated/makefile", "MAKEOVERRIDES": "CEPH_TEST_IMAGE=other",
@@ -154,7 +156,6 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len([command for command in self.runtime.capture_commands if command[1:3] == ["image", "inspect"]]), 4)
         for role in ("control", "osd", "rgw", "mds"):
             self.assertEqual(self.runtime.make_environment[runner.ROLE_ENV[role]], report["images"][role]["image_id"])
-        self.assertEqual(self.runtime.make_environment["CEPH_TEST_MIRROR_IMAGE"], report["images"]["control"]["image_id"])
         self.assertEqual(self.runtime.make_environment["CGO_ENABLED"], "0")
         self.assertEqual(self.runtime.make_environment["GOWORK"], "off")
         self.assertEqual(self.runtime.make_environment["GOFLAGS"], "-mod=readonly")

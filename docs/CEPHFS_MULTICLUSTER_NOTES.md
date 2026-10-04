@@ -27,8 +27,8 @@ ID를 확인하고 root의 `ceph.mirror.info`를 기록하므로 원격 network 
 `multicluster.RunCephFSMirror`가 Docker SDK로 기존 MGR에 destination network를
 추가하고, cluster network 삭제 전에 자신이 추가한 연결을 해제한다.
 고정 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라
-`control`과 `all`은 `cephfs-mirror`를 포함해야 한다. 기본 mirror 이미지는
-테스트 control 이미지이며 `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수 있다.
+`control`과 `all`은 `cephfs-mirror`를 포함해야 한다. 통합 테스트의 mirror 이미지는
+source 클러스터의 `ControlImage()`를 사용한다.
 단일 클러스터와 복제 연결의 수명은 [API 계약](MULTICLUSTER_API.md)처럼 구분한다.
 
 native 검증은 파일 bytes와 SHA-256, tree의 이름/삭제, symlink target,

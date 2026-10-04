@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -169,10 +168,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 
 func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *multicluster.RBDMirror {
 	t.Helper()
-	image, _ := integrationImages(t)
-	if override := os.Getenv("CEPH_TEST_MIRROR_IMAGE"); override != "" {
-		image = override
-	}
+	image := a.ControlImage()
 	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
 		Source: a, Destination: destination, Pool: pool, SourceSite: "a", DestinationSite: destinationSite,
 	})

@@ -74,10 +74,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
 	}
 	checkpoint("initial")
-	image := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-	if image == "" {
-		image, _ = integrationImages(t)
-	}
+	image := source.ControlImage()
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
 	mirror, err := multicluster.RunCephFSMirror(ctx, image, multicluster.CephFSMirrorConfig{
 		Source: source, Destination: destination,

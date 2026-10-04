@@ -122,7 +122,7 @@ CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds \
 make multicluster
 ```
 
-별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./internal/integration`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
+별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./internal/integration`처럼 실행합니다. 다른 Ceph 버전에서는 control/OSD/RGW/MDS를 같은 검증 대상 버전으로 맞춥니다. Mirror는 source 클러스터의 `ControlImage()`를 사용합니다. Control 이미지는 `CEPH_TEST_IMAGE`로 선택하며, 이 값이 없으면 고정 `DefaultImage`입니다.
 
 이미지 프로젝트의 [checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md#checking-an-image)는 주어진 로컬 이미지를 quick 또는 full로 검증합니다. Full은 독립 Python/Docker CLI harness로 RBD backup·RBD/CephFS snapshot mirroring·RGW multisite를 포함한 기능 시나리오를 실행하며, 이 저장소의 Go suite를 호출하지 않습니다. Go 쪽에서는 `make multicluster` 또는 위 selector로 별도로 검증합니다. 이전 `slim-images-multicluster`·`--go-module-dir`·`--multicluster` 빌더 연결은 현재 제공하지 않습니다. 단일 클러스터의 일반 `integration` 테스트와 Go `multicluster` 태그의 구분은 유지합니다.
 

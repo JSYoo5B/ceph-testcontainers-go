@@ -109,7 +109,7 @@ Pinned Ceph 20.2.4에서는 인증 전 `rgwx-perm-check-uid`가 system argument 
 
 ```sh
 env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE \
-  -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE \
+  -u CEPH_TEST_MDS_IMAGE \
   CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -tags=integration,features,multicluster ./internal/integration \
   -run '^Test(HostNetwork)?MultiClusterRGWOwnedSyncPolicy$' \
@@ -118,7 +118,7 @@ env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE \
 
 다음 전체 recipe는 원본 서버의 한계 회귀도 포함합니다. 원본 Quay에서 numeric priority와 ordinary-user source deny/grant까지 모두 PASS할 것으로 기대하지 않습니다. 선택적 patched RGW는 위의 2026-10-04 image ID·package SHA·Go snapshot에 연결된 역사적 증거로 보존합니다. 새 실행에서는 소유자가 준비한 이미지를 명시해야 하며 이 저장소나 이미지 checker가 당시 패치 이미지를 재생성하지 않습니다.
 
-`make scenario-rgw-sync-supported`는 원본 Quay에서 기본 lifecycle/account-root 및 독립된 `tag_owner_class`·`tenant_system_user_isolation` subtest를 선택하며 daemon/mirror override 다섯 개를 해제합니다. 새 실행의 실제 결과는 기존 patched 증거와 별도로 확인합니다. `make rgw-sync-native-regressions`는 numeric priority·ordinary-user source deny/grant의 엄격한 한계 회귀를 명시적으로 실행합니다. 이미 준비한 이미지 override를 받을 수 있지만 이미지를 빌드하거나 실패를 예상 성공으로 바꾸지 않습니다.
+`make scenario-rgw-sync-supported`는 원본 Quay에서 기본 lifecycle/account-root 및 독립된 `tag_owner_class`·`tenant_system_user_isolation` subtest를 선택하며 control/OSD/RGW/MDS override 네 개를 해제합니다. 새 실행의 실제 결과는 기존 patched 증거와 별도로 확인합니다. `make rgw-sync-native-regressions`는 numeric priority·ordinary-user source deny/grant의 엄격한 한계 회귀를 명시적으로 실행합니다. 이미 준비한 이미지 override를 받을 수 있지만 이미지를 빌드하거나 실패를 예상 성공으로 바꾸지 않습니다.
 
 ```sh
 CGO_ENABLED=0 go test -mod=readonly -count=1 -v \

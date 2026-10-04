@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"testing"
 	"time"
@@ -109,10 +108,7 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 
 func rbdJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *multicluster.RBDMirror {
 	t.Helper()
-	image, _ := integrationImages(t)
-	if override := os.Getenv("CEPH_TEST_MIRROR_IMAGE"); override != "" {
-		image = override
-	}
+	image := source.ControlImage()
 	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite, Mode: multicluster.RBDMirrorModeJournal,

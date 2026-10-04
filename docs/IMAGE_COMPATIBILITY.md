@@ -16,7 +16,7 @@
 
 override를 생략하면 `Run`에 전달한 이미지로 해당 역할을 실행합니다. 따라서 `control` 전용 이미지를 사용할 때는 최소한 OSD 이미지를 지정하고, RGW/CephFS를 시작할 때는 각각 RGW/MDS 이미지도 지정합니다. 조합하는 이미지는 같은 Ceph release와 지원 platform이어야 합니다.
 
-Mirror 도구와 daemon은 항상 `control` 계약에 포함됩니다. 이전 `base`/`multicluster` 단계 구분은 사용하지 않습니다. `RunRBDMirror`와 `RunCephFSMirror`에는 `control` 또는 `all` 이미지를 전달합니다. 각각 추가 client와 mirror daemon을 별도 컨테이너로 시작합니다.
+Mirror 도구와 daemon은 항상 `control` 계약에 포함됩니다. 이전 `base`/`multicluster` 단계 구분은 사용하지 않습니다. `RunRBDMirror`와 `RunCephFSMirror`에는 `control` 또는 `all` 이미지를 전달합니다. 통합 테스트는 source 클러스터의 `ControlImage()`를 전달하며 mirror 전용 이미지 환경 변수를 두지 않습니다. RBD는 전달한 이미지로 양쪽 setup client와 destination의 mirror daemon을 별도 컨테이너로 실행합니다. CephFS는 각 클러스터의 `Ceph` CLI로 설정하고 전달한 이미지로 source의 mirror daemon을 별도 컨테이너로 실행합니다.
 
 RGW multisite/topology의 image 인자는 gateway 역할만 선택합니다. 설정 client는 기본적으로 **각 zone의 클러스터가 가진 `ControlImage()`**를 사용합니다. `RGWMultisiteConfig.ControlImage`나 `RGWTopologyConfig.ControlImage`를 지정하면 모든 설정 client가 그 공용 control/all 이미지를 사용합니다. 이후 `AddZone`/`AddZonegroup`에도 같은 규칙을 적용합니다. RGW 이미지에 Python이나 `ceph` CLI를 요구하지 않습니다.
 
@@ -37,11 +37,10 @@ CEPH_TEST_IMAGE=my-company/ceph-control:dev \
 CEPH_TEST_OSD_IMAGE=my-company/ceph-osd:dev \
 CEPH_TEST_RGW_IMAGE=my-company/ceph-rgw:dev \
 CEPH_TEST_MDS_IMAGE=my-company/ceph-mds:dev \
-CEPH_TEST_MIRROR_IMAGE=my-company/ceph-control:dev \
 make image-compatibility
 ```
 
-이 target은 위 8개와 MGR candidate lifecycle을 합한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. 원본 기본 지원의 CI target인 `scenario-*`는 custom daemon/mirror override를 해제하므로 custom 이미지 검증에 사용하지 않습니다.
+이 target은 위 8개와 MGR candidate lifecycle을 합한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. 원본 기본 지원의 CI target인 `scenario-*`는 custom control/OSD/RGW/MDS override 네 개를 해제하므로 custom 이미지 검증에 사용하지 않습니다.
 
 원본 필수 CI의 이름 목록과 검증 상태는 [CI_FIXTURES.md](CI_FIXTURES.md), 구성별 증거는 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다. 이미지 프로젝트의 검사 결과와 Go 프로젝트의 실행 결과는 각각 기록합니다.
 

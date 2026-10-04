@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -37,10 +36,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	const size = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	imageName, _ := integrationImages(t)
-	if override := os.Getenv("CEPH_TEST_MIRROR_IMAGE"); override != "" {
-		imageName = override
-	}
+	imageName := source.ControlImage()
 	link, err := multicluster.RunRBDMirror(ctx, imageName, multicluster.RBDMirrorConfig{
 		Source: source, Destination: destination, Pool: pool, DaemonCount: 2,
 	})

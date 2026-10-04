@@ -5,7 +5,6 @@ package integration_test
 import (
 	"bytes"
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -23,10 +22,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	const name = "backlog"
 	rbdMultiClusterPool(t, ctx, source, a, pool)
 	rbdMultiClusterPool(t, ctx, destination, b, pool)
-	image, _ := integrationImages(t)
-	if override := os.Getenv("CEPH_TEST_MIRROR_IMAGE"); override != "" {
-		image = override
-	}
+	image := source.ControlImage()
 	mirror, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		testcontainers.CleanupContainer(t, mirror)

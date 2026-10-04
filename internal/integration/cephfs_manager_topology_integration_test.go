@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -103,10 +102,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
-	image := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-	if image == "" {
-		image, _ = integrationImages(t)
-	}
+	image := source.ControlImage()
 	mirror, err := multicluster.RunCephFSMirror(ctx, image, multicluster.CephFSMirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,

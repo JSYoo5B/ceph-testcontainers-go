@@ -22,7 +22,7 @@
 
 위 표는 현재 `scenario-*` target 이름으로 범위를 안내합니다. 아래의 이전 로그·CI job·명령 이름은 당시 `quay-*` 기록을 보존하며, 이름 변경을 새 runtime 실행으로 취급하지 않습니다.
 
-각 runtime profile은 daemon/mirror 이미지 환경 변수 다섯 개를 해제하여 원본 Quay를 직접 선택하며, 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 이 절에 추가합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
+각 runtime profile은 control/OSD/RGW/MDS 이미지 환경 변수 네 개를 해제하여 원본 Quay를 직접 선택하며 mirror도 source 클러스터의 control 이미지를 사용합니다. 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 이 절에 추가합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
 
 2026-10-04 새 원본 실행은 기존 `golang:1.27.1` 컨테이너의 host network에서 수행하며 서버·native client는 모두 고정 Quay 이미지를 사용합니다. Docker Desktop Linux ARM64, Engine 29.8.1/API 1.55, 4 CPU/3916 MiB 환경입니다. 새 서버 이미지나 Ceph source 빌드는 실행하지 않았습니다. Digest `6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9`는 AMD64·ARM64 manifest를 포함한 upstream OCI index입니다. 이 실행의 platform은 ARM64이며 manifest 존재만으로 AMD64 실행 성공을 주장하지 않습니다.
 

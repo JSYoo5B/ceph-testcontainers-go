@@ -23,12 +23,12 @@ TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|ManagerLifecycle|CephFSMDSScaleTop
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
 MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry|RGWEndpoints|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
 
-# These targets exercise ceph.DefaultImage directly. Clear daemon/mirror image
+# These targets exercise ceph.DefaultImage directly. Clear component image
 # overrides even when inherited from a local custom-image session. General
 # integration/feature targets below continue to honor those overrides.
 # Consumer-only overrides (e.g. the cryptsetup RBD image) are outside the required
 # baseline; full client-fixtures remains an explicit optional target.
-SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE CGO_ENABLED=0
+SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE CGO_ENABLED=0
 
 # Required fixture profiles also select the default native RBD consumer
 # and the default real Vault backend, independent of custom-image sessions.

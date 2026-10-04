@@ -29,7 +29,6 @@ ROLE_ENV = {
     "osd": "CEPH_TEST_OSD_IMAGE",
     "rgw": "CEPH_TEST_RGW_IMAGE",
     "mds": "CEPH_TEST_MDS_IMAGE",
-    "mirror": "CEPH_TEST_MIRROR_IMAGE",
 }
 EXPECTED_TESTS = (
     "TestClusterLifecycle",
@@ -246,8 +245,7 @@ def main(argv=None):
         # runner invokes exactly the checked-in compatibility target.
         for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "GOFLAGS"):
             env.pop(name, None)
-        selected = {role: images["all" if args.layout == "all" else
-                                 ("control" if role == "mirror" else role)]["image_id"]
+        selected = {role: images["all" if args.layout == "all" else role]["image_id"]
                     for role in ROLE_ENV}
         summary["test_environment"] = {ROLE_ENV[role]: image for role, image in selected.items()}
         # A nonempty neutral flag overrides persisted GOENV flags such as

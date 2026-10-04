@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -205,10 +204,7 @@ func TestMultiClusterRBDPeerLifecycle(t *testing.T) {
 
 func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *multicluster.RBDMirror {
 	t.Helper()
-	image := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-	if image == "" {
-		image, _ = integrationImages(t)
-	}
+	image := source.ControlImage()
 	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite,

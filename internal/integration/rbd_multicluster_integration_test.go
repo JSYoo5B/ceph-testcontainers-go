@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -117,10 +116,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	const imageSize = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	mirrorImage := os.Getenv("CEPH_TEST_MIRROR_IMAGE")
-	if mirrorImage == "" {
-		mirrorImage, _ = integrationImages(t)
-	}
+	mirrorImage := source.ControlImage()
 	t.Logf("native RBD multicluster runtime image=%s", mirrorImage)
 	mirror, err := multicluster.RunRBDMirror(ctx, mirrorImage, multicluster.RBDMirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
