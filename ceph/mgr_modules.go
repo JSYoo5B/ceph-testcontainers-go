@@ -71,7 +71,7 @@ func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	modules, err := c.mgrModules(ctx)
+	modules, err := c.waitMGRModules(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (change *MGRModuleOverride) Restore(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	modules, err := c.mgrModules(ctx)
+	modules, err := c.waitMGRModules(ctx)
 	if err != nil {
 		return err
 	}
@@ -255,6 +255,29 @@ func (c *Container) setMGRModule(ctx context.Context, name string, enabled bool)
 	}
 	_, err := c.Ceph(ctx, "mgr", "module", op, name)
 	return err
+}
+
+// The caller holds c.mu and supplies the existing operation deadline. Native
+// module changes can respawn the MGR after the MON has confirmed membership;
+// wait for a coherent active-MGR snapshot before capturing or restoring state.
+// Retry reads only, and do not admit a snapshot received after cancellation.
+func (c *Container) waitMGRModules(ctx context.Context) ([]MGRModuleState, error) {
+	var modules []MGRModuleState
+	err := c.poll(ctx, func() (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		current, err := c.mgrModules(ctx)
+		if err != nil {
+			return false, err
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		modules = current
+		return true, nil
+	})
+	return modules, err
 }
 
 // MGR module changes can briefly restart the active manager. A transient

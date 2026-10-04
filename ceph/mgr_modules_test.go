@@ -63,6 +63,112 @@ func TestTemporaryMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.
 	}
 }
 
+func TestTemporaryMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T) {
+	for _, operation := range []string{"apply", "restore"} {
+		t.Run(operation, func(t *testing.T) {
+			ctr := newMGRModuleFixture()
+			c := mgrModuleCluster(ctr)
+			c.settings.startupTimeout = 3 * time.Second
+			var change *MGRModuleOverride
+			if operation == "restore" {
+				var err error
+				change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			beforeMutations, beforeDumps := ctr.mutations, ctr.dumps
+			ctr.dumpResponses = []string{
+				`{"available":false,"modules":[],"available_modules":[]}`,
+				`{"available":true,"modules":["other"],"available_modules":[]}`,
+			}
+			if operation == "apply" {
+				var err error
+				change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+				if err != nil || change == nil || !ctr.enabled["mirroring"] {
+					t.Fatal("transient native snapshots prevented apply", err)
+				}
+			} else if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] {
+				t.Fatal("transient native snapshots prevented restoration", err)
+			}
+			if len(ctr.dumpResponses) != 0 || ctr.dumps-beforeDumps < 4 || ctr.mutations-beforeMutations != 1 {
+				t.Fatalf("native convergence must precede one mutation: dumps=%d mutations=%d pending=%d", ctr.dumps-beforeDumps, ctr.mutations-beforeMutations, len(ctr.dumpResponses))
+			}
+			if !ctr.enabled["rbd_support"] || !ctr.enabled["volumes"] {
+				t.Fatal("unrelated module membership changed")
+			}
+			if operation == "apply" {
+				if err := change.Restore(t.Context()); err != nil || len(c.moduleOverrides) != 0 {
+					t.Fatal("converged apply did not preserve restoration ownership", err)
+				}
+			} else if len(c.moduleOverrides) != 0 || !change.state.restored {
+				t.Fatal("successful restoration retained its lease")
+			}
+		})
+	}
+}
+
+func TestTemporaryMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *testing.T) {
+	for _, operation := range []string{"apply", "restore"} {
+		for _, failure := range []string{"unavailable", "inconsistent", "canceled-before-read", "canceled-after-read"} {
+			t.Run(operation+"/"+failure, func(t *testing.T) {
+				ctr := newMGRModuleFixture()
+				c := mgrModuleCluster(ctr)
+				var change *MGRModuleOverride
+				if operation == "restore" {
+					var err error
+					change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				beforeMutations, beforeCalls := ctr.mutations, len(ctr.calls)
+				c.settings.startupTimeout = 120 * time.Millisecond
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				wantErr := error(context.DeadlineExceeded)
+				switch failure {
+				case "unavailable":
+					ctr.rawDump = `{"available":false,"modules":[],"available_modules":[]}`
+				case "inconsistent":
+					ctr.rawDump = `{"available":true,"modules":["other"],"available_modules":[]}`
+				case "canceled-before-read":
+					cancel()
+					wantErr = context.Canceled
+				case "canceled-after-read":
+					ctr.cancelOnDump = cancel
+					wantErr = context.Canceled
+				}
+				started := time.Now()
+				var err error
+				if operation == "apply" {
+					change, err = c.TemporaryMGRModule(ctx, "mirroring", true)
+					if change != nil || len(c.moduleOverrides) != 0 || ctr.enabled["mirroring"] {
+						t.Fatal("failed initial snapshot adopted or changed native membership")
+					}
+				} else {
+					err = change.Restore(ctx)
+					if change.state.restored || c.moduleOverrides["mirroring"] != change || !ctr.enabled["mirroring"] {
+						t.Fatal("failed initial snapshot lost applied membership or restoration ownership")
+					}
+				}
+				if !errors.Is(err, wantErr) || time.Since(started) > time.Second || ctr.mutations != beforeMutations {
+					t.Fatalf("initial read must fail within context without mutation: err=%v elapsed=%v mutations=%d", err, time.Since(started), ctr.mutations-beforeMutations)
+				}
+				if failure == "canceled-before-read" && len(ctr.calls) != beforeCalls {
+					t.Fatal("canceled admission performed a native read")
+				}
+				if operation == "restore" {
+					ctr.rawDump, ctr.cancelOnDump = "", nil
+					if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] || len(c.moduleOverrides) != 0 {
+						t.Fatal("retry after failed initial snapshot did not restore original membership", err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestTemporaryMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
 	for _, name := range []string{"--force", "bad name", "mirroring;exit", "unknown", "missing", "broken"} {
 		ctr := newMGRModuleFixture()
@@ -264,10 +370,12 @@ type mgrModuleFixture struct {
 	enabled, always, forceDisabled                                                 map[string]bool
 	canRun                                                                         map[string]bool
 	calls                                                                          [][]string
+	dumpResponses                                                                  []string
 	failAfter, rawListing, rawDump                                                 string
 	dumps, failDumpAt, failDumpFrom, mutations, probes, filesystems, canceledReads int
 	mirrored                                                                       bool
 	cancelOnSet                                                                    context.CancelFunc
+	cancelOnDump                                                                   context.CancelFunc
 }
 
 func newMGRModuleFixture() *mgrModuleFixture {
@@ -322,8 +430,16 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			metadata = append(metadata, map[string]any{"name": name, "can_run": runnable, "error_string": diagnostic})
 		}
 		result = map[string]any{"available": true, "modules": enabled, "available_modules": metadata}
-		if ctr.rawDump != "" {
+		if len(ctr.dumpResponses) != 0 {
+			result = json.RawMessage(ctr.dumpResponses[0])
+			ctr.dumpResponses = ctr.dumpResponses[1:]
+		} else if ctr.rawDump != "" {
 			result = json.RawMessage(ctr.rawDump)
+		}
+		if ctr.cancelOnDump != nil {
+			cancel := ctr.cancelOnDump
+			ctr.cancelOnDump = nil
+			cancel()
 		}
 	} else if len(args) == 4 && slices.Equal(args[:2], []string{"mgr", "module"}) && slices.Contains([]string{"enable", "disable"}, args[2]) {
 		ctr.mutations++
