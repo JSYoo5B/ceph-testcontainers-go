@@ -92,3 +92,19 @@ RBD encryption의 `cryptsetup`, RADOS striper, 별도 KMS/backend 등의 추가 
 2026-10-05 Docker Desktop Linux ARM64에서 새 Go 소스를 `CGO_ENABLED=0`으로 컴파일한 binary를 준비된 원본 Quay 컨테이너에서 실행했습니다. 대표 9개가 모두 PASS했으며 runner·cleanup을 포함한 실행은 1020.117초였습니다. CephFS mirror socket, required rbd_support 명령을 통한 MGR 승격 후 준비 상태, ControlImage override를 생략한 RGW multisite를 실제 데이터와 함께 확인했습니다. 이미지 빌드·pull은 0회입니다.
 
 초기 `runtime-summary.json`의 테스트 exit code는 0이지만 정상 재접속 유예 중인 Ryuk 1개를 즉시 검사하여 종합 `passed`를 false로 기록했습니다. 원본 기록을 보존하고 유예 후 `post-runtime-audit.json`에서 owned container 0개·추가 network 0개와 실행 중 Go source 변경 0개를 확인했습니다. 증거는 로컬 `artifacts/image-policy-alignment-20261005/`입니다. 이 결과는 `official/all/linux-arm64` 한 조합의 증거이며 Debian·Ubuntu나 12개 CI 전체 완료로 확대하지 않습니다.
+
+추가 `TestMonitorManagerTopology`도 bridge/host 모두 PASS했습니다. Parent test는 394.09초, harness의 Go 실행·cleanup은 394.264초였고 정상 Ryuk 유예 뒤 owned container·추가 network가 모두 0개였습니다. Quorum 상실 시 fresh session의 bounded 거부, 복구·MON 교체·MGR 승격 뒤 retained/fresh RADOS 데이터와 volumes 상태를 확인했습니다. 외부 `timeout`을 제거한 native watchdog 경로의 실제 증거이며 로그는 같은 artifact의 `monitor-watchdog/`입니다.
+
+## Native CI matrix 실행 증거
+
+2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 아래 12개 조합이 모두 PASS했습니다. 각 조합의 artifact를 내려받아 9개 top-level test가 각각 한 번 완료하고 모든 child의 skip·fail이 없으며 package 결과가 성공인지 확인했습니다. 총 108회 실행이지만 서로 다른 이름은 9개입니다.
+
+| 계열 | all / AMD64 | all / ARM64 | roles / AMD64 | roles / ARM64 |
+|---|---|---|---|---|
+| 원본 Quay all · 공식 추출 roles | 9/9 PASS | 9/9 PASS | 9/9 PASS | 9/9 PASS |
+| Debian | 9/9 PASS | 9/9 PASS | 9/9 PASS | 9/9 PASS |
+| Ubuntu | 9/9 PASS | 9/9 PASS | 9/9 PASS | 9/9 PASS |
+
+모든 artifact의 source SHA-256은 `f27b8d232257cb9a9631fa9c538339bcf010f3684b98b9d0022fd0f613e984eb`로 동일했습니다. 선택한 image ID·registry digest·native engine/image platform, Go version, 실제 make 명령과 실행 시간을 함께 보관합니다. 각 구성은 4 CPU·약 16 GiB Linux runner와 Go 1.25.14, Docker 28.0.4를 사용했고 make 실행은 1016.040–1139.225초였습니다. 각 source/bootstrap hash와 실제 이미지 ID에 대한 한 번의 결과이며 다른 tag 내용·release 또는 전체 fixture·go-ceph 지원으로 확대하지 않습니다.
+
+CI artifact 이름은 `image-<variant>-<layout>-<architecture>`입니다. 로컬 원본은 `artifacts/image-policy-alignment-20261005/ci-ready/`, 12개 완료 기록과 source/platform 일치를 검증한 집계는 `ci-matrix-verified.json`에 보관합니다. 이미지 빌드는 모든 조합에서 0회였습니다.

@@ -57,7 +57,7 @@ Go CI의 각 새 job은 `shell: bash`의 pipefail로 `make` 실패를 유지하�
 | `debian` | GHCR `debian-20.2.4-all` | GHCR `debian-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 | `ubuntu` | GHCR `ubuntu-20.2.4-all` | GHCR `ubuntu-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 
-GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 새 12개 조합 전체의 runtime 완료는 아직 확인하지 않았습니다.
+GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS했습니다. 각 artifact의 source hash·이미지 ID·platform과 9개 완료 기록을 확인했습니다. 상세 결과는 [실행 증거](IMAGE_COMPATIBILITY.md#native-ci-matrix-실행-증거)에 기록합니다. 이 결과는 위 상세 fixture 101개 CI 전체의 성공을 뜻하지 않습니다.
 
 로컬에서는 현재 Docker 엔진의 native platform에서 한 조합을 실행합니다.
 
