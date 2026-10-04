@@ -32,6 +32,7 @@ COPY --from=module go.mod go.sum ./
 RUN --mount=type=cache,target=/root/go/pkg/mod go mod download
 COPY --from=module ceph ./ceph
 COPY --from=module multicluster ./multicluster
+COPY --from=module internal/dockerbridge ./internal/dockerbridge
 COPY --from=module internal/integration ./internal/integration
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go test ./ceph ./multicluster && \
