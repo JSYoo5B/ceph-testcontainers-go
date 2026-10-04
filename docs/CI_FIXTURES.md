@@ -81,7 +81,9 @@ Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)�
 | `debian` | GHCR `debian-20.2.4-all` | GHCR `debian-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 | `ubuntu` | GHCR `ubuntu-20.2.4-all` | GHCR `ubuntu-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 
-GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS했습니다. 각 artifact의 source hash·이미지 ID·platform과 9개 완료 기록을 확인했습니다. 상세 결과는 [실행 증거](IMAGE_COMPATIBILITY.md#native-ci-matrix-실행-증거)에 기록합니다. 이 결과는 위 상세 fixture 101개 CI 전체의 성공을 뜻하지 않습니다.
+GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS한 기존 기록을 보존합니다.
+
+후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)도 matrix 12개 각각 대표 9개 RUN/PASS·child FAIL/SKIP 0·package `ok`와 image ID·digest·native platform을 확인했습니다. Mirror 전용 role 선택을 제거하고 네 component 이미지와 source control mirror를 사용하는 경로입니다. 각 matrix cleanup 12개도 전후 동일 engine·source와 새 container/network 0개로 PASS했습니다. 현재 전체 상세 CI는 진행 중이며 이 결과를 상세 fixture 101개나 필수 cleanup 22개 전체의 성공으로 표시하지 않습니다. 같은 source manifest와 개별 artifact를 대조한 [최신 matrix 실행 증거](IMAGE_COMPATIBILITY.md#d9115f4-matrix-검증)에 기록합니다.
 
 로컬에서는 현재 Docker 엔진의 native platform에서 한 조합을 실행합니다.
 
