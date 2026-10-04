@@ -155,6 +155,8 @@ return fence.Restore(ctx)
 
 `MGRModules`는 enabled/always-on/force-disabled membership과 active MGR의 available/can-run/dependency 진단을 함께 조회합니다. `TemporaryMGRModule(ctx, name, enabled)`의 `Restore`는 이전 membership을 복원하며 readback 과도기를 기다립니다. always-on disable, unavailable dependency enable, overlapping handle, 사용 중인 filesystem의 volumes 또는 native mirror policy가 있는 mirroring disable은 거부합니다.
 
+Module 변경은 MON의 응답 뒤 active MGR 재시작을 일으킬 수 있습니다. 변경·복원 API는 기존 context/startup timeout 안에서 첫 native snapshot도 재조회하며, 취소 이후 도착한 snapshot으로 변경을 허용하지 않습니다. 재시도 대상은 읽기이며 변경 명령을 반복하지 않습니다. `MGRModules` 자체는 단발 snapshot이므로 readiness가 필요한 경우 `WaitMGRModuleReady`를 사용합니다.
+
 Ceph 20.2.4의 `rbd_support`와 `volumes`는 always-on입니다. enable true의 no-op lease는 허용하지만 임의 force-disable로 조건을 가장하지 않습니다. `WaitMGRModuleReady(ctx, "rbd_support")`는 실제 `ceph rbd task list`와 snapshot schedule list를, `volumes`는 `fs volume ls`를 probe합니다. 다른 module은 intended command를 caller가 확인합니다. configured membership과 작업 완료는 별도입니다. [MGR 관리 계약](https://docs.ceph.com/en/tentacle/mgr/administrator/).
 
 ## 실행 중 CephFS data pool 추가

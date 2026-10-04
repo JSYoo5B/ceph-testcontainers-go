@@ -8,6 +8,8 @@
 
 소비자 Dockerfile의 package 복사 누락을 수정한 source `73cc4ae34ed165bd1438d88fa0e62cbbc9aef296`의 [후속 전체 CI 37180395289](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37180395289)는 2026-10-04 05:36:43 UTC에 시작했으며 첫 관측은 queued 상태였습니다. 첫 run과 별도 실행으로 추적하며 새 fixture 전체의 terminal 결과는 아직 대기 중입니다.
 
+앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 전체 필수 CI 완료는 아직 확인하지 않았습니다.
+
 ## 실행 경로와 시간 제한
 
 [workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `quay-default`를 실행합니다. 기존 topology job과 새 fixture job은 모두 `quay-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 별도 Linux build stage에서 cgo를 사용합니다.
@@ -80,6 +82,8 @@ TestMGRModules
 TestRADOSClientFixtures
 TestNativePoolReplacement
 ```
+
+MGR 수정 후 Docker Desktop Linux ARM64의 focused `TestMGRModules`는 bridge/host 모두 PASS했습니다. Native membership/dependency, 실제 RBD schedule/task 완료, optional module의 이전 enabled/disabled 상태 복원, always-on 및 사용 중인 mirror policy 보호를 확인했습니다. Test는 159.29초, harness·cleanup 포함 176.592초이며 새 서버 이미지 빌드 0회와 최종 owned container/network 0개입니다. 단위·race에서도 재시작/불일치 snapshot 이후 변경 1회, 지속 실패·취소 시 변경 0회와 복원 소유권 보존을 검증했습니다. 증거는 `artifacts/quay-mgr-modules-20261004-r2/summary.json`과 `post-runtime-audit.json`에 보관하며, RADOS profile 4개 전체 또는 AMD64 CI 완료로 확대하지 않습니다.
 
 ### quay-rbd-fixtures · 6개
 
