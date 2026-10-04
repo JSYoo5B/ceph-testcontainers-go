@@ -279,7 +279,7 @@ make quay-topology-extensions
 
 `quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-`43099aa`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37165945276)에서 원본 Quay 기본 14개와 topology 38개 전체가 통과했습니다. 후속 RGW 공개망 우선순위 수정은 별도 재검증하며, Docker Desktop의 peer 단절 중 공개 포트 경로 한계도 구성별 기록에 구분합니다.
+RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 
 `make integration`, `make topology`, `make topology-extensions`, `make cluster-features`, `make client-fixtures`는 선택한 이미지 환경 변수를 사용하는 기존 별도 실행 경로로 유지합니다. 전체 client recipe에는 알려진 원본 서버 한계와 consumer 도구 조건이 있으므로 기본 Quay suite 전체 통과로 해석하지 않습니다.
 

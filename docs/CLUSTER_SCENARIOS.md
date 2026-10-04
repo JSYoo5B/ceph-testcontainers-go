@@ -10,7 +10,7 @@
 
 현재 필수 기준은 `ceph.DefaultImage`의 원본 Ceph 20.2.4입니다. Slim·회사 `.deb`·native 패치 빌드는 선택 도구이며 이 검증의 사전 조건이 아닙니다. 아래의 기존 성공 기록은 대부분 Quay-derived 역할별 slim 이미지와 Docker Desktop Linux ARM64의 관측입니다. 같은 source에서 추출했다는 사실만으로 원본 전체 이미지의 새 실행을 PASS 처리하지 않습니다.
 
-새 검증은 다음 대표 범위를 유지합니다. `topology-smoke`의 3 MON/2 MGR 및 RGW 2 zone만으로 전체 목표를 닫지 않습니다. 아래 runtime 성공 표는 IPAM 수정 전 기본·r2 배치입니다. 후속 `43099aa`의 Linux AMD64 CI에서도 같은 기본 14개와 토폴로지 38개 전체를 통과했으며, 이후 RGW 공개망 우선순위 수정의 재검증은 별도 기록합니다.
+새 검증은 다음 대표 범위를 유지합니다. `topology-smoke`의 3 MON/2 MGR 및 RGW 2 zone만으로 전체 목표를 닫지 않습니다. 아래 runtime 성공 표는 IPAM 수정 전 기본·r2 배치입니다. 후속 `43099aa`와 RGW 공개망 우선순위 수정을 포함한 `3f79a78`의 Linux AMD64 CI에서도 같은 기본 14개와 토폴로지 38개 전체를 통과했습니다. 각 실행의 source와 SDK 회귀는 아래에 별도 기록합니다.
 
 | 필수 실행 경로 | 대표 구성·변경 기준 | 새 원본 Quay 실행 상태 |
 |---|---|---|
@@ -66,7 +66,20 @@ Commit `43099aa`는 Docker가 선택한 주소 풀을 사용하는 명시적 IPA
 
 Commit `3f79a78`은 bridge RGW의 public endpoint를 `GwPriority=1`로 설정합니다. Host listener, 일반 `WithClient`, peer 기본값 0과 후속 사용자 customizer 합성은 유지합니다. SDK `TestRecoverableBridgePublishedPort`는 같은 published URL에서 전용 fresh HTTP 연결의 200·정확한 body를 단절 전·격리 중·복구 후·반복 복구에 확인하며 IP·aliases·priority·native PID도 비교합니다. CI는 기존 endpoint identity 검사와 이 HTTP 검사 2개를 별도 step으로 실행한 뒤 기존 확장 12개 전체를 실행합니다.
 
-수정 후 `make check`는 unit·race·vet·전체 tag compile 및 Python guard 63개에서 PASS했습니다. 실제 SDK 2개는 격리된 Engine 28.0.4에서 Go 21.105초, Docker Desktop의 Linux host-network Go runner에서 Go 21.852초에 PASS했습니다. 각각 profile elapsed는 23.478초, 36.234초이며 owned container/network는 0개입니다. 원본 Quay RGW peer topology도 142.918초 PASS했습니다. 같은 공개 URL의 격리 중 기존 object 읽기·새 object 쓰기, 상대 zone에 새 update 부재, 복구 뒤 양방향 bytes와 원래 period/PID/IP/alias 보존을 확인했습니다. 로그·source 189개 SHA는 `artifacts/quay-published-endpoint-20261004-r4/` 및 `artifacts/quay-gateway-priority-20261004-r4/`에 보존합니다. Source manifest의 revision은 수정 전 `43099aa` worktree이며 실제 189개 이름·SHA로 후속 `3f79a78`의 runtime 입력을 대조합니다. 이 focused 결과를 후속 전체 CI 성공으로 표현하지 않습니다. `3f79a78`을 main에 push했으며 [후속 전체 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)의 exact head SHA로 기본 14개·토폴로지 38개 및 SDK 회귀 2개를 재검증 중입니다. 관측은 `artifacts/quay-gateway-priority-ci-20261004-r4/`에 기록합니다.
+수정 후 `make check`는 unit·race·vet·전체 tag compile 및 Python guard 63개에서 PASS했습니다. 실제 SDK 2개는 격리된 Engine 28.0.4에서 Go 21.105초, Docker Desktop의 Linux host-network Go runner에서 Go 21.852초에 PASS했습니다. 각각 profile elapsed는 23.478초, 36.234초이며 owned container/network는 0개입니다. 원본 Quay RGW peer topology도 142.918초 PASS했습니다. 같은 공개 URL의 격리 중 기존 object 읽기·새 object 쓰기, 상대 zone에 새 update 부재, 복구 뒤 양방향 bytes와 원래 period/PID/IP/alias 보존을 확인했습니다. 로그·source 189개 SHA는 `artifacts/quay-published-endpoint-20261004-r4/` 및 `artifacts/quay-gateway-priority-20261004-r4/`에 보존합니다. Source manifest의 revision은 수정 전 `43099aa` worktree이며 실제 189개 이름·SHA로 후속 `3f79a78`의 runtime 입력을 대조합니다. 이 focused 결과는 후속 전체 CI와 별도 증거입니다.
+
+`3f79a78cb168bbe99a78fab5450a94f2f322e9d0`의 [후속 전체 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)는 2026-10-04 04:42 UTC SUCCESS로 종료했습니다. 04:42:34 UTC 공개 REST API 재조회에서 exact head SHA, 필수 job 5개와 실제 Makefile·SDK step의 SUCCESS를 확인했습니다. 같은 digest의 기본 Quay 이미지를 사용하며 새 서버 이미지 생성·Ceph native 빌드를 실행하지 않았습니다.
+
+| 필수 CI 실행 | 선택 범위 | 최종 결과 |
+|---|---|---|
+| `make check` | unit·race·vet·전체 tag compile·Python guard 63개 | SUCCESS |
+| `make quay-default` | native/runtime 11개와 signer helper 3개 | SUCCESS |
+| `make quay-topology` | 핵심 topology 8개 | SUCCESS |
+| `make quay-multicluster-topology` | 멀티클러스터 topology 18개 | SUCCESS |
+| `make quay-topology-extensions` | 확장 topology 12개 | SUCCESS |
+| Docker bridge SDK step | endpoint identity·fresh published HTTP 회귀 2개 | SUCCESS |
+
+원본 기본 14개와 topology 38개를 유지하고 SDK 회귀 2개를 별도로 더했습니다. `selection-audit.json`은 실제 Go `-list`의 distinct top-level 이름 54개와 selector·tag·package를 기록하며 runtime 성공 증거로 사용하지 않습니다. 전체 CI 결과와 단계별 상태의 증거는 `artifacts/quay-gateway-priority-ci-20261004-r4/terminal-revalidation.json`입니다. Optional RGW native 기능 회귀 job은 push에서 실행하지 않는 별도 경로이며 필수 topology 38개를 제외하거나 skip한 것이 아닙니다. 이후 문서 변경은 실행 코드·workflow를 변경하지 않습니다.
 
 Docker Desktop에는 별도 공개 포트 경로 문제가 관측됐습니다. Public priority 1을 유지한 BusyBox 서버에 peer를 **Start 전에** 연결하면 peer 단절 중 public-only observer의 직접 IP GET은 PASS하지만 VM host namespace와 macOS에서 기존 공개 포트 GET은 timeout이었습니다. 원래 peer를 복구하면 두 공개 경로 모두 정상 응답했습니다. Peer를 **Start 후** 연결한 별도 케이스는 격리 중에도 세 경로가 모두 PASS했습니다. `artifacts/quay-desktop-ingress-paths-20261004-r4/summary.json`에 실제 native identity·port·HTTP·정리를 보존합니다. 이는 Ceph가 아닌 Engine/Desktop published-port 경로의 결함 후보이며 현재 forwarder의 target 선택 원인까지 확정하지 않습니다. Priority 고정만으로 모든 Desktop/macOS 공개 연결을 보장하지 않습니다. 추가 proxy·서버 패치·이미지 생성 없이 지원되는 연결 순서의 차이를 확인했으며, 정식 fixture 적용 여부는 별도 검토 범위입니다.
 
