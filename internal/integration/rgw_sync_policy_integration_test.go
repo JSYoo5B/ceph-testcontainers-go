@@ -102,6 +102,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := link.ApplySyncGroup(ctx, bucket); err != nil {
 		t.Fatal(err)
 	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	payload := bytes.Repeat([]byte("owned RGW selective sync fixture\n"), 2048)
 	for _, path := range []string{selected + "/published/selected", selected + "/private/excluded", localOnly + "/published/excluded"} {
 		sourceS3.request(t, ctx, http.MethodPut, path, payload, http.StatusOK)
@@ -125,6 +126,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := link.SetSyncGroupStatus(ctx, bucket, multicluster.RGWSyncForbidden); err != nil {
 		t.Fatal(err)
 	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	waitOwnedBucketDisabled(t, ctx, link, bucket, "prefix")
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/published/while-forbidden", payload, http.StatusOK)
 	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destinationS3, selected + "/published/while-forbidden"})
@@ -134,6 +136,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := link.SetSyncGroupStatus(ctx, bucket, multicluster.RGWSyncEnabled); err != nil {
 		t.Fatal(err)
 	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +149,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err := link.SetSyncPipePrefix(ctx, bucket, "prefix", "reports/"); err != nil {
 		t.Fatal(err)
 	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/reports/after-update", payload, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/published/after-update", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusOK, payload)

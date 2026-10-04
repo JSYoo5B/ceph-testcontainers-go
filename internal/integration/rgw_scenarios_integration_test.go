@@ -25,27 +25,45 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 14*time.Minute)
 	defer cancel()
 	link, sourceS3, destinationS3 := newRGWScenario(t, ctx, "tc-selective-policy")
-	admin := link.SourceAdmin
-	for _, command := range [][]string{
-		{"sync", "group", "create", "--group-id", "selective", "--status", "allowed"},
-		{"sync", "group", "flow", "create", "--group-id", "selective", "--flow-id", "source-to-destination", "--flow-type", "directional", "--source-zone", "source", "--dest-zone", "destination"},
-		{"sync", "group", "pipe", "create", "--group-id", "selective", "--pipe-id", "bucket-allowance", "--source-zones", "source", "--source-bucket", "*", "--dest-zones", "destination", "--dest-bucket", "*"},
-		{"period", "update", "--commit"},
-	} {
-		rgwScenarioAdmin(t, ctx, admin, command...)
+	permission, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{}, multicluster.RGWSyncGroupConfig{ID: "selective", Status: multicluster.RGWSyncAllowed})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Reload both gateways before creating data, so the original default
-	// all-bucket policy cannot race the first writes of this scenario.
-	restartRGWScenarioGateway(t, ctx, link.Source, &sourceS3)
-	restartRGWScenarioGateway(t, ctx, link.Destination, &destinationS3)
+	if err := link.CreateSyncFlow(ctx, permission, multicluster.RGWSyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := link.CreateSyncPipe(ctx, permission, multicluster.RGWSyncPipeConfig{ID: "bucket-allowance", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Publish only this owned policy and reload both gateways before writes,
+	// so the original all-bucket policy cannot race this scenario's data.
+	if err := link.ApplySyncGroup(ctx, permission); err != nil {
+		t.Fatal(err)
+	}
+	sourceS3.endpoint, err = link.Source.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationS3.endpoint, err = link.Destination.S3Endpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRGWScenarioResponse(t, ctx, sourceS3, http.MethodGet, "/", http.StatusOK)
+	waitRGWScenarioResponse(t, ctx, destinationS3, http.MethodGet, "/", http.StatusOK)
 	const selected, localOnly = "/tc-policy-selected", "/tc-policy-local-only"
 	sourceS3.request(t, ctx, http.MethodPut, selected, nil, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, localOnly, nil, http.StatusOK)
-	rgwScenarioAdmin(t, ctx, admin, "sync", "group", "create", "--bucket", strings.TrimPrefix(selected, "/"), "--group-id", "selected-prefix", "--status", "enabled")
-	setPrefix := func(prefix string) {
-		rgwScenarioAdmin(t, ctx, admin, "sync", "group", "pipe", "create", "--bucket", strings.TrimPrefix(selected, "/"), "--group-id", "selected-prefix", "--pipe-id", "prefix", "--source-zones", "source", "--dest-zones", "destination", "--prefix", prefix)
+	bucket, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(selected, "/")}, multicluster.RGWSyncGroupConfig{ID: "selected-prefix", Status: multicluster.RGWSyncEnabled})
+	if err != nil {
+		t.Fatal(err)
 	}
-	setPrefix("published/")
+	if err := link.CreateSyncPipe(ctx, bucket, multicluster.RGWSyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := link.ApplySyncGroup(ctx, bucket); err != nil {
+		t.Fatal(err)
+	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	payload := bytes.Repeat([]byte("selected RGW policy object\n"), 1024)
 	for _, path := range []string{selected + "/published/selected", selected + "/private/excluded", localOnly + "/published/excluded"} {
 		sourceS3.request(t, ctx, http.MethodPut, path, payload, http.StatusOK)
@@ -68,7 +86,10 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	// Bucket policy changes are dynamic and do not need a period commit.
 	// Verify new writes after the change, without asserting historical
 	// backfill or deletion of objects previously selected by the old prefix.
-	setPrefix("reports/")
+	if err := link.SetSyncPipePrefix(ctx, bucket, "prefix", "reports/"); err != nil {
+		t.Fatal(err)
+	}
+	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/reports/after-policy-change", payload, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/published/after-policy-change", payload, http.StatusOK)
 	waitMultisiteObject(t, ctx, destinationS3, selected+"/reports/after-policy-change", http.StatusOK, payload)
@@ -79,6 +100,18 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 		t.Fatal("changing a policy unexpectedly changed the already replicated object")
 	}
 	t.Log("live prefix update selected the new reports/ write, excluded a new published/ write, propagated a selected deletion and retained the old copied object")
+}
+
+func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup) {
+	t.Helper()
+	// Import is a prerequisite for future writes. It does not prove effective
+	// discovery hints, data checkpoints, object bytes or permission effects.
+	started := time.Now()
+	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("bucket policy metadata imported before future writes: elapsed=%s group=%s period=%s zone=%s/%s bucket=%s/%s:%s", time.Since(started).Round(time.Millisecond), status.GroupID, status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID)
 }
 
 // This is a quiescent planned metadata-master change. It fences the current

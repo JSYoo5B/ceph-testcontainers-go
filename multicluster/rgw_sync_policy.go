@@ -257,6 +257,9 @@ func (f *RGWMultisite) CreateSyncPipe(ctx context.Context, g *RGWSyncGroup, conf
 // SetSyncPipePrefix changes only the selected owned pipe's source prefix.
 // Empty prefix removes the filter. It affects future replication selection;
 // historical backfill and deletion of previously copied objects are not promised.
+// For a bucket-scoped group, wait for WaitBucketSyncPolicyReady at the intended
+// destination before writing objects that depend on the new filter. This method
+// confirms the master's stored policy, not its asynchronous import into peers.
 func (f *RGWMultisite) SetSyncPipePrefix(ctx context.Context, g *RGWSyncGroup, id, prefix string) error {
 	if !validRGWSyncID(id) || strings.IndexFunc(prefix, unicode.IsControl) != -1 {
 		return errors.New("invalid RGW sync pipe ID or prefix")
