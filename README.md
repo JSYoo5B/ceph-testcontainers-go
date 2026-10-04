@@ -267,7 +267,7 @@ RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지
 
 ## 실행
 
-원본 pinned Quay를 기준으로 하는 필수 경로는 다음과 같습니다. `check`는 호스트 검증만 수행하며, 나머지는 기존 서버 이미지를 직접 실행합니다. 이미지 빌드가 필요하지 않습니다.
+원본 pinned Quay의 기본·토폴로지 필수 경로는 다음과 같습니다. `check`는 호스트 검증만 수행하며, 나머지는 기존 서버 이미지를 직접 실행합니다. 서버 이미지 빌드가 필요하지 않습니다.
 
 ```sh
 make check
@@ -278,6 +278,8 @@ make quay-topology-extensions
 ```
 
 `quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
+
+필수 CI에 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`, `quay-goceph-linux`의 7개 profile을 추가했습니다. 이름 수는 각각 8/8/4/6/14/7/1개이며, 기존 52개와 새 48개·별도 SDK 2개를 합해 102개입니다. 새 profile의 전체 runtime 검증은 대기 중입니다. 모두 원본 Quay 서버를 사용하며 go-ceph 경로만 Linux 소비자 probe/runner를 준비합니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건은 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
 
 RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 
