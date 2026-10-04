@@ -32,12 +32,12 @@ Ceph 20.2.4의 bootstrap import는 기존 peer를 재사용할 때 direction과 
 
 ## 실행
 
-`rbd-mirror`는 slim `control`과 `all`에 포함합니다. Native mirror test는 `multicluster.RunRBDMirror`로 bootstrap/auth/client/daemon을 구성하며 기본 mirror 이미지는 테스트 control 이미지입니다. `CEPH_TEST_MIRROR_IMAGE`로 다른 이미지를 지정할 수 있고 모든 역할의 Ceph 버전을 맞춥니다. 복제 연결의 수명은 클러스터와 분리합니다. [API 계약](MULTICLUSTER_API.md)을 확인합니다.
+고정 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 `control`과 `all`은 `rbd-mirror`를 포함해야 합니다. Native mirror test는 `multicluster.RunRBDMirror`로 bootstrap/auth/client/daemon을 구성하며 기본 mirror 이미지는 테스트 control 이미지입니다. `CEPH_TEST_MIRROR_IMAGE`로 다른 이미지를 지정할 수 있고 모든 역할의 Ceph 버전·architecture를 맞춥니다. 복제 연결의 수명은 클러스터와 분리합니다. [API 계약](MULTICLUSTER_API.md)을 확인합니다.
 
 ```sh
 CGO_ENABLED=0 \
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
 go test -tags='integration multicluster' -run '^TestMultiClusterRBD' \
   -count=1 -v -timeout=35m ./internal/integration
 ```

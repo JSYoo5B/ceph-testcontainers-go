@@ -73,9 +73,9 @@ Usage/ratelimit write bits도 owned operator의 최초 read-only 상태로 돌�
 ## 실행
 
 ```sh
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
-CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
+CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw \
 CGO_ENABLED=0 go test -mod=readonly -count=1 \
   -tags=integration,features ./internal/integration \
   -run '^TestRGWAdminRecordsAndRateLimit$' -timeout 25m -v

@@ -200,7 +200,7 @@ func topologyExecOutput(t *testing.T, parent context.Context, ctr testcontainers
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 50*time.Second)
 	defer cancel()
-	command := append([]string{"timeout", "--signal=KILL", "45s"}, args...)
+	command := topologyCommandWithTimeout(45*time.Second, args...)
 	code, reader, err := ctr.Exec(ctx, command, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +211,24 @@ func topologyExecOutput(t *testing.T, parent context.Context, ctr testcontainers
 	}
 	return output
 }
+
+func topologyCommandWithTimeout(timeout time.Duration, args ...string) []string {
+	return append([]string{"python3", "-c", topologyCommandTimeoutScript, strconv.FormatFloat(timeout.Seconds(), 'f', -1, 64)}, args...)
+}
+
+// subprocess.run kills and waits for the direct native command on timeout.
+// Preserve its output and exit status without a shell or an external watchdog.
+const topologyCommandTimeoutScript = `import subprocess, sys
+try:
+    result = subprocess.run(sys.argv[2:], timeout=float(sys.argv[1]), check=False)
+except subprocess.TimeoutExpired:
+    print('native command exceeded ' + sys.argv[1] + '-second watchdog', file=sys.stderr)
+    sys.exit(124)
+except OSError as error:
+    print('native command launch failed: ' + type(error).__name__, file=sys.stderr)
+    sys.exit(127)
+sys.exit(result.returncode if result.returncode >= 0 else 128 - result.returncode)
+`
 
 type topologySession struct {
 	PID        int    `json:"pid"`
@@ -242,7 +260,7 @@ func startTopologyRadosSession(t *testing.T, ctx context.Context, client testcon
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		// Check the per-session token in cmdline before killing an owned PID.
-		code, reader, err := client.Exec(cleanupCtx, []string{"timeout", "--signal=KILL", "10s", "python3", "-c", `import os, signal, sys
+		code, reader, err := client.Exec(cleanupCtx, topologyCommandWithTimeout(10*time.Second, "python3", "-c", `import os, signal, sys
 pid, token = int(sys.argv[1]), sys.argv[2].encode()
 try:
     command = open('/proc/%d/cmdline' % pid, 'rb').read().split(b'\0')
@@ -251,7 +269,7 @@ try:
 except ProcessLookupError:
     pass
 except FileNotFoundError:
-    pass`, strconv.Itoa(session.PID), token}, tcexec.Multiplexed())
+    pass`, strconv.Itoa(session.PID), token), tcexec.Multiplexed())
 		if err == nil {
 			_, err = io.ReadAll(reader)
 		}

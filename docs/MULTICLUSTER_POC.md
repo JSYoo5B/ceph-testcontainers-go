@@ -9,7 +9,7 @@
 - macOS ARM64 호스트, Docker Desktop Linux ARM64, 4 vCPU와 약 3916 MiB RAM에서 순차 실행했습니다.
 - 클러스터마다 MON 1개, MGR 1개, OSD 2개와 서로 다른 FSID·네트워크·admin keyring을 사용합니다. Client가 자신에게 배정된 FSID에 접속하는지도 확인합니다.
 - MON/MGR/client, OSD, RGW, MDS는 각각 기존 `20.2.4-control`, `20.2.4-osd`, `20.2.4-rgw`, `20.2.4-mds` slim 이미지를 사용했습니다.
-- 최초 PoC에서는 두 mirror 데몬만 원본 Quay 이미지를 사용했습니다. 현재는 mirror를 포함하도록 다시 빌드한 slim `control`로 실행하며 `all`에도 두 데몬이 있습니다.
+- 최초 PoC에서는 두 mirror 데몬만 원본 Quay 이미지를 사용했습니다. 후속 실험에서는 mirror를 포함하도록 다시 빌드한 당시 slim `control`로 실행했고 `all`에도 두 데몬이 있었습니다. 아래 과거 이미지 이름과 artifact는 당시 실행을 식별하며 현재 추출 이미지 tag를 뜻하지 않습니다.
 - 검증용 data client는 자기 클러스터에만 접속합니다. Multicluster API가 mirror daemon과 필요한 관리 client의 양쪽 클러스터 접속을 소유합니다. RGW끼리는 별도 HTTP bridge로 통신합니다. CephFS는 peer 등록 시 원격 filesystem을 검사하는 source MGR에도 destination 네트워크가 필요합니다.
 - 호스트에는 `go-ceph`, cgo, RBD kernel mapping이나 CephFS kernel/FUSE mount를 추가하지 않았습니다. 모든 Ceph 제어와 native client I/O는 컨테이너 안에서 실행하며 Go는 `CGO_ENABLED=0`입니다.
 
@@ -112,19 +112,19 @@ RGW 전환은 애플리케이션 write가 없는 계획된 변경입니다. 승�
 make multicluster
 ```
 
-현재 검증한 slim 역할 조합은 다음과 같습니다.
+현재 [공식 역할 추출](../../ceph-testcontainers-images/docs/ROLE_IMAGES.md)의 tag 규칙을 사용하는 입력 예시는 다음과 같습니다. 이미지는 먼저 로컬에 준비해야 합니다. 새로 추출한 이미지의 checker 결과와 Go 실행 결과를 별도로 기록하며 아래 명령 자체를 과거 slim 실행의 PASS 증거로 처리하지 않습니다.
 
 ```sh
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
-CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw \
-CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
+CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw \
+CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds \
 make multicluster
 ```
 
 별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./internal/integration`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
 
-이미지 프로젝트에서 `make slim-images-multicluster GO_MODULE_DIR=../ceph-testcontainers-go` 또는 빌더의 `--go-module-dir ... --multicluster`를 실행하면 새 이미지를 빌드하고 control을 mirror 이미지로 명시하여 이 suite를 실행합니다. 일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
+이미지 프로젝트의 [checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md#checking-an-image)는 주어진 로컬 이미지를 quick 또는 full로 검증합니다. Full은 독립 Python/Docker CLI harness로 RBD backup·RBD/CephFS snapshot mirroring·RGW multisite를 포함한 기능 시나리오를 실행하며, 이 저장소의 Go suite를 호출하지 않습니다. Go 쪽에서는 `make multicluster` 또는 위 selector로 별도로 검증합니다. 이전 `slim-images-multicluster`·`--go-module-dir`·`--multicluster` 빌더 연결은 현재 제공하지 않습니다. 단일 클러스터의 일반 `integration` 테스트와 Go `multicluster` 태그의 구분은 유지합니다.
 
 로컬 근거는 git에서 제외되는 `artifacts/multicluster-20.2.4/`에 있습니다. `suite.log`에는 RBD 두 경로와 RGW의 PASS 및 수정 전 CephFS 실패가, `cephfs-final.log`에는 수정 후 CephFS PASS와 실제 metadata 차이가 있습니다. 초기 RGW port 수정 전 실행은 `rgw.log`에 보존했습니다. 로그의 최종 케이스 결과를 정리한 `summary.json`도 남깁니다.
 

@@ -86,23 +86,19 @@ migration은 이 테스트에서 같은 metadata pool·namespace 안의 image �
 
 ## cryptsetup이 있는 native client 이미지
 
-기본 control role에는 Python rados/rbd와 librbd encryption의 runtime dependency가 있지만 `cryptsetup` 실행 파일은 없습니다. [test-only client Dockerfile](../../ceph-testcontainers-images/image/clients/rbd/Dockerfile)은 같은 고정 Quay release의 RPM image에서 distro package로 그 실행 파일을 설치합니다. extracted slim role에는 package database·dnf가 없으므로 이 Dockerfile의 기반에는 원본 RPM image를 지정합니다. client에만 도구가 추가되며 OSD/MON/MGR 이미지 구성은 바뀌지 않습니다.
+`control`의 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)은 Python rados/rbd를 포함하지만 `cryptsetup` 실행 파일은 요구하지 않습니다. 원본 Quay Ceph 20.2.4의 기존 실험에서는 cryptsetup이 있는 native client로 8개 phase를 통과했습니다. 다른 이미지를 선택할 때는 먼저 `python3 -c 'import rados, rbd'`와 `cryptsetup --version`을 확인하고, 필요하면 호출자가 Python bindings·librbd·libcryptsetup·cryptsetup을 갖춘 소비자 이미지를 준비합니다. 해당 이미지의 제작은 이미지 프로젝트가 제공하는 역할 추출이나 checker의 범위가 아닙니다. Go 테스트는 서버와 같은 Ceph release·ABI·Linux architecture의 준비된 이미지만 받습니다.
 
 ```sh
-docker build --platform linux/arm64 \
-  -f ../ceph-testcontainers-images/image/clients/rbd/Dockerfile \
-  -t ceph-testcontainers:20.2.4-rbd-client \
-  ../ceph-testcontainers-images/image/clients/rbd
-
-CEPH_TEST_RBD_CLIENT_IMAGE=ceph-testcontainers:20.2.4-rbd-client \
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
+# Prepare this client image locally before running the test.
+CEPH_TEST_RBD_CLIENT_IMAGE=my-company/ceph-rbd-client:20.2.4 \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
 CGO_ENABLED=0 go test -mod=readonly -count=1 \
   -tags=integration,features ./internal/integration \
   -run '^TestRBDClientFeatures$' -timeout 35m -v
 ```
 
-Linux x86-64에서는 platform을 `linux/amd64`로 선택합니다. 새 Ceph release나 회사 RPM 기반 native client는 Docker build의 `--build-arg CEPH_CLIENT_IMAGE=...`로 지정하고 서버와 ABI·release·architecture를 맞춥니다. Ubuntu/Debian 회사 client는 해당 배포판에서 `python3-rados`, `python3-rbd`, `librbd`와 `cryptsetup`을 설치한 별도 이미지를 `CEPH_TEST_RBD_CLIENT_IMAGE`로 주입합니다. 이 RPM 전용 Dockerfile에 다른 배포판 바이너리만 복사해서 섞지 않습니다. image 빌드의 package 설치에는 distro repository 접속이 필요합니다.
+Linux x86-64에서는 준비한 서버와 소비자 이미지가 모두 `linux/amd64`여야 합니다. 새 Ceph release나 회사 native client도 서버와 ABI·release·architecture를 맞춥니다. Ubuntu/Debian client는 해당 배포판의 `python3-rados`, `python3-rbd`, `librbd`와 `cryptsetup`을 포함한 별도 이미지를 `CEPH_TEST_RBD_CLIENT_IMAGE`로 주입할 수 있습니다. 서로 다른 배포판의 바이너리·공유 라이브러리를 임의로 섞지 않습니다. 과거 test-only client Dockerfile의 빌드 결과는 당시 실험의 증거이며 현재 유지되는 제작 도구가 아닙니다.
 
 rekey probe는 native writers를 닫고 raw RBD를 container의 임시 regular file로 export합니다. `cryptsetup luksChangeKey`가 변경한 header chunk만 동일 RBD에 기록한 후 fresh client에서 다시 load합니다. kernel RBD/NBD mapping, `/dev/mapper`, privileged container 또는 host native SDK가 필요하지 않습니다. test는 PBKDF2 iteration 1000을 명시해 작은 Docker VM에서 오래 걸리는 benchmark를 피합니다. 이 값은 테스트용이며 production key 정책이 아닙니다. format을 다시 호출해서 원래 bytes를 잃는 방식을 rekey로 취급하지 않습니다. `cryptsetup`이 없으면 rekey subtest는 원인을 표시하고 실패하며 미검증 경로를 skip으로 숨기지 않습니다.
 

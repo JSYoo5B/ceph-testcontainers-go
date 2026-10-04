@@ -6,6 +6,49 @@ import (
 	"testing"
 )
 
+type rgwControlImageStub struct {
+	image string
+	reads int
+}
+
+func (cluster *rgwControlImageStub) ControlImage() string {
+	cluster.reads++
+	return cluster.image
+}
+
+func TestRGWControlImageUsesEachClusterAndRespectsOverride(t *testing.T) {
+	for _, zone := range []string{"source", "destination", "added-zone"} {
+		t.Run(zone, func(t *testing.T) {
+			cluster := &rgwControlImageStub{image: "ceph-control:" + zone}
+			image, err := rgwControlImage("", cluster)
+			if err != nil || image != cluster.image || cluster.reads != 1 {
+				t.Fatalf("setup client did not select its own cluster's control image: image=%q reads=%d error=%v", image, cluster.reads, err)
+			}
+			cluster.reads = 0
+			const override = "compatible-control:explicit"
+			image, err = rgwControlImage(override, cluster)
+			if err != nil || image != override || cluster.reads != 0 {
+				t.Fatalf("explicit shared control image was not preserved: image=%q reads=%d error=%v", image, cluster.reads, err)
+			}
+		})
+	}
+}
+
+func TestRGWControlImageRejectsMissingOrBlankSelection(t *testing.T) {
+	if image, err := rgwControlImage("", nil); err == nil || image != "" {
+		t.Fatal("missing control image was accepted")
+	}
+	for _, image := range []string{"", " \t\n"} {
+		if selected, err := rgwControlImage("", &rgwControlImageStub{image: image}); err == nil || selected != "" {
+			t.Fatal("empty cluster control image was accepted")
+		}
+	}
+	cluster := &rgwControlImageStub{image: "valid-control:local"}
+	if image, err := rgwControlImage(" \t", cluster); err == nil || image != "" || cluster.reads != 0 {
+		t.Fatal("blank explicit override silently fell back to the cluster image")
+	}
+}
+
 func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 	fixture := &RGWMultisite{
 		RealmID: "realm-id", SourceZoneID: "source-id", DestinationZoneID: "destination-id",

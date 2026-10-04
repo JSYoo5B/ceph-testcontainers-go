@@ -39,6 +39,48 @@ jobs:
       - run: make check
       - name: Check supplied-image Linux runner without Docker
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
+      - name: Check image matrix selection without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_run_image_matrix.py -v
+
+  image-compatibility:
+    name: image / ${{ matrix.variant }} / ${{ matrix.layout }} / ${{ matrix.architecture.name }}
+    needs: test
+    runs-on: ${{ matrix.architecture.runner }}
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [official, debian, ubuntu]
+        layout: [all, roles]
+        architecture:
+          - name: amd64
+            runner: ubuntu-24.04
+          - name: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Verify published images with the Go module
+        run: >-
+          python3 .github/scripts/run_image_matrix.py
+          --variant '${{ matrix.variant }}'
+          --layout '${{ matrix.layout }}'
+          --platform 'linux/${{ matrix.architecture.name }}'
+          --output-dir artifacts/image-matrix
+      - name: Save image identities and test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
+          path: artifacts/image-matrix/
+          if-no-files-found: error
 
   quay-default:
     needs: test
@@ -243,8 +285,8 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rgw-sync-fixtures.log" --profile quay-rgw-sync-fixtures
 
-  # Linux go-ceph image preparation and validation moved to
-  # ceph-testcontainers-images; this repository consumes supplied images.
+  # Linux go-ceph remains an optional supplied-image Make target.
+  # Image checker CI is independent of this module and its consumer SDKs.
 
   rgw-native-regressions:
     if: github.event_name == 'workflow_dispatch' && inputs.rgw_native_regressions

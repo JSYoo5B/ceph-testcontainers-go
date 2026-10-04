@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"regexp"
 	"slices"
 	"testing"
 	"time"
@@ -49,8 +48,7 @@ func TestManagerLifecycle(t *testing.T) {
 		}
 	}
 	checkMap("a")
-	cephCommand(t, ctx, cluster, "mgr", "module", "enable", "status")
-	managerLifecycleStatus(t, ctx, cluster)
+	managerLifecycleRBDReady(t, ctx, cluster)
 	primary := cluster.ManagerContainer()
 	b, err := cluster.AddManager(ctx, "b")
 	if err != nil {
@@ -67,7 +65,7 @@ func TestManagerLifecycle(t *testing.T) {
 	if cluster.ManagerContainer() != nil || cluster.Managers()[0] != b {
 		t.Fatal("removing primary a retained its legacy pointer or replaced b's container")
 	}
-	managerLifecycleStatus(t, ctx, cluster)
+	managerLifecycleRBDReady(t, ctx, cluster)
 	replacement, err := cluster.AddManager(ctx, "replacement")
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +78,7 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkMap("b")
-	managerLifecycleStatus(t, ctx, cluster)
+	managerLifecycleRBDReady(t, ctx, cluster)
 	if err := cluster.RemoveManager(ctx, "b"); err == nil {
 		t.Fatal("last manager candidate was removed")
 	}
@@ -106,29 +104,30 @@ func TestManagerLifecycle(t *testing.T) {
 	if len(managers) != 1 {
 		t.Fatal("active manager identity was lost")
 	}
-	t.Log("MGR candidates 1 -> 2 -> 1 -> 2 -> 1: active a removed, b promoted, replacement standby removed; native MGR status command remained available")
+	t.Log("MGR candidates 1 -> 2 -> 1 -> 2 -> 1: active a removed, b promoted, replacement standby removed; native rbd_support task command remained available")
 }
 
-// osd status is served by the MGR status module rather than MON's osd stat.
-// Bound the CLI process itself while the module loads after active promotion.
-func managerLifecycleStatus(t *testing.T, parent context.Context, cluster *ceph.Container) {
+// rbd task list is served by the required rbd_support MGR module. A fresh
+// cluster has no tasks; require its actual JSON list after active promotion.
+// Bound the CLI process itself while the module finishes initialization.
+func managerLifecycleRBDReady(t *testing.T, parent context.Context, cluster *ceph.Container) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
-	osdRow := regexp.MustCompile(`(?m)^\s*(?:\|\s*)?0(?:\s*\||\s+)[^\n]*\bexists,up\b`)
 	for {
 		code, reader, err := cluster.ControlContainer().Exec(ctx,
-			[]string{"timeout", "40s", "ceph", "--connect-timeout", "5", "osd", "status"}, tcexec.Multiplexed())
+			topologyCommandWithTimeout(40*time.Second, "ceph", "--connect-timeout", "5", "rbd", "task", "list", "--format", "json"), tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
 			output, err = io.ReadAll(reader)
 		}
-		if err == nil && code == 0 && osdRow.Match(output) {
+		var tasks []json.RawMessage
+		if err == nil && code == 0 && json.Unmarshal(output, &tasks) == nil && tasks != nil && len(tasks) == 0 {
 			return
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("native MGR status command unavailable: error=%v exit=%d output=%s", err, code, output)
+			t.Fatalf("native rbd_support task command unavailable or fresh queue not empty: error=%v exit=%d output=%s", err, code, output)
 		case <-time.After(500 * time.Millisecond):
 		}
 	}

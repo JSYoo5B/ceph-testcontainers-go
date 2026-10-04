@@ -136,7 +136,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	if err := json.Unmarshal(fsDescription, &filesystem); err != nil || filesystem.ID <= 0 {
 		t.Fatalf("source filesystem ID: data=%s error=%v", fsDescription, err)
 	}
-	admin := multiClusterExecOutput(t, ctx, daemons[0], "ceph", "--admin-daemon", "/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", sourceFS.FilesystemName, filesystem.ID), peerID)
+	admin := multiClusterExecOutput(t, ctx, daemons[0], "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", sourceFS.FilesystemName, filesystem.ID), peerID)
 	var ownedDirectories map[string]json.RawMessage
 	if err := json.Unmarshal(admin, &ownedDirectories); err != nil || len(ownedDirectories) == 0 {
 		t.Fatalf("first daemon owns no native directories: data=%s error=%v", admin, err)

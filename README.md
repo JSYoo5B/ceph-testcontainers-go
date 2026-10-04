@@ -4,7 +4,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 기본 구성은 MON 1개, MGR 1개, OSD 2개를 각각 별도 컨테이너로 실행합니다. MON quorum·MGR standby, OSD 수, 여러 filesystem과 active/standby MDS, 이름별 RGW와 클러스터 사이의 peer/zone 연결을 선택할 수 있습니다. RBD는 별도 데몬 없이 OSD pool을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
-자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 이미지 생성·분석·검증 목록·배포는 별도 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. 이 프로젝트는 주어진 이미지를 Go에서 실행하고 클러스터를 구성합니다.
+자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 이미지 요구사항·검사·역할 이미지 생성은 별도 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. 이 프로젝트는 주어진 이미지를 Go에서 실행하고 클러스터를 구성합니다.
 
 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구 API를 제공합니다. 구성별 제공 범위와 원본 Quay 이미지의 필수 검증 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
@@ -204,7 +204,7 @@ CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하�
 
 ### Linux go-ceph 연동 테스트
 
-`make goceph-linux`는 미리 준비한 Linux client와 runner 이미지를 받아 testcontainers 클러스터와 go-ceph 소비자 테스트를 실행합니다. Probe 소스와 별도 Go 모듈은 이 프로젝트에 유지하며, Dockerfile·이미지 빌드는 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. Runner는 검증하려는 Go checkout의 소스로 빌드해야 합니다.
+`make goceph-linux`는 미리 준비한 Linux client와 runner 이미지를 받아 testcontainers 클러스터와 go-ceph 소비자 테스트를 실행합니다. Probe 소스와 별도 Go 모듈은 이 프로젝트에 유지합니다. 소비자는 probe 실행 파일·Linux native 라이브러리가 있는 client와 검증할 Go checkout의 integration binary가 있는 runner를 준비합니다. 이 두 소비자 이미지는 Ceph 역할 이미지 계약과 별개이며 이미지 프로젝트의 산출물이나 CI 검사를 전제하지 않습니다. 자세한 실행 계약은 [IMAGE_COMPATIBILITY.md](docs/IMAGE_COMPATIBILITY.md)를 따릅니다.
 
 bridge/host 각각 두 클러스터를 함께 실행하여 CephX·FSID, 같은 이름의 RADOS object/RBD image/CephFS file 분리, 새 연결에서 전체 데이터 비교, RBD snapshot 불변성, 각 OSD `2 → 3 → 2` 후 읽기·쓰기와 삭제를 검사합니다. host 모드에는 `ConnectionConfig()`를 사용하는 Linux 프로세스 검증도 포함합니다. 클러스터 제어에는 기존 CLI API를 사용하며 데이터 I/O는 Go의 go-ceph API로 수행합니다.
 
@@ -242,7 +242,7 @@ python3 internal/integration/goceph/run.py \
 | `AddManager(ctx, name)` / `RemoveManager(ctx, name)` | MGR candidate 추가·제거와 standby 승격 확인 |
 | `Monitors()` / `Managers()` | 이름순 소유 daemon handle 목록 |
 | `QuorumStatus(ctx)` / `ManagerStatus(ctx)` | native quorum·active/standby map 조회 |
-| `ControlContainer()` | 남은 quorum으로 관리하는 CLI handle |
+| `ControlContainer()` / `ControlImage()` | 남은 quorum으로 관리하는 CLI handle / 설정된 control 이미지 |
 | `AddOSD(ctx)` | OSD 등록, 포맷, 컨테이너 실행, up/in 확인 |
 | `RemoveOSD(ctx, id)` | drain → safe-to-destroy → stop → down → purge → 컨테이너 제거 |
 | `OSDs()` | ID 순서로 정렬한 소유 OSD 목록 |
@@ -282,7 +282,7 @@ make quay-topology-extensions
 
 `quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. 이미지를 생성하던 `quay-goceph-linux`의 준비·검증 job 1개는 `ceph-testcontainers-images`로 옮겼고, 여기의 같은 Make target은 주어진 client/runner 이미지만 실행합니다. 분리 이후 두 프로젝트 CI 전체 runtime 검증은 아직 수행하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
+Go CI에는 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `quay-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다. 확대된 Go 필수 CI 전체 runtime의 완료는 아직 확인하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
 
 RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 
@@ -312,19 +312,23 @@ make integration
 
 ## 이미지 선택
 
-기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. 주어진 `all` 이미지 하나를 모든 컨테이너에서 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 역할별로 지정할 수 있습니다. `control`은 MON/MGR, CLI·client·mirror 도구를 포함하며 MON과 MGR는 각각 별도 컨테이너로 실행합니다.
+기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. 준비된 `all` 이미지 하나를 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 지정합니다. `control`은 MON/MGR, CLI·Python client, RBD/CephFS mirror daemon과 multisite 관리 도구를 모두 포함합니다. MON/MGR와 mirror는 같은 이미지를 사용하더라도 각각 별도 컨테이너로 실행하며, 요청한 daemon만 시작합니다.
 
 ```go
-cluster, err := ceph.Run(ctx, "ceph-testcontainers:20.2.4-control",
-    ceph.WithOSDImage("ceph-testcontainers:20.2.4-osd"),
-    ceph.WithRGWImage("ceph-testcontainers:20.2.4-rgw"),
-    ceph.WithMDSImage("ceph-testcontainers:20.2.4-mds"),
+cluster, err := ceph.Run(ctx, "ceph-testcontainers:official-20.2.4-control",
+    ceph.WithOSDImage("ceph-testcontainers:official-20.2.4-osd"),
+    ceph.WithRGWImage("ceph-testcontainers:official-20.2.4-rgw"),
+    ceph.WithMDSImage("ceph-testcontainers:official-20.2.4-mds"),
 )
 ```
 
-생략한 역할은 `Run`에 전달한 이미지를 사용하며, 추가 OSD에도 같은 OSD 이미지 설정을 적용합니다. 한 이미지 방식은 `Run(ctx, "ceph-testcontainers:20.2.4-all", ...)`로 사용합니다. 위 local tag는 새 이미지 프로젝트에서 빌드한 이미지를 선택하는 예시입니다.
+생략한 역할은 `Run`의 이미지로 실행하므로 그 이미지에도 생략한 역할의 구성요소가 있어야 합니다. 추가 OSD에도 같은 OSD 설정을 적용합니다. 한 이미지 방식은 `Run(ctx, "ceph-testcontainers:official-20.2.4-all", ...)`로 사용합니다. 위 태그는 미리 준비한 이미지의 예시이며 회사 이미지나 다른 registry reference도 선택할 수 있습니다.
 
-Quay 기반 slim, 회사 `.deb` 입력, native 패치 빌드와 기존 용량·호환성 실험 문서는 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)로 옮겼습니다. 역할별 실행 도구·공통 의존성·검증·배포 기준은 [이미지 요구사항](../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)을 따릅니다. 이 Go 모듈은 이미지를 빌드하거나 패키지를 설치하지 않습니다.
+고정된 [이미지 요구사항](../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)은 다섯 역할의 실행 계약 하나를 정의합니다. 이전 `base`/`multicluster` 단계 구분은 사용하지 않으며 mirror도 `control`의 필수 구성입니다. 이미지의 배포판·패키지 이름·빌드 방법·label·생성 manifest는 Go API의 조건이 아닙니다. 이미지 요구사항·검사·역할 이미지 생성은 [이미지 프로젝트](../ceph-testcontainers-images/README.md), 공식 이미지에서의 역할 추출은 [ROLE_IMAGES.md](../ceph-testcontainers-images/docs/ROLE_IMAGES.md)를 따릅니다. Go 모듈은 런타임에 설정·키·bootstrap과 entrypoint를 제공하며 이미지를 빌드하거나 패키지를 설치하지 않습니다.
+
+이미지 프로젝트의 `quick`은 구성요소를, `full`은 자체 Docker harness의 기본 서비스와 다중 클러스터 8개 시나리오를 검사합니다. Go 모듈의 토폴로지·fixture·SDK 전체 검증과는 별개입니다. `make image-compatibility`는 준비된 이미지로 Go API 대표 9개 시나리오를 실행하며 역할별 환경 변수도 유지합니다. 사용 예와 역할별 명령 실행 위치, 추가 소비자 도구의 조건은 [IMAGE_COMPATIBILITY.md](docs/IMAGE_COMPATIBILITY.md)에 정리합니다.
+
+공식·GHCR Debian·Ubuntu 이미지에 `all`/역할 조합과 Linux AMD64/ARM64의 [12개 호환성 matrix](docs/IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 적용합니다. 로컬에서는 `make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles`로 현재 Docker 엔진의 native architecture에서 한 조합을 실행합니다. 기존 원본 Quay 상세 CI는 유지하며 추가 SDK 도구는 이 matrix의 서버 이미지 조건에 넣지 않습니다.
 
 ## 다중 클러스터 구성과 PoC
 
@@ -342,7 +346,7 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 기존 suite에는 RGW 선택 복제 정책, RBD split-brain·전체/증분 archive 복원과 CephFS archive PoC도 포함되어 있습니다. 이들 기능의 확장은 토폴로지 작업의 완료 조건에서 제외합니다.
 
-일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 slim `control`과 `all`에 포함되어 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
+일반 단일 클러스터 테스트와 별도로 `integration,multicluster` build tag를 사용합니다. 전체 suite timeout은 기본 60분이며 `MULTICLUSTER_TIMEOUT`으로 바꿀 수 있습니다. 전용 `rbd-mirror`·`cephfs-mirror` 데몬의 기본 이미지는 테스트 control 이미지이며, `CEPH_TEST_MIRROR_IMAGE`로 별도 지정할 수도 있습니다. 두 데몬은 `control`과 `all`의 필수 구성입니다. RGW multisite 관리 client는 각 클러스터의 `ControlImage()`를 기본으로 사용하며 `ControlImage` 설정으로 공용 이미지를 명시할 수 있습니다. RBD archive helper는 Go Reader/Writer로 byte를 전달하며 Go 호스트의 cgo나 kernel mount는 필요하지 않습니다.
 
 전환은 writer fencing·동기화 완료 확인·명시적 승격을 수행하는 계획된 절차입니다. RBD split-brain resync는 선택하지 않은 branch를 폐기합니다. CephFS native mirror의 user xattr 차이는 계속 관측되므로 완전한 metadata 보존으로 해석하지 않습니다. 구성과 케이스별 실제 결과는 [MULTICLUSTER_POC.md](docs/MULTICLUSTER_POC.md)를 확인합니다.
 

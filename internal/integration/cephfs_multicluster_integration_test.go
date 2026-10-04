@@ -236,7 +236,7 @@ func cephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.C
 	defer cancel()
 	var last string
 	for {
-		code, r, err := mirror.Exec(waitCtx, []string{"ceph", "--admin-daemon", "/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, filesystem.ID)}, tcexec.Multiplexed())
+		code, r, err := mirror.Exec(waitCtx, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, filesystem.ID)}, tcexec.Multiplexed())
 		if err != nil {
 			last = err.Error()
 		} else {

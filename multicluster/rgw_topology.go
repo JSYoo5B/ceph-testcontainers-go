@@ -34,6 +34,8 @@ type RGWZonegroupConfig struct {
 // MasterZonegroup for several regions with separately selected local masters.
 // MetadataMaster defaults to the first zone; MasterZonegroup to the first group.
 // All clusters use the same network mode and must not serve standalone RGW data.
+// ControlImage optionally overrides every zone's setup client image. Otherwise
+// each client uses its own cluster's control image, including added zones.
 type RGWTopologyConfig struct {
 	Zones                            []RGWZoneConfig
 	Realm, Zonegroup, MetadataMaster string
@@ -73,6 +75,8 @@ type rgwZoneState struct {
 // cleanup contract as RunRGWMultisite. The initial master becomes Source, and
 // the first remaining zone becomes Destination for compatibility. Zones returns
 // all sites. A non-nil result on error owns partial resources and needs cleanup.
+// image selects RGW gateways; each setup client uses its cluster's control
+// image unless ControlImage supplies a shared override.
 func RunRGWTopology(ctx context.Context, image string, config RGWTopologyConfig, opts ...testcontainers.ContainerCustomizer) (*RGWMultisite, error) {
 	zones, err := prepareRGWTopology(image, config)
 	if err != nil {
@@ -293,6 +297,8 @@ func (f *RGWMultisite) ZoneAdmin(ctx context.Context, name string, args ...strin
 // Refresh S3Endpoint afterwards because bridge-mode published ports may change.
 // A non-nil partial result remains owned on error; terminate the fixture if
 // initialization fails rather than adopting an external zone.
+// image selects the new gateway. Its setup client uses the new cluster's
+// control image unless the fixture was configured with ControlImage.
 func (f *RGWMultisite) AddZone(ctx context.Context, image string, config RGWZoneConfig, opts ...testcontainers.ContainerCustomizer) (*RGWZone, error) {
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, errors.New("invalid RGW fixture or zone name")
@@ -337,6 +343,10 @@ func (f *RGWMultisite) addZone(ctx context.Context, image string, config RGWZone
 		if zone.ID == "" || zone.client == nil || zone.Gateway == nil {
 			return nil, errors.New("finish initializing existing RGW zones before adding another")
 		}
+	}
+	clientImage, err := rgwControlImage(f.config.ControlImage, config.Cluster)
+	if err != nil {
+		return nil, err
 	}
 	if err := ensureFreshRGWCluster(ctx, config.Cluster); err != nil {
 		return nil, err
@@ -385,7 +395,7 @@ func (f *RGWMultisite) addZone(ctx context.Context, image string, config RGWZone
 	if f.httpNetwork != nil {
 		peerNetwork = f.httpNetwork.Name
 	}
-	state.client, err = runClient(ctx, f.config.ControlImage, config.Cluster, peerNetwork, &f.owned)
+	state.client, err = runClient(ctx, clientImage, config.Cluster, peerNetwork, &f.owned)
 	if err != nil {
 		return &state.RGWZone, err
 	}

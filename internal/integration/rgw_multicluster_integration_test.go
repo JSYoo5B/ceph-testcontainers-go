@@ -35,8 +35,10 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	if rgwImage == "" {
 		rgwImage = controlImage
 	}
+	// The RGW role needs no Python or Ceph CLI. Setup must select the
+	// source and destination control images without an explicit override.
 	multisite, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{
-		Source: source, Destination: destination, ControlImage: controlImage,
+		Source: source, Destination: destination,
 	})
 	if multisite != nil {
 		t.Cleanup(func() {

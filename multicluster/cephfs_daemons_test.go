@@ -395,6 +395,9 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 		}
 		output = []byte("watcher=172.20.0.8:0/1234 client.4262 cookie=1\n")
 	case args[0] == "ceph" && len(args) >= 2 && args[1] == "--admin-daemon":
+		if !reflect.DeepEqual(args, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", "source@1"}) {
+			return 0, nil, errors.New("incorrect mirror admin socket query")
+		}
 		output = []byte(`{"rados_inst":"172.20.0.8:0/1234","peers":{"owned-peer":{}},"snap_dirs":{"dir_count":0}}`)
 	case len(args) == 5 && reflect.DeepEqual(args, []string{"fs", "snapshot", "mirror", "daemon", "status"}):
 		output = []byte(`[{"daemon_id":4249,"filesystems":[{"name":"source","peers":[{"uuid":"owned-peer"}]}]}]`)

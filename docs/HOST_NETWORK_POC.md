@@ -62,10 +62,10 @@ S3 테스트의 첫 PUT은 Python urllib가 서명하지 않은 `Content-Type`�
 ## 실행과 범위
 
 ```sh
-export CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control
-export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd
-export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw
-export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds
+export CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control
+export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd
+export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw
+export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds
 make hostnetwork
 
 # 위 이미지 변수와 동일하게, mirror image 기본값은 control 이미지입니다.
@@ -105,7 +105,7 @@ CEPH_TEST_HOST_HTTP_REQUIRED=1 CEPH_TEST_HOST_TCP_REQUIRED=1 make hostnetwork
 
 go-ceph를 사용하는 소비자 테스트는 Linux 전용으로 제공합니다. 클러스터를 생성하는 공개 모듈의 `go.mod`에는 go-ceph를 추가하지 않고, `internal/integration/goceph/probe`의 별도 모듈에서 v0.41.0을 고정합니다. Linux runner의 testcontainers 코드는 `CGO_ENABLED=0`, 데이터 I/O를 수행하는 별도 Go 프로세스는 `CGO_ENABLED=1`, `-tags tentacle`로 빌드합니다. [go-ceph의 native 의존성과 release tag](https://github.com/ceph/go-ceph/blob/v0.41.0/README.md)를 따릅니다.
 
-빌드 stage는 digest로 고정한 Quay Ceph 20.2.4 이미지의 GCC·native 라이브러리를 사용합니다. 이 이미지에 개발 헤더가 없으므로 같은 Ceph v20.2.4 공개 소스의 `rados/librados.h`, `rados/rados_types.h`, `rbd/librbd.h`, `rbd/features.h`, `cephfs/libcephfs.h`, `cephfs/ceph_ll_client.h`를 가져옵니다. 임시 linker symlink로 기존 SONAME 라이브러리에 링크합니다. 런타임에는 선택한 Ceph 20.2.4 이미지와 컴파일된 바이너리만 필요하며 호스트의 Ceph 설치·헤더·cgo 환경을 사용하지 않습니다.
+다음 빌드 설명과 2026-10-02 결과는 이전 test-only 소비자 제작 도구의 실험 기록입니다. 당시 build stage는 digest로 고정한 Quay Ceph 20.2.4 이미지의 GCC·native 라이브러리를 사용했습니다. 이 이미지에 개발 헤더가 없어 같은 Ceph v20.2.4 공개 소스의 `rados/librados.h`, `rados/rados_types.h`, `rbd/librbd.h`, `rbd/features.h`, `cephfs/libcephfs.h`, `cephfs/ceph_ll_client.h`를 가져오고 임시 linker symlink로 기존 SONAME 라이브러리에 링크했습니다. 런타임에는 선택한 Ceph 20.2.4 이미지와 컴파일된 바이너리만 사용하여 호스트의 Ceph 설치·헤더·cgo 환경을 요구하지 않았습니다. 현재 이미지 프로젝트는 개발 헤더나 소비자 프로그램을 제작하지 않으며, 이 Go 프로젝트의 harness도 이미지를 빌드하지 않습니다.
 
 테스트 전체가 Docker Desktop의 Linux ARM64 VM에서 실행됩니다. Runner는 Docker socket을 통해 형제 컨테이너를 생성하고 Linux host network에 배치합니다. bridge 케이스의 클라이언트는 각 전용 네트워크에 `WithClient()`로 연결합니다. host 케이스는 같은 옵션으로 연결한 클라이언트 외에도 `ConnectionConfig()`를 임시 파일에 저장하여 runner의 Linux 프로세스에서 직접 연결합니다. 후자는 Docker daemon과 같은 network namespace에서 실행되며, macOS native 실행을 뜻하지 않습니다.
 
@@ -136,26 +136,26 @@ Linux native CGO 빌드와 Linux의 기존 `ceph`/`multicluster` 단위 테스�
 
 초기 테스트 작성 중 공유 pool에 두 application label을 활성화하여 Ceph 확인 요구에 실패했고, `client_metadata_timeout`이라는 미지원 옵션을 설정하여 probe가 거절됐습니다. 테스트 pool의 label을 `rbd`로 정하고 지원되는 timeout만 사용한 뒤 위 전체 케이스가 통과했습니다. 초기 실패 두 번의 생성 자원도 모두 정리했습니다. 최종 로그와 이미지 inspect는 `artifacts/go-ceph-linux-poc-run3/`에 있습니다. 이미지 build 시간은 위 테스트 시간에 포함하지 않으며, 한 번의 관측값입니다.
 
-분리 후 기본 실행은 Quay 20.2.4를 모든 서버 역할에 사용하며, client/runner 이미지는 [이미지 프로젝트](../../ceph-testcontainers-images/README.md)에서 미리 준비합니다. 아래 명령은 Go 프로젝트 루트에서 실행합니다.
+현재 기본 실행은 Quay 20.2.4를 모든 서버 역할에 사용합니다. Client/runner 이미지는 호출자가 미리 준비하며, 아래 이미지 이름은 실제로 공개·배포된 이미지를 뜻하지 않는 입력 예시입니다. Client와 runner에는 같은 Ceph ABI로 빌드한 `/usr/local/bin/go-ceph-probe`와 runtime libraries가 필요합니다. Runner는 현재 Go checkout의 integration/goceph 태그 테스트를 Linux용으로 컴파일하고 그 binary를 entrypoint로 실행해야 합니다. [Go 실행 harness](../internal/integration/goceph/run.py)는 로컬 Linux 이미지의 immutable ID를 확인해 실행하며, [Go 소비자 recipe](../internal/integration/goceph_integration_test.go)가 probe 실행과 실제 데이터 I/O를 검증합니다. 이미지 프로젝트의 [요구사항과 checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)는 서버 이미지 계약을 확인하며 이 Go 소비자를 빌드하거나 해당 named test를 실행하지 않습니다. 아래 명령은 Go 프로젝트 루트에서 실행합니다.
 
 ```sh
-CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
-CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
+CEPH_TEST_GOCEPH_CLIENT_IMAGE=my-company/ceph-go-client:20.2.4 \
+CEPH_TEST_GOCEPH_RUNNER_IMAGE=my-company/ceph-go-runner:20.2.4 \
 make goceph-linux
 ```
 
-역할별 slim 서버를 선택할 수도 있습니다. 소비자 이미지는 같은 ABI의 slim control을 client base로 이미지 프로젝트에서 별도로 빌드한 것을 지정합니다. 이전 실험에서는 이 준비를 Go harness가 수행했으며, 현재 harness에는 빌드 기능이 없습니다.
+공식 이미지에서 [역할별 추출](../../ceph-testcontainers-images/docs/ROLE_IMAGES.md)한 서버를 선택할 수도 있습니다. 같은 release·ABI·architecture의 준비된 client/runner를 지정합니다. 이전 실험에서는 이 준비를 Go harness가 수행했으며, 현재 harness에는 빌드 기능이 없습니다.
 
 ```sh
-export CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control
-export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd
-export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw
-export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds
+export CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control
+export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd
+export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw
+export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds
 python3 internal/integration/goceph/run.py \
-  --client-image ceph-testcontainers-goceph-slim:20.2.4-client \
-  --runner-image ceph-testcontainers-goceph-slim:20.2.4-runner
+  --client-image my-company/ceph-go-client:20.2.4 \
+  --runner-image my-company/ceph-go-runner:20.2.4
 ```
 
-로컬 Docker Engine의 `/var/run/docker.sock`에 접근할 수 있어야 합니다. Docker Desktop에서는 host networking을 활성화합니다. 실행에는 Python 3.9 이상과 Docker CLI가 필요합니다. 이미지 제작의 BuildKit named context·upstream header·Go module 다운로드는 이미지 프로젝트에서 수행합니다. `--docker`로 CLI 경로를, `--output-dir`로 새 결과 디렉터리를 지정합니다. 기본 결과는 `artifacts/go-ceph-linux-UTC-UUID/`이며 integration log, 실제 이미지 inspect, 시간과 cleanup 결과를 `summary.json`에 기록합니다. Ryuk의 정상 재접속 유예 시간 이후 생성한 컨테이너만 검사합니다.
+로컬 Docker Engine의 `/var/run/docker.sock`에 접근할 수 있어야 합니다. Docker Desktop에서는 host networking을 활성화합니다. 실행에는 Python 3.9 이상과 Docker CLI가 필요합니다. 소비자 빌드 도구·개발 헤더·Go module 다운로드는 호출자의 이미지 준비 과정에서 처리합니다. `--docker`로 CLI 경로를, `--output-dir`로 새 결과 디렉터리를 지정합니다. 기본 결과는 `artifacts/go-ceph-linux-UTC-UUID/`이며 integration log, 실제 이미지 inspect, 시간과 cleanup 결과를 `summary.json`에 기록합니다. Ryuk의 정상 재접속 유예 시간 이후 생성한 컨테이너만 검사합니다.
 
 현재 fixture의 native 빌드와 런타임 라이브러리는 Ceph 20.2.4로 맞춥니다. macOS native go-ceph, Linux AMD64·독립 bare-metal host, 제한된 client capability, RGW admin HTTP API, mirror/failover의 go-ceph 소비자 검증은 이번 케이스에 포함하지 않습니다. 기존 RGW/S3와 multicluster 시나리오의 CLI/Python 검증 결과는 앞의 기록을 따릅니다.

@@ -1,4 +1,4 @@
-.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet
+.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
 .PHONY: check race tag-compile quay-default topology-smoke rgw-sync-fixtures-quay rgw-sync-native-regressions
 .PHONY: quay-topology quay-multicluster-topology quay-topology-extensions
 .PHONY: quay-cluster-fixtures quay-cephfs-fixtures quay-rados-fixtures quay-rbd-fixtures quay-rgw-fixtures quay-rgw-sync-fixtures quay-goceph-linux
@@ -13,6 +13,10 @@ CLIENT_FIXTURES_TIMEOUT ?= 120m
 RGW_CLIENT_FIXTURES_TIMEOUT ?= 40m
 INTEGRATION_TIMEOUT ?= 20m
 TOPOLOGY_SMOKE_TIMEOUT ?= 45m
+IMAGE_COMPATIBILITY_TIMEOUT ?= 40m
+IMAGE_VARIANT ?= official
+IMAGE_LAYOUT ?= all
+IMAGE_PLATFORM ?=
 QUAY_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
@@ -140,10 +144,19 @@ quay-rgw-sync-fixtures:
 	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
 	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
 
-# Consume existing client/runner images prepared by ceph-testcontainers-images.
+# Consume existing client/runner images prepared by the caller.
 # CEPH_TEST_GOCEPH_CLIENT_IMAGE and CEPH_TEST_GOCEPH_RUNNER_IMAGE are required.
 quay-goceph-linux:
 	$(QUAY_TEST_ENV) python3 internal/integration/goceph/run.py
+
+# Module-level representative compatibility for supplied all or role images.
+# Image checker quick/full is independent; this target never builds images.
+image-compatibility:
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,topology,multicluster -count=1 -v -timeout=$(IMAGE_COMPATIBILITY_TIMEOUT) -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle|MultiCluster(RBDBackup|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|RGWMultisite))$$' ./internal/integration
+
+# Select existing official/GHCR images, freeze their IDs, then run the same Go tests.
+image-matrix:
+	python3 .github/scripts/run_image_matrix.py --variant "$(IMAGE_VARIANT)" --layout "$(IMAGE_LAYOUT)" $(if $(IMAGE_PLATFORM),--platform "$(IMAGE_PLATFORM)",)
 
 topology:
 	CGO_ENABLED=0 go test -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration

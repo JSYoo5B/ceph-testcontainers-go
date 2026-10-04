@@ -148,7 +148,9 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 // peer into the destination, and starts a daemon connected to both clusters.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
-// image must contain the RBD CLI and rbd-mirror. Enable each intended source
+// image must meet the control or all role requirements, including the rbd and
+// ceph CLIs, rbd-mirror and the common utilities. It supplies both setup clients
+// and mirror daemon containers. Enable each intended source
 // image through EnableImage or the RBD CLI in image scope. Pool scope
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.

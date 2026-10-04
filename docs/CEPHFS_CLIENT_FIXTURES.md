@@ -116,9 +116,9 @@ deauthorize와 partial-clone remove는 응답 유실 뒤 현재 native 상태를
 아래 selector는 각각 bridge와 host subtest를 포함합니다. host mode에는 Linux Docker host networking 또는 Docker Desktop의 host networking 설정이 필요합니다. native client/control image에는 Python `cephfs`/`rados`가 있어야 합니다.
 
 ```sh
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
-CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
+CEPH_TEST_MDS_IMAGE=ceph-testcontainers:official-20.2.4-mds \
 CGO_ENABLED=0 go test -mod=readonly -count=1 -tags=integration,features \
   ./internal/integration \
   -run '^(TestCephFSSubvolumeClientAuthorization|TestCephFSCloneCancellationAndPartialCleanup|TestCephFSRetainedSnapshotAndMetadataRecipe)$' \

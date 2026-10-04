@@ -75,9 +75,9 @@ real Vault audit는 scoped token의 정확한 allowed/denied read path를 확인
 ## 실행
 
 ```sh
-CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \
-CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd \
-CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw \
+CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
+CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
+CEPH_TEST_RGW_IMAGE=ceph-testcontainers:official-20.2.4-rgw \
 CEPH_TEST_VAULT_IMAGE=hashicorp/vault:1.21.4 \
 CGO_ENABLED=0 go test -mod=readonly -count=1 \
   -tags=integration,features ./internal/integration \

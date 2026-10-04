@@ -4,7 +4,7 @@
 
 기본 지원과 필수 검증은 digest로 고정한 원본 Quay Ceph 20.2.4를 기준으로 합니다. 기존 Quay-derived unpatched role 이미지에서는 기본 선택·lifecycle, single tag·owner/class 및 same-tenant system/user 조건을 bridge/host에서 실제 데이터와 cleanup으로 확인했습니다. 이 기록은 해당 이미지 조합의 증거이며 원본 전체 이미지의 새 필수 suite 실행을 대신하지 않습니다. Numeric priority와 ordinary-user source 권한 거부는 원본 Ceph 20.2.4에서 실패한 native 한계이며, 정책 저장 또는 checkpoint 성공만으로 이 조건을 지원한다고 표시하지 않습니다.
 
-G05/G07은 이 한계를 포함해 부분 제공으로 추적합니다. 아래의 두 native 패치를 적용한 Ubuntu Noble ARM64 RGW와 Quay-derived control/OSD/MDS의 전체 성공 기록은 선택적 custom-image 실험입니다. 이 결과를 기본 Quay 성공으로 채택하거나 프로젝트 사용에 native build·새 서버 이미지 생성을 요구하지 않습니다. 선택적 패치 재현에는 [native workflow](../../ceph-testcontainers-images/image/native/README.md)를 사용할 수 있습니다.
+G05/G07은 이 한계를 포함해 부분 제공으로 추적합니다. 아래의 두 native 패치를 적용한 Ubuntu Noble ARM64 RGW와 Quay-derived control/OSD/MDS의 전체 성공 기록은 선택적 custom-image 실험입니다. 이 결과를 기본 Quay 성공으로 채택하거나 프로젝트 사용에 native build·새 서버 이미지 생성을 요구하지 않습니다. 당시 source/package 제작 도구는 현재 유지되는 이미지 프로젝트의 범위에서 제거됐습니다. 패치 이미지의 제작·입력 패키지 관리는 소유자의 책임이며, 준비한 이미지는 [고정 요구사항과 checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 별도로 확인합니다. Checker의 full PASS는 아래 Go regression의 PASS를 대신하지 않습니다.
 
 ## 저장과 활성화
 
@@ -116,7 +116,7 @@ env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE \
   -timeout 60m
 ```
 
-다음 전체 recipe는 원본 서버의 한계 회귀도 포함합니다. 원본 Quay에서 numeric priority와 ordinary-user source deny/grant까지 모두 PASS할 것으로 기대하지 않으며, 선택적 patched RGW 실행 이미지와 증거는 [native workflow](../../ceph-testcontainers-images/image/native/README.md#실제-검증-결과와-실행-이미지)에서 지정합니다.
+다음 전체 recipe는 원본 서버의 한계 회귀도 포함합니다. 원본 Quay에서 numeric priority와 ordinary-user source deny/grant까지 모두 PASS할 것으로 기대하지 않습니다. 선택적 patched RGW는 위의 2026-10-04 image ID·package SHA·Go snapshot에 연결된 역사적 증거로 보존합니다. 새 실행에서는 소유자가 준비한 이미지를 명시해야 하며 이 저장소나 이미지 checker가 당시 패치 이미지를 재생성하지 않습니다.
 
 `make rgw-sync-fixtures-quay`는 원본 Quay에서 기본 lifecycle/account-root 및 독립된 `tag_owner_class`·`tenant_system_user_isolation` subtest를 선택하며 daemon/mirror override 다섯 개를 해제합니다. 새 실행의 실제 결과는 기존 patched 증거와 별도로 확인합니다. `make rgw-sync-native-regressions`는 numeric priority·ordinary-user source deny/grant의 엄격한 한계 회귀를 명시적으로 실행합니다. 이미 준비한 이미지 override를 받을 수 있지만 이미지를 빌드하거나 실패를 예상 성공으로 바꾸지 않습니다.
 
@@ -127,4 +127,4 @@ CGO_ENABLED=0 go test -mod=readonly -count=1 -v \
   -timeout 60m
 ```
 
-Role slim 이미지는 다른 fixture와 같은 `CEPH_TEST_IMAGE`·`CEPH_TEST_OSD_IMAGE`·`CEPH_TEST_RGW_IMAGE` 환경 변수를 사용합니다. Host variant는 Docker Linux host networking이 필요합니다.
+공식 역할 추출 이미지나 소유자가 준비한 custom 이미지는 다른 fixture와 같은 `CEPH_TEST_IMAGE`·`CEPH_TEST_OSD_IMAGE`·`CEPH_TEST_RGW_IMAGE` 환경 변수를 사용합니다. 역할을 혼합할 때는 release·architecture를 맞춥니다. Host variant는 Docker Linux host networking이 필요합니다.

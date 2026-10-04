@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run supplied go-ceph client and test-runner images entirely on Linux.
 
-Build the images in ceph-testcontainers-images before invoking this harness.
+The caller prepares the probe and checkout-specific runner images.
 The harness neither builds images nor pulls missing client/runner images.
 """
 
@@ -33,7 +33,7 @@ def parse_arguments(argv=None):
     for option in ("client_image", "runner_image"):
         if not getattr(args, option) or not getattr(args, option).strip():
             parser.error("--" + option.replace("_", "-") + " is required (or set CEPH_TEST_GOCEPH_" +
-                         option.upper() + "); prepare images in ceph-testcontainers-images first")
+                         option.upper() + "); supply existing Linux client and runner images")
     return args
 
 

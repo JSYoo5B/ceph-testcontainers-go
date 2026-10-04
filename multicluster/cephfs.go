@@ -100,7 +100,8 @@ type cephFSPeerIdentity struct {
 
 // RunCephFSMirror configures one-way directory snapshot mirroring between two
 // existing filesystems and starts each cephfs-mirror in a separate container. image
-// must contain a compatible cephfs-mirror binary. MGRs must supply mirroring.
+// must meet the control or all role requirements, including cephfs-mirror and
+// the ceph CLI used to query its local admin socket. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
 // disposable clusters; it does not undo configuration or delete mirrored data.
@@ -305,7 +306,7 @@ func (mirror *CephFSMirror) ownedFilesystemWatcherIDs(ctx context.Context) (map[
 	}
 	ids := make(map[string]bool)
 	for _, daemon := range mirror.daemons {
-		data, err := exec(ctx, daemon, "ceph", "--admin-daemon", "/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
+		data, err := exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
 		if err != nil {
 			return nil, fmt.Errorf("inspect filesystem session for mirror daemon %s: %w", daemon.DaemonName, err)
 		}
@@ -448,7 +449,7 @@ func (mirror *CephFSMirror) AddDaemon(ctx context.Context, daemonName string, op
 			return nil, fmt.Errorf("CephFS mirror daemon %q already exists", daemonName)
 		}
 	}
-	const socket = "/run/ceph/cephfs-mirror.asok"
+	const socket = "/var/run/ceph/cephfs-mirror.asok"
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		mirror.source.WithClient(),
 		testcontainers.WithFiles(testcontainers.ContainerFile{

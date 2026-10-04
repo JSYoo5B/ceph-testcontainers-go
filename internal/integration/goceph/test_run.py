@@ -33,7 +33,7 @@ class SuppliedImagesTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as error:
                         runner.main([*arguments, "--output-dir", str(output)])
                 self.assertEqual(error.exception.code, 2)
-                self.assertIn("ceph-testcontainers-images", stderr.getvalue())
+                self.assertIn("supply existing Linux client and runner images", stderr.getvalue())
                 self.assertFalse(output.exists())
                 capture.assert_not_called()
                 process.assert_not_called()

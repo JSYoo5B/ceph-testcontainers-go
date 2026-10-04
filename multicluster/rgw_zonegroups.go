@@ -41,6 +41,8 @@ func (f *RGWMultisite) Zonegroups() []RGWZonegroup {
 // unchanged. Metadata is shared across regions; object data replicates within
 // each region. Existing S3 endpoint mappings must be refreshed after reload.
 // On error, any newly created groups/zones/containers remain owned for Terminate.
+// image selects the new gateways. Setup clients use each new cluster's control
+// image unless the fixture was configured with ControlImage.
 func (f *RGWMultisite) AddZonegroup(ctx context.Context, image string, config RGWZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*RGWZonegroup, error) {
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
 		return nil, errors.New("RGW zonegroup requires a valid name and at least one zone")

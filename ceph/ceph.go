@@ -77,7 +77,9 @@ type OSDContainer struct {
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
-// img supplies MON/MGR and all other roles unless overridden by image options.
+// img must satisfy the control role: MON/MGR, CLI, Python clients and mirrors.
+// Other roles use img unless overridden by WithOSDImage, WithRGWImage or
+// WithMDSImage. Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
@@ -183,6 +185,16 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		}
 	}
 	return c, nil
+}
+
+// ControlImage returns the image selected for MON/MGR and auxiliary CLI/client
+// containers. It is fixed by Run and remains available after termination.
+// Multicluster setup clients use this image instead of a daemon-only RGW image.
+func (c *Container) ControlImage() string {
+	if c == nil {
+		return ""
+	}
+	return c.settings.controlImage
 }
 
 func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
