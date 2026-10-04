@@ -4,7 +4,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 기본 구성은 MON 1개, MGR 1개, OSD 2개를 각각 별도 컨테이너로 실행합니다. MON quorum·MGR standby, OSD 수, 여러 filesystem과 active/standby MDS, 이름별 RGW와 클러스터 사이의 peer/zone 연결을 선택할 수 있습니다. RBD는 별도 데몬 없이 OSD pool을 사용합니다. OSD마다 1 GiB sparse BlueStore 파일을 사용합니다. Ceph 데몬에 privileged 모드, 호스트 디스크, LVM, Docker 소켓, systemd가 필요하지 않습니다. testcontainers 자체와 Ryuk은 Docker 엔진 접근이 필요합니다.
 
-자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 경량화의 초기 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md), 현재 역할별 빌드와 검증은 [SLIM_IMAGE_AUTOMATION.md](docs/SLIM_IMAGE_AUTOMATION.md), 큰 구성요소와 분리 효과는 [COMPONENT_SIZE_ANALYSIS.md](docs/COMPONENT_SIZE_ANALYSIS.md)를 확인합니다.
+자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 이미지 생성·분석·검증 목록·배포는 별도 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. 이 프로젝트는 주어진 이미지를 Go에서 실행하고 클러스터를 구성합니다.
 
 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구 API를 제공합니다. 구성별 제공 범위와 원본 Quay 이미지의 필수 검증 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
@@ -24,7 +24,6 @@ ceph/                  단일 클러스터 API, 단위 테스트와 사용 예
 ceph/internal/scripts/ ceph 패키지에 embed하는 bootstrap 스크립트
 multicluster/          클러스터 사이의 구성·복제·백업 API
 internal/integration/  단일·다중 클러스터의 Docker 통합 테스트와 PoC
-image/slim/            역할별 이미지 빌드·분석 도구
 docs/                  설계·조사·검증 기록
 ```
 
@@ -205,18 +204,22 @@ CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하�
 
 ### Linux go-ceph 연동 테스트
 
-`make goceph-linux`는 Linux runner 안에서 testcontainers 클러스터를 구성하고, 별도 모듈의 go-ceph v0.41.0 클라이언트를 실제로 컴파일·실행합니다. Ceph 20.2.4 공개 헤더와 같은 버전의 native 라이브러리, `CGO_ENABLED=1`, `-tags tentacle`을 사용합니다. macOS/Windows에서 이 명령을 실행하더라도 Go 테스트와 native I/O는 Docker의 Linux 환경 안에서 수행합니다.
+`make goceph-linux`는 미리 준비한 Linux client와 runner 이미지를 받아 testcontainers 클러스터와 go-ceph 소비자 테스트를 실행합니다. Probe 소스와 별도 Go 모듈은 이 프로젝트에 유지하며, Dockerfile·이미지 빌드는 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. Runner는 검증하려는 Go checkout의 소스로 빌드해야 합니다.
 
 bridge/host 각각 두 클러스터를 함께 실행하여 CephX·FSID, 같은 이름의 RADOS object/RBD image/CephFS file 분리, 새 연결에서 전체 데이터 비교, RBD snapshot 불변성, 각 OSD `2 → 3 → 2` 후 읽기·쓰기와 삭제를 검사합니다. host 모드에는 `ConnectionConfig()`를 사용하는 Linux 프로세스 검증도 포함합니다. 클러스터 제어에는 기존 CLI API를 사용하며 데이터 I/O는 Go의 go-ceph API로 수행합니다.
 
 ```sh
+CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
+CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
-# 이미 만든 20.2.4 slim 이미지로 실행하려면 역할 이미지 변수를 지정하고:
+
+# CLI로 이미지를 직접 지정할 수도 있습니다.
 python3 internal/integration/goceph/run.py \
-  --client-base-image ceph-testcontainers:20.2.4-control
+  --client-image ceph-testcontainers-goceph:20.2.4-client \
+  --runner-image ceph-testcontainers-goceph:20.2.4-runner
 ```
 
-Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 Linux Docker Engine 또는 host networking을 켠 Docker Desktop이 필요합니다. Python 3.9 이상과 named build context를 지원하는 BuildKit이 필요하며 호스트에 Go/Ceph 개발 라이브러리를 설치하지 않습니다. 현재 fixture의 native 빌드 버전은 20.2.4로 고정합니다. 결과와 범위는 [Linux go-ceph 검증 기록](docs/HOST_NETWORK_POC.md#linux-go-ceph-연동-검증)에 정리합니다.
+두 이미지는 로컬 Docker 엔진에 존재해야 하며 harness는 이미지를 생성하거나 내려받지 않습니다. Docker socket을 runner에 연결하고 host network를 사용하므로 로컬 Linux Docker Engine 또는 host networking을 켠 Docker Desktop이 필요합니다. Python 3.9 이상과 Docker CLI가 필요하며 호스트에 Go/Ceph 개발 라이브러리를 설치하지 않습니다. macOS/Windows에서도 native I/O는 Docker의 Linux 환경에서 수행합니다. 기존 결과와 범위는 [Linux go-ceph 검증 기록](docs/HOST_NETWORK_POC.md#linux-go-ceph-연동-검증)에 정리합니다.
 
 ## API
 
@@ -279,7 +282,7 @@ make quay-topology-extensions
 
 `quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-필수 CI에 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`, `quay-goceph-linux`의 7개 profile을 추가했습니다. 이름 수는 각각 8/8/4/6/14/7/1개이며, 기존 52개와 새 48개·별도 SDK 2개를 합해 102개입니다. 새 profile의 전체 runtime 검증은 대기 중입니다. 모두 원본 Quay 서버를 사용하며 go-ceph 경로만 Linux 소비자 probe/runner를 준비합니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건은 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
+Go CI에는 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. 이미지를 생성하던 `quay-goceph-linux`의 준비·검증 job 1개는 `ceph-testcontainers-images`로 옮겼고, 여기의 같은 Make target은 주어진 client/runner 이미지만 실행합니다. 분리 이후 두 프로젝트 CI 전체 runtime 검증은 아직 수행하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
 
 RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 
@@ -307,33 +310,9 @@ export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
 make integration
 ```
 
-## 경량 이미지
+## 이미지 선택
 
-역할별 slim, 회사 `.deb` 입력, native 패치 빌드는 별도로 선택하는 도구입니다. 원본 Quay를 사용하는 모듈의 필수 실행·검증 경로에 포함하지 않습니다.
-
-원본 Ceph RPM 이미지 또는 로컬 Debian 패키지 묶음을 입력하여 `control`, `osd`, `rgw`, `mds`, `all`의 다섯 로컬 이미지를 자동으로 빌드합니다. 입력의 Ceph 바이너리와 설치된 의존성을 선별하고, 라이선스·Python 바인딩·OSD 동적 플러그인·MGR core module을 보존합니다. `control`에는 MON/MGR, 클라이언트 도구, `rbd-mirror`·`cephfs-mirror`를 함께 넣으며, MON과 MGR는 기존처럼 별도 컨테이너로 실행합니다. `all`은 모든 역할의 기능을 포함합니다.
-
-```sh
-make slim-images         # 원본 pull, 다섯 이미지 빌드와 smoke test
-make slim-images-verify  # 위 과정 + 혼합 이미지 및 all 이미지 전체 통합 테스트
-make slim-images-multicluster # 위 과정 + 독립 두 클러스터의 복제/백업 검증
-```
-
-Makefile의 기본 원본은 digest로 고정한 Ceph 20.2.4입니다. `CEPH_SOURCE_IMAGE`로 다른 원본을 지정할 수 있으며, 출력 tag는 원본의 실제 Ceph 버전에서 정합니다. 기본 repository에서는 `ceph-testcontainers:20.2.4-control` 등의 tag가 만들어집니다. 이미지 빌드에는 Python 3.9 이상, Docker API 1.49 이상과 호환 CLI, `ADD --link`를 지원하는 BuildKit/buildx가 필요하고, Go는 통합 테스트를 선택할 때 사용합니다.
-
-회사에서 빌드한 `.deb` 패키지는 호환되는 Debian/Ubuntu 기반 이미지와 함께 지정합니다. Ceph 패키지의 의존 라이브러리도 같은 빌드의 `.deb` 묶음에 포함하며, 일반 배포판 의존성은 기반 이미지의 APT 저장소에서 설치합니다. 입력 파일의 SHA256·패키지명·버전·architecture와 설치 결과를 기록하고, 제공하지 않은 Ceph 패키지가 저장소에서 보충되면 실패합니다.
-
-```sh
-python3 image/slim/build.py \
-  --deb-packages /path/to/company-build/*.deb \
-  --base-image ubuntu:24.04 \
-  --tag company-patch-001 \
-  --integration
-```
-
-출력은 `company-patch-001-control/osd/rgw/mds/all`입니다. 동일한 Ceph 버전의 서로 다른 패치 빌드는 `--tag`로 구분합니다. 패키지 디렉터리는 `--deb-directory` 또는 `make slim-images-deb CEPH_DEB_DIRECTORY=...`로 전달할 수 있습니다. Ubuntu 24.04 ARM64의 공개 Ceph 19.2.3 `.deb` 21개로 다섯 이미지의 smoke와 혼합/all 단일 클러스터 전체 suite를 통과했습니다. 동일 버전의 수정된 파일 재설치도 별도 검증했습니다. 재현 절차와 입력 조건은 [Debian 패키지 이미지 빌드](docs/DEBIAN_IMAGE_AUTOMATION.md)를 따릅니다.
-
-앞의 예제에서 `Run` 호출을 다음처럼 바꾸면 역할별 이미지를 사용합니다. 이미지 옵션을 생략한 역할은 `Run`의 이미지로 실행하며, 새로 추가하는 OSD에도 같은 OSD 이미지 설정을 적용합니다.
+기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. 주어진 `all` 이미지 하나를 모든 컨테이너에서 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 역할별로 지정할 수 있습니다. `control`은 MON/MGR, CLI·client·mirror 도구를 포함하며 MON과 MGR는 각각 별도 컨테이너로 실행합니다.
 
 ```go
 cluster, err := ceph.Run(ctx, "ceph-testcontainers:20.2.4-control",
@@ -343,11 +322,9 @@ cluster, err := ceph.Run(ctx, "ceph-testcontainers:20.2.4-control",
 )
 ```
 
-기존 방식은 `Run(ctx, "ceph-testcontainers:20.2.4-all", ...)`로 유지할 수 있습니다. `DefaultImage`는 공식 Quay 이미지입니다. 빌드는 registry에 push하지 않으며, 결과·manifest·단계별 로그는 실행마다 새 `artifacts/slim-UTC-UUID/` 디렉터리에 저장합니다.
+생략한 역할은 `Run`에 전달한 이미지를 사용하며, 추가 OSD에도 같은 OSD 이미지 설정을 적용합니다. 한 이미지 방식은 `Run(ctx, "ceph-testcontainers:20.2.4-all", ...)`로 사용합니다. 위 local tag는 새 이미지 프로젝트에서 빌드한 이미지를 선택하는 예시입니다.
 
-Linux ARM64에서 mirror 추가 이전 혼합/all 이미지의 전체 통합 테스트를 통과했고, mirror 포함 다섯 이미지의 smoke test를 다시 통과했습니다. 로컬 Docker `Size`는 공식 이미지 2,042,985,596 bytes, mirror를 포함한 `control` 676,867,079 bytes, `all` 895,036,802 bytes입니다. 공통 layer는 `all`을 포함해 재사용합니다. 이 수치를 이미지별로 합쳐 물리 디스크 사용량이나 다운로드 크기로 해석하지 않으며, daemon RAM 감소를 보장하지 않습니다. AMD64와 다른 원본 버전은 별도 검증이 필요합니다.
-
-명령 옵션, 공유 layer, 측정값과 metadata 보존 범위는 [자동화 기록](docs/SLIM_IMAGE_AUTOMATION.md)에 있습니다. 초기 여섯 역할 분석의 `mon-mgr`와 `client`를 이번 구현에서 `control`로 합친 판단은 [이미지 구성 분석](docs/IMAGE_LAYOUT.md)과 함께 볼 수 있습니다. 기존 단일 slim 실험의 `make slim-image`, `make slim-smoke`, `make slim-integration`도 유지하며, 당시 결과는 [SLIM_IMAGE_POC.md](docs/SLIM_IMAGE_POC.md)에 기록했습니다.
+Quay 기반 slim, 회사 `.deb` 입력, native 패치 빌드와 기존 용량·호환성 실험 문서는 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)로 옮겼습니다. 역할별 실행 도구·공통 의존성·검증·배포 기준은 [이미지 요구사항](../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)을 따릅니다. 이 Go 모듈은 이미지를 빌드하거나 패키지를 설치하지 않습니다.
 
 ## 다중 클러스터 구성과 PoC
 

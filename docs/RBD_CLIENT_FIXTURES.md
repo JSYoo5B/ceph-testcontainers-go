@@ -86,12 +86,13 @@ migration은 이 테스트에서 같은 metadata pool·namespace 안의 image �
 
 ## cryptsetup이 있는 native client 이미지
 
-기본 control role에는 Python rados/rbd와 librbd encryption의 runtime dependency가 있지만 `cryptsetup` 실행 파일은 없습니다. [test-only client Dockerfile](../internal/integration/rbd-client/Dockerfile)은 같은 고정 Quay release의 RPM image에서 distro package로 그 실행 파일을 설치합니다. extracted slim role에는 package database·dnf가 없으므로 이 Dockerfile의 기반에는 원본 RPM image를 지정합니다. client에만 도구가 추가되며 OSD/MON/MGR 이미지 구성은 바뀌지 않습니다.
+기본 control role에는 Python rados/rbd와 librbd encryption의 runtime dependency가 있지만 `cryptsetup` 실행 파일은 없습니다. [test-only client Dockerfile](../../ceph-testcontainers-images/image/clients/rbd/Dockerfile)은 같은 고정 Quay release의 RPM image에서 distro package로 그 실행 파일을 설치합니다. extracted slim role에는 package database·dnf가 없으므로 이 Dockerfile의 기반에는 원본 RPM image를 지정합니다. client에만 도구가 추가되며 OSD/MON/MGR 이미지 구성은 바뀌지 않습니다.
 
 ```sh
 docker build --platform linux/arm64 \
-  -f internal/integration/rbd-client/Dockerfile \
-  -t ceph-testcontainers:20.2.4-rbd-client .
+  -f ../ceph-testcontainers-images/image/clients/rbd/Dockerfile \
+  -t ceph-testcontainers:20.2.4-rbd-client \
+  ../ceph-testcontainers-images/image/clients/rbd
 
 CEPH_TEST_RBD_CLIENT_IMAGE=ceph-testcontainers:20.2.4-rbd-client \
 CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control \

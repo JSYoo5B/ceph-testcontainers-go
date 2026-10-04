@@ -136,13 +136,15 @@ Linux native CGO 빌드와 Linux의 기존 `ceph`/`multicluster` 단위 테스�
 
 초기 테스트 작성 중 공유 pool에 두 application label을 활성화하여 Ceph 확인 요구에 실패했고, `client_metadata_timeout`이라는 미지원 옵션을 설정하여 probe가 거절됐습니다. 테스트 pool의 label을 `rbd`로 정하고 지원되는 timeout만 사용한 뒤 위 전체 케이스가 통과했습니다. 초기 실패 두 번의 생성 자원도 모두 정리했습니다. 최종 로그와 이미지 inspect는 `artifacts/go-ceph-linux-poc-run3/`에 있습니다. 이미지 build 시간은 위 테스트 시간에 포함하지 않으며, 한 번의 관측값입니다.
 
-기본 실행은 Quay 20.2.4를 모든 역할에 사용합니다.
+분리 후 기본 실행은 Quay 20.2.4를 모든 서버 역할에 사용하며, client/runner 이미지는 [이미지 프로젝트](../../ceph-testcontainers-images/README.md)에서 미리 준비합니다. 아래 명령은 Go 프로젝트 루트에서 실행합니다.
 
 ```sh
+CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
+CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
 ```
 
-현재 역할별 slim 이미지로 실행한 명령은 다음과 같습니다.
+역할별 slim 서버를 선택할 수도 있습니다. 소비자 이미지는 같은 ABI의 slim control을 client base로 이미지 프로젝트에서 별도로 빌드한 것을 지정합니다. 이전 실험에서는 이 준비를 Go harness가 수행했으며, 현재 harness에는 빌드 기능이 없습니다.
 
 ```sh
 export CEPH_TEST_IMAGE=ceph-testcontainers:20.2.4-control
@@ -150,9 +152,10 @@ export CEPH_TEST_OSD_IMAGE=ceph-testcontainers:20.2.4-osd
 export CEPH_TEST_RGW_IMAGE=ceph-testcontainers:20.2.4-rgw
 export CEPH_TEST_MDS_IMAGE=ceph-testcontainers:20.2.4-mds
 python3 internal/integration/goceph/run.py \
-  --client-base-image ceph-testcontainers:20.2.4-control
+  --client-image ceph-testcontainers-goceph-slim:20.2.4-client \
+  --runner-image ceph-testcontainers-goceph-slim:20.2.4-runner
 ```
 
-로컬 Docker Engine의 `/var/run/docker.sock`에 접근할 수 있어야 합니다. Docker Desktop에서는 host networking을 활성화합니다. 빌드에는 Python 3.9 이상, Docker CLI/BuildKit의 named context, upstream header 및 Go module을 내려받을 네트워크가 필요합니다. `--docker`로 CLI 경로를, `--output-dir`로 새 결과 디렉터리를 지정합니다. 기본 결과는 `artifacts/go-ceph-linux-UTC-UUID/`이며 build log, integration log, 실제 이미지 inspect, 시간과 cleanup 결과를 `summary.json`에 기록합니다. Ryuk의 정상 재접속 유예 시간 이후 생성한 컨테이너만 검사합니다.
+로컬 Docker Engine의 `/var/run/docker.sock`에 접근할 수 있어야 합니다. Docker Desktop에서는 host networking을 활성화합니다. 실행에는 Python 3.9 이상과 Docker CLI가 필요합니다. 이미지 제작의 BuildKit named context·upstream header·Go module 다운로드는 이미지 프로젝트에서 수행합니다. `--docker`로 CLI 경로를, `--output-dir`로 새 결과 디렉터리를 지정합니다. 기본 결과는 `artifacts/go-ceph-linux-UTC-UUID/`이며 integration log, 실제 이미지 inspect, 시간과 cleanup 결과를 `summary.json`에 기록합니다. Ryuk의 정상 재접속 유예 시간 이후 생성한 컨테이너만 검사합니다.
 
 현재 fixture의 native 빌드와 런타임 라이브러리는 Ceph 20.2.4로 맞춥니다. macOS native go-ceph, Linux AMD64·독립 bare-metal host, 제한된 client capability, RGW admin HTTP API, mirror/failover의 go-ceph 소비자 검증은 이번 케이스에 포함하지 않습니다. 기존 RGW/S3와 multicluster 시나리오의 CLI/Python 검증 결과는 앞의 기록을 따릅니다.

@@ -124,7 +124,7 @@ make multicluster
 
 별도 선택은 `go test -tags=integration,multicluster -run '^TestMultiClusterRBD' -count=1 -v -timeout=35m ./internal/integration`처럼 실행합니다. 다른 Ceph 버전에서는 모든 역할과 **`CEPH_TEST_MIRROR_IMAGE`**를 같은 검증 대상 버전으로 맞춥니다. Mirror image의 기본값은 `CEPH_TEST_IMAGE`로 선택한 control 이미지이며, 이 값도 없으면 고정 `DefaultImage`입니다.
 
-`make slim-images-multicluster` 또는 빌더의 `--multicluster`는 새 이미지를 빌드하고 control을 mirror 이미지로 명시하여 이 suite를 실행합니다. 일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
+이미지 프로젝트에서 `make slim-images-multicluster GO_MODULE_DIR=../ceph-testcontainers-go` 또는 빌더의 `--go-module-dir ... --multicluster`를 실행하면 새 이미지를 빌드하고 control을 mirror 이미지로 명시하여 이 suite를 실행합니다. 일반 `integration` 및 `slim-images-verify`는 추가 `multicluster` tag를 사용하지 않습니다. 두 클러스터와 선택 mirror image가 필요한 검증을 기존 단일 클러스터 회귀 테스트와 분리했습니다.
 
 로컬 근거는 git에서 제외되는 `artifacts/multicluster-20.2.4/`에 있습니다. `suite.log`에는 RBD 두 경로와 RGW의 PASS 및 수정 전 CephFS 실패가, `cephfs-final.log`에는 수정 후 CephFS PASS와 실제 metadata 차이가 있습니다. 초기 RGW port 수정 전 실행은 `rgw.log`에 보존했습니다. 로그의 최종 케이스 결과를 정리한 `summary.json`도 남깁니다.
 

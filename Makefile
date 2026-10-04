@@ -1,14 +1,8 @@
-.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet slim-image slim-smoke slim-integration slim-images slim-images-verify slim-images-multicluster slim-images-deb slim-images-deb-verify slim-test
-.PHONY: check race tag-compile image-test native-test quay-default topology-smoke rgw-sync-fixtures-quay rgw-sync-native-regressions
+.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet
+.PHONY: check race tag-compile quay-default topology-smoke rgw-sync-fixtures-quay rgw-sync-native-regressions
 .PHONY: quay-topology quay-multicluster-topology quay-topology-extensions
 .PHONY: quay-cluster-fixtures quay-cephfs-fixtures quay-rados-fixtures quay-rbd-fixtures quay-rgw-fixtures quay-rgw-sync-fixtures quay-goceph-linux
 
-SLIM_IMAGE ?= ceph-testcontainers:20.2.4-slim
-CEPH_SOURCE_IMAGE ?= quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
-SLIM_REPOSITORY ?= ceph-testcontainers
-CEPH_DEB_DIRECTORY ?= artifacts/debs
-CEPH_DEB_BASE_IMAGE ?= ubuntu:24.04
-CEPH_DEB_TAG ?= local-deb
 MULTICLUSTER_TIMEOUT ?= 60m
 HOSTNETWORK_TIMEOUT ?= 40m
 TOPOLOGY_TIMEOUT ?= 40m
@@ -87,27 +81,19 @@ cluster-feature-extensions:
 test:
 	CGO_ENABLED=0 go test -mod=readonly ./...
 
-# Host-only checks: tag compilation does not execute integration/native clients,
-# and Python image tests use mocks/temporary files without generating images.
+# Go host checks. Tag compilation does not execute Docker or native clients.
+# Image builder checks belong to ceph-testcontainers-images.
 check:
 	$(MAKE) test
 	$(MAKE) race
 	$(MAKE) vet
 	$(MAKE) tag-compile
-	$(MAKE) image-test
 
 race:
 	CGO_ENABLED=1 go test -mod=readonly -race ./...
 
 tag-compile:
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,auth,features,multicluster,topology,hostnetwork,goceph -run '^$$' ./...
-
-image-test:
-	$(MAKE) slim-test
-	$(MAKE) native-test
-
-native-test:
-	python3 -m unittest discover -s image/native/tests -v
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
@@ -154,10 +140,10 @@ quay-rgw-sync-fixtures:
 	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
 	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
 
-# Prepare only the Linux native client probe/runner images, then run the SDK
-# fixture against pinned Quay servers; no Ceph server image/native Ceph build.
+# Consume existing client/runner images prepared by ceph-testcontainers-images.
+# CEPH_TEST_GOCEPH_CLIENT_IMAGE and CEPH_TEST_GOCEPH_RUNNER_IMAGE are required.
 quay-goceph-linux:
-	$(QUAY_TEST_ENV) python3 internal/integration/goceph/run.py --repository ceph-testcontainers-goceph-quay
+	$(QUAY_TEST_ENV) python3 internal/integration/goceph/run.py
 
 topology:
 	CGO_ENABLED=0 go test -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration
@@ -165,8 +151,8 @@ topology:
 topology-extensions:
 	CGO_ENABLED=0 go test -tags=integration,topology,multicluster,hostnetwork -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
 
-# All tests and native go-ceph clients execute on the Docker Linux host.
-# The fixture's nested module does not add go-ceph to this library's deps.
+# Execute supplied client/runner images on the Docker Linux host.
+# The nested probe module remains separate from this library's dependencies.
 goceph-linux:
 	python3 internal/integration/goceph/run.py
 
@@ -181,30 +167,3 @@ multicluster:
 
 vet:
 	CGO_ENABLED=0 go vet -mod=readonly ./...
-
-slim-image:
-	docker build --network=none -t $(SLIM_IMAGE) image/slim
-
-slim-smoke:
-	docker run --rm -i --entrypoint /bin/sh $(SLIM_IMAGE) < image/slim/smoke.sh
-
-slim-integration:
-	CEPH_TEST_IMAGE=$(SLIM_IMAGE) CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=20m ./internal/integration
-
-slim-images:
-	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)"
-
-slim-images-verify:
-	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --integration
-
-slim-images-multicluster:
-	python3 image/slim/build.py --source-image "$(CEPH_SOURCE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --multicluster
-
-slim-images-deb:
-	python3 image/slim/build.py --deb-directory "$(CEPH_DEB_DIRECTORY)" --base-image "$(CEPH_DEB_BASE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --tag "$(CEPH_DEB_TAG)"
-
-slim-images-deb-verify:
-	python3 image/slim/build.py --deb-directory "$(CEPH_DEB_DIRECTORY)" --base-image "$(CEPH_DEB_BASE_IMAGE)" --repository "$(SLIM_REPOSITORY)" --tag "$(CEPH_DEB_TAG)" --integration
-
-slim-test:
-	python3 -m unittest discover -s image/slim/tests -v

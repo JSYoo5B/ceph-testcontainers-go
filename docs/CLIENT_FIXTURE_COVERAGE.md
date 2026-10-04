@@ -2,7 +2,7 @@
 
 목표는 RADOS·RBD·CephFS·RGW client가 필요로 하는 서버 상태를 testcontainers로 준비하고, 장애·복구·복제 조건을 재현하는 것입니다. 공개 모듈은 go-ceph/cgo를 사용하지 않습니다. 서버 준비는 container의 CLI·파일로 수행하고, 실제 client 동작은 Linux container의 native library 또는 S3 SDK로 검증합니다.
 
-기본 지원과 필수 검증 기준은 `ceph.DefaultImage`의 digest로 고정한 원본 Quay Ceph 20.2.4입니다. 프로젝트 사용이나 기본 검증을 위해 Ceph native build 또는 새 서버 이미지 생성을 요구하지 않습니다. Slim·회사 `.deb`·native 패치 빌더는 선택 기능으로 분리합니다. 원본 서버에서 동작하지 않는 조건은 native 한계로 기록하며, custom image의 통과를 원본 이미지의 완료 증거로 채택하지 않습니다. Linux native client나 cryptsetup 등 소비자 테스트에 필요한 도구는 서버 이미지 빌드 요구와 구분합니다.
+기본 지원과 필수 검증 기준은 `ceph.DefaultImage`의 digest로 고정한 원본 Quay Ceph 20.2.4입니다. 프로젝트 사용이나 기본 검증을 위해 Ceph native build 또는 새 서버 이미지 생성을 요구하지 않습니다. Slim·회사 `.deb`·native 패치 빌더와 소비자 Dockerfile은 [ceph-testcontainers-images](../../ceph-testcontainers-images/README.md)에서 관리합니다. 이 Go 프로젝트는 준비된 서버/소비자 이미지를 명시적으로 받아 실행합니다. 원본 서버에서 동작하지 않는 조건은 native 한계로 기록하며, custom image의 통과를 원본 이미지의 완료 증거로 채택하지 않습니다. Linux native client나 cryptsetup 등 소비자 테스트에 필요한 도구는 서버 이미지 빌드 요구와 구분합니다.
 
 참고 범위는 [go-ceph v0.41.0](https://github.com/ceph/go-ceph/tree/v0.41.0)의 rados, rbd, cephfs 및 admin package와 Ceph Tentacle의 서버 관리 API입니다. client의 object/image/file CRUD마다 동일한 Go wrapper를 만드는 것은 완료 조건이 아닙니다. 그 API를 테스트할 수 있도록 인증·pool·namespace·daemon·module·policy를 구성할 수 있는지가 조건입니다. client operation도 대표 동작을 실행해 서버 준비가 충분한지 확인합니다.
 
@@ -74,7 +74,7 @@ NFS·SMB·NVMe-oF gateway, cephadm/systemd/LVM/실제 disk, kernel-only mount, h
 
 ## 조사와 실행 경로
 
-필수 원본 Quay 경로는 기존 `make check`, `make quay-default`, `make quay-topology`, `make quay-multicluster-topology`, `make quay-topology-extensions`와 새 fixture profile 7개입니다. 새 profile은 cluster/CephFS/RADOS/RBD/RGW/RGW sync/go-ceph별 8/8/4/6/14/7/1개 이름을 실행하며 기존 52개와 새 48개·별도 SDK 2개를 합해 102개를 선택합니다. [CI fixture 전체 목록·조건](CI_FIXTURES.md)에 정확한 target과 named test를 기록합니다. 새 profile의 전체 runtime 검증은 대기 중이며, [기존 topology 완료 증거](CLUSTER_SCENARIOS.md)를 새 fixture PASS로 대신하지 않습니다. 서버는 원본 Quay를 직접 사용하고 Linux go-ceph 소비자 probe/runner만 별도로 준비합니다.
+Go의 필수 원본 Quay 경로는 기존 `make check`, `make quay-default`, `make quay-topology`, `make quay-multicluster-topology`, `make quay-topology-extensions`와 fixture profile 6개입니다. Cluster/CephFS/RADOS/RBD/RGW/RGW sync별 8/8/4/6/14/7개, 새 이름 47개와 기존 52개·SDK 2개를 합해 101개를 선택합니다. 이미지 준비가 필요한 Linux go-ceph 1개는 이미지 프로젝트 CI로 이관했으며, Go의 실행 target은 주어진 client/runner 이미지만 소비합니다. [CI fixture 전체 목록·조건](CI_FIXTURES.md)에 정확한 target과 named test를 기록합니다. 분리 후 전체 runtime CI는 아직 실행하지 않았고 [기존 topology 완료 증거](CLUSTER_SCENARIOS.md)를 새 fixture PASS로 대신하지 않습니다. 서버는 기존 원본 Quay를 직접 사용합니다.
 
 `make cluster-features`와 `make client-fixtures`는 별도로 선택하는 내부 기능·client recipe입니다. 전체 client recipe에는 알려진 native 한계 회귀가 포함되므로 원본 Quay에서 전체 PASS를 보장하는 기본 suite로 표시하지 않습니다. 필수 RGW translation child와 strict optional native 회귀는 [CI 실행 기준](CI_FIXTURES.md)에서 구분합니다. 역할별 이미지를 선택하는 경우에는 [fixture 확장 문서](CLUSTER_FIXTURE_EXTENSIONS.md)의 환경 변수를 사용합니다. RBD encryption recipe는 cryptsetup과 동일 Ceph ABI의 native client library를 포함한 consumer image가 필요합니다. Slim control image를 쓰는 경우 [RBD client image](RBD_CLIENT_FIXTURES.md)의 빌드 후 `CEPH_TEST_RBD_CLIENT_IMAGE`로 지정합니다. 이 consumer 전용 의존성이 공개 Go module이나 daemon role image에 추가되지는 않습니다.
 

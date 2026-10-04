@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build and run the isolated go-ceph test fixture entirely on Linux."""
+"""Run supplied go-ceph client and test-runner images entirely on Linux.
+
+Build the images in ceph-testcontainers-images before invoking this harness.
+The harness neither builds images nor pulls missing client/runner images.
+"""
 
 import argparse
 import datetime
@@ -16,16 +20,25 @@ import uuid
 SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
 
 
-def main():
+def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", default="docker")
-    parser.add_argument("--go-image", default="golang:1.27.1")
-    parser.add_argument("--client-base-image", default=SOURCE_IMAGE,
-                        help="Ceph 20.2.4 runtime image containing librados/librbd/libcephfs")
+    parser.add_argument("--client-image", default=os.environ.get("CEPH_TEST_GOCEPH_CLIENT_IMAGE"),
+                        help="Existing Linux image containing /usr/local/bin/go-ceph-probe")
+    parser.add_argument("--runner-image", default=os.environ.get("CEPH_TEST_GOCEPH_RUNNER_IMAGE"),
+                        help="Existing Linux image containing this checkout's integration test binary")
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--repository", default="ceph-testcontainers-goceph")
     parser.add_argument("--test-run", default="^TestGoCephLinux$")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    for option in ("client_image", "runner_image"):
+        if not getattr(args, option) or not getattr(args, option).strip():
+            parser.error("--" + option.replace("_", "-") + " is required (or set CEPH_TEST_GOCEPH_" +
+                         option.upper() + "); prepare images in ceph-testcontainers-images first")
+    return args
+
+
+def main(argv=None):
+    args = parse_arguments(argv)
     fixture = Path(__file__).resolve().parent
     root = fixture.parents[2]
     output = args.output_dir or root / "artifacts" / (
@@ -34,9 +47,10 @@ def main():
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     summary = {"started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-               "source_image": SOURCE_IMAGE, "go_image": args.go_image,
-               "client_base_image": args.client_base_image, "go_ceph": "v0.41.0",
-               "native_build_tag": "tentacle", "commands": [], "passed": False}
+               "source_image": os.environ.get("CEPH_TEST_IMAGE") or SOURCE_IMAGE,
+               "client_image_reference": args.client_image, "runner_image_reference": args.runner_image,
+               "expected_go_ceph": "v0.41.0", "expected_native_build_tag": "tentacle",
+               "image_builds": 0, "commands": [], "passed": False}
 
     def capture(arguments):
         return subprocess.check_output([args.docker, *arguments], text=True).strip()
@@ -63,26 +77,30 @@ def main():
             raise RuntimeError("this fixture requires a Docker Linux engine")
         summary["docker"] = {key: info.get(key) for key in
                              ("ServerVersion", "OSType", "Architecture", "NCPU", "MemTotal")}
-        client_image, runner_image = args.repository + ":20.2.4-client", args.repository + ":20.2.4-runner"
-        common = ["build", "--progress=plain", "--build-context", "module=" + str(root),
-                  "--build-arg", "GO_IMAGE=" + args.go_image,
-                  "--build-arg", "CEPH_CLIENT_IMAGE=" + args.client_base_image]
-        for target, image in (("client", client_image), ("runner", runner_image)):
-            run([*common, "--target", target, "-t", image, str(fixture)], "build-" + target + ".log")
-            summary[target + "_image"] = json.loads(capture(["image", "inspect", image]))[0]
+        images = {}
+        for target, image in (("client", args.client_image), ("runner", args.runner_image)):
+            try:
+                inspected = json.loads(capture(["image", "inspect", "--", image]))[0]
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError(target + " image is unavailable locally; prepare or explicitly pull it " +
+                                   "before running this harness") from error
+            if inspected.get("Os") != "linux" or not re.fullmatch(r"sha256:[a-f0-9]{64}", inspected.get("Id", "")):
+                raise RuntimeError(target + " image must be an existing Linux image with an immutable image ID")
+            summary[target + "_image"] = inspected
+            images[target] = inspected["Id"]
         env = {"DOCKER_HOST": "unix:///var/run/docker.sock",
                "TESTCONTAINERS_HOST_OVERRIDE": "127.0.0.1",
                "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
-               "CEPH_TEST_GOCEPH_CLIENT_IMAGE": client_image}
+               "CEPH_TEST_GOCEPH_CLIENT_IMAGE": images["client"]}
         for name in ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE", "CEPH_TEST_MDS_IMAGE"):
             if os.environ.get(name):
                 env[name] = os.environ[name]
         cidfile = output / "runner.cid"
-        arguments = ["run", "--rm", "--network=host", "--cidfile", str(cidfile),
+        arguments = ["run", "--pull=never", "--rm", "--network=host", "--cidfile", str(cidfile),
                      "--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock"]
         for name, value in env.items():
             arguments.extend(["-e", name + "=" + value])
-        run([*arguments, runner_image, "-test.v", "-test.failfast", "-test.timeout=40m", "-test.run=" + args.test_run],
+        run([*arguments, images["runner"], "-test.v", "-test.failfast", "-test.timeout=40m", "-test.run=" + args.test_run],
             "integration.log")
         summary["passed"] = True
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:

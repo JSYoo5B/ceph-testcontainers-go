@@ -14,7 +14,7 @@
 
 | 필수 실행 경로 | 대표 구성·변경 기준 | 새 원본 Quay 실행 상태 |
 |---|---|---|
-| `make check` | unit·race·vet·전체 tag compile, Python 이미지 도구의 host guard. Ceph native build나 이미지 생성은 실행하지 않음 | MON·IPAM 수정 후 PASS. Python guard 63개. Runtime 증거와 별도 |
+| `make check` | Go unit·race·vet·전체 tag compile. 이미지 도구의 Python guard는 이미지 프로젝트 `make check`로 분리 | 기존 MON·IPAM 수정 후 PASS와 분리 후 Go 검사 PASS. Runtime 증거와 별도 |
 | `make quay-default` | 기본 MON/MGR/OSD와 OSD 추가·제거·데이터 유지, RGW/RBD/CephFS 연결, bootstrap 실패 cleanup | PASS: 14개 top-level test, 725.243초, Linux ARM64 |
 | `make quay-topology` | 3 MON quorum 상실·복구·교체와 active MGR failover, 동적 MGR 증감, 여러 FS/multi-active MDS/standby/replay와 MDS scale, 초기 Run composition과 같은 zone의 RGW 증감·교체 | 수정 후 PASS: 8/8 named test, profile elapsed 909.566초, Linux ARM64. Owned container/network 0개 |
 | `make quay-multicluster-topology` | 독립 host cluster 두 개·MON 포트 충돌 재시도·RGW endpoint 분리, RBD snapshot pair·journal 전환·3-cluster fanout·peer 제거/재등록·backup/restore, CephFS pair·MGR HA 연결, RGW 2/3 zone 및 metadata master 전환·복귀. 실제 FSID·key·peer/zone graph와 데이터 유지 | PASS: 18/18 named test, Go 4122.876초 / profile elapsed 4125.396초, Linux ARM64. Metadata master A→B→A·RBD peer 제거/재등록 포함. Owned container/network 0개 |
@@ -66,13 +66,13 @@ Commit `43099aa`는 Docker가 선택한 주소 풀을 사용하는 명시적 IPA
 
 Commit `3f79a78`은 bridge RGW의 public endpoint를 `GwPriority=1`로 설정합니다. Host listener, 일반 `WithClient`, peer 기본값 0과 후속 사용자 customizer 합성은 유지합니다. SDK `TestRecoverableBridgePublishedPort`는 같은 published URL에서 전용 fresh HTTP 연결의 200·정확한 body를 단절 전·격리 중·복구 후·반복 복구에 확인하며 IP·aliases·priority·native PID도 비교합니다. CI는 기존 endpoint identity 검사와 이 HTTP 검사 2개를 별도 step으로 실행한 뒤 기존 확장 12개 전체를 실행합니다.
 
-수정 후 `make check`는 unit·race·vet·전체 tag compile 및 Python guard 63개에서 PASS했습니다. 실제 SDK 2개는 격리된 Engine 28.0.4에서 Go 21.105초, Docker Desktop의 Linux host-network Go runner에서 Go 21.852초에 PASS했습니다. 각각 profile elapsed는 23.478초, 36.234초이며 owned container/network는 0개입니다. 원본 Quay RGW peer topology도 142.918초 PASS했습니다. 같은 공개 URL의 격리 중 기존 object 읽기·새 object 쓰기, 상대 zone에 새 update 부재, 복구 뒤 양방향 bytes와 원래 period/PID/IP/alias 보존을 확인했습니다. 로그·source 189개 SHA는 `artifacts/quay-published-endpoint-20261004-r4/` 및 `artifacts/quay-gateway-priority-20261004-r4/`에 보존합니다. Source manifest의 revision은 수정 전 `43099aa` worktree이며 실제 189개 이름·SHA로 후속 `3f79a78`의 runtime 입력을 대조합니다. 이 focused 결과는 후속 전체 CI와 별도 증거입니다.
+분리 이전 수정 후 `make check`는 unit·race·vet·전체 tag compile 및 Python guard 63개에서 PASS했습니다. 현재 Python 이미지 검사는 `ceph-testcontainers-images`로 옮겼습니다. 실제 SDK 2개는 격리된 Engine 28.0.4에서 Go 21.105초, Docker Desktop의 Linux host-network Go runner에서 Go 21.852초에 PASS했습니다. 각각 profile elapsed는 23.478초, 36.234초이며 owned container/network는 0개입니다. 원본 Quay RGW peer topology도 142.918초 PASS했습니다. 같은 공개 URL의 격리 중 기존 object 읽기·새 object 쓰기, 상대 zone에 새 update 부재, 복구 뒤 양방향 bytes와 원래 period/PID/IP/alias 보존을 확인했습니다. 로그·source 189개 SHA는 `artifacts/quay-published-endpoint-20261004-r4/` 및 `artifacts/quay-gateway-priority-20261004-r4/`에 보존합니다. Source manifest의 revision은 수정 전 `43099aa` worktree이며 실제 189개 이름·SHA로 후속 `3f79a78`의 runtime 입력을 대조합니다. 이 focused 결과는 후속 전체 CI와 별도 증거입니다.
 
 `3f79a78cb168bbe99a78fab5450a94f2f322e9d0`의 [후속 전체 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)는 2026-10-04 04:42 UTC SUCCESS로 종료했습니다. 04:42:34 UTC 공개 REST API 재조회에서 exact head SHA, 필수 job 5개와 실제 Makefile·SDK step의 SUCCESS를 확인했습니다. 같은 digest의 기본 Quay 이미지를 사용하며 새 서버 이미지 생성·Ceph native 빌드를 실행하지 않았습니다.
 
 | 필수 CI 실행 | 선택 범위 | 최종 결과 |
 |---|---|---|
-| `make check` | unit·race·vet·전체 tag compile·Python guard 63개 | SUCCESS |
+| 당시 `make check` | unit·race·vet·전체 tag compile·Python guard 63개; 분리 이전 실행 | SUCCESS |
 | `make quay-default` | native/runtime 11개와 signer helper 3개 | SUCCESS |
 | `make quay-topology` | 핵심 topology 8개 | SUCCESS |
 | `make quay-multicluster-topology` | 멀티클러스터 topology 18개 | SUCCESS |
