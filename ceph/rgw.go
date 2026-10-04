@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -187,6 +188,15 @@ func (c *Container) namedRGWDaemonOptions(port, tlsPort int, config RGWConfig) [
 		opts = append(opts, rgwTLSOptions(tlsPort, config.TLS)...)
 	}
 	if !c.UsesHostNetwork() {
+		publicNetwork := c.NetworkName()
+		// Prefer the public bridge for published S3 ports when a gateway's
+		// additional peer endpoint is disconnected. Equal priorities let
+		// Docker select that endpoint by its random network name instead.
+		opts = append(opts, testcontainers.WithEndpointSettingsModifier(func(endpoints map[string]*dockernetwork.EndpointSettings) {
+			if endpoint := endpoints[publicNetwork]; endpoint != nil {
+				endpoint.GwPriority = 1
+			}
+		}))
 		if config.TLS != nil {
 			opts = append(opts, testcontainers.WithExposedPorts("7481/tcp"))
 		}

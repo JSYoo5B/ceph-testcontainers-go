@@ -10,6 +10,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	mobynetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
+	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 )
 
 func TestRGWConfigurationRejectsUnsafeNamesBeforeStarting(t *testing.T) {
@@ -68,6 +69,69 @@ func TestNamedRGWOptionsPreserveScopeAndHostListener(t *testing.T) {
 		if !host && (len(request.ExposedPorts) != 1 || request.ExposedPorts[0] != "7480/tcp") {
 			t.Fatal("bridge gateway did not expose its container-local listener")
 		}
+	}
+}
+
+func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testing.T) {
+	// A peer sorting before the public network must not become the published
+	// S3 ingress gateway solely because its randomly generated name is lower.
+	const public, peer = "z-public-network", "a-peer-network"
+	cluster := &Container{network: &testcontainers.DockerNetwork{Name: public}, settings: options{startupTimeout: time.Second}}
+	var clientRequest testcontainers.GenericContainerRequest
+	if err := cluster.WithClient().Customize(&clientRequest); err != nil {
+		t.Fatal(err)
+	}
+	if clientRequest.EndpointSettingsModifier != nil {
+		t.Fatal("ordinary Ceph client configuration acquired an RGW gateway policy")
+	}
+	request := clientRequest
+	for _, option := range cluster.namedRGWDaemonOptions(7480, 0, RGWConfig{Name: "gateway"}) {
+		if err := option.Customize(&request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tcnetwork.WithNetworkName([]string{"peer-alias"}, peer).Customize(&request); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Networks) != 2 || request.Networks[0] != public || request.Networks[1] != peer || request.EndpointSettingsModifier == nil {
+		t.Fatal("RGW public endpoint is not first at Docker creation or peer composition changed")
+	}
+	// Caller modifiers remain composed after the module defaults, as with
+	// other Testcontainers request customizers.
+	if err := testcontainers.WithEndpointSettingsModifier(func(endpoints map[string]*mobynetwork.EndpointSettings) {
+		endpoints[public].DriverOpts = map[string]string{"caller-option": "preserved"}
+	}).Customize(&request); err != nil {
+		t.Fatal(err)
+	}
+	endpoints := map[string]*mobynetwork.EndpointSettings{
+		public: {Aliases: []string{"local-alias"}},
+		peer:   {Aliases: []string{"peer-alias"}},
+	}
+	request.EndpointSettingsModifier(endpoints)
+	if endpoints[public].GwPriority != 1 || endpoints[peer].GwPriority != 0 || endpoints[public].Aliases[0] != "local-alias" || endpoints[peer].Aliases[0] != "peer-alias" || endpoints[public].DriverOpts["caller-option"] != "preserved" {
+		t.Fatal("RGW gateway policy changed peer/client settings or lost caller modifier composition")
+	}
+	if err := testcontainers.WithEndpointSettingsModifier(func(endpoints map[string]*mobynetwork.EndpointSettings) {
+		endpoints[public].GwPriority = 7
+	}).Customize(&request); err != nil {
+		t.Fatal(err)
+	}
+	request.EndpointSettingsModifier(endpoints)
+	if endpoints[public].GwPriority != 7 || endpoints[peer].GwPriority != 0 {
+		t.Fatal("RGW default prevented an explicit subsequent caller gateway policy")
+	}
+}
+
+func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
+	cluster := &Container{settings: options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"}}
+	var request testcontainers.GenericContainerRequest
+	for _, option := range cluster.namedRGWDaemonOptions(42791, 0, RGWConfig{Name: "gateway"}) {
+		if err := option.Customize(&request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if request.EndpointSettingsModifier != nil || len(request.ExposedPorts) != 0 || request.Env["CEPH_RGW_ENDPOINT"] != "127.0.0.1:42791" {
+		t.Fatal("host listener configuration acquired bridge routing or port publication")
 	}
 }
 
