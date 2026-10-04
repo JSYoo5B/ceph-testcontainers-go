@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       rgw_image:
-        description: Existing RGW image for optional regressions (empty uses default Quay; no build)
+        description: Existing RGW image for optional regressions (empty uses default image; no build)
         type: string
         default: ''
 
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 # Tests and Docker share the Linux runner host. These jobs consume existing
-# Quay/prebuilt images and never compile Ceph or generate/publish role images.
+# Default/prebuilt images and never compile Ceph or generate/publish role images.
 env:
   TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
 
@@ -82,7 +82,7 @@ jobs:
           path: artifacts/image-matrix/
           if-no-files-found: error
 
-  quay-default:
+  scenario-default:
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -96,10 +96,10 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - run: make quay-default
+      - run: make scenario-default
 
-  quay-topology:
-    needs: quay-default
+  scenario-topology:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -112,10 +112,10 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - run: make quay-topology
+      - run: make scenario-topology
 
-  quay-multicluster-topology:
-    needs: quay-default
+  scenario-multicluster-topology:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -128,10 +128,10 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - run: make quay-multicluster-topology
+      - run: make scenario-multicluster-topology
 
-  quay-topology-extensions:
-    needs: quay-default
+  scenario-topology-extensions:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -146,15 +146,15 @@ jobs:
           cache-dependency-path: go.sum
       - name: Verify Docker bridge endpoint recovery
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
-      - name: Run make quay-topology-extensions
+      - name: Run make scenario-topology-extensions
         shell: bash
-        run: make quay-topology-extensions 2>&1 | tee "$RUNNER_TEMP/quay-topology-extensions.log"
+        run: make scenario-topology-extensions 2>&1 | tee "$RUNNER_TEMP/scenario-topology-extensions.log"
       - name: Identify failed topology cases
         if: failure()
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-topology-extensions.log" --profile quay-topology-extensions
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-topology-extensions.log" --profile scenario-topology-extensions
 
-  quay-cluster-fixtures:
-    needs: quay-default
+  scenario-cluster-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -167,16 +167,16 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-cluster-fixtures
+      - name: Run make scenario-cluster-fixtures
         shell: bash
-        run: make quay-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-cluster-fixtures.log"
+        run: make scenario-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cluster-fixtures.log"
       - name: Identify failed cluster fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-cluster-fixtures.log" --profile quay-cluster-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-cluster-fixtures.log" --profile scenario-cluster-fixtures
 
-  quay-cephfs-fixtures:
-    needs: quay-default
+  scenario-cephfs-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -189,16 +189,16 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-cephfs-fixtures
+      - name: Run make scenario-cephfs-fixtures
         shell: bash
-        run: make quay-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-cephfs-fixtures.log"
+        run: make scenario-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cephfs-fixtures.log"
       - name: Identify failed CephFS fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-cephfs-fixtures.log" --profile quay-cephfs-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-cephfs-fixtures.log" --profile scenario-cephfs-fixtures
 
-  quay-rados-fixtures:
-    needs: quay-default
+  scenario-rados-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -211,16 +211,16 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-rados-fixtures
+      - name: Run make scenario-rados-fixtures
         shell: bash
-        run: make quay-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rados-fixtures.log"
+        run: make scenario-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rados-fixtures.log"
       - name: Identify failed RADOS fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rados-fixtures.log" --profile quay-rados-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rados-fixtures.log" --profile scenario-rados-fixtures
 
-  quay-rbd-fixtures:
-    needs: quay-default
+  scenario-rbd-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -233,16 +233,16 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-rbd-fixtures
+      - name: Run make scenario-rbd-fixtures
         shell: bash
-        run: make quay-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rbd-fixtures.log"
+        run: make scenario-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rbd-fixtures.log"
       - name: Identify failed RBD fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rbd-fixtures.log" --profile quay-rbd-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rbd-fixtures.log" --profile scenario-rbd-fixtures
 
-  quay-rgw-fixtures:
-    needs: quay-default
+  scenario-rgw-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -255,16 +255,16 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-rgw-fixtures
+      - name: Run make scenario-rgw-fixtures
         shell: bash
-        run: make quay-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rgw-fixtures.log"
+        run: make scenario-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-fixtures.log"
       - name: Identify failed RGW fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rgw-fixtures.log" --profile quay-rgw-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rgw-fixtures.log" --profile scenario-rgw-fixtures
 
-  quay-rgw-sync-fixtures:
-    needs: quay-default
+  scenario-rgw-sync-fixtures:
+    needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:
@@ -277,20 +277,20 @@ jobs:
         with:
           go-version: '1.25.x'
           cache-dependency-path: go.sum
-      - name: Run make quay-rgw-sync-fixtures
+      - name: Run make scenario-rgw-sync-fixtures
         shell: bash
-        run: make quay-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/quay-rgw-sync-fixtures.log"
+        run: make scenario-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log"
       - name: Identify failed RGW sync fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/quay-rgw-sync-fixtures.log" --profile quay-rgw-sync-fixtures
+        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log" --profile scenario-rgw-sync-fixtures
 
   # Linux go-ceph remains an optional supplied-image Make target.
   # Image checker CI is independent of this module and its consumer SDKs.
 
   rgw-native-regressions:
     if: github.event_name == 'workflow_dispatch' && inputs.rgw_native_regressions
-    needs: [quay-topology, quay-multicluster-topology, quay-topology-extensions]
+    needs: [scenario-topology, scenario-multicluster-topology, scenario-topology-extensions]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:

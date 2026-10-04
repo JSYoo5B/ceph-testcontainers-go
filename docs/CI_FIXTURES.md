@@ -1,4 +1,4 @@
-# 원본 Quay fixture CI
+# 시나리오 fixture CI
 
 Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 기본·토폴로지 52개, 추가 서버/client fixture 47개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 101개**를 실행합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
@@ -12,37 +12,39 @@ Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2
 
 ## 실행 경로와 시간 제한
 
-[workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `quay-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `quay-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
+현재 CI job과 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을 사용합니다. 이전 실행의 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존합니다. 이름 변경은 필수 selector·timeout·이미지 선택을 변경하지 않으며, 기본 상세 시나리오는 계속 `ceph.DefaultImage`를 사용합니다.
+
+[workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
 | 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | 현재 runtime 상태 |
 |---|---:|---|---|---|
-| `quay-cluster-fixtures` | 8 | 40분 | 50분 | 검증 대기 |
-| `quay-cephfs-fixtures` | 8 | 120분 | 130분 | 검증 대기 |
-| `quay-rados-fixtures` | 4 | 120분 | 130분 | 검증 대기 |
-| `quay-rbd-fixtures` | 6 | 120분 | 130분 | 검증 대기 |
-| `quay-rgw-fixtures` | 14 | 120분 | 130분 | 검증 대기 |
-| `quay-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | 검증 대기 |
+| `scenario-cluster-fixtures` | 8 | 40분 | 50분 | 검증 대기 |
+| `scenario-cephfs-fixtures` | 8 | 120분 | 130분 | 검증 대기 |
+| `scenario-rados-fixtures` | 4 | 120분 | 130분 | 검증 대기 |
+| `scenario-rbd-fixtures` | 6 | 120분 | 130분 | 검증 대기 |
+| `scenario-rgw-fixtures` | 14 | 120분 | 130분 | 검증 대기 |
+| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | 검증 대기 |
 | Go CI 합계 | 47 | | | |
-| `quay-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 |
+| `scenario-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 |
 
 로컬에서는 [Makefile](../Makefile)의 같은 target을 사용합니다. Host network 경로를 container runner에서 실행하면 Docker daemon의 host 주소가 필요합니다. CI는 `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`을 지정합니다.
 
 ```sh
 make check
-make quay-default
-make quay-topology
-make quay-multicluster-topology
-make quay-topology-extensions
-make quay-cluster-fixtures
-make quay-cephfs-fixtures
-make quay-rados-fixtures
-make quay-rbd-fixtures
-make quay-rgw-fixtures
-make quay-rgw-sync-fixtures
+make scenario-default
+make scenario-topology
+make scenario-multicluster-topology
+make scenario-topology-extensions
+make scenario-cluster-fixtures
+make scenario-cephfs-fixtures
+make scenario-rados-fixtures
+make scenario-rbd-fixtures
+make scenario-rgw-fixtures
+make scenario-rgw-sync-fixtures
 # 아래 두 Linux 소비자 이미지는 호출자가 로컬 엔진에 미리 준비합니다.
 CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
 CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
-make quay-goceph-linux
+make scenario-goceph-linux
 ```
 
 Go CI의 각 새 job은 `shell: bash`의 pipefail로 `make` 실패를 유지하면서 `$RUNNER_TEMP/<profile>.log`에 출력을 저장합니다. 실패한 job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며, 완료된 Go 실패 test/subtest 이름만 annotation으로 노출합니다. Reporter에만 `continue-on-error`를 적용하므로 reporter 오류가 원래 테스트 결과를 덮지 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면 원인을 추정하지 않고 미확인 notice를 남깁니다.
@@ -75,7 +77,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 
 다음 목록은 profile별로 고정합니다. Test 내부에 bridge/host child가 있는 경우 모두 유지합니다. Host 전용 wrapper와 helper 이름도 그대로 포함하며, `-list` 또는 tag compile은 runtime 통과 증거로 사용하지 않습니다.
 
-### quay-cluster-fixtures · 8개
+### scenario-cluster-fixtures · 8개
 
 ```text
 TestClientIdentities
@@ -88,7 +90,7 @@ TestHostNetworkRGWPlacementStorageClasses
 TestRGWPlacementRealmStorageClasses
 ```
 
-### quay-cephfs-fixtures · 8개
+### scenario-cephfs-fixtures · 8개
 
 ```text
 TestCephFSDynamicDataPools
@@ -101,7 +103,7 @@ TestCephFSAdditionalErasureCodedDataPool
 TestHostNetworkCephFSFilesystem
 ```
 
-### quay-rados-fixtures · 4개
+### scenario-rados-fixtures · 4개
 
 ```text
 TestClientFencing
@@ -112,7 +114,7 @@ TestNativePoolReplacement
 
 MGR 수정 후 Docker Desktop Linux ARM64의 focused `TestMGRModules`는 bridge/host 모두 PASS했습니다. Native membership/dependency, 실제 RBD schedule/task 완료, optional module의 이전 enabled/disabled 상태 복원, always-on 및 사용 중인 mirror policy 보호를 확인했습니다. Test는 159.29초, harness·cleanup 포함 176.592초이며 새 서버 이미지 빌드 0회와 최종 owned container/network 0개입니다. 단위·race에서도 재시작/불일치 snapshot 이후 변경 1회, 지속 실패·취소 시 변경 0회와 복원 소유권 보존을 검증했습니다. 증거는 `artifacts/quay-mgr-modules-20261004-r2/summary.json`과 `post-runtime-audit.json`에 보관하며, RADOS profile 4개 전체 또는 AMD64 CI 완료로 확대하지 않습니다.
 
-### quay-rbd-fixtures · 6개
+### scenario-rbd-fixtures · 6개
 
 ```text
 TestRBDClientFeatures
@@ -127,7 +129,7 @@ TestHostNetworkRBDLifecycle
 
 2026-10-04 source `efa5ee3`의 로컬 focused 실행은 원본 Quay 서버와 같은 원본 Quay native consumer에서 `TestRBDClientFeatures` 하나를 PASS했습니다. Docker Desktop의 Linux ARM64에서 host-network Go runner로 실행했고, bridge/host 각 8개 native phase 총 16개가 skip 없이 통과했습니다. Test는 225.57초, harness·cleanup 포함 242.319초이며 이미지 빌드 0회, 최종 owned container/network 0개입니다. 증거는 `artifacts/quay-rbd-client-20261004-r1/summary.json`입니다. 이 결과는 RBD 소비자 도구와 해당 recipe의 실제 증거이며, RBD profile 6개 전체나 새 fixture 48개 전체 CI의 통과를 뜻하지 않습니다.
 
-### quay-rgw-fixtures · 14개
+### scenario-rgw-fixtures · 14개
 
 ```text
 TestRGWUserPlacementPolicy
@@ -148,7 +150,7 @@ TestRGWBackendStatusProbeReceivesBoundedContext
 
 뒤의 transport/signing/cleanup/audit/context helper 검사는 실제 RGW·Vault client proof와 별도입니다. Helper 성공만으로 backend 동작을 완료 처리하지 않습니다.
 
-### quay-rgw-sync-fixtures · 7개
+### scenario-rgw-sync-fixtures · 7개
 
 ```text
 TestMultiClusterRGWSelectivePolicy
@@ -162,7 +164,7 @@ TestHostNetworkMultiClusterRGWSyncTranslationFiltering
 
 마지막 두 parent에서는 `tag_owner_class`와 `tenant_system_user_isolation`만 필수 profile로 실행합니다. 독립된 이 두 child의 실제 복제 bytes·제외·checkpoint·cleanup을 확인하는 경로입니다. Parent 이름이 포함됐다는 이유로 모든 translation child를 실행한 것으로 세지 않습니다.
 
-### quay-goceph-linux · 준비된 소비자 이미지로 선택 실행하는 1개
+### scenario-goceph-linux · 준비된 소비자 이미지로 선택 실행하는 1개
 
 ```text
 TestGoCephLinux
@@ -178,7 +180,7 @@ TestGoCephLinux
 
 2026-10-04 로컬 Docker Desktop Linux ARM64 실행에서 원본 Quay RGW의 STS/Swift/SSE-KMS가 bridge/host 각 3개, 총 6개 phase를 skip 없이 PASS했습니다. 두 gateway의 STS trust/action/resource 거부와 기존 session의 정책 복원, Swift key/token·공유 object bytes, 실제 Vault의 allowed/denied audit read와 key 삭제·복원 후 decrypt 결과를 확인했습니다. Test는 136.39초, harness·cleanup 포함 151.158초이며 새 서버 이미지 빌드 0회와 최종 owned container/network 0개입니다. `artifacts/quay-rgw-backends-20261004-r1/summary.json`과 `post-runtime-audit.json`이 증거이며, RGW profile 14개 전체나 AMD64 CI 완료를 의미하지 않습니다.
 
-`quay-goceph-linux`의 [Linux 실행 harness](../internal/integration/goceph/run.py)는 주어진 client/runner 이미지를 local inspect한 뒤 immutable image ID로 실행합니다. 이미지를 빌드하거나 내려받지 않습니다. 호출자는 같은 Ceph release·ABI의 Linux native 라이브러리와 `go-ceph v0.41.0` probe를 가진 client, 검증할 Go checkout의 integration binary와 native probe를 가진 runner를 준비합니다. Probe의 cgo 빌드 조건은 소비자에게 적용되며 server 역할 이미지에 개발 헤더나 compiler를 요구하지 않습니다. 이미지 프로젝트 CI는 자체 Python 검사기를 실행하고 이 SDK profile을 실행하지 않습니다. 구체적인 입력 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#추가-소비자-조건)를 따릅니다. macOS native go-ceph 빌드의 지원을 뜻하지 않습니다.
+`scenario-goceph-linux`의 [Linux 실행 harness](../internal/integration/goceph/run.py)는 주어진 client/runner 이미지를 local inspect한 뒤 immutable image ID로 실행합니다. 이미지를 빌드하거나 내려받지 않습니다. 호출자는 같은 Ceph release·ABI의 Linux native 라이브러리와 `go-ceph v0.41.0` probe를 가진 client, 검증할 Go checkout의 integration binary와 native probe를 가진 runner를 준비합니다. Probe의 cgo 빌드 조건은 소비자에게 적용되며 server 역할 이미지에 개발 헤더나 compiler를 요구하지 않습니다. 이미지 프로젝트 CI는 자체 Python 검사기를 실행하고 이 SDK profile을 실행하지 않습니다. 구체적인 입력 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#추가-소비자-조건)를 따릅니다. macOS native go-ceph 빌드의 지원을 뜻하지 않습니다.
 
 새 local go-ceph 준비의 첫 실행은 runtime 이전에 실패했습니다. 소비자 Dockerfile이 module build context의 `internal/dockerbridge`를 복사하지 않아 Go runner를 컴파일할 수 없었습니다. 해당 package의 `COPY`를 추가한 `73cc4ae`의 재실행은 소비자 build와 `TestGoCephLinux`의 bridge/host runtime을 모두 PASS했습니다. 이 수정 후 결과를 `efa5ee3`의 성공 증거로 사용하지 않습니다.
 

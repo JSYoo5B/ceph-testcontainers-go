@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish completed Go failure names without exposing their diagnostic bodies.
 
-Usage: report_test_failures.py LOG --profile quay-topology-extensions
+Usage: report_test_failures.py LOG --profile scenario-topology-extensions
 This reporter always exits successfully; the test step owns its failure status.
 Annotation protocol: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands
 """

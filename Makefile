@@ -1,7 +1,7 @@
 .PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
-.PHONY: check race tag-compile quay-default topology-smoke rgw-sync-fixtures-quay rgw-sync-native-regressions
-.PHONY: quay-topology quay-multicluster-topology quay-topology-extensions
-.PHONY: quay-cluster-fixtures quay-cephfs-fixtures quay-rados-fixtures quay-rbd-fixtures quay-rgw-fixtures quay-rgw-sync-fixtures quay-goceph-linux
+.PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
+.PHONY: scenario-topology scenario-multicluster-topology scenario-topology-extensions
+.PHONY: scenario-cluster-fixtures scenario-cephfs-fixtures scenario-rados-fixtures scenario-rbd-fixtures scenario-rgw-fixtures scenario-rgw-sync-fixtures scenario-goceph-linux
 
 MULTICLUSTER_TIMEOUT ?= 60m
 HOSTNETWORK_TIMEOUT ?= 40m
@@ -17,7 +17,7 @@ IMAGE_COMPATIBILITY_TIMEOUT ?= 40m
 IMAGE_VARIANT ?= official
 IMAGE_LAYOUT ?= all
 IMAGE_PLATFORM ?=
-QUAY_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
+SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
@@ -28,19 +28,19 @@ MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflict
 # integration/feature targets below continue to honor those overrides.
 # Consumer-only overrides (e.g. the cryptsetup RBD image) are outside the required
 # baseline; full client-fixtures remains an explicit optional target.
-QUAY_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE CGO_ENABLED=0
+SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE -u CEPH_TEST_MIRROR_IMAGE CGO_ENABLED=0
 
-# Required fixture profiles also select the original Quay native RBD consumer
+# Required fixture profiles also select the default native RBD consumer
 # and the default real Vault backend, independent of custom-image sessions.
-QUAY_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE -u CEPH_TEST_VAULT_IMAGE $(QUAY_TEST_ENV)
-QUAY_FIXTURE_TAGS = integration,auth,features,topology,hostnetwork,multicluster
-QUAY_CLUSTER_FIXTURE_TESTS = ^Test(ClientIdentities|CephFSSubvolumes|ConfigurationOverrides|OSDPolicies|CephFSSubvolumeSnapshotsAndClones|RGWPlacementStorageClasses|HostNetworkRGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$
-QUAY_CEPHFS_FIXTURE_TESTS = ^Test(CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$
-QUAY_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
-QUAY_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
-QUAY_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
-QUAY_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
-QUAY_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
+SCENARIO_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE -u CEPH_TEST_VAULT_IMAGE $(SCENARIO_TEST_ENV)
+SCENARIO_FIXTURE_TAGS = integration,auth,features,topology,hostnetwork,multicluster
+SCENARIO_CLUSTER_FIXTURE_TESTS = ^Test(ClientIdentities|CephFSSubvolumes|ConfigurationOverrides|OSDPolicies|CephFSSubvolumeSnapshotsAndClones|RGWPlacementStorageClasses|HostNetworkRGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$
+SCENARIO_CEPHFS_FIXTURE_TESTS = ^Test(CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$
+SCENARIO_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
+SCENARIO_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
+SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
+SCENARIO_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
+SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
 
 .PHONY: topology-extensions
 .PHONY: cluster-features
@@ -60,11 +60,11 @@ rgw-admin-fixtures:
 rgw-sync-fixtures:
 	CGO_ENABLED=0 go test -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|SyncTranslationFiltering|AccountRootSync)$$' ./internal/integration
 
-# Original Quay coverage: keep strict data/permission/checkpoint assertions, and
+# Default-image coverage: keep strict data/permission/checkpoint assertions, and
 # select independent supported children without executing the two native defects.
-rgw-sync-fixtures-quay:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync)$$' ./internal/integration
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$' ./internal/integration
+scenario-rgw-sync-supported:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync)$$' ./internal/integration
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$' ./internal/integration
 
 # Explicit strict regression gate. Original 20.2.4 has native priority and source
 # user-authorization defects here; a caller may supply an existing patched RGW
@@ -102,52 +102,52 @@ tag-compile:
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
 
-# Required runtime baseline consumes the pinned Quay image; no slim/.deb/native
+# Required runtime baseline consumes the pinned default image; no slim/.deb/native
 # image producer is a prerequisite. Tests and clusters execute sequentially.
-quay-default:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
+scenario-default:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
 
 topology-smoke:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,topology,multicluster -count=1 -v -timeout=$(TOPOLOGY_SMOKE_TIMEOUT) -run '^Test(MonitorManagerTopology|MultiClusterRGWMultisite)$$' ./internal/integration
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,multicluster -count=1 -v -timeout=$(TOPOLOGY_SMOKE_TIMEOUT) -run '^Test(MonitorManagerTopology|MultiClusterRGWMultisite)$$' ./internal/integration
 
 # Major topology profiles run every scenario sequentially within each process.
 # Separate bounded CI jobs use these profiles; no image producer is required.
-quay-topology:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration
+scenario-topology:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration
 
-quay-multicluster-topology:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(QUAY_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS)' ./internal/integration
+scenario-multicluster-topology:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS)' ./internal/integration
 
-quay-topology-extensions:
-	$(QUAY_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
+scenario-topology-extensions:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
 
-# Supported cluster/client fixtures consume the pinned Quay server directly.
+# Supported cluster/client fixtures consume the pinned default server directly.
 # These profiles run every planned case, including bridge/host child scenarios.
-quay-cluster-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '$(QUAY_CLUSTER_FIXTURE_TESTS)' ./internal/integration
+scenario-cluster-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '$(SCENARIO_CLUSTER_FIXTURE_TESTS)' ./internal/integration
 
-quay-cephfs-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_CEPHFS_FIXTURE_TESTS)' ./internal/integration
+scenario-cephfs-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_CEPHFS_FIXTURE_TESTS)' ./internal/integration
 
-quay-rados-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RADOS_FIXTURE_TESTS)' ./internal/integration
+scenario-rados-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RADOS_FIXTURE_TESTS)' ./internal/integration
 
-quay-rbd-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RBD_FIXTURE_TESTS)' ./internal/integration
+scenario-rbd-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RBD_FIXTURE_TESTS)' ./internal/integration
 
-quay-rgw-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(QUAY_RGW_FIXTURE_TESTS)' ./internal/integration
+scenario-rgw-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RGW_FIXTURE_TESTS)' ./internal/integration
 
 # Supported translation children stay separate from strict optional native
 # priority/source-authorization regressions in rgw-sync-native-regressions.
-quay-rgw-sync-fixtures:
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
-	$(QUAY_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(QUAY_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(QUAY_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
+scenario-rgw-sync-fixtures:
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(SCENARIO_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
 
 # Consume existing client/runner images prepared by the caller.
 # CEPH_TEST_GOCEPH_CLIENT_IMAGE and CEPH_TEST_GOCEPH_RUNNER_IMAGE are required.
-quay-goceph-linux:
-	$(QUAY_TEST_ENV) python3 internal/integration/goceph/run.py
+scenario-goceph-linux:
+	$(SCENARIO_TEST_ENV) python3 internal/integration/goceph/run.py
 
 # Module-level representative compatibility for supplied all or role images.
 # Image checker quick/full is independent; this target never builds images.

@@ -274,15 +274,15 @@ RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지
 
 ```sh
 make check
-make quay-default
-make quay-topology
-make quay-multicluster-topology
-make quay-topology-extensions
+make scenario-default
+make scenario-topology
+make scenario-multicluster-topology
+make scenario-topology-extensions
 ```
 
-`quay-default`는 기본 서비스·노드 lifecycle과 cleanup을, `quay-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `quay-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `quay-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
+`scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Daemon/mirror 이미지 override 다섯 개는 각 profile에서 해제합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `quay-cluster-fixtures`, `quay-cephfs-fixtures`, `quay-rados-fixtures`, `quay-rbd-fixtures`, `quay-rgw-fixtures`, `quay-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `quay-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다. 확대된 Go 필수 CI 전체 runtime의 완료는 아직 확인하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다. 확대된 Go 필수 CI 전체 runtime의 완료는 아직 확인하지 않았습니다. 정확한 named test·native 결함의 strict 선택 경로·소비자 도구 조건과 기존 결과는 [CI_FIXTURES.md](docs/CI_FIXTURES.md)를 따릅니다.
 
 RGW 공개망 우선순위 수정까지 포함한 `3f79a78`의 [Linux AMD64 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)에서 원본 Quay 기본 14개와 topology 38개 전체, Docker bridge SDK 회귀 2개가 통과했습니다. 새 서버 이미지 빌드 없이 실행했으며, 기본 14개에는 native/runtime 11개와 signer helper 3개가 포함됩니다. Docker Desktop의 peer 단절 중 공개 포트 경로 한계와 이전 실행은 구성별 기록에 구분합니다.
 

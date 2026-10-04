@@ -15,10 +15,12 @@
 | 필수 실행 경로 | 대표 구성·변경 기준 | 새 원본 Quay 실행 상태 |
 |---|---|---|
 | `make check` | Go unit·race·vet·전체 tag compile. 이미지 도구의 Python guard는 이미지 프로젝트 `make check`로 분리 | 기존 MON·IPAM 수정 후 PASS와 분리 후 Go 검사 PASS. Runtime 증거와 별도 |
-| `make quay-default` | 기본 MON/MGR/OSD와 OSD 추가·제거·데이터 유지, RGW/RBD/CephFS 연결, bootstrap 실패 cleanup | PASS: 14개 top-level test, 725.243초, Linux ARM64 |
-| `make quay-topology` | 3 MON quorum 상실·복구·교체와 active MGR failover, 동적 MGR 증감, 여러 FS/multi-active MDS/standby/replay와 MDS scale, 초기 Run composition과 같은 zone의 RGW 증감·교체 | 수정 후 PASS: 8/8 named test, profile elapsed 909.566초, Linux ARM64. Owned container/network 0개 |
-| `make quay-multicluster-topology` | 독립 host cluster 두 개·MON 포트 충돌 재시도·RGW endpoint 분리, RBD snapshot pair·journal 전환·3-cluster fanout·peer 제거/재등록·backup/restore, CephFS pair·MGR HA 연결, RGW 2/3 zone 및 metadata master 전환·복귀. 실제 FSID·key·peer/zone graph와 데이터 유지 | PASS: 18/18 named test, Go 4122.876초 / profile elapsed 4125.396초, Linux ARM64. Metadata master A→B→A·RBD peer 제거/재등록 포함. Owned container/network 0개 |
-| `make quay-topology-extensions` | 5 MON quorum, public/backend 분리·endpoint 단절/복구, RBD/CephFS 복수 mirror daemon 증감·HA, RGW 초기/동적 여러 zonegroup·zone 탈퇴, 세 서비스의 peer 단절·catch-up | PASS: 12/12 named test, Go 2345.826초 / profile elapsed 2349.432초, Linux ARM64. Mirror daemon·RGW zonegroup bridge/host와 peer 단절·복구 포함. Owned container/network 0개 |
+| `make scenario-default` | 기본 MON/MGR/OSD와 OSD 추가·제거·데이터 유지, RGW/RBD/CephFS 연결, bootstrap 실패 cleanup | PASS: 14개 top-level test, 725.243초, Linux ARM64 |
+| `make scenario-topology` | 3 MON quorum 상실·복구·교체와 active MGR failover, 동적 MGR 증감, 여러 FS/multi-active MDS/standby/replay와 MDS scale, 초기 Run composition과 같은 zone의 RGW 증감·교체 | 수정 후 PASS: 8/8 named test, profile elapsed 909.566초, Linux ARM64. Owned container/network 0개 |
+| `make scenario-multicluster-topology` | 독립 host cluster 두 개·MON 포트 충돌 재시도·RGW endpoint 분리, RBD snapshot pair·journal 전환·3-cluster fanout·peer 제거/재등록·backup/restore, CephFS pair·MGR HA 연결, RGW 2/3 zone 및 metadata master 전환·복귀. 실제 FSID·key·peer/zone graph와 데이터 유지 | PASS: 18/18 named test, Go 4122.876초 / profile elapsed 4125.396초, Linux ARM64. Metadata master A→B→A·RBD peer 제거/재등록 포함. Owned container/network 0개 |
+| `make scenario-topology-extensions` | 5 MON quorum, public/backend 분리·endpoint 단절/복구, RBD/CephFS 복수 mirror daemon 증감·HA, RGW 초기/동적 여러 zonegroup·zone 탈퇴, 세 서비스의 peer 단절·catch-up | PASS: 12/12 named test, Go 2345.826초 / profile elapsed 2349.432초, Linux ARM64. Mirror daemon·RGW zonegroup bridge/host와 peer 단절·복구 포함. Owned container/network 0개 |
+
+위 표는 현재 `scenario-*` target 이름으로 범위를 안내합니다. 아래의 이전 로그·CI job·명령 이름은 당시 `quay-*` 기록을 보존하며, 이름 변경을 새 runtime 실행으로 취급하지 않습니다.
 
 각 runtime profile은 daemon/mirror 이미지 환경 변수 다섯 개를 해제하여 원본 Quay를 직접 선택하며, 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 이 절에 추가합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
 
@@ -70,7 +72,7 @@ Commit `3f79a78`은 bridge RGW의 public endpoint를 `GwPriority=1`로 설정합
 
 `3f79a78cb168bbe99a78fab5450a94f2f322e9d0`의 [후속 전체 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37173593510)는 2026-10-04 04:42 UTC SUCCESS로 종료했습니다. 04:42:34 UTC 공개 REST API 재조회에서 exact head SHA, 필수 job 5개와 실제 Makefile·SDK step의 SUCCESS를 확인했습니다. 같은 digest의 기본 Quay 이미지를 사용하며 새 서버 이미지 생성·Ceph native 빌드를 실행하지 않았습니다.
 
-| 필수 CI 실행 | 선택 범위 | 최종 결과 |
+| 당시 필수 CI 실행 | 선택 범위 | 최종 결과 |
 |---|---|---|
 | 당시 `make check` | unit·race·vet·전체 tag compile·Python guard 63개; 분리 이전 실행 | SUCCESS |
 | `make quay-default` | native/runtime 11개와 signer helper 3개 | SUCCESS |

@@ -41,7 +41,7 @@ CEPH_TEST_MIRROR_IMAGE=my-company/ceph-control:dev \
 make image-compatibility
 ```
 
-이 target은 위 8개와 MGR candidate lifecycle을 합한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. 원본 기본 지원의 CI target인 `quay-*`는 custom daemon/mirror override를 해제하므로 custom 이미지 검증에 사용하지 않습니다.
+이 target은 위 8개와 MGR candidate lifecycle을 합한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. 원본 기본 지원의 CI target인 `scenario-*`는 custom daemon/mirror override를 해제하므로 custom 이미지 검증에 사용하지 않습니다.
 
 원본 필수 CI의 이름 목록과 검증 상태는 [CI_FIXTURES.md](CI_FIXTURES.md), 구성별 증거는 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다. 이미지 프로젝트의 검사 결과와 Go 프로젝트의 실행 결과는 각각 기록합니다.
 
@@ -74,7 +74,7 @@ make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles \
 
 Ceph server 역할 이미지에는 compiler·개발 헤더·go-ceph·kernel mount 도구를 요구하지 않습니다. 애플리케이션 컨테이너는 사용하려는 SDK/runtime을 갖추고 `cluster.WithClient()`로 네트워크와 설정·키를 전달받습니다. 이 옵션은 패키지를 설치하지 않습니다.
 
-Linux go-ceph의 선택 실행 `make goceph-linux`/`make quay-goceph-linux`에는 호출자가 다음 두 이미지를 로컬 Docker 엔진에 준비합니다.
+Linux go-ceph의 선택 실행 `make goceph-linux`/`make scenario-goceph-linux`에는 호출자가 다음 두 이미지를 로컬 Docker 엔진에 준비합니다.
 
 - `CEPH_TEST_GOCEPH_CLIENT_IMAGE`: Linux native 라이브러리와 실행 가능한 `/usr/local/bin/go-ceph-probe`. Probe 소스와 별도 module은 [goceph/probe](../internal/integration/goceph/probe)에 있으며 현재 go-ceph v0.41.0/tentacle 기준입니다. Idle `sleep infinity`, 설정·키 복사와 probe 실행을 지원해야 합니다.
 - `CEPH_TEST_GOCEPH_RUNNER_IMAGE`: 검증할 Go checkout에서 `integration,goceph` tag로 컴파일한 Linux integration test binary를 entrypoint로 실행합니다. Docker socket에 접근하며 host-network native 검증용 probe와 native 라이브러리도 같은 runner에 있어야 합니다.
