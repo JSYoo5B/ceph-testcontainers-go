@@ -109,7 +109,11 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	defer cancel()
 	var nw *testcontainers.DockerNetwork
 	var err error
-	if !settings.hostNetwork {
+	if settings.hostNetwork {
+		if err := checkHostNetworkEngine(ctx); err != nil {
+			return nil, err
+		}
+	} else {
 		nw, err = dockerbridge.New(ctx)
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
@@ -245,7 +249,11 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			if err != nil || releaseErr != nil {
 				return mon, errors.Join(err, releaseErr)
 			}
-			err = mon.Start(ctx)
+			if err = mon.Start(ctx); err == nil {
+				// Validate the environment before MGR/OSD creation. A probe failure
+				// is not a port conflict, so it bypasses the retry below.
+				return mon, verifyHostMonitor(ctx, c.settings.publicAddress, lease.Ports[0])
+			}
 		}
 		if err == nil {
 			return mon, nil

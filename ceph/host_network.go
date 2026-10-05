@@ -14,11 +14,28 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const hostPortLeasePrefix = "TC_CEPH_HOST_PORT_LEASE "
+
+// ErrHostNetworkUnavailable reports that host mode cannot serve native clients
+// in the test process: the engine does not run Linux containers, the selected
+// address is not assigned on the Docker host, or the first MON's advertised
+// endpoint is not reachable from this process. Run returns it before creating
+// MGR/OSD daemons; later MON/RGW port reservations may also return it.
+var ErrHostNetworkUnavailable = errors.New("ceph host network is unavailable to the test process")
+
+// A msgr2 listener sends this banner before reading from the peer.
+const monitorBanner = "ceph v2\n"
+
+const (
+	hostProbeWindow = 5 * time.Second
+	hostProbeDial   = 2 * time.Second
+	hostProbeRetry  = 200 * time.Millisecond
+)
 
 // The sockets live in the Docker engine's host network namespace, which may
 // differ from the Go process's namespace. Keep every socket open until the
@@ -107,7 +124,11 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 	)
 	lease := &hostPortLease{ctr: ctr}
 	if err != nil {
-		return cleanupFailedHostPortLease(lease, fmt.Errorf("reserve host ports on %s: %w", address, err))
+		var started testcontainers.Container
+		if ctr != nil {
+			started = ctr
+		}
+		return cleanupFailedHostPortLease(lease, allocatorFailure(started, address, err))
 	}
 	logs, err := ctr.Logs(ctx)
 	if err != nil {
@@ -122,6 +143,27 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 		return cleanupFailedHostPortLease(lease, fmt.Errorf("decode host port reservations: %w", err))
 	}
 	return lease, nil
+}
+
+// The allocator exits before readiness when the address is not assigned on the
+// Docker host. Report that as an environment mismatch, not a generic exit.
+func allocatorFailure(ctr testcontainers.Container, address string, cause error) error {
+	err := fmt.Errorf("reserve host ports on %s: %w", address, cause)
+	if ctr == nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	logs, logErr := ctr.Logs(ctx)
+	if logErr != nil {
+		return err
+	}
+	output, _ := io.ReadAll(logs)
+	logs.Close()
+	if strings.Contains(string(output), "Cannot assign requested address") {
+		return fmt.Errorf("%w: address %s is not assigned on the Docker host: %w", ErrHostNetworkUnavailable, address, err)
+	}
+	return err
 }
 
 func cleanupFailedHostPortLease(lease *hostPortLease, cause error) (*hostPortLease, error) {
@@ -195,6 +237,105 @@ func hostContainerCustomizer(address string) testcontainers.CustomizeRequestOpti
 			config.PublishAllPorts = false
 		}
 		return nil
+	}
+}
+
+// checkHostNetworkEngine rejects engines that do not run Linux containers,
+// before any cluster resource is created.
+func checkHostNetworkEngine(ctx context.Context) error {
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
+	}
+	defer docker.Close()
+	info, err := docker.Info(ctx, mobycl.InfoOptions{})
+	if err != nil {
+		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
+	}
+	if info.Info.OSType != "linux" {
+		return fmt.Errorf("%w: Docker engine runs %q containers, host network mode requires a Linux engine", ErrHostNetworkUnavailable, info.Info.OSType)
+	}
+	return nil
+}
+
+// verifyHostMonitor connects from the test process to the advertised MON
+// endpoint, as a native client would. Docker Desktop may forward host-mode
+// ports asynchronously, so a refused, timed-out or bannerless connection is
+// retried within a window. A different banner fails at once.
+func verifyHostMonitor(ctx context.Context, address string, port int) error {
+	endpoint := net.JoinHostPort(address, strconv.Itoa(port))
+	if err := probeBanner(ctx, endpoint, monitorBanner, hostProbeWindow); err != nil {
+		return fmt.Errorf("%w: MON %s: %v; %s", ErrHostNetworkUnavailable, endpoint, err, hostNetworkHint(ctx, address))
+	}
+	return nil
+}
+
+var errForeignResponder = errors.New("another process answered")
+
+func probeBanner(ctx context.Context, endpoint, banner string, window time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, window)
+	defer cancel()
+	dialer := net.Dialer{Timeout: hostProbeDial}
+	var last error
+	for {
+		conn, err := dialer.DialContext(ctx, "tcp", endpoint)
+		if err == nil {
+			last = readBanner(conn, banner)
+			conn.Close()
+			if last == nil || errors.Is(last, errForeignResponder) {
+				return last
+			}
+		} else {
+			last = err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("not reachable within %s: %w", window, last)
+		case <-time.After(hostProbeRetry):
+		}
+	}
+}
+
+func readBanner(conn net.Conn, banner string) error {
+	if err := conn.SetReadDeadline(time.Now().Add(hostProbeDial)); err != nil {
+		return err
+	}
+	got := make([]byte, len(banner))
+	n, err := io.ReadFull(conn, got)
+	if n > 0 && string(got[:n]) != banner[:n] {
+		return fmt.Errorf("%w: %q", errForeignResponder, got[:n])
+	}
+	if err != nil {
+		// A port forwarder may accept and then close while its backend is absent.
+		return fmt.Errorf("no Ceph banner: %w", err)
+	}
+	return nil
+}
+
+func hostNetworkHint(ctx context.Context, address string) string {
+	var operatingSystem, daemonHost string
+	if docker, err := testcontainers.NewDockerClientWithOpts(ctx); err == nil {
+		if info, err := docker.Info(ctx, mobycl.InfoOptions{}); err == nil {
+			operatingSystem = info.Info.OperatingSystem
+		}
+		daemonHost = docker.DaemonHost()
+		docker.Close()
+	}
+	return describeHostNetworkFailure(operatingSystem, daemonHost, address)
+}
+
+func describeHostNetworkFailure(operatingSystem, daemonHost, address string) string {
+	local := strings.HasPrefix(daemonHost, "unix://") || strings.HasPrefix(daemonHost, "npipe://")
+	loopback := net.ParseIP(address).IsLoopback()
+	switch {
+	case strings.Contains(operatingSystem, "Docker Desktop") && loopback:
+		return "Docker Desktop forwards host-mode ports only with host networking enabled (Settings > Resources > Network)"
+	case strings.Contains(operatingSystem, "Docker Desktop"):
+		return "Docker Desktop forwards host-mode ports only to this machine's loopback; omit WithHostAddress to use 127.0.0.1"
+	case daemonHost != "" && !local && loopback:
+		return fmt.Sprintf("Docker daemon %s is remote; select its address reachable from this process with WithHostAddress", daemonHost)
+	default:
+		return "the test process must reach the Docker host's network; a process inside a bridge container cannot reach host-mode daemons"
 	}
 }
 

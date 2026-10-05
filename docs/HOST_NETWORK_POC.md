@@ -101,6 +101,21 @@ CEPH_TEST_HOST_HTTP_REQUIRED=1 CEPH_TEST_HOST_TCP_REQUIRED=1 make hostnetwork
 
 이 재검증 범위에서는 host networking 활성화 외에 추가 Docker Desktop 설정이 필요하지 않았습니다. 실행 로그와 최종 결과는 git에서 제외된 `artifacts/host-network-desktop-enabled/`에 남깁니다.
 
+## 실행 환경 사전 검증
+
+host 모드의 `Run`은 Docker 엔진의 `OSType`이 `linux`인지 확인하고, 첫 MON 기동 직후 테스트 프로세스에서 광고된 v2 endpoint에 접속합니다. msgr2 listener는 상대의 요청 전에 `ceph v2\n` banner를 보내므로, 이 banner를 받으면 실제 MON에 도달한 것으로 판정합니다. 다른 내용이 오면 같은 포트를 다른 프로세스가 점유한 것으로 보고 즉시 실패합니다. 연결 거부나 timeout은 Docker Desktop 포워딩 지연을 고려해 5초 동안 재시도합니다. Docker Desktop host networking 설정값은 Docker 엔진 API에 노출되지 않습니다. 그래서 설정을 조회하지 않고 실제 경로의 도달 여부로 판정하며, `docker info`의 `OperatingSystem`과 daemon 주소는 실패 원인 안내에만 사용합니다.
+
+2026-10-05 macOS ARM64, Docker Desktop Engine 29.8.1(host networking 활성화), 원본 Quay 20.2.4, OSD 1개 구성의 결과입니다.
+
+| 조건 | 결과 |
+| --- | --- |
+| 기본 주소 `127.0.0.1` | 통과, `Run` 8.49초 |
+| `WithHostAddress("192.168.65.3")`: VM의 `eth0` 주소이며 macOS에서 도달 불가 | `ErrHostNetworkUnavailable`, 6.42초. MON 생성 후 probe timeout, `127.0.0.1` 사용 안내 |
+| `WithHostAddress("192.0.2.10")`: Docker 호스트에 없는 주소 | `ErrHostNetworkUnavailable`, 0.78초. port lease의 bind 실패를 주소 미할당으로 분류 |
+| 기존 `TestHostNetworkMonitorPortConflictRetry` | 통과, 21.80초. 실제 EADDRINUSE 재시도 뒤 새 MON의 probe 통과 |
+
+세 실행 뒤 testcontainers label이 붙은 container는 Ryuk 외에 남지 않았습니다. Docker Desktop host networking을 끈 상태와 Linux Engine, 원격 Docker는 이번 실행에 포함하지 않았습니다. 비활성 상태는 위 VM 주소 사례와 같은 경로(광고 주소 도달 실패)로 판정하며 원인 안내만 달라집니다.
+
 ## Linux go-ceph 연동 검증
 
 go-ceph를 사용하는 소비자 테스트는 Linux 전용으로 제공합니다. 클러스터를 생성하는 공개 모듈의 `go.mod`에는 go-ceph를 추가하지 않고, `internal/integration/goceph/probe`의 별도 모듈에서 v0.41.0을 고정합니다. Linux runner의 testcontainers 코드는 `CGO_ENABLED=0`, 데이터 I/O를 수행하는 별도 Go 프로세스는 `CGO_ENABLED=1`, `-tags tentacle`로 빌드합니다. [go-ceph의 native 의존성과 release tag](https://github.com/ceph/go-ceph/blob/v0.41.0/README.md)를 따릅니다.

@@ -240,3 +240,135 @@ func (ctr *hostNetworkFixtureContainer) Terminate(context.Context, ...testcontai
 	}
 	return ctr.terminationErr
 }
+
+func bannerListener(t *testing.T, serve func(net.Conn)) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			serve(conn)
+			conn.Close()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func TestProbeBannerAcceptsMonitorBanner(t *testing.T) {
+	endpoint := bannerListener(t, func(conn net.Conn) { io.WriteString(conn, monitorBanner+"\x10\x00") })
+	if err := probeBanner(t.Context(), endpoint, monitorBanner, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProbeBannerRejectsForeignResponderWithoutWaiting(t *testing.T) {
+	endpoint := bannerListener(t, func(conn net.Conn) { io.WriteString(conn, "SSH-2.0-OpenSSH\r\n") })
+	started := time.Now()
+	err := probeBanner(t.Context(), endpoint, monitorBanner, 5*time.Second)
+	if !errors.Is(err, errForeignResponder) {
+		t.Fatalf("foreign listener was not identified: %v", err)
+	}
+	if time.Since(started) > 2*time.Second {
+		t.Fatal("a definite foreign responder must not wait for the probe window")
+	}
+}
+
+func TestProbeBannerRetriesUntilEndpointAppears(t *testing.T) {
+	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
+	}
+	endpoint := reserved.Addr().String()
+	reserved.Close()
+	go func() {
+		time.Sleep(3 * hostProbeRetry)
+		listener, err := net.Listen("tcp", endpoint)
+		if err != nil {
+			return
+		}
+		t.Cleanup(func() { listener.Close() })
+		if conn, err := listener.Accept(); err == nil {
+			io.WriteString(conn, monitorBanner)
+			conn.Close()
+		}
+	}()
+	if err := probeBanner(t.Context(), endpoint, monitorBanner, 5*time.Second); err != nil {
+		t.Fatalf("delayed forwarding was not retried: %v", err)
+	}
+}
+
+func TestProbeBannerFailsWithinWindow(t *testing.T) {
+	silentClose := bannerListener(t, func(net.Conn) {})
+	refused, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
+	}
+	closed := refused.Addr().String()
+	refused.Close()
+	for name, endpoint := range map[string]string{"refused": closed, "accept then close": silentClose} {
+		t.Run(name, func(t *testing.T) {
+			started := time.Now()
+			err := probeBanner(t.Context(), endpoint, monitorBanner, 600*time.Millisecond)
+			if err == nil || errors.Is(err, errForeignResponder) {
+				t.Fatalf("unreachable endpoint was accepted or misclassified: %v", err)
+			}
+			if elapsed := time.Since(started); elapsed > 600*time.Millisecond+hostProbeDial {
+				t.Fatalf("probe exceeded its window: %s", elapsed)
+			}
+		})
+	}
+}
+
+func TestVerifyHostMonitorWrapsSentinel(t *testing.T) {
+	refused, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
+	}
+	port := refused.Addr().(*net.TCPAddr).Port
+	refused.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	if err := verifyHostMonitor(ctx, "127.0.0.1", port); !errors.Is(err, ErrHostNetworkUnavailable) {
+		t.Fatalf("unreachable MON did not report ErrHostNetworkUnavailable: %v", err)
+	}
+}
+
+func TestDescribeHostNetworkFailureNamesTheLikelyCause(t *testing.T) {
+	for _, test := range []struct{ name, os, daemon, address, want string }{
+		{"Docker Desktop", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "127.0.0.1", "host networking enabled"},
+		{"Docker Desktop VM address", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "192.168.65.3", "omit WithHostAddress"},
+		{"remote loopback", "Ubuntu 24.04 LTS", "tcp://192.0.2.10:2376", "127.0.0.1", "WithHostAddress"},
+		{"remote explicit address", "Ubuntu 24.04 LTS", "tcp://192.0.2.10:2376", "192.0.2.10", "bridge container"},
+		{"local Linux", "Ubuntu 24.04 LTS", "unix:///var/run/docker.sock", "127.0.0.1", "bridge container"},
+		{"unknown engine", "", "", "127.0.0.1", "bridge container"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := describeHostNetworkFailure(test.os, test.daemon, test.address); !strings.Contains(got, test.want) {
+				t.Fatalf("hint %q does not mention %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAllocatorFailureReportsUnassignedAddress(t *testing.T) {
+	cause := errors.New("container exited with code 1")
+	unassigned := &hostNetworkFixtureContainer{logs: "OSError: [Errno 99] Cannot assign requested address\n"}
+	if err := allocatorFailure(unassigned, "192.0.2.10", cause); !errors.Is(err, ErrHostNetworkUnavailable) || !errors.Is(err, cause) || !strings.Contains(err.Error(), "192.0.2.10") {
+		t.Fatalf("unassigned host address was not reported as unavailable: %v", err)
+	}
+	for name, ctr := range map[string]testcontainers.Container{
+		"other failure": &hostNetworkFixtureContainer{logs: "ModuleNotFoundError: No module named 'ipaddress'\n"},
+		"no container":  nil,
+	} {
+		if err := allocatorFailure(ctr, "127.0.0.1", cause); errors.Is(err, ErrHostNetworkUnavailable) || !errors.Is(err, cause) {
+			t.Fatalf("%s was misclassified: %v", name, err)
+		}
+	}
+}

@@ -67,6 +67,8 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 // WithHostNetwork places every cluster daemon and WithClient container in the
 // Docker daemon's host network. MON and RGW ports are selected automatically.
 // The default advertised address is 127.0.0.1 for clients on that same host.
+// Run fails with ErrHostNetworkUnavailable unless the engine runs Linux
+// containers and the test process reaches the first MON's advertised endpoint.
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
@@ -85,8 +87,9 @@ func WithSeparateClusterNetwork() Option {
 }
 
 // WithHostAddress selects a local IPv4 address to bind and advertise in host
-// mode. Use an address reachable by remote clients when Docker is remote.
-// The address must exist on the Docker daemon host. Requires WithHostNetwork.
+// mode, typically the Docker host's address when Docker is remote. The address
+// must be assigned on the Docker daemon host and reachable from the test
+// process; Run verifies both. Requires WithHostNetwork.
 func WithHostAddress(address string) Option {
 	return func(o *options) error {
 		ip := net.ParseIP(address)
