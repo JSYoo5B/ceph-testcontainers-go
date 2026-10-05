@@ -249,6 +249,7 @@ python3 internal/integration/goceph/run.py \
 | `OSDs()[i].Stop/Start` | 해당 데몬의 정지/재시작을 통한 장애 주입 |
 | `Ceph(ctx, args...)` | 제어 컨테이너에서 CLI 실행, stdout 반환 |
 | `Status(ctx)` | readiness에 필요한 상태 JSON 일부 |
+| `CollectDiagnostics(ctx, config)` | 부분 생성·정지·종료 상태도 포함하는 제한된 진단 report 수집 |
 | `WaitForClean(ctx)` | 소유 OSD up/in, MGR 활성, 모든 PG active+clean 대기 |
 | `NetworkName()` / `WithClient()` | 애플리케이션 컨테이너 연결 |
 | `StartRGW(ctx)` / `RGWContainer.S3Endpoint(ctx)` | S3 gateway 기동, 테스트 자격 증명 및 호스트 HTTP endpoint |
@@ -267,6 +268,8 @@ python3 internal/integration/goceph/run.py \
 RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지 않습니다. `cluster.Terminate`는 이 서비스들을 OSD보다 먼저 종료합니다. 오류와 함께 반환된 서비스도 클러스터 cleanup으로 정리합니다.
 
 마지막 OSD의 제거는 거부합니다. 복제 수나 잔여 용량 때문에 안전한 이동이 불가능하면 `RemoveOSD`는 timeout으로 끝납니다. 이미 out/reweight된 OSD를 자동으로 in 상태로 되돌리지는 않습니다. CLI로 상태를 확인하고 재시도하거나 테스트 클러스터 전체를 종료합니다.
+
+실패 진단은 cleanup 전에 별도의 짧은 background context로 `cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{})`를 호출합니다. 반환된 report는 `json.MarshalIndent`로 저장할 수 있고 일부 조회가 실패해도 artifact와 오류를 함께 보존합니다. Mirror/client 추가, 시간·출력 제한, 비밀 값 마스킹과 JSON 저장 예시는 [진단 snapshot](docs/DIAGNOSTICS.md)을 따릅니다. 수집은 클러스터를 변경하거나 종료하지 않습니다.
 
 ## 실행
 

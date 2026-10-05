@@ -1,6 +1,7 @@
 .PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
 .PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
 .PHONY: scenario-topology scenario-multicluster-topology scenario-topology-extensions
+.PHONY: scenario-diagnostics
 .PHONY: scenario-cluster-fixtures scenario-cephfs-fixtures scenario-rados-fixtures scenario-rbd-fixtures scenario-rgw-fixtures scenario-rgw-sync-fixtures scenario-goceph-linux
 
 MULTICLUSTER_TIMEOUT ?= 60m
@@ -97,7 +98,7 @@ race:
 	CGO_ENABLED=1 go test -mod=readonly -race ./...
 
 tag-compile:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,auth,features,multicluster,topology,hostnetwork,goceph -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,auth,features,multicluster,topology,hostnetwork,goceph,diagnostics -run '^$$' ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
@@ -106,6 +107,10 @@ integration:
 # image producer is a prerequisite. Tests and clusters execute sequentially.
 scenario-default:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
+
+# Optional diagnostic collection proof; excluded from the established 101 tests.
+scenario-diagnostics:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,diagnostics -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) -run '^Test(ClusterDiagnostics|PartialClusterDiagnostics)$$' ./internal/integration
 
 topology-smoke:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,multicluster -count=1 -v -timeout=$(TOPOLOGY_SMOKE_TIMEOUT) -run '^Test(MonitorManagerTopology|MultiClusterRGWMultisite)$$' ./internal/integration
