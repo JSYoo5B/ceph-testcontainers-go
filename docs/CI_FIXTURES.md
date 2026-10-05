@@ -2,7 +2,7 @@
 
 Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 기본·토폴로지 52개, 추가 서버/client fixture 47개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 101개**를 실행합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
-분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 profile·47개이며 go-ceph 1개는 선택 실행입니다. **확대된 전체 CI는 실행했으며, source `be58018`에서 RGW sync의 실패 2개와 미실행 translation 2개가 남았습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 전체 실행의 실제 terminal 결과는 다음 절에 기록합니다. 기존 완료 기록이나 다른 source의 PASS로 남은 실패를 대체하지 않습니다.
+분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 profile·47개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
 첫 확대 CI는 source `efa5ee3655173c496cc00f8c3e0f78baa7bbedf0`의 [run 37179959997](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37179959997)로 2026-10-04 05:27:55 UTC에 시작했습니다. 05:30 UTC 관측에서는 `make check` job이 SUCCESS, `quay-default`는 실행 중이며 새 fixture runtime job은 모두 대기 상태였습니다. 이 중간 관측은 terminal 성공 증거가 아닙니다.
 
@@ -10,15 +10,25 @@ Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2
 
 앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 이 시작 기록만으로 전체 필수 CI 성공을 판정하지 않습니다.
 
-## 확인된 전체 CI 결과
+## 이전 전체 CI 결과
 
 2026-10-05 확인한 [run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)은 source `be58018d23efe0738c668e407075b556e4a09fd3`로 2026-10-04 19:05:23–20:32:00 UTC에 실행됐으며 terminal 결과는 **FAILURE**입니다. 원본 Quay Ceph 20.2.4의 Linux AMD64 필수 runtime job 10개 중 9개가 SUCCESS이고, 그 9개에서 기대한 parent 94개가 모두 RUN/PASS했습니다. Docker bridge SDK 2개는 이 94개에 포함됩니다.
 
-남은 `quay-rgw-sync-fixtures` job은 기대 parent 7개 중 5개를 실행해 3개 PASS·2개 FAIL했습니다. `TestMultiClusterRGWSelectivePolicy`는 prefix를 변경한 뒤 새 객체 `/tc-policy-selected/reports/after-policy-change`가 HTTP 404/`NoSuchKey`로 남아 기다림이 종료됐습니다. `TestHostNetworkMultiClusterRGWOwnedSyncPolicy`도 prefix 변경 뒤 `/tc-owned-selected/reports/after-update`의 새 bytes가 도착하지 않아 같은 404 상태로 deadline에 도달했습니다. 이는 정책 변경 뒤 미래 객체의 실제 복제가 실패한 관측이며, 단순 CLI 성공이나 이전 checkpoint로 통과 처리하지 않습니다. 이 run은 수정 전 실패 증거이며 다음 절의 후속 focused 실행과 구분합니다.
+남은 `quay-rgw-sync-fixtures` job은 기대 parent 7개 중 5개를 실행해 3개 PASS·2개 FAIL했습니다. `TestMultiClusterRGWSelectivePolicy`는 prefix를 변경한 뒤 새 객체 `/tc-policy-selected/reports/after-policy-change`가 HTTP 404/`NoSuchKey`로 남아 기다림이 종료됐습니다. `TestHostNetworkMultiClusterRGWOwnedSyncPolicy`도 prefix 변경 뒤 `/tc-owned-selected/reports/after-update`의 새 bytes가 도착하지 않아 같은 404 상태로 deadline에 도달했습니다. 이는 정책 변경 뒤 미래 객체의 실제 복제가 실패한 관측이며, 단순 CLI 성공이나 이전 checkpoint로 통과 처리하지 않습니다. 이 run은 수정 전 실패 증거이며 후속 focused 실행과 구분합니다.
 
 첫 Go 명령의 실패로 Make의 두 번째 translation 명령은 실행되지 않았습니다. 따라서 `TestMultiClusterRGWSyncTranslationFiltering`와 `TestHostNetworkMultiClusterRGWSyncTranslationFiltering`의 필수 child도 이 run에서는 미실행입니다. 전체 기대 101개 중 **99개 RUN·97개 PASS·2개 FAIL·2개 미실행**이며 parent SKIP은 0개입니다. 관측한 child 117개는 모두 PASS이고 child SKIP/FAIL은 0개입니다. 이 child 성공을 실행되지 않은 translation 범위의 증거로 사용하지 않습니다.
 
 Job ID·source head·raw log SHA-256·각 RUN/PASS/FAIL·child 및 package completion은 `artifacts/scenario-fixture-completion-20261005/previous-runtime-audit.json`에 연결했으며 raw 로그는 같은 디렉터리의 `previous-logs/`에 보관합니다. 당시 job 이름은 `quay-*`이고 아래 표는 같은 selector의 현재 `scenario-*` 이름을 사용합니다. 이름 변경이나 이후 source 변경을 이 이전 runtime의 새 PASS로 표시하지 않습니다. 대표 이미지 matrix 12개와 선택적 `rgw-native-regressions`는 위 101개 수에 합산하지 않습니다.
+
+## d9115f4 전체 CI 완료
+
+2026-10-05 확인한 [run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 source `d9115f4d05fda4da6c8d8975bc1b3204fb09ba15`로 2026-10-04 22:28:44–23:54:23 UTC에 실행됐으며 terminal 결과는 **SUCCESS**입니다. 원본 Quay Ceph 20.2.4의 Linux AMD64 상세 runtime job 10개에서 기대 parent 101개와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개, 모든 package 결과는 `ok`였습니다. 앞서 미실행된 translation parent 2개의 필수 `tag_owner_class`·`tenant_system_user_isolation` child도 포함합니다.
+
+101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. Child 121개나 matrix의 대표 9개 반복 실행을 distinct named test 또는 개별 native I/O 수로 더하지 않습니다. 알려진 native 한계의 선택적 `rgw-native-regressions` job은 push에서 SKIPPED였으며 원래 inventory와 완료 조건에서 제외된 경로입니다. G05/G07의 numeric priority·ordinary-user source 권한 거부를 해결하거나 지원으로 표시한 결과가 아닙니다.
+
+공식·Debian·Ubuntu × all/roles × Linux AMD64/ARM64 matrix 12개도 각각 대표 9개 RUN/PASS·child FAIL/SKIP 0·package `ok`를 확인했습니다. Source manifest `1486b355cef20286a528ef7ea1e25a6b2fef1954a8eb64c9a18b14953e52baf6`, 네 component 환경 변수와 source control mirror, image ID·digest·native platform 및 이미지 빌드 0회가 각 artifact에 연결됩니다. 상세 10개와 matrix 12개의 cleanup artifact 총 22개도 전후 동일 engine·source와 새 container/network 0개로 모두 PASS했습니다.
+
+Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snapshot-20261004T235822-469b79e6/audit.json`에서 `passed: true`와 collection error 0개를 기록합니다. 같은 snapshot의 `run.json`·`jobs.json`·`artifacts-index.json`에 terminal source와 job/artifact identity를 보관합니다. 각 raw log는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-cache-d9115f4/logs/`, image summary·cleanup before/after 원본은 같은 cache의 `artifacts/`에 보관합니다. 이전 `be58018` 실패와 아래 focused summary의 source 불일치는 각각 원문 그대로 유지합니다.
 
 ## RGW policy barrier 수정 후 focused 검증
 
@@ -28,7 +38,7 @@ Job ID·source head·raw log SHA-256·각 RUN/PASS/FAIL·child 및 package compl
 
 `artifacts/scenario-fixture-completion-20261005/focused/summary.json`의 strict 결과는 **`source_unchanged: false`, `passed: false` 그대로 보존**합니다. 실행 중 선택되지 않은 `cephfs_multicluster_integration_test.go`의 주석 한 줄이 `// Select a compatible runtime supplying the userspace mirror daemon.`에서 `// The source control runtime supplies the userspace mirror daemon.`으로 바뀌었습니다. `comment-only-source-change.json`은 이 주석을 되돌려 재구성한 SHA-256이 시작 시 manifest와 일치함을 기록합니다. `post-runtime-audit.json`은 원본 로그·summary의 해시와 native 실행·잔존 관측 결과를 별도로 연결합니다. 이 설명으로 strict summary를 PASS로 바꾸거나 실행 당시 source와 현재 source가 동일하다고 표시하지 않습니다.
 
-후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 기록 시점 진행 중입니다. 위 focused 3개 결과는 상세 101개, 이미지 matrix 12개 또는 필수 runtime cleanup 22개 전체의 PASS 증거가 아닙니다.
+후속 source `d9115f4`의 전체 성공은 [별도 CI 완료 증거](#d9115f4-전체-ci-완료)에 기록합니다. 위 focused 3개 결과와 source 검증 제한을 그 전체 실행의 증거로 대체하지 않습니다.
 
 ## 실행 경로와 시간 제한
 
@@ -36,16 +46,16 @@ Job ID·source head·raw log SHA-256·각 RUN/PASS/FAIL·child 및 package compl
 
 [workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
-| 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | `be58018` runtime 결과 |
-|---|---:|---|---|---|
-| `scenario-cluster-fixtures` | 8 | 40분 | 50분 | SUCCESS · 8/8 PASS · skip 0 |
-| `scenario-cephfs-fixtures` | 8 | 120분 | 130분 | SUCCESS · 8/8 PASS · skip 0 |
-| `scenario-rados-fixtures` | 4 | 120분 | 130분 | SUCCESS · 4/4 PASS · skip 0 |
-| `scenario-rbd-fixtures` | 6 | 120분 | 130분 | SUCCESS · 6/6 PASS · skip 0 |
-| `scenario-rgw-fixtures` | 14 | 120분 | 130분 | SUCCESS · 14/14 PASS · skip 0 |
-| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | FAILURE · RUN 5 / PASS 3 / FAIL 2 / 미실행 2 · skip 0 |
-| 추가 필수 합계 | 47 | | | 43 PASS / 2 FAIL / 2 미실행 · skip 0 |
-| `scenario-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 |
+| 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | `be58018` runtime 결과 | `d9115f4` runtime 결과 |
+|---|---:|---|---|---|---|
+| `scenario-cluster-fixtures` | 8 | 40분 | 50분 | SUCCESS · 8/8 PASS · skip 0 | SUCCESS · 8/8 PASS · fail/skip 0 |
+| `scenario-cephfs-fixtures` | 8 | 120분 | 130분 | SUCCESS · 8/8 PASS · skip 0 | SUCCESS · 8/8 PASS · fail/skip 0 |
+| `scenario-rados-fixtures` | 4 | 120분 | 130분 | SUCCESS · 4/4 PASS · skip 0 | SUCCESS · 4/4 PASS · fail/skip 0 |
+| `scenario-rbd-fixtures` | 6 | 120분 | 130분 | SUCCESS · 6/6 PASS · skip 0 | SUCCESS · 6/6 PASS · fail/skip 0 |
+| `scenario-rgw-fixtures` | 14 | 120분 | 130분 | SUCCESS · 14/14 PASS · skip 0 | SUCCESS · 14/14 PASS · fail/skip 0 |
+| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | FAILURE · RUN 5 / PASS 3 / FAIL 2 / 미실행 2 · skip 0 | SUCCESS · 7/7 PASS · fail/skip 0 |
+| 추가 필수 합계 | 47 | | | 43 PASS / 2 FAIL / 2 미실행 · skip 0 | 47/47 PASS · fail/skip 0 |
+| `scenario-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 | 필수 CI 완료 범위 밖 |
 
 로컬에서는 [Makefile](../Makefile)의 같은 target을 사용합니다. Host network 경로를 container runner에서 실행하면 Docker daemon의 host 주소가 필요합니다. CI는 `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`을 지정합니다.
 
@@ -83,7 +93,7 @@ Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)�
 
 GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS한 기존 기록을 보존합니다.
 
-후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)도 matrix 12개 각각 대표 9개 RUN/PASS·child FAIL/SKIP 0·package `ok`와 image ID·digest·native platform을 확인했습니다. Mirror 전용 role 선택을 제거하고 네 component 이미지와 source control mirror를 사용하는 경로입니다. 각 matrix cleanup 12개도 전후 동일 engine·source와 새 container/network 0개로 PASS했습니다. 현재 전체 상세 CI는 진행 중이며 이 결과를 상세 fixture 101개나 필수 cleanup 22개 전체의 성공으로 표시하지 않습니다. 같은 source manifest와 개별 artifact를 대조한 [최신 matrix 실행 증거](IMAGE_COMPATIBILITY.md#d9115f4-matrix-검증)에 기록합니다.
+후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)도 matrix 12개 각각 대표 9개 RUN/PASS·child FAIL/SKIP 0·package `ok`와 image ID·digest·native platform을 확인했습니다. Mirror 전용 role 선택을 제거하고 네 component 이미지와 source control mirror를 사용하는 경로입니다. 각 matrix cleanup 12개도 전후 동일 engine·source와 새 container/network 0개로 PASS했습니다. 같은 source manifest와 개별 artifact를 대조한 [최신 matrix 실행 증거](IMAGE_COMPATIBILITY.md#d9115f4-matrix-검증)에 기록합니다. 같은 run의 상세 101개·전체 cleanup 22개 성공은 [전체 CI 완료 증거](#d9115f4-전체-ci-완료)로 별도 확인합니다.
 
 로컬에서는 현재 Docker 엔진의 native platform에서 한 조합을 실행합니다.
 
