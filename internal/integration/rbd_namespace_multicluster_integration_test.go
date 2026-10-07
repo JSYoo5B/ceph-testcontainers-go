@@ -142,6 +142,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					if tc.scope == multicluster.RBDMirrorScopePool {
 						// Existing journaling images are enrolled when pool scope is
 						// enabled. Future images enroll without EnableImage or snapshots.
+						rbdMirrorReplayReady(t, ctx, link, existingName, multicluster.RBDMirrorModeJournal, tc.sourceNamespace, tc.destinationNamespace)
 						rbdScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, tc.destinationNamespace, existingName, before)
 						rbdScopeAssertReplicaIdentity(t, ctx, sourceClient, destinationClient, pool, tc.sourceNamespace, tc.destinationNamespace, existingName, "journal")
 						rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "volume", true)
@@ -151,6 +152,11 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
+					mirrorMode := multicluster.RBDMirrorModeJournal
+					if tc.scope == multicluster.RBDMirrorScopeImage {
+						mirrorMode = multicluster.RBDMirrorModeSnapshot
+					}
+					rbdMirrorReplayReady(t, ctx, link, "volume", mirrorMode, tc.sourceNamespace, tc.destinationNamespace)
 					rbdScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, tc.destinationNamespace, "volume", before)
 					after := bytes.Clone(before)
 					patch := rbdMultiClusterPayload(256<<10, 179+index)

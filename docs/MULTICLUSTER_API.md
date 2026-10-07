@@ -21,6 +21,8 @@
 
 클러스터 cleanup을 먼저 등록하고 연결 cleanup을 나중에 등록합니다. LIFO로 연결 → 클러스터 순서로 종료합니다. 오류와 함께 non-nil 연결이 반환돼도 cleanup이 필요합니다. Mirror의 embedded `Container`는 초기 daemon 하나의 호환 handle입니다. `Stop`/`Start`는 그 daemon만 제어하며 초기 daemon 제거 뒤에는 nil이 됩니다. 현재 구성원은 `Daemons()`로 조회합니다. `Terminate`는 연결이 소유한 추가 컨테이너와 네트워크 연결을 제거하고 클러스터나 데이터를 삭제하지 않습니다. Ceph에 쓴 realm, peer, auth, directory policy는 일회성 클러스터에 남습니다. CephFS의 `RemoveDirectory`/`RemovePeer`와 RBD의 peer 제어는 호출자가 명시적으로 선택하는 구성 변경이며 `Terminate`가 자동으로 수행하지 않습니다. 기존 클러스터 전체의 원래 상태 복원도 계약에 포함하지 않습니다.
 
+RBD의 image별 replay 상태와 bounded readiness는 `ImageStatus`·`WaitReplayReady`로 관측합니다. Original pool/namespace/image identity와 실제 소유 receiver를 확인하며, 특정 데이터의 복제 완료는 별도 client 검증으로 유지합니다. [Mirror 관측 계약](MIRROR_OBSERVABILITY.md)을 따릅니다.
+
 ## 사용 예
 
 두 공개 패키지는 다음 경로로 import합니다.

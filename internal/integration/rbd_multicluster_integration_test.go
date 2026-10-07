@@ -143,6 +143,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	execCommand(t, ctx, sourceClient, "rbd", "import", "/tmp/rbd-mirror-original", image,
 		"--object-size", "1M", "--image-feature", "layering,exclusive-lock", "--no-progress")
 	execCommand(t, ctx, sourceClient, "rbd", "mirror", "image", "enable", image, "snapshot")
+	rbdMirrorReplayReady(t, ctx, mirror, "replicated", multicluster.RBDMirrorModeSnapshot, "", "")
 	rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, before)
 	rbdMultiClusterAssertPrimary(t, ctx, sourceClient, image, true)
 	rbdMultiClusterAssertPrimary(t, ctx, destinationClient, image, false)
@@ -151,6 +152,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	copy(after[4<<20:], patch)
 	rbdMultiClusterWriteRange(t, ctx, sourceClient, image, imageSize, 4<<20, patch)
 	execCommand(t, ctx, sourceClient, "rbd", "mirror", "image", "snapshot", image)
+	rbdMirrorReplayReady(t, ctx, mirror, "replicated", multicluster.RBDMirrorModeSnapshot, "", "")
 	rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, after)
 	t.Log("RBD native snapshot mirroring: initial and changed checkpoints reached an independent non-primary destination with exact 8 MiB bytes")
 
@@ -174,6 +176,17 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 		t.Fatal(err)
 	}
 	t.Log("RBD native snapshot mirroring: clean demote/promote, source MON/OSD outage, and independent destination read/write verified")
+}
+
+// Receiver readiness and native bytes/checkpoints are separate assertions.
+func rbdMirrorReplayReady(t *testing.T, ctx context.Context, link *multicluster.RBDMirror, name string, mode multicluster.RBDMirrorMode, sourceNamespace, destinationNamespace string) multicluster.RBDMirrorImageStatus {
+	t.Helper()
+	status, err := link.WaitReplayReady(ctx, name)
+	if err != nil || !status.ReplayReady || status.State != "up+replaying" || status.Mode != mode || !status.SourcePrimary || status.DestinationPrimary || status.SourceNamespace != sourceNamespace || status.DestinationNamespace != destinationNamespace || status.SourceImageID == "" || status.DestinationImageID == "" || status.GlobalID == "" || status.DaemonName == "" || status.InstanceID == "" {
+		t.Fatalf("public RBD replay readiness differs: %+v error=%v", status, err)
+	}
+	t.Logf("public RBD replay-ready mode=%s source=%q destination=%q image=%s daemon=%s instance=%s", status.Mode, sourceNamespace, destinationNamespace, name, status.DaemonName, status.InstanceID)
+	return status
 }
 
 func rbdMultiClusterPool(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, pool string) {

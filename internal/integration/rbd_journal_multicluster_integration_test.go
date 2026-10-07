@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -21,9 +22,25 @@ import (
 // reads. It never creates mirror snapshots: journal replay carries changes,
 // including a receiver restart and planned primary ownership A -> B -> A.
 func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
+	for _, host := range []bool{false, true} {
+		name := "bridge"
+		if host {
+			name = "host"
+		}
+		t.Run(name, func(t *testing.T) {
+			var opts []testcontainers.ContainerCustomizer
+			if host {
+				opts = append(opts, ceph.WithHostNetwork())
+			}
+			testMultiClusterRBDJournalMirrorFailback(t, opts...)
+		})
+	}
+}
+
+func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t)
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
 	const pool = "tc-rbd-journal"
 	const name = "volume"
 	const image = pool + "/" + name
@@ -48,6 +65,7 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 	if err := forward.EnableImage(ctx, name); err != nil {
 		t.Fatal(err)
 	}
+	initialReplay := rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
 	rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, name, before)
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, true)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, false)
@@ -62,6 +80,16 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 	// Pause the receiver and prove its existing replica remains unchanged.
 	// New source writes are replayed from the journal after the receiver starts.
 	rbdScenarioStop(t, ctx, forward)
+	paused, err := forward.ImageStatus(ctx, name)
+	if err != nil || paused.ReplayReady || paused.GlobalID != initialReplay.GlobalID || paused.DestinationImageID != initialReplay.DestinationImageID {
+		t.Fatalf("stopped receiver readiness/identity differs: %+v error=%v", paused, err)
+	}
+	pausedCtx, pausedCancel := context.WithTimeout(ctx, 3*time.Second)
+	_, pausedErr := forward.WaitReplayReady(pausedCtx, name)
+	pausedCancel()
+	if !errors.Is(pausedErr, context.DeadlineExceeded) {
+		t.Fatalf("stopped receiver wait ignored deadline: %v", pausedErr)
+	}
 	backlog := bytes.Clone(first)
 	queued := rbdMultiClusterPayload(256<<10, 109)
 	copy(backlog, queued)
@@ -69,6 +97,10 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 	rbdJournalRead(t, ctx, destinationClient, destinationStatus.FSID, pool, name, first)
 	if err := forward.Start(ctx); err != nil {
 		t.Fatal(err)
+	}
+	restarted := rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
+	if restarted.GlobalID != initialReplay.GlobalID || restarted.SourceImageID != initialReplay.SourceImageID || restarted.DestinationImageID != initialReplay.DestinationImageID || restarted.InstanceID == initialReplay.InstanceID {
+		t.Fatal("receiver restart changed images or retained a stale process instance")
 	}
 	rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, name, backlog)
 
@@ -82,6 +114,7 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, false)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, true)
 	rbdScenarioStop(t, ctx, forward)
+	rbdMirrorReplayReady(t, ctx, reverse, name, multicluster.RBDMirrorModeJournal, "", "")
 	onB := bytes.Clone(backlog)
 	patchB := rbdMultiClusterPayload(1<<20, 137)
 	copy(onB[5<<20:], patchB)
@@ -96,6 +129,7 @@ func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
 	if err := forward.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
 	after := bytes.Clone(onB)
 	patchA := rbdMultiClusterPayload(256<<10, 167)
 	copy(after[2<<20:], patchA)
