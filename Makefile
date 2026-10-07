@@ -21,12 +21,28 @@ IMAGE_PLATFORM ?=
 SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
 SCENARIO_CEPHFS_REMOVAL_TIMEOUT ?= 90m
 SCENARIO_RBD_RECEIVERS_TIMEOUT ?= 90m
+SCENARIO_MULTICLUSTER_GROUP ?= all
+SCENARIO_CEPHFS_REMOVAL_CASE ?= all
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
 MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry|RGWEndpoints|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(TopologySnapshotsHonorBusyOwners|MonitorBootstrapRefresh|RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
 SCENARIO_CEPHFS_REMOVAL_TESTS = ^TestMultiCluster(CephFSPeerRemovalDrain|CephFSDirectoryRemovalRelease|CephFSOriginalProcessQuiescence|CephFSOriginalProcessQuiescenceRecovery|CephFSDirectoryAdditionIntent)$$
 SCENARIO_RBD_RECEIVERS_TESTS = ^TestMultiClusterRBDReceiverReadiness$$
+
+# Keep the aggregate selectors for local runs. CI selects disjoint shards so
+# unrelated scenarios do not consume each other's Go process timeout.
+MULTICLUSTER_TOPOLOGY_TESTS_all = $(MULTICLUSTER_TOPOLOGY_TESTS)
+MULTICLUSTER_TOPOLOGY_TESTS_infra = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry)|MultiCluster(MonitorBootstrapRefresh|TopologySnapshotsHonorBusyOwners))$$
+MULTICLUSTER_TOPOLOGY_TESTS_rbd = ^Test(HostNetworkRBDSnapshotMirror|MultiCluster(RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle))$$
+MULTICLUSTER_TOPOLOGY_TESTS_cephfs = ^Test(HostNetwork|MultiCluster)CephFS(SnapshotMirrorAndBackup|ManagerTopology)$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw = ^Test(HostNetwork(RGWEndpoints|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
+CEPHFS_REMOVAL_TESTS_all = $(SCENARIO_CEPHFS_REMOVAL_TESTS)
+CEPHFS_REMOVAL_TESTS_peer-drain = ^TestMultiClusterCephFSPeerRemovalDrain$$
+CEPHFS_REMOVAL_TESTS_directory-release = ^TestMultiClusterCephFSDirectoryRemovalRelease$$
+CEPHFS_REMOVAL_TESTS_process-quiescence = ^TestMultiClusterCephFSOriginalProcessQuiescence$$
+CEPHFS_REMOVAL_TESTS_process-recovery = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$
+CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAdditionIntent$$
 
 # These targets exercise ceph.DefaultImage directly. Clear component image
 # overrides even when inherited from a local custom-image session. General
@@ -125,12 +141,14 @@ scenario-topology:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(TOPOLOGY_TIMEOUT) -run '$(TOPOLOGY_TESTS)' ./internal/integration
 
 scenario-multicluster-topology:
-	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS)' ./internal/integration
+	@test -n '$(MULTICLUSTER_TOPOLOGY_TESTS_$(SCENARIO_MULTICLUSTER_GROUP))' || { echo 'Unknown SCENARIO_MULTICLUSTER_GROUP' >&2; exit 1; }
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS_$(SCENARIO_MULTICLUSTER_GROUP))' ./internal/integration
 
 # Retained peer/directory removal and registration recovery are
 # isolated from the general multicluster budget; every bridge/host case runs.
 scenario-cephfs-removal:
-	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(SCENARIO_CEPHFS_REMOVAL_TESTS)' ./internal/integration
+	@test -n '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' || { echo 'Unknown SCENARIO_CEPHFS_REMOVAL_CASE' >&2; exit 1; }
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' ./internal/integration
 
 # Receiver readiness and observed snapshot checkpoints use a separate budget.
 # Every scope and bridge/host case runs against the pinned original image.

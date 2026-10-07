@@ -30,6 +30,36 @@ RESOURCE_COMMANDS = {
 }
 ENGINE_COMMAND = ["docker", "info", "--format", "{{json .}}"]
 ID_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+READINESS_SECONDS = 60
+STDERR_LIMIT = 65536
+
+
+def command_stderr(value):
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return value if isinstance(value, str) else ""
+
+
+def startup_connection_failure(stderr):
+    """Recognize daemon socket startup failures, never permission failures."""
+    stderr = stderr.lower()
+    if any(value in stderr for value in ("permission denied", "access is denied",
+                                        "access denied", "authorization denied",
+                                        "unauthorized", "forbidden")):
+        return False
+    if "unix://" not in stderr and "dial unix" not in stderr:
+        return False
+    if "cannot connect to the docker daemon" in stderr:
+        return True
+    return (("error during connect" in stderr or "dial unix" in stderr)
+            and ("connection refused" in stderr or "no such file or directory" in stderr))
+
+
+class DockerCommandError(RuntimeError):
+    def __init__(self, command, exit_code, stderr):
+        super().__init__("Docker read failed (exit " + str(exit_code)
+                         + "): " + " ".join(command))
+        self.transient_connection = startup_connection_failure(stderr)
 
 
 def timestamp():
@@ -94,15 +124,27 @@ class DockerReader:
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout, check=False)
             record["exit_code"] = result.returncode
+            stderr = command_stderr(result.stderr)
+            record["stderr"] = stderr[:STDERR_LIMIT]
+            record["stderr_truncated"] = len(stderr) > STDERR_LIMIT
         except subprocess.TimeoutExpired as error:
+            stderr = command_stderr(error.stderr)
+            record["stderr"] = stderr[:STDERR_LIMIT]
+            record["stderr_truncated"] = len(stderr) > STDERR_LIMIT
+            record["error_type"] = "TimeoutExpired"
             raise TimeoutError("Docker cleanup inspection timed out") from error
+        except OSError as error:
+            record["error_type"] = type(error).__name__
+            record["error"] = str(error)
+            raise
         finally:
             record["seconds"] = round(self.monotonic() - started, 3)
         if deadline is not None and self.monotonic() >= deadline:
+            record["error_type"] = "ObservationDeadlineExpired"
             raise TimeoutError("Cleanup observation deadline expired")
         if result.returncode:
-            raise RuntimeError("Docker read failed (exit " + str(result.returncode)
-                               + "): " + " ".join(command))
+            record["error_type"] = "DockerCommandError"
+            raise DockerCommandError(command, result.returncode, stderr)
         return result.stdout
 
     def engine(self, deadline=None):
@@ -142,8 +184,56 @@ def write_report(path, report):
         output.write(content)
 
 
-def snapshot(directory, reader=None):
+def prepare_engine(reader, report, readiness_seconds, sleep):
+    """Observe startup before taking the one authoritative resource baseline."""
+    readiness = {"budget_seconds": readiness_seconds, "passed": False,
+                 "attempts": []}
+    report["readiness"] = readiness
+    deadline = reader.monotonic() + readiness_seconds
+    last_error = None
+    while True:
+        if reader.monotonic() >= deadline:
+            raise TimeoutError("Docker baseline readiness deadline expired: "
+                               + str(last_error)) from last_error
+        started = reader.monotonic()
+        attempt = {"number": len(readiness["attempts"]) + 1,
+                   "started_at": timestamp(), "passed": False,
+                   "command_begin": len(reader.commands)}
+        readiness["attempts"].append(attempt)
+        try:
+            engine = reader.engine(deadline)
+        except (OSError, ValueError, RuntimeError, TimeoutError) as error:
+            last_error = error
+            attempt["error_type"] = type(error).__name__
+            attempt["error"] = str(error)
+            retry = (isinstance(error, TimeoutError)
+                     or isinstance(error, DockerCommandError)
+                     and error.transient_connection)
+            attempt["retryable"] = retry
+            if not retry:
+                raise
+        else:
+            attempt["passed"] = True
+            attempt["engine"] = engine
+            readiness["engine"] = engine
+            readiness["passed"] = True
+            return engine
+        finally:
+            attempt["finished_at"] = timestamp()
+            attempt["seconds"] = round(reader.monotonic() - started, 3)
+            attempt["command_end"] = len(reader.commands)
+        available = deadline - reader.monotonic()
+        if available <= 0:
+            raise TimeoutError("Docker baseline readiness deadline expired: "
+                               + str(last_error)) from last_error
+        sleep(min(1, available))
+
+
+def snapshot(directory, reader=None, readiness_seconds=READINESS_SECONDS, sleep=None):
+    if not math.isfinite(readiness_seconds) or not 0 < readiness_seconds <= 60:
+        raise ValueError("Docker readiness must be greater than zero and at most 60 seconds")
     reader = reader or DockerReader()
+    sleep = sleep or time.sleep
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     before = directory / "before.json"
@@ -151,7 +241,10 @@ def snapshot(directory, reader=None):
         raise FileExistsError("Cleanup results already exist; choose a new directory")
     report = new_report("snapshot")
     try:
+        ready_engine = prepare_engine(reader, report, readiness_seconds, sleep)
         report["engine"] = reader.engine()
+        if report["engine"] != ready_engine:
+            raise RuntimeError("Docker engine changed after baseline readiness")
         report["resources"] = reader.resources()
         if reader.engine() != report["engine"]:
             raise RuntimeError("Docker engine changed during cleanup snapshot")
@@ -217,10 +310,13 @@ def main(argv=None):
         child.add_argument("--directory", type=Path, required=True)
         if action == "check":
             child.add_argument("--grace-seconds", type=float, default=30)
+        else:
+            child.add_argument("--readiness-seconds", type=float,
+                               default=READINESS_SECONDS)
     args = parser.parse_args(argv)
     try:
-        report = snapshot(args.directory) if args.action == "snapshot" else check(
-            args.directory, args.grace_seconds)
+        report = snapshot(args.directory, readiness_seconds=args.readiness_seconds) \
+            if args.action == "snapshot" else check(args.directory, args.grace_seconds)
     except (OSError, ValueError) as error:
         print("Cleanup inspection FAIL: " + str(error), file=sys.stderr)
         return 1

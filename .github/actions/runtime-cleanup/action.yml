@@ -14,6 +14,7 @@ runs:
   using: composite
   steps:
     - name: Inspect Testcontainers resources
+      id: inspect
       shell: bash
       env:
         CLEANUP_PHASE: ${{ inputs.phase }}
@@ -22,9 +23,9 @@ runs:
         python3 "$GITHUB_ACTION_PATH/../../scripts/check_runtime_cleanup.py"
         "$CLEANUP_PHASE" --directory "$CLEANUP_DIRECTORY"
     - name: Save resource identities and cleanup result
-      if: ${{ always() && inputs.phase == 'check' }}
+      if: ${{ always() && (inputs.phase == 'check' || steps.inspect.outcome == 'failure') }}
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ inputs.artifact_name }}
+        name: ${{ inputs.phase == 'snapshot' && format('{0}-baseline', inputs.artifact_name) || inputs.artifact_name }}
         path: ${{ inputs.directory }}/
         if-no-files-found: error

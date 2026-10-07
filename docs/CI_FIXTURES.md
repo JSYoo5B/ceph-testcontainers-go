@@ -55,6 +55,40 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 
 [workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
+현재 CI는 `scenario-multicluster-topology`의 20개 parent를 `infra` 4개,
+`rbd` 6개, `cephfs` 4개, `rgw` 6개의 독립 job으로 실행합니다.
+`scenario-cephfs-removal`의 5개 parent도 각각 독립 job으로 실행합니다.
+각 job의 Go 제한은 60분, runner 제한은 cleanup을 포함해 70분입니다.
+모든 bridge/host 하위 케이스를 유지하며 `fail-fast: false`로 다른 shard의
+결과도 수집합니다. 컴파일된 실제 이름을 이용하는 selector 검사는 분할의
+중복·누락·빈 선택과 잘못된 shard 인자를 거부합니다.
+
+이 분할은 source `27e9338`의 [run 37672475341](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37672475341)에서
+확인한 누적 시간 제한에 대응합니다. Multicluster는 앞선 18개 PASS가
+86.24분을 사용한 뒤 다음 parent 실행 중 90분 package 제한에 도달했고,
+CephFS removal은 앞선 4개 PASS가 77.05분을 사용한 뒤 마지막 parent
+실행 중 같은 제한에 도달했습니다. 이 실패를 개별 assertion 실패로
+표시하거나 분할 후 성공한 것으로 간주하지 않습니다. 해당 실행의 공식·
+Debian·Ubuntu 이미지 matrix 12개는 모두 성공했습니다.
+
+로컬 aggregate target과 기본 90분 제한은 유지합니다. 일부 시나리오만
+실행하려면 다음과 같이 선택합니다. 테스트 간 병렬 실행은 독립 Docker
+엔진을 사용하는 CI job에서 수행합니다.
+
+```sh
+make scenario-multicluster-topology SCENARIO_MULTICLUSTER_GROUP=rgw
+make scenario-cephfs-removal SCENARIO_CEPHFS_REMOVAL_CASE=process-recovery
+```
+
+각 shard는 자체 resource baseline·cleanup·테스트 로그 artifact를 남깁니다.
+Baseline 준비가 실패한 경우도 별도 `*-baseline` artifact를 보존하며,
+성공한 baseline 없이 후행 cleanup을 PASS로 표시하지 않습니다.
+Docker 준비 조회는 최대 60초 안에서 명령당 최대 10초를 사용합니다.
+Timeout과 로컬 daemon socket의 연결 실패만 재시도하고 권한 오류·잘못된
+응답·지원하지 않는 platform은 즉시 실패합니다. 준비가 끝난 뒤 원래의
+engine·resource ID·동일 engine baseline 검사를 별도로 수행합니다.
+준비 중 각 명령과 오류를 보존하며 후행 cleanup의 30초 grace는 유지합니다.
+
 | 추가 필수 profile | 이름 수 | Go timeout | CI job timeout | `be58018` runtime 결과 | `d9115f4` runtime 결과 |
 |---|---:|---|---|---|---|
 | `scenario-cluster-fixtures` | 8 | 40분 | 50분 | SUCCESS · 8/8 PASS · skip 0 | SUCCESS · 8/8 PASS · fail/skip 0 |

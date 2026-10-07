@@ -43,6 +43,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p test_run_image_matrix.py -v
       - name: Check cleanup observations without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_check_runtime_cleanup.py -v
+      - name: Check scenario shard coverage without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_scenario_shards.py -v
 
   image-compatibility:
     name: image / ${{ matrix.variant }} / ${{ matrix.layout }} / ${{ matrix.architecture.name }}
@@ -74,6 +76,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
       - name: Verify published images with the Go module
         run: >-
           python3 .github/scripts/run_image_matrix.py
@@ -114,6 +117,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-default
       - run: make scenario-default
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -141,6 +145,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-topology
       - run: make scenario-topology
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -150,9 +155,14 @@ jobs:
           artifact_name: runtime-cleanup-scenario-topology
 
   scenario-multicluster-topology:
+    name: multicluster / ${{ matrix.group }}
     needs: scenario-default
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [infra, rbd, cephfs, rgw]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -168,18 +178,36 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-      - run: make scenario-multicluster-topology
+          artifact_name: runtime-cleanup-multicluster-${{ matrix.group }}
+      - name: Run multicluster shard
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-multicluster-topology SCENARIO_MULTICLUSTER_GROUP='${{ matrix.group }}' SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT=60m 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-multicluster-topology
+          artifact_name: runtime-cleanup-multicluster-${{ matrix.group }}
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-multicluster-${{ matrix.group }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-cephfs-removal:
+    name: cephfs removal / ${{ matrix.case }}
     needs: scenario-default
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [peer-drain, directory-release, process-quiescence, process-recovery, directory-intent]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -195,13 +223,26 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-      - run: make scenario-cephfs-removal
+          artifact_name: runtime-cleanup-cephfs-removal-${{ matrix.case }}
+      - name: Run CephFS removal case
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-cephfs-removal SCENARIO_CEPHFS_REMOVAL_CASE='${{ matrix.case }}' SCENARIO_CEPHFS_REMOVAL_TIMEOUT=60m 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-cephfs-removal
+          artifact_name: runtime-cleanup-cephfs-removal-${{ matrix.case }}
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-cephfs-removal-${{ matrix.case }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-rbd-receivers:
     needs: scenario-default
@@ -222,6 +263,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rbd-receivers
       - run: make scenario-rbd-receivers
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -249,6 +291,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-topology-extensions
       - name: Verify Docker bridge endpoint recovery
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
       - name: Run make scenario-topology-extensions
@@ -283,6 +326,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-cluster-fixtures
       - name: Run make scenario-cluster-fixtures
         shell: bash
         run: make scenario-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cluster-fixtures.log"
@@ -316,6 +360,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-cephfs-fixtures
       - name: Run make scenario-cephfs-fixtures
         shell: bash
         run: make scenario-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cephfs-fixtures.log"
@@ -349,6 +394,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rados-fixtures
       - name: Run make scenario-rados-fixtures
         shell: bash
         run: make scenario-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rados-fixtures.log"
@@ -382,6 +428,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rbd-fixtures
       - name: Run make scenario-rbd-fixtures
         shell: bash
         run: make scenario-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rbd-fixtures.log"
@@ -415,6 +462,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rgw-fixtures
       - name: Run make scenario-rgw-fixtures
         shell: bash
         run: make scenario-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-fixtures.log"
@@ -448,6 +496,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rgw-sync-fixtures
       - name: Run make scenario-rgw-sync-fixtures
         shell: bash
         run: make scenario-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log"
@@ -486,6 +535,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-rgw-sync-native-regressions
       - run: make rgw-sync-native-regressions
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -513,6 +563,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-mirror-initial-daemons
       - run: make scenario-mirror-initial-daemons
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -540,6 +591,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rbd-namespaces
       - run: make scenario-rbd-namespaces
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -567,6 +619,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-storage-bootstrap
       - run: make scenario-storage-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -594,6 +647,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-manager-bootstrap
       - run: make scenario-manager-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -621,6 +675,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-rbd-namespace-observation
       - run: make scenario-rbd-namespace-observation
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -648,6 +703,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-mds-bootstrap
       - run: make scenario-mds-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -675,6 +731,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-mds-replacement
       - run: make scenario-mds-replacement
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -702,6 +759,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
+          artifact_name: runtime-cleanup-scenario-last-mds-replacement
       - run: make scenario-last-mds-replacement
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}

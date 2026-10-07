@@ -62,8 +62,9 @@ class CleanupTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.docker = Docker()
 
-    def snapshot(self):
-        return cleanup.snapshot(self.directory, self.docker.reader())
+    def snapshot(self, readiness=60):
+        return cleanup.snapshot(self.directory, self.docker.reader(), readiness,
+                                self.docker.clock.sleep)
 
     def check(self, grace=3):
         return cleanup.check(self.directory, grace, self.docker.reader(),
@@ -266,6 +267,189 @@ class CleanupTests(unittest.TestCase):
             with self.subTest(grace=grace), self.assertRaises(ValueError):
                 self.check(grace)
         self.assertFalse((self.directory / "after.json").exists())
+
+    def test_snapshot_retries_startup_timeout_and_preserves_every_attempt(self):
+        reads = 0
+
+        def starting(command, options):
+            nonlocal reads
+            if command == cleanup.ENGINE_COMMAND:
+                reads += 1
+                if reads <= 2:
+                    self.docker.clock.now += options["timeout"]
+                    raise subprocess.TimeoutExpired(command, options["timeout"],
+                                                    stderr=b"daemon startup still pending")
+
+        self.docker.hook = starting
+        before = self.snapshot()
+        self.assertTrue(before["passed"])
+        self.assertTrue(before["readiness"]["passed"])
+        attempts = before["readiness"]["attempts"]
+        self.assertEqual([a["passed"] for a in attempts], [False, False, True])
+        self.assertEqual([(a["command_begin"], a["command_end"]) for a in attempts],
+                         [(0, 1), (1, 2), (2, 3)])
+        self.assertEqual(len(before["commands"]), 7)
+        for command in before["commands"][:2]:
+            self.assertEqual(command["argv"], cleanup.ENGINE_COMMAND)
+            self.assertEqual(command["stderr"], "daemon startup still pending")
+            self.assertEqual(command["error_type"], "TimeoutExpired")
+            self.assertIsNone(command["exit_code"])
+        self.assertEqual(self.docker.clock.now, 22)
+        self.assertEqual(before["engine"], before["readiness"]["engine"])
+        self.assertEqual(before["resources"], {"containers": [OLD_CONTAINER],
+                                               "networks": [OLD_NETWORK]})
+        self.assertEqual(json.loads((self.directory / "before.json").read_text()), before)
+
+    def test_snapshot_retries_only_recognized_socket_startup_errors(self):
+        for stderr in ["Cannot connect to the Docker daemon at unix:///var/run/docker.sock. "
+                       "Is the docker daemon running?",
+                       'error during connect: dial unix /var/run/docker.sock: connect: connection refused',
+                       'dial unix /var/run/docker.sock: connect: no such file or directory']:
+            with self.subTest(stderr=stderr), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+
+                def first_connection(command, options):
+                    if len(docker.calls) == 1:
+                        return subprocess.CompletedProcess(command, 1, "", stderr)
+
+                docker.hook = first_connection
+                before = cleanup.snapshot(path, docker.reader(), 3, docker.clock.sleep)
+                self.assertTrue(before["passed"])
+                self.assertEqual(len(before["readiness"]["attempts"]), 2)
+                self.assertTrue(before["readiness"]["attempts"][0]["retryable"])
+                self.assertEqual(before["commands"][0]["stderr"], stderr)
+                self.assertEqual(before["commands"][0]["exit_code"], 1)
+                self.assertEqual(docker.clock.now, 1)
+
+    def test_exhausted_startup_readiness_is_bounded_and_cannot_create_a_baseline(self):
+        def never_ready(command, options):
+            self.docker.clock.now += options["timeout"]
+            raise subprocess.TimeoutExpired(command, options["timeout"], stderr=b"not ready")
+
+        self.docker.hook = never_ready
+        before = self.snapshot(12)
+        self.assertFalse(before["passed"])
+        self.assertFalse(before["readiness"]["passed"])
+        self.assertIn("readiness deadline", before["error"])
+        self.assertIn("inspection timed out", before["error"])
+        self.assertEqual(self.docker.clock.now, 12)
+        self.assertEqual([r["timeout_seconds"] for r in before["commands"]], [10, 1])
+        self.assertEqual(len(before["readiness"]["attempts"]), 2)
+        self.assertEqual([c[0] for c in self.docker.calls], [cleanup.ENGINE_COMMAND] * 2)
+        self.assertNotIn("resources", before)
+        self.assertNotIn("engine", before)
+        self.assertFalse((self.directory / "after.json").exists())
+        after = self.check()
+        self.assertFalse(after["passed"])
+        self.assertIn("successful supported snapshot", after["error"])
+        self.assertEqual(len(self.docker.calls), 2)
+
+    def test_permanent_startup_errors_never_retry(self):
+        cases = ["permission denied while trying to connect to the Docker daemon socket",
+                 "Cannot connect to the Docker daemon: permission denied",
+                 "Cannot connect to the Docker daemon at unix:///var/run/docker.sock: permission denied",
+                 "Cannot connect to the Docker daemon at tcp://remote.example:2375. Is the docker daemon running?",
+                 "Cannot connect to the Docker daemon. Is the docker daemon running on this host?",
+                 "Error response from daemon: authorization denied",
+                 "unknown server error"]
+        for stderr in cases:
+            with self.subTest(stderr=stderr), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+                docker.hook = lambda command, options: subprocess.CompletedProcess(
+                    command, 1, "", stderr)
+                before = cleanup.snapshot(path, docker.reader(), 3, docker.clock.sleep)
+                self.assertFalse(before["passed"])
+                self.assertFalse(before["readiness"]["attempts"][0]["retryable"])
+                self.assertEqual(len(docker.calls), 1)
+                self.assertEqual(docker.clock.now, 0)
+                self.assertEqual(before["commands"][0]["stderr"], stderr)
+        with tempfile.TemporaryDirectory() as path:
+            def missing(command, options):
+                raise FileNotFoundError("docker")
+
+            docker = Docker()
+            docker.hook = missing
+            before = cleanup.snapshot(path, docker.reader(), 3, docker.clock.sleep)
+            self.assertFalse(before["passed"])
+            self.assertEqual(len(docker.calls), 1)
+            self.assertEqual(before["commands"][0]["error_type"], "FileNotFoundError")
+            self.assertFalse(before["readiness"]["attempts"][0]["retryable"])
+
+    def test_invalid_startup_engine_observation_never_retries(self):
+        for output in ["{invalid", "[]", json.dumps({"ID": "", "OSType": "linux",
+                                                       "Architecture": "amd64"}),
+                       json.dumps({"ID": "native", "OSType": "linux",
+                                   "Architecture": "riscv64"}),
+                       json.dumps({"ID": "native", "OSType": "windows",
+                                   "Architecture": "amd64"})]:
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+                docker.hook = lambda command, options: subprocess.CompletedProcess(
+                    command, 0, output, "")
+                before = cleanup.snapshot(path, docker.reader(), 3, docker.clock.sleep)
+                self.assertFalse(before["passed"])
+                self.assertEqual(len(docker.calls), 1)
+                self.assertFalse(before["readiness"]["attempts"][0]["retryable"])
+                self.assertNotIn("resources", before)
+
+    def test_late_valid_startup_observation_cannot_publish_ready(self):
+        def slow(command, options):
+            self.docker.clock.now += 3
+
+        self.docker.hook = slow
+        before = self.snapshot(2)
+        self.assertFalse(before["passed"])
+        self.assertFalse(before["readiness"]["passed"])
+        self.assertEqual(len(self.docker.calls), 1)
+        self.assertEqual(before["commands"][0]["error_type"], "ObservationDeadlineExpired")
+        self.assertNotIn("resources", before)
+
+    def test_engine_switch_after_readiness_cannot_publish_a_baseline(self):
+        def changed_engine(command, options):
+            if command == cleanup.ENGINE_COMMAND and len(self.docker.calls) == 2:
+                self.docker.info["ID"] = "another-engine"
+
+        self.docker.hook = changed_engine
+        before = self.snapshot()
+        self.assertTrue(before["readiness"]["passed"])
+        self.assertFalse(before["passed"])
+        self.assertIn("changed after baseline readiness", before["error"])
+        self.assertEqual(len(self.docker.calls), 2)
+        self.assertNotIn("resources", before)
+
+    def test_authoritative_snapshot_failure_is_not_retried_as_startup(self):
+        def failed_list(command, options):
+            if command == cleanup.RESOURCE_COMMANDS["containers"]:
+                raise subprocess.TimeoutExpired(command, options["timeout"],
+                                                stderr=b"listing timeout")
+
+        self.docker.hook = failed_list
+        before = self.snapshot()
+        self.assertTrue(before["readiness"]["passed"])
+        self.assertFalse(before["passed"])
+        self.assertEqual(len(before["readiness"]["attempts"]), 1)
+        self.assertEqual(len(self.docker.calls), 3)
+        self.assertEqual(before["commands"][-1]["argv"], cleanup.RESOURCE_COMMANDS["containers"])
+        self.assertEqual(before["commands"][-1]["stderr"], "listing timeout")
+
+    def test_check_connection_failure_does_not_receive_startup_retry_or_extra_grace(self):
+        self.snapshot()
+        prior = len(self.docker.calls)
+        self.docker.hook = lambda command, options: subprocess.CompletedProcess(
+            command, 1, "", "Cannot connect to the Docker daemon")
+        after = self.check(2)
+        self.assertFalse(after["passed"])
+        self.assertEqual(len(self.docker.calls), prior + 1)
+        self.assertEqual(after["grace_seconds"], 2)
+        self.assertNotIn("readiness", after)
+        self.assertNotIn("new_resources", after)
+
+    def test_invalid_readiness_is_rejected_without_reads_or_a_result(self):
+        for seconds in [0, -1, 61, float("inf"), float("nan")]:
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                self.snapshot(seconds)
+        self.assertEqual(self.docker.calls, [])
+        self.assertFalse((self.directory / "before.json").exists())
 
 
 if __name__ == "__main__":
