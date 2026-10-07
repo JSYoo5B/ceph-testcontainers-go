@@ -38,6 +38,18 @@ Purge를 요청한 뒤 응답이 유실되면 descriptor를 유지합니다. 새
 
 2026-10-07 Docker Desktop Linux ARM64에서 고정 원본 `ceph.DefaultImage`로 `TestOSDRemovalLifecycle/bridge`, `/host`를 실행했습니다. 실제 purge 이후 응답만 유실시켜 재시도 중 native 변경·stop이 늘지 않고 cleanup만 수행됨을 확인했습니다. OSD 추가의 ID 재사용과 새로운 UUID, 외부 UUID 등록 뒤 native mutation·stop·terminate 거부, 복제 수 2인 pool의 8개 object 각각 32 KiB 원문 유지까지 검사했습니다. 최종 로그 `artifacts/followups-20261007/osd-runtime-final.log`는 127.678초 PASS이며 `osd-final-cleanup/after.json`은 새 container/network 0개로 PASS입니다. Unit·race·전체 tag compile/vet도 통과했습니다. 이 focused 실행은 기존 전체 CI 또는 다른 이미지 계열의 새 검증으로 표시하지 않습니다.
 
+## MON 교체 후 bootstrap 설정
+
+`AddMonitor`와 `RemoveMonitor`는 현재 quorum의 monmap으로 control·MON·MGR·OSD·MDS·RGW의 `/etc/ceph/ceph.conf`에 있는 global `mon host`를 갱신합니다. 실행 중인 native session이 새 monmap을 배운 것과 다음 재시작의 bootstrap 설정은 다르므로 양쪽을 유지합니다. Docker archive API를 사용해 중지된 소유 컨테이너도 처리하며 그 외 section·node별 설정·keyring과 process 상태를 유지합니다. Control의 private 설정은 새 client용 template에 복사하지 않습니다.
+
+파일 복사가 일부 실패하면 native MON 변경과 이미 성공한 파일 갱신은 유지됩니다. `RefreshMonitorConfig(ctx)`로 새 context에서 현재 quorum을 다시 읽고 재시도할 수 있습니다. 이미 최신인 파일은 쓰지 않습니다. Add의 partial handle에 다시 같은 이름을 추가하거나 새 데몬을 만드는 동작으로 재시도를 대신하지 않습니다. Remove의 partial ownership도 완료 전까지 유지됩니다. 이 작업은 process를 시작·재시작하지 않습니다.
+
+호출자가 `WithClient`로 만든 client와 별도 `multicluster` 연결은 각자의 config snapshot을 소유합니다. 자동 갱신 대상이 아니며 전체 MON 교체 뒤 이들의 재시작에는 새 `ConnectionConfig`를 반영해야 합니다. 이 계약은 cluster가 소유한 daemon의 rolling replacement와 구분합니다.
+
+2026-10-07의 수정 전 원본 Quay host probe는 a,b,c → d,e,f 교체와 3-member quorum을 유지했지만 기존 MGR/RGW/OSD의 파일에 옛 주소가 남았고 RGW cold start는 timeout으로 실패했습니다. 로그 `artifacts/followups-20261007/mon-before.log`와 별도 `mon-before-cleanup/after.json`의 새 리소스 0개를 보존합니다.
+
+수정 후 `TestMonitorRollingReplacement`는 같은 원본 Quay Linux ARM64의 bridge 144.00초·host 156.59초, 명령 전체 301.046초 PASS입니다. 최종 MON 세 개의 실제 quorum, running/stopped 소유 daemon의 개별 설정·role keyring, 중지된 MDS의 명시적 설정 복구, 원래 MGR/MDS/RGW container ID와 재등록된 새 MGR/MDS GID, RADOS/S3의 정확한 64 KiB를 확인했습니다. Caller-owned client snapshot은 유지했습니다. `mon-source.json`의 실행 전후 source 해시는 동일하며 `mon-runtime.log`, `mon-check.log`, 새 리소스 0개인 `mon-cleanup/after.json`에 runtime·전체 unit/race/vet/tag compile·cleanup 증거를 연결합니다. 기존 전체 CI와 다른 이미지 계열의 새 전체 검증으로 합산하지 않습니다.
+
 ## 네트워크 구성 계약
 
 `WithSeparateClusterNetwork()`는 Docker가 선택한 서로 다른 IPv4 subnet의 bridge 두 개를 생성합니다. `NetworkName()`은 public bridge이며 `ClusterNetworkName()`은 OSD backend bridge입니다. OSD만 양쪽에 연결됩니다. `WithClient`, MON/MGR/MDS/RGW와 mirror의 native client는 public bridge를 사용합니다. config의 `public network`/`cluster network`로 Ceph가 실제 주소를 선택합니다. 기본 단일 bridge와 host mode의 동작은 기존과 같습니다. 분리 옵션과 host mode를 함께 요청하면 생성 전에 거부합니다.

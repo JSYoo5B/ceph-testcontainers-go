@@ -189,8 +189,9 @@ func TestAddMonitorRejectsForeignMembershipBeforeCreatingResources(t *testing.T)
 }
 
 func monitorLifecycleFixture(control *monitorLifecycleControl) *Container {
+	control.config = []byte("[global]\nmon host = old\n")
 	return &Container{Container: control, monitors: make(map[string]*MonitorContainer),
-		settings: options{startupTimeout: time.Second}, config: []byte("mon host = old\n")}
+		settings: options{startupTimeout: time.Second}, config: bytes.Clone(control.config)}
 }
 
 type monitorLifecycleDaemon struct {
@@ -204,12 +205,15 @@ func (daemon *monitorLifecycleDaemon) Terminate(context.Context, ...testcontaine
 	return daemon.terminateErr
 }
 
+func (daemon *monitorLifecycleDaemon) GetContainerID() string { return "removed-monitor" }
+
 type monitorLifecycleControl struct {
 	testcontainers.Container
 	members, quorum, calls []string
 	removals, copies       int
 	afterRemoval           []monitorLifecycleRead
 	copyErr                error
+	config                 []byte
 }
 
 type monitorLifecycleRead struct {
@@ -264,7 +268,16 @@ func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string,
 	return exitCode, &stream, nil
 }
 
-func (control *monitorLifecycleControl) CopyToContainer(context.Context, []byte, string, int64) error {
+func (control *monitorLifecycleControl) GetContainerID() string { return "control" }
+
+func (control *monitorLifecycleControl) CopyFileFromContainer(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(control.config)), nil
+}
+
+func (control *monitorLifecycleControl) CopyToContainer(_ context.Context, data []byte, _ string, _ int64) error {
 	control.copies++
+	if control.copyErr == nil {
+		control.config = bytes.Clone(data)
+	}
 	return control.copyErr
 }

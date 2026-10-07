@@ -247,6 +247,7 @@ python3 internal/integration/goceph/run.py \
 | `ControlContainer()` / `ControlImage()` | 남은 quorum으로 관리하는 CLI handle / 설정된 control 이미지 |
 | `AddOSD(ctx)` | OSD 등록, 포맷, 컨테이너 실행, up/in 확인 |
 | `RemoveOSD(ctx, id)` | drain → safe-to-destroy → stop → down → purge → 컨테이너 제거 |
+| `RefreshMonitorConfig(ctx)` | 현재 quorum의 MON 주소를 소유 데몬들의 설정 파일에 다시 반영 |
 | `OSDs()` | ID 순서로 정렬한 소유 OSD 목록 |
 | `OSDs()[i].Stop/Start` | 해당 데몬의 정지/재시작을 통한 장애 주입 |
 | `Ceph(ctx, args...)` | 제어 컨테이너에서 CLI 실행, stdout 반환 |
@@ -287,7 +288,7 @@ make scenario-topology-extensions
 
 `scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 102개입니다. 새 `TestOSDRemovalLifecycle`은 원본 Quay의 bridge/host 로컬 검증을 완료했으며 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않습니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름이며 현재 기본·토폴로지·SDK 55개와 합해 103개입니다. 새 `TestOSDRemovalLifecycle`과 topology의 `TestMonitorRollingReplacement`는 원본 Quay의 bridge/host 로컬 검증을 완료했으며 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않습니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 
 Source `d9115f4`의 [전체 CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 terminal SUCCESS입니다. 상세 job 10개의 101개 named test와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개였습니다. 101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. 공식·Debian·Ubuntu의 12개 native 이미지 조합도 각각 대표 9개를 통과했고 상세·matrix cleanup artifact 22개에서 새 container/network 0개를 확인했습니다. Matrix 반복이나 child 수를 distinct native I/O 수로 더하지 않습니다.
 

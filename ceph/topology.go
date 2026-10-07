@@ -1,15 +1,20 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -314,17 +319,69 @@ func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 	return c.refreshMonitorConfigAfterRemoval(ctx, "")
 }
 
+// RefreshMonitorConfig copies the live quorum's bootstrap addresses into the
+// global mon_host entry of every owned daemon's ceph.conf, including stopped
+// daemons, without starting or restarting them. Other entries and comments are
+// retained. Caller-owned clients and multicluster daemon configs are not copied.
+//
+// AddMonitor and RemoveMonitor already refresh these files. Retry this method
+// after an AddMonitor that joined native membership but could not copy every
+// config; retry RemoveMonitor itself after a partial removal. Successful copies
+// and the future-client template are retained on partial failure. Repeating a
+// refresh reads each current file and skips copies that are already up to date.
+// External config writers must not race this operation: Docker has no file CAS.
+func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
+	if c == nil {
+		return errors.New("ceph cluster is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	defer c.mu.Unlock()
+	if c.closed {
+		return errors.New("ceph cluster is terminated")
+	}
+	return c.refreshMonitorConfig(ctx)
+}
+
+// Unlike Mutex.Lock, waiting for serialized topology work must respect the
+// caller's deadline. The caller owns Unlock after this helper succeeds.
+func (c *Container) lockTopology(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if c.mu.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 // The topology caller supplies its existing operation deadline. Only native
-// reads are retried here; membership mutation and config copying are not.
+// reads are polled here; membership is never mutated or daemons restarted. Each
+// config is read through Docker's archive API, which also works when stopped.
 func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
 	var status QuorumStatus
 	if err := c.poll(ctx, func() (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		current, err := c.QuorumStatus(ctx)
 		if err != nil {
 			return false, err
 		}
 		if len(current.MonMap.Mons) == 0 || len(current.QuorumNames) <= len(current.MonMap.Mons)/2 {
 			return false, errors.New("monitor membership has no majority quorum")
+		}
+		if _, err := monitorBootstrapAddresses(current); err != nil {
+			return false, err
 		}
 		if removedName != "" {
 			if slices.Contains(current.QuorumNames, removedName) {
@@ -341,29 +398,281 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	}); err != nil {
 		return err
 	}
+	addresses, err := monitorBootstrapAddresses(status)
+	if err != nil {
+		return err
+	}
+	c.configMu.RLock()
+	template := bytes.Clone(c.config)
+	c.configMu.RUnlock()
+	template, err = replaceGlobalMonitorHost(template, addresses)
+	if err != nil {
+		return fmt.Errorf("refresh future client configuration: %w", err)
+	}
+	control := c.cliContainer()
+	if control == nil {
+		return errors.New("ceph control container is unavailable")
+	}
+	if err := copyMonitorBootstrapConfig(ctx, control, addresses); err != nil {
+		return fmt.Errorf("refresh control configuration: %w", err)
+	}
+	// Publish after the control's current file confirms the new addresses. A
+	// later daemon copy failure must not keep new clients on removed monitors.
+	c.configMu.Lock()
+	c.config = template
+	c.configMu.Unlock()
+	var errs []error
+	for _, target := range c.monitorConfigTargets(control, removedName) {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		if err := copyMonitorBootstrapConfig(ctx, target.container, addresses); err != nil {
+			errs = append(errs, fmt.Errorf("refresh %s configuration: %w", target.name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func monitorBootstrapAddresses(status QuorumStatus) (string, error) {
+	names := make(map[string]bool)
 	var endpoints []string
 	for _, mon := range status.MonMap.Mons {
+		if mon.Name == "" || names[mon.Name] || len(mon.PublicAddrs.Addrvec) == 0 {
+			return "", errors.New("native monmap has empty/duplicate members or missing addresses")
+		}
+		names[mon.Name] = true
 		var addresses []string
+		seen := make(map[string]bool)
 		for _, addr := range mon.PublicAddrs.Addrvec {
-			endpoint, _, _ := strings.Cut(addr.Addr, "/")
-			addresses = append(addresses, addr.Type+":"+endpoint)
+			endpoint, nonce, hasNonce := strings.Cut(addr.Addr, "/")
+			host, port, err := net.SplitHostPort(endpoint)
+			ip, ipErr := netip.ParseAddr(host)
+			number, portErr := strconv.Atoi(port)
+			if err != nil || ipErr != nil || ip.IsUnspecified() || portErr != nil || number < 1 || number > 65535 || (addr.Type != "v1" && addr.Type != "v2") {
+				return "", errors.New("native monmap contains an invalid bootstrap address")
+			}
+			if hasNonce {
+				if _, err := strconv.ParseUint(nonce, 10, 64); err != nil {
+					return "", errors.New("native monmap contains an invalid address nonce")
+				}
+			}
+			address := addr.Type + ":" + endpoint
+			if seen[address] {
+				return "", errors.New("native monmap contains a duplicate member address")
+			}
+			seen[address] = true
+			addresses = append(addresses, address)
 		}
 		endpoints = append(endpoints, "["+strings.Join(addresses, ",")+"]")
 	}
-	c.configMu.Lock()
-	defer c.configMu.Unlock()
-	lines := strings.Split(string(c.config), "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, "mon host = ") {
-			lines[i] = "mon host = " + strings.Join(endpoints, " ")
+	quorum := make(map[string]bool)
+	for _, name := range status.QuorumNames {
+		if !names[name] || quorum[name] {
+			return "", errors.New("native quorum has unknown or duplicate members")
+		}
+		quorum[name] = true
+	}
+	if len(names) == 0 || len(quorum) <= len(names)/2 {
+		return "", errors.New("monitor membership has no majority quorum")
+	}
+	return strings.Join(endpoints, " "), nil
+}
+
+type monitorConfigTarget struct {
+	name      string
+	container testcontainers.Container
+}
+
+// The topology caller holds c.mu. Deduplicate the generic service handles and
+// filesystem/gateway descriptors without calling accessors that re-lock c.mu.
+func (c *Container) monitorConfigTargets(control testcontainers.Container, removedName string) []monitorConfigTarget {
+	var candidates []monitorConfigTarget
+	add := func(name string, ctr testcontainers.Container) {
+		if ctr != nil {
+			candidates = append(candidates, monitorConfigTarget{name: name, container: ctr})
 		}
 	}
-	config := []byte(strings.Join(lines, "\n"))
-	if err := c.cliContainer().CopyToContainer(ctx, config, "/etc/ceph/ceph.conf", 0o644); err != nil {
+	if !c.monitorTerminated && removedName != "a" {
+		add("mon.a", c.Container)
+	}
+	for name, mon := range c.monitors {
+		if mon != nil && name != removedName {
+			add("mon."+name, mon.Container)
+		}
+	}
+	for name, mgr := range c.managers {
+		if mgr != nil && !mgr.terminated {
+			add("mgr."+name, mgr.Container)
+		}
+	}
+	if initial := c.managers["a"]; initial == nil || !initial.terminated {
+		add("mgr.a", c.manager)
+	}
+	for id, osd := range c.osds {
+		if osd != nil && !osd.purged {
+			add(fmt.Sprintf("osd.%d", id), osd.Container)
+		}
+	}
+	for name, ctr := range c.services {
+		add(name, ctr)
+	}
+	for name, gateway := range c.gateways {
+		if gateway != nil {
+			add("rgw."+name, gateway.Container)
+		}
+	}
+	for _, fs := range c.filesystems {
+		if fs == nil {
+			continue
+		}
+		for _, mds := range fs.mdss {
+			if mds != nil {
+				add("mds."+mds.ID, mds.Container)
+			}
+		}
+	}
+	slices.SortFunc(candidates, func(a, b monitorConfigTarget) int { return strings.Compare(a.name, b.name) })
+	seen := map[string]bool{control.GetContainerID(): true}
+	var targets []monitorConfigTarget
+	for _, target := range candidates {
+		id := target.container.GetContainerID()
+		if id != "" && seen[id] {
+			continue
+		}
+		seen[id] = true
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+const monitorConfigMaxBytes = 1 << 20
+
+func copyMonitorBootstrapConfig(ctx context.Context, ctr testcontainers.Container, addresses string) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.config = config
-	return nil
+	reader, err := ctr.CopyFileFromContainer(ctx, "/etc/ceph/ceph.conf")
+	if err != nil {
+		return err
+	}
+	config, readErr := io.ReadAll(io.LimitReader(reader, monitorConfigMaxBytes+1))
+	if err := errors.Join(readErr, reader.Close()); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	updated, err := replaceGlobalMonitorHost(config, addresses)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(config, updated) {
+		return nil
+	}
+	return ctr.CopyToContainer(ctx, updated, "/etc/ceph/ceph.conf", 0o644)
+}
+
+// Accept the fixture's single explicit global setting, including native key
+// aliases, whitespace and comments. Ambiguous sections, duplicates, includes,
+// continuations and malformed quoted values are refused without rewriting.
+func replaceGlobalMonitorHost(config []byte, addresses string) ([]byte, error) {
+	if len(config) > monitorConfigMaxBytes || !utf8.Valid(config) || bytes.IndexByte(config, 0) >= 0 || strings.TrimSpace(addresses) == "" || strings.ContainsAny(addresses, "\r\n\x00#;") {
+		return nil, errors.New("invalid or oversized monitor bootstrap configuration")
+	}
+	lines := strings.SplitAfter(string(config), "\n")
+	global, section, globals, hosts := false, false, 0, 0
+	for index, original := range lines {
+		line := strings.TrimSuffix(original, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		ending := original[len(line):]
+		comment, err := monitorConfigComment(line)
+		if err != nil {
+			return nil, err
+		}
+		content := line
+		if comment >= 0 {
+			content = line[:comment]
+		}
+		trimmed := strings.TrimSpace(content)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") {
+			if !strings.HasSuffix(trimmed, "]") || strings.Count(trimmed, "[") != 1 || strings.Count(trimmed, "]") != 1 || strings.TrimSpace(trimmed[1:len(trimmed)-1]) == "" {
+				return nil, errors.New("ambiguous configuration section")
+			}
+			section = true
+			global = strings.TrimSpace(trimmed[1:len(trimmed)-1]) == "global"
+			if global {
+				globals++
+				if globals != 1 {
+					return nil, errors.New("duplicate global configuration section")
+				}
+			}
+			continue
+		}
+		key, _, hasValue := strings.Cut(content, "=")
+		if !section || !hasValue || strings.TrimSpace(key) == "" || strings.HasPrefix(trimmed, "!") || strings.HasSuffix(trimmed, "\\") {
+			return nil, errors.New("ambiguous configuration entry or include/continuation")
+		}
+		normalized := strings.Join(strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(key)), "_")
+		if normalized == "include" || normalized == "includedir" {
+			return nil, errors.New("configuration include cannot be refreshed unambiguously")
+		}
+		if !global || normalized != "mon_host" {
+			continue
+		}
+		hosts++
+		if hosts != 1 {
+			return nil, errors.New("duplicate global mon_host configuration")
+		}
+		equals := strings.IndexByte(line, '=')
+		start := equals + 1
+		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
+			start++
+		}
+		end := len(content)
+		for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
+			end--
+		}
+		lines[index] = line[:start] + addresses + line[end:] + ending
+	}
+	if globals != 1 || hosts != 1 {
+		return nil, errors.New("configuration needs exactly one explicit global mon_host entry")
+	}
+	return []byte(strings.Join(lines, "")), nil
+}
+
+func monitorConfigComment(line string) (int, error) {
+	var quoted byte
+	escaped := false
+	for index := range len(line) {
+		char := line[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		if quoted != 0 {
+			if char == quoted {
+				quoted = 0
+			}
+			continue
+		}
+		if char == '\'' || char == '"' {
+			quoted = char
+		} else if char == '#' || char == ';' {
+			return index, nil
+		}
+	}
+	if quoted != 0 || escaped {
+		return -1, errors.New("ambiguous configuration quoting or continuation")
+	}
+	return -1, nil
 }
 
 // AddManager creates a named active/standby candidate and waits for its mgrmap
