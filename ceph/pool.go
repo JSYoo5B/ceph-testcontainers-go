@@ -65,7 +65,9 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	if err != nil {
 		return nil, fmt.Errorf("configure pool: %w", err)
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")

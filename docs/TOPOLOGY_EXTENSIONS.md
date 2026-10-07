@@ -104,8 +104,10 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 | 완료 | constructor·관측 경로의 context-free configuration/manager/gateway/control snapshot | additive context getter와 consumer preflight. Busy source/destination 8개 실제 constructor의 deadline cause·후속 native 호출 0회, MON bridge/host 및 RGW 회귀 PASS·strict cleanup; [계약과 결과](TOPOLOGY_CONTEXT.md) |
 | 완료 | CephFS peer 제거 후 원래 worker의 종료 관측 | live cohort의 original FS/peer/session을 보존한 `BeginPeerRemoval`, `Status`, `WaitDrained`. 실제 삭제 응답 유실·동일 handle 재시도·새 peer/checkpoint·원문·strict cleanup bridge/host PASS; [계약과 증거](CEPHFS_PEER_REMOVAL.md) |
 | 완료 | host RGW allocator 생성과 lease 기록의 순서 | owner를 allocation 전에 얻고 nonnil lease를 같은 critical section에 기록. Busy/closed/canceled·partial error·동시 termination unit, native TLS·gateway 증감 bridge/host PASS; [계약과 증거](TOPOLOGY_CONTEXT.md#host-rgw-포트-allocator의-소유권) |
-| 다음 | CephFS setup/scale·subvolume/data-pool의 혼합 잠금 | 생성 전 대기는 caller context, 생성 후 ownership bookkeeping은 handle 유실 없이 유지 |
-| 이후 | CephFS directory release 및 중지/교체된 원래 peer worker의 quiescence | 원래 path/peer/session identity를 보존한 완료 witness. 현재 peer drain은 same-live-session 범위이며 process 변경을 종료 증거로 채택하지 않음 |
+| 완료 | CephFS setup/scale·subvolume/data-pool·pin/clone의 혼합 잠금 | 생성 전 setup→owner→control 대기는 caller context, 생성 후 identity/descriptor 기록 유지. 실제 held-gate·fresh retry unit/race 및 원본 Quay MDS scale/replay·data-pool·pin·clone 5개 parent PASS·strict cleanup; [계약과 결과](TOPOLOGY_CONTEXT.md#cephfs-setupscaleprovisioning의-context-admission) |
+| 다음 | CephFS directory 제거 후 원래 sync cycle 해제 관측 | 원래 path/peer/session과 모든 owned live replayer에서 exact path stats 부재를 확인하는 retained receipt. Snapshot 완료·thread join·remote unlock 성공은 별도 범위 |
+| 이후 | Cephx·CephFS grant/eviction의 남은 owner/control admission | caller context cause·secret-safe 오류·원래 키와 partial creation/grant handle 보존. Context 없는 caller customizer와 post-native publication은 구분 |
+| 이후 | 중지/교체된 원래 peer process의 quiescence | 현재 peer drain은 same-live-session 범위. 동일 engine의 원래 CID와 retired watcher를 검증하는 adapter 없이 process 변경을 종료 증거로 채택하지 않음 |
 
 Bootstrap 갱신은 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. Removal drain도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. Peer map에서 UUID가 없어지는 것과 in-flight replayer shutdown 완료는 서로 다른 관측입니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
 

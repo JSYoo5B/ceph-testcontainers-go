@@ -34,7 +34,11 @@ type cephFSCloneMetadata struct {
 // metadata_manager}.py and volumes/fs/async_cloner.py.
 func (fs *CephFSContainer) readCloneIncarnation(ctx context.Context, identity *cephFSCloneIdentity) (*cephFSCloneIncarnation, error) {
 	base := path.Join(path.Dir(path.Dir(path.Dir(identity.source.subvolume.path))), cephFSNativeGroup(identity.group), identity.name)
-	data, err := command(ctx, fs.cluster.cliContainer(), "python3", "-c", cephFSCloneIdentityScript, fs.config.Name, base)
+	control, err := fs.cluster.ControlContainerContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select CephFS clone CLI container: %w", err)
+	}
+	data, err := command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, fs.config.Name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native clone incarnation: %w", err)
 	}
@@ -113,9 +117,7 @@ func (fs *CephFSContainer) CancelSubvolumeClone(ctx context.Context, clone *Ceph
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return err
 	}
-	fs.cluster.mu.Lock()
 	timeout := fs.cluster.settings.startupTimeout
-	fs.cluster.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request := true

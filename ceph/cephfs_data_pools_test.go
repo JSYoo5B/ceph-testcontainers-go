@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -163,13 +164,22 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 	ctx := &cephFSDataPoolWaitingContext{Context: base, firstCheck: make(chan struct{})}
 	fs.cluster.cephfsSetupMu.Lock()
 	locked := true
-	defer func() {
+	result := make(chan error, 1)
+	exited := make(chan struct{})
+	t.Cleanup(func() {
+		cancel()
 		if locked {
 			fs.cluster.cephfsSetupMu.Unlock()
+			locked = false
 		}
-	}()
-	result := make(chan error, 1)
+		select {
+		case <-exited:
+		case <-time.After(time.Second):
+			t.Error("data-pool setup waiter did not exit after fixture release")
+		}
+	})
 	go func() {
+		defer close(exited)
 		_, done, err := fs.beginDataPoolOperation(ctx)
 		done()
 		result <- err
@@ -180,16 +190,27 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		t.Fatal("data pool operation did not reach its pre-lock context check")
 	}
 	cancel()
-	fs.cluster.cephfsSetupMu.Unlock()
-	locked = false
 	select {
 	case err := <-result:
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled waiter started a native-operation lease: %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("canceled waiter retained the filesystem setup lock")
+	case <-time.After(500 * time.Millisecond):
+		// Release and join a regression before failing this assertion.
+		fs.cluster.cephfsSetupMu.Unlock()
+		locked = false
+		select {
+		case <-result:
+		case <-time.After(time.Second):
+		}
+		t.Fatal("canceled waiter did not return while setup remained busy")
 	}
+	if fs.cluster.cephfsSetupMu.TryLock() {
+		fs.cluster.cephfsSetupMu.Unlock()
+		t.Fatal("canceled waiter stole or unlocked the held setup gate")
+	}
+	fs.cluster.cephfsSetupMu.Unlock()
+	locked = false
 	if len(ctr.calls) != 0 {
 		t.Fatal("canceled setup waiter sent native commands", ctr.calls)
 	}

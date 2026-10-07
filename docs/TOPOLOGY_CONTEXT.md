@@ -13,7 +13,7 @@
 
 부분 생성·변경 뒤 cleanup handle과 retry ownership을 유지합니다. 취소 때문에 이미 생성한 resource의 bookkeeping을 건너뛰지 않습니다. Owner→daemon/resources/interruption의 기존 잠금 순서도 유지합니다. 기다리는 goroutine을 남기지 않고 `TryLock`과 bounded poll로 대기합니다.
 
-호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. 기존 context-free getter 자체의 대기, Ceph 내부의 직접 control 조회, CephFS setup/scale·subvolume/data-pool의 여러 단계 잠금과 post-native descriptor publication은 별도 범위입니다. Host RGW allocator의 admission·publication은 아래 추가 계약을 따릅니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
+호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. 기존 context 없는 getter, 남은 직접 control 조회·authorization·WithClient cache와 post-native descriptor publication은 별도 범위입니다. Host RGW allocator와 CephFS setup/scale family의 admission은 아래 추가 계약을 따릅니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
 
 Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 기록을 완료합니다. 그 지점에서 cancellation을 이유로 handle 추적을 버리면 subsequent cleanup과 retry가 깨집니다. 새 context에서 같은 handle을 다시 호출해 확인·정리를 이어갑니다.
 
@@ -30,7 +30,7 @@ Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 �
 
 `Ceph(ctx)`는 context를 받는 control snapshot을 사용합니다. Cluster owner mutex를 다시 얻지 않으므로 이미 owner를 보유한 MON/MGR/OSD 작업에서도 사용할 수 있습니다. Native query 동안 snapshot의 read lock을 유지하지 않습니다. Snapshot과 process 종료 사이의 기존 lifetime race는 native 오류로 보고합니다.
 
-Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destination의 context-aware control·bootstrap snapshot을 사용하고 오류 cause를 `%w`로 보존합니다. CephFS MGR attachment는 manager snapshot 오류 뒤 native manager query를 실행하지 않습니다. 새 RGW cluster 판단도 gateway snapshot 오류 뒤 pool query를 실행하지 않습니다. CephFS watcher·peer 설정 갱신 및 RBD 설정 갱신의 control 조회도 같은 context를 사용합니다. Ceph 내부의 다른 직접 `cliContainer` 경로와 CephFS setup/scale의 혼합 잠금은 여전히 별도 범위입니다.
+Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destination의 context-aware control·bootstrap snapshot을 사용하고 오류 cause를 `%w`로 보존합니다. CephFS MGR attachment는 manager snapshot 오류 뒤 native manager query를 실행하지 않습니다. 새 RGW cluster 판단도 gateway snapshot 오류 뒤 pool query를 실행하지 않습니다. CephFS watcher·peer 설정 갱신 및 RBD 설정 갱신의 control 조회도 같은 context를 사용합니다. Ceph 내부의 나머지 직접 `cliContainer` 경로·authorization·WithClient cache는 아래 추가 CephFS 범위와 구분합니다.
 
 새 getter의 unit test는 실제 owner/config/control writer 잠금을 caller deadline 이후까지 유지합니다. 이미 owner를 보유한 `Ceph(ctx)`가 control snapshot만 얻어 native query에 도달하는 경로도 검사합니다. Configuration byte copy와 정렬된 descriptor slice, 기존 closed-cluster inspection 계약을 유지합니다.
 
@@ -73,5 +73,29 @@ Allocation 뒤 native 오류나 caller cancellation이 있어도 nonnil lease를
 6개 unit parent가 busy/closed/canceled admission의 allocation 0회, partial lease identity·오류 cause 유지, cleanup 실패/재시도/idempotence, 동시 termination과 inventory 순서를 검증합니다. 원본 Quay 20.2.4 Linux ARM64의 `TestRGWNativeTLS`는 bridge 46.41초·host 45.71초 PASS로 HTTP/TLS 별도 포트, 실제 인증서 검증과 S3 bytes를 확인했습니다. `TestRGWTopology`는 bridge 74.61초·host 74.52초 PASS로 gateway 증감·재생성과 기존 원문을 확인했습니다.
 
 Unit·race·vet·전체 tag compile 및 위 native 결과는 `artifacts/peer-drain-host-ports-20261007/`에 보존합니다. 같은 suite의 CephFS peer drain을 포함한 terminal은 PASS 710.650초이며 strict cleanup은 신규 container/network/Ryuk 0개, 관련 source·Makefile 217개는 실행 전후 동일합니다. 동시 termination 순서의 회귀는 unit fixture에서 검사한 것이며 native suite에서 해당 concurrency fault를 별도 주입했다는 뜻은 아닙니다.
+
+## CephFS setup·scale·provisioning의 context admission
+
+Filesystem setup과 MDS scale, subvolume/group·snapshot/clone·data-pool·pin의 기존 operation gate는 setup → owner → control 순서로 caller context를 적용합니다. Inner owner/control에 진입하지 못하면 이미 얻은 setup 잠금을 반환하고 native 조회·변경 전에 원래 context cause로 반환합니다. Configured startup timeout이 admission 뒤 시작되는 기존 timing 계약을 유지하며, caller의 더 짧은 deadline은 admission부터 적용됩니다.
+
+`MDSStatus`, scale의 loop/poll과 retirement preflight는 context 없는 `MDSs()` 대신 private context snapshot을 사용합니다. Snapshot 실패를 daemon 0개로 처리하지 않습니다. Native query 동안 owner 잠금을 유지하지 않으며 descriptor membership과 native FSMap을 하나의 atomic view로 보장하지 않습니다. 기존 `MDSs()`의 context 없는 inspection과 descriptor 생성 순서·identity·closed-fixture 조회 계약을 유지합니다.
+
+Inherited `CreatePool` 진입과 pin/clone/data-pool의 직접 control snapshot에도 context를 적용합니다. Clone wait/cancel이 immutable startup timeout을 읽기 위해 owner를 얻던 잠금은 제거했습니다. Scale의 daemon inspect 오류는 `%w`로 원래 cause를 유지하고, desired count publication 전에 closed/원래 filesystem ownership을 다시 확인합니다. Restored pin의 fast-path도 setup 진입에 context를 적용하므로 already-canceled 호출은 cause를 반환하고 새 context에서의 idempotence는 유지합니다.
+
+Native 성공 뒤 원래 FS/pool identity 기록, nonnil partial MDS 등록, 확인된 retirement inventory 정리는 caller cancellation과 별개로 보존합니다. 그 post-native publication 잠금과 authorization·WithClient customizer cache는 이번 admission 변경의 전체 latency 보장에 포함되지 않습니다. 외부 native 정책 변경과 owner snapshot도 atomic으로 묶지 않습니다.
+
+영구 unit regression은 실제 setup/owner/control 잠금을 deadline 이후까지 보유합니다. 8개 public operation × 세 gate, setup/pin·MDS snapshot/status, 관측된 native 경계 이후 registration/desired config/WaitReady 대기, inherited CreatePool·직접 control 조회를 검사합니다. Causal deadline/cancel, 후속 native query/mutation 0회, descriptor/count/identity·recovery handle 보존과 같은 fixture의 새 context 재시도를 확인합니다. Successful identity readback 직후 취소해도 원래 identity가 기록되는 것을 별도 확인합니다. 기존 canceled-data-pool 테스트도 setup을 반환하기 전에 취소 결과를 받도록 강화했고 failure cleanup은 한 경로에서 잠금 반환과 worker join을 수행합니다.
+
+추가 변경의 unit·race·vet·전체 tag compile은 PASS입니다. `artifacts/cephfs-context-admission-20261007/check.log`은 실제 전체 check 기록이며 최종 cancellation-test cleanup 수정의 unit·race는 별도 로그로 보존합니다. 원본 pinned Quay 20.2.4 Linux ARM64에서 다음 focused native 회귀를 통과했습니다.
+
+| Parent | 실행 결과 | 실제 확인 범위 |
+| --- | --- | --- |
+| `TestCephFSMDSScaleTopology` | bridge PASS 108.73s | 같은 FSID·pool에서 1 active → 2 active + 1 standby → 1 active + 1 standby → 1 active, retired container 제거·다른 filesystem 유지·새 client session 원문 |
+| `TestCephFSMDSScaleStandbyReplayTopology` | bridge PASS 106.80s | 초기 replay follower 및 같은 scale 전환, filesystem·pool·별도 filesystem identity와 원문 유지 |
+| `TestCephFSDynamicDataPools` | bridge 118.77s / host 118.56s PASS | replicated/EC attachment·native pool ID·fresh libcephfs bytes·clone placement, managed-use/all-namespace object guard 및 unused registration 제거 |
+| `TestCephFSPins` | bridge 252.05s / host 238.10s PASS | group export rank1·가까운 subvolume rank0, distributed/random의 두 active rank 배치·각 16개 파일·원래 pin 값 복원 |
+| `TestCephFSCloneCancellationAndPartialCleanup` | bridge 226.47s / host 219.69s PASS | canceled/failed clone·source protection 해제·명시적 partial cleanup·same-name replacement 보존·frozen snapshot bytes와 독립 clone I/O |
+
+다섯 parent와 예상 child 10개는 FAIL/SKIP 없이 package terminal PASS 1,389.544초입니다. MDS 두 구성의 fresh native session 16회에서 각 38,912 bytes와 SHA256을 확인하고 별도 filesystem은 scale 세 단계마다 동일 원문을 유지했습니다. `native-cleanup/after.json`은 같은 engine에서 새 container/network/Ryuk 잔여 0개를 확인합니다. `source-before.json`·`source-after.json`의 관련 source 219개(Go·script·module·Makefile)는 실행 전후 동일하며 고정 image 정책 해시도 유지됐습니다. `verification.json`은 원본 named 결과·native byte proof·cleanup·각 실제 check log 해시를 대조합니다. 이번 실행은 현재 selector 106개 전체 CI나 공식·Debian·Ubuntu matrix 재실행의 완료를 의미하지 않습니다.
 
 이 focused 실행을 전체 CI나 다른 image matrix의 새 검증으로 합산하지 않습니다. [MON bootstrap 재연결](MON_BOOTSTRAP_REFRESH.md)과 [topology 변경 계약](TOPOLOGY_EXTENSIONS.md)의 소유권 경계를 유지합니다.

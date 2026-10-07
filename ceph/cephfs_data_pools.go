@@ -147,14 +147,28 @@ func (fs *CephFSContainer) beginDataPoolOperation(ctx context.Context) (context.
 		return ctx, func() {}, errors.New("CephFS filesystem is unavailable")
 	}
 	c := fs.cluster
-	c.cephfsSetupMu.Lock()
+	if err := lockTopologyMutex(ctx, &c.cephfsSetupMu); err != nil {
+		return ctx, func() {}, err
+	}
 	if err := ctx.Err(); err != nil {
 		c.cephfsSetupMu.Unlock()
 		return ctx, func() {}, err
 	}
-	c.mu.Lock()
-	valid := !c.closed && c.cliContainer() != nil && c.filesystems[fs.config.Name] == fs && fs.nativeIdentity != nil
+	if err := c.lockTopology(ctx); err != nil {
+		c.cephfsSetupMu.Unlock()
+		return ctx, func() {}, err
+	}
+	valid := !c.closed && c.filesystems[fs.config.Name] == fs && fs.nativeIdentity != nil
 	timeout := c.settings.startupTimeout
+	if valid {
+		control, err := c.ControlContainerContext(ctx)
+		if err != nil {
+			c.mu.Unlock()
+			c.cephfsSetupMu.Unlock()
+			return ctx, func() {}, err
+		}
+		valid = control != nil
+	}
 	c.mu.Unlock()
 	if !valid {
 		c.cephfsSetupMu.Unlock()
@@ -435,7 +449,11 @@ func (fs *CephFSContainer) checkUnusedDataPool(ctx context.Context, name string)
 			}
 		}
 	}
-	data, err := command(ctx, fs.cluster.cliContainer(), "rados", "-p", name, "--all", "ls")
+	control, err := fs.cluster.ControlContainerContext(ctx)
+	if err != nil {
+		return fmt.Errorf("select data pool CLI container: %w", err)
+	}
+	data, err := command(ctx, control, "rados", "-p", name, "--all", "ls")
 	if err != nil {
 		return fmt.Errorf("inspect all data pool namespaces: %w", err)
 	}

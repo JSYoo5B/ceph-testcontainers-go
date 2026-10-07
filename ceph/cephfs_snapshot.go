@@ -482,9 +482,7 @@ func (fs *CephFSContainer) WaitForSubvolumeClone(ctx context.Context, clone *Cep
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return nil, err
 	}
-	fs.cluster.mu.Lock()
 	timeout := fs.cluster.settings.startupTimeout
-	fs.cluster.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for {

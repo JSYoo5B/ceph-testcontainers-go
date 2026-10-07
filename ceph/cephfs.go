@@ -102,9 +102,11 @@ func (c *Container) StartCephFSWithConfig(ctx context.Context, config CephFSConf
 	if err != nil {
 		return nil, fmt.Errorf("configure cephfs: %w", err)
 	}
-	c.cephfsSetupMu.Lock()
+	if err := lockTopologyMutex(ctx, &c.cephfsSetupMu); err != nil {
+		return nil, err
+	}
 	defer c.cephfsSetupMu.Unlock()
-	if err := c.validateCephFSPoolPlacement(config); err != nil {
+	if err := c.validateCephFSPoolPlacement(ctx, config); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -129,7 +131,9 @@ func (c *Container) StartCephFSWithConfig(ctx context.Context, config CephFSConf
 	for _, pool := range config.AdditionalDataPools {
 		fs.AdditionalDataPools = append(fs.AdditionalDataPools, pool.Name)
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	if c.filesystems == nil {
 		c.filesystems = make(map[string]*CephFSContainer)
 	}
@@ -196,6 +200,19 @@ func (fs *CephFSContainer) MDSs() []*MDSContainer {
 	return slices.Clone(fs.mdss)
 }
 
+// mdsSnapshot bounds topology admission for context-taking operations. It keeps
+// descriptor identity and creation order, including retained cleanup handles.
+func (fs *CephFSContainer) mdsSnapshot(ctx context.Context) ([]*MDSContainer, error) {
+	if fs == nil || fs.cluster == nil {
+		return nil, errors.New("cephfs cluster is unavailable")
+	}
+	if err := fs.cluster.lockTopology(ctx); err != nil {
+		return nil, err
+	}
+	defer fs.cluster.mu.Unlock()
+	return slices.Clone(fs.mdss), nil
+}
+
 // ScaleMDS changes the active/standby daemon counts of this existing filesystem
 // without recreating its pools or data. Active must be 1..256 and Standby must
 // be non-negative. Additional MDSs preserve the initial customizers and affinity.
@@ -216,9 +233,13 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 		return errors.New("cephfs cluster is unavailable")
 	}
 	c := fs.cluster
-	c.cephfsSetupMu.Lock()
+	if err := lockTopologyMutex(ctx, &c.cephfsSetupMu); err != nil {
+		return err
+	}
 	defer c.cephfsSetupMu.Unlock()
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		c.mu.Unlock()
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
@@ -235,17 +256,29 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 	if err != nil {
 		return err
 	}
-	daemons := fs.MDSs()
+	daemons, err := fs.mdsSnapshot(ctx)
+	if err != nil {
+		return err
+	}
 	if !cephFSMDSSettled(status, status.MaxMDS, len(daemons)) {
 		return errors.New("cephfs owned MDSs must be active or registered standbys before scaling")
 	}
 	for _, daemon := range daemons {
 		state, err := daemon.State(ctx)
-		if err != nil || state == nil || !state.Running {
-			return fmt.Errorf("mds.%s is not running; restore it before scaling (inspect error: %v)", daemon.ID, err)
+		if err != nil {
+			return fmt.Errorf("inspect mds.%s before scaling: %w", daemon.ID, err)
+		}
+		if state == nil || !state.Running {
+			return fmt.Errorf("mds.%s is not running; restore it before scaling", daemon.ID)
 		}
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
+		c.mu.Unlock()
+		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
+	}
 	fs.config = desired
 	c.mu.Unlock()
 	// A replay follower can replace only the rank it follows. Recycle followers
@@ -271,12 +304,23 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 			if err != nil {
 				return false, err
 			}
-			return len(current.StandbyReplay) == 0 && cephFSMDSSettled(current, status.MaxMDS, len(fs.MDSs())), nil
+			daemons, err := fs.mdsSnapshot(ctx)
+			if err != nil {
+				return false, err
+			}
+			return len(current.StandbyReplay) == 0 && cephFSMDSSettled(current, status.MaxMDS, len(daemons)), nil
 		}); err != nil {
 			return fmt.Errorf("wait for replay followers to become standbys: %w", err)
 		}
 	}
-	for len(fs.MDSs()) < active+standby {
+	for {
+		daemons, err := fs.mdsSnapshot(ctx)
+		if err != nil {
+			return err
+		}
+		if len(daemons) >= active+standby {
+			break
+		}
 		if err := fs.startMDS(ctx); err != nil {
 			return fmt.Errorf("add cephfs MDS while scaling: %w", err)
 		}
@@ -297,16 +341,27 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 		if err != nil {
 			return false, err
 		}
-		return cephFSMDSSettled(status, active, len(fs.MDSs())), nil
+		daemons, err := fs.mdsSnapshot(ctx)
+		if err != nil {
+			return false, err
+		}
+		return cephFSMDSSettled(status, active, len(daemons)), nil
 	}); err != nil {
 		return fmt.Errorf("wait for cephfs rank handoff: %w", err)
 	}
-	for len(fs.MDSs()) > active+standby {
+	for {
+		daemons, err := fs.mdsSnapshot(ctx)
+		if err != nil {
+			return err
+		}
+		if len(daemons) <= active+standby {
+			break
+		}
 		status, err := fs.MDSStatus(ctx)
 		if err != nil {
 			return err
 		}
-		candidate := cephFSMDSRetirementCandidate(status, fs.MDSs(), active)
+		candidate := cephFSMDSRetirementCandidate(status, daemons, active)
 		if candidate == nil {
 			return errors.New("no safely registered owned standby is available for cephfs scale-down")
 		}
@@ -325,7 +380,9 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 
 func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 	c := fs.cluster
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	if c.closed || c.filesystems[fs.FilesystemName] != fs {
 		c.mu.Unlock()
 		return errors.New("cephfs cluster is terminated or filesystem ownership changed")
@@ -362,7 +419,11 @@ func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 func (fs *CephFSContainer) retireMDS(ctx context.Context, candidate MDSStatus) error {
 	c := fs.cluster
 	var daemon *MDSContainer
-	for _, owned := range fs.MDSs() {
+	daemons, err := fs.mdsSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	for _, owned := range daemons {
 		if owned.ID == candidate.Name {
 			daemon = owned
 			break
@@ -466,11 +527,15 @@ func (fs *CephFSContainer) MDSStatus(ctx context.Context) (*CephFSMDSStatus, err
 	if fs == nil || fs.cluster == nil {
 		return nil, errors.New("cephfs cluster is unavailable")
 	}
+	daemons, err := fs.mdsSnapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot owned CephFS MDSs: %w", err)
+	}
 	data, err := fs.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
 	}
-	return parseCephFSMDSStatus(data, fs.FilesystemName, fs.MDSs())
+	return parseCephFSMDSStatus(data, fs.FilesystemName, daemons)
 }
 
 // WaitReady waits for all configured ranks to be owned and active and all
@@ -489,7 +554,9 @@ func (fs *CephFSContainer) WaitReady(ctx context.Context) error {
 		if err != nil {
 			return false, err
 		}
-		fs.cluster.mu.Lock()
+		if err := fs.cluster.lockTopology(ctx); err != nil {
+			return false, err
+		}
 		config := fs.config
 		fs.cluster.mu.Unlock()
 		if !cephFSMDSReady(status, config) {
@@ -594,8 +661,10 @@ func parseCephFSMDSStatus(data []byte, name string, daemons []*MDSContainer) (*C
 	return nil, fmt.Errorf("cephfs filesystem %q is absent from FSMap", name)
 }
 
-func (c *Container) validateCephFSPoolPlacement(config CephFSConfig) error {
-	c.mu.Lock()
+func (c *Container) validateCephFSPoolPlacement(ctx context.Context, config CephFSConfig) error {
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")

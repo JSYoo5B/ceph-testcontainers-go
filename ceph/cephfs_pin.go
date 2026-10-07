@@ -184,7 +184,9 @@ func (change *CephFSPinOverride) Restore(ctx context.Context) error {
 		return errors.New("CephFS pin override is unavailable")
 	}
 	fs := change.filesystem
-	fs.cluster.cephfsSetupMu.Lock()
+	if err := lockTopologyMutex(ctx, &fs.cluster.cephfsSetupMu); err != nil {
+		return err
+	}
 	restored := change.state.restored
 	fs.cluster.cephfsSetupMu.Unlock()
 	if restored {
@@ -277,7 +279,9 @@ func cephFSPinValue(policy *CephFSPinPolicy, kind CephFSPinType) float64 {
 }
 
 func (fs *CephFSContainer) checkPinTarget(ctx context.Context, fsID int64, target cephFSPinTarget) (string, error) {
-	fs.cluster.mu.Lock()
+	if err := fs.cluster.lockTopology(ctx); err != nil {
+		return "", err
+	}
 	closed := fs.cluster.closed
 	fs.cluster.mu.Unlock()
 	if closed {
@@ -362,7 +366,11 @@ func (fs *CephFSContainer) readAndCheckPinTarget(ctx context.Context, fsID int64
 }
 
 func (fs *CephFSContainer) readPinPolicy(ctx context.Context, base string) (*CephFSPinPolicy, error) {
-	data, err := command(ctx, fs.cluster.cliContainer(), "python3", "-c", cephFSPinReadScript, fs.config.Name, base)
+	control, err := fs.cluster.ControlContainerContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select CephFS pin CLI container: %w", err)
+	}
+	data, err := command(ctx, control, "python3", "-c", cephFSPinReadScript, fs.config.Name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native CephFS directory pins: %w", err)
 	}

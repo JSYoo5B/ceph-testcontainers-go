@@ -366,7 +366,7 @@ RBD image와 CephFS directory의 상태 조회·bounded 준비 대기는 [mirror
 
 CephFS peer 제거는 `BeginPeerRemoval`로 원래 peer·daemon cohort를 보존하고 `Status`·`WaitDrained`로 같은 live session의 replayer 종료를 확인할 수 있습니다. 응답 유실과 재시도, 기존 정책 요청 API 및 적용 조건은 [peer 제거 계약](docs/CEPHFS_PEER_REMOVAL.md)을 따릅니다.
 
-기존 topology·lifecycle 호출의 owner gate와 cleanup·network mutex 대기는 caller context를 따릅니다. 취소된 대기자는 native 변경 없이 반환하고 같은 fixture를 새 context로 재시도할 수 있습니다. 적용 범위와 남은 snapshot/setup 경로는 [잠금 대기 계약](docs/TOPOLOGY_CONTEXT.md)을 확인합니다.
+기존 topology·lifecycle 호출의 owner gate와 cleanup·network mutex 대기, context snapshot 및 CephFS setup/scale·provisioning admission은 caller context를 따릅니다. 취소된 대기자는 후속 native 변경 없이 반환하고 같은 fixture를 새 context로 재시도할 수 있습니다. 이미 생성된 identity/descriptor는 추적을 유지합니다. 적용 범위와 남은 authorization·customizer·publication 경로는 [잠금 대기 계약](docs/TOPOLOGY_CONTEXT.md)을 확인합니다.
 
 ## 현재 범위
 

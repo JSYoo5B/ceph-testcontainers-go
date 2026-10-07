@@ -145,14 +145,28 @@ func (fs *CephFSContainer) beginSubvolumeOperation(ctx context.Context) (context
 		return ctx, 0, func() {}, errors.New("CephFS filesystem is unavailable")
 	}
 	c := fs.cluster
-	c.cephfsSetupMu.Lock()
+	if err := lockTopologyMutex(ctx, &c.cephfsSetupMu); err != nil {
+		return ctx, 0, func() {}, err
+	}
 	if err := ctx.Err(); err != nil {
 		c.cephfsSetupMu.Unlock()
 		return ctx, 0, func() {}, err
 	}
-	c.mu.Lock()
-	valid := !c.closed && c.filesystems[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && c.cliContainer() != nil && fs.nativeIdentity != nil
+	if err := c.lockTopology(ctx); err != nil {
+		c.cephfsSetupMu.Unlock()
+		return ctx, 0, func() {}, err
+	}
+	valid := !c.closed && c.filesystems[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && fs.nativeIdentity != nil
 	timeout := c.settings.startupTimeout
+	if valid {
+		control, err := c.ControlContainerContext(ctx)
+		if err != nil {
+			c.mu.Unlock()
+			c.cephfsSetupMu.Unlock()
+			return ctx, 0, func() {}, err
+		}
+		valid = control != nil
+	}
 	c.mu.Unlock()
 	if !valid {
 		c.cephfsSetupMu.Unlock()
