@@ -198,3 +198,22 @@ final strict health/module closure, 10개 128 KiB byte 관측(독립 dataset 4�
 (ordinary 96.07초, replay 106.07초)와 자체 cleanup 0개를 확인했습니다.
 이 결과는 과거 93.742/99.372초 scale 기록을 대체하지 않으며 전체 117개 CI나 모든
 MDS 장애/복구 조합의 성공이 아닙니다. [원문과 현재 상태](NO_INITIAL_MDS.md)를 따릅니다.
+
+`scenario-mds-replacement`는 native 전역에서 원래 이름이 사라진 stopped original
+CID만 retire하고 기존 `ScaleMDS(ctx, 1, 1)`로 새 standby를 만드는 별도 topology입니다.
+API가 worker stop·native fail·auth 삭제를 수행하거나 CID-to-GID process binding을
+증명하는 것으로 표시하지 않습니다. 두 OSD·두 replica, ordinary 1 active / 1 standby
+및 active sibling의 원래 identities·auth names·coexisting nonce files를 유지합니다.
+Actual startup grace 3600초와 stopped/native-registered 거부, caller의 explicit
+GID fail 뒤 owned takeover·global old-name 부재·새 name/CID/GID·completed copied
+handle retry를 검증합니다. [공개 계약](CEPHFS_STOPPED_MDS.md)을 따릅니다.
+
+원본 Quay Linux ARM64 bridge/host primary 48592는 3개 RUN/PASS·package 207.328초
+(parent 206.97초, bridge 103.81초, host 103.16초), 별도 cold regression 58408은
+3개 RUN/PASS·201.502초(parent 200.89초, bridge 102.33초, host 98.56초)로 각각
+actual EXIT 0였습니다. Primary의 20개 128 KiB reader 기록은 dataset 8개와 retained
+verify를 합한 관측이고 raw health 4개는 unmuted HEALTH_OK/checks{}·required
+MGR closure를 확인했습니다. 같은 259개 source/policy와 각각 자체 outer cleanup의
+새 리소스 0개를 확인했습니다. [원문·종료·cleanup](CEPHFS_STOPPED_MDS.md)을 따르며
+P의 최초 cleanup FAIL/203.141·202.702초, P117/O116/N115/M114와 whole CI101을
+대체하지 않습니다. 전체 118개 CI·replay/foreign standby 변형·다른 platform의 성공이 아닙니다.

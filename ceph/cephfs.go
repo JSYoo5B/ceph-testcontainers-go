@@ -42,6 +42,7 @@ type MDSContainer struct {
 	testcontainers.Container
 	ID             string
 	FilesystemName string
+	identity       *cephFSMDSIdentity
 }
 
 // CephFSContainer describes one filesystem and embeds its first MDS container
@@ -470,7 +471,9 @@ func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(c
 	ctr, err := start(ctx, "mds."+id, c.settings.mdsImage, moduleOpts...)
 	if ctr != nil {
 		c.mu.Lock()
-		fs.mdss = append(fs.mdss, &MDSContainer{Container: ctr, ID: id, FilesystemName: fs.FilesystemName})
+		daemon := &MDSContainer{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
+		daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, err)
+		fs.mdss = append(fs.mdss, daemon)
 		if fs.Container == nil {
 			fs.Container = ctr
 		}

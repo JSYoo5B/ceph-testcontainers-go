@@ -247,3 +247,11 @@ SCENARIO_MDS_BOOTSTRAP_TESTS = ^TestNoInitialMDSTopology$$
 
 scenario-mds-bootstrap:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MDS_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_MDS_BOOTSTRAP_TESTS)' ./internal/integration
+
+# Stopped owned MDS retirement/replacement has its own bridge/host budget.
+.PHONY: scenario-mds-replacement
+SCENARIO_MDS_REPLACEMENT_TIMEOUT ?= 50m
+SCENARIO_MDS_REPLACEMENT_TESTS = ^TestStoppedMDSRetirementTopology$$
+
+scenario-mds-replacement:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MDS_REPLACEMENT_TIMEOUT) -run '$(SCENARIO_MDS_REPLACEMENT_TESTS)' ./internal/integration

@@ -655,3 +655,30 @@ jobs:
         with:
           phase: check
           artifact_name: runtime-cleanup-scenario-mds-bootstrap
+
+  scenario-mds-replacement:
+    needs: scenario-default
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Record Testcontainers resource identities
+        id: runtime_cleanup_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
+      - run: make scenario-mds-replacement
+      - name: Verify Testcontainers resource cleanup
+        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-scenario-mds-replacement

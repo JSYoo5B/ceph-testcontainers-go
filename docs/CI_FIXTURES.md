@@ -1,13 +1,14 @@
 # 시나리오 fixture CI
 
-현재 필수 compiled 선택은 O source의 실제 116개에
-`TestNoInitialMDSTopology` 한 parent만 추가한 **117개**입니다. 기본 14개,
-필수 internal 115개와 SDK 전체 11개 중 선택 2개를 실제 완료된 목록에서
-확인했습니다. 새 `scenario-mds-bootstrap`은 50분/60분의 독립 profile이며
-원본 Quay Linux ARM64 bridge/host focused 실행은 3개 RUN/PASS·203.141초·
-자체 outer cleanup의 새 container/network 0개를 확인했습니다. 이 목록을 새 전체 CI PASS로
-표시하지 않습니다. 아래 O116/N115/M114/whole CI101 기록은 해당 source의
-역사적 증거로 보존합니다.
+현재 필수 compiled 선택은 P cold-MDS source의 실제 117개에
+`TestStoppedMDSRetirementTopology` 한 parent만 추가한 **118개**입니다. 기본 14개,
+필수 internal 116개와 SDK 전체 11개 중 선택 2개를 실제 완료된 목록에서
+확인했습니다. 새 `scenario-mds-replacement`는 50분/60분의 독립 profile이며
+원본 Quay Linux ARM64 bridge/host focused 실행은 3개 RUN/PASS·207.328초·
+자체 outer cleanup의 새 container/network 0개를 확인했습니다. 같은 source의
+기존 cold-MDS 회귀도 별도 3개 RUN/PASS·201.502초·자체 cleanup 0개였습니다.
+이 목록을 새 전체 CI PASS로 표시하지 않습니다. 아래 P117/O116/N115/M114/whole
+CI101 기록은 해당 source의 역사적 증거로 보존합니다.
 
 Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. O source의 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
@@ -81,6 +82,7 @@ make scenario-rbd-namespace-observation
 make scenario-storage-bootstrap
 make scenario-manager-bootstrap
 make scenario-mds-bootstrap
+make scenario-mds-replacement
 make scenario-topology-extensions
 make scenario-cluster-fixtures
 make scenario-cephfs-fixtures
@@ -139,6 +141,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 | `scenario-storage-bootstrap` | 1 | 80분 | 90분 | `runtime-cleanup-scenario-storage-bootstrap` |
 | `scenario-manager-bootstrap` | 1 | 80분 | 90분 | `runtime-cleanup-scenario-manager-bootstrap` |
 | `scenario-mds-bootstrap` | 1 | 50분 | 60분 | `runtime-cleanup-scenario-mds-bootstrap` |
+| `scenario-mds-replacement` | 1 | 50분 | 60분 | `runtime-cleanup-scenario-mds-replacement` |
 
 Source `d9115f4`의 multicluster Make step은 68분 37초, 전체 job은 69분 1초였습니다. 추가된 긴 제거 관측·복구 parent의 시간 예산을 분리합니다. 이 분리와 선택 목록은 새 전체 CI 성공 증거가 아닙니다.
 
@@ -462,3 +465,26 @@ replay 106.07초)와 자체 cleanup 0개를 확인했습니다. Source 256과 po
 [자체 cleanup](../artifacts/no-initial-mds-20261008/scale-regression-cleanup/after.json)은
 cold first-start와 별도 evidence입니다. 두 focused 실행을 전체 117개 CI,
 모든 MDS 조합 또는 native partial-start 복구로 확장하지 않습니다.
+
+### `scenario-mds-replacement` · 1개
+
+```text
+TestStoppedMDSRetirementTopology
+```
+
+정확한 `integration,topology` parent·`-count=1`·`-failfast`, Go 50분/job 60분,
+`scenario-default` dependency, 기존 네 역할 override 해제, 자체 baseline·always
+cleanup·별도 artifact를 사용합니다. Setup부터 network별 15분 context와 별도
+cleanup/실패 로그 상한을 적용하며 두 OSD·두 replica의 ordinary target/sibling을
+구성합니다. [공개 계약](CEPHFS_STOPPED_MDS.md)에 따라 API는 native fail·auth
+삭제 없이 stopped original CID만 retire하고 desired capacity를 유지합니다.
+
+P117에 이 parent만 추가한 [실제 required 118개](../artifacts/stopped-mds-retirement-20261008/compiled-selection.json)와
+root `make check` session 2950은 actual EXIT 0입니다. Original Quay Linux ARM64
+primary 48592는 3개 RUN/PASS·package 207.328초(parent 206.97초, bridge 103.81초,
+host 103.16초), 같은 source의 별도 cold regression 58408은 3개 RUN/PASS·201.502초
+(parent 200.89초, bridge 102.33초, host 98.56초)로 각각 actual EXIT 0였습니다.
+259개 runtime source/policy를 유지했고 각각 자체 outer cleanup의 새 리소스는
+0개였습니다. [원문·종료·cleanup과 범위](CEPHFS_STOPPED_MDS.md)를 따르며
+기존 selector/P117·과거 focused 결과·전체 CI101을 새 전체 118개 runtime 성공으로
+바꾸지 않습니다. Replay/foreign standby 변형과 다른 image/platform도 범위 밖입니다.
