@@ -12,6 +12,8 @@ import (
 type options struct {
 	osds                   int
 	initialOSDs            []OSDConfig
+	initialOSDsExplicit    bool
+	noInitialOSDs          bool
 	poolReplicas           int
 	poolMinSize            int
 	poolDefaultsSet        bool
@@ -138,6 +140,19 @@ func WithMDSImage(image string) Option {
 	}
 }
 
+// WithNoInitialOSDs starts only the selected MON/MGR topology. It keeps the
+// ordinary prospective pool defaults (size 2, min_size 1) for later AddOSD calls;
+// WithPoolDefaults may override them. Initial pools, CephFS/RGW services and
+// explicit WithOSDCount/WithInitialOSDs options are rejected before allocation.
+// No storage readiness is implied: native internal pools may have pending PGs.
+// WithOSDCount(0) and WithInitialOSDs() keep their existing validation errors.
+func WithNoInitialOSDs() Option {
+	return func(o *options) error {
+		o.noInitialOSDs = true
+		return nil
+	}
+}
+
 // WithOSDCount sets the initial number of OSD containers (default: 2).
 func WithOSDCount(count int) Option {
 	return func(o *options) error {
@@ -146,6 +161,7 @@ func WithOSDCount(count int) Option {
 		}
 		o.osds = count
 		o.initialOSDs = nil
+		o.initialOSDsExplicit = true
 		return nil
 	}
 }
@@ -173,6 +189,7 @@ func WithInitialOSDs(configs ...OSDConfig) Option {
 			}
 		}
 		o.initialOSDs, o.osds = layout, len(layout)
+		o.initialOSDsExplicit = true
 		return nil
 	}
 }

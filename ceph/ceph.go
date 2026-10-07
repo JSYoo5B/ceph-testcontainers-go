@@ -106,6 +106,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := prepareInitialComposition(&settings); err != nil {
 		return nil, fmt.Errorf("configure initial ceph topology: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
 	var nw *testcontainers.DockerNetwork

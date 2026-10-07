@@ -215,3 +215,11 @@ SCENARIO_RBD_NAMESPACES_TESTS = ^TestMultiClusterRBDNamespaceBinding$$
 
 scenario-rbd-namespaces:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_NAMESPACES_TIMEOUT) -run '$(SCENARIO_RBD_NAMESPACES_TESTS)' ./internal/integration
+
+# Bootstrap without initial storage has a separate bridge/host lifecycle budget.
+.PHONY: scenario-storage-bootstrap
+SCENARIO_STORAGE_BOOTSTRAP_TIMEOUT ?= 80m
+SCENARIO_STORAGE_BOOTSTRAP_TESTS = ^TestNoInitialOSDTopology$$
+
+scenario-storage-bootstrap:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_STORAGE_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_STORAGE_BOOTSTRAP_TESTS)' ./internal/integration

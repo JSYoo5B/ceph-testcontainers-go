@@ -124,6 +124,17 @@ func resolveFilesystemDefaults(settings options, config CephFSConfig) CephFSConf
 // a network or daemon. Runtime IDs are unknown here; ordinal IDs suffice to
 // model the distinct OSD/host/rack domains of the initial layout.
 func prepareInitialComposition(settings *options) error {
+	if settings.noInitialOSDs {
+		if settings.initialOSDsExplicit || len(settings.initialOSDs) != 0 {
+			return fmt.Errorf("WithNoInitialOSDs cannot be combined with explicit initial OSD count or layout")
+		}
+		if len(settings.pools) != 0 || len(settings.filesystems) != 0 || len(settings.gateways) != 0 {
+			return fmt.Errorf("WithNoInitialOSDs requires no initial user pools, CephFS filesystems or RGW gateways; add OSDs before provisioning them")
+		}
+		// Run resolves positive prospective pool defaults before this suppresses
+		// initial launches. Later AddOSD uses the same placement and defaults.
+		settings.osds = 0
+	}
 	gatewayNames := make(map[string]bool)
 	for i, config := range settings.gateways {
 		config, err := normalizeRGWConfig(config)
@@ -170,7 +181,7 @@ func prepareInitialComposition(settings *options) error {
 	if needed == 0 {
 		needed = min(2, settings.osds)
 	}
-	if eligible < needed || eligible == 0 {
+	if !settings.noInitialOSDs && (eligible < needed || eligible == 0) {
 		return fmt.Errorf("default CRUSH root %q needs %d initial OSDs for automatically created pools, requested layout has %d; select a populated root with WithDefaultCRUSHRoot", settings.defaultCRUSHRoot, needed, eligible)
 	}
 	names := make(map[string]bool)
