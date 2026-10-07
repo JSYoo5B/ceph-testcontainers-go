@@ -223,6 +223,8 @@ Archive 전송은 read 사이에서 context 취소를 확인합니다. 호출자
 
 RBD의 `SourceRBD`/`DestinationRBD`는 연결이 소유한 관리 client에서 명령을 실행하며 `Rebootstrap`은 제거한 receiving peer를 다시 등록합니다. 왕복 전환에는 `SourceSite`/`DestinationSite`를 각 클러스터의 고정 이름으로 지정하고 반대 방향 연결에서도 그 이름을 유지합니다. 한 방향 연결의 daemon들은 destination에서 실행됩니다. 반대 방향 연결을 추가하면 반대 클러스터에도 receiving daemon이 필요합니다. Primary demote/promote, writer fencing, 복제 완료 대기, split-brain의 authoritative image 선택과 `resync`는 시나리오가 명시적으로 수행합니다.
 
+CephFS `BeginDirectoryAddition`은 daemon이 없는 구성에서도 native 요청 전 intent를 보존하고 같은 receipt의 fresh Begin으로 소유권을 확정합니다. `Status`는 등록 정책·소유권 관측만 수행합니다. [응답 유실·미적용 요청과 generation 계약](CEPHFS_DIRECTORY_ADDITION.md)을 따릅니다.
+
 CephFS의 `AddDirectory`/`RemoveDirectory`는 복제 directory 정책을, `PeerIDs`/`RemovePeer`/`RebootstrapPeer`는 동일한 source/destination 사이의 연결을 제어합니다. 제거한 정책이 daemon에 반영될 때까지 확인하고 다음 snapshot을 생성해야 합니다. API 성공과 실제 데이터 동기화 완료는 별도로 관측합니다. Destination에 이미 복제된 데이터나 snapshot을 peer 제거 시 삭제하지 않습니다.
 
 RGW의 `SourceAdmin`/`DestinationAdmin`은 realm/zone별 제어 명령을 실행합니다. `PullSourcePeriod`/`PullDestinationPeriod`는 native `realm pull`로 상대 site의 realm과 current committed period를 가져오고 활성 period 포인터·realm epoch·local zonegroup을 갱신합니다. Native `period pull`만으로는 활성 realm이나 local 구성이 바뀌지 않으므로 이 복귀 절차에 충분하지 않습니다. 정책 변경과 master 승격에는 실제 Ceph CLI와 gateway 재시작을 사용합니다. 새 master로 전환하기 전 metadata 동기화와 이전 writer fencing은 시나리오가 명시적으로 수행합니다. Realm/current period 반영은 해당 버전의 [rgw_zone.cc](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.cc)를 기준으로 구성했습니다.

@@ -24,7 +24,7 @@ SCENARIO_CEPHFS_REMOVAL_TIMEOUT ?= 90m
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
 MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry|RGWEndpoints|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(TopologySnapshotsHonorBusyOwners|MonitorBootstrapRefresh|RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
-SCENARIO_CEPHFS_REMOVAL_TESTS = ^TestMultiCluster(CephFSPeerRemovalDrain|CephFSDirectoryRemovalRelease|CephFSOriginalProcessQuiescence|CephFSOriginalProcessQuiescenceRecovery)$$
+SCENARIO_CEPHFS_REMOVAL_TESTS = ^TestMultiCluster(CephFSPeerRemovalDrain|CephFSDirectoryRemovalRelease|CephFSOriginalProcessQuiescence|CephFSOriginalProcessQuiescenceRecovery|CephFSDirectoryAdditionIntent)$$
 
 # These targets exercise ceph.DefaultImage directly. Clear component image
 # overrides even when inherited from a local custom-image session. General
@@ -125,7 +125,7 @@ scenario-topology:
 scenario-multicluster-topology:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS)' ./internal/integration
 
-# Retained peer/directory removal receipts and original-process recovery are
+# Retained peer/directory removal and registration recovery are
 # isolated from the general multicluster budget; every bridge/host case runs.
 scenario-cephfs-removal:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(SCENARIO_CEPHFS_REMOVAL_TESTS)' ./internal/integration

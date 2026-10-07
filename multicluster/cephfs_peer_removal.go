@@ -87,6 +87,9 @@ func (mirror *CephFSMirror) beginPeerRemoval(ctx context.Context, id string, rea
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+		return nil, err
+	}
 	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id {
 		r := mirror.peerRemoval
 		if r.processQuiescenceAcknowledged {
@@ -148,12 +151,21 @@ func (mirror *CephFSMirror) beginPeerRemoval(ctx context.Context, id string, rea
 		return nil, err
 	}
 	// Register BEFORE mutation; a lost CLI response cannot erase the intent.
+	mirror.supersedePeerDirectoryAddition(id)
 	mirror.peerRemoval = r
 	return r, r.resume(ctx)
 }
 
 // Called under mirror.mu. Legacy policy-only RemovePeer has no explicit receipt.
 func (mirror *CephFSMirror) guardPeerRemovalOverlap() error {
+	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+		return err
+	}
+	return mirror.guardCephFSRemovalOverlap()
+}
+
+// Addition resumes its own pending intent using only the removal admission gate.
+func (mirror *CephFSMirror) guardCephFSRemovalOverlap() error {
 	if mirror.peerRemoval != nil && !mirror.peerRemoval.terminal() {
 		return cephFSObserveGuard("explicit CephFS peer drain is incomplete")
 	}

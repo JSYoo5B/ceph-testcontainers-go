@@ -68,6 +68,9 @@ func (mirror *CephFSMirror) beginDirectoryRemoval(ctx context.Context, directory
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+		return nil, err
+	}
 	if r := mirror.directoryRemoval; r != nil && r.directory == directory && r.generation == mirror.directoryGenerations[directory] && !r.superseded {
 		if r.processQuiescenceAcknowledged {
 			return r, r.confirmAcknowledgedProcessPolicy(ctx)
@@ -143,14 +146,16 @@ func (mirror *CephFSMirror) beginDirectoryRemoval(ctx context.Context, directory
 		return nil, err
 	}
 	// Store the immutable identity and live witnesses BEFORE native mutation.
+	mirror.supersedeDirectoryAddition(directory)
 	mirror.directoryRemoval = r
 	return r, r.resume(ctx)
 }
 
 // Called under mirror.mu or before the constructor publishes its handle. Only
 // acknowledged owned registrations advance this generation: constructor add,
-// public AddDirectory and successful rebalance add.
+// public additions and successful rebalance add.
 func (mirror *CephFSMirror) advanceDirectoryGeneration(directory string) {
+	mirror.supersedeDirectoryAddition(directory)
 	if mirror.directoryGenerations == nil {
 		mirror.directoryGenerations = make(map[string]uint64)
 	}
@@ -213,19 +218,28 @@ func (r *CephFSMirrorDirectoryRemoval) policy(ctx context.Context) (bool, error)
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS directory removal policy", err)
 	}
+	seen, err := decodeCephFSDirectoryPolicy(data)
+	if err != nil {
+		return false, err
+	}
+	return seen[r.directory], ctx.Err()
+}
+
+// Shared strict native ls authority for retained path registration/removal.
+func decodeCephFSDirectoryPolicy(data []byte) (map[string]bool, error) {
 	var paths []string
 	if json.Unmarshal(data, &paths) != nil || paths == nil {
-		return false, cephFSObserveGuard("decode CephFS directory removal policy array")
+		return nil, cephFSObserveGuard("decode CephFS directory policy array")
 	}
 	seen := make(map[string]bool)
 	for _, directory := range paths {
 		canonical, err := normalizeMirrorDirectory(directory)
 		if err != nil || canonical != directory || seen[directory] {
-			return false, cephFSObserveGuard("CephFS directory removal policy path identity is ambiguous")
+			return nil, cephFSObserveGuard("CephFS directory policy path identity is ambiguous")
 		}
 		seen[directory] = true
 	}
-	return seen[r.directory], ctx.Err()
+	return seen, nil
 }
 
 func (r *CephFSMirrorDirectoryRemoval) forgetDesiredPolicy() {

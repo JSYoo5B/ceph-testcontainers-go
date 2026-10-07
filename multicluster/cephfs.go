@@ -91,6 +91,7 @@ type CephFSMirror struct {
 	pendingPeerImport                           *cephFSPeerIdentity
 	peerRemoval                                 *CephFSMirrorPeerRemoval
 	directoryRemoval                            *CephFSMirrorDirectoryRemoval
+	directoryAddition                           *CephFSMirrorDirectoryAddition
 	directoryGenerations                        map[string]uint64
 	peerGeneration                              uint64
 	managerNetworking                           *cephFSManagerNetworking
@@ -823,6 +824,7 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 	if r := mirror.directoryRemoval; r != nil && r.terminal() && r.directory == directory {
 		r.superseded = true
 	}
+	mirror.supersedeDirectoryAddition(directory)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("add CephFS mirror directory %q: %w", directory, err)
 	}
@@ -847,6 +849,9 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+		return err
+	}
 	if r := mirror.directoryRemoval; r != nil && r.directory == directory && !r.completed {
 		if r.processQuiescenceAcknowledged {
 			if !r.superseded && r.generation == mirror.directoryGenerations[directory] {
@@ -865,6 +870,7 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
+	mirror.supersedeDirectoryAddition(directory)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
 	}
@@ -925,6 +931,7 @@ func (mirror *CephFSMirror) RebalanceDirectories(ctx context.Context) error {
 	}
 	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories,
 		func(commandCtx context.Context, operation, directory string) error {
+			mirror.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
 			if err == nil && operation == "add" {
 				mirror.advanceDirectoryGeneration(directory)
@@ -1054,6 +1061,9 @@ func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+		return err
+	}
 	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id && !mirror.peerRemoval.completed {
 		if mirror.peerRemoval.processQuiescenceAcknowledged {
 			return mirror.peerRemoval.confirmAcknowledgedProcessPolicy(ctx)
@@ -1069,6 +1079,7 @@ func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 	if id == "" || id != mirror.peerID {
 		return errors.New("CephFS mirror does not own this peer")
 	}
+	mirror.supersedePeerDirectoryAddition(id)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.SourceFilesystem, id); err != nil {
 		return fmt.Errorf("remove CephFS mirror peer: %w", err)
 	}

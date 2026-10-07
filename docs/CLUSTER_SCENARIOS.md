@@ -20,7 +20,7 @@
 | `make scenario-multicluster-topology` | 독립 host cluster 두 개·MON 포트 충돌 재시도·RGW endpoint 분리, RBD snapshot pair·journal 전환·3-cluster fanout·peer 제거/재등록·backup/restore, CephFS pair·MGR HA 연결, RGW 2/3 zone 및 metadata master 전환·복귀. 실제 FSID·key·peer/zone graph와 데이터 유지 | PASS: 18/18 named test, Go 4122.876초 / profile elapsed 4125.396초, Linux ARM64. Metadata master A→B→A·RBD peer 제거/재등록 포함. Owned container/network 0개 |
 | `make scenario-topology-extensions` | 5 MON quorum, public/backend 분리·endpoint 단절/복구, RBD/CephFS 복수 mirror daemon 증감·HA, RGW 초기/동적 여러 zonegroup·zone 탈퇴, 세 서비스의 peer 단절·catch-up | PASS: 12/12 named test, Go 2345.826초 / profile elapsed 2349.432초, Linux ARM64. Mirror daemon·RGW zonegroup bridge/host와 peer 단절·복구 포함. Owned container/network 0개 |
 
-현재 selector는 `scenario-multicluster-topology` 20개와 별도 `scenario-cephfs-removal` 4개로 나눕니다. 기존 runtime 표의 source·이름 수는 당시 결과를 유지합니다. 최신 전체 선택 목록과 시간 예산은 [CI fixture 계약](CI_FIXTURES.md)을 따르며 새 profile의 등록을 전체 CI PASS로 표시하지 않습니다.
+현재 selector는 `scenario-multicluster-topology` 20개와 별도 `scenario-cephfs-removal` 5개로 나눕니다. 기존 runtime 표의 source·이름 수는 당시 결과를 유지합니다. 최신 전체 선택 목록과 시간 예산은 [CI fixture 계약](CI_FIXTURES.md)을 따르며 새 profile의 등록을 전체 CI PASS로 표시하지 않습니다.
 
 위 표는 현재 `scenario-*` target 이름으로 범위를 안내합니다. 아래의 이전 로그·CI job·명령 이름은 당시 `quay-*` 기록을 보존하며, 이름 변경을 새 runtime 실행으로 취급하지 않습니다.
 
