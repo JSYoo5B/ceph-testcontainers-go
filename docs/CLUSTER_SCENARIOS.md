@@ -217,3 +217,23 @@ MGR closure를 확인했습니다. 같은 259개 source/policy와 각각 자체 
 새 리소스 0개를 확인했습니다. [원문·종료·cleanup](CEPHFS_STOPPED_MDS.md)을 따르며
 P의 최초 cleanup FAIL/203.141·202.702초, P117/O116/N115/M114와 whole CI101을
 대체하지 않습니다. 전체 118개 CI·replay/foreign standby 변형·다른 platform의 성공이 아닙니다.
+
+`scenario-last-mds-replacement`는 ordinary 1 active / 0 standby의 마지막 original
+worker가 stopped/native-absent인 established failed rank 0에 한 새 indexed MDS를
+추가하고, 건강한 새 rank가 생긴 뒤 별도 Q `RemoveStoppedMDS`로 원래 CID만 retire합니다.
+두 OSD·replicas 2/min 1의 additional-pool target과 active sibling, 실제 MON-local
+3600초 grace·등록 거부·caller fail·strict failed-target health·fresh availability·
+coexisting nonce bytes와 completed copied retry를 순차 bridge/host에서 검사합니다.
+[공개 계약](CEPHFS_LAST_MDS_REPLACEMENT.md)의 실제 primary 25476은 EXIT 0,
+3개 RUN/PASS·package 223.931초(parent 223.62초, bridge 113.12초/host 110.49초)였습니다.
+24개 128 KiB reader 기록은 독립 dataset 8개와 retained verify를 합한 관측이며,
+두 fresh mount의 completed native errno 110/not killed·exact failed-target health 2개·
+strict initial/final HEALTH_OK 4개·required module closure 6개를 확인했습니다.
+262개 source와 고정 policy를 유지하고 자체 outer cleanup의 새 container/network가
+0개였습니다. 현재 source의 Q stopped-MDS 회귀 71135도 별도 3개 RUN/PASS·
+212.955초(parent 212.59초, bridge 105.00초/host 107.59초), P cold-MDS 회귀
+33769는 별도 3개 RUN/PASS·197.593초(parent 197.31초, bridge 98.97초/host 98.34초)와
+각각 자체 cleanup 0개로 완료했습니다. 회귀의 20개 reader/8 dataset과 10개 reader/
+4 dataset은 primary의 24개/8 dataset에 합산하지 않습니다. 과거 Q source259·
+207.328/201.502초와 P source256·203.141/202.702초는 원래 기록 그대로 보존합니다. Q118/P117 및 기존 전체 CI101·topology PASS를 대체하지 않으며
+새 119개 전체 suite나 다른 image/platform의 성공을 뜻하지 않습니다.

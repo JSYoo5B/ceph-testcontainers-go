@@ -37,6 +37,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | T10 | 최초 MGR 없는 MON/OSD 준비와 MON-only 조합 | `WithNoInitialManagers`, `AddManager`; initial pool·native MGR map/auth identity·명시적 첫 추가·management/data 준비 | 완료: 원본 Quay Linux ARM64 bridge/host의 독립 4개 fixture·최초 MGR map/auth/process 부재·명시적 첫 추가·active GID·module command·HEALTH_OK·128 KiB RADOS bytes·strict cleanup; 실제 selector 115개 확인, 기존 storage bootstrap의 새 source 회귀·별도 cleanup도 통과; [계약과 실행 범위](NO_INITIAL_MANAGERS.md) |
 | T11 | 최초 MDS 없는 CephFS storage 구성과 같은 descriptor의 첫 metadata service | `CephFSConfig.NoInitialMDS`, `ScaleMDS(ctx, 1, 0)`; original FS/pools·auth/worker/customizer 부재·client availability·first rank와 sibling control | 완료: 원본 Quay Linux ARM64 bridge/host의 독립 2개 cold/ready-sibling fixture·cold native FSMap/auth/worker/customizer 부재·완료된 deadline/native errno110·명시적 첫 rank/GID/fullCID·추가 pool nonce I/O와 sibling 보존·final strict health/modules·outer cleanup 0개, 3개 RUN/PASS·203.141초; 최초 중복 cleanup FAIL과 좁은 성공 receipt 수정을 보존; partial/race·initial composition은 unit 범위; [계약과 검증 상태](NO_INITIAL_MDS.md) |
 | T12 | stopped original MDS retire 뒤 명시적 replacement | `RemoveStoppedMDS(ctx, daemon)` + 기존 `ScaleMDS(ctx, 1, 1)`; exact original CID·전역 이름 부재·healthy owned ranks·auth/desired capacity·sibling 유지 | 완료: 원본 Quay Linux ARM64 bridge/host의 독립 ordinary 1 active / 1 standby fixture 2개·stopped/native-registered 거부·caller의 explicit fail 뒤 owned takeover·original CID 제거·새 name/CID/GID·20개 128 KiB byte 기록(8 dataset)·strict health/modules·outer cleanup 0개, 3개 RUN/PASS·207.328초; completed copied handle retry도 실제 확인; lost reply/partial/race·2 active는 unit/source 범위, CID-to-GID binding·replay/foreign standby native 변형은 주장하지 않음; [계약과 증거](CEPHFS_STOPPED_MDS.md) |
+| T13 | 마지막 original active MDS의 replacement 뒤 별도 CID retire | `AddMDSReplacement(ctx, originalStopped)` + `RemoveStoppedMDS`; original 1 active / 0 standby·failed rank 0·original/additional pools와 sibling 보존 | 완료: 원본 Quay Linux ARM64의 독립 bridge/host 1 active / 0 standby fixture 2개·등록 거부/caller fail·새 indexed worker/copied retry/Q retire·24개 128 KiB reader 기록(8 dataset)·original additional-pool/sibling bytes 보존·strict health/modules와 자체 cleanup 0개, 3개 RUN/PASS·223.931초; partial/lost reply/race 및 foreign/damaged/replay 거부는 unit/source 범위, CID-to-GID binding은 주장하지 않음; [계약과 상태](CEPHFS_LAST_MDS_REPLACEMENT.md) |
 | R01 | RBD metadata 초기화·namespace | `InitRBDPool`, `CreateRBDNamespace`; image/namespace 분리와 RO/RW client 효과 | 완료: `TestRBDNamespaces`, bridge/host; RO open exact bytes, 기본 writable open·image create·직접 RADOS write·foreign namespace read의 native EPERM/EACCES, RW 유지·owned cleanup |
 | R02 | RBD image 기능을 테스트할 기본 구성 | R01 + client recipe: layering/clone/flatten, trash/migration/group, encryption 및 lock 테스트 | 완료: [client recipe](RBD_CLIENT_FIXTURES.md), `TestRBDClientFeatures`, bridge/host |
 | R03 | MGR module membership·dependency·readiness·restore | `MGRModules`, `TemporaryMGRModule`, `WaitMGRModuleReady`; always-on/사용 중 보호·native command probe | 완료: `TestMGRModules`, bridge/host |
@@ -137,3 +138,13 @@ ordinary target/sibling fixture에서 실제 3개 RUN/PASS·207.328초·자체 c
 기존 측정값, O116/N115/M114 및 전체 CI101 기록은 각각의 source와 실행 그대로
 유지합니다. [현재 계약과 실제 증거](CEPHFS_STOPPED_MDS.md)는 all-standby/native
 partial recovery·전체 118개 CI·다른 image/platform의 완료로 확대하지 않습니다.
+
+Last-MDS replacement의 새 `scenario-last-mds-replacement`는 Q의 실제 118개에
+한 parent만 추가한 required 119개를 actual compiled 목록에서 확인했습니다.
+T13의 primary는 별도 3개 RUN/PASS·223.931초·자체 cleanup 새 리소스 0개로
+완료했고 262개 runtime source/policy를 유지했습니다. 현재 source의 기존 Q 회귀도 별도 3개 RUN/PASS·212.955초, P cold-MDS는
+별도 3개 RUN/PASS·197.593초와 각각 자체 cleanup 0개를 확인했습니다.
+각 회귀를 primary의 24개 reader/8 dataset이나 이전 Q/P source 측정값에
+합산하지 않습니다. Q의 healthy-survivor retire/standby
+replacement, P의 cold-first-start와 각 historical source 결과는 그대로 보존하며,
+새 whole CI119·damaged/multi-rank/replay·CID-to-GID binding 완료로 확대하지 않습니다.

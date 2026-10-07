@@ -267,6 +267,10 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 		c.mu.Unlock()
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
+	if err := fs.completedMDSReplacementCohort(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	desired := fs.config
 	desired.ActiveMDS, desired.StandbyMDS = active, standby
 	c.mu.Unlock()
@@ -301,6 +305,10 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		c.mu.Unlock()
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
+	}
+	if err := fs.completedMDSReplacementCohort(); err != nil {
+		c.mu.Unlock()
+		return err
 	}
 	fs.config = desired
 	c.mu.Unlock()
@@ -408,13 +416,21 @@ func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 // The private service seam preserves real daemon/partial publication while
 // allowing lifecycle units to avoid Docker. Production always uses startService.
 func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)) error {
+	_, err := fs.startMDSWithAdmission(ctx, start, nil, nil)
+	return err
+}
+
+// Admission/publication hooks belong only to explicit replacement. The legacy
+// wrapper above passes nil hooks and preserves ordinary and cold behavior.
+// Admission and publication run under c.mu; auth and startService run unlocked.
+func (fs *CephFSContainer) startMDSWithAdmission(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error), admit func(context.Context, string) (testcontainers.Container, error), published func(*MDSContainer)) (*MDSContainer, error) {
 	c := fs.cluster
 	if err := c.lockTopology(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if c.closed || c.filesystems[fs.FilesystemName] != fs {
 		c.mu.Unlock()
-		return errors.New("cephfs cluster is terminated or filesystem ownership changed")
+		return nil, errors.New("cephfs cluster is terminated or filesystem ownership changed")
 	}
 	id := cephFSMDSID(fs.FilesystemName, fs.nextMDSIndex)
 	opts := slices.Clone(fs.mdsOpts)
@@ -423,25 +439,33 @@ func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(c
 	if cold {
 		if fs.nativeIdentity != fs.coldMDS.identity || fs.Container != nil || len(fs.mdss) != 0 || fs.nextMDSIndex != 0 {
 			c.mu.Unlock()
-			return errors.New("original cold MDS ownership changed before startup")
+			return nil, errors.New("original cold MDS ownership changed before startup")
 		}
 		var err error
 		control, err = c.ControlContainerContext(ctx)
 		if err != nil || control == nil {
 			c.mu.Unlock()
-			return clientOperationError(ctx, "select initial MDS auth control", err)
+			return nil, clientOperationError(ctx, "select initial MDS auth control", err)
 		}
 		if err := fs.checkColdSelectedControl(ctx, control); err != nil {
 			c.mu.Unlock()
-			return err
+			return nil, err
 		}
 		if err := ctx.Err(); err != nil {
 			c.mu.Unlock()
-			return err
+			return nil, err
 		}
 		// All owner/control admission has succeeded. The next call attempts
 		// owned native auth mutation; uncertainty cannot authorize another first.
 		fs.coldMDS.attempted = true
+	}
+	if admit != nil {
+		var err error
+		control, err = admit(ctx, id)
+		if err != nil || control == nil {
+			c.mu.Unlock()
+			return nil, clientOperationError(ctx, "admit replacement MDS startup", err)
+		}
 	}
 	fs.nextMDSIndex++
 	c.mu.Unlock()
@@ -450,15 +474,18 @@ func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(c
 		"osd", "allow rw tag cephfs *=*", "mds", "allow"}
 	var keyring []byte
 	var err error
-	if cold {
+	if cold || admit != nil {
 		keyring, err = command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
 		if err != nil {
-			return clientOperationError(ctx, "create initial MDS credentials", err)
+			if admit != nil {
+				return nil, clientOperationError(ctx, "create replacement MDS credentials", err)
+			}
+			return nil, clientOperationError(ctx, "create initial MDS credentials", err)
 		}
 	} else {
 		keyring, err = c.Ceph(ctx, args...)
 		if err != nil {
-			return fmt.Errorf("create mds.%s credentials: %w", id, err)
+			return nil, fmt.Errorf("create mds.%s credentials: %w", id, err)
 		}
 	}
 	moduleOpts := []testcontainers.ContainerCustomizer{
@@ -468,21 +495,28 @@ func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(c
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(c.settings.startupTimeout)),
 	}
 	moduleOpts = append(moduleOpts, opts...)
+	var daemon *MDSContainer
 	ctr, err := start(ctx, "mds."+id, c.settings.mdsImage, moduleOpts...)
 	if ctr != nil {
 		c.mu.Lock()
-		daemon := &MDSContainer{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
+		daemon = &MDSContainer{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
 		daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, err)
 		fs.mdss = append(fs.mdss, daemon)
 		if fs.Container == nil {
 			fs.Container = ctr
 		}
+		if published != nil {
+			published(daemon)
+		}
 		c.mu.Unlock()
 	}
 	if cold && (err != nil || ctr == nil) {
-		return clientOperationError(ctx, "start initial MDS service", err)
+		return nil, clientOperationError(ctx, "start initial MDS service", err)
 	}
-	return err
+	if admit != nil && (err != nil || ctr == nil || ctx.Err() != nil) {
+		return daemon, clientOperationError(ctx, "start replacement MDS service", err)
+	}
+	return daemon, err
 }
 
 func (fs *CephFSContainer) retireMDS(ctx context.Context, candidate MDSStatus) error {

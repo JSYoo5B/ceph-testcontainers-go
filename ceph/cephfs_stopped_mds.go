@@ -24,6 +24,8 @@ type cephFSMDSIdentity struct {
 	name, cid, fsid                      string
 	confirmed, removalAttempted, removed bool
 	scope                                *cephFSMDSRemovalScope
+	replacement                          *cephFSMDSReplacement
+	createdByReplacement                 *cephFSMDSReplacement
 }
 
 type cephFSMDSRemovalScope struct {
@@ -96,6 +98,9 @@ func (fs *CephFSContainer) RemoveStoppedMDS(parent context.Context, daemon *MDSC
 	defer c.mu.Unlock()
 	i := daemon.identity
 	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
+		return err
+	}
+	if err := completedMDSReplacementAuthority(i); err != nil {
 		return err
 	}
 	// Admission to control/config precedes any Docker or native reads.
@@ -393,7 +398,7 @@ func (fs *CephFSContainer) decodeStoppedMDSScope(ctx context.Context, target *ce
 			return nil, errors.New("original MDS survivor creation identity is unavailable")
 		}
 		i := daemon.identity
-		if fs.checkStoppedMDSOwner(daemon, i) != nil || i.removed || i.fsid != target.fsid || !registered[i.name] || seenNames[i.name] || seenCIDs[i.cid] {
+		if fs.checkStoppedMDSOwner(daemon, i) != nil || completedMDSReplacementAuthority(i) != nil || i.removed || i.fsid != target.fsid || !registered[i.name] || seenNames[i.name] || seenCIDs[i.cid] {
 			return nil, errors.New("stopped MDS has an unconfirmed or foreign survivor")
 		}
 		info, err := i.container.Inspect(ctx)

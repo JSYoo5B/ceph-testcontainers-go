@@ -255,3 +255,11 @@ SCENARIO_MDS_REPLACEMENT_TESTS = ^TestStoppedMDSRetirementTopology$$
 
 scenario-mds-replacement:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MDS_REPLACEMENT_TIMEOUT) -run '$(SCENARIO_MDS_REPLACEMENT_TESTS)' ./internal/integration
+
+# Recover a failed sole MDS with a new owned member under an isolated budget.
+.PHONY: scenario-last-mds-replacement
+SCENARIO_LAST_MDS_REPLACEMENT_TIMEOUT ?= 50m
+SCENARIO_LAST_MDS_REPLACEMENT_TESTS = ^TestLastMDSReplacementTopology$$
+
+scenario-last-mds-replacement:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_LAST_MDS_REPLACEMENT_TIMEOUT) -run '$(SCENARIO_LAST_MDS_REPLACEMENT_TESTS)' ./internal/integration
