@@ -78,7 +78,7 @@ type rgwZoneState struct {
 // image selects RGW gateways; each setup client uses its cluster's control
 // image unless ControlImage supplies a shared override.
 func RunRGWTopology(ctx context.Context, image string, config RGWTopologyConfig, opts ...testcontainers.ContainerCustomizer) (*RGWMultisite, error) {
-	zones, err := prepareRGWTopology(image, config)
+	zones, err := prepareRGWTopology(ctx, image, config)
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +119,14 @@ func RunRGWTopology(ctx context.Context, image string, config RGWTopologyConfig,
 	return f, nil
 }
 
-func prepareRGWTopology(image string, config RGWTopologyConfig) ([]RGWZoneConfig, error) {
+func prepareRGWTopology(ctx context.Context, image string, config RGWTopologyConfig) ([]RGWZoneConfig, error) {
 	zones, err := normalizeRGWTopology(config)
 	if err != nil {
 		return nil, err
 	}
 	for i, zone := range zones {
 		for j := range i {
-			if err := validatePair(image, zones[j].Cluster, zone.Cluster); err != nil {
+			if err := validatePair(ctx, image, zones[j].Cluster, zone.Cluster); err != nil {
 				return nil, fmt.Errorf("RGW zones %s/%s: %w", zones[j].Name, zone.Name, err)
 			}
 		}
@@ -341,7 +341,7 @@ func (f *RGWMultisite) addZone(ctx context.Context, image string, config RGWZone
 		if zone.Name == config.Name {
 			return nil, fmt.Errorf("RGW zone %s is already owned", config.Name)
 		}
-		if err := validatePair(image, zone.cluster, config.Cluster); err != nil {
+		if err := validatePair(ctx, image, zone.cluster, config.Cluster); err != nil {
 			return nil, err
 		}
 		if zone.ID == "" || zone.client == nil || zone.Gateway == nil {

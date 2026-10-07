@@ -113,7 +113,7 @@ type cephFSPeerIdentity struct {
 // daemon or manager attachment; bridge mode joins the peer cluster network.
 // Initial daemon names are a through z, then node-27 and onward.
 func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*CephFSMirror, error) {
-	if err := validatePair(image, config.Source, config.Destination); err != nil {
+	if err := validatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
 	config, err := normalizeCephFSMirrorConfig(config)
@@ -317,7 +317,14 @@ func (mirror *CephFSMirror) loadFilesystemIdentity(ctx context.Context) error {
 // different GIDs. Resolve each owned process through its exact admin-socket
 // rados_inst address and the native mirror index object's watcher list.
 func (mirror *CephFSMirror) ownedFilesystemWatcherIDs(ctx context.Context) (map[string]bool, error) {
-	data, err := exec(ctx, mirror.source.ControlContainer(), "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
+	control, err := mirror.source.ControlContainerContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select CephFS source control handle: %w", err)
+	}
+	if control == nil {
+		return nil, errors.New("CephFS source control container is unavailable")
+	}
+	data, err := exec(ctx, control, "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
 	if err != nil {
 		return nil, fmt.Errorf("list mirrored filesystem watchers: %w", err)
 	}
@@ -625,7 +632,10 @@ func cephFSManagerCandidates(ctx context.Context, cluster *ceph.Container) ([]st
 	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	return waitForCephFSManagerCandidates(waitCtx, 500*time.Millisecond, func(observeCtx context.Context) (ceph.ManagerStatus, []*ceph.ManagerContainer, error) {
-		managers := cluster.Managers()
+		managers, err := cluster.ManagersContext(observeCtx)
+		if err != nil {
+			return ceph.ManagerStatus{}, nil, err
+		}
 		status, err := cluster.ManagerStatus(observeCtx)
 		return status, managers, err
 	})

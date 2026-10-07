@@ -360,7 +360,11 @@ func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
 // Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
 // without shell interpolation. Use --format json for machine-readable responses.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
-	return command(ctx, c.cliContainer(), append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+	control, err := c.ControlContainerContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select Ceph CLI container: %w", err)
+	}
+	return command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
 }
 
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.

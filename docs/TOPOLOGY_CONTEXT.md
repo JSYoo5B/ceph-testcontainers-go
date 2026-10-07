@@ -13,9 +13,38 @@
 
 부분 생성·변경 뒤 cleanup handle과 retry ownership을 유지합니다. 취소 때문에 이미 생성한 resource의 bookkeeping을 건너뛰지 않습니다. Owner→daemon/resources/interruption의 기존 잠금 순서도 유지합니다. 기다리는 goroutine을 남기지 않고 `TryLock`과 bounded poll로 대기합니다.
 
-호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. Constructor와 내부 getter의 `ConnectionConfig`·`Managers`·`Gateways` snapshot, control container 조회, CephFS setup/scale·subvolume/data-pool의 여러 단계 잠금, host RGW allocator의 resource publication은 후속 context·ownership 검토가 필요합니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
+호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. 기존 context-free getter 자체의 대기, Ceph 내부의 직접 control 조회, CephFS setup/scale·subvolume/data-pool의 여러 단계 잠금, host RGW allocator의 resource publication은 별도 범위입니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
 
 Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 기록을 완료합니다. 그 지점에서 cancellation을 이유로 handle 추적을 버리면 subsequent cleanup과 retry가 깨집니다. 새 context에서 같은 handle을 다시 호출해 확인·정리를 이어갑니다.
+
+## Context를 받는 설정·구성 조회
+
+기존 context-free getter는 유지합니다. 긴 topology 작업이나 control 종료와 함께 사용하는 호출자는 아래 variant로 잠금 대기에 caller context를 적용할 수 있습니다.
+
+| 공개 API | 반환·소유권 |
+| --- | --- |
+| `ConnectionConfigContext(ctx)` | 독립된 ceph.conf·admin keyring byte 복사본. 종료·불완전한 bootstrap을 거부하고 owner 및 config cache 잠금 대기를 제한 |
+| `ManagersContext(ctx)` | daemon 이름순 독립 slice. Descriptor와 container는 fixture 소유이며 종료 후 남은 descriptor 조회도 허용 |
+| `GatewaysContext(ctx)` | gateway 이름순 독립 slice. Partial startup descriptor와 fixture 소유권 유지 |
+| `ControlContainerContext(ctx)` | 기존 안정적인 control CLI handle 또는 기본 MON. Control handle 잠금만 사용하며 반환 이후 process 수명을 보장하지 않음 |
+
+`Ceph(ctx)`는 context를 받는 control snapshot을 사용합니다. Cluster owner mutex를 다시 얻지 않으므로 이미 owner를 보유한 MON/MGR/OSD 작업에서도 사용할 수 있습니다. Native query 동안 snapshot의 read lock을 유지하지 않습니다. Snapshot과 process 종료 사이의 기존 lifetime race는 native 오류로 보고합니다.
+
+Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destination의 context-aware control·bootstrap snapshot을 사용하고 오류 cause를 `%w`로 보존합니다. CephFS MGR attachment는 manager snapshot 오류 뒤 native manager query를 실행하지 않습니다. 새 RGW cluster 판단도 gateway snapshot 오류 뒤 pool query를 실행하지 않습니다. CephFS watcher·peer 설정 갱신 및 RBD 설정 갱신의 control 조회도 같은 context를 사용합니다. Ceph 내부의 다른 직접 `cliContainer` 경로와 CephFS setup/scale·host allocator의 혼합 잠금은 여전히 별도 범위입니다.
+
+새 getter의 unit test는 실제 owner/config/control writer 잠금을 caller deadline 이후까지 유지합니다. 이미 owner를 보유한 `Ceph(ctx)`가 control snapshot만 얻어 native query에 도달하는 경로도 검사합니다. Configuration byte copy와 정렬된 descriptor slice, 기존 closed-cluster inspection 계약을 유지합니다.
+
+`TestMultiClusterTopologySnapshotsHonorBusyOwners`는 독립된 실제 source/destination cluster를 각각 busy 상태로 만들고 `RunRBDMirror`, `RunCephFSMirror`, `RunRGWMultisite`, `RunRGWTopology` 8개 호출을 검증합니다. 50ms deadline과 400ms watchdog 안에 context cause를 보존하며 후속 Exec/file copy/cleanup 0회, nil partial fixture를 확인합니다. 잠금을 해제한 뒤 같은 cluster의 bootstrap/keyring·MGR/RGW descriptor·native OSD ID와 RADOS 원문이 그대로인지 확인합니다. 잠금 획득은 실제 `AddOSD` 진입을 이용하며 mutation 직전의 caller-owned container wrapper에서 중단합니다.
+
+추가 변경의 unit·race·vet와 전체 tag compile은 PASS이며 실제 tee 기록은 `artifacts/context-snapshots-20261007/check.log`입니다. 같은 원본 Quay 20.2.4 Linux ARM64에서 아래 focused runtime을 실행했습니다.
+
+| 추가 검증 | 결과 |
+| --- | --- |
+| 실제 source/destination busy owner와 네 종류 constructor | 8개 child PASS, parent 56.53초 |
+| 양쪽 MON 전체 교체·동일 client/mirror cold restart·local/remote bootstrap 갱신 | bridge 357.92초, host 370.31초 PASS |
+| RGW 3개 cluster·2개 zonegroup 구성과 zone 제거 | 291.29초 PASS |
+
+Package terminal은 PASS 1,076.494초입니다. MON 경로의 각 mode에서 CephFS source snapshot ID/name `2/backup-1`(초기·cold restart), `3/backup-2`, `4/backup-3`(새 peer)와 destination 원문을 확인했습니다. 같은 engine의 신규 container/network/Ryuk 잔여는 0개이고 관련 source와 Makefile 212개 SHA256은 실행 전후 동일합니다. `verification.json`은 실제 3개 parent·MON의 두 mode·constructor 8개 child·8개 checkpoint와 cleanup을 원본에서 대조합니다. Selector inventory는 현재 105개 required test 이름을 확인한 목록이며 이 focused run을 전체 matrix 재실행으로 표시하지 않습니다.
 
 ## 검증
 

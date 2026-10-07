@@ -60,7 +60,7 @@ type RGWMultisite struct {
 // image supplies only the RGW role; setup clients use the clusters' control
 // images unless ControlImage explicitly overrides them.
 func RunRGWMultisite(ctx context.Context, image string, config RGWMultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*RGWMultisite, error) {
-	if err := validatePair(image, config.Source, config.Destination); err != nil {
+	if err := validatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
 	sourceClientImage, err := rgwControlImage(config.ControlImage, config.Source)
@@ -439,7 +439,11 @@ func (f *RGWMultisite) zoneGroupName(zone string) string {
 }
 
 func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
-	if len(cluster.Gateways()) != 0 {
+	gateways, err := cluster.GatewaysContext(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect RGW storage gateways: %w", err)
+	}
+	if len(gateways) != 0 {
 		return fmt.Errorf("RGW topology requires fresh storage clusters without existing gateways")
 	}
 	data, err := cluster.Ceph(ctx, "osd", "pool", "ls", "--format", "json")

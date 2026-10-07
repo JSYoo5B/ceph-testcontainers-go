@@ -86,7 +86,14 @@ func (mirror *CephFSMirror) DirectoryStatus(ctx context.Context, directory strin
 		}
 		return result, ctx.Err()
 	}
-	data, err := exec(ctx, mirror.source.ControlContainer(), "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
+	control, err := mirror.source.ControlContainerContext(ctx)
+	if err != nil {
+		return result, cephFSObserveQuery("read CephFS filesystem watchers", err)
+	}
+	if control == nil {
+		return result, cephFSObserveQuery("CephFS source control container is unavailable", nil)
+	}
+	data, err := exec(ctx, control, "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
 	if err != nil {
 		return result, cephFSObserveQuery("read CephFS filesystem watchers", err)
 	}

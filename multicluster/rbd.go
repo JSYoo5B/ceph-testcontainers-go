@@ -177,7 +177,7 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
 func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*RBDMirror, error) {
-	if err := validatePair(image, config.Source, config.Destination); err != nil {
+	if err := validatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
 	config, err := normalizeRBDMirrorConfig(config)

@@ -77,7 +77,7 @@ func (f *RGWMultisite) AddZonegroup(ctx context.Context, image string, config RG
 			if existing.Name == zones[i].Name {
 				return nil, fmt.Errorf("RGW zone %s is already owned", zones[i].Name)
 			}
-			if err := validatePair(image, existing.cluster, zones[i].Cluster); err != nil {
+			if err := validatePair(ctx, image, existing.cluster, zones[i].Cluster); err != nil {
 				return nil, err
 			}
 		}
@@ -85,7 +85,7 @@ func (f *RGWMultisite) AddZonegroup(ctx context.Context, image string, config RG
 			if zones[j].Name == zones[i].Name {
 				return nil, errors.New("RGW zones must have unique names")
 			}
-			if err := validatePair(image, zones[j].Cluster, zones[i].Cluster); err != nil {
+			if err := validatePair(ctx, image, zones[j].Cluster, zones[i].Cluster); err != nil {
 				return nil, err
 			}
 		}

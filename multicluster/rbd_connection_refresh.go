@@ -103,7 +103,10 @@ func (m *RBDMirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error 
 		{m.config.Source, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source},
 		{m.config.Destination, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination},
 	} {
-		control := site.cluster.ControlContainer()
+		control, err := site.cluster.ControlContainerContext(ctx)
+		if err != nil {
+			return fmt.Errorf("inspect RBD mirror cluster control handle: %w", err)
+		}
 		if control == nil {
 			return errors.New("RBD mirror cluster control container is unavailable")
 		}

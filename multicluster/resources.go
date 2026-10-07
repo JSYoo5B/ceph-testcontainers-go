@@ -103,7 +103,7 @@ func (r *resources) terminate(ctx context.Context, opts ...testcontainers.Termin
 	return errors.Join(errs...)
 }
 
-func validatePair(image string, source, destination *ceph.Container) error {
+func validatePair(ctx context.Context, image string, source, destination *ceph.Container) error {
 	if strings.TrimSpace(image) == "" {
 		return errors.New("multicluster image must not be empty")
 	}
@@ -119,14 +119,22 @@ func validatePair(image string, source, destination *ceph.Container) error {
 	// A multi-MON fixture can remain live after its embedded primary MON was
 	// stopped or removed. Its independent CLI is the control handle; checking
 	// only the original container would reject a healthy surviving quorum.
+	sourceControl, err := source.ControlContainerContext(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect source Ceph control handle: %w", err)
+	}
+	destinationControl, err := destination.ControlContainerContext(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect destination Ceph control handle: %w", err)
+	}
 	if source.NetworkName() == "" || destination.NetworkName() == "" ||
-		source.ControlContainer() == nil || destination.ControlContainer() == nil ||
-		!source.ControlContainer().IsRunning() || !destination.ControlContainer().IsRunning() {
+		sourceControl == nil || destinationControl == nil ||
+		!sourceControl.IsRunning() || !destinationControl.IsRunning() {
 		return errors.New("multicluster requires two running Ceph clusters")
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if _, _, err := cluster.ConnectionConfig(); err != nil {
-			return errors.New("multicluster requires initialized, unterminated Ceph clusters")
+		if _, _, err := cluster.ConnectionConfigContext(ctx); err != nil {
+			return fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err)
 		}
 	}
 	return nil

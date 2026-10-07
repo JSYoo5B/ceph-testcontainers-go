@@ -1,6 +1,6 @@
 # 시나리오 fixture CI
 
-Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 54개, 추가 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 104개**를 선택합니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
+Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 55개, 추가 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 105개**를 선택합니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
 분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 fixture profile·48개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
@@ -125,7 +125,7 @@ TestHostNetworkRGWPlacementStorageClasses
 TestRGWPlacementRealmStorageClasses
 ```
 
-2026-10-07에 `TestOSDRemovalLifecycle`을 추가했습니다. 현재 fixture selector는 총 48개이며 기본·토폴로지·SDK 56개와 합해 104개입니다. `scenario-topology`에는 `TestMonitorRollingReplacement`도 추가했습니다. 위 표의 8/47개 및 전체 101개는 해당 source의 역사적 CI 결과로 유지합니다. 새 이름은 원본 Quay Linux ARM64 bridge/host focused 실행과 별도 cleanup 검사를 통과했으며 [OSD lifecycle 증거](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)를 따릅니다. `scenario-multicluster-topology`에는 `TestMultiClusterMonitorBootstrapRefresh`도 추가했습니다. [양쪽 MON 교체 후 bootstrap 검증](MON_BOOTSTRAP_REFRESH.md)을 따르며 현재 selector 104개의 전체 CI를 새로 통과했다고 표시하지 않습니다.
+2026-10-07에 `TestOSDRemovalLifecycle`을 추가했습니다. 현재 fixture selector는 총 48개이며 기본·토폴로지·SDK 57개와 합해 105개입니다. `scenario-topology`에는 `TestMonitorRollingReplacement`도 추가했습니다. 위 표의 8/47개 및 전체 101개는 해당 source의 역사적 CI 결과로 유지합니다. 새 이름은 원본 Quay Linux ARM64 bridge/host focused 실행과 별도 cleanup 검사를 통과했으며 [OSD lifecycle 증거](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)를 따릅니다. `scenario-multicluster-topology`에는 `TestMultiClusterMonitorBootstrapRefresh`도 추가했습니다. [양쪽 MON 교체 후 bootstrap 검증](MON_BOOTSTRAP_REFRESH.md)을 따르며 현재 selector 105개의 전체 CI를 새로 통과했다고 표시하지 않습니다. `TestMultiClusterTopologySnapshotsHonorBusyOwners`도 필수 multicluster selector에 추가했으며 [constructor와 snapshot context 계약](TOPOLOGY_CONTEXT.md)을 따릅니다.
 
 ### scenario-cephfs-fixtures · 8개
 
