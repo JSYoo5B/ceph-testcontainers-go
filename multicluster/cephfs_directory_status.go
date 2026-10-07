@@ -248,7 +248,7 @@ func waitCephFSObservedDirectory(ctx context.Context, interval time.Duration, ob
 			sourceID, destinationID, peerID = current.SourceFilesystemID, current.DestinationFilesystemID, current.PeerID
 			directory = current.Directory
 		}
-		lastErr = err
+		lastErr = retainWaitQueryCause(ctx, lastErr, err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			last.Ready = false
 			return last, fmt.Errorf("wait CephFS mirror directory observation: %w", errors.Join(ctxErr, lastErr))
@@ -274,6 +274,39 @@ type cephFSObservationError struct {
 	message   string
 	cause     error
 	permanent bool
+}
+
+// A caller-context-only failure has no new independent native query cause.
+// Retain an earlier exposed cause without changing inner-attempt timeouts,
+// mixed errors, permanent guards, or newer successful observations.
+func retainWaitQueryCause(ctx context.Context, previous, current error) error {
+	if ctx.Err() != nil && previous != nil && waitContextOnlyError(current) {
+		return errors.Join(previous, current)
+	}
+	return current
+}
+
+func waitContextOnlyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		found := false
+		for _, child := range joined.Unwrap() {
+			if child == nil {
+				continue
+			}
+			found = true
+			if !waitContextOnlyError(child) {
+				return false
+			}
+		}
+		return found
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok && wrapped.Unwrap() != nil {
+		return waitContextOnlyError(wrapped.Unwrap())
+	}
+	return err == context.Canceled || err == context.DeadlineExceeded
 }
 
 var errCephFSObservationGuard = errors.New("permanent CephFS observation guard")

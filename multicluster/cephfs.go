@@ -691,11 +691,17 @@ func waitForCephFSManagerCandidates(ctx context.Context, interval time.Duration,
 			return nil, fmt.Errorf("wait for a running owned active source Ceph manager (last observation: %v): %w", lastErr, err)
 		}
 		status, managers, err := observe(ctx)
+		if canceled := ctx.Err(); canceled != nil {
+			return nil, fmt.Errorf("wait for a running owned active source Ceph manager (last observation: available=%t active=%q gid=%d; error=%v): %w", status.Available, status.ActiveName, status.ActiveGID, err, canceled)
+		}
 		if err != nil {
 			lastErr = fmt.Errorf("inspect source Ceph manager map: %w", err)
 		} else {
 			ids, err := selectCephFSManagerCandidates(status, managers)
 			if err == nil {
+				if canceled := ctx.Err(); canceled != nil {
+					return nil, fmt.Errorf("wait for a running owned active source Ceph manager (last observation: available=%t active=%q gid=%d): %w", status.Available, status.ActiveName, status.ActiveGID, canceled)
+				}
 				return ids, nil
 			}
 			lastErr = err

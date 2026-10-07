@@ -313,18 +313,30 @@ func (c *Container) WaitForPGClean(ctx context.Context) error {
 	for {
 		// Serialize each observation with topology changes/termination without
 		// holding the cluster lock across the recovery wait.
-		c.mu.Lock()
-		if err := c.poolPolicyReady(); err != nil {
+		if err := c.lockTopology(ctx); err != nil {
+			return errors.Join(err, last)
+		}
+		if err := c.waitPolicyReady(ctx); err != nil {
 			c.mu.Unlock()
+			if ctx.Err() != nil {
+				return errors.Join(ctx.Err(), last, err)
+			}
 			return err
+		}
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return errors.Join(err, last)
 		}
 		s, err := c.Status(ctx)
 		c.mu.Unlock()
-		if err == nil && pgsAreClean(s) {
-			return nil
-		}
 		if err != nil {
 			last = err
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, last)
+		}
+		if err == nil && pgsAreClean(s) {
+			return nil
 		}
 		select {
 		case <-ctx.Done():

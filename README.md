@@ -6,6 +6,10 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 자료 조사와 판단 근거는 [RESEARCH.md](docs/RESEARCH.md), 클러스터 실행 결과는 [POC.md](docs/POC.md), RGW·RBD·CephFS 검증은 [SERVICES_POC.md](docs/SERVICES_POC.md)에 정리했습니다. 이미지 요구사항·검사·역할 이미지 생성은 별도 [ceph-testcontainers-images](../ceph-testcontainers-images/README.md)에서 관리합니다. 이 프로젝트는 주어진 이미지를 Go에서 실행하고 클러스터를 구성합니다.
 
+제공 API는 테스트 환경을 준비·변경·복원하는 operation과 실제 상태를 관측하는 check로 구분합니다. 토폴로지·pool·자격 증명·장애 조건을 준비하는 operation을 제공하며, 일반 운영 자동화를 확장 목표로 삼지 않습니다. Check는 Docker와 컨테이너 내부 CLI를 통해 assertion의 근거를 제공하고, 공개 Go 패키지에 Ceph 클라이언트 SDK·cgo 의존성을 요구하지 않습니다. 상태 관측은 토폴로지 구성과 별개의 주요 제공 책임입니다.
+
+기능별 구분과 현재 공개 API 전체 목록은 [Operation과 Check](docs/API_CAPABILITIES.md)에 있습니다. Native 질의와 보유 descriptor 조회, 각 Wait가 확인하는 조건을 구분해 assertion에 사용합니다. Context 취소·부분 결과 보존과 호출자 소유 채널·콜백 조합은 [Go 대기 사용법](docs/GO_WAITS.md)을 따릅니다.
+
 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구 API를 제공합니다. 구성별 제공 범위와 원본 Quay 이미지의 필수 검증 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
 여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.

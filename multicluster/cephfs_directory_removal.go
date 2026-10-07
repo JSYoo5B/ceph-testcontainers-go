@@ -372,6 +372,12 @@ func (r *CephFSMirrorDirectoryRemoval) initialStatus() CephFSMirrorDirectoryRemo
 // native query failures remain retryable. Common attestation conservatively
 // guards non-context failures while retaining the intent for fresh-context retry.
 func (r *CephFSMirrorDirectoryRemoval) Status(ctx context.Context) (CephFSMirrorDirectoryRemovalStatus, error) {
+	return r.statusWithAdmission(ctx, nil)
+}
+
+// Admission is private observation metadata, not a public proof field. A fresh
+// admitted policy or daemon observation must never be replaced by stale data.
+func (r *CephFSMirrorDirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (CephFSMirrorDirectoryRemovalStatus, error) {
 	result := r.initialStatus()
 	if r == nil || r.original == nil || r.original.mirror == nil {
 		return result, cephFSObserveGuard("CephFS directory removal handle is unavailable")
@@ -382,6 +388,9 @@ func (r *CephFSMirrorDirectoryRemoval) Status(ctx context.Context) (CephFSMirror
 		return result, err
 	}
 	defer r.original.mirror.mu.Unlock()
+	if admitted != nil {
+		*admitted = true
+	}
 	if err := r.checkHandle(); err != nil {
 		return result, err
 	}
@@ -471,21 +480,36 @@ func (r *CephFSMirrorDirectoryRemoval) Status(ctx context.Context) (CephFSMirror
 func (r *CephFSMirrorDirectoryRemoval) WaitReleased(ctx context.Context) (CephFSMirrorDirectoryRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return waitCephFSDirectoryReleased(ctx, 500*time.Millisecond, r.Status)
+	return waitCephFSDirectoryReleasedWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (CephFSMirrorDirectoryRemovalStatus, bool, error) {
+		admitted := false
+		status, err := r.statusWithAdmission(attempt, &admitted)
+		return status, admitted, err
+	})
 }
 
 func waitCephFSDirectoryReleased(ctx context.Context, interval time.Duration, observe func(context.Context) (CephFSMirrorDirectoryRemovalStatus, error)) (CephFSMirrorDirectoryRemovalStatus, error) {
+	return waitCephFSDirectoryReleasedWithAdmission(ctx, interval, func(attempt context.Context) (CephFSMirrorDirectoryRemovalStatus, bool, error) {
+		status, err := observe(attempt)
+		return status, true, err
+	})
+}
+
+func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (CephFSMirrorDirectoryRemovalStatus, bool, error)) (CephFSMirrorDirectoryRemovalStatus, error) {
 	var last CephFSMirrorDirectoryRemovalStatus
 	var lastError error
+	var haveObservation bool
 	for {
 		if err := ctx.Err(); err != nil {
 			last.Released = false
 			return last, errors.Join(lastError, err)
 		}
-		current, err := observe(ctx)
-		last = current
+		current, admitted, err := observe(ctx)
+		if admitted || !haveObservation {
+			last = current
+		}
+		haveObservation = haveObservation || admitted
 		if err != nil {
-			lastError = err
+			lastError = retainWaitQueryCause(ctx, lastError, err)
 		}
 		if canceled := ctx.Err(); canceled != nil {
 			last.Released = false

@@ -200,10 +200,19 @@ func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
 	defer ticker.Stop()
 	var last error
 	for {
-		c.mu.Lock()
-		if err := c.poolPolicyReady(); err != nil {
+		if err := c.lockTopology(ctx); err != nil {
+			return errors.Join(err, last)
+		}
+		if err := c.waitPolicyReady(ctx); err != nil {
 			c.mu.Unlock()
+			if ctx.Err() != nil {
+				return errors.Join(ctx.Err(), last, err)
+			}
 			return err
+		}
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return errors.Join(err, last)
 		}
 		modules, err := c.mgrModules(ctx)
 		module, ok := findMGRModule(modules, name)
@@ -225,10 +234,15 @@ func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
 			}
 		}
 		c.mu.Unlock()
+		if err != nil {
+			last = err
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, last)
+		}
 		if err == nil {
 			return nil
 		}
-		last = err
 		select {
 		case <-ctx.Done():
 			return errors.Join(ctx.Err(), last)

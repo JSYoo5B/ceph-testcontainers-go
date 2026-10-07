@@ -257,7 +257,7 @@ func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe fu
 		if current.SourceImageID != "" {
 			last = current
 		}
-		lastErr = err
+		lastErr = retainWaitQueryCause(ctx, lastErr, err)
 		if current.SourceImageID != "" {
 			if sourceID != "" && (sourceID != current.SourceImageID || globalID != current.GlobalID) {
 				last.ReplayReady = false

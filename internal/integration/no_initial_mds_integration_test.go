@@ -152,11 +152,12 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	}
 	coldMDSHealth(t, ctx, cluster, "cold-target", "cold-target", false)
 	short, stop := context.WithTimeout(ctx, 5*time.Second)
-	err = target.WaitReady(short)
+	err = coldMDSWaitReadyChannel(t, short, target)
 	stop()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("cold WaitReady implied client readiness or lost caller deadline", err)
 	}
+	t.Logf("GO_WAIT_CHANNEL filesystem=%s outcome=deadline result_count=1 channel_closed=true worker_joined=true", target.FilesystemName)
 	coldMDSAvailability(t, ctx, client, target.FilesystemName)
 	coldMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "verify", sibling.DataPool)
 	recheck(true)
@@ -169,7 +170,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	if err := target.ScaleMDS(ctx, 1, 0); err != nil {
 		t.Fatal("first explicit cold ScaleMDS failed", err)
 	}
-	if err := target.WaitReady(ctx); err != nil {
+	if err := coldMDSWaitReadyChannel(t, ctx, target); err != nil {
 		t.Fatal(err)
 	}
 	members := target.MDSs()
@@ -182,6 +183,8 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	if err != nil || reported.FilesystemID != beforeTarget.id || reported.MaxMDS != 1 || len(reported.Active) != 1 || len(reported.Standby) != 0 || len(reported.StandbyReplay) != 0 || !reported.Active[0].Owned || reported.Active[0].Name != live.active.name || reported.Active[0].GID != live.active.gid || reported.Active[0].Rank != 0 {
 		t.Fatal("public first rank does not match strict original native FSMap", err)
 	}
+	// This consumer-side query uses the live parent after the wait worker joined.
+	t.Logf("GO_WAIT_CHANNEL filesystem=%s outcome=success result_count=1 channel_closed=true worker_joined=true consumer_reentered=true", target.FilesystemName)
 	coldMDSAuth(t, ctx, cluster, []string{"mds.cold-target-0", "mds.warm-sibling-0"})
 	coldMDSResources(t, ctx, oracle, cluster, client, "after-first-scale")
 	t.Logf("NO_INITIAL_MDS_ACTIVE fsid=%s filesystem=%s fscid=%d rank=0 gid=%d name=%s cid=%s started_at=%s pid=%d customizers=%d", q.MonMap.FSID, target.FilesystemName, live.id, live.active.gid, live.active.name, members[0].GetContainerID(), process.startedAt, process.pid, customizers.Load())
@@ -192,6 +195,19 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := cluster.WaitForQuorum(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForPGClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitMGRModuleReady(ctx, "volumes"); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("GO_WAIT_READINESS fsid=%s quorum=true pg_clean=true rbd_support=true volumes=true", q.MonMap.FSID)
 	coldMDSHealth(t, ctx, cluster, "after-first-scale", "cold-target", true)
 	cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer done()
@@ -204,6 +220,45 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	}
 	oracle.assertRemoved(t, cleanup)
 	t.Logf("NO_INITIAL_MDS_COMPLETE fsid=%s target_fscid=%d sibling_fscid=%d first_gid=%d owned_mds=1 customizers=1", q.MonMap.FSID, beforeTarget.id, beforeSibling.id, live.active.gid)
+}
+
+// coldMDSWaitReadyChannel carries one terminal error to one caller. It does not
+// change WaitReady's predicate, create a library worker, or broadcast progress.
+func coldMDSWaitReadyChannel(t *testing.T, ctx context.Context, fs *ceph.CephFSContainer) error {
+	t.Helper()
+	waitCtx, cancel := context.WithCancel(ctx)
+	resultCh := make(chan error, 1)
+	var results <-chan error = resultCh
+	joined := make(chan struct{})
+	// Install before launch; LIFO joins this worker before earlier fixture cleanup.
+	t.Cleanup(func() {
+		cancel()
+		<-joined
+	})
+	go func() {
+		defer close(joined)
+		outcomeErr := fs.WaitReady(waitCtx)
+		resultCh <- outcomeErr
+		close(resultCh)
+	}()
+	var outcomeErr error
+	var open bool
+	select {
+	case outcomeErr, open = <-results:
+	case <-waitCtx.Done():
+		cancel()
+		<-joined
+		outcomeErr, open = <-results
+	}
+	cancel()
+	<-joined
+	if !open {
+		t.Fatal("WaitReady channel closed without its terminal result")
+	}
+	if _, open := <-results; open {
+		t.Fatal("WaitReady channel sent more than one terminal result")
+	}
+	return outcomeErr // Keep the actual error; cleanup cancellation is not its cause.
 }
 
 // Returned native daemon logs preserve loader/module/startup grounds on failure.

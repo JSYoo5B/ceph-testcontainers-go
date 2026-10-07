@@ -236,6 +236,12 @@ func (r *CephFSMirrorPeerRemoval) initialStatus() CephFSMirrorPeerRemovalStatus 
 // Common MON attestation has no typed error categories: its non-context errors
 // conservatively guard this observation, retaining the intent for a fresh retry.
 func (r *CephFSMirrorPeerRemoval) Status(ctx context.Context) (CephFSMirrorPeerRemovalStatus, error) {
+	return r.statusWithAdmission(ctx, nil)
+}
+
+// Private wait metadata distinguishes a queued attempt from a newer native
+// observation while leaving public Status values and error contracts unchanged.
+func (r *CephFSMirrorPeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (CephFSMirrorPeerRemovalStatus, error) {
 	result := r.initialStatus()
 	if r == nil || r.mirror == nil {
 		return result, cephFSObserveGuard("CephFS peer removal handle is unavailable")
@@ -246,6 +252,9 @@ func (r *CephFSMirrorPeerRemoval) Status(ctx context.Context) (CephFSMirrorPeerR
 		return result, err
 	}
 	defer r.mirror.mu.Unlock()
+	if admitted != nil {
+		*admitted = true
+	}
 	if err := r.checkHandle(); err != nil {
 		return result, err
 	}
@@ -322,21 +331,36 @@ func (r *CephFSMirrorPeerRemoval) Status(ctx context.Context) (CephFSMirrorPeerR
 func (r *CephFSMirrorPeerRemoval) WaitDrained(ctx context.Context) (CephFSMirrorPeerRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return waitCephFSPeerDrain(ctx, 500*time.Millisecond, r.Status)
+	return waitCephFSPeerDrainWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (CephFSMirrorPeerRemovalStatus, bool, error) {
+		admitted := false
+		status, err := r.statusWithAdmission(attempt, &admitted)
+		return status, admitted, err
+	})
 }
 
 func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe func(context.Context) (CephFSMirrorPeerRemovalStatus, error)) (CephFSMirrorPeerRemovalStatus, error) {
+	return waitCephFSPeerDrainWithAdmission(ctx, interval, func(attempt context.Context) (CephFSMirrorPeerRemovalStatus, bool, error) {
+		status, err := observe(attempt)
+		return status, true, err
+	})
+}
+
+func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (CephFSMirrorPeerRemovalStatus, bool, error)) (CephFSMirrorPeerRemovalStatus, error) {
 	var last CephFSMirrorPeerRemovalStatus
 	var lastError error
+	var haveObservation bool
 	for {
 		if err := ctx.Err(); err != nil {
 			last.Drained = false
 			return last, errors.Join(lastError, err)
 		}
-		current, err := observe(ctx)
-		last = current
+		current, admitted, err := observe(ctx)
+		if admitted || !haveObservation {
+			last = current
+		}
+		haveObservation = haveObservation || admitted
 		if err != nil {
-			lastError = err
+			lastError = retainWaitQueryCause(ctx, lastError, err)
 		}
 		if canceled := ctx.Err(); canceled != nil {
 			last.Drained = false

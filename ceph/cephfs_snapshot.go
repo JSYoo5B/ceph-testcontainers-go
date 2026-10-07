@@ -491,6 +491,9 @@ func (fs *CephFSContainer) WaitForSubvolumeClone(ctx context.Context, clone *Cep
 			return nil, err
 		}
 		if complete {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			return subvolume, nil
 		}
 		select {

@@ -870,10 +870,18 @@ func (c *Container) poll(ctx context.Context, check func() (bool, error)) error 
 	defer ticker.Stop()
 	var last error
 	for {
-		if ok, err := check(); ok && err == nil {
-			return nil
-		} else if err != nil {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, last)
+		}
+		ok, err := check()
+		if err != nil {
 			last = err
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, last)
+		}
+		if ok && err == nil {
+			return nil
 		}
 		select {
 		case <-ctx.Done():

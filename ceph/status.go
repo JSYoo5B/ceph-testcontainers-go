@@ -48,7 +48,11 @@ func (c *Container) Status(ctx context.Context) (Status, error) {
 func (c *Container) WaitForClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	expected := len(c.OSDs())
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	expected := len(c.osds)
+	c.mu.Unlock()
 	return c.poll(ctx, func() (bool, error) {
 		s, err := c.Status(ctx)
 		if err != nil {
