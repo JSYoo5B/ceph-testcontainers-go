@@ -288,7 +288,7 @@ make scenario-topology-extensions
 
 `scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름이며 현재 기본·토폴로지·SDK 57개와 합해 105개입니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`는 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름이며 현재 기본·토폴로지·SDK 58개와 합해 106개입니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`는 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 
 Source `d9115f4`의 [전체 CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 terminal SUCCESS입니다. 상세 job 10개의 101개 named test와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개였습니다. 101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. 공식·Debian·Ubuntu의 12개 native 이미지 조합도 각각 대표 9개를 통과했고 상세·matrix cleanup artifact 22개에서 새 container/network 0개를 확인했습니다. Matrix 반복이나 child 수를 distinct native I/O 수로 더하지 않습니다.
 
@@ -363,6 +363,8 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 전체 MON 교체 뒤 caller client와 multicluster link의 명시적 local/remote 주소 갱신은 [bootstrap 재연결 계약](docs/MON_BOOTSTRAP_REFRESH.md)을 따릅니다.
 
 RBD image와 CephFS directory의 상태 조회·bounded 준비 대기는 [mirror 관측 계약](docs/MIRROR_OBSERVABILITY.md)을 따릅니다. RBD readiness와 CephFS의 exact source snapshot 완료를 구분하며, destination의 실제 데이터는 client에서 별도로 확인합니다.
+
+CephFS peer 제거는 `BeginPeerRemoval`로 원래 peer·daemon cohort를 보존하고 `Status`·`WaitDrained`로 같은 live session의 replayer 종료를 확인할 수 있습니다. 응답 유실과 재시도, 기존 정책 요청 API 및 적용 조건은 [peer 제거 계약](docs/CEPHFS_PEER_REMOVAL.md)을 따릅니다.
 
 기존 topology·lifecycle 호출의 owner gate와 cleanup·network mutex 대기는 caller context를 따릅니다. 취소된 대기자는 native 변경 없이 반환하고 같은 fixture를 새 context로 재시도할 수 있습니다. 적용 범위와 남은 snapshot/setup 경로는 [잠금 대기 계약](docs/TOPOLOGY_CONTEXT.md)을 확인합니다.
 

@@ -82,6 +82,8 @@ type CephFSMirror struct {
 	metadataPoolID, destinationMetadataPoolID   int64
 	destinationFilesystemID                     int
 	pendingPeerImport                           *cephFSPeerIdentity
+	peerRemoval                                 *CephFSMirrorPeerRemoval
+	peerGeneration                              uint64
 	managerNetworking                           *cephFSManagerNetworking
 	closed                                      bool
 	daemons                                     []*CephFSMirrorDaemon
@@ -465,6 +467,9 @@ func (mirror *CephFSMirror) AddDaemon(ctx context.Context, daemonName string, op
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return nil, err
+	}
 	if mirror.closed {
 		return nil, errors.New("CephFS mirror has been terminated")
 	}
@@ -788,6 +793,9 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return err
+	}
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
@@ -814,6 +822,9 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return err
+	}
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
@@ -842,6 +853,9 @@ func (mirror *CephFSMirror) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return err
+	}
 	if mirror.closed {
 		return errors.New("CephFS mirror has been terminated")
 	}
@@ -993,12 +1007,22 @@ func (mirror *CephFSMirror) peerRecords(ctx context.Context) (map[string]json.Ra
 
 // RemovePeer unregisters only the peer this mirror bootstrapped. It preserves
 // destination data, snapshots and credentials. Daemon changes are asynchronous;
-// wait for the UUID to disappear from daemon status before re-adding the peer.
+// policy acknowledgement does not prove native replayer teardown. For a retained
+// strict same-session drain receipt, use BeginPeerRemoval and WaitDrained.
 func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id && !mirror.peerRemoval.completed {
+		if err := mirror.peerRemoval.checkHandle(); err != nil {
+			return err
+		}
+		return mirror.peerRemoval.resume(ctx)
+	}
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return err
+	}
 	if id == "" || id != mirror.peerID {
 		return errors.New("CephFS mirror does not own this peer")
 	}
@@ -1030,6 +1054,9 @@ func (mirror *CephFSMirror) RebootstrapPeer(ctx context.Context) (string, error)
 		return "", err
 	}
 	defer mirror.mu.Unlock()
+	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+		return "", err
+	}
 	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
 		return "", err
 	}
@@ -1092,6 +1119,9 @@ func (mirror *CephFSMirror) reconcilePendingPeer(peers map[string]json.RawMessag
 	id, err := matchPendingCephFSPeer(peers, mirror.pendingPeerImport)
 	if err != nil {
 		return "", err
+	}
+	if mirror.peerID != id {
+		mirror.peerGeneration++
 	}
 	mirror.peerID = id
 	mirror.pendingPeerImport = nil

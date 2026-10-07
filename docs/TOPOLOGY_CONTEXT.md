@@ -44,7 +44,7 @@ Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destinati
 | 양쪽 MON 전체 교체·동일 client/mirror cold restart·local/remote bootstrap 갱신 | bridge 357.92초, host 370.31초 PASS |
 | RGW 3개 cluster·2개 zonegroup 구성과 zone 제거 | 291.29초 PASS |
 
-Package terminal은 PASS 1,076.494초입니다. MON 경로의 각 mode에서 CephFS source snapshot ID/name `2/backup-1`(초기·cold restart), `3/backup-2`, `4/backup-3`(새 peer)와 destination 원문을 확인했습니다. 같은 engine의 신규 container/network/Ryuk 잔여는 0개이고 관련 source와 Makefile 212개 SHA256은 실행 전후 동일합니다. `verification.json`은 실제 3개 parent·MON의 두 mode·constructor 8개 child·8개 checkpoint와 cleanup을 원본에서 대조합니다. Selector inventory는 현재 105개 required test 이름을 확인한 목록이며 이 focused run을 전체 matrix 재실행으로 표시하지 않습니다.
+Package terminal은 PASS 1,076.494초입니다. MON 경로의 각 mode에서 CephFS source snapshot ID/name `2/backup-1`(초기·cold restart), `3/backup-2`, `4/backup-3`(새 peer)와 destination 원문을 확인했습니다. 같은 engine의 신규 container/network/Ryuk 잔여는 0개이고 관련 source와 Makefile 212개 SHA256은 실행 전후 동일합니다. `verification.json`은 실제 3개 parent·MON의 두 mode·constructor 8개 child·8개 checkpoint와 cleanup을 원본에서 대조합니다. Selector inventory는 이 실행 당시 105개 required test 이름을 확인한 목록이며 이 focused run을 전체 matrix 재실행으로 표시하지 않습니다.
 
 ## 검증
 
