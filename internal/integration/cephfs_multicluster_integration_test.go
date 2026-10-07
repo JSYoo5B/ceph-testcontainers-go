@@ -5,8 +5,10 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +44,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 			t.Fatal(err)
 		}
 	}
+	expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
 		if err := client.CopyToContainer(ctx, []byte(cephFSInterClusterScript), "/tmp/cephfs-intercluster.py", 0o600); err != nil {
 			t.Fatal(err)
@@ -56,6 +59,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 		}
 	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
+	snapshot1 := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-intercluster.py", "/federation", "backup-1")
 	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-1", "/tmp/cephfs-backup-1.json")
 	archive := multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-1.json")
 	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-1.json", 0o600); err != nil {
@@ -90,6 +94,17 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	if err != nil {
 		t.Fatal(err)
 	}
+	peers, err := mirror.PeerIDs(ctx)
+	if err != nil || len(peers) != 1 {
+		t.Fatalf("CephFS initial mirror peers: got %v, error %v; want one", peers, err)
+	}
+	expected.PeerID = peers[0]
+	cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-intercluster.py", expected, "/federation", snapshot1)
+	initialStatus, err := mirror.DirectoryStatus(ctx, "/federation")
+	if err != nil || !initialStatus.Ready || len(initialStatus.DaemonProblems) != 0 {
+		t.Fatalf("single live CephFS mirror directory status: status=%+v error=%v", initialStatus, err)
+	}
+	cephFSAssertObservedIdentity(t, initialStatus, expected, "/federation")
 	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-1", true)
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-1", "/tmp/cephfs-backup-1.json")
 	t.Log("native cephfs-mirror: first snapshot reached the destination; content, names, symlink, modes and owners checked separately from user xattrs")
@@ -98,7 +113,28 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	if err := mirror.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)
 	}
+	stoppedContainerID := mirror.GetContainerID()
+	stoppedState, err := mirror.State(ctx)
+	if err != nil || stoppedState == nil || stoppedState.Running {
+		t.Fatalf("CephFS receiver did not stop: state=%+v error=%v", stoppedState, err)
+	}
+	stoppedStatus, stoppedErr := mirror.DirectoryStatus(ctx, "/federation")
+	if stoppedStatus.Ready {
+		t.Fatalf("stopped CephFS receiver reported a ready directory: status=%+v error=%v", stoppedStatus, stoppedErr)
+	}
+	cephFSAssertObservedIdentity(t, stoppedStatus, expected, "/federation")
+	pausedCtx, pausedCancel := context.WithTimeout(ctx, 2*time.Second)
+	pausedStatus, pausedErr := mirror.WaitDirectoryReady(pausedCtx, "/federation")
+	pausedCancel()
+	if !errors.Is(pausedErr, context.DeadlineExceeded) || pausedStatus.Ready {
+		t.Fatalf("paused CephFS directory wait: status=%+v error=%v; want non-ready deadline", pausedStatus, pausedErr)
+	}
+	stoppedState, err = mirror.State(ctx)
+	if err != nil || stoppedState == nil || stoppedState.Running || mirror.GetContainerID() != stoppedContainerID {
+		t.Fatalf("CephFS observation changed the stopped receiver: state=%+v error=%v", stoppedState, err)
+	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "mutate")
+	snapshot2 := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-intercluster.py", "/federation", "backup-2")
 	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-2", "/tmp/cephfs-backup-2.json")
 	archive = multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-2.json")
 	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-2.json", 0o600); err != nil {
@@ -108,6 +144,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	if err := mirror.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-intercluster.py", expected, "/federation", snapshot2)
 	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-2", true)
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-1", "/tmp/cephfs-backup-1.json")
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-2", "/tmp/cephfs-backup-2.json")
@@ -123,6 +160,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	}
 	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 0, "")
 	fsCommand(sourceClient, sourceFS.FilesystemName, "membership-checkpoint", "directory-removed", "backup-3")
+	snapshot3 := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-intercluster.py", "/federation", "backup-3")
 	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
 	archive = multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-3.json")
 	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-3.json", 0o600); err != nil {
@@ -134,6 +172,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 		t.Fatal(err)
 	}
 	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, "")
+	cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-intercluster.py", expected, "/federation", snapshot3)
 	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-3", true)
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
 	t.Log("native CephFS directory membership: unregister stopped new snapshot delivery for 10s, existing destination data survived, re-register caught up snapshot and new bytes")
@@ -141,7 +180,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	// Removing the peer is independent of directory membership. The old UUID
 	// must disappear from both manager policy and the running daemon before a
 	// fresh token is imported for the same source filesystem.
-	peers, err := mirror.PeerIDs(ctx)
+	peers, err = mirror.PeerIDs(ctx)
 	if err != nil || len(peers) != 1 {
 		t.Fatalf("CephFS mirror peers: got %v, error %v; want one", peers, err)
 	}
@@ -155,6 +194,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	}
 	cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, removedPeer)
 	fsCommand(sourceClient, sourceFS.FilesystemName, "membership-checkpoint", "peer-removed", "backup-4")
+	snapshot4 := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-intercluster.py", "/federation", "backup-4")
 	fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
 	archive = multiClusterReadFile(t, ctx, sourceClient, "/tmp/cephfs-backup-4.json")
 	if err := destinationClient.CopyToContainer(ctx, archive, "/tmp/cephfs-backup-4.json", 0o600); err != nil {
@@ -171,6 +211,13 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	if err != nil || len(peers) != 1 || peers[0] != newPeer {
 		t.Fatalf("CephFS rebootstrap peers: got %v, error %v; want %s", peers, err, newPeer)
 	}
+	if newPeer == removedPeer {
+		t.Fatal("CephFS fresh bootstrap retained the removed peer UUID")
+	}
+	// A fresh public wait accepts the new peer for the same two filesystems
+	// and owned directory; an in-progress wait pins its original peer UUID.
+	expected.PeerID = newPeer
+	cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-intercluster.py", expected, "/federation", snapshot4)
 	cephFSWaitForRemoteSnapshot(t, ctx, destinationClient, destinationFS.FilesystemName, "backup-4", true)
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-3", "/tmp/cephfs-backup-3.json")
@@ -185,6 +232,71 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify-mirror", "/federation/.snap/backup-4", "/tmp/cephfs-backup-4.json")
 	fsCommand(destinationClient, destinationFS.FilesystemName, "verify", "/restored", "/tmp/cephfs-backup-1.json")
 	t.Log("source MON/MDS/OSDs stopped: fresh destination userspace sessions still read the mirrored snapshot and separately restored backup after destination OSD replacement")
+}
+
+// Read the expected checkpoint from the source native client. Destination snap
+// IDs and mirror-reported last_synced_snap cannot supply this independent value.
+func cephFSReadSourceSnapshot(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, script, directory, name string) multicluster.CephFSMirrorSnapshot {
+	t.Helper()
+	raw := multiClusterExecOutput(t, ctx, client, "python3", script, filesystem, "snapshot-checkpoint", directory, name)
+	var checkpoint multicluster.CephFSMirrorSnapshot
+	if err := json.Unmarshal(raw, &checkpoint); err != nil || checkpoint.ID == 0 || checkpoint.ID > ^uint64(0)-2 || checkpoint.Name != name {
+		t.Fatalf("invalid independent CephFS source snapshot %s/.snap/%s: data=%s error=%v", directory, name, raw, err)
+	}
+	return checkpoint
+}
+
+func cephFSObservedFilesystemIdentity(t *testing.T, ctx context.Context, source, destination *ceph.CephFSContainer) multicluster.CephFSMirrorDirectoryStatus {
+	t.Helper()
+	sourceStatus, err := source.MDSStatus(ctx)
+	if err != nil || sourceStatus == nil || sourceStatus.FilesystemID <= 0 {
+		t.Fatalf("read independent source filesystem identity: status=%+v error=%v", sourceStatus, err)
+	}
+	destinationStatus, err := destination.MDSStatus(ctx)
+	if err != nil || destinationStatus == nil || destinationStatus.FilesystemID <= 0 {
+		t.Fatalf("read independent destination filesystem identity: status=%+v error=%v", destinationStatus, err)
+	}
+	return multicluster.CephFSMirrorDirectoryStatus{
+		SourceFilesystem: source.FilesystemName, DestinationFilesystem: destination.FilesystemName,
+		SourceFilesystemID: int(sourceStatus.FilesystemID), DestinationFilesystemID: int(destinationStatus.FilesystemID),
+	}
+}
+
+func cephFSAssertObservedIdentity(t *testing.T, status, expected multicluster.CephFSMirrorDirectoryStatus, directory string) {
+	t.Helper()
+	if status.SourceFilesystem != expected.SourceFilesystem || status.DestinationFilesystem != expected.DestinationFilesystem ||
+		status.SourceFilesystemID != expected.SourceFilesystemID || status.DestinationFilesystemID != expected.DestinationFilesystemID ||
+		status.Directory != directory || status.PeerID != expected.PeerID {
+		t.Fatalf("CephFS directory observation changed independent filesystem/peer identity: status=%+v expected=%+v directory=%s", status, expected, directory)
+	}
+	if status.Ready {
+		watcherID, err := strconv.ParseUint(status.InstanceID, 10, 64)
+		if err != nil || watcherID == 0 || status.MappingState != "mapped" || status.DaemonName == "" {
+			t.Fatalf("ready CephFS directory lacks a mapped native owner: status=%+v", status)
+		}
+	}
+}
+
+func cephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *multicluster.CephFSMirror, sourceClient testcontainers.Container, script string, expected multicluster.CephFSMirrorDirectoryStatus, directory string, checkpoint multicluster.CephFSMirrorSnapshot) multicluster.CephFSMirrorDirectoryStatus {
+	t.Helper()
+	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	ready, err := mirror.WaitDirectoryReady(waitCtx, directory)
+	if err != nil || !ready.Ready {
+		t.Fatalf("wait ready CephFS directory %s: status=%+v error=%v", directory, ready, err)
+	}
+	cephFSAssertObservedIdentity(t, ready, expected, directory)
+	status, err := mirror.WaitSnapshotSynced(waitCtx, directory, checkpoint)
+	if err != nil || !status.Ready || status.LastSyncedSnapshot == nil || *status.LastSyncedSnapshot != checkpoint {
+		t.Fatalf("wait exact source CephFS snapshot %s/.snap/%s id=%d: status=%+v error=%v", directory, checkpoint.Name, checkpoint.ID, status, err)
+	}
+	cephFSAssertObservedIdentity(t, status, expected, directory)
+	current := cephFSReadSourceSnapshot(t, waitCtx, sourceClient, expected.SourceFilesystem, script, directory, checkpoint.Name)
+	if current != checkpoint {
+		t.Fatalf("source CephFS snapshot was recreated during observation: before=%+v after=%+v", checkpoint, current)
+	}
+	t.Logf("public CephFS directory checkpoint: directory=%s peer=%s owner=%s watcher=%s source_snap=%d/%s problems=%v", directory, status.PeerID, status.DaemonName, status.InstanceID, checkpoint.ID, checkpoint.Name, status.DaemonProblems)
+	return status
 }
 
 // A single absent response would also pass before a pending asynchronous sync
@@ -461,6 +573,15 @@ try:
         except cephfs.ObjectNotFound:
             present = False
         assert present == (expectation == 'present'), 'snapshot state still pending'
+    elif phase == 'snapshot-checkpoint':
+        root, name = args
+        assert root.startswith('/') and '\x00' not in root, 'invalid snapshot root'
+        assert name and name not in ('.', '..') and '/' not in name and '\x00' not in name, 'invalid snapshot name'
+        snapshot_path = root.rstrip('/') + '/.snap/' + name
+        info = fs.snap_info(snapshot_path)
+        snapshot_id = info['id']
+        assert type(snapshot_id) is int and 1 <= snapshot_id <= 18446744073709551613, 'invalid source snapshot ID'
+        print(json.dumps({'id': snapshot_id, 'name': name}, sort_keys=True))
     elif phase == 'remove-snapshot':
         fs.rmdir('/federation/.snap/' + args[0])
     else:

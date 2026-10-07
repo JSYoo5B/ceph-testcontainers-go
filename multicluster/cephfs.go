@@ -77,6 +77,8 @@ type CephFSMirror struct {
 	destinationSite, peerID                     string
 	filesystemID                                int
 	metadataPool                                string
+	metadataPoolID, destinationMetadataPoolID   int64
+	destinationFilesystemID                     int
 	pendingPeerImport                           *cephFSPeerIdentity
 	managerNetworking                           *cephFSManagerNetworking
 	closed                                      bool
@@ -286,6 +288,23 @@ func (mirror *CephFSMirror) loadFilesystemIdentity(ctx context.Context) error {
 	for _, pool := range pools {
 		if pool.ID == *filesystem.MDSMap.MetadataPool && pool.Name != "" {
 			mirror.filesystemID, mirror.metadataPool = filesystem.ID, pool.Name
+			mirror.metadataPoolID = *filesystem.MDSMap.MetadataPool
+			if mirror.destination != nil {
+				data, err := mirror.destination.Ceph(ctx, "fs", "get", mirror.DestinationFilesystem, "--format", "json")
+				if err != nil {
+					return fmt.Errorf("inspect destination mirrored filesystem identity: %w", err)
+				}
+				var remote struct {
+					ID     int `json:"id"`
+					MDSMap struct {
+						MetadataPool *int64 `json:"metadata_pool"`
+					} `json:"mdsmap"`
+				}
+				if json.Unmarshal(data, &remote) != nil || remote.ID <= 0 || remote.MDSMap.MetadataPool == nil {
+					return errors.New("destination did not return mirrored filesystem ID and metadata pool")
+				}
+				mirror.destinationFilesystemID, mirror.destinationMetadataPoolID = remote.ID, *remote.MDSMap.MetadataPool
+			}
 			return nil
 		}
 	}

@@ -64,18 +64,24 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 			t.Fatal(err)
 		}
 	}
+	expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
 		if err := client.CopyToContainer(ctx, []byte(cephFSMirrorDaemonScript), "/tmp/cephfs-mirror-daemons.py", 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(name string) {
+	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
+	checkpoint := func(name string) map[string]multicluster.CephFSMirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
+		checkpoints := make(map[string]multicluster.CephFSMirrorSnapshot, len(directories))
+		for _, directory := range directories {
+			checkpoints[directory] = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-mirror-daemons.py", directory, name)
+		}
+		return checkpoints
 	}
-	checkpoint("initial")
+	initial := checkpoint("initial")
 	image := source.ControlImage()
-	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
 	mirror, err := multicluster.RunCephFSMirror(ctx, image, multicluster.CephFSMirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
@@ -121,7 +127,28 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		t.Fatalf("shared mirror peer policy: peers=%v error=%v", peers, err)
 	}
 	peerID := peers[0]
+	expected.PeerID = peerID
+	waitCheckpoints := func(checkpoints map[string]multicluster.CephFSMirrorSnapshot, owners map[string]string, stoppedMember string) {
+		t.Helper()
+		for _, directory := range directories {
+			status := cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-mirror-daemons.py", expected, directory, checkpoints[directory])
+			if status.InstanceID != owners[directory] {
+				t.Fatalf("public CephFS directory owner disagrees with independent native dirmap: directory=%s status=%+v owners=%v", directory, status, owners)
+			}
+			if stoppedMember != "" {
+				if status.DaemonName == stoppedMember || status.DaemonProblems[stoppedMember] == "" {
+					t.Fatalf("public CephFS checkpoint lost unrelated stopped member: directory=%s status=%+v", directory, status)
+				}
+				observed, observationErr := mirror.DirectoryStatus(ctx, directory)
+				if observationErr == nil || !observed.Ready || observed.DaemonProblems[stoppedMember] == "" || observed.DaemonName == stoppedMember || observed.InstanceID != owners[directory] {
+					t.Fatalf("CephFS partial member status did not retain live selected owner and stopped member problem: status=%+v error=%v", observed, observationErr)
+				}
+				cephFSAssertObservedIdentity(t, observed, expected, directory)
+			}
+		}
+	}
 	owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
+	waitCheckpoints(initial, owners, "")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
 
 	// Cross-check admin peer status against the native directory map. The
@@ -156,7 +183,8 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 			t.Fatalf("directory %s still belongs to stopped native daemon %s", directory, stoppedID)
 		}
 	}
-	checkpoint("owner-stopped")
+	ownerStopped := checkpoint("owner-stopped")
+	waitCheckpoints(ownerStopped, owners, "a")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "owner-stopped")
 	t.Logf("native CephFS mirror owner %s stopped: four directories reassigned to the surviving instance; new snapshots and exact bytes arrived", stoppedID)
 
@@ -179,8 +207,9 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		}
 		t.Log("fixture-controlled CephFS directory rebalance after adding replacement: unregister/release/re-register owned policies while retaining peer and snapshot data")
 	}
-	cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
-	checkpoint("replacement")
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 2)
+	replacementSnapshots := checkpoint("replacement")
+	waitCheckpoints(replacementSnapshots, owners, "")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "replacement")
 
 	// Deliberately remove every process without removing its peer or directory
@@ -195,7 +224,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	if len(mirror.Daemons()) != 0 {
 		t.Fatal("zero-daemon outage retained a process in the inventory")
 	}
-	checkpoint("all-removed")
+	allRemoved := checkpoint("all-removed")
 	cephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed", 10*time.Second)
 	currentPeers, err := mirror.PeerIDs(ctx)
 	if err != nil || !slices.Equal(currentPeers, peers) {
@@ -204,7 +233,8 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	if _, err := mirror.AddDaemon(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+	waitCheckpoints(allRemoved, owners, "")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
 	t.Log("CephFS mirror daemon topology 2→1→2→1→0→1: shared auth/peer retained, native assignments converged, zero-instance backlog caught up, initial snapshot bytes preserved")
@@ -253,7 +283,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if isolated.Container.NetworkSettings.Networks[destination.NetworkName()] != nil || kept == nil || kept.IPAddress != local.IPAddress || !slices.Equal(kept.Aliases, local.Aliases) || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer cut did not preserve the original source endpoint and same running process")
 		}
-		checkpoint("peer-isolated")
+		peerIsolated := checkpoint("peer-isolated")
 		cephFSAssertDaemonSnapshotsAbsent(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated", 10*time.Second)
 		if current, err := mirror.PeerIDs(ctx); err != nil || !slices.Equal(current, peers) {
 			t.Fatalf("peer-only isolation changed filesystem policy: peers=%v error=%v", current, err)
@@ -279,6 +309,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if restoredPeer == nil || restoredPeer.IPAddress != peer.IPAddress || !slices.Equal(restoredPeer.Aliases, peer.Aliases) || restoredPeer.GwPriority != peer.GwPriority || restoredSource == nil || restoredSource.IPAddress != local.IPAddress || !restored.Container.State.Running || restored.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer restoration changed endpoint IP/aliases/priority, source endpoint, or mirror PID")
 		}
+		waitCheckpoints(peerIsolated, beforeOwners, "")
 		cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "peer-isolated")
 		t.Log("CephFS peer bridge interruption: process, source assignment and shared peer remained; remote snapshots stayed absent during isolation and exact bytes caught up after restoring the same endpoint")
 	}
@@ -423,10 +454,11 @@ func cephFSAssertDaemonSnapshotsAbsent(t *testing.T, ctx context.Context, client
 }
 
 const cephFSMirrorDaemonScript = `import cephfs
+import json
 import os
 import sys
 
-filesystem, phase, snapshot = sys.argv[1:]
+filesystem, phase, *args = sys.argv[1:]
 fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id='admin')
 fs.conf_set('client_mount_timeout', '30')
 fs.mount(filesystem_name=filesystem.encode())
@@ -434,40 +466,51 @@ directories = ['/daemon-a', '/daemon-b', '/daemon-c', '/daemon-d']
 def payload(directory):
     return (snapshot + ':' + directory + ':').encode() * 1024 + bytes(range(256))
 try:
-    for directory in directories:
-        root = directory.encode()
-        path = root + b'/.snap/' + snapshot.encode()
-        if phase == 'checkpoint':
-            try:
-                fs.mkdir(root, 0o755)
-            except cephfs.ObjectExists:
-                pass
-            fd = fs.open(root + b'/payload', os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o640)
-            try:
-                data = payload(directory)
-                assert fs.write(fd, data, 0) == len(data)
-                fs.fsync(fd, False)
-            finally:
-                fs.close(fd)
-            fs.sync_fs()
-            fs.mkdir(path, 0o755)
-        elif phase == 'verify':
-            fd = fs.open(path + b'/payload', os.O_RDONLY)
-            try:
-                expected = payload(directory)
-                actual = fs.read(fd, 0, len(expected) + 1)
-                assert actual == expected, 'snapshot byte mismatch: ' + directory
-            finally:
-                fs.close(fd)
-        elif phase == 'absent':
-            try:
-                fs.stat(path)
-            except cephfs.ObjectNotFound:
-                continue
-            raise AssertionError('unexpected snapshot while every mirror process removed: ' + directory)
-        else:
-            raise AssertionError('unknown phase: ' + phase)
-    print(phase + ' ' + snapshot + ': four directory snapshots checked')
+    if phase == 'snapshot-checkpoint':
+        root, name = args
+        assert root.startswith('/') and '\x00' not in root, 'invalid snapshot root'
+        assert name and name not in ('.', '..') and '/' not in name and '\x00' not in name, 'invalid snapshot name'
+        snapshot_path = root.rstrip('/') + '/.snap/' + name
+        info = fs.snap_info(snapshot_path)
+        snapshot_id = info['id']
+        assert type(snapshot_id) is int and 1 <= snapshot_id <= 18446744073709551613, 'invalid source snapshot ID'
+        print(json.dumps({'id': snapshot_id, 'name': name}, sort_keys=True))
+    else:
+        snapshot, = args
+        for directory in directories:
+            root = directory.encode()
+            path = root + b'/.snap/' + snapshot.encode()
+            if phase == 'checkpoint':
+                try:
+                    fs.mkdir(root, 0o755)
+                except cephfs.ObjectExists:
+                    pass
+                fd = fs.open(root + b'/payload', os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o640)
+                try:
+                    data = payload(directory)
+                    assert fs.write(fd, data, 0) == len(data)
+                    fs.fsync(fd, False)
+                finally:
+                    fs.close(fd)
+                fs.sync_fs()
+                fs.mkdir(path, 0o755)
+            elif phase == 'verify':
+                fd = fs.open(path + b'/payload', os.O_RDONLY)
+                try:
+                    expected = payload(directory)
+                    actual = fs.read(fd, 0, len(expected) + 1)
+                    assert actual == expected, 'snapshot byte mismatch: ' + directory
+                finally:
+                    fs.close(fd)
+            elif phase == 'absent':
+                try:
+                    fs.stat(path)
+                except cephfs.ObjectNotFound:
+                    continue
+                raise AssertionError('unexpected snapshot while every mirror process removed: ' + directory)
+            else:
+                raise AssertionError('unknown phase: ' + phase)
+        print(phase + ' ' + snapshot + ': four directory snapshots checked')
 finally:
     fs.shutdown()
 `

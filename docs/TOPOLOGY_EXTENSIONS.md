@@ -93,4 +93,16 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 
 자동 경로의 세 번째 실행은 `artifacts/topology-cephfs-daemons-native-third.log`에서 317.419초 FAIL입니다. 앞의 두 실행은 준비 코드의 JSON parser 문제로 실패했으며, 각각의 수정 후 단위 테스트에 실제 JSON 형태를 추가했습니다. 최종 자동 경로 실패는 준비 단계 이후 증설 시 native 배치 오류로 구분합니다.
 
+## 후속 runtime 우선순위
+
+2026-10-07 코드 검토에서 OSD 삭제 재시도, 소유 daemon MON bootstrap 갱신, RBD/CephFS 관측 다음의 공백을 아래 순서로 확인했습니다. 아래 항목은 현재 제공·검증 완료 범위에 포함하지 않습니다.
+
+| 순서 | 남은 공백 | 다음 검증 기준 |
+| --- | --- | --- |
+| 1 | 전체 MON rolling 이후 caller client와 multicluster의 bootstrap 갱신. `WithClient`와 multicluster 관리 client·mirror daemon은 생성 시 config snapshot을 받으며 cluster의 `RefreshMonitorConfig` 대상 밖 | 연결이 소유한 running/stopped client·daemon의 설정 갱신과 remote peer bootstrap을 구분. 양쪽 MON 전체 교체 후 동일 link cold restart·native 재연결·원문 유지 |
+| 2 | 기존 topology mutation의 plain mutex 대기는 caller context 만료에도 앞 작업이 끝날 때까지 반환하지 못할 수 있음 | context-aware lock 적용. Busy fixture에서 짧은 deadline 호출이 native mutation 없이 반환하고, 새 context 호출은 정상 진행 |
+| 3 | CephFS directory/peer 제거 직후 ownership을 지우므로 새 directory observer로 release 완료를 기다릴 수 없음 | 원래 FS/peer/path identity를 보존한 제거 handle과 bounded drain wait. 완료 확인 후 re-register/rebootstrap와 기존 snapshot 원문 유지 |
+
+첫 번째는 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. 세 번째도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
+
 근거: [Ceph network 구성](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/), [RBD mirror daemon 구성](https://docs.ceph.com/en/tentacle/rbd/rbd-mirroring/), [CephFS mirror 모듈](https://docs.ceph.com/en/tentacle/cephfs/cephfs-mirroring/), [RGW multisite](https://docs.ceph.com/en/tentacle/radosgw/multisite/).

@@ -181,6 +181,11 @@ CephFS mirror는 초기 MGR a의 존재 대신 현재 native map의 실행 중 o
 | `RemoveDaemon(ctx, name, opts...)` | owned process 종료·inventory 제거. 마지막 daemon 제거도 허용하며 이후 `AddDaemon`으로 재개. 실패하면 membership을 유지하여 재시도 |
 | RBD daemon `Status(ctx)` | native admin socket의 `PoolReplayers` 조회. `Pool`, `Peer`, `State`, `InstanceID`, `LeaderInstanceID`, `Leader`, `Instances`로 해당 pool의 election/membership 관측. process 중단 또는 socket 부재 시 오류 |
 | CephFS `RebalanceDirectories(ctx)` | fixture가 소유한 directory 정책을 명시적으로 제거·release 대기·재등록. 현재 구성원 전부 실행 중이어야 하며 중단한 구성원은 먼저 제거 |
+| RBD `ImageStatus(ctx, name)`, `WaitReplayReady(ctx, name)` | 원래 pool/namespace/image pair와 실행 중 owned receiver의 exact native instance 확인. 특정 write/checkpoint의 완료는 별도 client에서 검증 |
+| CephFS `DirectoryStatus(ctx, path)`, `WaitDirectoryReady(ctx, path)` | 현재 owned directory의 원래 filesystem/peer, MGR assignment·live owner 및 다른 unavailable member 문제 관측 |
+| CephFS `WaitSnapshotSynced(ctx, path, CephFSMirrorSnapshot)` | source client에서 독립적으로 읽은 snapshot ID·이름과 정확한 native last_synced 일치 대기. Destination bytes·retention은 별도 확인 |
+
+관측별 deadline·identity·partial readiness와 실제 실행 증거는 [mirror 관측 계약](MIRROR_OBSERVABILITY.md)을 따릅니다.
 
 RBD daemon은 각각 다른 Ceph client를 사용하며 pool receiving peer와 native leader election/image assignment를 공유합니다. CephFS daemon은 동일한 source client와 single peer를 공유합니다. filesystem당 peer 하나 제한은 그대로이므로 여러 daemon이 같은 filesystem의 A→B/C fanout을 만들지는 않습니다.
 
