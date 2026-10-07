@@ -498,7 +498,9 @@ func (f *RGWMultisite) PullDestinationPeriod(ctx context.Context) error {
 // Terminate removes owned gateways, CLI clients and the HTTP bridge. Realm,
 // zone configuration and data remain; neither Ceph cluster is terminated.
 func (f *RGWMultisite) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
 	defer f.topologyMu.Unlock()
 	f.closed = true
 	return f.owned.terminate(ctx, opts...)

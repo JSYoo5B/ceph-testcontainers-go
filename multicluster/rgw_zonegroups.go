@@ -47,7 +47,9 @@ func (f *RGWMultisite) AddZonegroup(ctx context.Context, image string, config RG
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
 		return nil, errors.New("RGW zonegroup requires a valid name and at least one zone")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return nil, err
+	}
 	defer f.topologyMu.Unlock()
 	if _, exists := f.groupIDs[config.Name]; exists {
 		return nil, fmt.Errorf("RGW zonegroup %s is already owned", config.Name)
@@ -115,7 +117,9 @@ func (f *RGWMultisite) RemoveZone(ctx context.Context, name string) error {
 	if f == nil || !validRGWZoneName(name) {
 		return errors.New("invalid RGW fixture or zone name")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
 	defer f.topologyMu.Unlock()
 	if f.closed {
 		return errors.New("RGW multisite is terminated")

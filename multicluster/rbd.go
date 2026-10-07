@@ -132,7 +132,9 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 	if d == nil {
 		return nil
 	}
-	d.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &d.mu); err != nil {
+		return err
+	}
 	defer d.mu.Unlock()
 	if d.terminated || d.Container == nil {
 		return nil
@@ -241,7 +243,9 @@ func (m *RBDMirror) AddDaemon(ctx context.Context, name string, opts ...testcont
 	if err := validateRBDMirrorDaemonName(name); err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return nil, err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil || m.config.Destination == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable or terminated")
@@ -300,7 +304,9 @@ func (m *RBDMirror) RemoveDaemon(ctx context.Context, name string, opts ...testc
 	if m == nil {
 		return errors.New("RBD mirror fixture is unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return err
+	}
 	defer m.mu.Unlock()
 	if m.closed {
 		return errors.New("RBD mirror fixture is terminated")
@@ -343,7 +349,9 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
@@ -529,7 +537,9 @@ func (m *RBDMirror) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
 		return errors.New("RBD mirror source setup client is unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil {
 		return errors.New("RBD mirror source setup client is unavailable or terminated")
@@ -589,7 +599,9 @@ func (m *RBDMirror) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	if m == nil {
 		return nil
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return err
+	}
 	defer m.mu.Unlock()
 	m.closed = true
 	if err := m.owned.terminate(ctx, opts...); err != nil {

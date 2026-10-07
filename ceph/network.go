@@ -94,7 +94,9 @@ type NetworkInterruption struct {
 // The fixture retains the handle and attempts restoration during Terminate.
 // Restore explicitly before destroying caller-owned containers or the cluster.
 func (c *Container) InterruptNetwork(ctx context.Context, ctr testcontainers.Container, plane NetworkPlane) (*NetworkInterruption, error) {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed || c.UsesHostNetwork() || ctr == nil || ctr.GetContainerID() == "" {
 		return nil, errors.New("network interruption requires a live bridge cluster and an attached container")
@@ -113,8 +115,14 @@ func (c *Container) InterruptNetwork(ctx context.Context, ctr testcontainers.Con
 	}
 	id := ctr.GetContainerID()
 	key := name + "/" + id
-	if previous := c.interruptions[key]; previous != nil && !previous.isComplete() {
-		return previous, errors.New("restore the existing endpoint interruption first")
+	if previous := c.interruptions[key]; previous != nil {
+		complete, err := previous.isComplete(ctx)
+		if err != nil {
+			return previous, err
+		}
+		if !complete {
+			return previous, errors.New("restore the existing endpoint interruption first")
+		}
 	}
 	link, err := InterruptNetwork(ctx, ctr, name)
 	if link != nil {
@@ -177,17 +185,21 @@ func restoreEndpoint(original *dockernetwork.EndpointSettings) *dockernetwork.En
 	return endpoint
 }
 
-func (link *NetworkInterruption) isComplete() bool {
-	link.mu.Lock()
+func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
+	if err := lockTopologyMutex(ctx, &link.mu); err != nil {
+		return false, err
+	}
 	defer link.mu.Unlock()
-	return link.complete
+	return link.complete, nil
 }
 
 // Restore reattaches the original endpoint, preserving the IP advertised by
 // Ceph. Removed containers need no restoration. An externally reattached
 // endpoint with a different address is refused rather than overwritten.
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
-	link.mu.Lock()
+	if err := lockTopologyMutex(ctx, &link.mu); err != nil {
+		return err
+	}
 	defer link.mu.Unlock()
 	if link.complete {
 		return nil

@@ -132,7 +132,9 @@ func (f *RGWMultisite) CreateSyncGroup(ctx context.Context, scope RGWSyncPolicyS
 	if f == nil {
 		return nil, errors.New("RGW multisite fixture is required")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return nil, err
+	}
 	defer f.topologyMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -335,7 +337,9 @@ func (f *RGWMultisite) RemoveSyncGroup(ctx context.Context, g *RGWSyncGroup) err
 	if f == nil {
 		return errors.New("RGW multisite fixture is required")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
 	defer f.topologyMu.Unlock()
 	if err := f.validateSyncGroup(g, true); err != nil {
 		return err
@@ -399,7 +403,9 @@ func (f *RGWMultisite) changeSyncGroup(ctx context.Context, g *RGWSyncGroup, cha
 	if f == nil {
 		return errors.New("RGW multisite fixture is required")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
 	defer f.topologyMu.Unlock()
 	if err := f.validateSyncGroup(g, false); err != nil {
 		return err

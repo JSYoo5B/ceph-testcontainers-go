@@ -381,7 +381,9 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
@@ -483,7 +485,9 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")
@@ -667,7 +671,9 @@ func (c *Container) ServiceContainers() []testcontainers.Container {
 // startService registers partial failures too, so callers can always terminate
 // the cluster after a failed RGW/MDS bootstrap.
 func (c *Container) startService(ctx context.Context, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
@@ -694,7 +700,9 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // Terminate removes all owned daemons before removing the isolated network.
 // It also works on a partially initialized cluster returned by Run.
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	c.closed = true
 	var errs []error

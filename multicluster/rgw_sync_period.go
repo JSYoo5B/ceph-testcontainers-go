@@ -21,7 +21,9 @@ func (f *RGWMultisite) ApplySyncGroup(ctx context.Context, g *RGWSyncGroup) erro
 	if f == nil {
 		return errors.New("RGW multisite fixture is required")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return err
+	}
 	defer f.topologyMu.Unlock()
 	if err := f.validateSyncGroup(g, true); err != nil {
 		return err

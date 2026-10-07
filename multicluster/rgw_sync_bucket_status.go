@@ -106,6 +106,10 @@ func lockRGWSyncObservation(ctx context.Context, mutex *sync.Mutex) error {
 			return err
 		}
 		if mutex.TryLock() {
+			if err := ctx.Err(); err != nil {
+				mutex.Unlock()
+				return err
+			}
 			return nil
 		}
 		select {

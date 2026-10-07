@@ -50,7 +50,9 @@ func (daemon *CephFSMirrorDaemon) Terminate(ctx context.Context, opts ...testcon
 	if daemon == nil {
 		return nil
 	}
-	daemon.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &daemon.mu); err != nil {
+		return err
+	}
 	defer daemon.mu.Unlock()
 	if daemon.removed || daemon.Container == nil {
 		return nil
@@ -452,7 +454,9 @@ func (mirror *CephFSMirror) Daemons() []*CephFSMirrorDaemon {
 // Ceph's Tentacle documentation describes native assignment and failover but
 // also notes that deploying multiple CephFS mirror daemons is untested upstream.
 func (mirror *CephFSMirror) AddDaemon(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*CephFSMirrorDaemon, error) {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return nil, err
+	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
 		return nil, errors.New("CephFS mirror has been terminated")
@@ -513,7 +517,9 @@ func (mirror *CephFSMirror) registerDaemonContainer(container testcontainers.Con
 // Native MGR registration and directory reassignment are asynchronous. A failed
 // termination retains the inventory entry so removal can be retried.
 func (mirror *CephFSMirror) RemoveDaemon(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
 		return errors.New("CephFS mirror has been terminated")
@@ -553,7 +559,9 @@ func (mirror *CephFSMirror) Terminate(ctx context.Context, opts ...testcontainer
 	if mirror == nil {
 		return nil
 	}
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	mirror.closed = true
 	if err := mirror.owned.terminate(ctx, opts...); err != nil {
@@ -571,7 +579,9 @@ func (mirror *CephFSMirror) Terminate(ctx context.Context, opts ...testcontainer
 // fixtures already share the namespace and require no Docker attachments.
 // Existing attachments supplied by the caller remain caller-owned.
 func (mirror *CephFSMirror) AttachManagers(ctx context.Context) error {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	return mirror.attachManagers(ctx)
 }
@@ -764,7 +774,9 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 	if err != nil {
 		return err
 	}
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
@@ -788,7 +800,9 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 	if err != nil {
 		return err
 	}
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
@@ -814,7 +828,9 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 // membership is retained on partial CLI failure so a fresh-context retry can
 // recover. Caller-added policies and other filesystems are not modified.
 func (mirror *CephFSMirror) RebalanceDirectories(ctx context.Context) error {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
 		return errors.New("CephFS mirror has been terminated")
@@ -922,7 +938,9 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 // PeerIDs lists configured source filesystem peers in UUID order. These are
 // monitor policies, not a guarantee that daemon synchronization has stopped.
 func (mirror *CephFSMirror) PeerIDs(ctx context.Context) ([]string, error) {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return nil, err
+	}
 	defer mirror.mu.Unlock()
 	return mirror.peerIDs(ctx)
 }
@@ -967,7 +985,9 @@ func (mirror *CephFSMirror) peerRecords(ctx context.Context) (map[string]json.Ra
 // destination data, snapshots and credentials. Daemon changes are asynchronous;
 // wait for the UUID to disappear from daemon status before re-adding the peer.
 func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
-	mirror.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return err
+	}
 	defer mirror.mu.Unlock()
 	if id == "" || id != mirror.peerID {
 		return errors.New("CephFS mirror does not own this peer")

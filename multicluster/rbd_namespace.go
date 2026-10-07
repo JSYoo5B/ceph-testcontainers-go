@@ -45,7 +45,9 @@ func (m *RBDMirror) PolicyStatus(ctx context.Context) (RBDMirrorPolicies, error)
 	if m == nil {
 		return status, errors.New("RBD mirror fixture is unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return RBDMirrorPolicies{}, err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
 		return status, errors.New("RBD mirror fixture is unavailable or terminated")

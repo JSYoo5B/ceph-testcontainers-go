@@ -148,7 +148,9 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
@@ -257,7 +259,9 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 // RemoveMonitor preserves a working quorum; add a replacement first when a
 // stop would leave fewer than a majority of the current map running.
 func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")
@@ -350,19 +354,7 @@ func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
 // Unlike Mutex.Lock, waiting for serialized topology work must respect the
 // caller's deadline. The caller owns Unlock after this helper succeeds.
 func (c *Container) lockTopology(ctx context.Context) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if c.mu.TryLock() {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	return lockTopologyMutex(ctx, &c.mu)
 }
 
 // The topology caller supplies its existing operation deadline. Only native
@@ -683,7 +675,9 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
@@ -762,7 +756,9 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	if !daemonNamePattern.MatchString(name) {
 		return errors.New("invalid manager name")
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")

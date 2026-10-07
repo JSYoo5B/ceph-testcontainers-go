@@ -84,7 +84,9 @@ func (r *resources) addCleanup(name string, cleanup func(context.Context) error)
 }
 
 func (r *resources) terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	r.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &r.mu); err != nil {
+		return err
+	}
 	defer r.mu.Unlock()
 	var errs []error
 	for i := len(r.actions) - 1; i >= 0; i-- {

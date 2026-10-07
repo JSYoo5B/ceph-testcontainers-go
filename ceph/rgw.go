@@ -59,7 +59,9 @@ func (c *Container) StartRGW(ctx context.Context) (*RGWContainer, error) {
 // Multisite period endpoints are not changed automatically. The last gateway
 // can be removed because RGW is optional. Failed cleanup remains tracked.
 func (c *Container) RemoveRGW(ctx context.Context, name string) error {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")

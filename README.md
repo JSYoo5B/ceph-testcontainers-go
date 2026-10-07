@@ -364,6 +364,8 @@ CephFS mirror는 현재 owned MGR 후보에 peer network를 준비합니다. 새
 
 RBD image와 CephFS directory의 상태 조회·bounded 준비 대기는 [mirror 관측 계약](docs/MIRROR_OBSERVABILITY.md)을 따릅니다. RBD readiness와 CephFS의 exact source snapshot 완료를 구분하며, destination의 실제 데이터는 client에서 별도로 확인합니다.
 
+기존 topology·lifecycle 호출의 owner gate와 cleanup·network mutex 대기는 caller context를 따릅니다. 취소된 대기자는 native 변경 없이 반환하고 같은 fixture를 새 context로 재시도할 수 있습니다. 적용 범위와 남은 snapshot/setup 경로는 [잠금 대기 계약](docs/TOPOLOGY_CONTEXT.md)을 확인합니다.
+
 ## 현재 범위
 
 MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 구성할 수 있습니다. 기존 역할별 slim 이미지의 PoC에서는 RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결까지 bridge/host에서 검증했습니다. 원본 Quay 이미지의 실행 결과와 각 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 서버 측 pool·Cephx·namespace·subvolume·사용자 정책은 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.

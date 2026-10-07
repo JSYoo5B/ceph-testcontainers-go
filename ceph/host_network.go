@@ -69,7 +69,9 @@ func (lease *hostPortLease) Release(ctx context.Context) error {
 	if lease == nil {
 		return nil
 	}
-	lease.mu.Lock()
+	if err := lockTopologyMutex(ctx, &lease.mu); err != nil {
+		return err
+	}
 	defer lease.mu.Unlock()
 	if lease.ctr == nil {
 		return nil

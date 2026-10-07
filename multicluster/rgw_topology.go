@@ -269,7 +269,9 @@ func (f *RGWMultisite) zoneStates() []*rgwZoneState {
 // zone whose CLI client started successfully. Do not edit period/zone state
 // concurrently with AddZone or external metadata master transitions.
 func (f *RGWMultisite) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return nil, err
+	}
 	var client testcontainers.Container
 	if !f.closed {
 		for _, zone := range f.zoneStates() {
@@ -303,7 +305,9 @@ func (f *RGWMultisite) AddZone(ctx context.Context, image string, config RGWZone
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, errors.New("invalid RGW fixture or zone name")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return nil, err
+	}
 	defer f.topologyMu.Unlock()
 	return f.addZone(ctx, image, config, false, opts...)
 }

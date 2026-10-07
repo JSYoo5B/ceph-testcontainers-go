@@ -100,9 +100,11 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 | 순서 | 남은 공백 | 다음 검증 기준 |
 | --- | --- | --- |
 | 완료 | 전체 MON rolling 이후 caller client와 multicluster bootstrap | 명시적 local/remote 갱신 API 및 원본 Quay bridge/host PASS. 양쪽 MON 전체 교체·동일 link cold restart·원문 유지; [계약과 결과](MON_BOOTSTRAP_REFRESH.md) |
-| 2 | 기존 topology mutation의 plain mutex 대기는 caller context 만료에도 앞 작업이 끝날 때까지 반환하지 못할 수 있음 | context-aware lock 적용. Busy fixture에서 짧은 deadline 호출이 native mutation 없이 반환하고, 새 context 호출은 정상 진행 |
-| 3 | CephFS directory/peer 제거 직후 ownership을 지우므로 새 directory observer로 release 완료를 기다릴 수 없음 | 원래 FS/peer/path identity를 보존한 제거 handle과 bounded drain wait. 완료 확인 후 re-register/rebootstrap와 기존 snapshot 원문 유지 |
+| 완료 | 기존 topology·lifecycle 직렬화 gate의 plain mutex 대기 | 42개 진입 경로와 nested cleanup/network lock에 caller context 적용. Busy fixture의 native 변경 0회·새 context 재시도, 원본 Quay 대표 MON/OSD/RBD/CephFS/RGW 5개 parent PASS·strict cleanup 확인; [적용 범위와 결과](TOPOLOGY_CONTEXT.md) |
+| 다음 | constructor·관측 경로의 context-free configuration/manager/gateway/control snapshot | context를 받는 additive getter와 consumer preflight. Busy source/destination 또는 control 종료 중 deadline cause 보존·후속 native 호출 0회 |
+| 이후 | CephFS setup/scale·subvolume/data-pool 및 host RGW resource publication의 혼합 잠금 | 생성 전 대기는 caller context, 생성 후 ownership bookkeeping은 handle 유실 없이 유지 |
+| 이후 | CephFS directory/peer 제거 직후 ownership을 지우므로 새 directory observer로 release 완료를 기다릴 수 없음 | 원래 FS/peer/path identity를 보존한 제거 handle과 bounded drain wait. 완료 확인 후 re-register/rebootstrap와 기존 snapshot 원문 유지 |
 
-첫 번째는 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. 세 번째도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
+Bootstrap 갱신은 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. Removal drain도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. Peer map에서 UUID가 없어지는 것과 in-flight replayer shutdown 완료는 서로 다른 관측입니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
 
 근거: [Ceph network 구성](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/), [RBD mirror daemon 구성](https://docs.ceph.com/en/tentacle/rbd/rbd-mirroring/), [CephFS mirror 모듈](https://docs.ceph.com/en/tentacle/cephfs/cephfs-mirroring/), [RGW multisite](https://docs.ceph.com/en/tentacle/radosgw/multisite/).

@@ -25,7 +25,9 @@ func (m *RBDMirror) InterruptPeerLink(ctx context.Context, daemonName string) (*
 	if m == nil {
 		return nil, errors.New("RBD mirror is unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return nil, err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.config.Source == nil || m.config.Source.UsesHostNetwork() {
 		return nil, errors.New("peer interruption requires a live bridge RBD mirror")
@@ -46,7 +48,9 @@ func (m *CephFSMirror) InterruptPeerLink(ctx context.Context, daemonName string)
 	if m == nil {
 		return nil, errors.New("CephFS mirror is unavailable")
 	}
-	m.mu.Lock()
+	if err := lockRGWSyncObservation(ctx, &m.mu); err != nil {
+		return nil, err
+	}
 	defer m.mu.Unlock()
 	if m.closed || m.destination == nil || m.destination.UsesHostNetwork() {
 		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
@@ -67,7 +71,9 @@ func (f *RGWMultisite) InterruptZoneLink(ctx context.Context, zoneName string) (
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
 	}
-	f.topologyMu.Lock()
+	if err := lockRGWSyncObservation(ctx, &f.topologyMu); err != nil {
+		return nil, err
+	}
 	defer f.topologyMu.Unlock()
 	if f.closed || f.httpNetwork == nil {
 		return nil, errors.New("zone link interruption requires a live bridge RGW topology")
