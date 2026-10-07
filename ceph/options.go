@@ -23,6 +23,8 @@ type options struct {
 	gateways               []RGWConfig
 	monitors               int
 	managers               int
+	managerCountExplicit   bool
+	noInitialManagers      bool
 	blockSize              int64
 	startupTimeout         time.Duration
 	osdImage               string
@@ -54,6 +56,20 @@ func WithManagerCount(count int) Option {
 			return fmt.Errorf("manager count must be at least 1")
 		}
 		o.managers = count
+		o.managerCountExplicit = true
+		return nil
+	}
+}
+
+// WithNoInitialManagers defers the first MGR until an explicit AddManager.
+// Run waits for MON quorum and requested OSDs up/in, without implying PG clean
+// or MGR module readiness. Initial CephFS/RGW services and an explicit manager
+// count are rejected before allocation; positive-OSD initial pools are allowed.
+// The ordinary default is one MGR and WithManagerCount(0) remains invalid.
+// The control image must still contain the MGR and its required dependencies.
+func WithNoInitialManagers() Option {
+	return func(o *options) error {
+		o.noInitialManagers = true
 		return nil
 	}
 }

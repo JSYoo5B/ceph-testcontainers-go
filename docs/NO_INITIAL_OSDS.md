@@ -74,8 +74,12 @@ to its MON request; suppressing OSDs does not suppress or apply it to other role
 
 ## Bootstrap readiness and lifecycle
 
-Run still requires an answering MON, the selected native MON topology and an
-available active MGR; it does not require `HEALTH_OK` or `WaitForClean`. Native
+Ordinary Run, including `WithNoInitialOSDs()` alone, still requires an answering
+MON, the selected native MON topology and an available active MGR. The explicit
+`WithNoInitialManagers()` option instead waits for MON quorum and owned initial
+OSD states; combining both zero options constructs a MON-only phase. See the
+[no-initial-manager contract](NO_INITIAL_MANAGERS.md). Neither cold constructor
+requires `HEALTH_OK` or `WaitForClean`. Native
 `.mgr` pools or pending PGs may exist without OSDs. No pool/data readiness is
 implied. `WaitForClean` retains its existing active+clean PG and up/in contract,
 and `CreatePool` retains its eligible owned-domain preflight.
@@ -167,3 +171,19 @@ all Ceph APIs, production upgrades, hardware performance, global process absence
 or every image/platform combination. No image-requirement violation was observed;
 a substantiated violation must stop dependent work and preserve the exact
 policy item, image digest, reproducing command and native failure evidence.
+
+## No-manager composition follow-up
+
+`WithNoInitialManagers()` can also be selected with this option to construct a
+MON-only phase. The [no-initial-manager validation](NO_INITIAL_MANAGERS.md#validation)
+passed four independent bridge/host fixtures on the later 250-input source,
+including first MGR startup before OSDs and subsequent exact data checks. This
+does not replace the historical 248-input storage-bootstrap measurements above.
+The existing `scenario-storage-bootstrap` independently passed on that new
+source in 89.109 seconds, with all seven named tests and dedicated cleanup leaving
+no new containers or networks. Its parent took 88.71 seconds, bridge 45.03 and
+host 43.69. Its [own provenance](../artifacts/no-initial-managers-20261007/storage-bootstrap-regression/provenance.json)
+and [cleanup](../artifacts/no-initial-managers-20261007/storage-bootstrap-regression/cleanup/after.json)
+retain the separate episode and unchanged 250 source inputs/fixed policy. This
+focused regression does not certify a new full CI/image matrix or replace the
+historical M measurement of 89.354 seconds above.

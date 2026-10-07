@@ -171,11 +171,8 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return c, err
 		}
 	}
-	if err := c.poll(ctx, func() (bool, error) {
-		s, err := c.Status(ctx)
-		return s.MgrMap.Available, err
-	}); err != nil {
-		return c, fmt.Errorf("wait for ceph manager: %w", err)
+	if err := c.waitForInitialDaemons(ctx); err != nil {
+		return c, err
 	}
 	for _, pool := range settings.pools {
 		if _, err := c.CreatePool(ctx, pool); err != nil {
@@ -193,6 +190,41 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		}
 	}
 	return c, nil
+}
+
+func (c *Container) waitForInitialDaemons(ctx context.Context) error {
+	if c.settings.noInitialManagers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := c.WaitForQuorum(ctx); err != nil {
+			return fmt.Errorf("wait for ceph quorum without initial managers: %w", err)
+		}
+		// MON OSDMap state is available before the first MGR. Its captured UUIDs
+		// and up/in flags do not rely on MGR-produced PG or health statistics.
+		if err := c.poll(ctx, func() (bool, error) {
+			states, err := c.OSDStates(ctx)
+			if err != nil {
+				return false, err
+			}
+			for _, state := range states {
+				if !state.Up || !state.In {
+					return false, nil
+				}
+			}
+			return true, nil
+		}); err != nil {
+			return fmt.Errorf("wait for initial OSDs without managers: %w", err)
+		}
+		return ctx.Err()
+	}
+	if err := c.poll(ctx, func() (bool, error) {
+		s, err := c.Status(ctx)
+		return s.MgrMap.Available, err
+	}); err != nil {
+		return fmt.Errorf("wait for ceph manager: %w", err)
+	}
+	return nil
 }
 
 // ControlImage returns the image selected for MON/MGR and auxiliary CLI/client

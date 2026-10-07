@@ -135,6 +135,15 @@ func prepareInitialComposition(settings *options) error {
 		// initial launches. Later AddOSD uses the same placement and defaults.
 		settings.osds = 0
 	}
+	if settings.noInitialManagers {
+		if settings.managerCountExplicit {
+			return fmt.Errorf("WithNoInitialManagers cannot be combined with an explicit initial manager count")
+		}
+		if len(settings.filesystems) != 0 || len(settings.gateways) != 0 {
+			return fmt.Errorf("WithNoInitialManagers requires no initial CephFS filesystems or RGW gateways; add a manager before provisioning them")
+		}
+		settings.managers = 0
+	}
 	gatewayNames := make(map[string]bool)
 	for i, config := range settings.gateways {
 		config, err := normalizeRGWConfig(config)

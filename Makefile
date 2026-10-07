@@ -223,3 +223,11 @@ SCENARIO_STORAGE_BOOTSTRAP_TESTS = ^TestNoInitialOSDTopology$$
 
 scenario-storage-bootstrap:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_STORAGE_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_STORAGE_BOOTSTRAP_TESTS)' ./internal/integration
+
+# Bootstrap without an initial manager has a separate bridge/host lifecycle budget.
+.PHONY: scenario-manager-bootstrap
+SCENARIO_MANAGER_BOOTSTRAP_TIMEOUT ?= 80m
+SCENARIO_MANAGER_BOOTSTRAP_TESTS = ^TestNoInitialManagerTopology$$
+
+scenario-manager-bootstrap:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MANAGER_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_MANAGER_BOOTSTRAP_TESTS)' ./internal/integration

@@ -99,6 +99,8 @@ if err != nil {
 
 `ceph.WithNoInitialOSDs()`를 선택하면 초기 OSD 없이 MON/MGR부터 구성하고 `AddOSD`·`AddOSDWithConfig`로 storage를 추가할 수 있습니다. 초기 user pool·CephFS·RGW를 함께 요청할 수 없으며, storage 이전의 health와 데이터 준비는 구분합니다. 기본 `Run`의 OSD 2개와 마지막 owned OSD 제거 보호는 유지합니다. [최초 OSD 없는 bootstrap 계약](docs/NO_INITIAL_OSDS.md)을 확인합니다.
 
+`ceph.WithNoInitialManagers()`는 초기 MGR 없이 MON quorum과 owned OSD up/in을 확인하고 반환합니다. 양수 OSD와 초기 pool 구성은 유지하며, 초기 CephFS·RGW는 첫 `AddManager` 뒤 명시적으로 구성합니다. `WithNoInitialOSDs()`와 함께 선택하면 MON-only 단계로 시작합니다. MGR 통계·module·clean 준비는 별도로 확인하며 기본 MGR 1개와 마지막 MGR 제거 보호를 바꾸지 않습니다. [최초 MGR 없는 bootstrap 계약](docs/NO_INITIAL_MANAGERS.md)을 따릅니다.
+
 각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
 
 `RemoveMonitor`는 quorum을, `RemoveManager`는 다른 실행 중 candidate의 승격 가능성을 확인한 뒤 해당 노드를 제거합니다. `CephFSContainer.ScaleMDS(ctx, active, standby)`는 같은 filesystem에서 rank handoff 후 남는 standby를 제거하며 pool과 파일을 유지합니다. `RemoveRGW`는 gateway만 제거하므로 같은 zone의 다른 gateway나 교체 노드가 기존 데이터를 계속 제공합니다. multisite의 gateway 주소를 바꿀 때는 period endpoint도 함께 변경해야 합니다.
@@ -229,10 +231,11 @@ python3 internal/integration/goceph/run.py \
 
 | API | 역할 |
 | --- | --- |
-| `Run(ctx, image, opts...)` | 클러스터 부트스트랩, MGR 활성화, 초기 OSD up/in 확인 |
+| `Run(ctx, image, opts...)` | 클러스터 부트스트랩, 요청한 초기 MGR 활성화, 초기 owned OSD up/in 확인 |
 | `WithMonitorCount(n)` / `WithManagerCount(n)` | 초기 MON quorum 후보와 active/standby MGR 수 |
 | `WithOSDCount(n)` | 초기 OSD 수, 기본 2개 |
 | `WithNoInitialOSDs()` | MON/MGR부터 시작하고 이후 명시적 OSD 추가 |
+| `WithNoInitialManagers()` | 초기 MGR 없이 MON/OSD로 시작하고 이후 명시적 MGR 추가 |
 | `WithCephFS(configs...)` / `WithRGW(configs...)` | 초기 filesystem별 active/standby/replay MDS와 이름별 gateway 구성 |
 | `WithOSDBlockSize(bytes)` | OSD sparse 파일 크기, 기본/최소 1 GiB |
 | `WithStartupTimeout(duration)` | 부트스트랩 및 개별 토폴로지 작업 제한, 기본 3분 |
@@ -291,12 +294,13 @@ make scenario-rbd-receivers
 make scenario-mirror-initial-daemons
 make scenario-rbd-namespaces
 make scenario-storage-bootstrap
+make scenario-manager-bootstrap
 make scenario-topology-extensions
 ```
 
 `scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. `scenario-cephfs-removal`은 retained peer/directory receipt와 원래 process·watcher 관측, 명시적 승인 뒤 새 daemon/peer/path 복구와 응답 유실을 보존하는 directory 등록·재등록을 별도 시간 예산에서 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름입니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, fixture 48개와 Docker bridge SDK 2개를 합한 distinct top-level test 이름은 114개입니다. 공유 namespace 관측 추가 시점의 실제 선택 113개에 `TestNoInitialOSDTopology` 한 이름만 더한 목록이며 현재 전체 CI PASS를 뜻하지 않습니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`은 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름입니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, fixture 48개와 Docker bridge SDK 2개를 합한 새 profile를 포함한 실제 distinct top-level test 선택은 115개입니다. storage bootstrap까지 실제 선택한 M source의 114개에 `TestNoInitialManagerTopology` 한 이름만 추가한 compiled 목록을 확인했습니다. 새 manager bootstrap의 원본 Quay Linux ARM64 bridge/host focused 실행은 7개 RUN/PASS·141.986초·자체 cleanup의 새 리소스 0개를 확인했으며, 현재 115개 전체 CI의 새 성공으로 표시하지 않습니다. 공유 namespace 관측 시점의 113개와 과거 전체 CI PASS도 각각의 source 증거로 유지합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`은 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 
 Source `d9115f4`의 [전체 CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 terminal SUCCESS입니다. 상세 job 10개의 101개 named test와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개였습니다. 101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. 공식·Debian·Ubuntu의 12개 native 이미지 조합도 각각 대표 9개를 통과했고 상세·matrix cleanup artifact 22개에서 새 container/network 0개를 확인했습니다. Matrix 반복이나 child 수를 distinct native I/O 수로 더하지 않습니다.
 
