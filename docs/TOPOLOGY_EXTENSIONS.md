@@ -44,7 +44,7 @@ Purge를 요청한 뒤 응답이 유실되면 descriptor를 유지합니다. 새
 
 파일 복사가 일부 실패하면 native MON 변경과 이미 성공한 파일 갱신은 유지됩니다. `RefreshMonitorConfig(ctx)`로 새 context에서 현재 quorum을 다시 읽고 재시도할 수 있습니다. 이미 최신인 파일은 쓰지 않습니다. Add의 partial handle에 다시 같은 이름을 추가하거나 새 데몬을 만드는 동작으로 재시도를 대신하지 않습니다. Remove의 partial ownership도 완료 전까지 유지됩니다. 이 작업은 process를 시작·재시작하지 않습니다.
 
-호출자가 `WithClient`로 만든 client와 별도 `multicluster` 연결은 각자의 config snapshot을 소유합니다. 자동 갱신 대상이 아니며 전체 MON 교체 뒤 이들의 재시작에는 새 `ConnectionConfig`를 반영해야 합니다. 이 계약은 cluster가 소유한 daemon의 rolling replacement와 구분합니다.
+호출자가 `WithClient`로 만든 client와 별도 `multicluster` 연결은 각자의 config snapshot을 소유합니다. `RefreshClientMonitorConfig`와 link의 `RefreshMonitorConfig`로 stopped/running 파일을 명시적으로 갱신할 수 있습니다. Remote peer 주소는 RBD `Rebootstrap` 또는 CephFS `RefreshPeerMonitorConfig`로 갱신한 뒤 daemon을 cold-start합니다. [MON bootstrap 재연결 계약](MON_BOOTSTRAP_REFRESH.md)을 따르며 cluster가 소유한 daemon의 자동 갱신과 구분합니다.
 
 2026-10-07의 수정 전 원본 Quay host probe는 a,b,c → d,e,f 교체와 3-member quorum을 유지했지만 기존 MGR/RGW/OSD의 파일에 옛 주소가 남았고 RGW cold start는 timeout으로 실패했습니다. 로그 `artifacts/followups-20261007/mon-before.log`와 별도 `mon-before-cleanup/after.json`의 새 리소스 0개를 보존합니다.
 
@@ -95,11 +95,11 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 
 ## 후속 runtime 우선순위
 
-2026-10-07 코드 검토에서 OSD 삭제 재시도, 소유 daemon MON bootstrap 갱신, RBD/CephFS 관측 다음의 공백을 아래 순서로 확인했습니다. 아래 항목은 현재 제공·검증 완료 범위에 포함하지 않습니다.
+2026-10-07 코드 검토에서 OSD 삭제 재시도, 소유 daemon MON bootstrap 갱신, RBD/CephFS 관측 다음의 공백을 아래 순서로 확인했습니다. 아래 항목은 후속 진행 상태를 구분합니다.
 
 | 순서 | 남은 공백 | 다음 검증 기준 |
 | --- | --- | --- |
-| 1 | 전체 MON rolling 이후 caller client와 multicluster의 bootstrap 갱신. `WithClient`와 multicluster 관리 client·mirror daemon은 생성 시 config snapshot을 받으며 cluster의 `RefreshMonitorConfig` 대상 밖 | 연결이 소유한 running/stopped client·daemon의 설정 갱신과 remote peer bootstrap을 구분. 양쪽 MON 전체 교체 후 동일 link cold restart·native 재연결·원문 유지 |
+| 완료 | 전체 MON rolling 이후 caller client와 multicluster bootstrap | 명시적 local/remote 갱신 API 및 원본 Quay bridge/host PASS. 양쪽 MON 전체 교체·동일 link cold restart·원문 유지; [계약과 결과](MON_BOOTSTRAP_REFRESH.md) |
 | 2 | 기존 topology mutation의 plain mutex 대기는 caller context 만료에도 앞 작업이 끝날 때까지 반환하지 못할 수 있음 | context-aware lock 적용. Busy fixture에서 짧은 deadline 호출이 native mutation 없이 반환하고, 새 context 호출은 정상 진행 |
 | 3 | CephFS directory/peer 제거 직후 ownership을 지우므로 새 directory observer로 release 완료를 기다릴 수 없음 | 원래 FS/peer/path identity를 보존한 제거 handle과 bounded drain wait. 완료 확인 후 re-register/rebootstrap와 기존 snapshot 원문 유지 |
 

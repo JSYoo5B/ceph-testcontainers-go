@@ -152,10 +152,10 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	if _, err := config.Source.Ceph(ctx, "fs", "snapshot", "mirror", "enable", config.SourceFilesystem); err != nil {
 		return mirror, fmt.Errorf("enable CephFS source snapshot mirroring: %w", err)
 	}
-	if _, err := mirror.RebootstrapPeer(ctx); err != nil {
+	if err := mirror.loadFilesystemIdentity(ctx); err != nil {
 		return mirror, err
 	}
-	if err := mirror.loadFilesystemIdentity(ctx); err != nil {
+	if _, err := mirror.RebootstrapPeer(ctx); err != nil {
 		return mirror, err
 	}
 	for i := 0; i < config.DaemonCount; i++ {
@@ -991,10 +991,20 @@ func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 // Current source MGR candidates receive peer-network access before import,
 // including replacements added after the mirror was constructed.
 func (mirror *CephFSMirror) RebootstrapPeer(ctx context.Context) (string, error) {
-	mirror.mu.Lock()
+	if mirror == nil {
+		return "", cephFSObserveGuard("CephFS mirror fixture is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := lockRGWSyncObservation(ctx, &mirror.mu); err != nil {
+		return "", err
+	}
 	defer mirror.mu.Unlock()
-	if mirror.destination == nil {
-		return "", errors.New("CephFS mirror is not initialized")
+	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
+		return "", err
+	}
+	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
+		return "", err
 	}
 	if err := mirror.attachManagers(ctx); err != nil {
 		return "", err
@@ -1018,7 +1028,7 @@ func (mirror *CephFSMirror) RebootstrapPeer(ctx context.Context) (string, error)
 	bootstrap, err := mirror.destination.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "create",
 		expected.FilesystemName, expected.ClientName, expected.SiteName)
 	if err != nil {
-		return "", fmt.Errorf("create destination CephFS peer bootstrap token: %w", err)
+		return "", cephFSObserveQuery("create destination CephFS peer bootstrap token", err)
 	}
 	var token struct {
 		Token string `json:"token"`
@@ -1026,11 +1036,18 @@ func (mirror *CephFSMirror) RebootstrapPeer(ctx context.Context) (string, error)
 	if err := json.Unmarshal(bootstrap, &token); err != nil || token.Token == "" {
 		return "", errors.New("destination did not return a valid CephFS peer bootstrap token")
 	}
+	token.Token, err = mirror.normalizeCephFSPeerBootstrap(ctx, token.Token)
+	if err != nil {
+		return "", err
+	}
 	// An error from Exec cannot prove the manager did not apply the command.
 	// Keep the attempted identity before import, including on import failure.
 	mirror.pendingPeerImport = expected
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_bootstrap", "import", mirror.SourceFilesystem, token.Token); err != nil {
-		return "", fmt.Errorf("import destination CephFS peer: %w", err)
+		return "", cephFSObserveQuery("import destination CephFS peer", err)
+	}
+	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
+		return "", err
 	}
 	peers, err = mirror.peerRecords(ctx)
 	if err != nil {

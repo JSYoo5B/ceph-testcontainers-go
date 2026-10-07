@@ -109,6 +109,7 @@ func (c *Container) Managers() []*ManagerContainer {
 type QuorumStatus struct {
 	QuorumNames []string `json:"quorum_names"`
 	MonMap      struct {
+		FSID string `json:"fsid"`
 		Mons []struct {
 			Name        string `json:"name"`
 			PublicAddrs struct {
