@@ -1,6 +1,6 @@
 .PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
 .PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
-.PHONY: scenario-topology scenario-multicluster-topology scenario-cephfs-removal scenario-topology-extensions
+.PHONY: scenario-topology scenario-multicluster-topology scenario-cephfs-removal scenario-topology-extensions scenario-rbd-receivers
 .PHONY: scenario-diagnostics
 .PHONY: scenario-cluster-fixtures scenario-cephfs-fixtures scenario-rados-fixtures scenario-rbd-fixtures scenario-rgw-fixtures scenario-rgw-sync-fixtures scenario-goceph-linux
 
@@ -20,11 +20,13 @@ IMAGE_LAYOUT ?= all
 IMAGE_PLATFORM ?=
 SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
 SCENARIO_CEPHFS_REMOVAL_TIMEOUT ?= 90m
+SCENARIO_RBD_RECEIVERS_TIMEOUT ?= 90m
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
 MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry|RGWEndpoints|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(TopologySnapshotsHonorBusyOwners|MonitorBootstrapRefresh|RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
 SCENARIO_CEPHFS_REMOVAL_TESTS = ^TestMultiCluster(CephFSPeerRemovalDrain|CephFSDirectoryRemovalRelease|CephFSOriginalProcessQuiescence|CephFSOriginalProcessQuiescenceRecovery|CephFSDirectoryAdditionIntent)$$
+SCENARIO_RBD_RECEIVERS_TESTS = ^TestMultiClusterRBDReceiverReadiness$$
 
 # These targets exercise ceph.DefaultImage directly. Clear component image
 # overrides even when inherited from a local custom-image session. General
@@ -129,6 +131,11 @@ scenario-multicluster-topology:
 # isolated from the general multicluster budget; every bridge/host case runs.
 scenario-cephfs-removal:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(SCENARIO_CEPHFS_REMOVAL_TESTS)' ./internal/integration
+
+# Receiver readiness and observed snapshot checkpoints use a separate budget.
+# Every scope and bridge/host case runs against the pinned original image.
+scenario-rbd-receivers:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_RECEIVERS_TIMEOUT) -run '$(SCENARIO_RBD_RECEIVERS_TESTS)' ./internal/integration
 
 scenario-topology-extensions:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration

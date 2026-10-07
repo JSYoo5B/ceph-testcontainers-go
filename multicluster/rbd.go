@@ -72,6 +72,10 @@ type RBDMirror struct {
 	initialDaemonName               string
 	poolIdentities                  *rbdMirrorPoolIdentities
 	policyIdentities                *rbdMirrorPolicyIdentities
+	receiverClusters                *rbdReceiverClusterIdentities
+	receiverPeer                    *rbdReceiverPeerIdentity
+	receiverPeerGeneration          uint64
+	receiverSetupConfirmed          bool
 }
 
 // RBDMirrorDaemon is one destination-side rbd-mirror process. Every daemon has
@@ -79,10 +83,13 @@ type RBDMirror struct {
 // config-key store. Stop and Start retain its identity and native pool state.
 type RBDMirrorDaemon struct {
 	testcontainers.Container
-	DaemonName string
-	ClientName string
-	mu         sync.Mutex
-	terminated bool
+	DaemonName                                                  string
+	ClientName                                                  string
+	mu                                                          sync.Mutex
+	terminated                                                  bool
+	receiverHandle                                              testcontainers.Container
+	receiverContainerID, receiverClientName, receiverDaemonName string
+	receiverStartupConfirmed                                    bool
 }
 
 // RBDMirrorDaemonStatus is the native daemon admin socket's pool membership and
@@ -184,11 +191,15 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 	if err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
+	receiverClusters, err := captureRBDReceiverClusters(ctx, config)
+	if err != nil {
+		return nil, err
+	}
 	identities, err := preflightRBDMirrorPools(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("preflight RBD mirror pools/namespaces: %w", err)
 	}
-	mirror := &RBDMirror{config: config, image: image, daemonOpts: slices.Clone(opts), poolIdentities: identities}
+	mirror := &RBDMirror{config: config, image: image, daemonOpts: slices.Clone(opts), poolIdentities: identities, receiverClusters: receiverClusters}
 	sourceClient, err := runClient(ctx, image, config.Source, config.Destination.NetworkName(), &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
@@ -215,6 +226,7 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 			return mirror, err
 		}
 	}
+	mirror.receiverSetupConfirmed = true
 	return mirror, nil
 }
 
@@ -282,7 +294,7 @@ func (m *RBDMirror) AddDaemon(ctx context.Context, name string, opts ...testcont
 	ctr, err := testcontainers.Run(ctx, m.image, daemonOpts...)
 	var daemon *RBDMirrorDaemon
 	if ctr != nil {
-		daemon = &RBDMirrorDaemon{Container: ctr, DaemonName: name, ClientName: clientName}
+		daemon = &RBDMirrorDaemon{Container: ctr, DaemonName: name, ClientName: clientName, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
 		m.daemons = append(m.daemons, daemon)
 		m.owned.addContainer(daemon)
 		if m.initialDaemonName == "" {
@@ -360,6 +372,31 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
 		return err
 	}
+	var receiverCandidate *rbdReceiverPeerIdentity
+	if m.receiverClusters != nil {
+		if err := m.checkRBDReceiverClusterFSIDs(ctx); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Invalidate only after owner/preflight/context admission, immediately
+		// before the first owned native bootstrap mutation attempt. A reply lost
+		// later must not leave a previous readiness capability usable.
+		m.receiverPeer = nil
+		m.receiverPeerGeneration++
+		defer func() {
+			// Registered before token cleanup: LIFO cleanup completes first.
+			ctxErr := ctx.Err()
+			if returnErr == nil && ctxErr != nil {
+				returnErr = rbdReceiverQuery(ctx, "confirm RBD receiving bootstrap", ctxErr)
+			}
+			if returnErr == nil && receiverCandidate != nil && ctxErr == nil {
+				receiverCandidate.generation = m.receiverPeerGeneration
+				m.receiverPeer = receiverCandidate
+			}
+		}()
+	}
 	token, err := m.SourceRBD(ctx, "mirror", "pool", "peer", "bootstrap", "create", "--site-name", config.SourceSite, config.Pool)
 	if err != nil {
 		return fmt.Errorf("create RBD mirror peer token: %w", err)
@@ -434,7 +471,16 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 			return fmt.Errorf("enable receiving on imported RBD mirror peer: %w", err)
 		}
 	}
-	return m.checkRBDMirrorPolicyIdentities(ctx)
+	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
+		return err
+	}
+	if m.receiverClusters != nil {
+		receiverCandidate, err = m.captureRBDReceiverPeer(ctx, bootstrap)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type rbdMirrorPeer struct {

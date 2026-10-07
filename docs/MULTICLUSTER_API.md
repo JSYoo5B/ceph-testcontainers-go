@@ -221,6 +221,8 @@ if err := multicluster.RestoreRBDBackup(ctx, destinationClient, "images/restored
 
 Archive 전송은 read 사이에서 context 취소를 확인합니다. 호출자가 제공한 Reader/Writer의 blocking I/O 자체를 중단해야 한다면 해당 구현도 취소를 지원해야 합니다. Incremental restore는 baseline의 존재를 검사하지만, 같은 이름의 snapshot 내용까지 인증하는 backup manifest를 제공하지는 않습니다.
 
+RBD `ReceiverStatus`·`WaitReceiverReady`는 configured pool/namespace에서 image 없이도 exact owned daemon cohort의 발견·election 합의를 확인합니다. HA survivor 이름을 명시할 수 있고, 대기는 원래 peer generation·handles/CIDs를 고정합니다. [Receiver 준비 상태 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
+
 RBD의 `SourceRBD`/`DestinationRBD`는 연결이 소유한 관리 client에서 명령을 실행하며 `Rebootstrap`은 제거한 receiving peer를 다시 등록합니다. 왕복 전환에는 `SourceSite`/`DestinationSite`를 각 클러스터의 고정 이름으로 지정하고 반대 방향 연결에서도 그 이름을 유지합니다. 한 방향 연결의 daemon들은 destination에서 실행됩니다. 반대 방향 연결을 추가하면 반대 클러스터에도 receiving daemon이 필요합니다. Primary demote/promote, writer fencing, 복제 완료 대기, split-brain의 authoritative image 선택과 `resync`는 시나리오가 명시적으로 수행합니다.
 
 CephFS `BeginDirectoryAddition`은 daemon이 없는 구성에서도 native 요청 전 intent를 보존하고 같은 receipt의 fresh Begin으로 소유권을 확정합니다. `Status`는 등록 정책·소유권 관측만 수행합니다. [응답 유실·미적용 요청과 generation 계약](CEPHFS_DIRECTORY_ADDITION.md)을 따릅니다.

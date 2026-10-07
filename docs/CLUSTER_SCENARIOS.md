@@ -171,3 +171,5 @@ CephFS는 native mirror module의 filesystem당 single peer 제한을 따릅니�
 - [MDS standby](https://docs.ceph.com/en/tentacle/cephfs/standby/), [multi-MDS](https://docs.ceph.com/en/tentacle/cephfs/multimds/): active rank, standby/replay, filesystem별 daemon affinity와 rank handoff를 구성 기준으로 사용합니다.
 - [RBD mirroring](https://docs.ceph.com/en/tentacle/rbd/rbd-mirroring/), [RGW multisite](https://docs.ceph.com/en/tentacle/radosgw/multisite/): 클러스터 자체와 peer/zone 연결은 별도 패키지에서 구성합니다.
 - [AWS SDK endpoint 설정](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-endpoints.html), [MinIO client 옵션](https://github.com/minio/minio-go/blob/master/api.go): RGW 소비자에는 연결 가능한 HTTP endpoint와 테스트 자격 증명이 필요합니다. SDK의 모든 기능을 모듈 자체가 구현할 필요는 없습니다.
+
+`scenario-rbd-receivers`는 image 없는 RBD receiver의 namespace 발견·leader/member 합의와 장애·교체·zero inventory 복구를 검증합니다. [RBD receiver 관측 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
