@@ -269,7 +269,7 @@ python3 internal/integration/goceph/run.py \
 
 RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지 않습니다. `cluster.Terminate`는 이 서비스들을 OSD보다 먼저 종료합니다. 오류와 함께 반환된 서비스도 클러스터 cleanup으로 정리합니다.
 
-마지막 OSD의 제거는 거부합니다. 복제 수나 잔여 용량 때문에 안전한 이동이 불가능하면 `RemoveOSD`는 timeout으로 끝납니다. 이미 out/reweight된 OSD를 자동으로 in 상태로 되돌리지는 않습니다. CLI로 상태를 확인하고 재시도하거나 테스트 클러스터 전체를 종료합니다.
+마지막으로 등록된 소유 OSD의 제거는 거부합니다. `RemoveOSD`는 각 단계에서 등록 UUID를 확인하여 같은 번호의 외부 replacement를 거부합니다. Purge 응답이 유실되면 handle을 유지하며 새 context로 재시도할 수 있습니다. 이미 완료된 purge는 Docker 정리만 재시도합니다. 이 정리가 끝나기 전에는 `AddOSD`를 거부합니다. 복제 수나 잔여 용량 때문에 안전한 이동이 불가능하면 timeout으로 끝나며 이미 out/reweight된 OSD를 자동으로 in 상태로 되돌리지는 않습니다. 외부 OSD 등록·교체는 삭제와 동시에 실행하지 않아야 합니다. [삭제 계약과 검증](docs/TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)을 따릅니다.
 
 실패 진단은 cleanup 전에 별도의 짧은 background context로 `cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{})`를 호출합니다. 반환된 report는 `json.MarshalIndent`로 저장할 수 있고 일부 조회가 실패해도 artifact와 오류를 함께 보존합니다. Mirror/client 추가, 시간·출력 제한, 비밀 값 마스킹과 JSON 저장 예시는 [진단 snapshot](docs/DIAGNOSTICS.md)을 따릅니다. 수집은 클러스터를 변경하거나 종료하지 않습니다.
 
@@ -287,7 +287,7 @@ make scenario-topology-extensions
 
 `scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 각각 8/8/4/6/14/7개, 총 47개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 101개입니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
+Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름이며 기존 기본·토폴로지·SDK 54개와 합해 102개입니다. 새 `TestOSDRemovalLifecycle`은 원본 Quay의 bridge/host 로컬 검증을 완료했으며 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않습니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 
 Source `d9115f4`의 [전체 CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 terminal SUCCESS입니다. 상세 job 10개의 101개 named test와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개였습니다. 101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. 공식·Debian·Ubuntu의 12개 native 이미지 조합도 각각 대표 9개를 통과했고 상세·matrix cleanup artifact 22개에서 새 container/network 0개를 확인했습니다. Matrix 반복이나 child 수를 distinct native I/O 수로 더하지 않습니다.
 

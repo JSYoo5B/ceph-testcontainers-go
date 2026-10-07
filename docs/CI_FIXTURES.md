@@ -111,18 +111,21 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 
 다음 목록은 profile별로 고정합니다. Test 내부에 bridge/host child가 있는 경우 모두 유지합니다. Host 전용 wrapper와 helper 이름도 그대로 포함하며, `-list` 또는 tag compile은 runtime 통과 증거로 사용하지 않습니다.
 
-### scenario-cluster-fixtures · 8개
+### scenario-cluster-fixtures · 현재 9개
 
 ```text
 TestClientIdentities
 TestCephFSSubvolumes
 TestConfigurationOverrides
 TestOSDPolicies
+TestOSDRemovalLifecycle
 TestCephFSSubvolumeSnapshotsAndClones
 TestRGWPlacementStorageClasses
 TestHostNetworkRGWPlacementStorageClasses
 TestRGWPlacementRealmStorageClasses
 ```
+
+2026-10-07에 `TestOSDRemovalLifecycle`을 추가했습니다. 현재 fixture selector는 총 48개이며 기존 54개와 합해 102개입니다. 위 표의 8/47개 및 전체 101개는 해당 source의 역사적 CI 결과로 유지합니다. 새 이름은 원본 Quay Linux ARM64 bridge/host focused 실행과 별도 cleanup 검사를 통과했으며 [OSD lifecycle 증거](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)를 따릅니다. 현재 selector 102개의 전체 CI를 새로 통과했다고 표시하지 않습니다.
 
 ### scenario-cephfs-fixtures · 8개
 

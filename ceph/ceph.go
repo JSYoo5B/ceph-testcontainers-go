@@ -70,10 +70,11 @@ type Container struct {
 // Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
-	ID         int
-	nativeUUID string
-	placement  OSDConfig
-	purged     bool
+	ID          int
+	nativeUUID  string
+	placement   OSDConfig
+	purged      bool
+	purgeIssued bool
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
@@ -373,6 +374,9 @@ func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
 // Omitted host names resolve to osd-ID; logical hosts/racks are simulated
 // placement domains on the same Docker engine, not physical failure domains.
 func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OSDContainer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	config, err := normalizeOSDConfig(resolveOSDDefaults(c.settings, config))
 	if err != nil {
 		return nil, err
@@ -382,8 +386,11 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, osd := range c.osds {
-		if osd.purged {
+		if osd.purged || osd.purgeIssued {
 			return nil, fmt.Errorf("finish removing osd.%d before adding another OSD", osd.ID)
 		}
 	}
@@ -392,6 +399,9 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
 	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
@@ -464,33 +474,77 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 
 // RemoveOSD drains an owned OSD, waits for safe-to-destroy, stops it, waits for
 // down, purges it from Ceph and removes its container. It refuses the last OSD.
-// On timeout the OSD remains tracked; inspect the cluster and retry or terminate.
+// Every removal phase verifies the captured registration UUID. External OSD
+// replacement must not race removal: Ceph has no UUID compare-and-swap purge.
+// An uncertain purge response remains tracked; a retry reconciles fresh native
+// absence only after this handle issued purge. Completed purge retries only
+// Docker cleanup. On error retry with a fresh context or terminate the cluster.
 func (c *Container) RemoveOSD(ctx context.Context, id int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	osd, ok := c.osds[id]
-	if !ok {
-		return fmt.Errorf("osd.%d is not owned by this cluster", id)
+	if c.closed {
+		return errors.New("ceph cluster is terminated")
 	}
-	if len(c.osds) <= 1 && !osd.purged {
-		return errors.New("cannot remove the last OSD; terminate the cluster instead")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	osd, ok := c.osds[id]
+	if !ok || osd == nil {
+		return fmt.Errorf("osd.%d is not owned by this cluster", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	name := fmt.Sprintf("osd.%d", id)
 	if !osd.purged {
+		expected, err := uuid.Parse(osd.nativeUUID)
+		if err != nil || expected == uuid.Nil {
+			return fmt.Errorf("osd.%d registration UUID is unavailable", id)
+		}
+		dump, err := c.removalOSDDump(ctx)
+		if err != nil {
+			return err
+		}
+		if _, exists := dump.osds[id]; !exists && osd.purgeIssued {
+			// The previous purge may have committed despite a lost response.
+			// A fresh, strict absence can settle only this handle's own request.
+			osd.purged = true
+		} else {
+			if _, err := c.ownedOSDState(dump, id); err != nil {
+				return err
+			}
+			remaining := 0
+			for otherID, other := range c.osds {
+				if other == nil || other.purged {
+					continue
+				}
+				if _, err := c.ownedOSDState(dump, otherID); err == nil {
+					remaining++
+				}
+			}
+			if remaining <= 1 {
+				return errors.New("cannot remove the last OSD; terminate the cluster instead")
+			}
+		}
+	}
+	if !osd.purged {
 		// Reweight avoids the small-cluster active+remapped case documented by Ceph.
-		if _, err := c.Ceph(ctx, "osd", "crush", "reweight", name, "0"); err != nil {
+		if err := c.removalOSDMutation(ctx, id, "osd", "crush", "reweight", name, "0"); err != nil {
 			return err
 		}
-		if _, err := c.Ceph(ctx, "osd", "out", strconv.Itoa(id)); err != nil {
+		if err := c.removalOSDMutation(ctx, id, "osd", "out", strconv.Itoa(id)); err != nil {
 			return err
 		}
-		if err := c.poll(ctx, func() (bool, error) {
-			_, err := c.Ceph(ctx, "osd", "safe-to-destroy", strconv.Itoa(id))
-			return err == nil, err
-		}); err != nil {
+		if err := c.waitOSDRemoval(ctx, id, true); err != nil {
 			return fmt.Errorf("drain %s: %w", name, err)
+		}
+		if _, err := c.removalOSDState(ctx, id); err != nil {
+			return err
 		}
 		if osd.Container != nil {
 			stopTimeout := 10 * time.Second
@@ -498,13 +552,22 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 				return fmt.Errorf("stop %s: %w", name, err)
 			}
 		}
-		if err := c.waitOSD(ctx, id, false); err != nil {
+		if err := c.waitOSDRemoval(ctx, id, false); err != nil {
 			return fmt.Errorf("wait for %s down: %w", name, err)
 		}
+		if _, err := c.removalOSDState(ctx, id); err != nil {
+			return err
+		}
+		// Mark before the request because cancellation/transport failure does
+		// not establish whether the MON committed the purge.
+		osd.purgeIssued = true
 		if _, err := c.Ceph(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
 			return err
 		}
 		osd.purged = true
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if osd.Container != nil {
 		if err := osd.Terminate(ctx); !onlyMissingHostResource(err) {
@@ -513,6 +576,63 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	}
 	delete(c.osds, id)
 	return nil
+}
+
+// Native reads and each mutation remain inside the serialized removal. A
+// malformed/missing/replaced identity stops the operation immediately rather
+// than being polled until timeout and then mistaken for successful draining.
+func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return osdPolicySnapshot{}, err
+	}
+	dump, err := c.osdPolicyDump(ctx)
+	if err != nil {
+		return dump, err
+	}
+	return dump, ctx.Err()
+}
+
+func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, error) {
+	dump, err := c.removalOSDDump(ctx)
+	if err != nil {
+		return OSDState{}, err
+	}
+	return c.ownedOSDState(dump, id)
+}
+
+func (c *Container) removalOSDMutation(ctx context.Context, id int, args ...string) error {
+	if _, err := c.removalOSDState(ctx, id); err != nil {
+		return err
+	}
+	_, err := c.Ceph(ctx, args...)
+	return err
+}
+
+func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var last error
+	for {
+		state, err := c.removalOSDState(ctx, id)
+		if err != nil {
+			return errors.Join(err, last)
+		}
+		if !drain && !state.Up {
+			return nil
+		}
+		if drain {
+			if _, err := c.Ceph(ctx, "osd", "safe-to-destroy", strconv.Itoa(id)); err == nil {
+				return nil
+			} else {
+				last = err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), last)
+		case <-ticker.C:
+		}
+	}
 }
 
 // OSDs returns a snapshot of owned OSD containers sorted by ID.

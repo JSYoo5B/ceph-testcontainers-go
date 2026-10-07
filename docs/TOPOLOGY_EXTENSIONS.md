@@ -30,6 +30,14 @@ RBD/RGW peer 단절은 `artifacts/topology-peer-network-links.log`에서 RBD 132
 
 최종 실행 후 running/stopped Docker container는 0개이며 testcontainers 임시 network도 남지 않았습니다. 기본 `bridge`/`host`/`none`과 기존 `kind` network는 유지했습니다. 부분 생성·불확실한 endpoint 연결 응답·client close·daemon 종료·directory release 실패에서 cleanup/재시도 상태를 유지하는 것은 단위 테스트에서 별도로 확인했습니다.
 
+## OSD 삭제의 소유권과 재시도
+
+`RemoveOSD`는 native OSD map의 등록 UUID를 생성 당시 값과 비교하고 reweight/out, safe-to-destroy, stop/down, purge 단계 사이에서도 다시 확인합니다. 같은 숫자 ID에 다른 UUID가 등록됐거나 map을 해석할 수 없으면 다음 변경을 거부합니다. Ceph purge에는 UUID compare-and-swap이 없으므로 외부 등록·교체를 삭제와 동시에 실행하지 않아야 합니다.
+
+Purge를 요청한 뒤 응답이 유실되면 descriptor를 유지합니다. 새 context의 재시도에서 엄격하게 읽은 native map에 해당 ID가 없으면 자신의 이전 요청을 완료된 것으로 정리합니다. 같은 ID의 다른 UUID가 있으면 거부하며, 이전 purge 요청 없이 사라진 ID를 성공으로 간주하지 않습니다. 완료된 purge 뒤 Docker cleanup이 실패하면 native mutation이나 stop을 반복하지 않고 cleanup만 재시도합니다. 완료되지 않은 purge/cleanup handle이 있으면 `AddOSD`를 막아 ID 재사용에 따른 handle 유실을 방지합니다. 마지막 OSD 판단은 cleanup handle 개수 대신 실제 등록된 소유 UUID를 사용합니다.
+
+2026-10-07 Docker Desktop Linux ARM64에서 고정 원본 `ceph.DefaultImage`로 `TestOSDRemovalLifecycle/bridge`, `/host`를 실행했습니다. 실제 purge 이후 응답만 유실시켜 재시도 중 native 변경·stop이 늘지 않고 cleanup만 수행됨을 확인했습니다. OSD 추가의 ID 재사용과 새로운 UUID, 외부 UUID 등록 뒤 native mutation·stop·terminate 거부, 복제 수 2인 pool의 8개 object 각각 32 KiB 원문 유지까지 검사했습니다. 최종 로그 `artifacts/followups-20261007/osd-runtime-final.log`는 127.678초 PASS이며 `osd-final-cleanup/after.json`은 새 container/network 0개로 PASS입니다. Unit·race·전체 tag compile/vet도 통과했습니다. 이 focused 실행은 기존 전체 CI 또는 다른 이미지 계열의 새 검증으로 표시하지 않습니다.
+
 ## 네트워크 구성 계약
 
 `WithSeparateClusterNetwork()`는 Docker가 선택한 서로 다른 IPv4 subnet의 bridge 두 개를 생성합니다. `NetworkName()`은 public bridge이며 `ClusterNetworkName()`은 OSD backend bridge입니다. OSD만 양쪽에 연결됩니다. `WithClient`, MON/MGR/MDS/RGW와 mirror의 native client는 public bridge를 사용합니다. config의 `public network`/`cluster network`로 Ceph가 실제 주소를 선택합니다. 기본 단일 bridge와 host mode의 동작은 기존과 같습니다. 분리 옵션과 host mode를 함께 요청하면 생성 전에 거부합니다.

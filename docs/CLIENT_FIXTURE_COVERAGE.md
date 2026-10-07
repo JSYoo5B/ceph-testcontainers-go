@@ -61,6 +61,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | G10 | realm/zonegroup/master 전환·recovery | `multicluster` zone/peer/period API; master failover 및 metadata/data 복구 | 완료: 기존 multicluster/topology PoC |
 | G11 | AdminOps usage log와 bucket rate-limit 준비 | pre-start usage log·flush 조건, scoped admin caps·owned log trim과 별도 request rate 거부·복구 | 완료: [실행 recipe](RGW_ADMIN_RECORDS.md), `TestRGWAdminRecordsAndRateLimit`, bridge/host |
 | D01 | runtime 설정·OSD out/in·global 장애 flag·PG 복구 | `TemporaryConfig`, `SetOSDIn`, `TemporaryOSDFlag`, `WaitForPGClean`; native 상태와 I/O·restore | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
+| D02 | OSD 등록 identity와 삭제 실패 재시도 | `RemoveOSD`, `AddOSD`; 실제 purge 응답 유실·외부 UUID 거부·등록 개수 guard | 완료: 원본 Quay bridge/host `TestOSDRemovalLifecycle`, 8개 object 원문 및 owned cleanup; [삭제 계약](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도) |
 
 ## 책임과 실제 제한
 
