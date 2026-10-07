@@ -83,6 +83,8 @@ type CephFSMirror struct {
 	destinationFilesystemID                     int
 	pendingPeerImport                           *cephFSPeerIdentity
 	peerRemoval                                 *CephFSMirrorPeerRemoval
+	directoryRemoval                            *CephFSMirrorDirectoryRemoval
+	directoryGenerations                        map[string]uint64
 	peerGeneration                              uint64
 	managerNetworking                           *cephFSManagerNetworking
 	closed                                      bool
@@ -182,6 +184,7 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 			return mirror, fmt.Errorf("configure CephFS mirror directory %q: %w", directory, err)
 		}
 		mirror.ownedDirectories[directory] = true
+		mirror.advanceDirectoryGeneration(directory)
 	}
 	return mirror, nil
 }
@@ -799,6 +802,11 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
+	// Even an uncertain native re-add invalidates the old cycle receipt; it
+	// does not establish new ownership or advance the registration generation.
+	if r := mirror.directoryRemoval; r != nil && r.completed && r.directory == directory {
+		r.superseded = true
+	}
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("add CephFS mirror directory %q: %w", directory, err)
 	}
@@ -807,6 +815,7 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 		mirror.ownedDirectories = make(map[string]bool)
 	}
 	mirror.ownedDirectories[directory] = true
+	mirror.advanceDirectoryGeneration(directory)
 	return nil
 }
 
@@ -822,6 +831,12 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 		return err
 	}
 	defer mirror.mu.Unlock()
+	if mirror.directoryRemoval != nil && mirror.directoryRemoval.directory == directory && !mirror.directoryRemoval.completed {
+		if err := mirror.directoryRemoval.checkHandle(); err != nil {
+			return err
+		}
+		return mirror.directoryRemoval.resume(ctx)
+	}
 	if err := mirror.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
@@ -889,6 +904,9 @@ func (mirror *CephFSMirror) RebalanceDirectories(ctx context.Context) error {
 	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories,
 		func(commandCtx context.Context, operation, directory string) error {
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
+			if err == nil && operation == "add" {
+				mirror.advanceDirectoryGeneration(directory)
+			}
 			return err
 		}, mirror.pendingDirectoryRelease, 500*time.Millisecond)
 }

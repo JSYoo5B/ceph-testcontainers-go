@@ -152,7 +152,7 @@ func (mirror *CephFSMirror) guardPeerRemovalOverlap() error {
 	if mirror.peerRemoval != nil && !mirror.peerRemoval.completed {
 		return cephFSObserveGuard("explicit CephFS peer drain is incomplete")
 	}
-	return nil
+	return mirror.guardDirectoryRemovalOverlap()
 }
 
 func (r *CephFSMirrorPeerRemoval) checkHandle() error {
