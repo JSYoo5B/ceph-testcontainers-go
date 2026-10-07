@@ -68,6 +68,8 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | D02 | OSD 등록 identity와 삭제 실패 재시도 | `RemoveOSD`, `AddOSD`; 실제 purge 응답 유실·외부 UUID 거부·등록 개수 guard | 완료: 원본 Quay bridge/host `TestOSDRemovalLifecycle`, 8개 object 원문 및 owned cleanup; [삭제 계약](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도) |
 | D03 | 전체 MON 교체 후 기존 daemon 재시작 | `AddMonitor`, `RemoveMonitor`, `RefreshMonitorConfig`; running/stopped 소유 config 갱신과 개별 설정 유지 | 완료: 원본 Quay bridge/host `TestMonitorRollingReplacement`, MGR/MDS 새 native GID·RADOS/S3 원문·owned cleanup; [bootstrap 계약](TOPOLOGY_EXTENSIONS.md#mon-교체-후-bootstrap-설정) |
 
+Cephx·subvolume authorization의 잠금 대기 취소, 부분 client/grant 보존, secret-safe canonical context cause와 최신 bridge/host 회귀는 [인증 admission 계약](TOPOLOGY_CONTEXT.md#cephxsubvolume-authorization의-context-admission)을 따릅니다.
+
 ## 책임과 실제 제한
 
 단일 cluster의 pool·principal·module·FS/RGW policy는 `ceph`, cluster 사이의 peer·namespace mapping·realm/period 전달·선택적 복제는 `multicluster`가 담당합니다. 선택적 sync와 schedule처럼 기존 cluster 안에 서버 상태를 만드는 기능도 목적에 따라 해당 package에 둡니다. 실행 이미지에 필요한 native module/object class가 없으면 연결 옵션만으로 가능하다고 표시하지 않습니다.

@@ -107,12 +107,18 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return nil, errors.New("ceph cluster is terminated")
 	}
-	if len(c.config) == 0 || c.cliContainer() == nil {
+	control, err := c.ControlContainerContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(c.config) == 0 || control == nil {
 		return nil, errors.New("ceph cluster bootstrap is incomplete")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -136,10 +142,13 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	client := &ClientConfig{owner: c, name: entity}
 	client.config = clientConfigBytes(c.config, client)
-	control := c.cliContainer()
+	control, err = c.ControlContainerContext(ctx)
+	if err != nil {
+		return client, err
+	}
 	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
-		return client, errors.New("generate fresh Cephx key: command failed")
+		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
@@ -149,7 +158,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 		_, _ = command(cleanupCtx, control, "rm", "-f", keyringPath)
 	}()
 	if err := control.CopyToContainer(ctx, client.keyring, keyringPath, 0o600); err != nil {
-		return client, errors.New("copy fresh Cephx keyring to control container failed")
+		return client, clientOperationError(ctx, "copy fresh Cephx keyring to control container failed", err)
 	}
 	// Supplying our fresh key makes Ceph reject a concurrently created identity
 	// with another key. An auth-add command without -i can silently reuse it.
@@ -208,7 +217,9 @@ func (c *Container) WithClientIdentity(client *ClientConfig) testcontainers.Cust
 // must not race this operation. A repeat call after success is a no-op; existing
 // sessions may retain issued tickets.
 func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) error {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if c.closed {
 		return errors.New("ceph cluster is terminated")
@@ -240,12 +251,25 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 func (c *Container) clientAuthCommand(ctx context.Context, operation string, args ...string) ([]byte, error) {
 	data, err := c.Ceph(ctx, args...)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%s: %w", operation, ctx.Err())
-		}
-		return nil, fmt.Errorf("%s: Ceph command failed", operation)
+		return nil, clientOperationError(ctx, operation+": Ceph command failed", err)
 	}
 	return data, nil
+}
+
+// Native key generation, copies and auth errors can contain credentials. Keep
+// only canonical context causes while returning a fixed operation description.
+func clientOperationError(ctx context.Context, operation string, native error) error {
+	causes := []error{errors.New(operation)}
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		causes = append(causes, contextErr)
+	}
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		if errors.Is(native, cause) && !errors.Is(contextErr, cause) {
+			causes = append(causes, cause)
+		}
+	}
+	return errors.Join(causes...)
 }
 
 func clientKey(keyring []byte, entity string) string {

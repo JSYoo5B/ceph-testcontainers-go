@@ -10,7 +10,9 @@ import (
 // ClientCapabilities returns the current caps of a confirmed, owned identity.
 // It verifies the native key without returning auth database secrets.
 func (c *Container) ClientCapabilities(ctx context.Context, client *ClientConfig) (ClientCaps, error) {
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return ClientCaps{}, err
+	}
 	defer c.mu.Unlock()
 	return c.ownedClientCapabilities(ctx, client)
 }
@@ -28,7 +30,9 @@ func (c *Container) UpdateClientCaps(ctx context.Context, client *ClientConfig, 
 	if len(args) == 0 {
 		return errors.New("at least one service capability is required; use DeleteClient for revocation")
 	}
-	c.mu.Lock()
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

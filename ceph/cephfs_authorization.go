@@ -119,7 +119,9 @@ func (fs *CephFSContainer) AuthorizeSubvolume(ctx context.Context, volume *CephF
 	if err != nil {
 		return grant, err
 	}
-	fs.cluster.mu.Lock()
+	if err := fs.cluster.lockTopology(ctx); err != nil {
+		return grant, err
+	}
 	defer fs.cluster.mu.Unlock()
 	before, err := fs.authorizationClientCaps(ctx, identity)
 	if err != nil {
@@ -407,7 +409,9 @@ func (fs *CephFSContainer) DeauthorizeSubvolume(ctx context.Context, grant *Ceph
 	if err := fs.checkAuthorizationVolume(ctx, fsID, identity); err != nil {
 		return err
 	}
-	fs.cluster.mu.Lock()
+	if err := fs.cluster.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer fs.cluster.mu.Unlock()
 	current, err := fs.authorizationClientCaps(ctx, identity)
 	if err != nil {
@@ -471,7 +475,9 @@ func (fs *CephFSContainer) EvictSubvolumeClients(ctx context.Context, grant *Cep
 	if err := fs.checkAuthorizationVolume(ctx, fsID, identity); err != nil {
 		return err
 	}
-	fs.cluster.mu.Lock()
+	if err := fs.cluster.lockTopology(ctx); err != nil {
+		return err
+	}
 	defer fs.cluster.mu.Unlock()
 	if _, err := fs.authorizationClientCaps(ctx, identity); err != nil {
 		return err

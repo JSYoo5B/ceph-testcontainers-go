@@ -13,7 +13,7 @@
 
 부분 생성·변경 뒤 cleanup handle과 retry ownership을 유지합니다. 취소 때문에 이미 생성한 resource의 bookkeeping을 건너뛰지 않습니다. Owner→daemon/resources/interruption의 기존 잠금 순서도 유지합니다. 기다리는 goroutine을 남기지 않고 `TryLock`과 bounded poll로 대기합니다.
 
-호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. 기존 context 없는 getter, 남은 직접 control 조회·authorization·WithClient cache와 post-native descriptor publication은 별도 범위입니다. Host RGW allocator와 CephFS setup/scale family의 admission은 아래 추가 계약을 따릅니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
+호출이 잠금을 얻은 뒤에는 기존 native API와 Docker operation의 context 처리·부분 실패 계약을 따릅니다. 위 표는 해당 직렬화 gate의 진입 대기 범위입니다. 기존 context 없는 getter, 남은 직접 control 조회·context 없는 WithClient customizer cache와 post-native descriptor publication은 별도 범위입니다. Cephx/authorization의 진입 대기는 아래 추가 계약을 따릅니다. Host RGW allocator와 CephFS setup/scale family의 admission은 아래 추가 계약을 따릅니다. 모든 public API의 전체 latency가 caller deadline 안에 끝난다는 계약으로 넓히지 않습니다.
 
 Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 기록을 완료합니다. 그 지점에서 cancellation을 이유로 handle 추적을 버리면 subsequent cleanup과 retry가 깨집니다. 새 context에서 같은 handle을 다시 호출해 확인·정리를 이어갑니다.
 
@@ -30,7 +30,7 @@ Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 �
 
 `Ceph(ctx)`는 context를 받는 control snapshot을 사용합니다. Cluster owner mutex를 다시 얻지 않으므로 이미 owner를 보유한 MON/MGR/OSD 작업에서도 사용할 수 있습니다. Native query 동안 snapshot의 read lock을 유지하지 않습니다. Snapshot과 process 종료 사이의 기존 lifetime race는 native 오류로 보고합니다.
 
-Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destination의 context-aware control·bootstrap snapshot을 사용하고 오류 cause를 `%w`로 보존합니다. CephFS MGR attachment는 manager snapshot 오류 뒤 native manager query를 실행하지 않습니다. 새 RGW cluster 판단도 gateway snapshot 오류 뒤 pool query를 실행하지 않습니다. CephFS watcher·peer 설정 갱신 및 RBD 설정 갱신의 control 조회도 같은 context를 사용합니다. Ceph 내부의 나머지 직접 `cliContainer` 경로·authorization·WithClient cache는 아래 추가 CephFS 범위와 구분합니다.
+Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destination의 context-aware control·bootstrap snapshot을 사용하고 오류 cause를 `%w`로 보존합니다. CephFS MGR attachment는 manager snapshot 오류 뒤 native manager query를 실행하지 않습니다. 새 RGW cluster 판단도 gateway snapshot 오류 뒤 pool query를 실행하지 않습니다. CephFS watcher·peer 설정 갱신 및 RBD 설정 갱신의 control 조회도 같은 context를 사용합니다. Ceph 내부의 나머지 직접 `cliContainer` 경로·WithClient customizer cache는 아래 추가 CephFS 및 인증 범위와 구분합니다.
 
 새 getter의 unit test는 실제 owner/config/control writer 잠금을 caller deadline 이후까지 유지합니다. 이미 owner를 보유한 `Ceph(ctx)`가 control snapshot만 얻어 native query에 도달하는 경로도 검사합니다. Configuration byte copy와 정렬된 descriptor slice, 기존 closed-cluster inspection 계약을 유지합니다.
 
@@ -82,7 +82,7 @@ Filesystem setup과 MDS scale, subvolume/group·snapshot/clone·data-pool·pin�
 
 Inherited `CreatePool` 진입과 pin/clone/data-pool의 직접 control snapshot에도 context를 적용합니다. Clone wait/cancel이 immutable startup timeout을 읽기 위해 owner를 얻던 잠금은 제거했습니다. Scale의 daemon inspect 오류는 `%w`로 원래 cause를 유지하고, desired count publication 전에 closed/원래 filesystem ownership을 다시 확인합니다. Restored pin의 fast-path도 setup 진입에 context를 적용하므로 already-canceled 호출은 cause를 반환하고 새 context에서의 idempotence는 유지합니다.
 
-Native 성공 뒤 원래 FS/pool identity 기록, nonnil partial MDS 등록, 확인된 retirement inventory 정리는 caller cancellation과 별개로 보존합니다. 그 post-native publication 잠금과 authorization·WithClient customizer cache는 이번 admission 변경의 전체 latency 보장에 포함되지 않습니다. 외부 native 정책 변경과 owner snapshot도 atomic으로 묶지 않습니다.
+Native 성공 뒤 원래 FS/pool identity 기록, nonnil partial MDS 등록, 확인된 retirement inventory 정리는 caller cancellation과 별개로 보존합니다. 그 post-native publication 잠금과 당시 미변경 authorization·WithClient customizer cache는 이 setup/scale 변경의 전체 latency 보장에 포함되지 않습니다. 이후 인증 admission은 아래 별도 계약을 따릅니다. 외부 native 정책 변경과 owner snapshot도 atomic으로 묶지 않습니다.
 
 영구 unit regression은 실제 setup/owner/control 잠금을 deadline 이후까지 보유합니다. 8개 public operation × 세 gate, setup/pin·MDS snapshot/status, 관측된 native 경계 이후 registration/desired config/WaitReady 대기, inherited CreatePool·직접 control 조회를 검사합니다. Causal deadline/cancel, 후속 native query/mutation 0회, descriptor/count/identity·recovery handle 보존과 같은 fixture의 새 context 재시도를 확인합니다. Successful identity readback 직후 취소해도 원래 identity가 기록되는 것을 별도 확인합니다. 기존 canceled-data-pool 테스트도 setup을 반환하기 전에 취소 결과를 받도록 강화했고 failure cleanup은 한 경로에서 잠금 반환과 worker join을 수행합니다.
 
@@ -99,3 +99,24 @@ Native 성공 뒤 원래 FS/pool identity 기록, nonnil partial MDS 등록, 확
 다섯 parent와 예상 child 10개는 FAIL/SKIP 없이 package terminal PASS 1,389.544초입니다. MDS 두 구성의 fresh native session 16회에서 각 38,912 bytes와 SHA256을 확인하고 별도 filesystem은 scale 세 단계마다 동일 원문을 유지했습니다. `native-cleanup/after.json`은 같은 engine에서 새 container/network/Ryuk 잔여 0개를 확인합니다. `source-before.json`·`source-after.json`의 관련 source 219개(Go·script·module·Makefile)는 실행 전후 동일하며 고정 image 정책 해시도 유지됐습니다. `verification.json`은 원본 named 결과·native byte proof·cleanup·각 실제 check log 해시를 대조합니다. 이번 실행은 현재 selector 106개 전체 CI나 공식·Debian·Ubuntu matrix 재실행의 완료를 의미하지 않습니다.
 
 이 focused 실행을 전체 CI나 다른 image matrix의 새 검증으로 합산하지 않습니다. [MON bootstrap 재연결](MON_BOOTSTRAP_REFRESH.md)과 [topology 변경 계약](TOPOLOGY_EXTENSIONS.md)의 소유권 경계를 유지합니다.
+
+## Cephx·subvolume authorization의 context admission
+
+`CreateClient`, `DeleteClient`, `ClientCapabilities`, `UpdateClientCaps`와 CephFS authorize/deauthorize/evict의 기존 owner 진입은 caller deadline·cancel을 따릅니다. CephFS의 setup → owner → control 순서를 유지하며, volume identity를 먼저 읽은 뒤 나중에 얻는 owner에도 같은 context를 적용합니다. `CreateClient`의 첫 bootstrap 확인과 key 생성 직전 control snapshot도 context를 사용합니다. 대기 중 취소되면 아직 시작하지 않은 native 인증 변경을 실행하지 않습니다.
+
+Native key 생성·keyring copy·auth 오류는 고정 operation 메시지와 `context.Canceled`·`DeadlineExceeded` 원인만 보존합니다. 원래 native 오류를 연결하지 않으므로 그 오류의 key·credential 문자열을 노출하지 않습니다. `errors.Is`로 caller 또는 native의 canonical context cause를 확인할 수 있습니다. Sanitizer는 caller context를 한 번만 읽어 그 사이의 취소 전환으로 native cause를 잃지 않습니다.
+
+이미 생성한 client와 성공한 native readback의 created/ready/revoked·caps·grant 기록은 취소 후에도 보존합니다. Fresh client 생성 뒤 authorization 진입에서 취소되면 nonnil grant에 ready client를 반환할 수 있지만 grant 자체는 아직 authorize를 시도하지 않았습니다. 이를 native 권한으로 adopt하거나 자동으로 principal을 삭제하지 않습니다. 필요하면 원래 `grant.Client`로 명시적인 `DeleteClient`를 수행하고 새 principal로 다시 구성합니다. Attempted grant와 revoke는 원래 private scope로 재시도하며 copied public descriptor의 변경으로 다른 리소스를 채택하지 않습니다.
+
+Keyring 임시 파일 정리는 기존처럼 caller 취소와 분리된 최대 10초 context를 사용합니다. Native 실행 시간, 이 정리와 이미 확인한 결과의 bookkeeping publication까지 caller deadline 안에 끝난다는 계약은 아닙니다. Context 없는 `WithClient`·`WithClientIdentity`도 유지합니다. 내부 daemon startup은 cluster owner를 가진 상태에서 config cache를 읽으므로 runtime config writer와 경합하지 않으며, 외부 customizer의 짧은 byte-copy cache lock은 이 인증 변경의 범위 밖입니다.
+
+15개 새 unit parent가 실제 owner/control 및 setup → owner → control 대기, 관측된 native 경계 뒤 late admission, 잠금 반환, 동일 fixture의 새 context 재시도, partial client/grant, 성공 readback 직후 취소, applied mutation 이후 불확실한 readback, 원래 identity replacement 거부를 검증합니다. Secret masking 도중의 취소 전환도 deterministic regression으로 확인했으며 두 번 context를 읽는 잘못된 sanitizer의 negative control은 실패하고 최종 구현은 통과했습니다. Native 실행 후 late-control watchdog의 failure cleanup을 launch 전에 등록하고 late callback publication을 막는 테스트 정리만 보완했으며, 최종 focused unit·race(count=3)가 각각 1.097초·3.244초 PASS입니다. Production은 변경하지 않았습니다.
+
+전체 `make check`의 unit·race·vet·tag compile 및 독립 production 검토가 통과했습니다. 고정 원본 Quay Ceph 20.2.4 Linux ARM64에서 다음 focused 회귀를 실행했습니다.
+
+| Parent | bridge / host | 실제 확인 |
+| --- | --- | --- |
+| `TestClientIdentities` | PASS 48.86s / 48.72s | 65,536-byte RADOS 원문, RO/RW·다른 pool/namespace 거부, wrong key·revoke의 fresh 연결 거부, writer→reader→writer의 동일 key와 omitted MGR cap 제거 |
+| `TestCephFSSubvolumeClientAuthorization` | PASS 128.84s / 133.62s | 524,288-byte CephFS 원문·RADOS namespace 접근, 16개 fresh probe, RO/RW·neighbor 격리, scoped revoke 후 native EPERM·동시 admin 연결, 다른 권한/key 보존 및 established-session eviction |
+
+`artifacts/auth-context-admission-20261007/`의 `check.log`, `native-runtime.log`, `changed-test-unit.log`, `changed-test-race.log`, `independent-review.md`, `verification.json`에 기록했습니다. Package terminal은 PASS 360.498초이고 같은 engine의 신규 container/network/Ryuk는 0개입니다. Native 실행 중 source·Makefile 224개의 해시가 동일하며 실행 후 위 watchdog failure 정리 테스트 한 파일만 변경된 사실과 별도 검증을 기록했습니다. 고정 이미지 정책 해시도 유지했습니다. 현재 selector 107개는 유지하며 이 두 기존 parent의 focused 실행을 전체 CI·다른 이미지 계열·새 native cancellation fault의 증거로 표시하지 않습니다.
