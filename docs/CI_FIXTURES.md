@@ -1,6 +1,6 @@
 # 시나리오 fixture CI
 
-Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 115개**를 선택하도록 구성합니다. 이전 storage bootstrap source의 실제 선택 114개에서 새 parent 한 개만 추가한 실제 compiled 목록을 확인했습니다. 이 선택 결과는 현재 115개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
+Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 현재116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
 분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 fixture profile·48개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
@@ -68,6 +68,7 @@ make scenario-cephfs-removal
 make scenario-rbd-receivers
 make scenario-mirror-initial-daemons
 make scenario-rbd-namespaces
+make scenario-rbd-namespace-observation
 make scenario-storage-bootstrap
 make scenario-manager-bootstrap
 make scenario-topology-extensions
@@ -124,6 +125,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 | `scenario-rbd-receivers` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-receivers` |
 | `scenario-mirror-initial-daemons` | 1 | 150분 | 160분 | `runtime-cleanup-scenario-mirror-initial-daemons` |
 | `scenario-rbd-namespaces` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-namespaces` |
+| `scenario-rbd-namespace-observation` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-namespace-observation` |
 | `scenario-storage-bootstrap` | 1 | 80분 | 90분 | `runtime-cleanup-scenario-storage-bootstrap` |
 | `scenario-manager-bootstrap` | 1 | 80분 | 90분 | `runtime-cleanup-scenario-manager-bootstrap` |
 
@@ -166,6 +168,16 @@ TestMultiClusterRBDNamespaceBinding
 ```
 
 한 pair·한 pool·한 owner가 두 snapshot mapping과 한 journal mapping을 공유합니다. Bridge/host에서 최초 daemon 없는 Bind의 리소스 수, 각 scope의 독립 native 정책·election·image identity·replica bytes, 공유 Stop/Start·제거·교체를 검사합니다. 전용 Go 90분·job 100분과 자체 baseline·always cleanup을 사용합니다. 전체 체크와 실제 selector 목록을 통과했고, 원본 Quay Linux ARM64 bridge/host focused native 실행은 package 696.407초로 통과했습니다. 현재 전체 CI나 다른 이미지 계열의 새 전체 PASS로 합산하지 않습니다. [읽기 전용 namespace view 계약](RBD_NAMESPACE_BINDING.md)을 따릅니다.
+
+### `scenario-rbd-namespace-observation` · 1개
+
+```text
+TestMultiClusterRBDNamespaceImageObservation
+```
+
+같은 shared pool·owner·cohort의 두 image-snapshot mapping과 한 pool-journal mapping을 retained view의 `ImageStatus`·`WaitReplayReady`로 관측합니다. Bridge/host 각각 두 OSD·pool replicas2/min1로 strict HEALTH_OK를 유지하고, zero-daemon source 관측·명시적 Add·원래 same-name image IDs·Stop/Start·Remove/Add replacement·live attribution과 실제 nonce bytes·source checkpoint ID를 구분합니다. Receiver election 준비는 별도 API의 계약이며 image replay 관측에 추가 조건으로 만들지 않습니다.
+
+`integration,multicluster`의 정확한 한 parent를 `-count=1 -failfast`로 선택하며 Go90분·job100분, `scenario-default` dependency, 기존 네 역할 override 해제, 자체 baseline·always cleanup과 별도 artifact를 사용합니다. Network별30분 context가 bootstrap/client 생성부터 operation까지 덮고 cleanup은 별도 bounded Background context를 유지합니다. 실패한 child는 다음 network를 시작하지 않습니다. 첫 native35557은 size1/one-OSD의 POOL_NO_REDUNDANCY로 package156.187초 FAIL했고 host는 시작하지 않았으며 자체 cleanup을 확인했습니다. 두 OSD·size2로 바꾼 Final3는 원본 Quay Linux ARM64 bridge/host에서 실제3개 RUN/PASS·package886.778초(parent886.38초,bridge450.08초/host436.31초), FAIL/SKIP0개로 종료했습니다. 18 READY·18 BYTES·12 source CHECKPOINT·18 PENDING·8 rawHEALTH_OK/checks{}·8 MODULES·2 ownerCLEANUP·2 COMPLETE를 확인했고 별도 outer cleanup의 새 container/network는0개였습니다. 같은253개 source input과 고정 policy를 유지했으며 [실제 종료·marker 요약](../artifacts/rbd-namespace-image-observation-20261007/native-summary.json)과 [원문·체크 기록](../artifacts/rbd-namespace-image-observation-20261007/checks-provenance.json), [별도 cleanup](../artifacts/rbd-namespace-image-observation-20261007/runtime-cleanup-final3/after.json)을 보관합니다. 경고를 성공으로 허용하거나 image/module 요구사항을 완화하지 않았습니다. 이 measured focused 결과는116개 전체 CI나 다른 image/platform 조합의 새 성공을 뜻하지 않습니다. [관측 계약·보존된 실패와 검증 상태](RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따릅니다.
 
 ### `scenario-storage-bootstrap` · 1개
 

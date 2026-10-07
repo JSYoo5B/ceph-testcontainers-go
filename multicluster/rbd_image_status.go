@@ -58,23 +58,47 @@ func (m *RBDMirror) ImageStatus(ctx context.Context, imageName string) (RBDMirro
 	if m.poolIdentities == nil || m.policyIdentities == nil {
 		return result, rbdImageGuardError("RBD mirror pool and policies are not confirmed")
 	}
-	result.Pool, result.Name = m.config.Pool, imageName
-	result.SourceNamespace, result.DestinationNamespace = m.config.SourceNamespace, m.config.DestinationNamespace
-	if err := m.checkRBDMirrorObservedIdentities(ctx); err != nil {
+	return m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil)
+}
+
+// The original owner's gate is held throughout this bounded read. A non-nil
+// scope belongs to a retained view; it never replaces the owner's config.
+func (m *RBDMirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (RBDMirrorImageStatus, error) {
+	var result RBDMirrorImageStatus
+	pool, sourceNS, destinationNS := m.config.Pool, m.config.SourceNamespace, m.config.DestinationNamespace
+	mode := m.config.Mode
+	checkIdentities := m.checkRBDMirrorObservedIdentities
+	if scope != nil {
+		pool, sourceNS, destinationNS = scope.selection[0], scope.selection[1], scope.selection[2]
+		mode = "" // The source image, not the owner's original mode, is authoritative.
+		checkIdentities = func(ctx context.Context) error { return m.checkRBDReceiverScopeIdentities(ctx, scope) }
+	}
+	result.Pool, result.Name = pool, imageName
+	result.SourceNamespace, result.DestinationNamespace = sourceNS, destinationNS
+	if err := checkIdentities(ctx); err != nil {
 		return result, err
 	}
-	mode, err := normalizeRBDMirrorMode(m.config.Mode)
-	if err != nil {
-		return result, rbdImageGuardError("RBD mirror image mode is invalid")
+	if scope == nil {
+		var err error
+		mode, err = normalizeRBDMirrorMode(mode)
+		if err != nil {
+			return result, rbdImageGuardError("RBD mirror image mode is invalid")
+		}
+		result.Mode = mode
 	}
-	result.Mode = mode
-	source, err := readRBDMirrorObservedInfo(ctx, m.sourceClient, rbdMirrorImageSpec(m.config.Pool, m.config.SourceNamespace, imageName), imageName, mode)
+	source, err := readRBDMirrorImageInfoForScope(ctx, m.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), imageName, mode, scope != nil)
 	if err != nil {
 		return result, err
 	}
 	result.GlobalID, result.SourceImageID, result.SourcePrimary = source.GlobalID, source.ID, source.Primary
 	result.SourceMirrorState = source.State
-	destination, err := readRBDMirrorObservedInfo(ctx, m.destinationClient, rbdMirrorImageSpec(m.config.Pool, m.config.DestinationNamespace, imageName), imageName, mode)
+	if scope != nil {
+		mode, result.Mode = source.Mode, source.Mode
+		if scope.policies.source.selected.Mode == "pool" && mode != RBDMirrorModeJournal {
+			return result, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
+		}
+	}
+	destination, err := readRBDMirrorImageInfoForScope(ctx, m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, mode, scope != nil)
 	if err != nil {
 		return result, err
 	}
@@ -85,8 +109,8 @@ func (m *RBDMirror) ImageStatus(ctx context.Context, imageName string) (RBDMirro
 	}
 	// Creating/disabling are valid transitions, never replay-ready. Native status
 	// refuses these states. Preserve identities and let Wait retry.
-	if source.State != "enabled" || destination.State != "enabled" {
-		if err := m.checkRBDMirrorObservedIdentities(ctx); err != nil {
+	if scope == nil && (source.State != "enabled" || destination.State != "enabled") {
+		if err := checkIdentities(ctx); err != nil {
 			return result, err
 		}
 		if err := ctx.Err(); err != nil {
@@ -94,41 +118,62 @@ func (m *RBDMirror) ImageStatus(ctx context.Context, imageName string) (RBDMirro
 		}
 		return result, nil
 	}
-	status, err := readRBDMirrorObservedStatus(ctx, m.destinationClient, rbdMirrorImageSpec(m.config.Pool, m.config.DestinationNamespace, imageName), imageName, source.GlobalID)
-	if err != nil {
-		return result, err
+	var status rbdObservedStatus
+	if source.State == "enabled" && destination.State == "enabled" {
+		var err error
+		status, err = readRBDMirrorImageStatusForScope(ctx, m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, source.GlobalID, scope != nil)
+		if err != nil {
+			return result, err
+		}
 	}
 	result.State, result.Description, result.LastUpdate = status.State, status.Description, status.LastUpdate
 	// A native "up" entry may outlive the process. Attribute an up/replaying
 	// report to a currently running owned process and its actual pool instance.
 	if source.Primary && !destination.Primary && status.State == "up+replaying" && status.Service != nil {
-		for _, daemon := range m.daemons {
-			if daemon == nil || daemon.Container == nil {
-				continue
-			}
-			// AddDaemon creates client.rbd-mirror.<id>. Ceph registers its
-			// service as <id>, stripping both the client entity type and the
-			// rbd-mirror daemon prefix. Match this exact owned identity.
-			nativeDaemonID, ownedClient := strings.CutPrefix(daemon.ClientName, "client.rbd-mirror.")
-			if !ownedClient || nativeDaemonID == "" || nativeDaemonID != status.Service.DaemonID {
-				continue
-			}
-			result.DaemonName, result.InstanceID = daemon.DaemonName, status.Service.InstanceID
-			state, err := daemon.State(ctx)
-			if err != nil {
-				return result, rbdImageQueryError("inspect RBD receiving process", err)
-			}
-			if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+		if scope != nil {
+			for _, name := range witness.names {
+				member := witness.members[name]
+				nativeID, ownedClient := strings.CutPrefix(member.client, "client.rbd-mirror.")
+				if !ownedClient || nativeID == "" || nativeID != status.Service.DaemonID {
+					continue
+				}
+				result.DaemonName, result.InstanceID = name, status.Service.InstanceID
+				observed, err := m.readRBDReceiver(ctx, scope, member)
+				if err != nil {
+					return result, err
+				}
+				result.ReplayReady = observed.problem == "" && observed.report.Running && observed.report.NamespaceDiscovered && observed.report.PoolState == "running" && observed.report.InstanceID == status.Service.InstanceID
 				break
 			}
-			native, err := readRBDMirrorObservedDaemon(ctx, daemon.Container)
-			if err != nil {
-				return result, err
+		} else {
+			for _, daemon := range m.daemons {
+				if daemon == nil || daemon.Container == nil {
+					continue
+				}
+				// AddDaemon creates client.rbd-mirror.<id>. Ceph registers its
+				// service as <id>, stripping both the client entity type and the
+				// rbd-mirror daemon prefix. Match this exact owned identity.
+				nativeDaemonID, ownedClient := strings.CutPrefix(daemon.ClientName, "client.rbd-mirror.")
+				if !ownedClient || nativeDaemonID == "" || nativeDaemonID != status.Service.DaemonID {
+					continue
+				}
+				result.DaemonName, result.InstanceID = daemon.DaemonName, status.Service.InstanceID
+				state, err := daemon.State(ctx)
+				if err != nil {
+					return result, rbdImageQueryError("inspect RBD receiving process", err)
+				}
+				if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+					break
+				}
+				native, err := readRBDMirrorObservedDaemon(ctx, daemon.Container)
+				if err != nil {
+					return result, err
+				}
+				result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool RBDMirrorPoolReplayerStatus) bool {
+					return pool.Pool == m.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
+				})
+				break
 			}
-			result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool RBDMirrorPoolReplayerStatus) bool {
-				return pool.Pool == m.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
-			})
-			break
 		}
 	}
 	// Detect replacement between info and status instead of blessing a new image
@@ -139,22 +184,32 @@ func (m *RBDMirror) ImageStatus(ctx context.Context, imageName string) (RBDMirro
 		spec   string
 		before rbdObservedInfo
 	}{
-		{m.sourceClient, rbdMirrorImageSpec(m.config.Pool, m.config.SourceNamespace, imageName), source},
-		{m.destinationClient, rbdMirrorImageSpec(m.config.Pool, m.config.DestinationNamespace, imageName), destination},
+		{m.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), source},
+		{m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), destination},
 	} {
-		after, err := readRBDMirrorObservedInfo(ctx, site.client, site.spec, imageName, mode)
+		after, err := readRBDMirrorImageInfoForScope(ctx, site.client, site.spec, imageName, mode, scope != nil)
 		if err != nil {
 			result.ReplayReady = false
 			return result, err
 		}
 		if after != site.before {
 			result.ReplayReady = false
-			return result, rbdImageGuardError("RBD image identity or primary ownership changed during observation")
+			if scope == nil || after.ID != site.before.ID || after.GlobalID != site.before.GlobalID || after.Mode != site.before.Mode || after.Primary != site.before.Primary {
+				return result, rbdImageGuardError("RBD image identity or primary ownership changed during observation")
+			}
+			// A recognized state transition with stable scoped identity is non-ready.
+			// Retain all final authority checks and let a later poll observe progress.
 		}
 	}
-	if err := m.checkRBDMirrorObservedIdentities(ctx); err != nil {
+	if err := checkIdentities(ctx); err != nil {
 		result.ReplayReady = false
 		return result, err
+	}
+	if scope != nil {
+		if _, err := m.receiverWitness(scope, nil, witness); err != nil {
+			result.ReplayReady = false
+			return result, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		result.ReplayReady = false
@@ -267,6 +322,7 @@ func validateRBDMirrorObservedImage(name string) error {
 type rbdObservedInfo struct {
 	ID, GlobalID, State string
 	Primary             bool
+	Mode                RBDMirrorMode
 }
 
 func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Container, spec, name string, mode RBDMirrorMode) (rbdObservedInfo, error) {
@@ -275,6 +331,11 @@ func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Contai
 	if err != nil {
 		return result, rbdImageQueryError("read RBD mirror image info", err)
 	}
+	return decodeRBDMirrorObservedInfo(data, name, mode)
+}
+
+func decodeRBDMirrorObservedInfo(data []byte, name string, mode RBDMirrorMode) (rbdObservedInfo, error) {
+	var result rbdObservedInfo
 	// Explicit native key tags matter: global_id is not Go's GlobalID.
 	var tagged struct {
 		Name      *string `json:"name"`
@@ -290,10 +351,11 @@ func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Contai
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing name/identity")
 	}
 	mirror := tagged.Mirroring
-	if mirror.Mode == nil || mirror.State == nil || mirror.GlobalID == nil || mirror.Primary == nil || *mirror.Mode != string(mode) || !slices.Contains([]string{"creating", "enabled", "disabling"}, *mirror.State) || *mirror.GlobalID == "" {
+	if mirror.Mode == nil || mirror.State == nil || mirror.GlobalID == nil || mirror.Primary == nil || (mode != "" && *mirror.Mode != string(mode) || mode == "" && !slices.Contains([]string{"snapshot", "journal"}, *mirror.Mode)) || !slices.Contains([]string{"creating", "enabled", "disabling"}, *mirror.State) || *mirror.GlobalID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing mirroring fields")
 	}
 	result.ID, result.GlobalID, result.State, result.Primary = *tagged.ID, *mirror.GlobalID, *mirror.State, *mirror.Primary
+	result.Mode = RBDMirrorMode(*mirror.Mode)
 	return result, nil
 }
 
@@ -314,6 +376,11 @@ func readRBDMirrorObservedStatus(ctx context.Context, client testcontainers.Cont
 	if err != nil {
 		return result, rbdImageQueryError("read RBD mirror image status", err)
 	}
+	return decodeRBDMirrorObservedStatus(data, name, globalID)
+}
+
+func decodeRBDMirrorObservedStatus(data []byte, name, globalID string) (rbdObservedStatus, error) {
+	var result rbdObservedStatus
 	var native struct {
 		Name        *string             `json:"name"`
 		GlobalID    *string             `json:"global_id"`

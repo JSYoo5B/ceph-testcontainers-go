@@ -23,12 +23,17 @@ import (
 // checked so copying cannot succeed by accidentally reading the source's pool.
 func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
+	return newMultiClusterPairWithContext(t, t.Context(), customizers...)
+}
+
+func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
+	t.Helper()
 	image, opts := integrationImages(t)
 	opts = append(opts, ceph.WithOSDCount(2))
 	opts = append(opts, customizers...)
 	clusters := make([]*ceph.Container, 2)
 	for i := range clusters {
-		cluster, err := ceph.Run(t.Context(), image, opts...)
+		cluster, err := ceph.Run(ctx, image, opts...)
 		if cluster != nil {
 			t.Cleanup(func() {
 				if t.Failed() {
@@ -53,11 +58,11 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 		clusters[i] = cluster
 	}
 	source, destination := clusters[0], clusters[1]
-	a, err := source.Status(t.Context())
+	a, err := source.Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := destination.Status(t.Context())
+	b, err := destination.Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +73,7 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 	t.Logf("independent clusters: source FSID=%s OSDs=%d; destination FSID=%s OSDs=%d", a.FSID, a.OSDMap.NumOSDs, b.FSID, b.OSDMap.NumOSDs)
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
-		client, err := testcontainers.Run(t.Context(), image, cluster.WithClient(),
+		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
 			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 		)
@@ -80,7 +85,7 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 		}
 		clients[i] = client
 		var status ceph.Status
-		if err := json.Unmarshal(multiClusterExecOutput(t, t.Context(), client, "ceph", "status", "--format", "json"), &status); err != nil {
+		if err := json.Unmarshal(multiClusterExecOutput(t, ctx, client, "ceph", "status", "--format", "json"), &status); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{a.FSID, b.FSID}[i]
@@ -88,8 +93,8 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 			t.Fatalf("client %d connected to FSID %s instead of %s", i, status.FSID, expected)
 		}
 	}
-	if bytes.Equal(multiClusterReadFile(t, t.Context(), clients[0], "/etc/ceph/ceph.client.admin.keyring"),
-		multiClusterReadFile(t, t.Context(), clients[1], "/etc/ceph/ceph.client.admin.keyring")) {
+	if bytes.Equal(multiClusterReadFile(t, ctx, clients[0], "/etc/ceph/ceph.client.admin.keyring"),
+		multiClusterReadFile(t, ctx, clients[1], "/etc/ceph/ceph.client.admin.keyring")) {
 		t.Fatal("independent clusters unexpectedly share admin credentials")
 	}
 	return source, destination, clients[0], clients[1]

@@ -231,3 +231,11 @@ SCENARIO_MANAGER_BOOTSTRAP_TESTS = ^TestNoInitialManagerTopology$$
 
 scenario-manager-bootstrap:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MANAGER_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_MANAGER_BOOTSTRAP_TESTS)' ./internal/integration
+
+# Scoped image replay observations have an independent shared-owner lifecycle budget.
+.PHONY: scenario-rbd-namespace-observation
+SCENARIO_RBD_NAMESPACE_OBSERVATION_TIMEOUT ?= 90m
+SCENARIO_RBD_NAMESPACE_OBSERVATION_TESTS = ^TestMultiClusterRBDNamespaceImageObservation$$
+
+scenario-rbd-namespace-observation:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -failfast -v -timeout=$(SCENARIO_RBD_NAMESPACE_OBSERVATION_TIMEOUT) -run '$(SCENARIO_RBD_NAMESPACE_OBSERVATION_TESTS)' ./internal/integration
