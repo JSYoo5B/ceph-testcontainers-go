@@ -111,6 +111,7 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 | 완료 | Cephx·CephFS grant/eviction의 owner/control admission | caller context cause·secret-safe 오류·부분 client/grant 보존. 원본 Quay RADOS/CephFS 인증 bridge/host PASS·strict cleanup; [범위와 결과](TOPOLOGY_CONTEXT.md#cephxsubvolume-authorization의-context-admission). Context 없는 customizer와 post-native publication은 별도 |
 | 완료 | mirror directory 추가의 응답 유실·등록 intent | `BeginDirectoryAddition`·read-only `Status`, zero inventory·실제 응답 유실·미적용 요청·typed 제거 후 재등록. 원본 Quay bridge/host·56 byte/hash·12 checkpoint·독립 verifier·strict cleanup PASS; [등록 계약과 증거](CEPHFS_DIRECTORY_ADDITION.md) |
 | 완료 | RBD receiver의 pool/namespace topology readiness | 이미지 없이 exact owned cohort·namespace/election 관측. 원본 Quay bridge/host 10 scope·70 readiness·10 byte marker·8 checkpoint, 기존 A→B→A 회귀와 source·cleanup 검증 완료; [계약·범위](RBD_RECEIVER_READINESS.md) |
+| 완료 | RBD·CephFS 최초 mirror daemon 없는 정책 구성 | additive `NoInitialDaemons`; 기존 zero default 보존, 원본 Quay bridge/host 여섯 fresh pair의 first Add·partial cleanup·factory 지연·raw resource·실제 bytes·source/cleanup·독립 증거 검증; [계약·범위](NO_INITIAL_MIRROR_DAEMONS.md) |
 
 Bootstrap 갱신은 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. Removal drain도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. Peer map에서 UUID가 없어지는 것과 in-flight replayer shutdown 완료는 서로 다른 관측입니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
 

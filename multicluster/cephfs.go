@@ -31,6 +31,10 @@ type CephFSMirrorConfig struct {
 	// DaemonCount defaults to one. Multiple daemons let the native MGR module
 	// distribute directories and reassign them after an instance disappears.
 	DaemonCount int
+	// NoInitialDaemons configures peer and initial directory policies without
+	// starting a mirror daemon. DaemonCount must be zero. AddDaemon starts
+	// processes explicitly later; DaemonCount=0 otherwise still defaults to one.
+	NoInitialDaemons bool
 	// OriginalProcessClientFactory opts in to retained original-run observations.
 	// Each fresh raw client transfers to this fixture. Nil disables the capability.
 	// The factory must honor ctx; a nonnil client returned with error is closed.
@@ -116,7 +120,8 @@ type cephFSPeerIdentity struct {
 }
 
 // RunCephFSMirror configures one-way directory snapshot mirroring between two
-// existing filesystems and starts each cephfs-mirror in a separate container. image
+// existing filesystems and starts each initial cephfs-mirror in a separate
+// container. NoInitialDaemons retains setup without launching a daemon. image
 // must meet the control or all role requirements, including cephfs-mirror and
 // the ceph CLI used to query its local admin socket. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
@@ -126,6 +131,12 @@ type cephFSPeerIdentity struct {
 // daemon or manager attachment; bridge mode joins the peer cluster network.
 // Initial daemon names are a through z, then node-27 and onward.
 func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*CephFSMirror, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("configure CephFS mirror: %w", err)
+	}
+	if _, err := normalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
+		return nil, fmt.Errorf("CephFS %w", err)
+	}
 	if err := validatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
@@ -186,8 +197,10 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 	// Register the complete initial set before assigning directories. Tentacle's
 	// native add-instance policy has a throttled shuffle path; starting processes
 	// one by one with already-assigned directories needlessly enters that path.
-	if err := mirror.waitForDaemonRegistrations(ctx, config.DaemonCount); err != nil {
-		return mirror, err
+	if config.DaemonCount > 0 {
+		if err := mirror.waitForDaemonRegistrations(ctx, config.DaemonCount); err != nil {
+			return mirror, err
+		}
 	}
 	for _, directory := range config.Directories {
 		if _, err := config.Source.Ceph(ctx, "fs", "snapshot", "mirror", "add", config.SourceFilesystem, directory); err != nil {
@@ -195,6 +208,9 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 		}
 		mirror.ownedDirectories[directory] = true
 		mirror.advanceDirectoryGeneration(directory)
+	}
+	if err := ctx.Err(); err != nil {
+		return mirror, fmt.Errorf("confirm CephFS mirror construction: %w", err)
 	}
 	return mirror, nil
 }
@@ -1213,12 +1229,11 @@ func normalizeMirrorDirectory(directory string) (string, error) {
 }
 
 func normalizeCephFSMirrorConfig(config CephFSMirrorConfig) (CephFSMirrorConfig, error) {
-	if config.DaemonCount < 0 {
-		return config, errors.New("CephFS mirror daemon count must not be negative")
+	count, err := normalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons)
+	if err != nil {
+		return config, fmt.Errorf("CephFS %w", err)
 	}
-	if config.DaemonCount == 0 {
-		config.DaemonCount = 1
-	}
+	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
 		if !validCephFSMirrorFilesystemName(name) {
 			return config, errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore")

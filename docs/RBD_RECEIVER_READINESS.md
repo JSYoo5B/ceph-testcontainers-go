@@ -67,7 +67,7 @@ status, err := link.WaitReceiverReady(ctx, survivor.DaemonName)
 cohort Ready를 false로 둡니다. 이 진단은 다른 fixture나 cluster가 unhealthy라는
 판정이 아닙니다. Shared pool 전체의 aggregate readiness는 별도 후속 계약입니다.
 Zero inventory는 성공한 non-ready 관측이며 Wait은 caller deadline까지 기다립니다.
-DaemonCount=0의 기존 one-daemon 기본값은 유지하고, zero는 RemoveDaemon으로 구성합니다.
+DaemonCount=0의 기존 one-daemon 기본값은 유지합니다. `RemoveDaemon`으로 zero를 구성하거나 새 `NoInitialDaemons: true` 옵션으로 최초 receiver 없이 link를 만들 수 있습니다. [최초 daemon 없는 구성](NO_INITIAL_MIRROR_DAEMONS.md)의 별도 검증 범위를 따르며, 아래 J 실행은 RemoveDaemon 경로의 역사적 증거입니다.
 
 ## Original identity와 수명
 
@@ -125,7 +125,7 @@ TC Exec/State와 반환 reader가 context를 준수하는 기존 transport 계�
 ## 검증 범위
 
 Temp 후보의 multicluster 전체 unit, receiver unit race, vet는 통과했습니다.
-현재 저장소에 합친 `make check`의 전체 unit·race·vet·tag compile과 전용 target의 `integration,multicluster` compile도 통과했습니다. 필수 CI 선택 목록은 111개로 확인했습니다. 이 이름 inventory는 현재 111개 전체의 새로운 CI runtime 성공을 뜻하지 않습니다.
+J source `2876f24`에 합친 `make check`의 전체 unit·race·vet·tag compile과 전용 target의 `integration,multicluster` compile도 통과했습니다. 당시 필수 CI 선택 목록은 111개로 확인했습니다. 이 이름 inventory는 현재 111개 전체의 새로운 CI runtime 성공을 뜻하지 않습니다.
 별도 native acceptance는 original Quay image에서 bridge/host를 순차 실행하여
 네 namespace 매핑의 image snapshot과 named 자동 pool journal enrollment를 검사합니다.
 Empty two→explicit survivor→same-CID restart→leader removal→replacement→partial

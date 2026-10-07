@@ -172,7 +172,7 @@ CephFS mirror는 초기 MGR a의 존재 대신 현재 native map의 실행 중 o
 
 ### Mirror daemon 증감과 관측
 
-두 config의 `DaemonCount`는 0이면 기본 1개이고 음수는 거부합니다. 초기 daemon 이름은 `a`부터 `z`, 이후 `node-27` 순서입니다. 복수 daemon은 같은 peer와 filesystem/pool을 담당하며 native assignment와 failover는 비동기로 진행됩니다. socket 준비나 컨테이너 수만으로 복제·HA 완료를 판단하지 않습니다.
+두 config의 `DaemonCount`는 0이면 기본 1개이고 음수는 거부합니다. `NoInitialDaemons: true`와 count 0을 함께 사용하면 최초 mirror daemon 없이 정책을 구성한 뒤 `AddDaemon`으로 명시적으로 시작할 수 있습니다. True와 positive count의 조합은 runtime 접근 전에 거부합니다. RBD는 설정용 CLI 2개를 계속 소유하며 CephFS는 bridge MGR 연결을 소유할 수 있습니다. [최초 daemon 없는 구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다. 초기 daemon 이름은 `a`부터 `z`, 이후 `node-27` 순서입니다. 복수 daemon은 같은 peer와 filesystem/pool을 담당하며 native assignment와 failover는 비동기로 진행됩니다. socket 준비나 컨테이너 수만으로 복제·HA 완료를 판단하지 않습니다.
 
 | API | 계약 |
 |---|---|

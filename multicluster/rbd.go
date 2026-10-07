@@ -51,6 +51,10 @@ type RBDMirrorConfig struct {
 	// DaemonCount defaults to one. Multiple daemons share the pool's receiving
 	// peer and participate in Ceph's native leader election and image assignment.
 	DaemonCount int
+	// NoInitialDaemons configures policies and the receiving peer without
+	// starting a mirror daemon. DaemonCount must be zero. AddDaemon starts
+	// processes explicitly later; DaemonCount=0 otherwise still defaults to one.
+	NoInitialDaemons bool
 }
 
 // RBDMirror owns its daemons and setup CLI containers, not the Ceph clusters.
@@ -154,7 +158,8 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 }
 
 // RunRBDMirror enables the selected scope on both pool/namespaces, imports a receiving
-// peer into the destination, and starts a daemon connected to both clusters.
+// peer into the destination, and starts the configured initial daemons connected
+// to both clusters. NoInitialDaemons retains setup without launching a daemon.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
 // image must meet the control or all role requirements, including the rbd and
@@ -184,6 +189,12 @@ func (d *RBDMirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
 func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opts ...testcontainers.ContainerCustomizer) (*RBDMirror, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("configure RBD mirror: %w", err)
+	}
+	if _, err := normalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
+		return nil, fmt.Errorf("configure RBD mirror: RBD %w", err)
+	}
 	if err := validatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
@@ -225,6 +236,9 @@ func RunRBDMirror(ctx context.Context, image string, config RBDMirrorConfig, opt
 		if _, err := mirror.AddDaemon(ctx, name); err != nil {
 			return mirror, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return mirror, fmt.Errorf("confirm RBD mirror construction: %w", err)
 	}
 	mirror.receiverSetupConfirmed = true
 	return mirror, nil
@@ -659,16 +673,15 @@ func (m *RBDMirror) Terminate(ctx context.Context, opts ...testcontainers.Termin
 }
 
 func normalizeRBDMirrorConfig(config RBDMirrorConfig) (RBDMirrorConfig, error) {
-	if config.DaemonCount < 0 {
-		return config, errors.New("RBD mirror daemon count must not be negative")
+	count, err := normalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons)
+	if err != nil {
+		return config, fmt.Errorf("RBD %w", err)
 	}
-	if config.DaemonCount == 0 {
-		config.DaemonCount = 1
-	}
+	config.DaemonCount = count
 	config.Pool = strings.TrimSpace(config.Pool)
 	config.SourceSite = strings.TrimSpace(config.SourceSite)
 	config.DestinationSite = strings.TrimSpace(config.DestinationSite)
-	config, err := normalizeRBDMirrorScopeAndNamespaces(config)
+	config, err = normalizeRBDMirrorScopeAndNamespaces(config)
 	if err != nil {
 		return config, err
 	}

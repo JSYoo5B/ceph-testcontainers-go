@@ -173,3 +173,5 @@ CephFS는 native mirror module의 filesystem당 single peer 제한을 따릅니�
 - [AWS SDK endpoint 설정](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-endpoints.html), [MinIO client 옵션](https://github.com/minio/minio-go/blob/master/api.go): RGW 소비자에는 연결 가능한 HTTP endpoint와 테스트 자격 증명이 필요합니다. SDK의 모든 기능을 모듈 자체가 구현할 필요는 없습니다.
 
 `scenario-rbd-receivers`는 image 없는 RBD receiver의 namespace 발견·leader/member 합의와 장애·교체·zero inventory 복구를 검증합니다. [RBD receiver 관측 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
+
+RBD와 CephFS mirror는 `NoInitialDaemons`로 최초 daemon 없이 정책을 구성한 뒤 `AddDaemon`으로 시작할 수 있습니다. [최초 daemon 없는 구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다.

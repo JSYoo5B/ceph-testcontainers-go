@@ -199,3 +199,11 @@ multicluster:
 
 vet:
 	CGO_ENABLED=0 go vet -mod=readonly ./...
+
+# Zero-initial mirror construction uses its own sequential bridge/host budget.
+.PHONY: scenario-mirror-initial-daemons
+SCENARIO_MIRROR_INITIAL_DAEMONS_TIMEOUT ?= 150m
+SCENARIO_MIRROR_INITIAL_DAEMONS_TESTS = ^TestMultiClusterNoInitialMirrorDaemons$$
+
+scenario-mirror-initial-daemons:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_MIRROR_INITIAL_DAEMONS_TIMEOUT) -run '$(SCENARIO_MIRROR_INITIAL_DAEMONS_TESTS)' ./internal/integration
