@@ -175,3 +175,5 @@ CephFS는 native mirror module의 filesystem당 single peer 제한을 따릅니�
 `scenario-rbd-receivers`는 image 없는 RBD receiver의 namespace 발견·leader/member 합의와 장애·교체·zero inventory 복구를 검증합니다. [RBD receiver 관측 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
 
 RBD와 CephFS mirror는 `NoInitialDaemons`로 최초 daemon 없이 정책을 구성한 뒤 `AddDaemon`으로 시작할 수 있습니다. [최초 daemon 없는 구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다.
+
+`scenario-rbd-namespaces`는 한 pool·peer·owner의 daemon 집합을 여러 기존 namespace mapping이 공유하는 구성을 검증합니다. 읽기 전용 `BindNamespace`와 원본 Quay bridge/host의 실제 replica·재시작·교체 결과는 [공유 namespace 계약](RBD_NAMESPACE_BINDING.md)을 따릅니다.

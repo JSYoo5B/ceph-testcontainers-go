@@ -153,8 +153,9 @@ snapshot bytes, including later partial-startup cleanup and resumed delivery.
 No native pass is implied by compiling this scenario; runtime acceptance must
 be recorded separately on the exact image and source under test.
 
-The merged repository `make check` passed full units, race, vet and all fixture
-tag compile. Actual compiled CI selection has 112 required parents; all prior
+At source `a141901`, the merged repository `make check` passed full units, race,
+vet and all fixture tag compile. That source's actual compiled CI selection had
+112 required parents; all prior
 profile sets remain unchanged and this separate scenario adds one parent. The
 exact `integration,multicluster` name list also compiled successfully.
 
@@ -179,3 +180,7 @@ native results, separate from a new complete CI run or an image/platform matrix.
 The 150-minute Go and 160-minute CI budgets do not promise another environment's
 execution time. Resource counts establish construction behavior rather than
 measured memory savings.
+
+A later [read-only namespace binding](RBD_NAMESPACE_BINDING.md) can share this
+zero-daemon RBD owner across existing native mappings. It owns no extra runtime
+and does not change the initial-daemon option contract.

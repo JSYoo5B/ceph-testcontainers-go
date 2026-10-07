@@ -207,3 +207,11 @@ SCENARIO_MIRROR_INITIAL_DAEMONS_TESTS = ^TestMultiClusterNoInitialMirrorDaemons$
 
 scenario-mirror-initial-daemons:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_MIRROR_INITIAL_DAEMONS_TIMEOUT) -run '$(SCENARIO_MIRROR_INITIAL_DAEMONS_TESTS)' ./internal/integration
+
+# Existing namespace bindings use a separate shared-pool bridge/host budget.
+.PHONY: scenario-rbd-namespaces
+SCENARIO_RBD_NAMESPACES_TIMEOUT ?= 90m
+SCENARIO_RBD_NAMESPACES_TESTS = ^TestMultiClusterRBDNamespaceBinding$$
+
+scenario-rbd-namespaces:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_NAMESPACES_TIMEOUT) -run '$(SCENARIO_RBD_NAMESPACES_TESTS)' ./internal/integration

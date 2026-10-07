@@ -54,6 +54,7 @@ type rbdReceiverWitness struct {
 	members  map[string]rbdReceiverMemberWitness
 	allOwned bool
 	scope    [3]string
+	binding  *rbdNamespaceBindingIdentity
 }
 
 // ReceiverStatus reads an exact owned cohort in this link's configured scope.
@@ -124,9 +125,12 @@ func waitRBDReceiverReady(ctx context.Context, interval time.Duration, observe f
 	}
 }
 
-func (m *RBDMirror) receiverWitness(names []string, previous *rbdReceiverWitness) (*rbdReceiverWitness, error) {
+func (m *RBDMirror) receiverWitness(scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (*rbdReceiverWitness, error) {
 	if m.closed || !m.receiverSetupConfirmed || m.sourceClient == nil || m.destinationClient == nil || m.config.Source == nil || m.config.Destination == nil || m.receiverClusters == nil || m.receiverPeer == nil || m.poolIdentities == nil || m.policyIdentities == nil {
 		return nil, rbdReceiverGuard("RBD receiver bootstrap capability is unavailable or unconfirmed")
+	}
+	if err := scope.guard(m); err != nil {
+		return nil, err
 	}
 	all := len(names) == 0
 	owned := make(map[string]*RBDMirrorDaemon)
@@ -149,7 +153,7 @@ func (m *RBDMirror) receiverWitness(names []string, previous *rbdReceiverWitness
 			return nil, rbdReceiverGuard("RBD expected receiver names must be distinct owned daemons")
 		}
 	}
-	w := &rbdReceiverWitness{peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, policies: m.policyIdentities, names: names, members: make(map[string]rbdReceiverMemberWitness), allOwned: all, scope: [3]string{m.config.Pool, m.config.SourceNamespace, m.config.DestinationNamespace}}
+	w := &rbdReceiverWitness{peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, policies: scope.policies, names: names, members: make(map[string]rbdReceiverMemberWitness), allOwned: all, scope: scope.selection, binding: scope.binding}
 	for _, name := range names {
 		d := owned[name]
 		if d.Container == nil || d.receiverHandle == nil || !sameRBDReceiverHandle(d.Container, d.receiverHandle) || !rbdReceiverContainerID(d.receiverContainerID) || d.receiverDaemonName != name || d.Container.GetContainerID() != d.receiverContainerID || d.ClientName != d.receiverClientName {
@@ -158,7 +162,7 @@ func (m *RBDMirror) receiverWitness(names []string, previous *rbdReceiverWitness
 		w.members[name] = rbdReceiverMemberWitness{d, d.receiverHandle, d.receiverContainerID, d.receiverClientName}
 	}
 	if previous != nil {
-		if previous.peer != w.peer || previous.peer.generation != m.receiverPeerGeneration || previous.clusters != w.clusters || previous.pools != w.pools || previous.policies != w.policies || previous.allOwned != w.allOwned || previous.scope != w.scope || !slices.Equal(previous.names, w.names) {
+		if previous.peer != w.peer || previous.peer.generation != m.receiverPeerGeneration || previous.clusters != w.clusters || previous.pools != w.pools || previous.policies != w.policies || previous.binding != w.binding || previous.allOwned != w.allOwned || previous.scope != w.scope || !slices.Equal(previous.names, w.names) {
 			return nil, rbdReceiverGuard("RBD original receiver scope or cohort changed while waiting")
 		}
 		for name, current := range w.members {
@@ -172,6 +176,10 @@ func (m *RBDMirror) receiverWitness(names []string, previous *rbdReceiverWitness
 }
 
 func (m *RBDMirror) receiverStatus(ctx context.Context, names []string, previous *rbdReceiverWitness) (RBDMirrorReceiverStatus, *rbdReceiverWitness, error) {
+	return m.receiverStatusForScope(ctx, nil, names, previous)
+}
+
+func (m *RBDMirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (RBDMirrorReceiverStatus, *rbdReceiverWitness, error) {
 	var result RBDMirrorReceiverStatus
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
@@ -182,16 +190,19 @@ func (m *RBDMirror) receiverStatus(ctx context.Context, names []string, previous
 		return result, previous, rbdReceiverQuery(ctx, "admit RBD receiver observation", err)
 	}
 	defer m.mu.Unlock()
-	w, err := m.receiverWitness(names, previous)
+	if scope == nil {
+		scope = m.originalReceiverScope()
+	}
+	w, err := m.receiverWitness(scope, names, previous)
 	if err != nil {
 		return result, previous, err
 	}
 	result = RBDMirrorReceiverStatus{
-		Pool: m.config.Pool, SourceNamespace: m.config.SourceNamespace, DestinationNamespace: m.config.DestinationNamespace,
+		Pool: scope.selection[0], SourceNamespace: scope.selection[1], DestinationNamespace: scope.selection[2],
 		SourceFSID: w.clusters.source, DestinationFSID: w.clusters.destination, SourcePoolID: w.pools.source, DestinationPoolID: w.pools.destination, PeerID: w.peer.uuid,
 		ExpectedDaemons: slices.Clone(w.names), Daemons: make(map[string]RBDMirrorReceiverDaemonStatus), DaemonProblems: make(map[string]string),
 	}
-	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
+	if err := m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
 		return result, w, err
 	}
 	var failures []error
@@ -200,7 +211,7 @@ func (m *RBDMirror) receiverStatus(ctx context.Context, names []string, previous
 	for pass, observations := range []map[string]rbdReceiverNativeObservation{first, second} {
 		for _, name := range w.names {
 			member := w.members[name]
-			observation, err := m.readRBDReceiver(ctx, member)
+			observation, err := m.readRBDReceiver(ctx, scope, member)
 			observations[name] = observation
 			result.Daemons[name] = observation.report
 			if observation.problem != "" {
@@ -219,10 +230,10 @@ func (m *RBDMirror) receiverStatus(ctx context.Context, names []string, previous
 		}
 	}
 	deriveRBDReceiverElection(&result, second)
-	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
+	if err := m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
 		return result, w, errors.Join(append(failures, err)...)
 	}
-	if _, err := m.receiverWitness(names, w); err != nil {
+	if _, err := m.receiverWitness(scope, names, w); err != nil {
 		return result, w, errors.Join(append(failures, err)...)
 	}
 	if err := ctx.Err(); err != nil {
@@ -241,7 +252,7 @@ type rbdReceiverNativeObservation struct {
 	problem string
 }
 
-func (m *RBDMirror) readRBDReceiver(ctx context.Context, member rbdReceiverMemberWitness) (rbdReceiverNativeObservation, error) {
+func (m *RBDMirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, member rbdReceiverMemberWitness) (rbdReceiverNativeObservation, error) {
 	var result rbdReceiverNativeObservation
 	result.report.ContainerID, result.report.ClientName = member.cid, member.client
 	if err := lockRGWSyncObservation(ctx, &member.daemon.mu); err != nil {
@@ -271,7 +282,7 @@ func (m *RBDMirror) readRBDReceiver(ctx context.Context, member rbdReceiverMembe
 		result.problem = "receiver-status-query-failed"
 		return result, err
 	}
-	selected, present, err := decodeRBDReceiverDiscovery(data, m.config.Pool, m.receiverPeer)
+	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiverPeer)
 	if err != nil {
 		result.problem = "receiver-status-invalid"
 		return result, err
@@ -281,7 +292,7 @@ func (m *RBDMirror) readRBDReceiver(ctx context.Context, member rbdReceiverMembe
 	} else {
 		result.report.PoolState, result.report.InstanceID, result.report.LeaderInstanceID = selected.state, selected.instance, selected.leaderInstance
 		result.report.Leader, result.members = selected.leader, slices.Clone(selected.members)
-		result.report.NamespaceDiscovered = slices.Contains(selected.namespaces, rbdReceiverNamespace{m.config.DestinationNamespace, m.config.SourceNamespace})
+		result.report.NamespaceDiscovered = slices.Contains(selected.namespaces, rbdReceiverNamespace{scope.selection[2], scope.selection[1]})
 		if selected.state != "running" {
 			result.problem = "receiver-pool-not-running"
 		} else if !result.report.NamespaceDiscovered {
