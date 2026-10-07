@@ -40,7 +40,7 @@ Intent는 native 제거 요청 전에 등록합니다. 응답 유실 시 nonnil 
 
 `BeginPeerRemoval`은 최대 2분, `Status`는 최대 30초, `WaitDrained`는 최대 2분이며 caller의 더 짧은 deadline/cancel이 잠금 대기와 native 조회에도 적용됩니다. Wait는 관측 사이에 fixture 잠금을 해제합니다. Query 오류와 deadline은 마지막 report 및 원래 cause를 유지합니다. Schema·identity·generation 변경은 guard 오류로 종료하며 intent를 버리지 않습니다. 공통 MON bootstrap attestation이 context 이외 오류를 반환하면 보수적으로 그 관측을 중단합니다. Quorum 가용성 회복 뒤 같은 handle을 새 context로 다시 관측할 수 있습니다.
 
-진행 중인 explicit receipt가 있으면 새 peer bootstrap, daemon 증설, directory 추가/제거·재분배를 막아 원래 cohort와 정책을 유지합니다. Daemon 제거와 전체 fixture cleanup은 계속 가능합니다. 이 첫 구현은 같은 live session의 witness를 요구하므로 cohort를 중지·재시작·제거하면 완료를 확인하지 못할 수 있습니다. 새 process를 원래 worker의 종료 증거로 채택하지 않습니다. Directory cycle 해제는 별도 [directory receipt](CEPHFS_DIRECTORY_REMOVAL.md)로 확인합니다. Stopped-process quiescence는 후속 범위입니다.
+진행 중인 explicit receipt가 있으면 새 peer bootstrap, daemon 증설, directory 추가/제거·재분배를 막아 원래 cohort와 정책을 유지합니다. Daemon 제거와 전체 fixture cleanup은 계속 가능합니다. 이 첫 구현은 같은 live session의 witness를 요구하므로 cohort를 중지·재시작·제거하면 완료를 확인하지 못할 수 있습니다. 새 process를 원래 worker의 종료 증거로 채택하지 않습니다. Directory cycle 해제는 별도 [directory receipt](CEPHFS_DIRECTORY_REMOVAL.md)로 확인합니다. 원래 process의 종료·watcher retirement는 선택적 raw observer와 receipt의 [ProcessQuiescence](CEPHFS_PROCESS_QUIESCENCE.md)로 별도 관측할 수 있습니다. 그 read-only 결과는 Drained나 pending gate를 변경하지 않습니다.
 
 완료 뒤 새로운 peer bootstrap은 generation을 진행합니다. 이전 receipt는 원래 UUID의 당시 관측 기록이며 새 peer 상태를 대신하지 않습니다. 이후 상태 조회는 superseded guard로 반환합니다. 외부 native policy·직접 container lifecycle 변경을 receipt 작업과 동시에 실행하지 않아야 합니다.
 

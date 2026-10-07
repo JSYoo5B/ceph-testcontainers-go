@@ -105,7 +105,9 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 | 완료 | CephFS peer 제거 후 원래 worker의 종료 관측 | live cohort의 original FS/peer/session을 보존한 `BeginPeerRemoval`, `Status`, `WaitDrained`. 실제 삭제 응답 유실·동일 handle 재시도·새 peer/checkpoint·원문·strict cleanup bridge/host PASS; [계약과 증거](CEPHFS_PEER_REMOVAL.md) |
 | 완료 | host RGW allocator 생성과 lease 기록의 순서 | owner를 allocation 전에 얻고 nonnil lease를 같은 critical section에 기록. Busy/closed/canceled·partial error·동시 termination unit, native TLS·gateway 증감 bridge/host PASS; [계약과 증거](TOPOLOGY_CONTEXT.md#host-rgw-포트-allocator의-소유권) |
 | 완료 | CephFS setup/scale·subvolume/data-pool·pin/clone의 혼합 잠금 | 생성 전 setup→owner→control 대기는 caller context, 생성 후 identity/descriptor 기록 유지. 실제 held-gate·fresh retry unit/race 및 원본 Quay MDS scale/replay·data-pool·pin·clone 5개 parent PASS·strict cleanup; [계약과 결과](TOPOLOGY_CONTEXT.md#cephfs-setupscaleprovisioning의-context-admission) |
-| 다음 | CephFS directory 제거 후 원래 sync cycle 해제 관측 | 원래 path/peer/session과 모든 owned live replayer에서 exact path stats 부재를 확인하는 retained receipt. Snapshot 완료·thread join·remote unlock 성공은 별도 범위 |
+| 완료 | CephFS directory 제거 후 원래 sync cycle 해제 관측 | `BeginDirectoryRemoval`, `Status`, `WaitReleased`; 원래 path/peer/session과 모든 owned live replayer에서 exact path stats 부재. 응답 유실·재등록·원문 및 strict cleanup bridge/host PASS; [계약과 증거](CEPHFS_DIRECTORY_REMOVAL.md) |
+| 완료 | 제거 receipt의 원래 process·watcher 종료 관측 | 선택적 raw Docker observer와 `ProcessQuiescence`; 원래 engine/CID·StartedAt/GID·policy/generation. Peer/directory × bridge/host 4개 pair·12개 관측·bytes·strict cleanup PASS; [관측 계약](CEPHFS_PROCESS_QUIESCENCE.md) |
+| 다음 | 원래 daemon 제거 뒤 중단된 제거의 명시적 승인과 fixture 재사용 | Read-only proof와 별도 terminal 상태, 새 authority 확인 후 overlap 해제·rebootstrap/re-add·새 checkpoint I/O. Drained·Released나 원격 unlock 성공으로 대체하지 않음 |
 | 이후 | Cephx·CephFS grant/eviction의 남은 owner/control admission | caller context cause·secret-safe 오류·원래 키와 partial creation/grant handle 보존. Context 없는 caller customizer와 post-native publication은 구분 |
 | 이후 | 중지/교체된 원래 peer process의 quiescence | 현재 peer drain은 same-live-session 범위. 동일 engine의 원래 CID와 retired watcher를 검증하는 adapter 없이 process 변경을 종료 증거로 채택하지 않음 |
 

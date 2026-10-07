@@ -55,6 +55,7 @@ type CephFSMirrorPeerRemovalDaemonStatus struct {
 type cephFSPeerRemovalWitness struct {
 	daemon                                            *CephFSMirrorDaemon
 	name, containerID, startedAt, address, instanceID string
+	originalProcess                                   *cephFSBoundOriginalProcess
 }
 
 type cephFSPeerRemovalSession struct {
@@ -367,6 +368,11 @@ func (r *CephFSMirrorPeerRemoval) captureCohort(ctx context.Context) error {
 		ids[w.containerID], names[w.name] = true, true
 		r.cohort = append(r.cohort, w)
 	}
+	if r.mirror.originalProcessClientFactory != nil {
+		if err := validateCephFSProcessCohort(ctx, r); err != nil {
+			return err
+		}
+	}
 	if err := r.checkWatcherCohort(watchers); err != nil {
 		return err
 	}
@@ -428,6 +434,15 @@ func (r *CephFSMirrorPeerRemoval) captureDaemon(ctx context.Context, daemon *Cep
 	}
 	if !normalCephFSRemovalProcess(state) || !sameCephFSRemovalStartedAt(state.StartedAt, w.startedAt) || daemon.GetContainerID() != w.containerID {
 		return w, cephFSObserveGuard("original CephFS process changed during removal preflight")
+	}
+	if r.mirror.originalProcessClientFactory != nil {
+		if daemon.originalProcess == nil {
+			return w, cephFSObserveGuard("original raw process observer binding is unavailable")
+		}
+		w.originalProcess = daemon.originalProcess
+		if err := confirmCephFSOriginalRun(ctx, w); err != nil {
+			return w, err
+		}
 	}
 	return w, ctx.Err()
 }

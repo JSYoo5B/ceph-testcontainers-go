@@ -115,7 +115,9 @@ quiescence, snapshot checkpoint 완료, 데이터·metadata 불변성을 증명�
 않는다. 특히 [remote unlock 실패](https://github.com/ceph/ceph/blob/v20.2.4/src/tools/cephfs_mirror/PeerReplayer.cc#L462-L477)는
 오류를 기록하고 반환하므로 뒤의 등록/stats 삭제만으로 unlock 성공을 알 수
 없다. checkpoint와 실제 파일 내용은 별도의 snapshot 관찰과 I/O로 검증해야
-한다.
+한다. 원래 process의 종료·watcher retirement는 선택적 raw observer를 제공한
+receipt의 [ProcessQuiescence](CEPHFS_PROCESS_QUIESCENCE.md)로 별도 관측한다.
+그 결과는 Released나 pending gate를 변경하지 않는다.
 
 ## 검증
 
@@ -127,4 +129,4 @@ Public `WaitReleased` 결과를 별도 Docker Inspect·native status/help·RADOS
 
 각 mode의 source client에서 독립적으로 읽은 snapshot ID/name은 12개, 양쪽 총 24개입니다. 재등록 전후 같은 pending checkpoint를 다시 확인하므로 observer 성공 기록은 15회씩 총 30회이며 이를 30개의 독립 checkpoint나 native I/O로 합산하지 않습니다. Native test는 제거 직전 active sync cycle을 의도적으로 오래 유지하지 않습니다. In-flight 취소의 코드 순서는 fixed-tag source와 unit의 tracked entry로 확인하며 native timing proof로 표시하지 않습니다.
 
-`artifacts/cephfs-directory-removal-20261007/`의 `check.log`, `native-runtime.log`, `verification.json`, `independent-review.md`에 증거를 보존합니다. Package terminal은 PASS 513.762초이고 동일 engine의 신규 container/network/Ryuk는 0개입니다. 관련 source·Makefile 222개 SHA256이 실행 전후 동일하며 고정 이미지 정책 SHA256은 `4682819b3174a632b9da32eb955f9c52593a24112f780f64280380f0e6ccee62`입니다. `scenario-multicluster-topology`에 새 parent를 추가해 현재 필수 selector는 107개로 확인했습니다. 이 focused 실행을 전체 CI 또는 다른 이미지 계열의 새 전체 PASS로 표시하지 않습니다.
+`artifacts/cephfs-directory-removal-20261007/`의 `check.log`, `native-runtime.log`, `verification.json`, `independent-review.md`에 증거를 보존합니다. Package terminal은 PASS 513.762초이고 동일 engine의 신규 container/network/Ryuk는 0개입니다. 관련 source·Makefile 222개 SHA256이 실행 전후 동일하며 고정 이미지 정책 SHA256은 `4682819b3174a632b9da32eb955f9c52593a24112f780f64280380f0e6ccee62`입니다. `scenario-multicluster-topology`에 새 parent를 추가한 해당 source의 필수 selector는 107개로 확인했습니다. 이 focused 실행을 전체 CI 또는 다른 이미지 계열의 새 전체 PASS로 표시하지 않습니다.

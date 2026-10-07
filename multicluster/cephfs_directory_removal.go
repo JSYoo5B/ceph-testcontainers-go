@@ -163,6 +163,11 @@ func (mirror *CephFSMirror) guardDirectoryRemovalOverlap() error {
 // checkHandle is called only under mirror.mu. This composition reuses the peer
 // receipt's attestation/session parsers, never its peer teardown completion.
 func (r *CephFSMirrorDirectoryRemoval) checkHandle() error {
+	return r.checkDirectoryRemovalHandle(false)
+}
+
+// allowRetired belongs only to the separate original-process observation.
+func (r *CephFSMirrorDirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) error {
 	if r == nil || r.original == nil || r.original.mirror == nil || r.original.source == nil || r.original.destination == nil || r.original.readClusters == nil || len(r.original.cohort) == 0 {
 		return cephFSObserveGuard("CephFS directory removal original identity is unavailable")
 	}
@@ -173,7 +178,7 @@ func (r *CephFSMirrorDirectoryRemoval) checkHandle() error {
 	if m.source != o.source || m.destination != o.destination || m.SourceFilesystem != o.sourceFilesystem || m.DestinationFilesystem != o.destinationFilesystem || m.SourceClientEntity != o.sourceClient || m.filesystemID != o.sourceID || m.destinationFilesystemID != o.destinationID || m.metadataPoolID != o.sourceMetadata || m.destinationMetadataPoolID != o.destinationMetadata || m.metadataPool != o.metadataPool || m.DestinationClientEntity != o.peer.ClientName || m.destinationSite != o.peer.SiteName || m.peerID != o.peerID {
 		return cephFSObserveGuard("CephFS directory removal original fixture identity changed")
 	}
-	if len(m.daemons) != len(o.cohort) {
+	if !allowRetired && len(m.daemons) != len(o.cohort) {
 		return cephFSObserveGuard("CephFS directory removal original owned cohort changed")
 	}
 	seen := make(map[*CephFSMirrorDaemon]bool)
@@ -181,7 +186,7 @@ func (r *CephFSMirrorDirectoryRemoval) checkHandle() error {
 		seen[daemon] = true
 	}
 	for _, w := range o.cohort {
-		if !seen[w.daemon] {
+		if !allowRetired && !seen[w.daemon] {
 			return cephFSObserveGuard("CephFS directory removal original daemon ownership changed")
 		}
 	}

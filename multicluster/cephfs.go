@@ -31,6 +31,11 @@ type CephFSMirrorConfig struct {
 	// DaemonCount defaults to one. Multiple daemons let the native MGR module
 	// distribute directories and reassign them after an instance disappears.
 	DaemonCount int
+	// OriginalProcessClientFactory opts in to retained original-run observations.
+	// Each fresh raw client transfers to this fixture. Nil disables the capability.
+	// The factory must honor ctx; a nonnil client returned with error is closed.
+	// Optional binding failure preserves Run success and is reported by the daemon.
+	OriginalProcessClientFactory func(context.Context) (*mobycl.Client, error)
 }
 
 // CephFSMirrorDaemon is one owned mirror process. DaemonName is a stable fixture
@@ -38,9 +43,11 @@ type CephFSMirrorConfig struct {
 // All daemons in a fixture share SourceClientEntity and the same peer policy.
 type CephFSMirrorDaemon struct {
 	testcontainers.Container
-	DaemonName string
-	mu         sync.Mutex
-	removed    bool
+	DaemonName          string
+	mu                  sync.Mutex
+	removed             bool
+	originalProcess     *cephFSBoundOriginalProcess
+	processBindingState string
 }
 
 // Terminate removes this process without modifying cluster policy. Successful
@@ -93,6 +100,7 @@ type CephFSMirror struct {
 	daemonKeyring                               []byte
 	daemonOptions                               []testcontainers.ContainerCustomizer
 	initialDaemonAssigned                       bool
+	originalProcessClientFactory                func(context.Context) (*mobycl.Client, error)
 	ownedDirectories                            map[string]bool
 	pendingDirectoryRelease                     map[string]bool
 }
@@ -135,7 +143,8 @@ func RunCephFSMirror(ctx context.Context, image string, config CephFSMirrorConfi
 		Directories: append([]string(nil), config.Directories...),
 		source:      config.Source, destination: config.Destination, destinationSite: config.DestinationSite,
 		daemonImage: image, sourceID: sourceID, daemonOptions: append([]testcontainers.ContainerCustomizer(nil), opts...),
-		ownedDirectories: make(map[string]bool),
+		ownedDirectories:             make(map[string]bool),
+		originalProcessClientFactory: config.OriginalProcessClientFactory,
 	}
 	for _, cluster := range []*ceph.Container{config.Source, config.Destination} {
 		if _, err := cluster.Ceph(ctx, "mgr", "module", "enable", "mirroring"); err != nil {
@@ -506,6 +515,13 @@ func (mirror *CephFSMirror) AddDaemon(ctx context.Context, daemonName string, op
 	var daemon *CephFSMirrorDaemon
 	if container != nil {
 		daemon = mirror.registerDaemonContainer(container, daemonName)
+		if mirror.originalProcessClientFactory != nil {
+			if err != nil {
+				daemon.processBindingState = "partial-startup"
+			} else {
+				mirror.bindOriginalProcessClient(ctx, daemon, container)
+			}
+		}
 	}
 	if err != nil {
 		return daemon, fmt.Errorf("run CephFS snapshot mirror daemon %q: %w", daemonName, err)
