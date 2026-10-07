@@ -820,7 +820,7 @@ func (mirror *CephFSMirror) AddDirectory(ctx context.Context, directory string) 
 	}
 	// Even an uncertain native re-add invalidates the old cycle receipt; it
 	// does not establish new ownership or advance the registration generation.
-	if r := mirror.directoryRemoval; r != nil && r.completed && r.directory == directory {
+	if r := mirror.directoryRemoval; r != nil && r.terminal() && r.directory == directory {
 		r.superseded = true
 	}
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.SourceFilesystem, directory); err != nil {
@@ -847,11 +847,17 @@ func (mirror *CephFSMirror) RemoveDirectory(ctx context.Context, directory strin
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if mirror.directoryRemoval != nil && mirror.directoryRemoval.directory == directory && !mirror.directoryRemoval.completed {
-		if err := mirror.directoryRemoval.checkHandle(); err != nil {
-			return err
+	if r := mirror.directoryRemoval; r != nil && r.directory == directory && !r.completed {
+		if r.processQuiescenceAcknowledged {
+			if !r.superseded && r.generation == mirror.directoryGenerations[directory] {
+				return r.confirmAcknowledgedProcessPolicy(ctx)
+			}
+		} else {
+			if err := r.checkHandle(); err != nil {
+				return err
+			}
+			return r.resume(ctx)
 		}
-		return mirror.directoryRemoval.resume(ctx)
 	}
 	if err := mirror.guardPeerRemovalOverlap(); err != nil {
 		return err
@@ -1049,6 +1055,9 @@ func (mirror *CephFSMirror) RemovePeer(ctx context.Context, id string) error {
 	}
 	defer mirror.mu.Unlock()
 	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id && !mirror.peerRemoval.completed {
+		if mirror.peerRemoval.processQuiescenceAcknowledged {
+			return mirror.peerRemoval.confirmAcknowledgedProcessPolicy(ctx)
+		}
 		if err := mirror.peerRemoval.checkHandle(); err != nil {
 			return err
 		}

@@ -309,9 +309,23 @@ func (r *CephFSMirrorDirectoryRemoval) ProcessQuiescence(ctx context.Context) (C
 }
 
 func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *CephFSMirrorPeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (CephFSMirrorProcessQuiescenceStatus, error) {
-	result := CephFSMirrorProcessQuiescenceStatus{Directory: directory, Daemons: make(map[string]CephFSMirrorOriginalProcessStatus)}
+	result := initialCephFSProcessQuiescenceStatus(o, directory)
 	if o == nil || o.mirror == nil || owner == nil || authority == nil {
 		return result, cephFSObserveGuard("original process receipt owner is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := lockRGWSyncObservation(ctx, &o.mirror.mu); err != nil {
+		return result, err
+	}
+	defer o.mirror.mu.Unlock()
+	return observeCephFSReceiptProcessQuiescenceLocked(ctx, o, directory, owner, authority)
+}
+
+func initialCephFSProcessQuiescenceStatus(o *CephFSMirrorPeerRemoval, directory string) CephFSMirrorProcessQuiescenceStatus {
+	result := CephFSMirrorProcessQuiescenceStatus{Directory: directory, Daemons: make(map[string]CephFSMirrorOriginalProcessStatus)}
+	if o == nil {
+		return result
 	}
 	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = o.peerID, o.sourceFilesystem, o.destinationFilesystem
 	result.SourceFilesystemID, result.DestinationFilesystemID = o.sourceID, o.destinationID
@@ -322,12 +336,16 @@ func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *CephFSMirrorP
 		}
 		result.Daemons[w.name] = entry
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := lockRGWSyncObservation(ctx, &o.mirror.mu); err != nil {
-		return result, err
+	return result
+}
+
+// Called with mirror.mu held. Proof and an explicit acknowledgment decision can
+// share one fixture gate without admitting a local generation change between.
+func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *CephFSMirrorPeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (CephFSMirrorProcessQuiescenceStatus, error) {
+	result := initialCephFSProcessQuiescenceStatus(o, directory)
+	if o == nil || o.mirror == nil || owner == nil || authority == nil {
+		return result, cephFSObserveGuard("original process receipt owner is unavailable")
 	}
-	defer o.mirror.mu.Unlock()
 	if err := owner(); err != nil {
 		return result, err
 	}

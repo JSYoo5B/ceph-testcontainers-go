@@ -33,6 +33,7 @@ type CephFSMirrorPeerRemoval struct {
 	cohort                                                              []cephFSPeerRemovalWitness
 	completed                                                           bool
 	requestAcknowledged                                                 bool
+	processQuiescenceAcknowledged                                       bool
 }
 
 // CephFSMirrorPeerRemovalStatus describes one observation of the original UUID.
@@ -88,6 +89,9 @@ func (mirror *CephFSMirror) beginPeerRemoval(ctx context.Context, id string, rea
 	defer mirror.mu.Unlock()
 	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id {
 		r := mirror.peerRemoval
+		if r.processQuiescenceAcknowledged {
+			return r, r.confirmAcknowledgedProcessPolicy(ctx)
+		}
 		if err := r.checkHandle(); err != nil {
 			return r, err
 		}
@@ -150,7 +154,7 @@ func (mirror *CephFSMirror) beginPeerRemoval(ctx context.Context, id string, rea
 
 // Called under mirror.mu. Legacy policy-only RemovePeer has no explicit receipt.
 func (mirror *CephFSMirror) guardPeerRemovalOverlap() error {
-	if mirror.peerRemoval != nil && !mirror.peerRemoval.completed {
+	if mirror.peerRemoval != nil && !mirror.peerRemoval.terminal() {
 		return cephFSObserveGuard("explicit CephFS peer drain is incomplete")
 	}
 	return mirror.guardDirectoryRemovalOverlap()

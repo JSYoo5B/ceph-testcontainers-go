@@ -20,6 +20,7 @@ type CephFSMirrorDirectoryRemoval struct {
 	directory, ownerID                         string
 	generation                                 uint64
 	requestAcknowledged, completed, superseded bool
+	processQuiescenceAcknowledged              bool
 }
 
 // CephFSMirrorDirectoryRemovalStatus observes the original path registration.
@@ -68,6 +69,9 @@ func (mirror *CephFSMirror) beginDirectoryRemoval(ctx context.Context, directory
 	}
 	defer mirror.mu.Unlock()
 	if r := mirror.directoryRemoval; r != nil && r.directory == directory && r.generation == mirror.directoryGenerations[directory] && !r.superseded {
+		if r.processQuiescenceAcknowledged {
+			return r, r.confirmAcknowledgedProcessPolicy(ctx)
+		}
 		if err := r.checkHandle(); err != nil {
 			return r, err
 		}
@@ -154,7 +158,7 @@ func (mirror *CephFSMirror) advanceDirectoryGeneration(directory string) {
 }
 
 func (mirror *CephFSMirror) guardDirectoryRemovalOverlap() error {
-	if mirror.directoryRemoval != nil && !mirror.directoryRemoval.completed {
+	if mirror.directoryRemoval != nil && !mirror.directoryRemoval.terminal() {
 		return cephFSObserveGuard("explicit CephFS directory release is incomplete")
 	}
 	return nil

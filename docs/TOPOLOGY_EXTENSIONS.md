@@ -107,9 +107,10 @@ CephFS mirroring의 filesystem당 single peer 제한은 그대로 적용합니�
 | 완료 | CephFS setup/scale·subvolume/data-pool·pin/clone의 혼합 잠금 | 생성 전 setup→owner→control 대기는 caller context, 생성 후 identity/descriptor 기록 유지. 실제 held-gate·fresh retry unit/race 및 원본 Quay MDS scale/replay·data-pool·pin·clone 5개 parent PASS·strict cleanup; [계약과 결과](TOPOLOGY_CONTEXT.md#cephfs-setupscaleprovisioning의-context-admission) |
 | 완료 | CephFS directory 제거 후 원래 sync cycle 해제 관측 | `BeginDirectoryRemoval`, `Status`, `WaitReleased`; 원래 path/peer/session과 모든 owned live replayer에서 exact path stats 부재. 응답 유실·재등록·원문 및 strict cleanup bridge/host PASS; [계약과 증거](CEPHFS_DIRECTORY_REMOVAL.md) |
 | 완료 | 제거 receipt의 원래 process·watcher 종료 관측 | 선택적 raw Docker observer와 `ProcessQuiescence`; 원래 engine/CID·StartedAt/GID·policy/generation. Peer/directory × bridge/host 4개 pair·12개 관측·bytes·strict cleanup PASS; [관측 계약](CEPHFS_PROCESS_QUIESCENCE.md) |
-| 다음 | 원래 daemon 제거 뒤 중단된 제거의 명시적 승인과 fixture 재사용 | Read-only proof와 별도 terminal 상태, 새 authority 확인 후 overlap 해제·rebootstrap/re-add·새 checkpoint I/O. Drained·Released나 원격 unlock 성공으로 대체하지 않음 |
-| 이후 | Cephx·CephFS grant/eviction의 남은 owner/control admission | caller context cause·secret-safe 오류·원래 키와 partial creation/grant handle 보존. Context 없는 caller customizer와 post-native publication은 구분 |
-| 이후 | 중지/교체된 원래 peer process의 quiescence | 현재 peer drain은 same-live-session 범위. 동일 engine의 원래 CID와 retired watcher를 검증하는 adapter 없이 process 변경을 종료 증거로 채택하지 않음 |
+| 완료 | 원래 daemon 제거 뒤 중단된 제거의 명시적 승인과 fixture 재사용 | `AcknowledgeProcessQuiescence`의 fresh removed-CID/watcher proof와 별도 terminal 상태. 응답 유실·삭제 재전송 없음·peer/directory × bridge/host 새 daemon/peer/path·backlog와 새 checkpoint bytes·strict cleanup PASS; [승인 계약과 증거](CEPHFS_PROCESS_ACKNOWLEDGMENT.md). Drained·Released·원격 unlock은 별도 |
+| 완료 | Cephx·CephFS grant/eviction의 owner/control admission | caller context cause·secret-safe 오류·부분 client/grant 보존. 원본 Quay RADOS/CephFS 인증 bridge/host PASS·strict cleanup; [범위와 결과](TOPOLOGY_CONTEXT.md#cephxsubvolume-authorization의-context-admission). Context 없는 customizer와 post-native publication은 별도 |
+| 다음 | mirror directory 추가의 응답 유실·등록 intent | Native 변경 전에 원래 FS/peer/path intent 보존, read-only 정책 관측, 명시적 재시도로 새 generation 채택. Legacy Add의 불확실한 성공이나 외부 path를 자동 채택하지 않음 |
+| 이후 | RBD receiver의 pool/namespace topology readiness | 이미지가 없어도 실제 owned receiver·election·pool/namespace 준비를 관측하고 bounded 대기. Image replay readiness·특정 데이터 완료와 구분 |
 
 Bootstrap 갱신은 cluster가 소유한 daemon을 갱신하는 현재 계약의 실패가 아니라, 별도 연결과 caller 소유 config의 경계입니다. Removal drain도 현재 observer의 명시적인 current-owned-policy 범위와 구분합니다. Peer map에서 UUID가 없어지는 것과 in-flight replayer shutdown 완료는 서로 다른 관측입니다. [관측 계약과 검증](MIRROR_OBSERVABILITY.md)을 따릅니다.
 

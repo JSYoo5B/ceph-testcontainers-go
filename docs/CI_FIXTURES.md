@@ -1,6 +1,6 @@
 # 시나리오 fixture CI
 
-Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 58개, 추가 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 108개**를 선택합니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
+Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. 현재 기본·토폴로지 55개, 별도 CephFS removal 4개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 **distinct top-level test 이름 109개**를 선택합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 4개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
 분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 fixture profile·48개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
@@ -64,6 +64,7 @@ make check
 make scenario-default
 make scenario-topology
 make scenario-multicluster-topology
+make scenario-cephfs-removal
 make scenario-topology-extensions
 make scenario-cluster-fixtures
 make scenario-cephfs-fixtures
@@ -77,7 +78,7 @@ CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make scenario-goceph-linux
 ```
 
-Go CI의 각 새 job은 `shell: bash`의 pipefail로 `make` 실패를 유지하면서 `$RUNNER_TEMP/<profile>.log`에 출력을 저장합니다. 실패한 job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며, 완료된 Go 실패 test/subtest 이름만 annotation으로 노출합니다. Reporter에만 `continue-on-error`를 적용하므로 reporter 오류가 원래 테스트 결과를 덮지 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면 원인을 추정하지 않고 미확인 notice를 남깁니다.
+Go CI의 6개 fixture job은 `shell: bash`의 pipefail로 `make` 실패를 유지하면서 `$RUNNER_TEMP/<profile>.log`에 출력을 저장합니다. 실패한 job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며, 완료된 Go 실패 test/subtest 이름만 annotation으로 노출합니다. Reporter에만 `continue-on-error`를 적용하므로 reporter 오류가 원래 테스트 결과를 덮지 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면 원인을 추정하지 않고 미확인 notice를 남깁니다.
 
 Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID를 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 ID가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. `runtime-cleanup-scenario-*` 또는 matrix의 `runtime-cleanup-image-<variant>-<layout>-<architecture>` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
 
@@ -109,6 +110,24 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 
 ## 추가되는 named test 전체
 
+현재 긴 CephFS 제거 시나리오는 별도 필수 profile에서 실행합니다. 각 parent의 bridge/host child 전체를 유지하며, pinned 원본 이미지·역할 override 해제·순차 실행·cleanup 조건을 따릅니다. 두 job은 `scenario-default` 성공 뒤 독립 runner에서 실행합니다.
+
+| 현재 필수 profile | 이름 수 | Go timeout | CI job timeout | cleanup artifact |
+| --- | ---: | --- | --- | --- |
+| `scenario-multicluster-topology` | 20 | 90분 | 100분 | `runtime-cleanup-scenario-multicluster-topology` |
+| `scenario-cephfs-removal` | 4 | 90분 | 100분 | `runtime-cleanup-scenario-cephfs-removal` |
+
+Source `d9115f4`의 multicluster Make step은 68분 37초, 전체 job은 69분 1초였습니다. 추가된 긴 제거 관측·복구 parent의 시간 예산을 분리합니다. 이 분리와 선택 목록은 새 전체 CI 성공 증거가 아닙니다.
+
+### `scenario-cephfs-removal` · 4개
+
+```text
+TestMultiClusterCephFSPeerRemovalDrain
+TestMultiClusterCephFSDirectoryRemovalRelease
+TestMultiClusterCephFSOriginalProcessQuiescence
+TestMultiClusterCephFSOriginalProcessQuiescenceRecovery
+```
+
 다음 목록은 profile별로 고정합니다. Test 내부에 bridge/host child가 있는 경우 모두 유지합니다. Host 전용 wrapper와 helper 이름도 그대로 포함하며, `-list` 또는 tag compile은 runtime 통과 증거로 사용하지 않습니다.
 
 ### scenario-cluster-fixtures · 현재 9개
@@ -125,7 +144,7 @@ TestHostNetworkRGWPlacementStorageClasses
 TestRGWPlacementRealmStorageClasses
 ```
 
-2026-10-07에 `TestOSDRemovalLifecycle`을 추가했습니다. 해당 시점의 fixture selector는 총 48개이며 기본·토폴로지·SDK 58개와 합해 106개였습니다. `scenario-topology`에는 `TestMonitorRollingReplacement`도 추가했습니다. 위 표의 8/47개 및 전체 101개는 해당 source의 역사적 CI 결과로 유지합니다. 새 이름은 원본 Quay Linux ARM64 bridge/host focused 실행과 별도 cleanup 검사를 통과했으며 [OSD lifecycle 증거](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)를 따릅니다. `scenario-multicluster-topology`에는 `TestMultiClusterMonitorBootstrapRefresh`도 추가했습니다. [양쪽 MON 교체 후 bootstrap 검증](MON_BOOTSTRAP_REFRESH.md)을 따르며 현재 selector 108개의 전체 CI를 새로 통과했다고 표시하지 않습니다. `TestMultiClusterTopologySnapshotsHonorBusyOwners`도 필수 multicluster selector에 추가했으며 [constructor와 snapshot context 계약](TOPOLOGY_CONTEXT.md)을 따릅니다. `TestMultiClusterCephFSPeerRemovalDrain`도 같은 selector에 추가했으며 [bridge/host의 public 제거 handle 검증](CEPHFS_PEER_REMOVAL.md)을 따릅니다. `TestMultiClusterCephFSDirectoryRemovalRelease`도 같은 selector에 추가했으며 [원래 두 daemon의 directory cycle 해제·재등록 검증](CEPHFS_DIRECTORY_REMOVAL.md)을 따릅니다. `TestMultiClusterCephFSOriginalProcessQuiescence`도 추가했으며 [원래 process 관측 계약](CEPHFS_PROCESS_QUIESCENCE.md)을 따릅니다. 현재 108개 inventory는 새 source의 선택 목록이며 과거 전체 CI 101개와 별도로 기록합니다.
+2026-10-07에 `TestOSDRemovalLifecycle`을 추가했습니다. 해당 시점의 fixture selector는 총 48개이며 기본·토폴로지·SDK 58개와 합해 106개였습니다. `scenario-topology`에는 `TestMonitorRollingReplacement`도 추가했습니다. 위 표의 8/47개 및 전체 101개는 해당 source의 역사적 CI 결과로 유지합니다. 새 이름은 원본 Quay Linux ARM64 bridge/host focused 실행과 별도 cleanup 검사를 통과했으며 [OSD lifecycle 증거](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도)를 따릅니다. `scenario-multicluster-topology`에는 `TestMultiClusterMonitorBootstrapRefresh`도 추가했습니다. [양쪽 MON 교체 후 bootstrap 검증](MON_BOOTSTRAP_REFRESH.md)을 따르며 현재 selector 109개의 전체 CI를 새로 통과했다고 표시하지 않습니다. `TestMultiClusterTopologySnapshotsHonorBusyOwners`도 필수 multicluster selector에 추가했으며 [constructor와 snapshot context 계약](TOPOLOGY_CONTEXT.md)을 따릅니다. `TestMultiClusterCephFSPeerRemovalDrain`도 같은 selector에 추가했으며 [bridge/host의 public 제거 handle 검증](CEPHFS_PEER_REMOVAL.md)을 따릅니다. `TestMultiClusterCephFSDirectoryRemovalRelease`도 같은 selector에 추가했으며 [원래 두 daemon의 directory cycle 해제·재등록 검증](CEPHFS_DIRECTORY_REMOVAL.md)을 따릅니다. `TestMultiClusterCephFSOriginalProcessQuiescence`도 추가했으며 [원래 process 관측 계약](CEPHFS_PROCESS_QUIESCENCE.md)을 따릅니다. Peer drain·directory release·원래 process 관측은 이제 별도 `scenario-cephfs-removal`로 이동하고, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`를 같은 profile에 추가했습니다. [명시적 복구 승인 계약](CEPHFS_PROCESS_ACKNOWLEDGMENT.md)을 따릅니다. 현재 109개 inventory는 새 source의 선택 목록이며 과거 전체 CI 101개와 별도로 기록합니다.
 
 ### scenario-cephfs-fixtures · 8개
 
