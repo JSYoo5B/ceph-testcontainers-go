@@ -303,8 +303,7 @@ func (c *Container) startNamedRGWDaemon(ctx context.Context, config RGWConfig, c
 		if config.TLS != nil {
 			count = 2
 		}
-		lease, err := reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), count, c.settings.startupTimeout)
-		c.trackHostPortLease(lease)
+		lease, err := c.reserveTrackedHostPorts(ctx, count)
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("reserve RGW host port: %w", err)
 		}
