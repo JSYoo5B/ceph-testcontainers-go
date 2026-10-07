@@ -177,3 +177,24 @@ CephFS는 native mirror module의 filesystem당 single peer 제한을 따릅니�
 RBD와 CephFS mirror는 `NoInitialDaemons`로 최초 daemon 없이 정책을 구성한 뒤 `AddDaemon`으로 시작할 수 있습니다. [최초 daemon 없는 구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다.
 
 `scenario-rbd-namespaces`는 한 pool·peer·owner의 daemon 집합을 여러 기존 namespace mapping이 공유하는 구성을 검증합니다. 읽기 전용 `BindNamespace`와 원본 Quay bridge/host의 실제 replica·재시작·교체 결과는 [공유 namespace 계약](RBD_NAMESPACE_BINDING.md)을 따릅니다.
+
+`scenario-mds-bootstrap`은 최초 MDS를 제외한 owned CephFS storage부터
+구성하고 같은 descriptor의 명시적 첫 `ScaleMDS(ctx, 1, 0)`으로 이어지는
+별도 topology입니다. [Cold MDS 계약](NO_INITIAL_MDS.md)은 기존 ordinary
+active/standby/replay scale 및 과거 topology PASS와 구분합니다. 두 OSD·두
+replica의 target/sibling, original native identities, cold client availability,
+fresh nonce I/O와 final unmuted HEALTH_OK를 검사합니다. 원본 Quay
+Linux ARM64 bridge/host의 독립 두 cluster는 3개 RUN/PASS·package 203.141초로
+완료했고 자체 outer cleanup의 새 container/network는 0개였습니다. 실패 후 다음 network를 시작하지 않고 자체 baseline과 always
+cleanup을 유지합니다. Go 50분/job 60분 등록은 runtime PASS 약속이 아닙니다.
+
+첫 cold-MDS native의 bridge는 기능·health·raw removal 관측 뒤 fallback의
+중복 client 제거로 package 103.921초 FAIL했으며 host는 시작하지 않았습니다.
+그 실패와 outer cleanup 0개를 유지하고 native-only 성공 receipt 수정 뒤의
+별도 Final2 실행의 성공을 기록합니다. 두 native cold mount의 errno110과
+final strict health/module closure, 10개 128 KiB byte 관측(독립 dataset 4개)을
+확인했습니다. Source 256과 고정 policy를 유지했으며 기존 ordinary scale/replay의
+새 source 회귀는 별도 bridge-only 실행에서 2개 RUN/PASS·202.702초
+(ordinary 96.07초, replay 106.07초)와 자체 cleanup 0개를 확인했습니다.
+이 결과는 과거 93.742/99.372초 scale 기록을 대체하지 않으며 전체 117개 CI나 모든
+MDS 장애/복구 조합의 성공이 아닙니다. [원문과 현재 상태](NO_INITIAL_MDS.md)를 따릅니다.

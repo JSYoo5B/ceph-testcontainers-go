@@ -239,3 +239,11 @@ SCENARIO_RBD_NAMESPACE_OBSERVATION_TESTS = ^TestMultiClusterRBDNamespaceImageObs
 
 scenario-rbd-namespace-observation:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -failfast -v -timeout=$(SCENARIO_RBD_NAMESPACE_OBSERVATION_TIMEOUT) -run '$(SCENARIO_RBD_NAMESPACE_OBSERVATION_TESTS)' ./internal/integration
+
+# Bootstrap without initial MDS uses a separate bridge/host lifecycle budget.
+.PHONY: scenario-mds-bootstrap
+SCENARIO_MDS_BOOTSTRAP_TIMEOUT ?= 50m
+SCENARIO_MDS_BOOTSTRAP_TESTS = ^TestNoInitialMDSTopology$$
+
+scenario-mds-bootstrap:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_MDS_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_MDS_BOOTSTRAP_TESTS)' ./internal/integration

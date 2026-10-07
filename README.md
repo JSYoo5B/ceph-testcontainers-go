@@ -103,6 +103,8 @@ if err != nil {
 
 각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
 
+`ceph.CephFSConfig{NoInitialMDS: true}`는 원래 filesystem과 pool을 먼저 구성하고 MDS auth·container·customizer 없이 반환합니다. Active/standby count는 생략하고 replay는 false로 두며, 같은 descriptor의 첫 `ScaleMDS(ctx, 1, 0)`으로 기동합니다. Cold 상태의 embedded `Container`는 nil이고 `WaitReady`는 client 준비를 성공으로 표시하지 않습니다. [최초 MDS 없는 filesystem 계약](docs/NO_INITIAL_MDS.md)을 따릅니다.
+
 `RemoveMonitor`는 quorum을, `RemoveManager`는 다른 실행 중 candidate의 승격 가능성을 확인한 뒤 해당 노드를 제거합니다. `CephFSContainer.ScaleMDS(ctx, active, standby)`는 같은 filesystem에서 rank handoff 후 남는 standby를 제거하며 pool과 파일을 유지합니다. `RemoveRGW`는 gateway만 제거하므로 같은 zone의 다른 gateway나 교체 노드가 기존 데이터를 계속 제공합니다. multisite의 gateway 주소를 바꿀 때는 period endpoint도 함께 변경해야 합니다.
 
 ## 애플리케이션 연결
@@ -206,7 +208,7 @@ if err != nil {
 _ = fs
 ```
 
-CephFS는 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하고 rank 0의 `up:active`를 기다립니다. 검증에는 공식 이미지 내부의 Python `libcephfs` 바인딩을 사용했습니다. 이 네이티브 라이브러리는 Linux 컨테이너 안에만 있으며 Go 호스트의 cgo 의존성을 추가하지 않습니다. RBD kernel mapping과 CephFS kernel/FUSE mount는 이번 검증 범위에 포함하지 않습니다.
+기본 CephFS 생성은 `tc-cephfs` 파일시스템, metadata/data 풀, MDS 1개를 생성하고 rank 0의 `up:active`를 기다립니다. 검증에는 공식 이미지 내부의 Python `libcephfs` 바인딩을 사용했습니다. 이 네이티브 라이브러리는 Linux 컨테이너 안에만 있으며 Go 호스트의 cgo 의존성을 추가하지 않습니다. RBD kernel mapping과 CephFS kernel/FUSE mount는 이번 검증 범위에 포함하지 않습니다.
 
 ### Linux go-ceph 연동 테스트
 
@@ -265,6 +267,7 @@ python3 internal/integration/goceph/run.py \
 | `StartRGWWithConfig(ctx, config, opts...)` / `RemoveRGW(ctx, name)` | 이름별 gateway 추가·제거, zone의 기존 데이터 유지 |
 | `StartCephFS(ctx, opts...)` | 풀·파일시스템 생성, MDS 기동 및 active 대기 |
 | `StartCephFSWithConfig(ctx, config, opts...)` / `CephFSContainer.ScaleMDS(ctx, active, standby)` | filesystem 구성과 실행 중 MDS 수 변경 |
+| `CephFSConfig.NoInitialMDS` | 최초 MDS 없이 FS/pool 생성; 첫 명시적 `ScaleMDS(ctx, 1, 0)` 전 embedded handle은 nil |
 | `Filesystems()` / `Gateways()` | 이름순 소유 filesystem·gateway descriptor 목록 |
 | `ServiceContainers()` | 소유 RGW/MDS 컨테이너 조회 |
 | `ManagerContainer()` | 초기 MGR의 호환 handle. active 조회와 전체 후보에는 `ManagerStatus`·`Managers` 사용 |
@@ -296,12 +299,15 @@ make scenario-rbd-namespaces
 make scenario-rbd-namespace-observation
 make scenario-storage-bootstrap
 make scenario-manager-bootstrap
+make scenario-mds-bootstrap
 make scenario-topology-extensions
 ```
 
 `scenario-default`는 기본 서비스·노드 lifecycle과 cleanup을, `scenario-topology`는 MON/MGR/MDS/RGW의 구성·변경을 검사합니다. `scenario-multicluster-topology`는 독립 cluster와 RGW zone·RBD/CephFS peer 그래프를, `scenario-topology-extensions`는 분리 네트워크·복수 mirror daemon·zonegroup/zone lifecycle·단절 복구를 검사합니다. `scenario-cephfs-removal`은 retained peer/directory receipt와 원래 process·watcher 관측, 명시적 승인 뒤 새 daemon/peer/path 복구와 응답 유실을 보존하는 directory 등록·재등록을 별도 시간 예산에서 검사합니다. Control/OSD/RGW/MDS 이미지 override 네 개는 각 profile에서 해제하며 mirror는 클러스터의 control 이미지를 사용합니다. 대표 범위와 기존 slim 결과·새 원본 실행 결과는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에서 구분합니다. `topology-smoke`는 빠른 일부 검사입니다.
 
-현재 필수 compiled 선택은 N source의 115개에 `TestMultiClusterRBDNamespaceImageObservation` 한 이름만 추가한 116개입니다. 기본 14개, 필수 internal 114개와 SDK 전체 11개 중 선택 2개를 확인했고 기존 selector는 유지했습니다. 원래 owner와 별도로 retained namespace view의 `ImageStatus`·`WaitReplayReady`를 위한 `scenario-rbd-namespace-observation`을 추가했습니다. 첫 scoped native FAIL은 보존하며, 두 OSD·두 replica와 기존 strict health 조건을 유지한 원본 Quay Linux ARM64 bridge/host 재실행은 3개 RUN/PASS·package886.778초·자체 cleanup의 새 container/network0개를 확인했습니다. 18개 ready 관측과 18개 2MiB byte 기록·12개 source checkpoint ID는 구분하며, 이 focused 결과를 전체116개 CI나 다른 image/platform 조합의 새 성공으로 표시하지 않습니다. [Scoped image 계약과 검증 상태](docs/RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따릅니다.
+O source에서 확인한 필수 compiled 선택은 N source의 115개에 `TestMultiClusterRBDNamespaceImageObservation` 한 이름만 추가한 116개입니다. 기본 14개, 필수 internal 114개와 SDK 전체 11개 중 선택 2개를 확인했고 기존 selector는 유지했습니다. 원래 owner와 별도로 retained namespace view의 `ImageStatus`·`WaitReplayReady`를 위한 `scenario-rbd-namespace-observation`을 추가했습니다. 첫 scoped native FAIL은 보존하며, 두 OSD·두 replica와 기존 strict health 조건을 유지한 원본 Quay Linux ARM64 bridge/host 재실행은 3개 RUN/PASS·package886.778초·자체 cleanup의 새 container/network0개를 확인했습니다. 18개 ready 관측과 18개 2MiB byte 기록·12개 source checkpoint ID는 구분하며, 이 focused 결과를 전체116개 CI나 다른 image/platform 조합의 새 성공으로 표시하지 않습니다. [Scoped image 계약과 검증 상태](docs/RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따릅니다.
+
+`scenario-mds-bootstrap`은 `TestNoInitialMDSTopology` 한 parent를 별도 Go 50분·job 60분 예산에서 선택합니다. 현재 필수 compiled 선택은 O source의 실제 116개에 이 이름만 추가한 117개입니다. 기본 14개, 필수 internal 115개와 SDK 전체 11개 중 선택 2개를 확인했고 기존 selector는 유지했습니다. 두 OSD·두 replica, cold target과 ready sibling의 original identity·가용성·첫 MDS·fresh nonce I/O 및 엄격한 health/cleanup을 순차 bridge/host에서 검사하도록 구성했습니다. 첫 native는 bridge 기능 관측과 자체 raw removal을 완료했지만 fallback의 중복 client 제거로 package 103.921초 FAIL했습니다. Host는 시작하지 않았고 별도 outer cleanup은 새 리소스 0개였습니다. 성공한 explicit 제거 receipt만 fallback에서 건너뛰는 좁은 수정 뒤 원본 Quay Linux ARM64의 bridge/host 재실행은 3개 RUN/PASS·package 203.141초로 완료했습니다. 2개 cold zero/첫 active/가용성 관측과 10개 128 KiB byte 기록(독립 nonce dataset 4개), final strict HEALTH_OK·required module closure, 자체 outer cleanup의 새 container/network 0개를 확인했습니다. 256개 runtime source와 고정 image policy가 유지됐으며 새 117개 전체 CI나 다른 image/platform의 성공으로 합산하지 않습니다. 같은 source의 기존 bridge-only ordinary MDS scale/standby-replay도 별도 2개 RUN/PASS·202.702초와 자체 cleanup 0개로 확인했으며 [현재 계약과 검증 상태](docs/NO_INITIAL_MDS.md)를 따릅니다. O116·N115·M114와 과거 전체 CI101 결과는 해당 source의 증거로 유지합니다.
 
 Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름입니다. Manager bootstrap 추가 시점에는 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, fixture 48개와 Docker bridge SDK 2개를 합한 실제 distinct top-level test 선택이 115개였습니다. storage bootstrap까지 실제 선택한 M source의 114개에 `TestNoInitialManagerTopology` 한 이름만 추가한 compiled 목록을 확인했습니다. 새 manager bootstrap의 원본 Quay Linux ARM64 bridge/host focused 실행은 7개 RUN/PASS·141.986초·자체 cleanup의 새 리소스 0개를 확인했으며, 이 N source의 115개 전체 CI 성공으로 표시하지 않습니다. 공유 namespace 관측 시점의 113개와 과거 전체 CI PASS도 각각의 source 증거로 유지합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`은 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 

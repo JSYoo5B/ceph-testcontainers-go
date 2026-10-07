@@ -233,6 +233,11 @@ func prepareInitialComposition(settings *options) error {
 				return err
 			}
 		}
+		if config.NoInitialMDS {
+			// Preserve the omitted startup-count request for the runtime constructor;
+			// validation above used the ordinary prospective max_mds of one.
+			config.ActiveMDS = 0
+		}
 		settings.filesystems[i] = config
 	}
 	return nil

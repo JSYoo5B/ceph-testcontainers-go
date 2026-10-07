@@ -27,8 +27,12 @@ type CephFSConfig struct {
 	DataPool            PoolConfig
 	AdditionalDataPools []PoolConfig
 	ActiveMDS           int
-	StandbyMDS          int
-	StandbyReplay       bool
+	// NoInitialMDS creates the filesystem/pools without a metadata daemon.
+	// ActiveMDS and StandbyMDS must be omitted and StandbyReplay false.
+	// The first ScaleMDS must request 1 active / 0 standby; later scale is ordinary.
+	NoInitialMDS  bool
+	StandbyMDS    int
+	StandbyReplay bool
 }
 
 // MDSContainer is an owned metadata daemon. ID is its static Ceph daemon name;
@@ -56,6 +60,7 @@ type CephFSContainer struct {
 	mdsOpts             []testcontainers.ContainerCustomizer
 	nextMDSIndex        int
 	nativeIdentity      *cephFSNativeIdentity
+	coldMDS             *cephFSColdMDS
 	pinOverrides        map[string]*CephFSPinOverride
 }
 
@@ -131,6 +136,13 @@ func (c *Container) StartCephFSWithConfig(ctx context.Context, config CephFSConf
 	for _, pool := range config.AdditionalDataPools {
 		fs.AdditionalDataPools = append(fs.AdditionalDataPools, pool.Name)
 	}
+	var coldFSID string
+	if config.NoInitialMDS {
+		coldFSID, err = fs.readColdFSID(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
@@ -176,6 +188,12 @@ func (c *Container) StartCephFSWithConfig(ctx context.Context, config CephFSConf
 		if _, err := c.Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
 			return fs, fmt.Errorf("add cephfs data pool %q: %w", pool, err)
 		}
+	}
+	if config.NoInitialMDS {
+		if err := fs.captureColdMDS(ctx, coldFSID); err != nil {
+			return fs, err
+		}
+		return fs, nil
 	}
 	for i := range config.ActiveMDS + config.StandbyMDS {
 		if err := fs.startMDS(ctx); err != nil {
@@ -239,6 +257,10 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 	defer c.cephfsSetupMu.Unlock()
 	if err := c.lockTopology(ctx); err != nil {
 		return err
+	}
+	if fs.Container == nil && fs.coldMDS != nil {
+		c.mu.Unlock()
+		return fs.scaleColdMDS(ctx, active, standby, fs.startMDS)
 	}
 	if c.closed || c.filesystems[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		c.mu.Unlock()
@@ -379,6 +401,12 @@ func (fs *CephFSContainer) ScaleMDS(ctx context.Context, active, standby int) (r
 }
 
 func (fs *CephFSContainer) startMDS(ctx context.Context) error {
+	return fs.startMDSWithService(ctx, fs.cluster.startService)
+}
+
+// The private service seam preserves real daemon/partial publication while
+// allowing lifecycle units to avoid Docker. Production always uses startService.
+func (fs *CephFSContainer) startMDSWithService(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)) error {
 	c := fs.cluster
 	if err := c.lockTopology(ctx); err != nil {
 		return err
@@ -388,14 +416,49 @@ func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 		return errors.New("cephfs cluster is terminated or filesystem ownership changed")
 	}
 	id := cephFSMDSID(fs.FilesystemName, fs.nextMDSIndex)
-	fs.nextMDSIndex++
 	opts := slices.Clone(fs.mdsOpts)
+	cold := fs.coldMDS != nil && !fs.coldMDS.attempted
+	var control testcontainers.Container
+	if cold {
+		if fs.nativeIdentity != fs.coldMDS.identity || fs.Container != nil || len(fs.mdss) != 0 || fs.nextMDSIndex != 0 {
+			c.mu.Unlock()
+			return errors.New("original cold MDS ownership changed before startup")
+		}
+		var err error
+		control, err = c.ControlContainerContext(ctx)
+		if err != nil || control == nil {
+			c.mu.Unlock()
+			return clientOperationError(ctx, "select initial MDS auth control", err)
+		}
+		if err := fs.checkColdSelectedControl(ctx, control); err != nil {
+			c.mu.Unlock()
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return err
+		}
+		// All owner/control admission has succeeded. The next call attempts
+		// owned native auth mutation; uncertainty cannot authorize another first.
+		fs.coldMDS.attempted = true
+	}
+	fs.nextMDSIndex++
 	c.mu.Unlock()
-	keyring, err := c.Ceph(ctx, "auth", "get-or-create", "mds."+id,
+	args := []string{"auth", "get-or-create", "mds." + id,
 		"mon", "allow profile mds", "mgr", "allow profile mds",
-		"osd", "allow rw tag cephfs *=*", "mds", "allow")
-	if err != nil {
-		return fmt.Errorf("create mds.%s credentials: %w", id, err)
+		"osd", "allow rw tag cephfs *=*", "mds", "allow"}
+	var keyring []byte
+	var err error
+	if cold {
+		keyring, err = command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+		if err != nil {
+			return clientOperationError(ctx, "create initial MDS credentials", err)
+		}
+	} else {
+		keyring, err = c.Ceph(ctx, args...)
+		if err != nil {
+			return fmt.Errorf("create mds.%s credentials: %w", id, err)
+		}
 	}
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": fs.FilesystemName}),
@@ -404,7 +467,7 @@ func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(c.settings.startupTimeout)),
 	}
 	moduleOpts = append(moduleOpts, opts...)
-	ctr, err := c.startService(ctx, "mds."+id, c.settings.mdsImage, moduleOpts...)
+	ctr, err := start(ctx, "mds."+id, c.settings.mdsImage, moduleOpts...)
 	if ctr != nil {
 		c.mu.Lock()
 		fs.mdss = append(fs.mdss, &MDSContainer{Container: ctr, ID: id, FilesystemName: fs.FilesystemName})
@@ -412,6 +475,9 @@ func (fs *CephFSContainer) startMDS(ctx context.Context) error {
 			fs.Container = ctr
 		}
 		c.mu.Unlock()
+	}
+	if cold && (err != nil || ctr == nil) {
+		return clientOperationError(ctx, "start initial MDS service", err)
 	}
 	return err
 }
@@ -695,6 +761,9 @@ func normalizeCephFSConfig(config CephFSConfig) (CephFSConfig, error) {
 	}
 	if len(config.Name) > 110 || !poolResourceName.MatchString(config.Name) {
 		return config, errors.New("filesystem name must use letters, digits, underscores, dots or dashes, start with a letter, digit or underscore, and fit generated pool names")
+	}
+	if config.NoInitialMDS && (config.ActiveMDS != 0 || config.StandbyMDS != 0 || config.StandbyReplay) {
+		return config, errors.New("NoInitialMDS requires omitted active/standby counts and no standby replay")
 	}
 	if config.ActiveMDS == 0 {
 		config.ActiveMDS = 1
