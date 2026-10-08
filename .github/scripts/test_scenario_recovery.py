@@ -15,6 +15,8 @@ import check_scenario_quiescence as original_checker
 
 FIXTURE = Path(__file__).with_name("fixtures") / "cephfs-recovery-native.log"
 PROVENANCE = FIXTURE.with_suffix(".provenance.json")
+JSON_FIXTURE = FIXTURE.with_name("cephfs-recovery-native-json.log")
+JSON_PROVENANCE = JSON_FIXTURE.with_suffix(".provenance.json")
 
 
 def native_leaf_log(case):
@@ -196,6 +198,99 @@ class RecoveryCoverageTests(unittest.TestCase):
                                      capture_output=True, text=True, timeout=10)
             self.assertEqual(missing.returncode, 1)
             self.assertFalse(json.loads(missing.stdout)["passed"])
+
+
+class RecoveryJSONCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.case = "process-recovery-bridge-peer"
+        self.raw = JSON_FIXTURE.read_text()
+        self.rows = [json.loads(line) for line in self.raw.splitlines()]
+
+    def assert_rejected(self, rows):
+        raw = "\n".join(json.dumps(row) for row in rows) + "\n"
+        self.assertFalse(checker.validate_json(raw, self.case)["passed"])
+
+    def test_actual_native_json_postorder_is_bound_and_format_modes_are_explicit(self):
+        provenance = json.loads(JSON_PROVENANCE.read_text())
+        self.assertEqual(hashlib.sha256(JSON_FIXTURE.read_bytes()).hexdigest(), provenance["fixture_sha256"])
+        self.assertEqual(provenance["original_log_sha256"], "ca2e4d6145b9f0144b0f3634906d066ea76870e1adf293a2c23768ee1505dbb2")
+        self.assertEqual(provenance["original_log_bytes"], 156031)
+        self.assertEqual(provenance["native_exit_code"], 0)
+        self.assertIn("-json", provenance["native_argv"])
+        self.assertEqual(len(provenance["original_line_numbers"]), 42)
+        self.assertEqual(provenance["original_line_numbers"], sorted(set(provenance["original_line_numbers"])))
+        passes = [row["Test"] for row in self.rows if row["Action"] == "pass" and "Test" in row]
+        leaf = checker.required_leaf(self.case)
+        self.assertEqual(passes, [leaf, leaf.rsplit("/", 1)[0], checker.PARENT])
+        report = checker.validate_json(self.raw, self.case)
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["pass_order"], "postorder")
+        self.assertEqual(report["json_observed_passes"], passes)
+        text = "".join(row.get("Output", "") for row in self.rows)
+        self.assertFalse(checker.validate(text, self.case)["passed"])
+        self.assertTrue(checker.validate(text, self.case, pass_order="postorder")["passed"])
+        # The original plain producer still requires parent/network/leaf.
+        plain = native_leaf_log(self.case)
+        self.assertTrue(checker.validate(plain, self.case)["passed"])
+        self.assertFalse(checker.validate(plain, self.case, pass_order="postorder")["passed"])
+        self.assertFalse(checker.validate_json(plain, self.case)["passed"])
+        with self.assertRaises(ValueError):
+            checker.validate(text, self.case, pass_order="either")
+
+    def test_every_structured_and_output_event_is_required_once(self):
+        for index in range(len(self.rows)):
+            with self.subTest(row=index):
+                self.assert_rejected(self.rows[:index] + self.rows[index + 1:])
+                self.assert_rejected(self.rows[:index] + [self.rows[index], self.rows[index]] + self.rows[index + 1:])
+
+    def test_structured_fail_skip_foreign_identity_and_false_package_pass_are_rejected(self):
+        lifecycle = [i for i, row in enumerate(self.rows) if row["Action"] != "output"]
+        for index in lifecycle:
+            for key, value in (("Action", "fail"), ("Action", "skip"),
+                               ("Package", "example.com/foreign/package"), ("Time", "invalid"),
+                               ("Test", checker.PARENT + "/host/peer")):
+                rows = [row.copy() for row in self.rows]
+                rows[index][key] = value
+                self.assert_rejected(rows)
+        pass_indices = [i for i, row in enumerate(self.rows) if row["Action"] == "pass"]
+        for index in pass_indices:
+            for elapsed in (True, -1, float("inf"), float("nan"), "0"):
+                rows = [row.copy() for row in self.rows]
+                rows[index]["Elapsed"] = elapsed
+                self.assert_rejected(rows)
+        # A final package PASS cannot substitute for unfinished ancestor PASS.
+        package = self.rows[-1]
+        for index in pass_indices[:-1]:
+            self.assert_rejected(self.rows[:index] + [package] + self.rows[index:-1])
+        rows = [row.copy() for row in self.rows]
+        first, last = pass_indices[0], pass_indices[-2]
+        rows[first], rows[last] = rows[last], rows[first]
+        self.assert_rejected(rows)
+
+    def test_output_test_attribution_and_native_proof_placement_remain_bound(self):
+        outputs = [i for i, row in enumerate(self.rows) if row["Action"] == "output"]
+        for index in outputs:
+            rows = [row.copy() for row in self.rows]
+            rows[index]["Test"] = checker.PARENT
+            # Parent's own RUN/PASS already has that identity; choose a foreign
+            # selected ancestor so attribution still changes for those rows.
+            if rows[index] == self.rows[index]:
+                rows[index]["Test"] = checker.required_leaf(self.case)
+            self.assert_rejected(rows)
+        proof = next(i for i, row in enumerate(self.rows) if checker.BYTES_MARKER in row.get("Output", ""))
+        self.assert_rejected([self.rows[proof]] + self.rows[:proof] + self.rows[proof + 1:])
+        self.assert_rejected(self.rows[:proof] + self.rows[proof + 1:] + [self.rows[proof]])
+        for raw in ("", self.raw + "{}\n", self.raw + "null\n", "{broken\n" + self.raw,
+                    self.raw.replace('"Action":"start"', '"Action":"start","Action":"pass"', 1)):
+            if raw != self.raw:
+                self.assertFalse(checker.validate_json(raw, self.case)["passed"])
+
+    def test_cli_json_requires_explicit_format_and_complete_structured_history(self):
+        for options, code in (([], 1), (["--format", "go-json"], 0)):
+            result = subprocess.run([sys.executable, checker.__file__, str(JSON_FIXTURE), "--case", self.case, *options],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, code, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["passed"], code == 0)
 
 
 if __name__ == "__main__":
