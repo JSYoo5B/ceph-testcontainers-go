@@ -59,9 +59,10 @@ else
 $(error Unknown SCENARIO_IMAGE_LAYOUT)
 endif
 
-# Required fixture profiles also select the default native RBD consumer
-# and the default real Vault backend, independent of custom-image sessions.
-SCENARIO_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE -u CEPH_TEST_VAULT_IMAGE $(SCENARIO_TEST_ENV)
+# Required fixture profiles select the default native RBD consumer.
+# Vault is an external KMS fixture; preserve an explicitly selected registry
+# image and let the backend recipe select its default when unset.
+SCENARIO_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE $(SCENARIO_TEST_ENV)
 SCENARIO_FIXTURE_TAGS = integration,auth,features,topology,hostnetwork,multicluster
 SCENARIO_CLUSTER_FIXTURE_TESTS = ^Test(ClientIdentities|CephFSSubvolumes|ConfigurationOverrides|OSDPolicies|OSDRemovalLifecycle|CephFSSubvolumeSnapshotsAndClones|RGWPlacementStorageClasses|HostNetworkRGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$
 SCENARIO_CEPHFS_FIXTURE_TESTS = ^Test(CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$

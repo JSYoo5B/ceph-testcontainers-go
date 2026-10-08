@@ -164,7 +164,7 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertNotIn(name, actual)
                 self.assertEqual(command[command.index(name) - 1], "-u")
         for name in CONSUMERS:
-            if target in FIXTURES:
+            if target in FIXTURES and name == "CEPH_TEST_RBD_CLIENT_IMAGE":
                 self.assertNotIn(name, actual)
                 self.assertEqual(command[command.index(name) - 1], "-u")
             else:

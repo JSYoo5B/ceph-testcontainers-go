@@ -112,7 +112,7 @@ class ScenarioShardTests(unittest.TestCase):
                 command = self.command("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP",
                                        group, ("MULTICLUSTER_TIMEOUT=40m",))
                 for image in ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE",
-                              "CEPH_TEST_MDS_IMAGE", "CEPH_TEST_RBD_CLIENT_IMAGE", "CEPH_TEST_VAULT_IMAGE"):
+                              "CEPH_TEST_MDS_IMAGE", "CEPH_TEST_RBD_CLIENT_IMAGE"):
                     self.assertIn(image, command)
                     self.assertEqual(command[command.index(image) - 1], "-u")
                 for flag in ("-count=1", "-mod=readonly", "CGO_ENABLED=0", "-timeout=40m",

@@ -386,9 +386,9 @@ TestGoCephLinux
 
 새 profile은 Ceph source를 컴파일하거나 MON/MGR/OSD/MDS/RGW/mirror 서버 이미지를 생성하지 않습니다. Control/OSD/RGW/MDS override 네 개를 해제하여 기존 원본 Quay 서버를 직접 소비하며 mirror는 source 클러스터의 control 이미지를 사용합니다. `ceph.Run`은 호출자가 선택한 이미지를 실행하며 이미지 builder를 호출하지 않습니다.
 
-일반 fixture profile은 `CEPH_TEST_RBD_CLIENT_IMAGE`와 `CEPH_TEST_VAULT_IMAGE`도 해제합니다. RBD native consumer는 기본 Quay의 Python bindings·cryptsetup을 사용합니다. ARM64 원본 이미지의 사전 도구 조회에서 bindings와 cryptsetup 2.8.6이 확인됐지만, 이 관측은 cluster I/O 또는 새 AMD64 CI 통과가 아닙니다. Slim consumer에 cryptsetup이 없다면 기존 [RBD client 준비 경로](RBD_CLIENT_FIXTURES.md)를 별도로 선택합니다.
+일반 fixture profile은 `CEPH_TEST_RBD_CLIENT_IMAGE`를 해제합니다. RBD native consumer는 기본 Quay의 Python bindings·cryptsetup을 사용합니다. ARM64 원본 이미지의 사전 도구 조회에서 bindings와 cryptsetup 2.8.6이 확인됐지만, 이 관측은 cluster I/O 또는 새 AMD64 CI 통과가 아닙니다. Slim consumer에 cryptsetup이 없다면 기존 [RBD client 준비 경로](RBD_CLIENT_FIXTURES.md)를 별도로 선택합니다.
 
-`TestRGWProtocolBackends`는 기본 `hashicorp/vault:1.21.4`의 실제 KV-v2 backend를 기동합니다. 허용·거부 audit transaction, STS/Swift 및 암호화 데이터를 확인하며 모의 backend로 성공을 대신하지 않습니다. [Backend recipe](RGW_PROTOCOL_BACKENDS.md)에 조건을 기록합니다.
+`TestRGWProtocolBackends`는 기본 `hashicorp/vault:1.21.4`의 실제 KV-v2 backend를 기동합니다. `CEPH_TEST_VAULT_IMAGE`를 지정하면 `scenario-rgw-fixtures`에서도 그 값을 유지하므로 사내 registry의 호환 Vault 이미지나 이미 로컬에 준비한 이미지를 사용할 수 있습니다. Vault는 외부 KMS 테스트 서비스이며 Ceph 역할 이미지 요구사항에 포함하지 않습니다. 허용·거부 audit transaction, STS/Swift 및 암호화 데이터를 확인하며 모의 backend로 성공을 대신하지 않습니다. [Backend recipe](RGW_PROTOCOL_BACKENDS.md)에 조건을 기록합니다.
 
 2026-10-04 로컬 Docker Desktop Linux ARM64 실행에서 원본 Quay RGW의 STS/Swift/SSE-KMS가 bridge/host 각 3개, 총 6개 phase를 skip 없이 PASS했습니다. 두 gateway의 STS trust/action/resource 거부와 기존 session의 정책 복원, Swift key/token·공유 object bytes, 실제 Vault의 allowed/denied audit read와 key 삭제·복원 후 decrypt 결과를 확인했습니다. Test는 136.39초, harness·cleanup 포함 151.158초이며 새 서버 이미지 빌드 0회와 최종 owned container/network 0개입니다. `artifacts/quay-rgw-backends-20261004-r1/summary.json`과 `post-runtime-audit.json`이 증거이며, RGW profile 14개 전체나 AMD64 CI 완료를 의미하지 않습니다.
 

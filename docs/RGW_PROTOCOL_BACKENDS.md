@@ -52,6 +52,20 @@ container/object를 제거한 뒤 account listing이 유효 token으로 성공�
 
 HTTP 모의 서버 대신 공식 `hashicorp/vault:1.21.4` image의 in-memory dev server를 별도 testcontainers container로 실행합니다. `CEPH_TEST_VAULT_IMAGE`로 호환 image/tag/digest를 주입할 수 있습니다. native client SDK나 Vault CLI를 Go host에 설치할 필요는 없습니다. 테스트가 Vault HTTP API로 fresh KV-v2 mount·두 256-bit base64 key·정확히 한 key path만 읽는 scoped token·file audit device를 준비합니다. RGW에는 root token을 전달하지 않습니다.
 
+Vault는 RGW의 SSE-KMS 경로를 검증하기 위한 외부 테스트 서비스입니다. 일반 RGW 클러스터 생성에 필요한 daemon이나 Ceph 이미지의 payload가 아니므로 `control`/`osd`/`rgw`/`mds`/`all` 요구사항에 Vault 서버를 추가하지 않습니다. RGW 이미지에는 Vault backend와 통신하는 Ceph 기능이 필요하고, Vault 서버 이미지는 테스트 실행자가 별도로 선택합니다.
+
+퍼블릭 registry에 접근할 수 없는 환경에서는 호환 Vault 이미지를 사내 registry로 미러링하거나 로컬 Docker에 준비한 뒤 선택합니다. `rgw-protocol-fixtures`와 `scenario-rgw-fixtures` 모두 아래 변수를 유지하며, 지정하지 않으면 기본 공식 이미지를 사용합니다. Registry 경로·tag·digest만 바꿔 선택할 수 있고 Ceph release와 Vault version을 동일하게 맞출 필요는 없습니다. 선택한 Vault는 `vault server -dev`, HTTP health·KV-v2·policy/token·file audit API와 `/tmp` audit 파일 쓰기를 지원해야 합니다. 테스트가 image entrypoint를 `vault`로 지정하므로 실행 파일도 컨테이너의 `PATH`에 있어야 합니다.
+
+```sh
+CEPH_TEST_VAULT_IMAGE=registry.example.com/testing/vault:1.21.4 \
+make rgw-protocol-fixtures
+
+CEPH_TEST_VAULT_IMAGE=registry.example.com/testing/vault:1.21.4 \
+make scenario-rgw-fixtures
+```
+
+Private registry 인증은 실행 전에 Docker에 설정합니다. 로컬에 준비한 이미지도 같은 변수로 선택할 수 있습니다. 오프라인 실행에는 Ceph 이미지와 Testcontainers가 사용하는 Ryuk 등 다른 실행 이미지도 미리 준비해야 합니다.
+
 | `client.admin` 설정 | 값 / 준비 |
 | --- | --- |
 | `rgw_crypt_s3_kms_backend` | `vault` |
@@ -62,7 +76,7 @@ HTTP 모의 서버 대신 공식 `hashicorp/vault:1.21.4` image의 in-memory dev
 | `rgw_crypt_vault_secret_engine` | `kv` |
 | `rgw_crypt_require_ssl` | 이 isolated HTTP recipe에서만 `false`; RGW TLS fixture는 별도로 제공 |
 
-bridge Ceph에서는 Vault를 cluster의 public bridge에 연결합니다. host Ceph에서는 Vault가 자체 Docker bridge endpoint를 유지하고 host-network RGW가 그 IP로 접속합니다. Go orchestrator의 Vault 접근은 별도의 random mapped 8200 포트입니다. 고정 host port를 점유하거나 서로 다른 Ceph cluster에 bridge를 공유시키지 않습니다. 첫 pull에는 registry 연결이 필요합니다.
+bridge Ceph에서는 Vault를 cluster의 public bridge에 연결합니다. host Ceph에서는 Vault가 자체 Docker bridge endpoint를 유지하고 host-network RGW가 그 IP로 접속합니다. Go orchestrator의 Vault 접근은 별도의 random mapped 8200 포트입니다. 고정 host port를 점유하거나 서로 다른 Ceph cluster에 bridge를 공유시키지 않습니다. 선택한 이미지가 로컬에 없으면 해당 registry에서 pull하므로 registry 연결이 필요합니다.
 
 S3 PUT의 `x-amz-server-side-encryption=aws:kms`와 key ID `allowed`를 확인하고, 두 gateway에서 GET의 encryption header와 exact bytes를 검증합니다. Vault에는 존재하지만 RGW token policy가 제외한 `denied` key로 PUT하면 실패하고 object가 남지 않아야 합니다.
 
