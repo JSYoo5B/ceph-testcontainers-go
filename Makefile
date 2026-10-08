@@ -68,6 +68,10 @@ CEPHFS_REMOVAL_TESTS_all = $(SCENARIO_CEPHFS_REMOVAL_TESTS)
 CEPHFS_REMOVAL_TESTS_peer-drain = ^TestMultiClusterCephFSPeerRemovalDrain$$
 CEPHFS_REMOVAL_TESTS_directory-release = ^TestMultiClusterCephFSDirectoryRemovalRelease$$
 CEPHFS_REMOVAL_TESTS_process-quiescence = ^TestMultiClusterCephFSOriginalProcessQuiescence$$
+CEPHFS_REMOVAL_TESTS_process-quiescence-bridge-peer = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^bridge$$/^peer$$
+CEPHFS_REMOVAL_TESTS_process-quiescence-bridge-directory = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^bridge$$/^directory$$
+CEPHFS_REMOVAL_TESTS_process-quiescence-host-peer = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^host$$/^peer$$
+CEPHFS_REMOVAL_TESTS_process-quiescence-host-directory = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^host$$/^directory$$
 CEPHFS_REMOVAL_TESTS_process-recovery = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$
 CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAdditionIntent$$
 
@@ -195,7 +199,9 @@ scenario-multicluster-topology:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT) -run '$(MULTICLUSTER_TOPOLOGY_TESTS_$(SCENARIO_MULTICLUSTER_GROUP))' ./internal/integration
 
 # Retained peer/directory removal and registration recovery are
-# isolated from the general multicluster budget; every bridge/host case runs.
+# isolated from the general multicluster budget. Local all and the original
+# process-quiescence selector retain all four fresh-pair leaves; CI selects one
+# complete network/receipt fixture per runner, including every evidence phase.
 scenario-cephfs-removal:
 	@test -n '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' || { echo 'Unknown SCENARIO_CEPHFS_REMOVAL_CASE' >&2; exit 1; }
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' ./internal/integration

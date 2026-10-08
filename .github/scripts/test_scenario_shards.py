@@ -10,6 +10,7 @@ import subprocess
 import unittest
 
 import check_scenario_receivers as receiver_checker
+import check_scenario_quiescence as quiescence_checker
 import test_scenario_images as image_helpers
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +31,8 @@ RGW_TOPOLOGY_CASES = {
 GROUPS = ("infra", "rbd", "cephfs", *RGW_TOPOLOGY_CASES)
 CASES = ("peer-drain", "directory-release", "process-quiescence",
          "process-recovery", "directory-intent")
+CEPHFS_CI_CASES = ("peer-drain", "directory-release", *quiescence_checker.CASES,
+                   "process-recovery", "directory-intent")
 RGW_SYNC_POLICY_CASES = {
     "policy-selective": "TestMultiClusterRGWSelectivePolicy",
     "policy-owned-bridge": "TestMultiClusterRGWOwnedSyncPolicy",
@@ -150,7 +153,8 @@ class ScenarioShardTests(unittest.TestCase):
         for target, option, timeout in (
                 ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", "120m"),
                 ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", "90m"),
-                ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE", "90m")):
+                ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE", "90m"),
+                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", "90m")):
             with self.subTest(target=target):
                 command = self.command(target)
                 self.assertEqual(command, self.command(target, option, "all"))
@@ -187,7 +191,7 @@ class ScenarioShardTests(unittest.TestCase):
         self.assertEqual(selected_leaves, inventory)
         self.assertEqual(len(selected_leaves), 10)
 
-    def test_primary_jobs_cover_every_compiled_parent_with_only_the_exact_receiver_partition(self):
+    def test_primary_jobs_cover_every_compiled_parent_with_exact_receiver_and_quiescence_partitions(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
         jobs = dict(image_helpers.blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
         options = {
@@ -199,7 +203,7 @@ class ScenarioShardTests(unittest.TestCase):
             "scenario-rbd-receivers": "SCENARIO_RBD_RECEIVERS_CASE",
         }
         counts = Counter()
-        receiver_jobs = {}
+        receiver_jobs, quiescence_jobs = {}, {}
         for target in image_helpers.PRIMARY:
             matrix = re.search(r"^        (?:group|case): \[(.*?)\]$", jobs[target], re.M)
             values = [value.strip() for value in matrix.group(1).split(",")] if matrix else [None]
@@ -220,15 +224,52 @@ class ScenarioShardTests(unittest.TestCase):
                 if target == "scenario-rbd-receivers":
                     self.assertEqual(selected, {receiver_checker.PARENT})
                     receiver_jobs[value] = self.command(target, options[target], value)
+                if target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
+                    self.assertEqual(selected, {quiescence_checker.PARENT})
+                    quiescence_jobs[value] = self.command(target, options[target], value)
                 counts.update(selected)
         self.assertTrue(OPTIONAL_NATIVE_SHUFFLE_PARENTS <= self.compiled)
         self.assertEqual(set(counts), self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS)
         self.assertEqual({parent: count for parent, count in counts.items() if count > 1},
-                         {receiver_checker.PARENT: 2})
-        self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 1)
+                         {receiver_checker.PARENT: 2, quiescence_checker.PARENT: 4})
+        self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 4)
+        self.assertEqual(set(quiescence_jobs), set(quiescence_checker.CASES))
+        for case, command in quiescence_jobs.items():
+            self.assertEqual(command[command.index("-run") + 1], quiescence_checker.SELECTORS[case])
         self.assertEqual(set(receiver_jobs), set(receiver_checker.NETWORKS))
         for network, command in receiver_jobs.items():
             self.assertEqual(command[command.index("-run") + 1], receiver_checker.SELECTORS[network])
+
+    def test_quiescence_cases_preserve_four_exact_fresh_pair_leaves_and_legacy_aggregate(self):
+        target, option = "scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE"
+        legacy = self.command(target, option, "process-quiescence")
+        self.assertEqual(legacy[legacy.index("-run") + 1], "^" + quiescence_checker.PARENT + "$")
+        inventory = {quiescence_checker.required_leaf(case) for case in quiescence_checker.CASES}
+        selected_leaves = set()
+        for case, (network, kind) in quiescence_checker.CASES.items():
+            command = self.command(target, option, case)
+            expression = command[command.index("-run") + 1]
+            self.assertEqual(expression, quiescence_checker.SELECTORS[case])
+            self.assertEqual(self.selection(target, option, case), {quiescence_checker.PARENT})
+            components = expression.split("/")
+            self.assertEqual(len(components), 3)  # no evidence-phase filter
+            selected = {leaf for leaf in inventory if all(re.fullmatch(part, name)
+                        for part, name in zip(components, leaf.split("/")))}
+            self.assertEqual(selected, {quiescence_checker.required_leaf(case)})
+            self.assertFalse(selected_leaves & selected)
+            selected_leaves |= selected
+            for foreign in (network + "-other", "other-" + network, "", kind):
+                self.assertNotRegex(foreign, components[1])
+            for foreign in (kind + "-other", "other-" + kind, "", network):
+                self.assertNotRegex(foreign, components[2])
+            self.assertNotRegex(quiescence_checker.PARENT + "Other", components[0])
+            for flag in ("-tags=integration,topology,hostnetwork,multicluster", "-timeout=90m",
+                         "-count=1", "-mod=readonly", "CGO_ENABLED=0"):
+                self.assertIn(flag, command)
+            ci_command = self.command(target, option, case, ("SCENARIO_CEPHFS_REMOVAL_TIMEOUT=60m",))
+            self.assertIn("-timeout=60m", ci_command)
+        self.assertEqual(selected_leaves, inventory)
+        self.assertEqual(len(selected_leaves), 4)
 
     def test_removal_cases_preserve_compiled_aggregate(self):
         self.assert_partition("scenario-cephfs-removal",
@@ -313,7 +354,7 @@ class ScenarioShardTests(unittest.TestCase):
     def test_shards_keep_original_image_and_all_child_selection(self):
         for target, option, values in [
                 ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", GROUPS),
-                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CASES),
+                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CEPHFS_CI_CASES),
                 ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
                 ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES)]:
             for value in values:
@@ -326,13 +367,17 @@ class ScenarioShardTests(unittest.TestCase):
                     self.assertIn("-count=1", command)
                     self.assertIn("-mod=readonly", command)
                     self.assertIn("CGO_ENABLED=0", command)
-                    self.assertNotIn("/", command[command.index("-run") + 1])
+                    expression = command[command.index("-run") + 1]
+                    if target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
+                        self.assertEqual(expression, quiescence_checker.SELECTORS[value])
+                    else:
+                        self.assertNotIn("/", expression)
 
     def test_workflow_selects_every_supported_shard(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
         for job, key, values, option in [
                 ("scenario-multicluster-topology", "group", GROUPS, "SCENARIO_MULTICLUSTER_GROUP"),
-                ("scenario-cephfs-removal", "case", CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
+                ("scenario-cephfs-removal", "case", CEPHFS_CI_CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
                 ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", CEPHFS_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
                 ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
@@ -371,6 +416,19 @@ class ScenarioShardTests(unittest.TestCase):
                 for group in RGW_SYNC_GROUPS:
                     self.assertIsNotNone(reporter.PROFILE.fullmatch(
                         profile.replace("${{ matrix.group }}", group)))
+            if job == "scenario-cephfs-removal":
+                self.assertIn("timeout-minutes: 70", block)
+                self.assertIn("SCENARIO_CEPHFS_REMOVAL_TIMEOUT=60m", block)
+                self.assertIn("if: ${{ startsWith(matrix.case, 'process-quiescence-') }}", block)
+                self.assertIn("check_scenario_quiescence.py artifacts/scenario/test.log --case '${{ matrix.case }}'", block)
+                self.assertIn("> artifacts/scenario/coverage.json", block)
+                self.assertEqual(block.count("artifact_name: runtime-cleanup-cephfs-removal-${{ matrix.case }}"), 2)
+                self.assertIn("artifact_name: scenario-images-cephfs-removal-${{ matrix.case }}", block)
+                self.assertIn("name: scenario-cephfs-removal-${{ matrix.case }}", block)
+                self.assertLess(block.index("| tee artifacts/scenario/test.log"),
+                                block.index("check_scenario_quiescence.py artifacts/scenario/test.log"))
+                self.assertLess(block.index("check_scenario_quiescence.py artifacts/scenario/test.log"),
+                                block.index("phase: check"))
             if job == "scenario-rbd-receivers":
                 self.assertIn("name: rbd receivers / ${{ matrix.case }}", block)
                 self.assertIn("timeout-minutes: 100", block)

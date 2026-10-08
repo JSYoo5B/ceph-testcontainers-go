@@ -15,6 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import check_scenario_quiescence as quiescence_checker
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ROLES = ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE",
@@ -279,7 +281,8 @@ class ScenarioImageTests(unittest.TestCase):
                 ("scenario-rgw-sync-fixtures", "group", "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
                 ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
-                ("scenario-rbd-receivers", "case", "SCENARIO_RBD_RECEIVERS_CASE")):
+                ("scenario-rbd-receivers", "case", "SCENARIO_RBD_RECEIVERS_CASE"),
+                ("scenario-cephfs-removal", "case", "SCENARIO_CEPHFS_REMOVAL_CASE")):
             matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
             self.assertIsNotNone(matrix)
             values = [value.strip() for value in matrix.group(1).split(",")]
@@ -293,6 +296,8 @@ class ScenarioImageTests(unittest.TestCase):
                     if target == "scenario-rgw-sync-fixtures" and value == "translation":
                         self.assertEqual(expression.split("/", 1)[1],
                                          "(tag_owner_class|tenant_system_user_isolation)$")
+                    elif target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
+                        self.assertEqual(expression, quiescence_checker.SELECTORS[value])
                     elif target == "scenario-rbd-receivers":
                         self.assertEqual(expression,
                                          "^TestMultiClusterRBDReceiverReadiness$/^" + value + "$")
@@ -357,7 +362,8 @@ class ScenarioImageTests(unittest.TestCase):
                 prepared.append(expand(scalar(prep, "artifact_name")))
                 cleanups.append(expand(scalar(baseline, "artifact_name")))
         # Count the frozen workflow's own matrix dimensions rather than parent
-        # executions: bridge/host legitimately share one receiver parent.
+        # executions: receiver network and original-process quiescence leaves
+        # legitimately repeat only their exact selected parents.
         expanded_primary_count = sum(
             len(re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)
                 .group(1).split(","))
