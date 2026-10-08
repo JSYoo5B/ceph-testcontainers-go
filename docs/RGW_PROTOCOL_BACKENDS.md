@@ -50,9 +50,13 @@ container/object를 제거한 뒤 account listing이 유효 token으로 성공�
 
 ## 실제 Vault KV-v2를 연결한 SSE-KMS
 
-HTTP 모의 서버 대신 공식 `hashicorp/vault:1.21.4` image의 in-memory dev server를 별도 testcontainers container로 실행합니다. `CEPH_TEST_VAULT_IMAGE`로 호환 image/tag/digest를 주입할 수 있습니다. native client SDK나 Vault CLI를 Go host에 설치할 필요는 없습니다. 테스트가 Vault HTTP API로 fresh KV-v2 mount·두 256-bit base64 key·정확히 한 key path만 읽는 scoped token·file audit device를 준비합니다. RGW에는 root token을 전달하지 않습니다.
+RGW SSE-KMS 클러스터 구축 시나리오는 [Testcontainers Vault 모듈](https://golang.testcontainers.org/modules/vault/)의 `vault.Run`으로 공식 `hashicorp/vault:1.21.4` image의 in-memory dev server를 함께 실행합니다. `vault.WithToken`으로 테스트 전용 root token을 설정하고 모듈의 HTTP health wait와 `HttpHostAddress`를 사용합니다. `CEPH_TEST_VAULT_IMAGE`로 호환 image/tag/digest를 주입할 수 있습니다. native client SDK나 Vault CLI를 Go host에 설치할 필요는 없습니다. 테스트가 Vault HTTP API로 fresh KV-v2 mount·두 256-bit base64 key·정확히 한 key path만 읽는 scoped token·file audit device를 준비합니다. RGW에는 root token을 전달하지 않습니다.
 
 Vault는 RGW의 SSE-KMS 경로를 검증하기 위한 외부 테스트 서비스입니다. 일반 RGW 클러스터 생성에 필요한 daemon이나 Ceph 이미지의 payload가 아니므로 `control`/`osd`/`rgw`/`mds`/`all` 요구사항에 Vault 서버를 추가하지 않습니다. RGW 이미지에는 Vault backend와 통신하는 Ceph 기능이 필요하고, Vault 서버 이미지는 테스트 실행자가 별도로 선택합니다.
+
+구축 순서는 Ceph cluster 생성 → RGW가 접근할 수 있는 네트워크에 Vault 시작 → KV-v2 key·scoped token 준비 → RGW KMS 설정과 token 파일 적용 → RGW 시작입니다. Vault 모듈과 Ceph 모듈을 조합하며, 시작한 Vault는 실패한 준비 단계를 포함해 `CleanupContainer`로 정리합니다. `ceph.Run`에서 KMS를 선택하지 않은 일반 RGW 구성에 Vault를 자동으로 시작하지 않습니다.
+
+2026-10-08 Linux ARM64에서 Vault 모듈 v0.44.0과 기존 공식 control/OSD/RGW 역할 이미지로 bridge 64.95초·host 68.35초, STS/Swift/SSE-KMS 총 6개 phase를 skip 없이 통과했습니다. 공식 Vault 1.21.4에 사내 registry 형식의 로컬 태그를 붙여 `CEPH_TEST_VAULT_IMAGE` 선택을 확인했고 각 네트워크에서 completed audit allowed/denied read 5/1과 키 삭제·복원 후 기존 데이터 읽기를 검증했습니다. Native package는 133.739초이며 종료 후 새 Testcontainers container/network 0개와 임시 Vault 태그 제거를 확인했습니다. 로그·cleanup 보고서·이미지 ID는 ignored `artifacts/vault-module-rgw-20261008/`에 보존합니다. 이 결과는 원격 사내 registry 인증·pull, AMD64 또는 전체 CI의 새 성공 증거가 아닙니다.
 
 퍼블릭 registry에 접근할 수 없는 환경에서는 호환 Vault 이미지를 사내 registry로 미러링하거나 로컬 Docker에 준비한 뒤 선택합니다. `rgw-protocol-fixtures`와 `scenario-rgw-fixtures` 모두 아래 변수를 유지하며, 지정하지 않으면 기본 공식 이미지를 사용합니다. Registry 경로·tag·digest만 바꿔 선택할 수 있고 Ceph release와 Vault version을 동일하게 맞출 필요는 없습니다. 선택한 Vault는 `vault server -dev`, HTTP health·KV-v2·policy/token·file audit API와 `/tmp` audit 파일 쓰기를 지원해야 합니다. 테스트가 image entrypoint를 `vault`로 지정하므로 실행 파일도 컨테이너의 `PATH`에 있어야 합니다.
 
