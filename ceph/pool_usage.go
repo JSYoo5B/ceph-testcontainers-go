@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
@@ -208,15 +209,20 @@ func decodePoolUsage(data []byte, fsid, name string, id int64) (PoolUsageSnapsho
 	return result, nil
 }
 
-// Reject duplicate fields and trailing documents; neither may silently change
-// an assertion's native identity or numeric value. Unknown fields are allowed.
+// Reject duplicate fields, aliases of required fields and trailing documents;
+// none may silently change an assertion's native identity or numeric value.
+// Unrelated unknown fields are allowed. The struct decoder's case folding must
+// not let an unknown spelling overwrite a canonical native field.
 func poolUsageJSON(data []byte, value any) error {
 	if len(data) == 0 || len(data) > 4<<20 {
 		return errors.New("invalid pool usage JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	var walk func() error
-	walk = func() error {
+	var walk func(reflect.Type) error
+	walk = func(expected reflect.Type) error {
+		for expected != nil && expected.Kind() == reflect.Pointer {
+			expected = expected.Elem()
+		}
 		token, err := decoder.Token()
 		if err != nil {
 			return err
@@ -227,6 +233,16 @@ func poolUsageJSON(data []byte, value any) error {
 		}
 		switch delim {
 		case '{':
+			fields := map[string]reflect.Type{}
+			if expected != nil && expected.Kind() == reflect.Struct {
+				for i := 0; i < expected.NumField(); i++ {
+					field := expected.Field(i)
+					name := strings.Split(field.Tag.Get("json"), ",")[0]
+					if name != "" && name != "-" {
+						fields[name] = field.Type
+					}
+				}
+			}
 			seen := map[string]bool{}
 			for decoder.More() {
 				key, err := decoder.Token()
@@ -238,13 +254,25 @@ func poolUsageJSON(data []byte, value any) error {
 					return errors.New("duplicate pool usage field")
 				}
 				seen[name] = true
-				if err := walk(); err != nil {
+				next := fields[name]
+				if next == nil {
+					for canonical := range fields {
+						if strings.EqualFold(name, canonical) {
+							return errors.New("noncanonical pool usage field")
+						}
+					}
+				}
+				if err := walk(next); err != nil {
 					return err
 				}
 			}
 		case '[':
+			var element reflect.Type
+			if expected != nil && (expected.Kind() == reflect.Slice || expected.Kind() == reflect.Array) {
+				element = expected.Elem()
+			}
 			for decoder.More() {
-				if err := walk(); err != nil {
+				if err := walk(element); err != nil {
 					return err
 				}
 			}
@@ -254,7 +282,7 @@ func poolUsageJSON(data []byte, value any) error {
 		_, err = decoder.Token()
 		return err
 	}
-	if walk() != nil {
+	if walk(reflect.TypeOf(value)) != nil {
 		return errors.New("invalid pool usage JSON")
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {

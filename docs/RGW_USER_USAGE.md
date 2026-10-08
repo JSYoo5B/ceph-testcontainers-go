@@ -11,9 +11,9 @@ if err != nil {
 // usage.SizeBytes, SizeActualBytes, NumObjects로 caller의 assertion을 작성한다.
 ```
 
-일반 사용자와 tenant 사용자는 `Scope == "user"`, `OwnerID == UserID`입니다. account root는 `Scope == "account"`, `OwnerID == account.ID()`이며 **계정 전체의 합계**입니다. root 사용자 한 명이 쓴 데이터만의 합계로 해석하면 안 됩니다. native `user stats`는 user의 account ID가 있으면 그 account를 통계 owner로 선택합니다. [Ceph v20.2.4 user stats](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L9066-L9100)
+일반 사용자와 tenant 사용자는 `Scope == "user"`, `OwnerID == UserID`입니다. account root는 `Scope == "account"`, `OwnerID == account.ID()`이며 **계정 전체의 합계**입니다. root 사용자 한 명이 쓴 데이터만의 합계로 해석하면 안 됩니다. native `user stats`는 user의 account ID가 있으면 그 account를 통계 owner로 선택합니다. [Ceph v20.2.4 user stats](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L9563-L9649)
 
-`SizeBytes`는 native `size`, `SizeActualBytes`는 반올림 accounting 값인 `size_actual`, `NumObjects`는 `num_objects`입니다. replica를 포함한 실제 디스크 할당량이나 요금은 아닙니다. `LastStatsSync`와 `LastStatsUpdate`는 native timestamp 문자열을 보존하며, zero timestamp는 `0.000000`일 수 있습니다. [storage counter 출력](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2982-L2995), [timestamp 출력](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.cc#L577-L580), [utime 형식](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L231-L261)
+`SizeBytes`는 native `size`, `SizeActualBytes`는 반올림 accounting 값인 `size_actual`, `NumObjects`는 `num_objects`입니다. replica를 포함한 실제 디스크 할당량이나 요금은 아닙니다. `LastStatsSync`와 `LastStatsUpdate`는 native timestamp 문자열을 보존하며, zero timestamp는 `0.000000`일 수 있습니다. [storage counter 출력](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177), [timestamp 출력](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.cc#L577-L580), [utime 형식](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L247-L275)
 
 조회는 기존 owner/gateway gate와 caller context에 묶입니다. 조회 전후에 user credentials, native type, tenant, account lifetime, runtime scope를 다시 확인하며, identity가 바뀌거나 마지막 context 검사가 실패하면 counters를 공개하지 않습니다. missing/null/duplicate 필드와 uint64 범위를 벗어난 값, malformed timestamp를 거부합니다. 오류에 credentials 또는 native output을 포함하지 않습니다.
 

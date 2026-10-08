@@ -38,10 +38,10 @@ proof로 사용하지 않는다. 각 original identity·generation·ownership gu
 현재 daemon 준비나 실제 I/O의 증거로 대신하지 않는다. Endpoint 조회는 경로에
 따라 Docker inspect/port resolution을 사용할 수 있으며 native health 검사는 아니다.
 
-현재 typed pool/user/account 조회는 policy·quota·caps/identity 범위다. 실제
-사용량 통계를 반환하는 typed Check로 확대해 읽지 않는다. Raw CLI로 추가 상태를
-질의할 수 있으며, 향후 Check gap은 typed 사용량·상태 query 관점에서 정리할 수
-있다. 현재 목록의 분류와 아직 구현하지 않은 Check 확장은 구분한다.
+Pool/user/account의 policy·quota·caps/identity 조회와 사용량 조회는 별도 Check다.
+`PoolUsage`는 monitor가 보고한 pool 통계, `UserUsage`는 RGW의 user 또는 account
+집계 범위를 반환한다. 비동기 통계의 갱신과 실제 I/O 성공은 각 계약에 따라
+별도로 확인한다. Raw CLI로 추가 상태를 질의할 수 있다.
 
 Raw CLI 접점은 argv에 따라 조회와 변경 모두 가능하다. 이미지·client·customizer
 옵션 및 안전한 문자열 표현도 공개 surface에 포함되지만 native Check로 세지
@@ -142,7 +142,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L38) · [Container.PoolStatus](../ceph/pool_policy.go#L48) |
-| [ceph/pool_usage.go](../ceph/pool_usage.go) | [Container.PoolUsage](../ceph/pool_usage.go#L43) |
+| [ceph/pool_usage.go](../ceph/pool_usage.go) | [Container.PoolUsage](../ceph/pool_usage.go#L44) |
 | [ceph/rbd.go](../ceph/rbd.go) | [Container.ListRBDNamespaces](../ceph/rbd.go#L107) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.UserInfo](../ceph/rgw_admin.go#L457) |
 | [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.PlacementStatus](../ceph/rgw_placement.go#L250) |
@@ -253,7 +253,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/placement.go](../ceph/placement.go) | [OSDConfig](../ceph/placement.go#L16) |
 | [ceph/pool.go](../ceph/pool.go) | [PoolConfig](../ceph/pool.go#L18) · [ErasureCodeConfig](../ceph/pool.go#L39) · [Pool](../ceph/pool.go#L48) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [PoolQuota](../ceph/pool_policy.go#L16) · [PoolState](../ceph/pool_policy.go#L24) |
-| [ceph/pool_usage.go](../ceph/pool_usage.go) | [PoolUsageSnapshot](../ceph/pool_usage.go#L22) |
+| [ceph/pool_usage.go](../ceph/pool_usage.go) | [PoolUsageSnapshot](../ceph/pool_usage.go#L23) |
 | [ceph/rbd.go](../ceph/rbd.go) | [RBDNamespace](../ceph/rbd.go#L15) |
 | [ceph/rgw.go](../ceph/rgw.go) | [RGWContainer](../ceph/rgw.go#L24) · [RGWConfig](../ceph/rgw.go#L43) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWUserConfig](../ceph/rgw_admin.go#L25) · [RGWUser](../ceph/rgw_admin.go#L37) · [RGWQuota](../ceph/rgw_admin.go#L90) · [RGWAdminCapability](../ceph/rgw_admin.go#L96)<br>[RGWUserInfo](../ceph/rgw_admin.go#L105) |

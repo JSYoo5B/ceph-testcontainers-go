@@ -7,6 +7,10 @@ JSON에서 한 pool의 사용량을 읽는다. Go 쪽 Ceph SDK나 cgo가 필요�
 호출자 취소는 zero snapshot과 error를 반환한다. error와 함께 온 값을
 성공한 assertion 입력으로 쓰지 않는다.
 
+필수 JSON field 이름은 native spelling과 정확히 일치해야 한다. 중복 field와
+대소문자 또는 Unicode case folding으로 같은 필드로 해석되는 별칭을 거부한다.
+결과에 영향을 주지 않는 알 수 없는 추가 field는 허용한다.
+
 ```go
 usage, err := cluster.PoolUsage(ctx, "test-data")
 if err != nil {

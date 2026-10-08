@@ -182,6 +182,91 @@ func TestPoolUsageRejectsIdentityDriftAndMalformedPoolLists(t *testing.T) {
 	}
 }
 
+func TestPoolUsageRejectsCaseAliasesInNativeIdentity(t *testing.T) {
+	cases := map[string]string{
+		"pool ID alias only":            strings.Replace(poolUsageFixturePolicies, `"pool_id":7`, `"POOL_ID":7`, 1),
+		"pool name alias only":          strings.Replace(poolUsageFixturePolicies, `"pool_name":"fixture"`, `"Pool_Name":"fixture"`, 1),
+		"pool ID canonical and alias":   strings.Replace(poolUsageFixturePolicies, `"pool_id":7`, `"pool_id":9,"Pool_ID":7`, 1),
+		"pool name canonical and alias": strings.Replace(poolUsageFixturePolicies, `"pool_name":"fixture"`, `"pool_name":"shadowed","POOL_NAME":"fixture"`, 1),
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			id, err := poolUsageID([]byte(data), "fixture")
+			if err == nil || id != 0 {
+				t.Fatalf("case alias adopted a native pool identity: id=%d err=%v", id, err)
+			}
+		})
+	}
+}
+
+func TestPoolUsageRejectsCaseAliasesInNativeStatistics(t *testing.T) {
+	canonical := poolUsageFixtureDF(poolUsageFixtureStats)
+	cases := map[string]string{
+		// Both last aliases keep the split/total relationship valid. A sum check
+		// must not disguise the fact that unrecognized keys replaced counters.
+		"consistent counter overwrite": strings.Replace(strings.Replace(canonical,
+			`"stored":4099`, `"stored":4099,"Stored":4100`, 1),
+			`"stored_data":4096`, `"stored_data":4096,"Stored_Data":4097`, 1),
+		"pool ID canonical and alias":   strings.Replace(canonical, `"id":7`, `"id":9,"ID":7`, 1),
+		"pool name canonical and alias": strings.Replace(canonical, `"name":"fixture"`, `"name":"shadowed","Name":"fixture"`, 1),
+		"long s pool collection":        strings.Replace(canonical, `"pools":`, `"poolſ":`, 1),
+		"long s stats section":          strings.Replace(canonical, `"stats":`+poolUsageFixtureStats, `"ſtats":`+poolUsageFixtureStats, 1),
+		"long s stored counter":         strings.Replace(canonical, `"stored":`, `"ſtored":`, 1),
+	}
+	for _, field := range []string{"pools", "name", "id", "stored", "stored_data", "stored_omap", "bytes_used", "data_bytes_used", "omap_bytes_used", "objects", "max_avail", "percent_used"} {
+		cases[field+" alias only"] = strings.Replace(canonical, `"`+field+`":`, `"`+strings.ToUpper(field)+`":`, 1)
+	}
+	// The outer aggregate also has stats; alter the target pool section alone.
+	cases["stats alias only"] = strings.Replace(canonical, `"stats":`+poolUsageFixtureStats, `"STATS":`+poolUsageFixtureStats, 1)
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			usage, err := decodePoolUsage([]byte(data), poolUsageFixtureFSID, "fixture", 7)
+			if err == nil || usage != (PoolUsageSnapshot{}) {
+				t.Fatalf("case alias published native usage: usage=%+v err=%v", usage, err)
+			}
+		})
+	}
+}
+
+func TestPoolUsageJSONRejectsUnicodeKnownFieldAliases(t *testing.T) {
+	// These folds are accepted by encoding/json's struct field matching.
+	// The helper must respect exact native names rather than adopting aliases.
+	for name, data := range map[string]string{
+		"Kelvin alias only":          `{"Key":7,"stored":3}`,
+		"Kelvin canonical and alias": `{"key":7,"Key":8,"stored":3}`,
+		"long s alias only":          `{"key":7,"ſtored":3}`,
+		"long s canonical and alias": `{"key":7,"stored":3,"ſtored":4}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var native struct {
+				Key    *uint64 `json:"key"`
+				Stored *uint64 `json:"stored"`
+			}
+			if err := poolUsageJSON([]byte(data), &native); err == nil {
+				t.Fatalf("Unicode field alias was adopted: key=%v stored=%v", native.Key, native.Stored)
+			}
+		})
+	}
+}
+
+func TestPoolUsageAllowsUnrelatedMixedCaseUnknownFields(t *testing.T) {
+	// These keys do not alias any known field in their respective sections.
+	// Unknown nested data may resemble a native schema without becoming one.
+	stats := strings.Replace(poolUsageFixtureStats, `"stored":4099`,
+		`"kb_used":16,"KB_USED":17,"KB_USED":18,"Future":{"Stored":1,"ſtored":2},"stored":4099`, 1)
+	df := strings.Replace(poolUsageFixtureDF(stats), `"pools":`,
+		`"future":{"POOLS":[],"pools":null},"Future":null,"pools":`, 1)
+	usage, err := decodePoolUsage([]byte(df), poolUsageFixtureFSID, "fixture", 7)
+	if err != nil || usage.StoredBytes != 4099 || usage.StoredDataBytes != 4096 || usage.AllocatedBytes != 16384 || usage.ID != 7 {
+		t.Fatalf("unrelated unknown fields altered native usage: usage=%+v err=%v", usage, err)
+	}
+	policies := strings.Replace(poolUsageFixturePolicies, `"pool_id":7`,
+		`"future":{"POOL_ID":8,"pool_id":9},"Future":false,"pool_id":7`, 1)
+	if id, err := poolUsageID([]byte(policies), "fixture"); err != nil || id != 7 {
+		t.Fatalf("unrelated unknown fields altered native identity: id=%d err=%v", id, err)
+	}
+}
+
 func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 	for _, point := range []string{"terminated", "control", "bootstrap", "keyring", "ambiguous uuid"} {
 		t.Run(point, func(t *testing.T) {
