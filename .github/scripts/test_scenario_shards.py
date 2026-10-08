@@ -21,7 +21,12 @@ RGW_TOPOLOGY_CASES = {
 GROUPS = ("infra", "rbd", "cephfs", *RGW_TOPOLOGY_CASES)
 CASES = ("peer-drain", "directory-release", "process-quiescence",
          "process-recovery", "directory-intent")
-RGW_SYNC_GROUPS = ("policy", "account", "translation")
+RGW_SYNC_POLICY_CASES = {
+    "policy-selective": "TestMultiClusterRGWSelectivePolicy",
+    "policy-owned-bridge": "TestMultiClusterRGWOwnedSyncPolicy",
+    "policy-owned-host": "TestHostNetworkMultiClusterRGWOwnedSyncPolicy",
+}
+RGW_SYNC_GROUPS = (*RGW_SYNC_POLICY_CASES, "account", "translation")
 CEPHFS_FIXTURE_CASES = {
     "data-pools": "TestCephFSDynamicDataPools",
     "clone-cancellation": "TestCephFSCloneCancellationAndPartialCleanup",
@@ -108,7 +113,8 @@ class ScenarioShardTests(unittest.TestCase):
                               "SCENARIO_MULTICLUSTER_GROUP", GROUPS, (4, 6, 4, *((1,) * 6)))
 
     def test_parent_cases_select_exact_compiled_name_and_all_children(self):
-        for target, option, cases in PARENT_CASE_TARGETS:
+        for target, option, cases in (*PARENT_CASE_TARGETS,
+                ("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP", RGW_SYNC_POLICY_CASES)):
             for case, parent in cases.items():
                 with self.subTest(target=target, case=case):
                     self.assertEqual(self.selection(target, option, case), {parent})
@@ -142,7 +148,22 @@ class ScenarioShardTests(unittest.TestCase):
 
     def test_rgw_sync_shards_preserve_compiled_aggregate(self):
         self.assert_partition("scenario-rgw-sync-fixtures",
-                              "SCENARIO_RGW_SYNC_GROUP", RGW_SYNC_GROUPS, (3, 2, 2))
+                              "SCENARIO_RGW_SYNC_GROUP", RGW_SYNC_GROUPS, (1, 1, 1, 2, 2))
+
+    def test_rgw_sync_local_policy_preserves_all_three_independent_cases(self):
+        target, option = "scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP"
+        aggregate = self.selection(target, option, "policy")
+        self.assertEqual(aggregate, set(RGW_SYNC_POLICY_CASES.values()))
+        combined = set()
+        for case in RGW_SYNC_POLICY_CASES:
+            selected = self.selection(target, option, case)
+            self.assertFalse(combined & selected, case)
+            combined |= selected
+        self.assertEqual(combined, aggregate)
+        command = self.command(target, option, "policy")
+        self.assertEqual(command[command.index("-run") + 1],
+                         r"^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGWOwnedSyncPolicy)$")
+        self.assertIn("-timeout=60m", command)
 
     def test_rgw_sync_local_all_preserves_two_original_commands(self):
         commands = self.commands("scenario-rgw-sync-fixtures")
@@ -168,12 +189,12 @@ class ScenarioShardTests(unittest.TestCase):
                 self.assertRegex(child, child_expression)
             for child in ("priority_tags_owner_class", "ordinary_user_denial_grant"):
                 self.assertNotRegex(child, child_expression)
-        for group in ("policy", "account"):
+        for group in ("policy", *RGW_SYNC_POLICY_CASES, "account"):
             command = self.command("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP", group)
             self.assertNotIn("/", command[command.index("-run") + 1])
 
     def test_rgw_sync_shards_keep_fixture_image_contract_and_ci_budget(self):
-        for group in RGW_SYNC_GROUPS:
+        for group in ("policy", *RGW_SYNC_GROUPS):
             with self.subTest(group=group):
                 command = self.command("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP",
                                        group, ("MULTICLUSTER_TIMEOUT=40m",))

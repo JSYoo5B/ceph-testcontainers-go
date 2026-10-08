@@ -263,7 +263,8 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(len(supported), 2)
         for command in supported:
             self.assert_image_environment("scenario-rgw-sync-supported", command, env, True)
-        for group in ("all", "policy", "account", "translation"):
+        for group in ("all", "policy", "policy-selective", "policy-owned-bridge",
+                      "policy-owned-host", "account", "translation"):
             with self.subTest(group=group):
                 _, commands = self.dry_run("scenario-rgw-sync-fixtures", env,
                                            ("SCENARIO_RGW_SYNC_GROUP=" + group,))
@@ -275,6 +276,7 @@ class ScenarioImageTests(unittest.TestCase):
         env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
         for target, key, option in (
                 ("scenario-multicluster-topology", "group", "SCENARIO_MULTICLUSTER_GROUP"),
+                ("scenario-rgw-sync-fixtures", "group", "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
                 ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE")):
             matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
@@ -287,7 +289,11 @@ class ScenarioImageTests(unittest.TestCase):
                     self.assertEqual(len(commands), 1)
                     self.assert_image_environment(target, commands[0], env, True)
                     expression = commands[0][commands[0].index("-run") + 1]
-                    self.assertNotIn("/", expression)
+                    if target == "scenario-rgw-sync-fixtures" and value == "translation":
+                        self.assertEqual(expression.split("/", 1)[1],
+                                         "(tag_owner_class|tenant_system_user_isolation)$")
+                    else:
+                        self.assertNotIn("/", expression)
 
     def test_every_primary_job_prepares_after_own_baseline_and_before_make(self):
         self.assertEqual({name for name in self.jobs if name.startswith("scenario-")},
@@ -320,6 +326,8 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(len(set(artifacts)), len(PRIMARY))
 
     def test_every_expanded_primary_job_has_distinct_image_and_cleanup_artifacts(self):
+        self.assertEqual(set(self.jobs), set(PRIMARY) |
+                         {"test", "image-compatibility", "rgw-native-regressions"})
         prepared, cleanups = [], []
         for name in PRIMARY:
             block = self.jobs[name]
@@ -344,8 +352,26 @@ class ScenarioImageTests(unittest.TestCase):
                     return artifact
                 prepared.append(expand(scalar(prep, "artifact_name")))
                 cleanups.append(expand(scalar(baseline, "artifact_name")))
-        self.assertEqual(len(prepared), 52)
-        self.assertEqual(len(cleanups), 52)
+        self.assertEqual(len(prepared), 54)
+        self.assertEqual(len(cleanups), 54)
+        compatibility = self.jobs["image-compatibility"]
+        baseline = next(step for step in steps(compatibility)
+                        if "uses: " + CLEANUP in step and "phase: snapshot" in step)
+        compatibility_cases = [(variant, layout, architecture)
+                               for variant in ("official", "debian", "ubuntu")
+                               for layout in ("all", "roles")
+                               for architecture in ("amd64", "arm64")]
+        for variant, layout, architecture in compatibility_cases:
+            artifact = scalar(baseline, "artifact_name")
+            for key, value in (("variant", variant), ("layout", layout),
+                               ("architecture.name", architecture)):
+                artifact = artifact.replace("${{ matrix." + key + " }}", value)
+            self.assertNotIn("${{", artifact)
+            cleanups.append(artifact)
+        # The host unit job has no native resources; optional regressions are
+        # outside this required cohort. Compatibility still runs twelve cells.
+        self.assertEqual(len(prepared) + len(compatibility_cases) + 1, 67)
+        self.assertEqual(len(cleanups), 66)
         self.assertEqual(len(set(prepared)), len(prepared))
         self.assertEqual(len(set(cleanups)), len(cleanups))
         self.assertFalse(set(prepared) & set(cleanups))

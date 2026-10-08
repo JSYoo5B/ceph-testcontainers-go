@@ -564,7 +564,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [policy, account, translation]
+        group: [policy-selective, policy-owned-bridge, policy-owned-host, account, translation]
     env:
       CGO_ENABLED: '0'
     steps:

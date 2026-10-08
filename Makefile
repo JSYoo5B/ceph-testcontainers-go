@@ -103,6 +103,9 @@ SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlac
 SCENARIO_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
 SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
 RGW_SYNC_FIXTURE_TESTS_policy = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGWOwnedSyncPolicy)$$
+RGW_SYNC_FIXTURE_TESTS_policy-selective = ^TestMultiClusterRGWSelectivePolicy$$
+RGW_SYNC_FIXTURE_TESTS_policy-owned-bridge = ^TestMultiClusterRGWOwnedSyncPolicy$$
+RGW_SYNC_FIXTURE_TESTS_policy-owned-host = ^TestHostNetworkMultiClusterRGWOwnedSyncPolicy$$
 RGW_SYNC_FIXTURE_TESTS_account = ^Test(HostNetwork)?MultiClusterRGWAccountRootSync$$
 RGW_SYNC_FIXTURE_TESTS_translation = $(SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS)
 

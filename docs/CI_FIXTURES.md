@@ -43,6 +43,47 @@ native 실행을 이미지 release `37735853373-1`의 immutable identity에
 원본 로그·artifact와 strict 판정은
 `artifacts/image-contract-resume-20261008/ci-639f226/`에 보존합니다.
 
+## 독립 parent 분할의 전체 CI 확인
+
+2026-10-08 source `a388e6d`의 [run 37751704257](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37751704257)은
+terminal SUCCESS입니다. 필수 job 65개에서 distinct parent 119개와 선택된
+필수 child가 모두 RUN/PASS했습니다. 대표 이미지 matrix 12개×9개,
+각 job의 자체 cleanup 64쌍과 주요 이미지 준비 52개도 검증했습니다.
+필수 FAIL·SKIP은 0개이고, translation의 필수 child 4개와 한 case에서만
+실행하는 Docker bridge SDK parent 2개를 유지했습니다. 선택적 native
+regression의 SKIP은 완료 범위에서 제외합니다.
+
+공식·Debian·Ubuntu 이미지의 실제 native 실행과 cleanup·원본 job upload를
+source 및 immutable release `37735853373-1`에 대조했습니다. Matrix의
+기본 summary에는 Docker engine ID가 없으므로 그 필드의 일치를 주장하지
+않습니다. 같은 job의 원본 전후 cleanup에서 engine identity와 새 자원
+0개를 검증하며, summary의 native platform과 실행 로그를 함께 대조합니다.
+원본 API 2페이지의 artifact 165개와 세 verifier의 재실행 결과는
+`artifacts/heavy-scenario-split-20261008/ci-a388e6d/`에 보존합니다.
+
+이전 `639f226`과 이번 실행의 측정값은 다음과 같습니다. 그룹 시간은
+`scenario-default` 완료부터 해당 그룹의 마지막 job 완료까지로, runner
+대기를 포함합니다. 각 case의 최장 실행 시간과 같은 수치가 아닙니다.
+
+| 완료 범위 | 이전 묶음 실행 | 독립 parent 실행 |
+|---|---:|---:|
+| CephFS fixtures 8개 | 46분 41초 | 32분 37초 |
+| topology extensions 12개 | 57분 14초 | 30분 10초 |
+| RGW multicluster 6개 | 44분 55초 | 23분 22초 |
+| workflow 생성부터 마지막 필수 job 완료 | 72분 04초 | 66분 54초 |
+
+26개 case의 native Ceph 실험 시간 합은 약 1.2% 감소했지만 runner 점유
+시간 합은 약 13.6% 증가했습니다. 전체 필수 job의 runner 점유 합은
+약 1.6% 증가했습니다. 병렬 완료와 중복된 준비·정리 비용을 구분해야 하며,
+CPU 사용량이나 이후 실행의 성능 보장으로 해석하지 않습니다. 각 source의
+한 번씩 완료된 CI 비교이고, 실제 관측된 동시 runner 최대치는 20개입니다.
+
+이번 마지막 job은 `rgw sync / policy`로, 준비조건 충족 후 runner 대기가
+23분 23초이고 job 자체는 28분 35초였습니다. 세 parent는 각각 새
+클러스터 쌍을 만들므로 parent별 분할로 추가 bootstrap 없이 독립 실행할
+수 있습니다. 아래 새 policy 선택은 이 critical path를 대상으로 하지만,
+새 설정의 전체 CI 성공이나 다음 실행의 단축 폭은 별도로 검증합니다.
+
 ## 이전 전체 CI 결과
 
 2026-10-05 확인한 [run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)은 source `be58018d23efe0738c668e407075b556e4a09fd3`로 2026-10-04 19:05:23–20:32:00 UTC에 실행됐으며 terminal 결과는 **FAILURE**입니다. 원본 Quay Ceph 20.2.4의 Linux AMD64 필수 runtime job 10개 중 9개가 SUCCESS이고, 그 9개에서 기대한 parent 94개가 모두 RUN/PASS했습니다. Docker bridge SDK 2개는 이 94개에 포함됩니다.
@@ -108,21 +149,26 @@ parent별 CI 분할은 같은 테스트에 필요한 Ceph bootstrap 횟수를 �
 유지해야 하는 RBD lifecycle phase와 비교적 짧은 RGW protocol backend의
 공유 fixture는 유지합니다.
 
-새 구성의 필수 job은 **65개**, 자체 cleanup은 **64쌍**, 주요 시나리오의
-이미지 준비 artifact는 **52개**입니다. Distinct parent 119개와 이미지
+부모별 1차 분할 `a388e6d`의 필수 job은 **65개**, 자체 cleanup은
+**64쌍**, 주요 시나리오 이미지 준비 artifact는 **52개**입니다. Distinct parent 119개와 이미지
 matrix 12개×대표 parent 9개는 유지합니다. 각 case의 이미지 역할·immutable
 identity·source·native 판정·항상 실행하는 cleanup과 독립 artifact를 함께
-검사합니다. 이 수는 설정의 완료 조건이며, 새 split source의 전체 native
-성공이나 성능 개선을 아직 뜻하지 않습니다. 앞선 source `639f226`의
-run도 새 분할 결과로 합산하지 않습니다.
+검사합니다. 이 수는 `a388e6d`에서 완료한 분할의 범위입니다. 위 전체 CI 증거와
+측정값을 따르며, 이후 policy 분할 설정의 완료로 합산하지 않습니다.
 
-RGW sync의 기존 7개 parent는 `policy` 3개, `account` 2개,
-`translation` 2개의 독립 job으로 실행합니다. CI는 각 Go 실행에 40분,
-cleanup을 포함한 job에 50분을 둡니다. Translation의 기존
-`tag_owner_class`·`tenant_system_user_isolation` 하위 검증은 그대로
-실행하고 선택적 native regression 경로는 기존처럼 별도입니다.
-로컬 `SCENARIO_RGW_SYNC_GROUP=all`은 기존 두 Go 명령과 기본 60분
-제한을 유지합니다.
+RGW sync의 새 CI 선택은 `policy-selective`, `policy-owned-bridge`,
+`policy-owned-host` 각 1개, `account` 2개, `translation` 2개의
+독립 job입니다. Policy parent는 각자 기존 fresh cluster 쌍을 사용합니다.
+새 설정의 필수 job은 **67개**, 자체 cleanup은 **66쌍**, 주요 이미지
+준비는 **54개**이며 distinct parent 119개와 matrix 12개×9개를 유지합니다.
+이 수는 설정의 완료 조건으로, 위 `a388e6d`의 65-job 성공을 새 설정의
+native 성공으로 표시하지 않습니다.
+
+각 Go 실행은 기존 40분, cleanup을 포함한 job은 50분 제한을 유지합니다.
+Translation의 `tag_owner_class`·`tenant_system_user_isolation` child는
+그대로 실행하고 선택적 native regression은 기존처럼 별도입니다.
+로컬 `SCENARIO_RGW_SYNC_GROUP=policy`는 기존 세 parent의 한 Go 명령,
+`all`은 기존 두 Go 명령과 기본 60분 제한을 유지합니다.
 
 분할 근거인 `e31968e` RGW sync job은 전체 68분 14초였으며, 두 Go
 package가 각각 2882.202초·1175.122초를 사용했습니다. 기존 75분 job
@@ -167,6 +213,7 @@ make scenario-multicluster-topology SCENARIO_MULTICLUSTER_GROUP=rgw-master-failo
 make scenario-cephfs-removal SCENARIO_CEPHFS_REMOVAL_CASE=process-recovery
 make scenario-cephfs-fixtures SCENARIO_CEPHFS_FIXTURE_CASE=pins
 make scenario-topology-extensions SCENARIO_TOPOLOGY_EXTENSION_CASE=cephfs-mirror-host
+make scenario-rgw-sync-fixtures SCENARIO_RGW_SYNC_GROUP=policy-owned-host
 make scenario-rgw-sync-fixtures SCENARIO_RGW_SYNC_GROUP=translation
 ```
 
