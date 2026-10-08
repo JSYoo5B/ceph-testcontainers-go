@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 import check_scenario_quiescence as quiescence_checker
+import check_scenario_recovery as recovery_checker
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -282,6 +283,7 @@ class ScenarioImageTests(unittest.TestCase):
                 ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
                 ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
                 ("scenario-rbd-receivers", "case", "SCENARIO_RBD_RECEIVERS_CASE"),
+                ("scenario-rbd-fixtures", "case", "SCENARIO_RBD_FIXTURE_CASE"),
                 ("scenario-cephfs-removal", "case", "SCENARIO_CEPHFS_REMOVAL_CASE")):
             matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
             self.assertIsNotNone(matrix)
@@ -298,6 +300,8 @@ class ScenarioImageTests(unittest.TestCase):
                                          "(tag_owner_class|tenant_system_user_isolation)$")
                     elif target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
                         self.assertEqual(expression, quiescence_checker.SELECTORS[value])
+                    elif target == "scenario-cephfs-removal" and value in recovery_checker.CASES:
+                        self.assertEqual(expression, recovery_checker.SELECTORS[value])
                     elif target == "scenario-rbd-receivers":
                         self.assertEqual(expression,
                                          "^TestMultiClusterRBDReceiverReadiness$/^" + value + "$")
@@ -362,7 +366,7 @@ class ScenarioImageTests(unittest.TestCase):
                 prepared.append(expand(scalar(prep, "artifact_name")))
                 cleanups.append(expand(scalar(baseline, "artifact_name")))
         # Count the frozen workflow's own matrix dimensions rather than parent
-        # executions: receiver network and original-process quiescence leaves
+        # executions: receiver network and original-process quiescence/recovery leaves
         # legitimately repeat only their exact selected parents.
         expanded_primary_count = sum(
             len(re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)

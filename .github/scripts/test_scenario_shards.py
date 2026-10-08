@@ -11,6 +11,7 @@ import unittest
 
 import check_scenario_receivers as receiver_checker
 import check_scenario_quiescence as quiescence_checker
+import check_scenario_recovery as recovery_checker
 import test_scenario_images as image_helpers
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ GROUPS = ("infra", "rbd", "cephfs", *RGW_TOPOLOGY_CASES)
 CASES = ("peer-drain", "directory-release", "process-quiescence",
          "process-recovery", "directory-intent")
 CEPHFS_CI_CASES = ("peer-drain", "directory-release", *quiescence_checker.CASES,
-                   "process-recovery", "directory-intent")
+                   *recovery_checker.CASES, "directory-intent")
 RGW_SYNC_POLICY_CASES = {
     "policy-selective": "TestMultiClusterRGWSelectivePolicy",
     "policy-owned-bridge": "TestMultiClusterRGWOwnedSyncPolicy",
@@ -48,6 +49,14 @@ CEPHFS_FIXTURE_CASES = {
     "retained-snapshot": "TestCephFSRetainedSnapshotAndMetadataRecipe",
     "ec-data-pool": "TestCephFSAdditionalErasureCodedDataPool",
     "host-filesystem": "TestHostNetworkCephFSFilesystem",
+}
+RBD_FIXTURE_CASES = {
+    "client-features": "TestRBDClientFeatures",
+    "snapshot-schedule": "TestRBDAutomaticSnapshotSchedule",
+    "mirror-scope": "TestMultiClusterRBDMirrorScopeAndNamespaces",
+    "failback": "TestMultiClusterRBDFailback",
+    "split-brain": "TestMultiClusterRBDSplitBrainResync",
+    "host-lifecycle": "TestHostNetworkRBDLifecycle",
 }
 TOPOLOGY_EXTENSION_CASES = {
     "network-interruption": "TestSeparateClusterNetworksAndInterruptions",
@@ -67,6 +76,7 @@ PARENT_CASE_TARGETS = (
     ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", RGW_TOPOLOGY_CASES),
     ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
     ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES),
+    ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", RBD_FIXTURE_CASES),
 )
 
 
@@ -144,6 +154,14 @@ class ScenarioShardTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assert_partition(target, option, cases, (1,) * len(cases))
 
+    def test_rbd_cases_preserve_six_whole_native_fixtures_and_original_budget(self):
+        for case in RBD_FIXTURE_CASES:
+            command = self.command("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", case)
+            for flag in ("-tags=integration,auth,features,topology,hostnetwork,multicluster",
+                         "-timeout=120m", "-count=1", "-mod=readonly", "CGO_ENABLED=0"):
+                self.assertIn(flag, command)
+            self.assertEqual(command[command.index("CEPH_TEST_RBD_CLIENT_IMAGE") - 1], "-u")
+
     def test_legacy_multicluster_rgw_aggregate_preserves_all_six_cases(self):
         aggregate = self.selection("scenario-multicluster-topology",
                                    "SCENARIO_MULTICLUSTER_GROUP", "rgw")
@@ -152,6 +170,7 @@ class ScenarioShardTests(unittest.TestCase):
     def test_new_local_all_defaults_preserve_original_process_budgets(self):
         for target, option, timeout in (
                 ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", "120m"),
+                ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", "120m"),
                 ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", "90m"),
                 ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE", "90m"),
                 ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", "90m")):
@@ -191,7 +210,7 @@ class ScenarioShardTests(unittest.TestCase):
         self.assertEqual(selected_leaves, inventory)
         self.assertEqual(len(selected_leaves), 10)
 
-    def test_primary_jobs_cover_every_compiled_parent_with_exact_receiver_and_quiescence_partitions(self):
+    def test_primary_jobs_cover_every_compiled_parent_with_exact_network_and_recovery_partitions(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
         jobs = dict(image_helpers.blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
         options = {
@@ -201,9 +220,10 @@ class ScenarioShardTests(unittest.TestCase):
             "scenario-cephfs-fixtures": "SCENARIO_CEPHFS_FIXTURE_CASE",
             "scenario-topology-extensions": "SCENARIO_TOPOLOGY_EXTENSION_CASE",
             "scenario-rbd-receivers": "SCENARIO_RBD_RECEIVERS_CASE",
+            "scenario-rbd-fixtures": "SCENARIO_RBD_FIXTURE_CASE",
         }
         counts = Counter()
-        receiver_jobs, quiescence_jobs = {}, {}
+        receiver_jobs, quiescence_jobs, recovery_jobs = {}, {}, {}
         for target in image_helpers.PRIMARY:
             matrix = re.search(r"^        (?:group|case): \[(.*?)\]$", jobs[target], re.M)
             values = [value.strip() for value in matrix.group(1).split(",")] if matrix else [None]
@@ -227,42 +247,56 @@ class ScenarioShardTests(unittest.TestCase):
                 if target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
                     self.assertEqual(selected, {quiescence_checker.PARENT})
                     quiescence_jobs[value] = self.command(target, options[target], value)
+                if target == "scenario-cephfs-removal" and value in recovery_checker.CASES:
+                    self.assertEqual(selected, {recovery_checker.PARENT})
+                    recovery_jobs[value] = self.command(target, options[target], value)
                 counts.update(selected)
         self.assertTrue(OPTIONAL_NATIVE_SHUFFLE_PARENTS <= self.compiled)
         self.assertEqual(set(counts), self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS)
         self.assertEqual({parent: count for parent, count in counts.items() if count > 1},
-                         {receiver_checker.PARENT: 2, quiescence_checker.PARENT: 4})
-        self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 4)
+                         {receiver_checker.PARENT: 2, quiescence_checker.PARENT: 4,
+                          recovery_checker.PARENT: 4})
+        self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 7)
         self.assertEqual(set(quiescence_jobs), set(quiescence_checker.CASES))
         for case, command in quiescence_jobs.items():
             self.assertEqual(command[command.index("-run") + 1], quiescence_checker.SELECTORS[case])
+        self.assertEqual(set(recovery_jobs), set(recovery_checker.CASES))
+        for case, command in recovery_jobs.items():
+            self.assertEqual(command[command.index("-run") + 1], recovery_checker.SELECTORS[case])
         self.assertEqual(set(receiver_jobs), set(receiver_checker.NETWORKS))
         for network, command in receiver_jobs.items():
             self.assertEqual(command[command.index("-run") + 1], receiver_checker.SELECTORS[network])
 
     def test_quiescence_cases_preserve_four_exact_fresh_pair_leaves_and_legacy_aggregate(self):
         target, option = "scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE"
-        legacy = self.command(target, option, "process-quiescence")
-        self.assertEqual(legacy[legacy.index("-run") + 1], "^" + quiescence_checker.PARENT + "$")
-        inventory = {quiescence_checker.required_leaf(case) for case in quiescence_checker.CASES}
+        self.assert_fresh_pair_partition(target, option, "process-quiescence", quiescence_checker)
+
+    def test_recovery_cases_preserve_four_exact_fresh_pair_leaves_and_legacy_aggregate(self):
+        target, option = "scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE"
+        self.assert_fresh_pair_partition(target, option, "process-recovery", recovery_checker)
+
+    def assert_fresh_pair_partition(self, target, option, legacy_case, checker):
+        legacy = self.command(target, option, legacy_case)
+        self.assertEqual(legacy[legacy.index("-run") + 1], "^" + checker.PARENT + "$")
+        inventory = {checker.required_leaf(case) for case in checker.CASES}
         selected_leaves = set()
-        for case, (network, kind) in quiescence_checker.CASES.items():
+        for case, (network, kind) in checker.CASES.items():
             command = self.command(target, option, case)
             expression = command[command.index("-run") + 1]
-            self.assertEqual(expression, quiescence_checker.SELECTORS[case])
-            self.assertEqual(self.selection(target, option, case), {quiescence_checker.PARENT})
+            self.assertEqual(expression, checker.SELECTORS[case])
+            self.assertEqual(self.selection(target, option, case), {checker.PARENT})
             components = expression.split("/")
             self.assertEqual(len(components), 3)  # no evidence-phase filter
             selected = {leaf for leaf in inventory if all(re.fullmatch(part, name)
                         for part, name in zip(components, leaf.split("/")))}
-            self.assertEqual(selected, {quiescence_checker.required_leaf(case)})
+            self.assertEqual(selected, {checker.required_leaf(case)})
             self.assertFalse(selected_leaves & selected)
             selected_leaves |= selected
             for foreign in (network + "-other", "other-" + network, "", kind):
                 self.assertNotRegex(foreign, components[1])
             for foreign in (kind + "-other", "other-" + kind, "", network):
                 self.assertNotRegex(foreign, components[2])
-            self.assertNotRegex(quiescence_checker.PARENT + "Other", components[0])
+            self.assertNotRegex(checker.PARENT + "Other", components[0])
             for flag in ("-tags=integration,topology,hostnetwork,multicluster", "-timeout=90m",
                          "-count=1", "-mod=readonly", "CGO_ENABLED=0"):
                 self.assertIn(flag, command)
@@ -341,7 +375,8 @@ class ScenarioShardTests(unittest.TestCase):
                                ("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP"),
                                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE"),
                                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
-                               ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE")]:
+                               ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE"),
+                               ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE")]:
             for value in ("unknown", "", "bridge/scope-0"):
                 with self.subTest(target=target, value=value):
                     result = subprocess.run(["make", "--no-print-directory", target,
@@ -356,6 +391,7 @@ class ScenarioShardTests(unittest.TestCase):
                 ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", GROUPS),
                 ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CEPHFS_CI_CASES),
                 ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
+                ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", RBD_FIXTURE_CASES),
                 ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES)]:
             for value in values:
                 with self.subTest(target=target, value=value):
@@ -370,18 +406,22 @@ class ScenarioShardTests(unittest.TestCase):
                     expression = command[command.index("-run") + 1]
                     if target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
                         self.assertEqual(expression, quiescence_checker.SELECTORS[value])
+                    elif target == "scenario-cephfs-removal" and value in recovery_checker.CASES:
+                        self.assertEqual(expression, recovery_checker.SELECTORS[value])
                     else:
                         self.assertNotIn("/", expression)
 
     def test_workflow_selects_every_supported_shard(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        self.assertIn("python3 -m unittest discover -s .github/scripts -p test_scenario_recovery.py -v", workflow)
         for job, key, values, option in [
                 ("scenario-multicluster-topology", "group", GROUPS, "SCENARIO_MULTICLUSTER_GROUP"),
                 ("scenario-cephfs-removal", "case", CEPHFS_CI_CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
                 ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", CEPHFS_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
                 ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
-                ("scenario-rbd-receivers", "case", receiver_checker.NETWORKS, "SCENARIO_RBD_RECEIVERS_CASE")]:
+                ("scenario-rbd-receivers", "case", receiver_checker.NETWORKS, "SCENARIO_RBD_RECEIVERS_CASE"),
+                ("scenario-rbd-fixtures", "case", RBD_FIXTURE_CASES, "SCENARIO_RBD_FIXTURE_CASE")]:
             block = re.search(r"^  " + job + r":\n.*?(?=^  \w[\w-]*:\n|\Z)",
                               workflow, re.M | re.S).group()
             actual = re.search(r"^        " + key + r": \[(.*?)\]$", block, re.M)
@@ -421,6 +461,8 @@ class ScenarioShardTests(unittest.TestCase):
                 self.assertIn("SCENARIO_CEPHFS_REMOVAL_TIMEOUT=60m", block)
                 self.assertIn("if: ${{ startsWith(matrix.case, 'process-quiescence-') }}", block)
                 self.assertIn("check_scenario_quiescence.py artifacts/scenario/test.log --case '${{ matrix.case }}'", block)
+                self.assertIn("if: ${{ startsWith(matrix.case, 'process-recovery-') }}", block)
+                self.assertIn("check_scenario_recovery.py artifacts/scenario/test.log --case '${{ matrix.case }}'", block)
                 self.assertIn("> artifacts/scenario/coverage.json", block)
                 self.assertEqual(block.count("artifact_name: runtime-cleanup-cephfs-removal-${{ matrix.case }}"), 2)
                 self.assertIn("artifact_name: scenario-images-cephfs-removal-${{ matrix.case }}", block)
@@ -429,6 +471,19 @@ class ScenarioShardTests(unittest.TestCase):
                                 block.index("check_scenario_quiescence.py artifacts/scenario/test.log"))
                 self.assertLess(block.index("check_scenario_quiescence.py artifacts/scenario/test.log"),
                                 block.index("phase: check"))
+                self.assertLess(block.index("| tee artifacts/scenario/test.log"),
+                                block.index("check_scenario_recovery.py artifacts/scenario/test.log"))
+                self.assertLess(block.index("check_scenario_recovery.py artifacts/scenario/test.log"),
+                                block.index("phase: check"))
+            if job == "scenario-rbd-fixtures":
+                self.assertIn("name: rbd fixture / ${{ matrix.case }}", block)
+                self.assertIn("timeout-minutes: 130", block)
+                self.assertNotIn("CLIENT_FIXTURES_TIMEOUT=", block)
+                self.assertEqual(block.count("artifact_name: runtime-cleanup-scenario-rbd-fixtures-${{ matrix.case }}"), 2)
+                self.assertIn("artifact_name: scenario-images-scenario-rbd-fixtures-${{ matrix.case }}", block)
+                self.assertIn("name: scenario-rbd-fixtures-${{ matrix.case }}", block)
+                self.assertIn("uses: actions/upload-artifact@v7", block)
+                self.assertIn("if: always()", block)
             if job == "scenario-rbd-receivers":
                 self.assertIn("name: rbd receivers / ${{ matrix.case }}", block)
                 self.assertIn("timeout-minutes: 100", block)

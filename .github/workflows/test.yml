@@ -47,6 +47,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_shards.py -v
       - name: Check CephFS quiescence completion gate without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_quiescence.py -v
+      - name: Check CephFS recovery completion gate without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_scenario_recovery.py -v
       - name: Check receiver scope completion gate without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_receivers.py -v
       - name: Check primary scenario image selection without Docker
@@ -225,7 +227,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [peer-drain, directory-release, process-quiescence-bridge-peer, process-quiescence-bridge-directory, process-quiescence-host-peer, process-quiescence-host-directory, process-recovery, directory-intent]
+        case: [peer-drain, directory-release, process-quiescence-bridge-peer, process-quiescence-bridge-directory, process-quiescence-host-peer, process-quiescence-host-directory, process-recovery-bridge-peer, process-recovery-bridge-directory, process-recovery-host-peer, process-recovery-host-directory, directory-intent]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -255,6 +257,9 @@ jobs:
       - name: Verify complete original-process fixture
         if: ${{ startsWith(matrix.case, 'process-quiescence-') }}
         run: python3 .github/scripts/check_scenario_quiescence.py artifacts/scenario/test.log --case '${{ matrix.case }}' > artifacts/scenario/coverage.json
+      - name: Verify complete process recovery fixture
+        if: ${{ startsWith(matrix.case, 'process-recovery-') }}
+        run: python3 .github/scripts/check_scenario_recovery.py artifacts/scenario/test.log --case '${{ matrix.case }}' > artifacts/scenario/coverage.json
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
@@ -506,9 +511,14 @@ jobs:
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rados-fixtures.log" --profile scenario-rados-fixtures
 
   scenario-rbd-fixtures:
+    name: rbd fixture / ${{ matrix.case }}
     needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 130
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [client-features, snapshot-schedule, mirror-scope, failback, split-brain, host-lifecycle]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -524,24 +534,34 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-rbd-fixtures
+          artifact_name: runtime-cleanup-scenario-rbd-fixtures-${{ matrix.case }}
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-rbd-fixtures
+          artifact_name: scenario-images-scenario-rbd-fixtures-${{ matrix.case }}
       - name: Run make scenario-rbd-fixtures
         shell: bash
-        run: make scenario-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rbd-fixtures.log"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-rbd-fixtures SCENARIO_RBD_FIXTURE_CASE='${{ matrix.case }}' 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-rbd-fixtures
+          artifact_name: runtime-cleanup-scenario-rbd-fixtures-${{ matrix.case }}
       - name: Identify failed RBD fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rbd-fixtures.log" --profile scenario-rbd-fixtures
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile 'scenario-rbd-fixtures-${{ matrix.case }}'
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-rbd-fixtures-${{ matrix.case }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-rgw-fixtures:
     needs: scenario-default

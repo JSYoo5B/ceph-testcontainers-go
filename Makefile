@@ -27,6 +27,7 @@ SCENARIO_CEPHFS_REMOVAL_CASE ?= all
 SCENARIO_RGW_SYNC_GROUP ?= all
 SCENARIO_TOPOLOGY_EXTENSION_CASE ?= all
 SCENARIO_CEPHFS_FIXTURE_CASE ?= all
+SCENARIO_RBD_FIXTURE_CASE ?= all
 SCENARIO_IMAGE_LAYOUT ?= all
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
@@ -73,6 +74,10 @@ CEPHFS_REMOVAL_TESTS_process-quiescence-bridge-directory = ^TestMultiClusterCeph
 CEPHFS_REMOVAL_TESTS_process-quiescence-host-peer = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^host$$/^peer$$
 CEPHFS_REMOVAL_TESTS_process-quiescence-host-directory = ^TestMultiClusterCephFSOriginalProcessQuiescence$$/^host$$/^directory$$
 CEPHFS_REMOVAL_TESTS_process-recovery = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$
+CEPHFS_REMOVAL_TESTS_process-recovery-bridge-peer = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$/^bridge$$/^peer$$
+CEPHFS_REMOVAL_TESTS_process-recovery-bridge-directory = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$/^bridge$$/^directory$$
+CEPHFS_REMOVAL_TESTS_process-recovery-host-peer = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$/^host$$/^peer$$
+CEPHFS_REMOVAL_TESTS_process-recovery-host-directory = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$/^host$$/^directory$$
 CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAdditionIntent$$
 
 # The default clears inherited image overrides and exercises ceph.DefaultImage.
@@ -107,6 +112,13 @@ CEPHFS_FIXTURE_TESTS_ec-data-pool = ^TestCephFSAdditionalErasureCodedDataPool$$
 CEPHFS_FIXTURE_TESTS_host-filesystem = ^TestHostNetworkCephFSFilesystem$$
 SCENARIO_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
 SCENARIO_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
+RBD_FIXTURE_TESTS_all = $(SCENARIO_RBD_FIXTURE_TESTS)
+RBD_FIXTURE_TESTS_client-features = ^TestRBDClientFeatures$$
+RBD_FIXTURE_TESTS_snapshot-schedule = ^TestRBDAutomaticSnapshotSchedule$$
+RBD_FIXTURE_TESTS_mirror-scope = ^TestMultiClusterRBDMirrorScopeAndNamespaces$$
+RBD_FIXTURE_TESTS_failback = ^TestMultiClusterRBDFailback$$
+RBD_FIXTURE_TESTS_split-brain = ^TestMultiClusterRBDSplitBrainResync$$
+RBD_FIXTURE_TESTS_host-lifecycle = ^TestHostNetworkRBDLifecycle$$
 SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
 SCENARIO_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
 SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
@@ -200,7 +212,7 @@ scenario-multicluster-topology:
 
 # Retained peer/directory removal and registration recovery are
 # isolated from the general multicluster budget. Local all and the original
-# process-quiescence selector retain all four fresh-pair leaves; CI selects one
+# process-quiescence/recovery selectors retain four fresh-pair leaves; CI selects one
 # complete network/receipt fixture per runner, including every evidence phase.
 scenario-cephfs-removal:
 	@test -n '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' || { echo 'Unknown SCENARIO_CEPHFS_REMOVAL_CASE' >&2; exit 1; }
@@ -230,7 +242,8 @@ scenario-rados-fixtures:
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RADOS_FIXTURE_TESTS)' ./internal/integration
 
 scenario-rbd-fixtures:
-	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RBD_FIXTURE_TESTS)' ./internal/integration
+	@test -n '$(RBD_FIXTURE_TESTS_$(SCENARIO_RBD_FIXTURE_CASE))' || { echo 'Unknown SCENARIO_RBD_FIXTURE_CASE' >&2; exit 1; }
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(RBD_FIXTURE_TESTS_$(SCENARIO_RBD_FIXTURE_CASE))' ./internal/integration
 
 scenario-rgw-fixtures:
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RGW_FIXTURE_TESTS)' ./internal/integration
