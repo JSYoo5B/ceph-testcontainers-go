@@ -49,6 +49,12 @@ MON의 health code·원인·mute를 반환한다. MGR·storage 준비나 HEALTH_
 snapshot을 반환한다. 공식 role 이미지의 focused native 검증과 전체 CI는 별도이며, mute와 severity,
 반환 message의 비밀 정보 가능성은 [HealthDetails 계약](HEALTH_DETAILS.md)을 따른다.
 
+`PoolPGs`는 원래 FSID와 조회 앞뒤의 pool identity를 확인하고 reported
+PG 상태·vector·primary·epoch·signed counters를 보존한다. Native PGReady와
+stats-invalid flag로 실제 데이터 가시성이나 최신 매핑을 추론하지 않는다.
+Unknown·빈 vector·EC NONE 슬롯 및 오류 zero-result 계약은
+[PoolPGs 문서](POOL_PGS.md)를 따른다.
+
 Raw CLI 접점은 argv에 따라 조회와 변경 모두 가능하다. 이미지·client·customizer
 옵션 및 안전한 문자열 표현도 공개 surface에 포함되지만 native Check로 세지
 않는다. Backup/export/restore는 recovery fixture에서 조건부 가치가 있으므로
@@ -60,15 +66,15 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
 | Fixture Operation | 89 | 46 | 135 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 74 | 33 | 107 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 75 | 33 | 108 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 187 | 90 | **277** |
+| 전체 | 188 | 90 | **278** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 277개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 278개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 
 실행 검증은 [fixture 범위와 native 기록](CLUSTER_SCENARIOS.md),
@@ -130,7 +136,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (65개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (66개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -149,6 +155,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L38) · [Container.PoolStatus](../ceph/pool_policy.go#L48) |
+| [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [Container.PoolPGs](../ceph/pool_pgs.go) |
 | [ceph/pool_usage.go](../ceph/pool_usage.go) | [Container.PoolUsage](../ceph/pool_usage.go#L44) |
 | [ceph/rbd.go](../ceph/rbd.go) | [Container.ListRBDNamespaces](../ceph/rbd.go#L107) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.UserInfo](../ceph/rgw_admin.go#L457) |

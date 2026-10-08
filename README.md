@@ -12,6 +12,8 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 `HealthDetails(ctx)`는 원래 FSID를 확인하고 MON이 보고한 health code·원인·mute를 읽습니다. MGR나 storage 준비 전에도 사용할 수 있으며, 실패하면 zero snapshot과 출력이 제거된 error를 반환합니다. 의미와 실제 검증 범위는 [HealthDetails 계약](docs/HEALTH_DETAILS.md)에 있습니다.
 
+`PoolPGs(ctx, poolName)`는 원래 FSID와 pool ID를 확인하고 보고된 PG 상태·up/acting·primary·epoch·signed 통계를 읽습니다. `pg_ready`, unknown/빈 매핑, EC NONE 슬롯과 보고 지연의 의미는 [PoolPGs 계약](docs/POOL_PGS.md)을 따릅니다.
+
 역할별 daemon 수·active/standby·네트워크·peer/zone 토폴로지와 노드 추가·제거·교체·복구 API를 제공합니다. 구성별 제공 범위와 원본 Quay 이미지의 필수 검증 상태는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)에 기록합니다. 이어서 클라이언트 테스트의 사전 조건을 만드는 pool 정책·quota, Cephx caps, RBD namespace, CephFS subvolume, RGW 사용자 관리 API를 제공합니다. 사용법과 검증 범위는 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 있습니다.
 
 여러 zonegroup·zone 탈퇴, mirror daemon 증감·HA, public/cluster 네트워크 분리와 선택적 peer 연결 단절의 제공 범위와 검증 결과는 [TOPOLOGY_EXTENSIONS.md](docs/TOPOLOGY_EXTENSIONS.md)에 있습니다. `make topology-extensions`로 해당 대표 시나리오를 다시 실행합니다.

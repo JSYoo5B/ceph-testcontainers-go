@@ -1,13 +1,15 @@
 # 시나리오 fixture CI
 
-현재 필수 compiled 선택은 Q stopped-MDS source의 실제 118개에
-`TestLastMDSReplacementTopology` 한 parent만 추가한 **119개**입니다. 기본 14개,
-필수 `internal/integration` 117개와 `internal/dockerbridge` runtime 2개·기존 selector를 실제 완료된
-[compiled 목록](../artifacts/last-mds-replacement-20261008/compiled-selection.json)에서
-확인했습니다. 새 `scenario-last-mds-replacement`는 Go 50분/job 60분의 독립 profile이며
-원본 Quay Linux ARM64의 독립 bridge/host 실행은 3개 RUN/PASS·223.931초와
-자체 cleanup의 새 container/network 0개를 확인했습니다. Q118/P117/O116/N115/M114와
-whole CI101은 해당 source의 역사적 증거로 보존하며 새 전체 CI PASS로 합산하지 않습니다.
+현재 필수 선택은 기존 완료 source `3ac07fe`의 119개에
+`TestPoolPGReportedBoundaries` 한 parent를 추가한 **120개**입니다. 실제
+compiled `internal/integration` 120개 중 기존 local-only native shuffle
+2개만 제외한 118개와, 별도 Docker bridge SDK parent 2개를 선택합니다.
+Receiver parent는 bridge/host 두 job에서 각각 실행하므로 primary 실행
+instance는 121개입니다. 이 parent의 네트워크별 5개 scope를 정확히 모두
+실행하는지 별도로 검사합니다. 새 설정은 필수 job 68개, cleanup 67쌍,
+주요 이미지 준비 55개와 기존 12×9 matrix를 유지하며, 실제 전체 완료
+결과는 source별로 기록합니다. 가장 최근 완료한 전체 CI는 아래의
+`3ac07fe` 67-job 결과이며 새 source의 성공으로 대신 사용하지 않습니다.
 
 이전 O source는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용했습니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
@@ -24,7 +26,7 @@ whole CI101은 해당 source의 역사적 증거로 보존하며 새 전체 CI P
 이미지 준비 artifact는 native 테스트 성공을 뜻하지 않으며 각 job의 실제
 Go 결과·이미지 identity·자체 cleanup을 함께 확인합니다. 선택 방식은
 [이미지 호환성 문서](IMAGE_COMPATIBILITY.md#주요-시나리오의-역할-이미지-선택)를
-따릅니다. Native go-ceph 소비자 probe는 필수 119개에 포함하지 않습니다.
+따릅니다. Native go-ceph 소비자 probe는 이 필수 선택에 포함하지 않습니다.
 
 ## 새 역할 이미지의 전체 CI 확인
 
@@ -78,11 +80,42 @@ source 및 immutable release `37735853373-1`에 대조했습니다. Matrix의
 CPU 사용량이나 이후 실행의 성능 보장으로 해석하지 않습니다. 각 source의
 한 번씩 완료된 CI 비교이고, 실제 관측된 동시 runner 최대치는 20개입니다.
 
-이번 마지막 job은 `rgw sync / policy`로, 준비조건 충족 후 runner 대기가
+이 `a388e6d` 실행의 마지막 job은 `rgw sync / policy`로, 준비조건 충족 후 runner 대기가
 23분 23초이고 job 자체는 28분 35초였습니다. 세 parent는 각각 새
 클러스터 쌍을 만들므로 parent별 분할로 추가 bootstrap 없이 독립 실행할
 수 있습니다. 아래 새 policy 선택은 이 critical path를 대상으로 하지만,
-새 설정의 전체 CI 성공이나 다음 실행의 단축 폭은 별도로 검증합니다.
+새 설정의 전체 CI 성공과 관측 시간은 다음 절에 별도로 기록합니다.
+
+## RGW policy 분리와 HealthDetails의 전체 CI 확인
+
+2026-10-08 source `3ac07fe9525e5442fb646fdd67a92d321e0bc89d`의
+[run 37766891332](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37766891332)은
+terminal SUCCESS입니다. 필수 job 67개에서 기존 distinct parent 119개,
+matrix 12×9개, 자체 cleanup 66쌍, 주요 역할 이미지 준비 54개를
+검증했습니다. 필수 FAIL·SKIP은 0개이고 translation child 4개와 Docker
+bridge SDK parent 2개는 유지했습니다. 선택적 native regression SKIP은
+필수 완료 범위에 포함하지 않습니다.
+
+각 policy parent를 단일 job으로 옮겨 추가 Ceph bootstrap 없이 세 개를
+병행했습니다. Job별 native PASS는 selective 366.91초, owned bridge
+564.12초, owned host 696.41초입니다. 원래 job들의 겹친 runner 실행
+구간은 1715→820초였으며 전체 workflow 생성부터 마지막 필수 job
+완료까지는 66분 54초→62분 08초였습니다. 반면 필수 runner 점유 합은
+48,135→48,406초, 주요 이미지 준비 시간 합은 760.363→875.587초로
+증가했습니다. Source와 runner가 다른 한 번씩의 실제 관측이며 분할의
+순수 성능 효과나 이후 실행 시간으로 일반화하지 않습니다. 새 마지막
+job은 `cephfs removal / process-quiescence`였습니다.
+
+같은 source의 `HealthDetails`는 기본 lifecycle과 matrix 12개에서 native
+전체 field를 비교했고, cold MGR의 bridge/host 변형에서 TTL 만료·sticky·
+원래 상태 복원까지 검증했습니다. 전체 raw 로그의 비교 기록은 72개입니다.
+중간 TTL의 raw JSON 파일 자체를 저장했다는 뜻은 아니며 실제 실행한
+독립 oracle의 비교와 predicate를 원본 Go log에서 검증합니다.
+
+원본 source archive, API artifact 171개와 ZIP·upload identity, 세 verifier의
+재실행, 독립 완료 검토와 별도 시간 비교는
+`artifacts/heavy-scenario-split-20261008/ci-3ac07fe/`에 보존합니다.
+아래 receiver 분리와 새 PoolPGs source의 성공 증거로 대신 사용하지 않습니다.
 
 ## 이전 전체 CI 결과
 
@@ -316,7 +349,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 | `scenario-multicluster-topology` | 20 | 90분 | group별 70분 | `runtime-cleanup-multicluster-<group>` |
 | `scenario-cephfs-removal` | 5 | 90분 | case별 70분 | `runtime-cleanup-cephfs-removal-<case>` |
 | `scenario-topology-extensions` | 12 + SDK 2 | 90분 | case별 50분 | `runtime-cleanup-scenario-topology-extensions-<case>` |
-| `scenario-rbd-receivers` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-receivers` |
+| `scenario-rbd-receivers` | 1 distinct parent · bridge/host job별 5 scope | 90분 | 각 100분 | `runtime-cleanup-scenario-rbd-receivers-<case>` |
 | `scenario-mirror-initial-daemons` | 1 | 150분 | 160분 | `runtime-cleanup-scenario-mirror-initial-daemons` |
 | `scenario-rbd-namespaces` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-namespaces` |
 | `scenario-rbd-namespace-observation` | 1 | 90분 | 100분 | `runtime-cleanup-scenario-rbd-namespace-observation` |
@@ -339,13 +372,17 @@ TestMultiClusterCephFSOriginalProcessQuiescenceRecovery
 TestMultiClusterCephFSDirectoryAdditionIntent
 ```
 
-### `scenario-rbd-receivers` · 1개
+### `scenario-rbd-receivers` · 1 parent, 2 CI job
 
 ```text
 TestMultiClusterRBDReceiverReadiness
 ```
 
-Image 없는 receiver의 default/named namespace 매핑 네 종류와 named pool journal 모드를 bridge/host에서 순차 검증합니다. Leader·membership readiness, explicit snapshot checkpoint, 실제 destination bytes를 별도로 확인합니다. 전용 Go 90분·job 100분을 사용하며 첫 로컬 Linux ARM64 실행은 package 1705.518초로 PASS했습니다. 이 측정은 다른 runner의 시간 보장이 아닙니다. `scenario-default` 성공 뒤 독립 runner에서 실행하고 자체 baseline과 항상 실행하는 cleanup 검사를 유지합니다. [RBD receiver 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
+Image 없는 receiver의 default/named namespace 매핑 네 종류와 named pool journal 모드를 검증합니다. Leader·membership readiness, explicit snapshot checkpoint, 실제 destination bytes를 별도로 확인합니다. CI는 `SCENARIO_RBD_RECEIVERS_CASE=bridge|host`로 서로 독립적인 두 runner에서 실행합니다. 네트워크별 `scope-0`부터 `scope-4`까지는 같은 원래 클러스터 쌍을 공유하며 원래 phase history·election·CID/UUID·bytes·negative window를 유지합니다. 추가 클러스터 bootstrap은 없습니다. 로컬 기본값과 `CASE=all`은 기존 bridge/host 순차 실행을 유지합니다.
+
+전용 Go 90분·job별 100분과 `scenario-default` 의존성은 유지합니다. Job별 log/prep/cleanup artifact는 case 이름을 포함합니다. [실행 검사기](../.github/scripts/check_scenario_receivers.py)는 선택한 parent·network·5 scope가 정확히 한 번씩 RUN/PASS했는지 확인하며 다른 network·누락·중복·FAIL·SKIP·비어 있는 filtered 실행을 거부합니다. 같은 parent를 두 job에서 선택하므로 distinct 이름 수와 실행 instance 수를 구분합니다.
+
+첫 로컬 Linux ARM64 묶음 실행은 package 1705.518초로 PASS했습니다. 이는 분리한 새 job의 실행 시간이나 성공 증거가 아닙니다. 항상 실행하는 자체 cleanup 검사를 유지하며 [RBD receiver 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
 
 ### `scenario-mirror-initial-daemons` · 1개
 

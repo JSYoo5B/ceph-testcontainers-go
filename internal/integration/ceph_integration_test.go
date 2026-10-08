@@ -71,6 +71,7 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal("original health oracle FSID unavailable", err)
 	}
 	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
+	originalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "initial-pool-clean")
 
 	// A separate container proves MON discovery and direct OSD connectivity.
 	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
@@ -116,6 +117,10 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	logStatus(t, ctx, cluster, fmt.Sprintf("added osd.%d", added.ID))
+	addedPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-osd-add")
+	if addedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
+		t.Fatal("OSD addition replaced original pool")
+	}
 	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +129,10 @@ func TestClusterLifecycle(t *testing.T) {
 	}
 	verifyObjects(t, ctx, client, payload)
 	logStatus(t, ctx, cluster, fmt.Sprintf("removed original osd.%d; all objects intact", original.ID))
+	removedPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-original-osd-remove")
+	if removedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
+		t.Fatal("OSD removal replaced original pool")
+	}
 
 	readded, err := cluster.AddOSD(ctx)
 	if err != nil {
@@ -141,6 +150,10 @@ func TestClusterLifecycle(t *testing.T) {
 	verifyObjects(t, ctx, client, payload)
 	t.Logf("second add/remove cycle: osd.%d; total %s", readded.ID, time.Since(started).Round(time.Millisecond))
 	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
+	finalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-osd-lifecycle")
+	if finalPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
+		t.Fatal("OSD lifecycle replaced original pool")
+	}
 }
 
 func TestBootstrapFailureCleanup(t *testing.T) {
