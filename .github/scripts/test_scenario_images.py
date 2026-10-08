@@ -271,6 +271,24 @@ class ScenarioImageTests(unittest.TestCase):
                 for command in commands:
                     self.assert_image_environment("scenario-rgw-sync-fixtures", command, env, True)
 
+    def test_heavy_parent_cases_preserve_prepared_roles_and_consumer_boundary(self):
+        env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
+        for target, key, option in (
+                ("scenario-multicluster-topology", "group", "SCENARIO_MULTICLUSTER_GROUP"),
+                ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
+                ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE")):
+            matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
+            self.assertIsNotNone(matrix)
+            values = [value.strip() for value in matrix.group(1).split(",")]
+            self.assertEqual(len(values), len(set(values)))
+            for value in values:
+                with self.subTest(target=target, case=value):
+                    _, commands = self.dry_run(target, env, (option + "=" + value,))
+                    self.assertEqual(len(commands), 1)
+                    self.assert_image_environment(target, commands[0], env, True)
+                    expression = commands[0][commands[0].index("-run") + 1]
+                    self.assertNotIn("/", expression)
+
     def test_every_primary_job_prepares_after_own_baseline_and_before_make(self):
         self.assertEqual({name for name in self.jobs if name.startswith("scenario-")},
                          set(PRIMARY))
@@ -300,6 +318,37 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertNotRegex(preparation, r"(?m)^\s+(?:if|continue-on-error):")
                 artifacts.append(scalar(preparation, "artifact_name"))
         self.assertEqual(len(set(artifacts)), len(PRIMARY))
+
+    def test_every_expanded_primary_job_has_distinct_image_and_cleanup_artifacts(self):
+        prepared, cleanups = [], []
+        for name in PRIMARY:
+            block = self.jobs[name]
+            dimensions = re.findall(r"^        (group|case): \[(.*?)\]$", block, re.M)
+            self.assertLessEqual(len(dimensions), 1, name)
+            variants = [(None, None)]
+            if dimensions:
+                key, source = dimensions[0]
+                values = [value.strip() for value in source.split(",")]
+                self.assertTrue(all(values), name)
+                self.assertEqual(len(values), len(set(values)), name)
+                variants = [(key, value) for value in values]
+            job_steps = steps(block)
+            prep = next(step for step in job_steps if "uses: " + PREP in step)
+            baseline = next(step for step in job_steps
+                            if "uses: " + CLEANUP in step and "phase: snapshot" in step)
+            for key, value in variants:
+                def expand(artifact):
+                    if key is not None:
+                        artifact = artifact.replace("${{ matrix." + key + " }}", value)
+                    self.assertNotIn("${{", artifact, (name, key, value))
+                    return artifact
+                prepared.append(expand(scalar(prep, "artifact_name")))
+                cleanups.append(expand(scalar(baseline, "artifact_name")))
+        self.assertEqual(len(prepared), 52)
+        self.assertEqual(len(cleanups), 52)
+        self.assertEqual(len(set(prepared)), len(prepared))
+        self.assertEqual(len(set(cleanups)), len(cleanups))
+        self.assertFalse(set(prepared) & set(cleanups))
 
     def test_existing_compatibility_matrix_remains_twelve_native_cells(self):
         job = self.jobs["image-compatibility"]

@@ -24,6 +24,8 @@ SCENARIO_RBD_RECEIVERS_TIMEOUT ?= 90m
 SCENARIO_MULTICLUSTER_GROUP ?= all
 SCENARIO_CEPHFS_REMOVAL_CASE ?= all
 SCENARIO_RGW_SYNC_GROUP ?= all
+SCENARIO_TOPOLOGY_EXTENSION_CASE ?= all
+SCENARIO_CEPHFS_FIXTURE_CASE ?= all
 SCENARIO_IMAGE_LAYOUT ?= all
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
@@ -39,6 +41,25 @@ MULTICLUSTER_TOPOLOGY_TESTS_infra = ^Test(HostNetwork(MultiCluster|MonitorPortCo
 MULTICLUSTER_TOPOLOGY_TESTS_rbd = ^Test(HostNetworkRBDSnapshotMirror|MultiCluster(RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle))$$
 MULTICLUSTER_TOPOLOGY_TESTS_cephfs = ^Test(HostNetwork|MultiCluster)CephFS(SnapshotMirrorAndBackup|ManagerTopology)$$
 MULTICLUSTER_TOPOLOGY_TESTS_rgw = ^Test(HostNetwork(RGWEndpoints|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-endpoints-host = ^TestHostNetworkRGWEndpoints$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-multisite-bridge = ^TestMultiClusterRGWMultisite$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-multisite-host = ^TestHostNetworkRGWMultisite$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-three-zone-bridge = ^TestMultiClusterRGWThreeZoneTopology$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-three-zone-host = ^TestHostNetworkRGWThreeZoneTopology$$
+MULTICLUSTER_TOPOLOGY_TESTS_rgw-master-failover = ^TestMultiClusterRGWMetadataMasterFailover$$
+TOPOLOGY_EXTENSION_TESTS_all = $(TOPOLOGY_EXTENSION_TESTS)
+TOPOLOGY_EXTENSION_TESTS_network-interruption = ^TestSeparateClusterNetworksAndInterruptions$$
+TOPOLOGY_EXTENSION_TESTS_five-monitors = ^TestFiveMonitorQuorumAndNetworkRecovery$$
+TOPOLOGY_EXTENSION_TESTS_rbd-mirror-bridge = ^TestMultiClusterRBDMirrorDaemonTopology$$
+TOPOLOGY_EXTENSION_TESTS_rbd-mirror-host = ^TestHostNetworkRBDMirrorDaemonTopology$$
+TOPOLOGY_EXTENSION_TESTS_cephfs-mirror-bridge = ^TestMultiClusterCephFSMirrorDaemonRebalanceTopology$$
+TOPOLOGY_EXTENSION_TESTS_cephfs-mirror-host = ^TestHostNetworkCephFSMirrorDaemonRebalanceTopology$$
+TOPOLOGY_EXTENSION_TESTS_rgw-initial-bridge = ^TestMultiClusterRGWInitialZonegroupsTopology$$
+TOPOLOGY_EXTENSION_TESTS_rgw-initial-host = ^TestHostNetworkRGWInitialZonegroupsTopology$$
+TOPOLOGY_EXTENSION_TESTS_rgw-removal-bridge = ^TestMultiClusterRGWZonegroupsAndRemovalTopology$$
+TOPOLOGY_EXTENSION_TESTS_rgw-removal-host = ^TestHostNetworkRGWZonegroupsAndRemovalTopology$$
+TOPOLOGY_EXTENSION_TESTS_rbd-peer-network = ^TestMultiClusterRBDPeerNetworkInterruption$$
+TOPOLOGY_EXTENSION_TESTS_rgw-peer-network = ^TestMultiClusterRGWPeerNetworkTopology$$
 CEPHFS_REMOVAL_TESTS_all = $(SCENARIO_CEPHFS_REMOVAL_TESTS)
 CEPHFS_REMOVAL_TESTS_peer-drain = ^TestMultiClusterCephFSPeerRemovalDrain$$
 CEPHFS_REMOVAL_TESTS_directory-release = ^TestMultiClusterCephFSDirectoryRemovalRelease$$
@@ -67,6 +88,15 @@ SCENARIO_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE $(SCENARIO_TEST_EN
 SCENARIO_FIXTURE_TAGS = integration,auth,features,topology,hostnetwork,multicluster
 SCENARIO_CLUSTER_FIXTURE_TESTS = ^Test(ClientIdentities|CephFSSubvolumes|ConfigurationOverrides|OSDPolicies|OSDRemovalLifecycle|CephFSSubvolumeSnapshotsAndClones|RGWPlacementStorageClasses|HostNetworkRGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$
 SCENARIO_CEPHFS_FIXTURE_TESTS = ^Test(CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$
+CEPHFS_FIXTURE_TESTS_all = $(SCENARIO_CEPHFS_FIXTURE_TESTS)
+CEPHFS_FIXTURE_TESTS_data-pools = ^TestCephFSDynamicDataPools$$
+CEPHFS_FIXTURE_TESTS_clone-cancellation = ^TestCephFSCloneCancellationAndPartialCleanup$$
+CEPHFS_FIXTURE_TESTS_quiesce = ^TestCephFSQuiesceCheckpoints$$
+CEPHFS_FIXTURE_TESTS_authorization = ^TestCephFSSubvolumeClientAuthorization$$
+CEPHFS_FIXTURE_TESTS_pins = ^TestCephFSPins$$
+CEPHFS_FIXTURE_TESTS_retained-snapshot = ^TestCephFSRetainedSnapshotAndMetadataRecipe$$
+CEPHFS_FIXTURE_TESTS_ec-data-pool = ^TestCephFSAdditionalErasureCodedDataPool$$
+CEPHFS_FIXTURE_TESTS_host-filesystem = ^TestHostNetworkCephFSFilesystem$$
 SCENARIO_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
 SCENARIO_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
 SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
@@ -169,7 +199,8 @@ scenario-rbd-receivers:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_RECEIVERS_TIMEOUT) -run '$(SCENARIO_RBD_RECEIVERS_TESTS)' ./internal/integration
 
 scenario-topology-extensions:
-	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
+	@test -n '$(TOPOLOGY_EXTENSION_TESTS_$(SCENARIO_TOPOLOGY_EXTENSION_CASE))' || { echo 'Unknown SCENARIO_TOPOLOGY_EXTENSION_CASE' >&2; exit 1; }
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS_$(SCENARIO_TOPOLOGY_EXTENSION_CASE))' ./internal/integration
 
 # Supported cluster/client fixtures consume the selected default/role images.
 # These profiles run every planned case, including bridge/host child scenarios.
@@ -177,7 +208,8 @@ scenario-cluster-fixtures:
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '$(SCENARIO_CLUSTER_FIXTURE_TESTS)' ./internal/integration
 
 scenario-cephfs-fixtures:
-	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_CEPHFS_FIXTURE_TESTS)' ./internal/integration
+	@test -n '$(CEPHFS_FIXTURE_TESTS_$(SCENARIO_CEPHFS_FIXTURE_CASE))' || { echo 'Unknown SCENARIO_CEPHFS_FIXTURE_CASE' >&2; exit 1; }
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(CEPHFS_FIXTURE_TESTS_$(SCENARIO_CEPHFS_FIXTURE_CASE))' ./internal/integration
 
 scenario-rados-fixtures:
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '$(SCENARIO_RADOS_FIXTURE_TESTS)' ./internal/integration

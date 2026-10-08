@@ -172,7 +172,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [infra, rbd, cephfs, rgw]
+        group: [infra, rbd, cephfs, rgw-endpoints-host, rgw-multisite-bridge, rgw-multisite-host, rgw-three-zone-bridge, rgw-three-zone-host, rgw-master-failover]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -295,9 +295,14 @@ jobs:
           artifact_name: runtime-cleanup-scenario-rbd-receivers
 
   scenario-topology-extensions:
+    name: topology extension / ${{ matrix.case }}
     needs: scenario-default
     runs-on: ubuntu-24.04
-    timeout-minutes: 100
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [network-interruption, five-monitors, rbd-mirror-bridge, rbd-mirror-host, cephfs-mirror-bridge, cephfs-mirror-host, rgw-initial-bridge, rgw-initial-host, rgw-removal-bridge, rgw-removal-host, rbd-peer-network, rgw-peer-network]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -313,25 +318,37 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-topology-extensions
+          artifact_name: runtime-cleanup-scenario-topology-extensions-${{ matrix.case }}
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-topology-extensions
+          artifact_name: scenario-images-scenario-topology-extensions-${{ matrix.case }}
       - name: Verify Docker bridge endpoint recovery
+        if: ${{ matrix.case == 'network-interruption' }}
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
       - name: Run make scenario-topology-extensions
         shell: bash
-        run: make scenario-topology-extensions 2>&1 | tee "$RUNNER_TEMP/scenario-topology-extensions.log"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-topology-extensions SCENARIO_TOPOLOGY_EXTENSION_CASE='${{ matrix.case }}' TOPOLOGY_EXTENSIONS_TIMEOUT=40m 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-topology-extensions
+          artifact_name: runtime-cleanup-scenario-topology-extensions-${{ matrix.case }}
       - name: Identify failed topology cases
         if: failure()
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-topology-extensions.log" --profile scenario-topology-extensions
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile 'scenario-topology-extensions-${{ matrix.case }}'
+
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-topology-extensions-${{ matrix.case }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-cluster-fixtures:
     needs: scenario-default
@@ -372,9 +389,14 @@ jobs:
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-cluster-fixtures.log" --profile scenario-cluster-fixtures
 
   scenario-cephfs-fixtures:
+    name: cephfs fixture / ${{ matrix.case }}
     needs: scenario-default
     runs-on: ubuntu-24.04
-    timeout-minutes: 130
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [data-pools, clone-cancellation, quiesce, authorization, pins, retained-snapshot, ec-data-pool, host-filesystem]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -390,24 +412,35 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-cephfs-fixtures
+          artifact_name: runtime-cleanup-scenario-cephfs-fixtures-${{ matrix.case }}
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-cephfs-fixtures
+          artifact_name: scenario-images-scenario-cephfs-fixtures-${{ matrix.case }}
       - name: Run make scenario-cephfs-fixtures
         shell: bash
-        run: make scenario-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cephfs-fixtures.log"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-cephfs-fixtures SCENARIO_CEPHFS_FIXTURE_CASE='${{ matrix.case }}' CLIENT_FIXTURES_TIMEOUT=40m 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-cephfs-fixtures
+          artifact_name: runtime-cleanup-scenario-cephfs-fixtures-${{ matrix.case }}
       - name: Identify failed CephFS fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-cephfs-fixtures.log" --profile scenario-cephfs-fixtures
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile 'scenario-cephfs-fixtures-${{ matrix.case }}'
+
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-cephfs-fixtures-${{ matrix.case }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-rados-fixtures:
     needs: scenario-default

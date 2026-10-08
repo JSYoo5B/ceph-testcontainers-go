@@ -10,10 +10,47 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GROUPS = ("infra", "rbd", "cephfs", "rgw")
+RGW_TOPOLOGY_CASES = {
+    "rgw-endpoints-host": "TestHostNetworkRGWEndpoints",
+    "rgw-multisite-bridge": "TestMultiClusterRGWMultisite",
+    "rgw-multisite-host": "TestHostNetworkRGWMultisite",
+    "rgw-three-zone-bridge": "TestMultiClusterRGWThreeZoneTopology",
+    "rgw-three-zone-host": "TestHostNetworkRGWThreeZoneTopology",
+    "rgw-master-failover": "TestMultiClusterRGWMetadataMasterFailover",
+}
+GROUPS = ("infra", "rbd", "cephfs", *RGW_TOPOLOGY_CASES)
 CASES = ("peer-drain", "directory-release", "process-quiescence",
          "process-recovery", "directory-intent")
 RGW_SYNC_GROUPS = ("policy", "account", "translation")
+CEPHFS_FIXTURE_CASES = {
+    "data-pools": "TestCephFSDynamicDataPools",
+    "clone-cancellation": "TestCephFSCloneCancellationAndPartialCleanup",
+    "quiesce": "TestCephFSQuiesceCheckpoints",
+    "authorization": "TestCephFSSubvolumeClientAuthorization",
+    "pins": "TestCephFSPins",
+    "retained-snapshot": "TestCephFSRetainedSnapshotAndMetadataRecipe",
+    "ec-data-pool": "TestCephFSAdditionalErasureCodedDataPool",
+    "host-filesystem": "TestHostNetworkCephFSFilesystem",
+}
+TOPOLOGY_EXTENSION_CASES = {
+    "network-interruption": "TestSeparateClusterNetworksAndInterruptions",
+    "five-monitors": "TestFiveMonitorQuorumAndNetworkRecovery",
+    "rbd-mirror-bridge": "TestMultiClusterRBDMirrorDaemonTopology",
+    "rbd-mirror-host": "TestHostNetworkRBDMirrorDaemonTopology",
+    "cephfs-mirror-bridge": "TestMultiClusterCephFSMirrorDaemonRebalanceTopology",
+    "cephfs-mirror-host": "TestHostNetworkCephFSMirrorDaemonRebalanceTopology",
+    "rgw-initial-bridge": "TestMultiClusterRGWInitialZonegroupsTopology",
+    "rgw-initial-host": "TestHostNetworkRGWInitialZonegroupsTopology",
+    "rgw-removal-bridge": "TestMultiClusterRGWZonegroupsAndRemovalTopology",
+    "rgw-removal-host": "TestHostNetworkRGWZonegroupsAndRemovalTopology",
+    "rbd-peer-network": "TestMultiClusterRBDPeerNetworkInterruption",
+    "rgw-peer-network": "TestMultiClusterRGWPeerNetworkTopology",
+}
+PARENT_CASE_TARGETS = (
+    ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", RGW_TOPOLOGY_CASES),
+    ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
+    ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES),
+)
 
 
 class ScenarioShardTests(unittest.TestCase):
@@ -68,7 +105,36 @@ class ScenarioShardTests(unittest.TestCase):
 
     def test_multicluster_shards_preserve_compiled_aggregate(self):
         self.assert_partition("scenario-multicluster-topology",
-                              "SCENARIO_MULTICLUSTER_GROUP", GROUPS, (4, 6, 4, 6))
+                              "SCENARIO_MULTICLUSTER_GROUP", GROUPS, (4, 6, 4, *((1,) * 6)))
+
+    def test_parent_cases_select_exact_compiled_name_and_all_children(self):
+        for target, option, cases in PARENT_CASE_TARGETS:
+            for case, parent in cases.items():
+                with self.subTest(target=target, case=case):
+                    self.assertEqual(self.selection(target, option, case), {parent})
+                    command = self.command(target, option, case)
+                    expression = command[command.index("-run") + 1]
+                    self.assertNotIn("/", expression)
+                    self.assertEqual(expression, "^" + parent + "$")
+
+    def test_cephfs_and_extension_cases_preserve_compiled_aggregates(self):
+        for target, option, cases in PARENT_CASE_TARGETS[1:]:
+            with self.subTest(target=target):
+                self.assert_partition(target, option, cases, (1,) * len(cases))
+
+    def test_legacy_multicluster_rgw_aggregate_preserves_all_six_cases(self):
+        aggregate = self.selection("scenario-multicluster-topology",
+                                   "SCENARIO_MULTICLUSTER_GROUP", "rgw")
+        self.assertEqual(aggregate, set(RGW_TOPOLOGY_CASES.values()))
+
+    def test_new_local_all_defaults_preserve_original_process_budgets(self):
+        for target, option, timeout in (
+                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", "120m"),
+                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", "90m")):
+            with self.subTest(target=target):
+                command = self.command(target)
+                self.assertEqual(command, self.command(target, option, "all"))
+                self.assertIn("-timeout=" + timeout, command)
 
     def test_removal_cases_preserve_compiled_aggregate(self):
         self.assert_partition("scenario-cephfs-removal",
@@ -122,7 +188,9 @@ class ScenarioShardTests(unittest.TestCase):
     def test_unknown_or_empty_shards_fail_before_go(self):
         for target, option in [("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP"),
                                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE"),
-                               ("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP")]:
+                               ("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP"),
+                               ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE"),
+                               ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE")]:
             for value in ("unknown", ""):
                 with self.subTest(target=target, value=value):
                     result = subprocess.run(["make", "--no-print-directory", target,
@@ -135,7 +203,9 @@ class ScenarioShardTests(unittest.TestCase):
     def test_shards_keep_original_image_and_all_child_selection(self):
         for target, option, values in [
                 ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", GROUPS),
-                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CASES)]:
+                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CASES),
+                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
+                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES)]:
             for value in values:
                 with self.subTest(target=target, value=value):
                     command = self.command(target, option, value)
@@ -153,16 +223,26 @@ class ScenarioShardTests(unittest.TestCase):
         for job, key, values, option in [
                 ("scenario-multicluster-topology", "group", GROUPS, "SCENARIO_MULTICLUSTER_GROUP"),
                 ("scenario-cephfs-removal", "case", CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
-                ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP")]:
+                ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP"),
+                ("scenario-cephfs-fixtures", "case", CEPHFS_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
+                ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE")]:
             block = re.search(r"^  " + job + r":\n.*?(?=^  \w[\w-]*:\n|\Z)",
                               workflow, re.M | re.S).group()
             actual = re.search(r"^        " + key + r": \[(.*?)\]$", block, re.M)
-            self.assertEqual(tuple(x.strip() for x in actual.group(1).split(",")), values)
+            self.assertEqual(tuple(x.strip() for x in actual.group(1).split(",")), tuple(values))
             self.assertIn("fail-fast: false", block)
             self.assertIn(option + "='${{ matrix." + key + " }}'", block)
             self.assertIn("set -o pipefail", block)
             self.assertIn("phase: snapshot", block)
             self.assertIn("phase: check", block)
+            if job in ("scenario-cephfs-fixtures", "scenario-topology-extensions"):
+                self.assertIn("timeout-minutes: 50", block)
+                timeout = "CLIENT_FIXTURES_TIMEOUT" if job == "scenario-cephfs-fixtures" else "TOPOLOGY_EXTENSIONS_TIMEOUT"
+                self.assertIn(timeout + "=40m", block)
+                for artifact in ("runtime-cleanup-", "scenario-images-", "scenario-"):
+                    self.assertRegex(block, re.escape(artifact) + r"[^\n]*\$\{\{ matrix\.case \}\}")
+                self.assertIn("uses: actions/upload-artifact@v7", block)
+                self.assertIn("if: always()", block)
             if job == "scenario-rgw-sync-fixtures":
                 self.assertIn("timeout-minutes: 50", block)
                 self.assertIn("MULTICLUSTER_TIMEOUT=40m", block)
@@ -180,6 +260,17 @@ class ScenarioShardTests(unittest.TestCase):
                 for group in RGW_SYNC_GROUPS:
                     self.assertIsNotNone(reporter.PROFILE.fullmatch(
                         profile.replace("${{ matrix.group }}", group)))
+
+    def test_bridge_sdk_recovery_runs_only_once_in_network_interruption_case(self):
+        workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        block = re.search(r"^  scenario-topology-extensions:\n.*?(?=^  \w[\w-]*:\n|\Z)",
+                          workflow, re.M | re.S).group()
+        sdk_steps = re.findall(r"^      - name: [^\n]*\n(?:(?!^      - ).)*?internal/dockerbridge[^\n]*",
+                               block, re.M | re.S)
+        self.assertEqual(len(sdk_steps), 1)
+        self.assertIn("if: ${{ matrix.case == 'network-interruption' }}", sdk_steps[0])
+        self.assertIn("^TestRecoverableBridge(EndpointIdentity|PublishedPort)$", sdk_steps[0])
+        self.assertEqual(workflow.count("./internal/dockerbridge"), 1)
 
 
 if __name__ == "__main__":
