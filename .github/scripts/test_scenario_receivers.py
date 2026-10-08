@@ -1,6 +1,7 @@
-"""Exercise the receiver leaf gate using synthetic logs; never start Docker."""
+"""Exercise the receiver gate with synthetic and actual Go logs; no Docker."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,12 +14,76 @@ import check_scenario_receivers as checker
 def successful_log(network):
     tests = (checker.PARENT, checker.PARENT + "/" + network, *checker.required_leaves(network))
     lines = ["=== RUN   " + name for name in tests]
+    lines += ["--- PASS: " + name + " (6.00s)" for name in tests[:2]]
     lines += ["    --- PASS: " + name + " (1.00s)" for name in tests[2:]]
-    lines += ["--- PASS: " + name + " (6.00s)" for name in (tests[1], tests[0])]
     return "\n".join([*lines, "PASS", "ok\t" + checker.PACKAGE + "\t6.00s", ""])
 
 
 class ReceiverCoverageTests(unittest.TestCase):
+    def test_actual_go_nested_output_completes_each_selected_network(self):
+        # Exercise testing.T's real output ordering independently of the
+        # synthetic log builder and the checker's expected inventory.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "go.mod").write_text(
+                "module github.com/jsyoo5b/ceph-testcontainers-go\n\ngo 1.25.0\n")
+            package = root / "internal/integration"
+            package.mkdir(parents=True)
+            (package / "receiver_test.go").write_text('''package integration_test
+
+import (
+    "fmt"
+    "testing"
+)
+
+func TestMultiClusterRBDReceiverReadiness(t *testing.T) {
+    for _, network := range []string{"bridge", "host"} {
+        t.Run(network, func(t *testing.T) {
+            for scope := 0; scope < 5; scope++ {
+                t.Run(fmt.Sprintf("scope-%d", scope), func(t *testing.T) {
+                    t.Log("scope completed")
+                })
+            }
+        })
+    }
+}
+''')
+            for network in ("bridge", "host"):
+                result = subprocess.run(
+                    ["go", "test", "-mod=readonly", "-count=1", "-v", "-run",
+                     "^TestMultiClusterRBDReceiverReadiness$/^" + network + "$",
+                     "./internal/integration"], cwd=root,
+                    env=os.environ | {"CGO_ENABLED": "0"}, capture_output=True,
+                    text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                receipt = checker.validate(result.stdout, network)
+                self.assertTrue(receipt["passed"], receipt)
+                self.assertEqual(receipt["observed_runs"], receipt["observed_passes"])
+                self.assertEqual(len(receipt["observed_passes"]), 7)
+
+    def test_synthetic_postorder_results_are_not_real_go_tree_output(self):
+        original = successful_log("bridge")
+        lines = original.splitlines()
+        passes = [line for line in lines if "--- PASS:" in line]
+        postorder = passes[2:] + passes[1:2] + passes[:1]
+        index = next(i for i, line in enumerate(lines) if "--- PASS:" in line)
+        mutated = "\n".join([*lines[:index], *postorder, *lines[index + 7:], ""])
+        self.assertFalse(checker.validate(mutated, "bridge")["passed"])
+
+    def test_package_completion_cannot_precede_any_network_or_scope_result(self):
+        lines = successful_log("bridge").splitlines()
+        runs, passes, completion = lines[:7], lines[7:14], lines[14:16]
+        # Every name still has one ordered RUN/PASS; only package completion
+        # is early. Checking the parent alone misses these incomplete trees.
+        for completed_results in range(1, 7):
+            log = "\n".join([*runs, *passes[:completed_results], *completion,
+                              *passes[completed_results:], ""])
+            with self.subTest(completed_results=completed_results):
+                result = checker.validate(log, "bridge")
+                self.assertFalse(result["passed"], result)
+                self.assertIn("receiver tests did not finish after their RUN and before package completion",
+                              result["errors"])
+
     def test_complete_bridge_and_host_fixtures_have_exact_disjoint_leaf_inventory(self):
         all_leaves = []
         for network in checker.NETWORKS:

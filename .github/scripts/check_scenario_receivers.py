@@ -24,7 +24,9 @@ def validate(log, network):
     """Validate one own job; the same parent may run in the other network job."""
     leaves = required_leaves(network)
     expected_runs = (PARENT, PARENT + "/" + network, *leaves)
-    expected_passes = (*leaves, PARENT + "/" + network, PARENT)
+    # Go buffers subtest results and reports their completed tree in preorder:
+    # parent, network, then scopes. Completion still precedes package PASS.
+    expected_passes = expected_runs
     runs, passes, failures, skipped, package_passes, package_success = [], [], [], [], [], []
     run_positions, pass_positions = {}, {}
     for index, line in enumerate(log.splitlines()):
@@ -56,7 +58,8 @@ def validate(log, network):
         errors.append("receiver log lacks exactly one completed successful Go package")
     if tuple(runs) == expected_runs and tuple(passes) == expected_passes:
         if any(run_positions[name] >= pass_positions[name] for name in expected_runs) or (
-                package_passes and pass_positions[PARENT] >= package_passes[0]):
+                package_passes and any(pass_positions[name] >= package_passes[0]
+                                       for name in expected_runs)):
             errors.append("receiver tests did not finish after their RUN and before package completion")
     run_counts, pass_counts = Counter(runs), Counter(passes)
     return {
