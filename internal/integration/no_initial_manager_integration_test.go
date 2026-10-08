@@ -102,6 +102,11 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, nil, "cold")
 	noInitialManagerHealth(t, ctx, cluster, "cold", false)
+	integrationHealthDetails(t, ctx, cluster, fsid, "cold-manager")
+	var restoreHealthCondition, restoreHealthMute func()
+	if !noStorage {
+		restoreHealthCondition, restoreHealthMute = noInitialManagerHealthMutes(t, ctx, cluster, fsid)
+	}
 	t.Logf("NO_INITIAL_MGR_ZERO fsid=%s owned_managers=0 native_managers=0 osds=%d mon_cid=%s", fsid, wantOSDs, cluster.GetContainerID())
 	short, stop := context.WithTimeout(ctx, 200*time.Millisecond)
 	err = cluster.WaitForClean(short)
@@ -190,7 +195,25 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	healthCtx, healthCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer healthCancel()
+	if restoreHealthMute != nil {
+		restoreHealthCondition()
+		noInitialManagerAwaitHealth(t, healthCtx, cluster, fsid, "recovered-sticky", func(snapshot ceph.HealthSnapshot) bool {
+			if _, present := snapshot.Checks["OSDMAP_FLAGS"]; present {
+				return false
+			}
+			mute := noInitialManagerMute(snapshot, "OSDMAP_FLAGS")
+			if mute == nil || !mute.Sticky || mute.ExpiresAt != "" {
+				t.Fatal("resolved owned flag check lost its native sticky mute")
+			}
+			return true
+		})
+		restoreHealthMute()
+	}
 	topologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
+	health := integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
+	if health.Status != "HEALTH_OK" || len(health.Checks) != 0 || len(health.Mutes) != 0 {
+		t.Fatal("recovered health did not retain strict closure and mute restoration")
+	}
 	if noStorage {
 		noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "seed", "after-provision", originalPoolID)
 	}
@@ -241,6 +264,105 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	t.Logf("NO_INITIAL_MGR_CLEANUP owned_containers=%d owned_networks=%d remaining=0", len(oracle.owned), len(oracle.networks))
 	t.Logf("NO_INITIAL_MGR_COMPLETE combined_zero=%t fsid=%s mgr_gid=%d pool_id=%d", noStorage, fsid, gid, originalPoolID)
+}
+
+// An owned noout flag prepares an immediate warning independently of the new
+// MON's MGR grace period. Raw mute commands test TTL and sticky observations;
+// both the flag and mute are restored before the original strict closure.
+func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string) (func(), func()) {
+	t.Helper()
+	flags, err := cluster.OSDFlags(ctx)
+	if err != nil || slices.Contains(flags, "noout") {
+		t.Fatal("fresh fixture has no exact unmodified noout baseline", err)
+	}
+	flag, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+	flagActive := flag != nil
+	restoreCondition := func() {
+		if !flagActive {
+			return
+		}
+		cleanup, done := context.WithTimeout(context.Background(), time.Minute)
+		defer done()
+		if err := flag.Restore(cleanup); err != nil {
+			t.Error("restore owned health flag", err)
+			return
+		}
+		flagActive = false
+	}
+	t.Cleanup(restoreCondition)
+	if err != nil || flag == nil {
+		t.Fatal("prepare owned health warning", err)
+	}
+	active := false
+	restore := func() {
+		if !active {
+			return
+		}
+		cleanup, done := context.WithTimeout(context.Background(), time.Minute)
+		defer done()
+		if _, err := cluster.Ceph(cleanup, "health", "unmute", "OSDMAP_FLAGS"); err != nil {
+			t.Error("restore native health mute", err)
+			return
+		}
+		active = false
+	}
+	t.Cleanup(restore)
+	probe, done := context.WithTimeout(ctx, 90*time.Second)
+	defer done()
+	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "before-mute", func(snapshot ceph.HealthSnapshot) bool {
+		if len(snapshot.Mutes) != 0 {
+			t.Fatal("fresh fixture has an unexpected native health mute")
+		}
+		_, present := snapshot.Checks["OSDMAP_FLAGS"]
+		return present
+	})
+	// Mark the mutation before issuing it so an ambiguous reply still restores.
+	active = true
+	cephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "20s")
+	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "ttl-muted", func(snapshot ceph.HealthSnapshot) bool {
+		mute := noInitialManagerMute(snapshot, "OSDMAP_FLAGS")
+		check, present := snapshot.Checks["OSDMAP_FLAGS"]
+		if mute == nil || !present || !check.Muted || mute.Sticky || mute.ExpiresAt == "" {
+			t.Fatal("native TTL mute was not retained with the matching check")
+		}
+		return true
+	})
+	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "ttl-expired", func(snapshot ceph.HealthSnapshot) bool {
+		check, present := snapshot.Checks["OSDMAP_FLAGS"]
+		return present && !check.Muted && len(snapshot.Mutes) == 0
+	})
+	cephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "--sticky")
+	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "sticky-muted", func(snapshot ceph.HealthSnapshot) bool {
+		mute := noInitialManagerMute(snapshot, "OSDMAP_FLAGS")
+		check, present := snapshot.Checks["OSDMAP_FLAGS"]
+		if mute == nil || !present || !check.Muted || !mute.Sticky || mute.ExpiresAt != "" {
+			t.Fatal("native sticky mute was not retained with the matching check")
+		}
+		return true
+	})
+	return restoreCondition, restore
+}
+
+func noInitialManagerAwaitHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, phase string, ready func(ceph.HealthSnapshot) bool) {
+	t.Helper()
+	topologyWait(t, ctx, func() bool {
+		snapshot := integrationHealthDetails(t, ctx, cluster, fsid, phase)
+		for code := range snapshot.Checks {
+			if code != "OSDMAP_FLAGS" && code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
+				t.Fatal("unexpected native health check during mute fixture", code)
+			}
+		}
+		return ready(snapshot)
+	})
+}
+
+func noInitialManagerMute(snapshot ceph.HealthSnapshot, code string) *ceph.HealthMute {
+	for _, mute := range snapshot.Mutes {
+		if mute.Code == code {
+			return &mute
+		}
+	}
+	return nil
 }
 
 func noInitialManagerMap(t *testing.T, ctx context.Context, cluster *ceph.Container, active bool) uint64 {

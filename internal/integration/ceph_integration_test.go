@@ -66,6 +66,11 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	logStatus(t, ctx, cluster, "initial")
+	quorum, err := cluster.QuorumStatus(ctx)
+	if err != nil || quorum.MonMap.FSID == "" {
+		t.Fatal("original health oracle FSID unavailable", err)
+	}
+	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
 
 	// A separate container proves MON discovery and direct OSD connectivity.
 	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
@@ -135,6 +140,7 @@ func TestClusterLifecycle(t *testing.T) {
 	}
 	verifyObjects(t, ctx, client, payload)
 	t.Logf("second add/remove cycle: osd.%d; total %s", readded.ID, time.Since(started).Round(time.Millisecond))
+	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
 }
 
 func TestBootstrapFailureCleanup(t *testing.T) {

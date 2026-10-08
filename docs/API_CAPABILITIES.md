@@ -15,7 +15,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 
 | 기능 축 | Operation: fixture 조건 준비·장애·복원 | Check: 확인하는 범위 |
 | --- | --- | --- |
-| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, owned cleanup | quorum, manager/module 준비, OSD 상태·flag, PG clean |
+| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean |
 | Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
 | CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
@@ -43,6 +43,12 @@ Pool/user/account의 policy·quota·caps/identity 조회와 사용량 조회는 
 집계 범위를 반환한다. 비동기 통계의 갱신과 실제 I/O 성공은 각 계약에 따라
 별도로 확인한다. Raw CLI로 추가 상태를 질의할 수 있다.
 
+`HealthDetails`는 원래 bootstrap FSID와 조회 전후 native FSID를 확인하고
+MON의 health code·원인·mute를 반환한다. MGR·storage 준비나 HEALTH_OK를
+요구하지 않으며, 세 번의 native 읽기는 비원자적이다. 오류·취소 시 zero
+snapshot을 반환한다. 공식 role 이미지의 focused native 검증과 전체 CI는 별도이며, mute와 severity,
+반환 message의 비밀 정보 가능성은 [HealthDetails 계약](HEALTH_DETAILS.md)을 따른다.
+
 Raw CLI 접점은 argv에 따라 조회와 변경 모두 가능하다. 이미지·client·customizer
 옵션 및 안전한 문자열 표현도 공개 surface에 포함되지만 native Check로 세지
 않는다. Backup/export/restore는 recovery fixture에서 조건부 가치가 있으므로
@@ -54,15 +60,15 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
 | Fixture Operation | 89 | 46 | 135 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 73 | 33 | 106 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 74 | 33 | 107 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 186 | 90 | **276** |
+| 전체 | 187 | 90 | **277** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 276개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 277개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 
 실행 검증은 [fixture 범위와 native 기록](CLUSTER_SCENARIOS.md),
@@ -124,7 +130,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (64개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (65개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -139,6 +145,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/config.go](../ceph/config.go) | [Container.Configuration](../ceph/config.go#L59) |
 | [ceph/diagnostics.go](../ceph/diagnostics.go) | [Container.CollectDiagnostics](../ceph/diagnostics.go#L85) |
 | [ceph/fencing.go](../ceph/fencing.go) | [Container.BlocklistEntries](../ceph/fencing.go#L45) |
+| [ceph/health_details.go](../ceph/health_details.go) | [Container.HealthDetails](../ceph/health_details.go#L55) |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L38) · [Container.PoolStatus](../ceph/pool_policy.go#L48) |
@@ -230,7 +237,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 79개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 82개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
@@ -246,6 +253,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/config.go](../ceph/config.go) | [ConfigSetting](../ceph/config.go#L19) · [ConfigEntry](../ceph/config.go#L25) · [ConfigOverride](../ceph/config.go#L38) |
 | [ceph/diagnostics.go](../ceph/diagnostics.go) | [DiagnosticsConfig](../ceph/diagnostics.go#L33) · [DiagnosticsContainer](../ceph/diagnostics.go#L46) · [DiagnosticArtifact](../ceph/diagnostics.go#L55) · [DiagnosticsReport](../ceph/diagnostics.go#L68) |
 | [ceph/fencing.go](../ceph/fencing.go) | [BlocklistEntry](../ceph/fencing.go#L20) · [BlocklistOverride](../ceph/fencing.go#L31) |
+| [ceph/health_details.go](../ceph/health_details.go) | [HealthSnapshot](../ceph/health_details.go#L21) · [HealthCheck](../ceph/health_details.go#L29) · [HealthMute](../ceph/health_details.go#L41) |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [MGRModuleState](../ceph/mgr_modules.go#L19) · [MGRModuleOverride](../ceph/mgr_modules.go#L42) |
 | [ceph/network.go](../ceph/network.go) | [NetworkPlane](../ceph/network.go#L17) · [NetworkInterruption](../ceph/network.go#L81) |
 | [ceph/options.go](../ceph/options.go) | [Option](../ceph/options.go#L80) |
