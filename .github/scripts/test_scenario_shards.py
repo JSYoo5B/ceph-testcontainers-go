@@ -2,14 +2,23 @@
 
 import os
 import importlib.util
+from collections import Counter
 from pathlib import Path
 import re
 import shlex
 import subprocess
 import unittest
 
+import check_scenario_receivers as receiver_checker
+import test_scenario_images as image_helpers
 
 ROOT = Path(__file__).resolve().parents[2]
+# Native live-shuffle diagnostics require CEPH_TEST_CEPHFS_NATIVE_SHUFFLE=1.
+# Required CI retains the existing explicit-rebalance variants instead.
+OPTIONAL_NATIVE_SHUFFLE_PARENTS = frozenset((
+    "TestMultiClusterCephFSMirrorDaemonTopology",
+    "TestHostNetworkCephFSMirrorDaemonTopology",
+))
 RGW_TOPOLOGY_CASES = {
     "rgw-endpoints-host": "TestHostNetworkRGWEndpoints",
     "rgw-multisite-bridge": "TestMultiClusterRGWMultisite",
@@ -61,14 +70,18 @@ PARENT_CASE_TARGETS = (
 class ScenarioShardTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        result = subprocess.run(
-            ["go", "test", "-mod=readonly", "-tags=integration,auth,features,topology,hostnetwork,multicluster",
-             "-list", "^Test", "./internal/integration"], cwd=ROOT,
-            env=os.environ | {"CGO_ENABLED": "0"}, capture_output=True,
-            text=True, timeout=180, check=True)
-        cls.compiled = set(re.findall(r"^Test\w+$", result.stdout, re.M))
-        if not cls.compiled:
-            raise AssertionError("Go did not list compiled scenario parents")
+        def compiled(tags):
+            result = subprocess.run(
+                ["go", "test", "-mod=readonly", "-tags=" + tags,
+                 "-list", "^Test", "./internal/integration"], cwd=ROOT,
+                env=os.environ | {"CGO_ENABLED": "0"}, capture_output=True,
+                text=True, timeout=180, check=True)
+            names = set(re.findall(r"^Test\w+$", result.stdout, re.M))
+            if not names:
+                raise AssertionError("Go did not list compiled scenario parents")
+            return names
+        cls.compiled = compiled("integration,auth,features,topology,hostnetwork,multicluster")
+        cls.default_compiled = compiled("integration")
 
     def commands(self, target, option=None, value=None, extra=()):
         args = ["make", "--no-print-directory", "-n", target]
@@ -136,11 +149,86 @@ class ScenarioShardTests(unittest.TestCase):
     def test_new_local_all_defaults_preserve_original_process_budgets(self):
         for target, option, timeout in (
                 ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", "120m"),
-                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", "90m")):
+                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", "90m"),
+                ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE", "90m")):
             with self.subTest(target=target):
                 command = self.command(target)
                 self.assertEqual(command, self.command(target, option, "all"))
                 self.assertIn("-timeout=" + timeout, command)
+
+    def test_receiver_network_cases_preserve_original_compiled_parent_and_ten_scope_leaves(self):
+        target, option = "scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE"
+        self.assertEqual(self.selection(target), {receiver_checker.PARENT})
+        aggregate_command = self.command(target)
+        self.assertEqual(aggregate_command[aggregate_command.index("-run") + 1],
+                         "^" + receiver_checker.PARENT + "$")
+        inventory = {leaf for network in receiver_checker.NETWORKS
+                     for leaf in receiver_checker.required_leaves(network)}
+        selected_leaves = set()
+        for network in receiver_checker.NETWORKS:
+            command = self.command(target, option, network)
+            expression = command[command.index("-run") + 1]
+            self.assertEqual(expression, receiver_checker.SELECTORS[network])
+            self.assertEqual(self.selection(target, option, network), {receiver_checker.PARENT})
+            components = expression.split("/")
+            self.assertEqual(len(components), 2)  # no scope filter: preserve same-pair phase history
+            selected = {leaf for leaf in inventory
+                        if all(re.search(part, name) for part, name
+                               in zip(components, leaf.split("/")))}
+            self.assertEqual(selected, set(receiver_checker.required_leaves(network)))
+            self.assertFalse(selected_leaves & selected)
+            selected_leaves |= selected
+            for foreign in (network + "-other", "other-" + network, "", "scope-0"):
+                self.assertNotRegex(foreign, components[1])
+            self.assertNotRegex(receiver_checker.PARENT + "Other", components[0])
+            for flag in ("-tags=integration,multicluster", "-timeout=90m", "-count=1",
+                         "-mod=readonly", "CGO_ENABLED=0"):
+                self.assertIn(flag, command)
+        self.assertEqual(selected_leaves, inventory)
+        self.assertEqual(len(selected_leaves), 10)
+
+    def test_primary_jobs_cover_every_compiled_parent_with_only_the_exact_receiver_partition(self):
+        workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        jobs = dict(image_helpers.blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        options = {
+            "scenario-multicluster-topology": "SCENARIO_MULTICLUSTER_GROUP",
+            "scenario-cephfs-removal": "SCENARIO_CEPHFS_REMOVAL_CASE",
+            "scenario-rgw-sync-fixtures": "SCENARIO_RGW_SYNC_GROUP",
+            "scenario-cephfs-fixtures": "SCENARIO_CEPHFS_FIXTURE_CASE",
+            "scenario-topology-extensions": "SCENARIO_TOPOLOGY_EXTENSION_CASE",
+            "scenario-rbd-receivers": "SCENARIO_RBD_RECEIVERS_CASE",
+        }
+        counts = Counter()
+        receiver_jobs = {}
+        for target in image_helpers.PRIMARY:
+            matrix = re.search(r"^        (?:group|case): \[(.*?)\]$", jobs[target], re.M)
+            values = [value.strip() for value in matrix.group(1).split(",")] if matrix else [None]
+            for value in values:
+                commands = self.commands(target, options.get(target) if matrix else None, value)
+                selected = set()
+                for command in commands:
+                    if "-run" in command:
+                        expression = command[command.index("-run") + 1].split("/", 1)[0]
+                        parents = {name for name in self.compiled if re.search(expression, name)}
+                    else:
+                        self.assertEqual(target, "scenario-default")
+                        self.assertIn("-tags=integration", command)
+                        parents = self.default_compiled
+                    self.assertTrue(parents, (target, value))
+                    self.assertFalse(selected & parents, (target, value))
+                    selected |= parents
+                if target == "scenario-rbd-receivers":
+                    self.assertEqual(selected, {receiver_checker.PARENT})
+                    receiver_jobs[value] = self.command(target, options[target], value)
+                counts.update(selected)
+        self.assertTrue(OPTIONAL_NATIVE_SHUFFLE_PARENTS <= self.compiled)
+        self.assertEqual(set(counts), self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS)
+        self.assertEqual({parent: count for parent, count in counts.items() if count > 1},
+                         {receiver_checker.PARENT: 2})
+        self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 1)
+        self.assertEqual(set(receiver_jobs), set(receiver_checker.NETWORKS))
+        for network, command in receiver_jobs.items():
+            self.assertEqual(command[command.index("-run") + 1], receiver_checker.SELECTORS[network])
 
     def test_removal_cases_preserve_compiled_aggregate(self):
         self.assert_partition("scenario-cephfs-removal",
@@ -211,8 +299,9 @@ class ScenarioShardTests(unittest.TestCase):
                                ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE"),
                                ("scenario-rgw-sync-fixtures", "SCENARIO_RGW_SYNC_GROUP"),
                                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                               ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE")]:
-            for value in ("unknown", ""):
+                               ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
+                               ("scenario-rbd-receivers", "SCENARIO_RBD_RECEIVERS_CASE")]:
+            for value in ("unknown", "", "bridge/scope-0"):
                 with self.subTest(target=target, value=value):
                     result = subprocess.run(["make", "--no-print-directory", target,
                                              option + "=" + value], cwd=ROOT,
@@ -246,7 +335,8 @@ class ScenarioShardTests(unittest.TestCase):
                 ("scenario-cephfs-removal", "case", CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
                 ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", CEPHFS_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE")]:
+                ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
+                ("scenario-rbd-receivers", "case", receiver_checker.NETWORKS, "SCENARIO_RBD_RECEIVERS_CASE")]:
             block = re.search(r"^  " + job + r":\n.*?(?=^  \w[\w-]*:\n|\Z)",
                               workflow, re.M | re.S).group()
             actual = re.search(r"^        " + key + r": \[(.*?)\]$", block, re.M)
@@ -281,6 +371,20 @@ class ScenarioShardTests(unittest.TestCase):
                 for group in RGW_SYNC_GROUPS:
                     self.assertIsNotNone(reporter.PROFILE.fullmatch(
                         profile.replace("${{ matrix.group }}", group)))
+            if job == "scenario-rbd-receivers":
+                self.assertIn("name: rbd receivers / ${{ matrix.case }}", block)
+                self.assertIn("timeout-minutes: 100", block)
+                self.assertIn("check_scenario_receivers.py artifacts/scenario/test.log --network '${{ matrix.case }}'", block)
+                self.assertIn("> artifacts/scenario/coverage.json", block)
+                self.assertEqual(block.count("artifact_name: runtime-cleanup-scenario-rbd-receivers-${{ matrix.case }}"), 2)
+                self.assertIn("artifact_name: scenario-images-scenario-rbd-receivers-${{ matrix.case }}", block)
+                self.assertIn("name: scenario-rbd-receivers-${{ matrix.case }}", block)
+                self.assertIn("uses: actions/upload-artifact@v7", block)
+                self.assertIn("if: always()", block)
+                self.assertLess(block.index("| tee artifacts/scenario/test.log"),
+                                block.index("check_scenario_receivers.py artifacts/scenario/test.log"))
+                self.assertLess(block.index("check_scenario_receivers.py artifacts/scenario/test.log"),
+                                block.index("phase: check"))
 
     def test_bridge_sdk_recovery_runs_only_once_in_network_interruption_case(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()

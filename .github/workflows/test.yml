@@ -45,6 +45,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p test_check_runtime_cleanup.py -v
       - name: Check scenario shard coverage without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_shards.py -v
+      - name: Check receiver scope completion gate without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_scenario_receivers.py -v
       - name: Check primary scenario image selection without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_images.py -v
 
@@ -263,9 +265,14 @@ jobs:
           if-no-files-found: warn
 
   scenario-rbd-receivers:
+    name: rbd receivers / ${{ matrix.case }}
     needs: scenario-default
     runs-on: ubuntu-24.04
     timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [bridge, host]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -281,18 +288,31 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-rbd-receivers
+          artifact_name: runtime-cleanup-scenario-rbd-receivers-${{ matrix.case }}
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-rbd-receivers
-      - run: make scenario-rbd-receivers
+          artifact_name: scenario-images-scenario-rbd-receivers-${{ matrix.case }}
+      - name: Run receiver network with every scope
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-rbd-receivers SCENARIO_RBD_RECEIVERS_CASE='${{ matrix.case }}' 2>&1 | tee artifacts/scenario/test.log
+      - name: Verify every selected receiver scope completed
+        run: python3 .github/scripts/check_scenario_receivers.py artifacts/scenario/test.log --network '${{ matrix.case }}' > artifacts/scenario/coverage.json
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-rbd-receivers
+          artifact_name: runtime-cleanup-scenario-rbd-receivers-${{ matrix.case }}
+      - name: Save receiver scenario log and coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-rbd-receivers-${{ matrix.case }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-topology-extensions:
     name: topology extension / ${{ matrix.case }}

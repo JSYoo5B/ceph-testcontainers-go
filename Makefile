@@ -21,6 +21,7 @@ IMAGE_PLATFORM ?=
 SCENARIO_MULTICLUSTER_TOPOLOGY_TIMEOUT ?= 90m
 SCENARIO_CEPHFS_REMOVAL_TIMEOUT ?= 90m
 SCENARIO_RBD_RECEIVERS_TIMEOUT ?= 90m
+SCENARIO_RBD_RECEIVERS_CASE ?= all
 SCENARIO_MULTICLUSTER_GROUP ?= all
 SCENARIO_CEPHFS_REMOVAL_CASE ?= all
 SCENARIO_RGW_SYNC_GROUP ?= all
@@ -33,6 +34,9 @@ TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMon
 MULTICLUSTER_TOPOLOGY_TESTS = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry|RGWEndpoints|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology)|MultiCluster(TopologySnapshotsHonorBusyOwners|MonitorBootstrapRefresh|RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle|CephFSSnapshotMirrorAndBackup|CephFSManagerTopology|RGWMultisite|RGWThreeZoneTopology|RGWMetadataMasterFailover))$$
 SCENARIO_CEPHFS_REMOVAL_TESTS = ^TestMultiCluster(CephFSPeerRemovalDrain|CephFSDirectoryRemovalRelease|CephFSOriginalProcessQuiescence|CephFSOriginalProcessQuiescenceRecovery|CephFSDirectoryAdditionIntent)$$
 SCENARIO_RBD_RECEIVERS_TESTS = ^TestMultiClusterRBDReceiverReadiness$$
+RBD_RECEIVERS_TESTS_all = $(SCENARIO_RBD_RECEIVERS_TESTS)
+RBD_RECEIVERS_TESTS_bridge = ^TestMultiClusterRBDReceiverReadiness$$/^bridge$$
+RBD_RECEIVERS_TESTS_host = ^TestMultiClusterRBDReceiverReadiness$$/^host$$
 
 # Keep the aggregate selectors for local runs. CI selects disjoint shards so
 # unrelated scenarios do not consume each other's Go process timeout.
@@ -197,9 +201,11 @@ scenario-cephfs-removal:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' ./internal/integration
 
 # Receiver readiness and observed snapshot checkpoints use a separate budget.
-# Every scope and bridge/host case uses the explicitly selected scenario layout.
+# Each network keeps all five scopes on its original cluster pair. The local
+# default runs both networks with the original process budget and image layout.
 scenario-rbd-receivers:
-	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_RECEIVERS_TIMEOUT) -run '$(SCENARIO_RBD_RECEIVERS_TESTS)' ./internal/integration
+	@test -n '$(RBD_RECEIVERS_TESTS_$(SCENARIO_RBD_RECEIVERS_CASE))' || { echo 'Unknown SCENARIO_RBD_RECEIVERS_CASE' >&2; exit 1; }
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_RECEIVERS_TIMEOUT) -run '$(RBD_RECEIVERS_TESTS_$(SCENARIO_RBD_RECEIVERS_CASE))' ./internal/integration
 
 scenario-topology-extensions:
 	@test -n '$(TOPOLOGY_EXTENSION_TESTS_$(SCENARIO_TOPOLOGY_EXTENSION_CASE))' || { echo 'Unknown SCENARIO_TOPOLOGY_EXTENSION_CASE' >&2; exit 1; }

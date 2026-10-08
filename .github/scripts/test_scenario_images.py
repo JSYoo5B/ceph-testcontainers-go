@@ -278,7 +278,8 @@ class ScenarioImageTests(unittest.TestCase):
                 ("scenario-multicluster-topology", "group", "SCENARIO_MULTICLUSTER_GROUP"),
                 ("scenario-rgw-sync-fixtures", "group", "SCENARIO_RGW_SYNC_GROUP"),
                 ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE")):
+                ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
+                ("scenario-rbd-receivers", "case", "SCENARIO_RBD_RECEIVERS_CASE")):
             matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
             self.assertIsNotNone(matrix)
             values = [value.strip() for value in matrix.group(1).split(",")]
@@ -292,6 +293,9 @@ class ScenarioImageTests(unittest.TestCase):
                     if target == "scenario-rgw-sync-fixtures" and value == "translation":
                         self.assertEqual(expression.split("/", 1)[1],
                                          "(tag_owner_class|tenant_system_user_isolation)$")
+                    elif target == "scenario-rbd-receivers":
+                        self.assertEqual(expression,
+                                         "^TestMultiClusterRBDReceiverReadiness$/^" + value + "$")
                     else:
                         self.assertNotIn("/", expression)
 
@@ -352,8 +356,15 @@ class ScenarioImageTests(unittest.TestCase):
                     return artifact
                 prepared.append(expand(scalar(prep, "artifact_name")))
                 cleanups.append(expand(scalar(baseline, "artifact_name")))
-        self.assertEqual(len(prepared), 54)
-        self.assertEqual(len(cleanups), 54)
+        # Count the frozen workflow's own matrix dimensions rather than parent
+        # executions: bridge/host legitimately share one receiver parent.
+        expanded_primary_count = sum(
+            len(re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)
+                .group(1).split(","))
+            if re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)
+            else 1 for name in PRIMARY)
+        self.assertEqual(len(prepared), expanded_primary_count)
+        self.assertEqual(len(cleanups), expanded_primary_count)
         compatibility = self.jobs["image-compatibility"]
         baseline = next(step for step in steps(compatibility)
                         if "uses: " + CLEANUP in step and "phase: snapshot" in step)
@@ -370,8 +381,9 @@ class ScenarioImageTests(unittest.TestCase):
             cleanups.append(artifact)
         # The host unit job has no native resources; optional regressions are
         # outside this required cohort. Compatibility still runs twelve cells.
-        self.assertEqual(len(prepared) + len(compatibility_cases) + 1, 67)
-        self.assertEqual(len(cleanups), 66)
+        self.assertEqual(len(prepared) + len(compatibility_cases) + 1,
+                         expanded_primary_count + len(compatibility_cases) + 1)
+        self.assertEqual(len(cleanups), expanded_primary_count + len(compatibility_cases))
         self.assertEqual(len(set(prepared)), len(prepared))
         self.assertEqual(len(set(cleanups)), len(cleanups))
         self.assertFalse(set(prepared) & set(cleanups))
