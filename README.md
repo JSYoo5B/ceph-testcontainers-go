@@ -400,6 +400,11 @@ CephFS peer 제거는 `BeginPeerRemoval`로 원래 peer·daemon cohort를 보존
 
 ## 현재 범위
 
+상태 assertion용으로 [Pool 사용량](docs/POOL_USAGE_CHECK.md)과
+[RGW 사용자·account 저장량](docs/RGW_USER_USAGE.md)을 조회할 수 있습니다.
+Docker 안의 native CLI를 사용하며 Go Ceph SDK/cgo는 필요하지 않습니다.
+비동기 통계와 account 집계 범위를 구분합니다.
+
 MON quorum 상실·복구와 교체, MGR standby 승격, 여러 filesystem의 multi-active MDS·standby/replay 증감, 여러 RGW와 독립 클러스터·mirror/multisite를 구성할 수 있습니다. 기존 역할별 slim 이미지의 PoC에서는 RGW 3 zone과 초기 MGR 제거·standby 승격 후 CephFS mirror 재연결까지 bridge/host에서 검증했습니다. 원본 Quay 이미지의 실행 결과와 각 로그는 [CLUSTER_SCENARIOS.md](docs/CLUSTER_SCENARIOS.md)를 따릅니다. 서버 측 pool·Cephx·namespace·subvolume·사용자 정책은 [CLUSTER_INTERNAL_FEATURES.md](docs/CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
 
 CephFS subvolume snapshot·비동기 clone, RGW placement·storage class, 임시 중앙 config·OSD flag와 in/out 제어도 제공합니다. 클라이언트 테스트에 필요한 서버 조건을 준비하고 원래 설정을 복원하는 API입니다. `make cluster-feature-extensions`로 실제 Linux 클라이언트와 함께 검증하며, 사용법과 복원·부분 실패 계약은 [CLUSTER_FIXTURE_EXTENSIONS.md](docs/CLUSTER_FIXTURE_EXTENSIONS.md)를 확인합니다.

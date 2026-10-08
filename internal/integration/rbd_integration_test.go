@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -32,6 +34,10 @@ func testRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) 
 	execCommand(t, ctx, client, "rbd", "pool", "init", pool)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
+	}
+	nativeStatus, err := cluster.Status(ctx)
+	if err != nil || nativeStatus.FSID == "" {
+		t.Fatalf("read original pool usage cluster identity: status=%+v error=%v", nativeStatus, err)
 	}
 
 	// Explicit create/info/delete checks are separate from import, which creates
@@ -61,6 +67,7 @@ func testRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) 
 	execCommand(t, ctx, client, "rbd", "import", "/tmp/rbd-before", pool+"/original", "--object-size", "1M", "--image-feature", "layering", "--no-progress")
 	verifyRBDInfo(t, ctx, client, pool+"/original", imageSize)
 	verifyRBDBytes(t, ctx, client, pool+"/original", before)
+	importUsage := verifyRBDPoolUsage(t, ctx, cluster, ceph.PoolUsageSnapshot{FSID: nativeStatus.FSID, Name: pool}, imageSize, "after_import")
 	execCommand(t, ctx, client, "rbd", "snap", "create", pool+"/original@baseline")
 	execCommand(t, ctx, client, "rbd", "snap", "protect", pool+"/original@baseline")
 	execCommand(t, ctx, client, "rbd", "clone", pool+"/original@baseline", pool+"/clone", "--image-feature", "layering")
@@ -83,6 +90,7 @@ func testRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) 
 	verifyRBDBytes(t, ctx, client, pool+"/original@baseline", before)
 	verifyRBDBytes(t, ctx, client, pool+"/clone", before)
 	t.Log("RBD: parent, snapshot, and clone bytes survived OSD 2 -> 3 -> 2")
+	verifyRBDPoolUsage(t, ctx, cluster, importUsage, imageSize, "after_topology")
 
 	// Flatten severs the clone's parent dependency. Its bytes must remain intact
 	// after the protected parent snapshot is removed.
@@ -165,4 +173,47 @@ func rbdOutput(t *testing.T, ctx context.Context, client testcontainers.Containe
 		t.Fatalf("%s exited %d: %s", strings.Join(args, " "), code, out)
 	}
 	return out
+}
+
+// PG reports are asynchronous. Retry only a missing usage row or valid lagging
+// counters; malformed/foreign observations and query errors remain failures.
+func verifyRBDPoolUsage(t *testing.T, ctx context.Context, cluster *ceph.Container, expected ceph.PoolUsageSnapshot, minimumBytes uint64, phase string) ceph.PoolUsageSnapshot {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var last ceph.PoolUsageSnapshot
+	var lastErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("%s pool usage did not converge: last=%+v observation_error=%v context=%v", phase, last, lastErr, err)
+		}
+		usage, err := cluster.PoolUsage(ctx, expected.Name)
+		last, lastErr = usage, err
+		if err != nil {
+			// The API currently has no public absence sentinel. Match this single
+			// exact condition; do not hide invalid schema, native identity drift,
+			// transport failure or cancellation under a broad retry policy.
+			if err.Error() != fmt.Sprintf("pool %q usage statistics are not reported", expected.Name) {
+				t.Fatalf("%s pool usage observation failed: %v", phase, err)
+			}
+		} else {
+			if usage.Name != expected.Name || usage.ID <= 0 || usage.FSID != expected.FSID || expected.ID > 0 && usage.ID != expected.ID {
+				t.Fatalf("%s pool usage belongs to a different native identity: got=%+v expected=%+v", phase, usage, expected)
+			}
+			if usage.StoredBytes >= minimumBytes && usage.Objects >= 8 && usage.AllocatedBytes > 0 {
+				if err := ctx.Err(); err != nil {
+					t.Fatalf("%s pool usage context expired at observation: %v", phase, err)
+				}
+				t.Logf("POOL_USAGE_NATIVE phase=%s fsid=%s pool_id=%d pool=%s stored=%d objects=%d allocated=%d valid=true", phase, usage.FSID, usage.ID, usage.Name, usage.StoredBytes, usage.Objects, usage.AllocatedBytes)
+				return usage
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%s pool usage did not converge: last=%+v observation_error=%v context=%v", phase, last, lastErr, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }

@@ -192,6 +192,15 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	if _, err := gateway.Admin(ctx, "account", "stats", "--account-id", account.ID(), "--sync-stats"); err != nil {
 		t.Fatal(err)
 	}
+	// The two roots have different user IDs. Only root 0 wrote an object, but
+	// native user stats for either root aggregate the same account owner.
+	for _, root := range roots {
+		usage, err := gateway.UserUsage(ctx, root)
+		if err != nil || usage.UserID != root.ID() || usage.Tenant != "account_tenant" || usage.Scope != "account" || usage.OwnerID != account.ID() || usage.OwnerID == root.ID() || usage.NumObjects != 1 || usage.SizeBytes != uint64(len(accountPayload)) {
+			t.Fatalf("native account aggregate mislabeled as individual user: usage=%+v error=%v expected_account=%q", usage, err, account.ID())
+		}
+		t.Logf("RGW_USER_USAGE stage=account-after-write scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
+	}
 	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, account, rootClients[1], accountBucketB)
 	if err := gateway.RemoveAccount(ctx, account); err == nil {
 		t.Fatal("nonempty account removed without purge")

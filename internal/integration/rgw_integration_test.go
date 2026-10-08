@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 )
 
 func TestRGWS3(t *testing.T) {
@@ -30,8 +32,16 @@ func TestRGWS3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	user, err := rgw.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-rgw-storage-check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, secret, err := user.Credentials()
+	if err != nil {
+		t.Fatal(err)
+	}
 	client := s3HTTPClient{
-		endpoint: endpoint, accessKey: rgw.AccessKey, secretKey: rgw.SecretKey, region: rgw.Region,
+		endpoint: endpoint, accessKey: access, secretKey: secret, region: rgw.Region,
 		http: &http.Client{Timeout: 45 * time.Second},
 	}
 	const bucket = "/tc-rgw-poc"
@@ -47,6 +57,8 @@ func TestRGWS3(t *testing.T) {
 	if len(buckets.Buckets) != 1 || buckets.Buckets[0].Name != strings.TrimPrefix(bucket, "/") {
 		t.Fatalf("unexpected S3 bucket listing: %+v", buckets)
 	}
+
+	rgwFixtureUserUsage(t, ctx, rgw, user, "zero-before-writes", 0, 0)
 
 	payload := bytes.Repeat([]byte("RGW signed S3 roundtrip\n"), 4096)
 	keys := []string{"payload-0", "payload-1", "nested/payload-2", "nested/payload-3"}
@@ -68,6 +80,7 @@ func TestRGWS3(t *testing.T) {
 	}
 	slices.Sort(keys)
 	verify()
+	rgwFixtureUserUsage(t, ctx, rgw, user, "four-objects", uint64(len(keys)), uint64(len(keys)*len(payload)))
 
 	// Private buckets must reject both unsigned and incorrectly signed requests.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+bucket+"/"+keys[0], nil)
@@ -94,6 +107,7 @@ func TestRGWS3(t *testing.T) {
 		t.Fatal("S3 write/read after topology change changed payload")
 	}
 	t.Log("S3 payloads survived OSD add/remove; new writes/read after replacement succeeded")
+	rgwFixtureUserUsage(t, ctx, rgw, user, "after-topology-five-objects", uint64(len(keys)+1), uint64((len(keys)+1)*len(payload)))
 
 	for _, key := range append(keys, "after-topology") {
 		client.request(t, ctx, http.MethodDelete, bucket+"/"+key, nil, http.StatusNoContent)
@@ -102,8 +116,23 @@ func TestRGWS3(t *testing.T) {
 	if listed := client.listKeys(t, ctx, bucket); len(listed) != 0 {
 		t.Fatalf("S3 delete left objects: %v", listed)
 	}
+	rgwFixtureUserUsage(t, ctx, rgw, user, "zero-after-object-delete", 0, 0)
 	client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
 	t.Log("S3 object deletion, missing-object 404, empty listing and bucket deletion succeeded")
+}
+
+// Explicit synchronization prepares deterministic native accounting for the
+// fixture assertion. UserUsage itself performs only read-only stats queries.
+func rgwFixtureUserUsage(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, user *ceph.RGWUser, stage string, objects, sizeBytes uint64) {
+	t.Helper()
+	if _, err := gateway.Admin(ctx, "user", "stats", "--uid", user.ID(), "--sync-stats"); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := gateway.UserUsage(ctx, user)
+	if err != nil || usage.UserID != user.ID() || usage.Scope != "user" || usage.OwnerID != user.ID() || usage.NumObjects != objects || usage.SizeBytes != sizeBytes {
+		t.Fatalf("native user storage assertion %s: usage=%+v error=%v expected_objects=%d expected_bytes=%d", stage, usage, err, objects, sizeBytes)
+	}
+	t.Logf("RGW_USER_USAGE stage=%s scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", stage, usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 }
 
 // This deliberately small test-only SigV4 client avoids adding a native client
