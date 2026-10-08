@@ -3,7 +3,6 @@ package ceph
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -427,16 +426,10 @@ func (archive *monitorConfigArchive) Exec(ctx context.Context, args []string, _ 
 		return 0, nil, err
 	}
 	archive.execs++
-	if strings.Join(args, " ") != "ceph --connect-timeout 5 quorum_status --format json" || archive.native == nil {
+	if !monitorQuorumTestCommand(args) || archive.native == nil {
 		return 0, nil, errors.New("config refresh invoked an unexpected daemon process")
 	}
-	var header [8]byte
-	header[0] = 1
-	binary.BigEndian.PutUint32(header[4:], uint32(len(archive.native)))
-	var stream bytes.Buffer
-	stream.Write(header[:])
-	stream.Write(archive.native)
-	return 0, &stream, nil
+	return monitorQuorumTestReader(args, 0, archive.native)
 }
 
 func (archive *monitorConfigArchive) Start(context.Context) error {

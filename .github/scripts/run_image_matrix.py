@@ -4,6 +4,7 @@
 An absent image is explicitly pulled for the Docker engine's native platform.
 Existing references are resolved once to local image IDs before invoking make.
 This is module compatibility evidence, not the separate image contract checker.
+Preparation mode resolves those same images without executing compatibility tests.
 """
 
 import argparse
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -55,7 +57,14 @@ def parse_arguments(argv=None):
     parser.add_argument("--release", choices=(RELEASE,), default=RELEASE)
     parser.add_argument("--output-dir", type=Path,
                         help="New directory only; default artifacts/image-matrix-<cell>-<UTC>-<id>")
-    return parser.parse_args(argv)
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="Resolve supplied images without running Go or compatibility tests")
+    parser.add_argument("--github-env", type=Path,
+                        help="Append the four resolved role IDs to this file; requires --prepare-only")
+    args = parser.parse_args(argv)
+    if args.github_env is not None and not args.prepare_only:
+        parser.error("--github-env requires --prepare-only")
+    return args
 
 
 def image_references(variant, layout, release):
@@ -145,6 +154,27 @@ def completed_tests(path, module):
             "package_failure": package_failure, "passed": passed}
 
 
+def append_role_environment(path, environment):
+    if set(environment) != set(ROLE_ENV.values()) or any(
+            not isinstance(value, str) or IMAGE_ID.fullmatch(value) is None
+            for value in environment.values()):
+        raise RuntimeError("prepared environment must contain exactly four immutable role image IDs")
+    content = "".join(name + "=" + environment[name] + "\n" for name in ROLE_ENV.values()).encode("utf-8")
+    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0), 0o600)
+    try:
+        original = os.fstat(descriptor)
+        if not stat.S_ISREG(original.st_mode):
+            raise RuntimeError("GitHub environment output must be a regular file")
+        try:
+            if os.write(descriptor, content) != len(content):
+                raise OSError("incomplete GitHub role environment append")
+        except BaseException:
+            os.ftruncate(descriptor, original.st_size)
+            raise
+    finally:
+        os.close(descriptor)
+
+
 def main(argv=None):
     args = parse_arguments(argv)
     output = args.output_dir or ROOT / "artifacts" / (
@@ -162,12 +192,22 @@ def main(argv=None):
                "cleanup_owner": "Go test fixtures (this runner never prunes Docker resources)",
                "commands": [], "images": {}, "test_command": ["make", "image-compatibility"],
                "test_exit_code": None, "runtime_result": "not_run", "passed": False}
+    if args.prepare_only:
+        summary.update({"scope": "image_preparation", "preparation_passed": False,
+                        "test_command": None,
+                        "cleanup_owner": "caller (image preparation creates no containers or networks)"})
     code = 1
 
     def capture(command):
-        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=60, check=False)
-        summary["commands"].append({"argv": command, "exit_code": result.returncode})
-        return result
+        started = time.monotonic()
+        record = {"argv": command, "exit_code": None}
+        summary["commands"].append(record)
+        try:
+            result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=60, check=False)
+            record["exit_code"] = result.returncode
+            return result
+        finally:
+            record["seconds"] = round(time.monotonic() - started, 3)
 
     def stream(command, name, env=None):
         started = time.monotonic()
@@ -189,13 +229,15 @@ def main(argv=None):
         revision = os.environ.get("GITHUB_SHA")
         if revision and re.fullmatch(r"[a-fA-F0-9]{40}", revision):
             summary["source"]["declared_github_revision"] = revision.lower()
-        for executable in ("go", "make", "docker"):
+        for executable in (("docker",) if args.prepare_only else ("go", "make", "docker")):
             if shutil.which(executable) is None:
                 raise RuntimeError(executable + " is required on the caller's PATH")
-        go = capture(["go", "version"])
-        if go.returncode:
-            raise RuntimeError("caller Go is unavailable")
-        summary["go_version"] = go.stdout.strip()
+        if not args.prepare_only:
+            go = capture(["go", "version"])
+            if go.returncode:
+                raise RuntimeError("caller Go is unavailable")
+            summary["go_version"] = go.stdout.strip()
+        preparation_started = time.monotonic()
         info_result = capture(["docker", "info", "--format", "{{json .}}"])
         if info_result.returncode:
             raise RuntimeError("Docker engine info failed")
@@ -203,6 +245,8 @@ def main(argv=None):
         platform = native_platform(info)
         summary["docker"] = {name: info.get(name) for name in
                              ("ServerVersion", "OSType", "Architecture", "NCPU", "MemTotal")}
+        if args.prepare_only:
+            summary["docker"]["ID"] = info.get("ID")
         summary["platform"] = platform
         if args.platform and args.platform != platform:
             raise RuntimeError("requested platform differs from Docker engine native platform; emulation is not validation")
@@ -240,29 +284,39 @@ def main(argv=None):
             summary["images"][role] = {"reference": reference, "image_id": image_id,
                                       "repo_digests": repo_digests, "platform": platform}
         images = summary["images"]
-        env = os.environ.copy()
-        # Inherited make options can request dry runs or extra goals. This
-        # runner invokes exactly the checked-in compatibility target.
-        for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "GOFLAGS"):
-            env.pop(name, None)
+        summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]
                     for role in ROLE_ENV}
-        summary["test_environment"] = {ROLE_ENV[role]: image for role, image in selected.items()}
-        # A nonempty neutral flag overrides persisted GOENV flags such as
-        # -overlay; preserve normal cache/proxy and Docker connectivity config.
-        summary["test_environment"].update({"CGO_ENABLED": "0", "GOWORK": "off", "GOFLAGS": "-mod=readonly"})
-        env.update(summary["test_environment"])
-        summary["test_exit_code"] = stream(summary["test_command"], "integration.log", env)
-        summary["tests"] = completed_tests(output / "integration.log", summary["source"]["module"])
-        summary["passed"] = summary["test_exit_code"] == 0 and summary["tests"]["passed"]
-        summary["runtime_result"] = "passed" if summary["passed"] else "failed"
-        code = summary["test_exit_code"]
-        if code < 0:
-            code = 128 - code
-        if not summary["passed"]:
-            if not code:
-                code = 1
-            summary["error"] = "compatibility tests did not complete all nine cases without failure or skip"
+        environment = {ROLE_ENV[role]: image for role, image in selected.items()}
+        if args.prepare_only:
+            summary["prepared_environment"] = environment
+            if args.github_env is not None:
+                append_role_environment(args.github_env, environment)
+                summary["github_env"] = {"path": str(args.github_env), "appended_keys": list(ROLE_ENV.values())}
+            summary["preparation_passed"] = True
+            code = 0
+        else:
+            env = os.environ.copy()
+            # Inherited make options can request dry runs or extra goals. This
+            # runner invokes exactly the checked-in compatibility target.
+            for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "GOFLAGS"):
+                env.pop(name, None)
+            summary["test_environment"] = environment
+            # A nonempty neutral flag overrides persisted GOENV flags such as
+            # -overlay; preserve normal cache/proxy and Docker connectivity config.
+            summary["test_environment"].update({"CGO_ENABLED": "0", "GOWORK": "off", "GOFLAGS": "-mod=readonly"})
+            env.update(summary["test_environment"])
+            summary["test_exit_code"] = stream(summary["test_command"], "integration.log", env)
+            summary["tests"] = completed_tests(output / "integration.log", summary["source"]["module"])
+            summary["passed"] = summary["test_exit_code"] == 0 and summary["tests"]["passed"]
+            summary["runtime_result"] = "passed" if summary["passed"] else "failed"
+            code = summary["test_exit_code"]
+            if code < 0:
+                code = 128 - code
+            if not summary["passed"]:
+                if not code:
+                    code = 1
+                summary["error"] = "compatibility tests did not complete all nine cases without failure or skip"
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         summary["error"] = str(error)
         print(str(error), file=sys.stderr)
@@ -272,7 +326,9 @@ def main(argv=None):
         with (output / "summary.json").open("x", encoding="utf-8") as report:
             json.dump(summary, report, indent=2)
             report.write("\n")
-        print("Image matrix result: " + ("PASS" if summary["passed"] else "FAIL") + "; " + str(output), flush=True)
+        label = "Image preparation" if args.prepare_only else "Image matrix"
+        passed = summary["preparation_passed"] if args.prepare_only else summary["passed"]
+        print(label + " result: " + ("PASS" if passed else "FAIL") + "; " + str(output), flush=True)
     return code
 
 

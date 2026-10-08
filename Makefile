@@ -23,6 +23,8 @@ SCENARIO_CEPHFS_REMOVAL_TIMEOUT ?= 90m
 SCENARIO_RBD_RECEIVERS_TIMEOUT ?= 90m
 SCENARIO_MULTICLUSTER_GROUP ?= all
 SCENARIO_CEPHFS_REMOVAL_CASE ?= all
+SCENARIO_RGW_SYNC_GROUP ?= all
+SCENARIO_IMAGE_LAYOUT ?= all
 
 TOPOLOGY_TESTS = ^Test(MonitorManagerTopology|MonitorRollingReplacement|ManagerLifecycle|CephFSMDSScaleTopology|CephFSMDSScaleStandbyReplayTopology|CephFSMultiActiveStandbyFailoverAndFilesystems|CephFSStandbyReplayFailover|RGWTopology|InitialClusterComposition)$$
 TOPOLOGY_EXTENSION_TESTS = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery|(MultiCluster|HostNetwork)(RBDMirrorDaemonTopology|CephFSMirrorDaemonRebalanceTopology|RGWInitialZonegroupsTopology|RGWZonegroupsAndRemovalTopology)|MultiCluster(RBDPeerNetworkInterruption|RGWPeerNetworkTopology))$$
@@ -44,12 +46,18 @@ CEPHFS_REMOVAL_TESTS_process-quiescence = ^TestMultiClusterCephFSOriginalProcess
 CEPHFS_REMOVAL_TESTS_process-recovery = ^TestMultiClusterCephFSOriginalProcessQuiescenceRecovery$$
 CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAdditionIntent$$
 
-# These targets exercise ceph.DefaultImage directly. Clear component image
-# overrides even when inherited from a local custom-image session. General
-# integration/feature targets below continue to honor those overrides.
+# The default clears inherited image overrides and exercises ceph.DefaultImage.
+# CI can explicitly select prepared role images without changing module defaults.
 # Consumer-only overrides (e.g. the cryptsetup RBD image) are outside the required
 # baseline; full client-fixtures remains an explicit optional target.
+ifeq ($(SCENARIO_IMAGE_LAYOUT),roles)
+$(foreach name,CEPH_TEST_IMAGE CEPH_TEST_OSD_IMAGE CEPH_TEST_RGW_IMAGE CEPH_TEST_MDS_IMAGE,$(if $(strip $($(name))),,$(error $(name) is required for SCENARIO_IMAGE_LAYOUT=roles)))
+SCENARIO_TEST_ENV = env CGO_ENABLED=0
+else ifeq ($(SCENARIO_IMAGE_LAYOUT),all)
 SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE CGO_ENABLED=0
+else
+$(error Unknown SCENARIO_IMAGE_LAYOUT)
+endif
 
 # Required fixture profiles also select the default native RBD consumer
 # and the default real Vault backend, independent of custom-image sessions.
@@ -62,6 +70,9 @@ SCENARIO_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedul
 SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
 SCENARIO_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
 SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
+RGW_SYNC_FIXTURE_TESTS_policy = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGWOwnedSyncPolicy)$$
+RGW_SYNC_FIXTURE_TESTS_account = ^Test(HostNetwork)?MultiClusterRGWAccountRootSync$$
+RGW_SYNC_FIXTURE_TESTS_translation = $(SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS)
 
 .PHONY: topology-extensions
 .PHONY: cluster-features
@@ -123,8 +134,8 @@ tag-compile:
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
 
-# Required runtime baseline consumes the pinned default image; no slim/.deb/native
-# image producer is a prerequisite. Tests and clusters execute sequentially.
+# Required scenarios consume selected existing images; the default is Quay all.
+# No image producer is required. Tests and clusters execute sequentially.
 scenario-default:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
 
@@ -178,8 +189,13 @@ scenario-rgw-fixtures:
 # Supported translation children stay separate from strict optional native
 # priority/source-authorization regressions in rgw-sync-native-regressions.
 scenario-rgw-sync-fixtures:
+ifeq ($(SCENARIO_RGW_SYNC_GROUP),all)
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(SCENARIO_RGW_SYNC_FIXTURE_TESTS)' ./internal/integration
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS)' ./internal/integration
+else
+	@test -n '$(RGW_SYNC_FIXTURE_TESTS_$(SCENARIO_RGW_SYNC_GROUP))' || { echo 'Unknown SCENARIO_RGW_SYNC_GROUP' >&2; exit 1; }
+	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '$(RGW_SYNC_FIXTURE_TESTS_$(SCENARIO_RGW_SYNC_GROUP))' ./internal/integration
+endif
 
 # Consume existing client/runner images prepared by the caller.
 # CEPH_TEST_GOCEPH_CLIENT_IMAGE and CEPH_TEST_GOCEPH_RUNNER_IMAGE are required.

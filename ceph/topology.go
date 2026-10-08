@@ -123,12 +123,11 @@ type QuorumStatus struct {
 }
 
 func (c *Container) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
-	var status QuorumStatus
-	data, err := c.Ceph(ctx, "quorum_status", "--format", "json")
-	if err == nil {
-		err = json.Unmarshal(data, &status)
+	control, err := c.ControlContainerContext(ctx)
+	if err != nil {
+		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
 	}
-	return status, err
+	return queryMonitorQuorum(ctx, control)
 }
 
 // WaitForQuorum waits for a majority of the current monmap, including fixtures
@@ -275,9 +274,19 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := c.QuorumStatus(ctx)
-	if err != nil {
-		return err
+	var status QuorumStatus
+	if err := c.poll(ctx, func() (bool, error) {
+		current, err := c.QuorumStatus(ctx)
+		if err != nil {
+			return false, err
+		}
+		if len(current.MonMap.Mons) == 0 {
+			return false, errors.New("native monitor membership map is empty")
+		}
+		status = current
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("inspect monitor %s membership before removal: %w", name, err)
 	}
 	member := false
 	for _, current := range status.MonMap.Mons {
@@ -295,7 +304,7 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 			return errors.New("removing this monitor would lose quorum; add a replacement first")
 		}
 		if _, err := c.Ceph(ctx, "mon", "remove", name); err != nil {
-			return err
+			return fmt.Errorf("remove monitor %s from native membership: %w", name, err)
 		}
 	}
 	// A failed AddMonitor can own a descriptor before any container or map
@@ -303,7 +312,7 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 	// succeeded but Docker cleanup failed. Neither case changes quorum.
 	if mon.Container != nil {
 		if err := mon.Terminate(ctx); !onlyMissingHostResource(err) {
-			return err
+			return fmt.Errorf("terminate removed monitor %s container: %w", name, err)
 		}
 	}
 	// Removing a MON can elect a new leader after the membership command has

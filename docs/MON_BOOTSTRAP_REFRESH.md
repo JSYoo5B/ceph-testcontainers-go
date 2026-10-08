@@ -47,7 +47,53 @@ if err := fsLink.RefreshPeerMonitorConfig(ctx); err != nil {
 
 Native 근거: [RBD bootstrap peer 재사용과 attribute 갱신](https://github.com/ceph/ceph/blob/v20.2.4/src/librbd/api/Mirror.cc#L203-L250), [CephFS bootstrap token과 peer config](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/mirroring/fs/snapshot_mirror.py), [CephFS replayer 초기 remote config](https://github.com/ceph/ceph/blob/v20.2.4/src/tools/cephfs_mirror/PeerReplayer.cc#L239-L274).
 
+## Quorum 조회와 MON 제거 응답
+
+`QuorumStatus`는 control 이미지의 기존 Python 3로 CLI 하위 프로세스를
+관리합니다. 프로세스 실행은 최대 5초이며 Exec와 종료 결과 수신에는 최대
+250ms의 여유를 둡니다. 더 이른 caller deadline을 늘리지 않습니다.
+stdout JSON과 stderr는 각각 1 MiB·64 KiB로 제한해 별도 pipe로 받으며,
+timeout·잘린 출력·비정상 종료·잘못된 supervisor/native schema는 유효한
+관측으로 반환하지 않습니다. deadline 이후 결과도 오류와 zero value로
+반환합니다. CLI의 `--connect-timeout`만으로 command discovery·명령·종료를
+모두 제한할 수 없으므로 새로 시작한 process group을 supervisor가 종료하고
+직접 자식의 종료를 회수합니다. 갑작스러운 caller 취소가 Docker Exec를 먼저
+끝낼 수 있으며, 이때 하위 프로세스의 독립 실행 제한까지는 control 안에서
+남아 있을 수 있습니다. 취소 즉시 프로세스가 종료된다고 보장하지 않습니다.
+
+`RemoveMonitor`는 기존 startup 시간 안에서 사전 quorum 조회만 재시도합니다.
+비어 있지 않은 현재 monmap을 확인해야 이미 없는 member로 판정할 수
+있습니다. 조회가 끝나지 않으면 membership·daemon·설정·cleanup 소유권을
+유지합니다. `mon remove`의 불확실한 응답은 오류로 반환하며 내부에서
+재전송하지 않습니다. 새 context로 명시적으로 `RemoveMonitor`를 재호출하면
+현재 membership을 읽고, 이미 제거된 member의 mutation은 건너뛴 뒤 같은
+owned container의 정리와 config 갱신을 진행합니다. 의도적으로 정지한
+MGR·MDS·RGW를 준비 조회가 시작하거나 재시작하지 않습니다.
+
+Native timeout 근거는 고정 버전의 [Ceph CLI](https://github.com/ceph/ceph/blob/v20.2.4/src/ceph.in#L1000-L1006),
+[command description 조회](https://github.com/ceph/ceph/blob/v20.2.4/src/ceph.in#L1152-L1153),
+[Python timeout 인자](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/rados/rados.pyx)를
+따릅니다. 기존 control/all 이미지 요구사항과 public API·startup 시간은
+유지합니다.
+
 ## 검증
+
+2026-10-08 bounded quorum 조회 수정의 로컬 snapshot을 원본 고정 Quay
+Ceph 20.2.4, Docker Desktop Linux ARM64에서 검증했습니다.
+`TestMonitorRollingReplacement/bridge` 147.82초·`/host` 143.22초와
+`TestRGWS3` 65.55초가 모두 PASS입니다. S3는 bootstrap/owned 자격증명
+양쪽의 전체 data/auth/delete 경로와 owned 사용자 usage 관측 4개를
+확인했습니다. MON은 원래 전체 교체·정지 daemon·cold restart·bytes와
+설정/keyring 판정을 유지했습니다.
+
+`artifacts/monitor-quorum-check-20261008/native-verification.json`은
+실제 프로세스 EXIT0·원본 JSON 로그·이미지 digest/platform·같은 engine의
+신규 리소스 0개와 native 실행 중 source 326개의 동일 SHA256
+`1e0dec31e22a019c1ef76767705d61fd2cd6d6abfaf30de5461e34de694259cf`를
+연결합니다. 이후 host unit fixture의 안전한 자체 종료 보완과 CI/docs
+분할 변경은 이 snapshot의 native 결과에 합산하지 않습니다. 이 focused
+결과를 최신 main 전체 CI나 12개 이미지 matrix의 새 통과로 표시하지
+않습니다.
 
 `TestMultiClusterMonitorBootstrapRefresh/bridge`와 `/host`는 서로 다른 FSID의 두 cluster에서 a,b,c → d,e,f 전체 MON 교체, 중지된 caller client·RBD/CephFS daemon의 explicit local/remote 갱신, 같은 container cold restart, original native identity·keyring·개별 설정 보존을 검사합니다. RBD는 8 MiB 전체 원문과 새 ranged journal write, CephFS는 source에서 독립적으로 읽은 snapshot ID·이름과 destination의 파일·symlink·mode·owner를 비교합니다. Warm destination MGR에서 peer 제거·새 token import도 별도 phase로 검사합니다.
 

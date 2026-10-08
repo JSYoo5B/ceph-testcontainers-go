@@ -46,11 +46,22 @@ func newServiceCluster(t *testing.T, customizers ...testcontainers.ContainerCust
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			if t.Failed() {
-				ctrs := append([]testcontainers.Container{cluster.Container}, cluster.ServiceContainers()...)
+				ctrs := append([]testcontainers.Container{cluster.Container, cluster.ControlContainer()}, cluster.ServiceContainers()...)
+				for _, monitor := range cluster.Monitors() {
+					if monitor != nil && monitor.Container != nil {
+						ctrs = append(ctrs, monitor.Container)
+					}
+				}
 				ctrs = append(ctrs, osdContainers(cluster)...)
+				seen := make(map[string]bool)
 				for _, ctr := range ctrs {
 					if ctr == nil {
 						continue
+					}
+					if id := ctr.GetContainerID(); seen[id] {
+						continue
+					} else {
+						seen[id] = true
 					}
 					logs, err := ctr.Logs(ctx)
 					if err != nil {

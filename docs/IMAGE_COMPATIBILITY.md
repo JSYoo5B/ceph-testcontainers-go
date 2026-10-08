@@ -46,7 +46,7 @@ make image-compatibility
 
 ## 공식·Debian·Ubuntu 이미지 matrix
 
-Go 호환성 matrix는 `official`·`debian`·`ubuntu` 세 계열에 같은 대표 9개 테스트를 적용합니다. 각 계열을 `all` 하나와 네 역할을 조합하는 `roles` 방식으로 나누고, 각각 Linux AMD64·ARM64의 native Docker runner에서 실행합니다. CI는 AMD64에 `ubuntu-24.04`, ARM64에 `ubuntu-24.04-arm`을 사용합니다. Runner 이름은 [GitHub의 native runner 목록](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)을 따릅니다. 총 12개 조합이며 9개 이름을 반복 실행하는 것이지 108개의 서로 다른 테스트를 추가하는 것은 아닙니다. 원본 Quay의 상세 fixture CI 101개는 별도로 유지합니다.
+Go 호환성 matrix는 `official`·`debian`·`ubuntu` 세 계열에 같은 대표 9개 테스트를 적용합니다. 각 계열을 `all` 하나와 네 역할을 조합하는 `roles` 방식으로 나누고, 각각 Linux AMD64·ARM64의 native Docker runner에서 실행합니다. CI는 AMD64에 `ubuntu-24.04`, ARM64에 `ubuntu-24.04-arm`을 사용합니다. Runner 이름은 [GitHub의 native runner 목록](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)을 따릅니다. 총 12개 조합이며 9개 이름을 반복 실행하는 것이지 108개의 서로 다른 테스트를 추가하는 것은 아닙니다. 주요 상세 CI의 필수 parent 119개는 별도 범위입니다.
 
 | 계열 | `all` 입력 | `roles` 입력 |
 |---|---|---|
@@ -67,7 +67,60 @@ make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles \
   IMAGE_PLATFORM=linux/arm64
 ```
 
-각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 8개 시나리오, Go matrix의 9개 대표 테스트, 원본 Quay의 상세 101개 및 SDK 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. CI 실행 설정과 결과 상태는 [CI matrix](CI_FIXTURES.md#이미지-호환성-matrix)를 확인합니다.
+각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 8개 시나리오, Go matrix의 9개 대표 테스트, 상세 CI의 필수 119개 및 선택적 go-ceph 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. CI 실행 설정과 결과 상태는 [CI matrix](CI_FIXTURES.md#이미지-호환성-matrix)를 확인합니다.
+
+## 주요 시나리오의 역할 이미지 선택
+
+CI의 `scenario-*` job은 먼저 자체 Docker resource baseline을 기록하고
+공개 `official-20.2.4-{control,osd,rgw,mds}`를 준비합니다. 같은 Ceph
+upstream 빌드의 역할 조합으로 현재 fixed runtime 계약을 소비합니다.
+이미지를 빌드하거나 계약에 도구를 추가하지 않습니다. Python 준비 단계는
+native platform·로컬 immutable image ID·registry digest를 기록하고,
+확인된 cache miss에 한해 이미지를 pull합니다. 다운로드 시간과 native
+테스트 시간을 구분합니다.
+
+준비 결과의 `scope=image_preparation`, `preparation_passed=true`는
+이미지 선택만 확인합니다. `passed=false`, `runtime_result=not_run`을
+유지하며 Go/native 테스트의 성공으로 표시하지 않습니다. 네 역할을 모두
+검증한 뒤 `CEPH_TEST_*` 네 값만 전달하고, CI는
+`SCENARIO_IMAGE_LAYOUT=roles`로 기존 필수 selector를 실행합니다.
+모든 필수 parent/child·cleanup 판정과 12개 호환성 matrix는 유지합니다.
+
+로컬 `make scenario-*`는 기본 `SCENARIO_IMAGE_LAYOUT=all`로 기존
+원본 Quay를 선택합니다. 준비된 네 역할을 지정하고
+`SCENARIO_IMAGE_LAYOUT=roles`를 명시하면 같은 target을 해당 조합으로
+실행합니다. 역할 값이 하나라도 빠지면 Go 실행 전에 오류로 종료합니다.
+다음 준비 명령 자체는 테스트를 실행하지 않습니다.
+
+```sh
+python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
+  --prepare-only --output-dir artifacts/role-preparation
+```
+
+`summary.json`의 `prepared_environment`에 기록된 네 ID를 환경에 지정한
+뒤 `make scenario-topology SCENARIO_IMAGE_LAYOUT=roles`처럼 실행합니다.
+`--github-env`는 CI가 지정한 환경 파일에 네 값을 기록하는 선택 옵션이며
+`--prepare-only`와 함께만 사용할 수 있습니다.
+
+2026-10-08 로컬 Linux ARM64에서 동일한 MON bridge/host 교체와 RGW
+bootstrap/owned S3·OSD 2→3→2 시나리오를 `all → roles → roles → all`
+순서로 실행했습니다. 네 실행 모두 PASS했고 자체 cleanup의 새
+container/network는 0개였습니다. Native 테스트 시간은 다음과 같습니다.
+
+| 실행 | 원본 Quay all | official roles |
+| --- | ---: | ---: |
+| 첫 비교 | 356.941초 | 359.021초 |
+| 역순 비교 | 373.132초 | 356.386초 |
+| 평균 | 365.037초 | 357.704초 |
+
+이 focused 관측에서는 roles가 평균 7.333초(2.0%) 짧아 주요 CI를
+전환했습니다. Native 입력 178개는 동일했고 각 실행 중 전체 source도
+변경되지 않았습니다. 첫 role 이미지 다운로드·준비 40.751초는 위 테스트
+시간에 포함하지 않았습니다. 두 번의 로컬 관측은 모든 시나리오나 다른
+runner에서의 시간 단축을 보장하지 않습니다. 원문·프로세스 종료·이미지
+identity·source·cleanup을 대조한
+[비교 증거](../artifacts/roles-major-comparison-20261008/focused-comparison-verification.json)를
+보관하며 전체 필수 CI의 결과는 별도로 확인합니다.
 
 ## 추가 소비자 조건
 

@@ -368,7 +368,7 @@ cluster, err := ceph.Run(ctx, "ceph-testcontainers:official-20.2.4-control",
 
 이미지 프로젝트의 `quick`은 구성요소를, `full`은 자체 Docker harness의 기본 서비스와 다중 클러스터 8개 시나리오를 검사합니다. Go 모듈의 토폴로지·fixture·SDK 전체 검증과는 별개입니다. `make image-compatibility`는 준비된 이미지로 Go API 대표 9개 시나리오를 실행하며 역할별 환경 변수도 유지합니다. 사용 예와 역할별 명령 실행 위치, 추가 소비자 도구의 조건은 [IMAGE_COMPATIBILITY.md](docs/IMAGE_COMPATIBILITY.md)에 정리합니다.
 
-공식·GHCR Debian·Ubuntu 이미지에 `all`/역할 조합과 Linux AMD64/ARM64의 [12개 호환성 matrix](docs/IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 적용합니다. 로컬에서는 `make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles`로 현재 Docker 엔진의 native architecture에서 한 조합을 실행합니다. 기존 원본 Quay 상세 CI는 유지하며 추가 SDK 도구는 이 matrix의 서버 이미지 조건에 넣지 않습니다.
+공식·GHCR Debian·Ubuntu 이미지에 `all`/역할 조합과 Linux AMD64/ARM64의 [12개 호환성 matrix](docs/IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 적용합니다. 로컬에서는 `make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles`로 현재 Docker 엔진의 native architecture에서 한 조합을 실행합니다. 주요 CI 시나리오는 준비된 공식 역할 이미지 네 개를 선택하며, 모듈 기본 이미지와 원본 Quay all의 대표 matrix 검증은 유지합니다. 추가 SDK 도구는 서버 이미지 조건에 넣지 않습니다.
 
 ## 다중 클러스터 구성과 PoC
 

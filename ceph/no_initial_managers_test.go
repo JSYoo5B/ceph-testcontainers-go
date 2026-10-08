@@ -301,9 +301,12 @@ func (c *noInitialManagerControl) Terminate(context.Context, ...testcontainers.T
 }
 
 func (c *noInitialManagerControl) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-	call := strings.Join(args[3:], " ")
+	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
 	c.calls = append(c.calls, call)
 	if call == c.fail {
+		if monitorQuorumTestCommand(args) {
+			return monitorQuorumTestReader(args, 1, []byte("PRIVATE-FIRST-MGR-KEY"))
+		}
 		return 1, noInitialOSDStream("PRIVATE-FIRST-MGR-KEY"), nil
 	}
 	var result string
@@ -321,6 +324,9 @@ func (c *noInitialManagerControl) Exec(_ context.Context, args []string, _ ...tc
 		result = c.mgr
 	default:
 		return 1, noInitialOSDStream("unexpected cold-manager test command"), nil
+	}
+	if monitorQuorumTestCommand(args) {
+		return monitorQuorumTestReader(args, 0, []byte(result))
 	}
 	return 0, noInitialOSDStream(result), nil
 }

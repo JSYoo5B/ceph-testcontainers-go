@@ -244,7 +244,8 @@ type poolFixtureContainer struct {
 }
 
 func (ctr *poolFixtureContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-	args = slices.Clone(args[3:]) // ceph --connect-timeout 5 precedes module arguments.
+	commandArgs := args
+	args = slices.Clone(monitorQuorumTestModuleArgs(args))
 	ctr.calls = append(ctr.calls, args)
 	command := strings.Join(args, " ")
 	output := ""
@@ -259,6 +260,9 @@ func (ctr *poolFixtureContainer) Exec(_ context.Context, args []string, _ ...tce
 	code := 0
 	if command == ctr.fail {
 		header[0], code, output = byte(stdcopy.Stderr), 1, "injected command failure"
+	}
+	if monitorQuorumTestCommand(commandArgs) {
+		return monitorQuorumTestReader(commandArgs, code, []byte(output))
 	}
 	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
 	var stream bytes.Buffer

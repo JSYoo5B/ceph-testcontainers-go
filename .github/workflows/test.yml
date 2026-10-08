@@ -45,6 +45,8 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p test_check_runtime_cleanup.py -v
       - name: Check scenario shard coverage without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_shards.py -v
+      - name: Check primary scenario image selection without Docker
+        run: python3 -m unittest discover -s .github/scripts -p test_scenario_images.py -v
 
   image-compatibility:
     name: image / ${{ matrix.variant }} / ${{ matrix.layout }} / ${{ matrix.architecture.name }}
@@ -118,6 +120,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-default
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-default
       - run: make scenario-default
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -146,6 +152,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-topology
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-topology
       - run: make scenario-topology
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -179,6 +189,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-multicluster-${{ matrix.group }}
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-multicluster-${{ matrix.group }}
       - name: Run multicluster shard
         shell: bash
         run: |
@@ -224,6 +238,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-cephfs-removal-${{ matrix.case }}
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-cephfs-removal-${{ matrix.case }}
       - name: Run CephFS removal case
         shell: bash
         run: |
@@ -264,6 +282,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rbd-receivers
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rbd-receivers
       - run: make scenario-rbd-receivers
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -292,6 +314,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-topology-extensions
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-topology-extensions
       - name: Verify Docker bridge endpoint recovery
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
       - name: Run make scenario-topology-extensions
@@ -327,6 +353,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-cluster-fixtures
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-cluster-fixtures
       - name: Run make scenario-cluster-fixtures
         shell: bash
         run: make scenario-cluster-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cluster-fixtures.log"
@@ -361,6 +391,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-cephfs-fixtures
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-cephfs-fixtures
       - name: Run make scenario-cephfs-fixtures
         shell: bash
         run: make scenario-cephfs-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-cephfs-fixtures.log"
@@ -395,6 +429,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rados-fixtures
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rados-fixtures
       - name: Run make scenario-rados-fixtures
         shell: bash
         run: make scenario-rados-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rados-fixtures.log"
@@ -429,6 +467,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rbd-fixtures
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rbd-fixtures
       - name: Run make scenario-rbd-fixtures
         shell: bash
         run: make scenario-rbd-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rbd-fixtures.log"
@@ -463,6 +505,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rgw-fixtures
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rgw-fixtures
       - name: Run make scenario-rgw-fixtures
         shell: bash
         run: make scenario-rgw-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-fixtures.log"
@@ -478,9 +524,14 @@ jobs:
         run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rgw-fixtures.log" --profile scenario-rgw-fixtures
 
   scenario-rgw-sync-fixtures:
+    name: rgw sync / ${{ matrix.group }}
     needs: scenario-default
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [policy, account, translation]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -496,20 +547,34 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-rgw-sync-fixtures
-      - name: Run make scenario-rgw-sync-fixtures
+          artifact_name: runtime-cleanup-rgw-sync-${{ matrix.group }}
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-rgw-sync-${{ matrix.group }}
+      - name: Run RGW sync shard
         shell: bash
-        run: make scenario-rgw-sync-fixtures 2>&1 | tee "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log"
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-rgw-sync-fixtures SCENARIO_RGW_SYNC_GROUP='${{ matrix.group }}' MULTICLUSTER_TIMEOUT=40m 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-rgw-sync-fixtures
+          artifact_name: runtime-cleanup-rgw-sync-${{ matrix.group }}
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-rgw-sync-${{ matrix.group }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
       - name: Identify failed RGW sync fixture cases
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py "$RUNNER_TEMP/scenario-rgw-sync-fixtures.log" --profile scenario-rgw-sync-fixtures
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile 'scenario-rgw-sync-${{ matrix.group }}'
 
   # Linux go-ceph remains an optional supplied-image Make target.
   # Image checker CI is independent of this module and its consumer SDKs.
@@ -564,6 +629,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-mirror-initial-daemons
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-mirror-initial-daemons
       - run: make scenario-mirror-initial-daemons
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -592,6 +661,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rbd-namespaces
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rbd-namespaces
       - run: make scenario-rbd-namespaces
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -620,6 +693,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-storage-bootstrap
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-storage-bootstrap
       - run: make scenario-storage-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -648,6 +725,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-manager-bootstrap
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-manager-bootstrap
       - run: make scenario-manager-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -676,6 +757,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-rbd-namespace-observation
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-rbd-namespace-observation
       - run: make scenario-rbd-namespace-observation
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -704,6 +789,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-mds-bootstrap
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-mds-bootstrap
       - run: make scenario-mds-bootstrap
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -732,6 +821,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-mds-replacement
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-mds-replacement
       - run: make scenario-mds-replacement
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
@@ -760,6 +853,10 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-last-mds-replacement
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-scenario-last-mds-replacement
       - run: make scenario-last-mds-replacement
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}

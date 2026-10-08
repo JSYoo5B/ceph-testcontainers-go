@@ -31,7 +31,7 @@ func (c *waitContextControl) Exec(ctx context.Context, args []string, opts ...tc
 	if c.after != nil {
 		c.after(args)
 	}
-	if c.failure != nil && strings.Join(args[3:], " ") == c.failureQuery {
+	if c.failure != nil && strings.Join(monitorQuorumTestModuleArgs(args), " ") == c.failureQuery {
 		return 0, nil, c.failure
 	}
 	return code, reader, err
@@ -288,7 +288,7 @@ func TestWaitContextLateReadyCancellationNeverPublishesSuccess(t *testing.T) {
 			defer cancel()
 			reached := false
 			f.control.after = func(args []string) {
-				if strings.Join(args[3:], " ") == f.finalQuery {
+				if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
 					reached = true
 					cancel()
 				}
@@ -313,7 +313,7 @@ func TestWaitContextCloneLateCancellationPreservesSharedHandle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f.control.after = func(args []string) {
-		if strings.Join(args[3:], " ") == f.finalQuery {
+		if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
 			cancel()
 		}
 	}
@@ -334,7 +334,7 @@ func TestWaitContextCleanRetainsInitialOwnedCount(t *testing.T) {
 	f := newWaitContextFixture(t, "Clean")
 	original := f.cluster.osds[0]
 	f.control.after = func(args []string) {
-		if strings.Join(args[3:], " ") == f.finalQuery {
+		if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
 			f.cluster.osds[1] = &OSDContainer{ID: 1}
 		}
 	}
@@ -352,7 +352,7 @@ func TestWaitContextCanceledProbeRetainsNativeCause(t *testing.T) {
 			cause := errors.New("injected final native probe failure")
 			f.control.failureQuery, f.control.failure = f.finalQuery, cause
 			f.control.after = func(args []string) {
-				if strings.Join(args[3:], " ") == f.finalQuery {
+				if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
 					cancel()
 				}
 			}
@@ -384,7 +384,7 @@ func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
 			entered := make(chan struct{})
 			var signal sync.Once
 			f.control.after = func(args []string) {
-				if strings.Join(args[3:], " ") == query {
+				if strings.Join(monitorQuorumTestModuleArgs(args), " ") == query {
 					signal.Do(func() { close(entered) })
 				}
 			}

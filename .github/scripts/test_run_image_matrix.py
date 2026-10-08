@@ -166,6 +166,146 @@ class MatrixTests(unittest.TestCase):
             self.assertNotIn(name, self.runtime.make_environment)
         self.assertFalse(any(runner.OFFICIAL_IMAGE in command for command in self.runtime.capture_commands))
 
+    def test_prepare_roles_exports_only_four_ids_after_all_images_validate(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        self.runtime.info["ID"] = "native-engine"
+        self.runtime.go_code = 9
+        original_capture = self.runtime.capture
+
+        def capture(command, **kwargs):
+            self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+            return original_capture(command, **kwargs)
+
+        self.runtime.capture = capture
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(env_file)],
+                                     env={"GITHUB_SHA": "a" * 40, "GOFLAGS": "-overlay=unrelated"},
+                                     missing_executable="go"), 0)
+        report = self.summary()
+        self.assertEqual(report["scope"], "image_preparation")
+        self.assertTrue(report["preparation_passed"])
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertIsNone(report["test_exit_code"])
+        self.assertIsNone(report["test_command"])
+        self.assertNotIn("tests", report)
+        self.assertNotIn("go_version", report)
+        self.assertNotIn("test_environment", report)
+        self.assertEqual(report["docker"]["ID"], "native-engine")
+        self.assertEqual(report["source"]["declared_github_revision"], "a" * 40)
+        self.assertEqual(len(report["images"]), 4)
+        self.assertEqual(report["image_builds"], 0)
+        self.assertGreaterEqual(report["image_preparation_seconds"], 0)
+        for command in report["commands"]:
+            self.assertGreaterEqual(command["seconds"], 0)
+            self.assertEqual(command["argv"][0], "docker")
+        self.assertEqual(len(self.runtime.capture_commands), 5)
+        self.assertFalse(self.runtime.stream_commands)
+        self.assertIsNone(self.runtime.make_environment)
+        self.assertFalse((self.output / "integration.log").exists())
+        expected = {runner.ROLE_ENV[role]: image["image_id"] for role, image in report["images"].items()}
+        lines = env_file.read_text().splitlines()
+        self.assertEqual(lines[0], "EXISTING=keep")
+        self.assertEqual(dict(line.split("=", 1) for line in lines[1:]), expected)
+        self.assertEqual(len(lines), 5)
+        self.assertEqual(report["prepared_environment"], expected)
+        self.assertEqual(report["github_env"]["appended_keys"], list(runner.ROLE_ENV.values()))
+
+    def test_prepare_late_role_failure_never_appends_environment(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        reference = runner.REGISTRY + ":official-20.2.4-mds"
+        self.runtime.inspect_overrides[reference] = {"Architecture": "amd64"}
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(env_file)]), 1)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        report = self.summary()
+        self.assertEqual(set(report["images"]), {"control", "osd", "rgw"})
+        self.assertFalse(report["preparation_passed"])
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertNotIn("github_env", report)
+        self.assertFalse(self.runtime.stream_commands)
+
+    def test_prepare_absent_role_only_pulls_native_image_and_never_make(self):
+        reference = runner.REGISTRY + ":official-20.2.4-osd"
+        self.runtime.missing.add(reference)
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles"], missing_executable="make"), 0)
+        self.assertEqual(self.runtime.stream_commands,
+                         [["docker", "pull", "--platform", "linux/arm64", reference]])
+        inspected = [command[-1] for command in self.runtime.capture_commands
+                     if command[1:3] == ["image", "inspect"]]
+        self.assertEqual(inspected.count(reference), 2)
+        self.assertEqual(len(inspected), 5)
+        self.assertEqual(set(self.summary()["prepared_environment"]), set(runner.ROLE_ENV.values()))
+        self.assertFalse((self.output / "integration.log").exists())
+
+    def test_prepare_platform_mismatch_never_exports_or_inspects(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        self.assertEqual(self.invoke(["--prepare-only", "--platform", "linux/amd64",
+                                     "--github-env", str(env_file)]), 1)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        self.assertEqual(self.runtime.capture_commands, [["docker", "info", "--format", "{{json .}}"]])
+        self.assertFalse(self.runtime.stream_commands)
+        self.assertFalse(self.summary()["preparation_passed"])
+
+    def test_github_env_is_rejected_without_prepare_before_tools_or_output(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        with self.assertRaises(SystemExit) as error:
+            self.invoke(["--github-env", str(env_file)])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.runtime.capture_commands)
+        self.assertFalse(self.runtime.stream_commands)
+
+    def test_prepare_does_not_implicitly_write_inherited_github_env(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        self.assertEqual(self.invoke(["--prepare-only"], env={"GITHUB_ENV": str(env_file)}), 0)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        self.assertNotIn("github_env", self.summary())
+        self.assertEqual(len(set(self.summary()["prepared_environment"].values())), 1)
+
+    def test_export_rejects_other_keys_or_nonimmutable_values_without_appending(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        valid = {name: "sha256:" + "a" * 64 for name in runner.ROLE_ENV.values()}
+        invalid = [valid | {"GOFLAGS": "-overlay=unrelated"},
+                   {key: value for key, value in valid.items() if key != "CEPH_TEST_MDS_IMAGE"},
+                   valid | {"CEPH_TEST_IMAGE": "sha256:" + "a" * 64 + "\nOTHER=bad"},
+                   valid | {"CEPH_TEST_IMAGE": None}]
+        for environment in invalid:
+            with self.subTest(environment=environment), self.assertRaises(RuntimeError):
+                runner.append_role_environment(env_file, environment)
+            self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+
+    def test_prepare_invalid_digest_metadata_never_appends_environment(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        reference = runner.REGISTRY + ":official-20.2.4-mds"
+        self.runtime.inspect_overrides[reference] = {"RepoDigests": [reference + "@mutable"]}
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(env_file)]), 1)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        self.assertIn("invalid registry digest metadata", self.summary()["error"])
+        self.assertNotIn("github_env", self.summary())
+
+    def test_prepare_environment_write_failure_is_reported_without_runtime_success(self):
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(self.root)]), 1)
+        report = self.summary()
+        self.assertEqual(len(report["images"]), 4)
+        self.assertFalse(report["preparation_passed"])
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertNotIn("github_env", report)
+
+    def test_environment_partial_write_is_rolled_back(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        original_write = os.write
+
+        def partial_write(descriptor, content):
+            return original_write(descriptor, content[:10])
+
+        with mock.patch.object(runner.os, "write", side_effect=partial_write):
+            self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(env_file)]), 1)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        self.assertFalse(self.summary()["preparation_passed"])
+        self.assertEqual(self.summary()["runtime_result"], "not_run")
+
     def test_only_missing_image_is_pulled_for_native_platform_and_reinspected(self):
         reference = runner.REGISTRY + ":debian-20.2.4-all"
         self.runtime.missing.add(reference)

@@ -2,14 +2,14 @@
 
 현재 필수 compiled 선택은 Q stopped-MDS source의 실제 118개에
 `TestLastMDSReplacementTopology` 한 parent만 추가한 **119개**입니다. 기본 14개,
-필수 internal 117개와 SDK 전체 11개 중 선택 2개·기존 selector를 실제 완료된
+필수 `internal/integration` 117개와 `internal/dockerbridge` runtime 2개·기존 selector를 실제 완료된
 [compiled 목록](../artifacts/last-mds-replacement-20261008/compiled-selection.json)에서
 확인했습니다. 새 `scenario-last-mds-replacement`는 Go 50분/job 60분의 독립 profile이며
 원본 Quay Linux ARM64의 독립 bridge/host 실행은 3개 RUN/PASS·223.931초와
 자체 cleanup의 새 container/network 0개를 확인했습니다. Q118/P117/O116/N115/M114와
 whole CI101은 해당 source의 역사적 증거로 보존하며 새 전체 CI PASS로 합산하지 않습니다.
 
-Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용합니다. O source의 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
+이전 O source는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용했습니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
 분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 fixture profile·48개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
@@ -18,6 +18,13 @@ Go 필수 CI는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2
 소비자 Dockerfile의 package 복사 누락을 수정한 source `73cc4ae34ed165bd1438d88fa0e62cbbc9aef296`의 [후속 전체 CI 37180395289](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37180395289)는 2026-10-04 05:36:43 UTC에 시작했으며 첫 관측은 queued 상태였습니다. 첫 run과 별도로 추적한 당시의 중간 관측이며, 새 fixture 전체의 terminal 성공 증거가 아닙니다.
 
 앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 이 시작 기록만으로 전체 필수 CI 성공을 판정하지 않습니다.
+
+현재 주요 CI는 공식 역할 이미지 네 개를 검증해 immutable ID로 선택합니다.
+모듈의 기본 `ceph.DefaultImage`와 원본 Quay all의 대표 matrix는 유지합니다.
+이미지 준비 artifact는 native 테스트 성공을 뜻하지 않으며 각 job의 실제
+Go 결과·이미지 identity·자체 cleanup을 함께 확인합니다. 선택 방식은
+[이미지 호환성 문서](IMAGE_COMPATIBILITY.md#주요-시나리오의-역할-이미지-선택)를
+따릅니다. Native go-ceph 소비자 probe는 필수 119개에 포함하지 않습니다.
 
 ## 이전 전체 CI 결과
 
@@ -51,7 +58,7 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 
 ## 실행 경로와 시간 제한
 
-현재 CI job과 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을 사용합니다. 이전 실행의 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존합니다. 이름 변경은 필수 selector·timeout·이미지 선택을 변경하지 않으며, 기본 상세 시나리오는 계속 `ceph.DefaultImage`를 사용합니다.
+현재 CI job과 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을 사용합니다. 이전 실행의 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존합니다. 로컬 Make 기본 실행은 `ceph.DefaultImage`를 사용하고, 주요 CI는 준비된 공식 역할 이미지 네 개를 명시적으로 선택합니다. 이 선택은 기존 이미지 runtime 계약과 필수 selector·판정을 유지하며, 이전 Quay 실행의 결과를 새 역할 이미지 결과로 표시하지 않습니다.
 
 [workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
@@ -63,6 +70,21 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 결과도 수집합니다. 컴파일된 실제 이름을 이용하는 selector 검사는 분할의
 중복·누락·빈 선택과 잘못된 shard 인자를 거부합니다.
 
+RGW sync의 기존 7개 parent는 `policy` 3개, `account` 2개,
+`translation` 2개의 독립 job으로 실행합니다. CI는 각 Go 실행에 40분,
+cleanup을 포함한 job에 50분을 둡니다. Translation의 기존
+`tag_owner_class`·`tenant_system_user_isolation` 하위 검증은 그대로
+실행하고 선택적 native regression 경로는 기존처럼 별도입니다.
+로컬 `SCENARIO_RGW_SYNC_GROUP=all`은 기존 두 Go 명령과 기본 60분
+제한을 유지합니다.
+
+분할 근거인 `e31968e` RGW sync job은 전체 68분 14초였으며, 두 Go
+package가 각각 2882.202초·1175.122초를 사용했습니다. 기존 75분 job
+여유는 6분 46초였습니다. 같은 native 검증을 group별로 나누면 앞선
+시나리오의 시간이 뒤 시나리오의 실행·cleanup 시간을 소진하지 않습니다.
+이 추가 분할 후 필수 job은 42개, 자체 cleanup은 41쌍입니다.
+Distinct parent 119개와 이미지 matrix 12개×9개는 유지합니다.
+
 이 분할은 source `27e9338`의 [run 37672475341](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37672475341)에서
 확인한 누적 시간 제한에 대응합니다. Multicluster는 앞선 18개 PASS가
 86.24분을 사용한 뒤 다음 parent 실행 중 90분 package 제한에 도달했고,
@@ -71,6 +93,23 @@ CephFS removal은 앞선 4개 PASS가 77.05분을 사용한 뒤 마지막 parent
 표시하거나 분할 후 성공한 것으로 간주하지 않습니다. 해당 실행의 공식·
 Debian·Ubuntu 이미지 matrix 12개는 모두 성공했습니다.
 
+분리 커밋 `e31968e`의 [run 37704685360](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37704685360)은
+2026-10-08에 전체 SUCCESS로 끝났습니다. 필수 job 40개, 실제 RUN/PASS
+parent 119개, 이미지 matrix 12개×대표 parent 9개와 자체 cleanup 39쌍을
+원본 source·run·job·artifact 및 Docker engine/ID로 대조했습니다.
+필수 119개는 `internal/integration` 117개와 `internal/dockerbridge`의
+runtime parent 2개입니다. 별도 선택 실행인 `goceph-linux` 소비자 probe의
+성공을 포함하지 않습니다. 이후 Check 추가 커밋 `457473e`의
+[run 37708580179](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37708580179)은
+MON rolling replacement의 bridge `RemoveMonitor` 호출에서 실패했으므로
+앞선 전체 성공을 최신 main의 결과로 합산하지 않습니다. 해당 native
+조회·제거 응답의 처리 계약은 [MON 재연결 문서](MON_BOOTSTRAP_REFRESH.md)를 따릅니다.
+이 실행의 terminal 결과는 FAILURE이며 필수 job은 39개 SUCCESS·1개
+FAILURE입니다. 실제 parent 119개가 실행돼 118개 PASS·1개 FAIL이고,
+RGW sync는 64분 3초로 SUCCESS였습니다. RGW sync의 추가 분할은
+이 실행에서 관측되지 않은 timeout 실패를 주장하는 변경이 아니라,
+두 Go 실행이 공유하던 job 예산을 분리하는 변경입니다.
+
 로컬 aggregate target과 기본 90분 제한은 유지합니다. 일부 시나리오만
 실행하려면 다음과 같이 선택합니다. 테스트 간 병렬 실행은 독립 Docker
 엔진을 사용하는 CI job에서 수행합니다.
@@ -78,6 +117,7 @@ Debian·Ubuntu 이미지 matrix 12개는 모두 성공했습니다.
 ```sh
 make scenario-multicluster-topology SCENARIO_MULTICLUSTER_GROUP=rgw
 make scenario-cephfs-removal SCENARIO_CEPHFS_REMOVAL_CASE=process-recovery
+make scenario-rgw-sync-fixtures SCENARIO_RGW_SYNC_GROUP=translation
 ```
 
 각 shard는 자체 resource baseline·cleanup·테스트 로그 artifact를 남깁니다.
@@ -96,7 +136,7 @@ engine·resource ID·동일 engine baseline 검사를 별도로 수행합니다.
 | `scenario-rados-fixtures` | 4 | 120분 | 130분 | SUCCESS · 4/4 PASS · skip 0 | SUCCESS · 4/4 PASS · fail/skip 0 |
 | `scenario-rbd-fixtures` | 6 | 120분 | 130분 | SUCCESS · 6/6 PASS · skip 0 | SUCCESS · 6/6 PASS · fail/skip 0 |
 | `scenario-rgw-fixtures` | 14 | 120분 | 130분 | SUCCESS · 14/14 PASS · skip 0 | SUCCESS · 14/14 PASS · fail/skip 0 |
-| `scenario-rgw-sync-fixtures` | 7 | 각 Go 명령 60분, 두 명령 실행 | 75분 | FAILURE · RUN 5 / PASS 3 / FAIL 2 / 미실행 2 · skip 0 | SUCCESS · 7/7 PASS · fail/skip 0 |
+| `scenario-rgw-sync-fixtures` | 7 | CI group별 40분, 로컬 all 각 명령 60분 | group별 50분 | FAILURE · RUN 5 / PASS 3 / FAIL 2 / 미실행 2 · skip 0 | SUCCESS · 7/7 PASS · fail/skip 0 |
 | 추가 필수 합계 | 47 | | | 43 PASS / 2 FAIL / 2 미실행 · skip 0 | 47/47 PASS · fail/skip 0 |
 | `scenario-goceph-linux` · 선택 실행 | 1 | native integration runner 40분 | 기본 CI job 없음 | caller가 client/runner 준비 | 필수 CI 완료 범위 밖 |
 
@@ -135,7 +175,7 @@ Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)�
 
 ## 이미지 호환성 matrix
 
-원본 Quay 상세 경로에 더해 [workflow](../.github/workflows/test.yml)의 `image-compatibility` job이 공식·GHCR Debian·Ubuntu 이미지에 같은 대표 9개 Go 테스트를 적용합니다. 세 계열 × `all`/`roles` × Linux AMD64/ARM64, 총 12개 조합입니다. `fail-fast: false`로 한 조합의 실패가 다른 조합의 결과 수집을 취소하지 않으며 각 job의 제한은 50분입니다. AMD64는 `ubuntu-24.04`, ARM64는 `ubuntu-24.04-arm`의 native Docker 엔진에서 실행하고 에뮬레이션 성공으로 다른 architecture를 지원한다고 표시하지 않습니다.
+주요 공식 역할 이미지 상세 경로에 더해 [workflow](../.github/workflows/test.yml)의 `image-compatibility` job이 공식·GHCR Debian·Ubuntu 이미지에 같은 대표 9개 Go 테스트를 적용합니다. 세 계열 × `all`/`roles` × Linux AMD64/ARM64, 총 12개 조합입니다. `fail-fast: false`로 한 조합의 실패가 다른 조합의 결과 수집을 취소하지 않으며 각 job의 제한은 50분입니다. AMD64는 `ubuntu-24.04`, ARM64는 `ubuntu-24.04-arm`의 native Docker 엔진에서 실행하고 에뮬레이션 성공으로 다른 architecture를 지원한다고 표시하지 않습니다.
 
 | 계열 | `all` 방식 | `roles` 방식 | platform별 선택 수 |
 |---|---|---|---:|

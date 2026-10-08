@@ -30,7 +30,7 @@ type replacementMDSControl struct {
 }
 
 func (n *replacementMDSControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-	call := strings.Join(args[3:], " ")
+	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
 	if n.before != nil {
 		n.before(call)
 	}

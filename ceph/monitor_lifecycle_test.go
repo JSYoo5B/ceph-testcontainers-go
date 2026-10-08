@@ -3,7 +3,6 @@ package ceph
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -188,6 +187,94 @@ func TestAddMonitorRejectsForeignMembershipBeforeCreatingResources(t *testing.T)
 	}
 }
 
+func TestMonitorRemovalRetriesBlockedPreflightReadWithinOriginalBudget(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c", "replacement"}, quorum: []string{"a", "b", "c", "replacement"}}
+	cluster := monitorLifecycleFixture(control)
+	cluster.settings.startupTimeout = 7 * time.Second
+	daemon := &monitorLifecycleDaemon{}
+	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b"}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	started := time.Now()
+	control.quorumHook = func(attempt context.Context, count int) error {
+		if count != 1 {
+			return nil
+		}
+		deadline, ok := attempt.Deadline()
+		if !ok || deadline.After(started.Add(monitorQuorumProcessTimeout+monitorQuorumExecCushion+100*time.Millisecond)) {
+			t.Fatal("preflight used the entire operation budget for one native read")
+		}
+		<-attempt.Done()
+		if ctx.Err() != nil {
+			t.Fatal("one blocked read consumed the caller's operation budget")
+		}
+		return attempt.Err()
+	}
+	if err := cluster.RemoveMonitor(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if control.quorumReads != 3 || control.removals != 1 || control.copies != 1 || daemon.terminations != 1 || daemon.starts != 0 || cluster.monitors["b"] != nil || time.Since(started) >= cluster.settings.startupTimeout {
+		t.Fatalf("safe read retry repeated mutation, restarted a daemon or exceeded budget: reads=%d removes=%d copies=%d terminations=%d starts=%d elapsed=%s", control.quorumReads, control.removals, control.copies, daemon.terminations, daemon.starts, time.Since(started))
+	}
+	if strings.Count(string(cluster.config), "[v2:") != 3 {
+		t.Fatal("successful retry did not publish the exact surviving native map")
+	}
+}
+
+func TestMonitorRemovalSustainedPreflightTimeoutHasNoEffects(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
+	cluster := monitorLifecycleFixture(control)
+	cluster.settings.startupTimeout = 40 * time.Millisecond
+	daemon := &monitorLifecycleDaemon{}
+	owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
+	cluster.monitors["b"] = owned
+	before := bytes.Clone(cluster.config)
+	control.quorumHook = func(attempt context.Context, _ int) error {
+		<-attempt.Done()
+		return attempt.Err()
+	}
+	err := cluster.RemoveMonitor(t.Context(), "b")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "membership before removal") || cluster.monitors["b"] != owned || control.removals != 0 || control.copies != 0 || daemon.terminations != 0 || daemon.starts != 0 || !bytes.Equal(before, cluster.config) {
+		t.Fatalf("blocked preflight lost its deadline or changed owned state: %v", err)
+	}
+}
+
+func TestMonitorRemovalUncertainMutationIsNotResent(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}, removalErr: context.DeadlineExceeded}
+	cluster := monitorLifecycleFixture(control)
+	daemon := &monitorLifecycleDaemon{}
+	owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
+	cluster.monitors["b"] = owned
+	before := bytes.Clone(cluster.config)
+	err := cluster.RemoveMonitor(t.Context(), "b")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "native membership") || control.removals != 1 || daemon.terminations != 0 || control.copies != 0 || cluster.monitors["b"] != owned || !bytes.Equal(before, cluster.config) {
+		t.Fatalf("uncertain membership reply was retried or published cleanup: %v", err)
+	}
+	// The server committed, but the first client received no successful reply.
+	// Only an explicit fresh call may observe absence and complete owned cleanup.
+	control.removalErr = nil
+	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+		t.Fatal(err)
+	}
+	if control.removals != 1 || daemon.terminations != 1 || daemon.starts != 0 || control.copies != 1 || cluster.monitors["b"] != nil || slices.Contains(control.members, "b") {
+		t.Fatal("explicit retry resent the committed mutation or lost cleanup ownership")
+	}
+}
+
+func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{}, quorum: []string{}}
+	cluster := monitorLifecycleFixture(control)
+	cluster.settings.startupTimeout = 40 * time.Millisecond
+	daemon := &monitorLifecycleDaemon{}
+	owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
+	cluster.monitors["b"] = owned
+	before := bytes.Clone(cluster.config)
+	err := cluster.RemoveMonitor(t.Context(), "b")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "membership map is empty") || cluster.monitors["b"] != owned || control.removals != 0 || control.copies != 0 || daemon.terminations != 0 || daemon.starts != 0 || !bytes.Equal(before, cluster.config) {
+		t.Fatalf("empty membership was treated as authoritative absence and changed owned state: %v", err)
+	}
+}
+
 func monitorLifecycleFixture(control *monitorLifecycleControl) *Container {
 	control.config = []byte("[global]\nmon host = old\n")
 	return &Container{Container: control, monitors: make(map[string]*MonitorContainer),
@@ -198,6 +285,7 @@ type monitorLifecycleDaemon struct {
 	testcontainers.Container
 	terminateErr error
 	terminations int
+	starts       int
 }
 
 func (daemon *monitorLifecycleDaemon) Terminate(context.Context, ...testcontainers.TerminateOption) error {
@@ -207,6 +295,11 @@ func (daemon *monitorLifecycleDaemon) Terminate(context.Context, ...testcontaine
 
 func (daemon *monitorLifecycleDaemon) GetContainerID() string { return "removed-monitor" }
 
+func (daemon *monitorLifecycleDaemon) Start(context.Context) error {
+	daemon.starts++
+	return errors.New("intentionally stopped daemon must not restart")
+}
+
 type monitorLifecycleControl struct {
 	testcontainers.Container
 	members, quorum, calls []string
@@ -214,6 +307,9 @@ type monitorLifecycleControl struct {
 	afterRemoval           []monitorLifecycleRead
 	copyErr                error
 	config                 []byte
+	quorumReads            int
+	quorumHook             func(context.Context, int) error
+	removalErr             error
 }
 
 type monitorLifecycleRead struct {
@@ -225,12 +321,18 @@ func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string,
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
-	call := strings.Join(args[3:], " ")
+	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
 	control.calls = append(control.calls, call)
 	var output []byte
 	exitCode := 0
 	switch {
 	case call == "quorum_status --format json":
+		control.quorumReads++
+		if control.quorumHook != nil {
+			if err := control.quorumHook(ctx, control.quorumReads); err != nil {
+				return 0, nil, err
+			}
+		}
 		nativeMembers, nativeQuorum := control.members, control.quorum
 		if control.removals != 0 && len(control.afterRemoval) != 0 {
 			read := control.afterRemoval[0]
@@ -256,16 +358,13 @@ func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string,
 		control.members = slices.DeleteFunc(control.members, func(member string) bool { return member == name })
 		control.quorum = slices.DeleteFunc(control.quorum, func(member string) bool { return member == name })
 		control.removals++
+		if control.removalErr != nil {
+			return 0, nil, control.removalErr
+		}
 	default:
 		return 0, nil, errors.New("unexpected monitor CLI call: " + call)
 	}
-	var stream bytes.Buffer
-	header := make([]byte, 8)
-	header[0] = 1
-	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
-	stream.Write(header)
-	stream.Write(output)
-	return exitCode, &stream, nil
+	return monitorQuorumTestReader(args, exitCode, output)
 }
 
 func (control *monitorLifecycleControl) GetContainerID() string { return "control" }

@@ -35,7 +35,7 @@ func (n *stoppedMDSControl) Exec(ctx context.Context, args []string, _ ...tcexec
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
-	call := strings.Join(args[3:], " ")
+	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
 	n.calls = append(n.calls, call)
 	var output string
 	switch {
@@ -63,6 +63,9 @@ func (n *stoppedMDSControl) Exec(ctx context.Context, args []string, _ ...tcexec
 	code := 0
 	if n.fail == call {
 		code, output = 1, "never-log-stopped-mds-native-secret"
+	}
+	if monitorQuorumTestCommand(args) {
+		return monitorQuorumTestReader(args, code, []byte(output))
 	}
 	var header [8]byte
 	header[0] = byte(stdcopy.Stdout)

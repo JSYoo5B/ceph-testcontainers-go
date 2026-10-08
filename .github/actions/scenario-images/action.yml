@@ -1,0 +1,24 @@
+name: Prepare published Ceph role images
+description: Resolve existing native role images for a scenario without building them
+inputs:
+  artifact_name:
+    description: Unique image identity artifact name for this scenario job
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Resolve native role image identities
+      shell: bash
+      run: |
+        python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
+          --variant official --layout roles --prepare-only \
+          --platform linux/amd64 --github-env "$GITHUB_ENV" \
+          --output-dir artifacts/scenario-images
+        printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' >> "$GITHUB_ENV"
+    - name: Save selected image identities
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: artifacts/scenario-images/
+        if-no-files-found: error
