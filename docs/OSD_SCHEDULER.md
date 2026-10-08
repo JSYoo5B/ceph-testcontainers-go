@@ -1,8 +1,10 @@
 # 테스트 fixture의 OSD scheduler 검토
 
-2026-10-08의 동일 환경 3쌍 반복 실험에서는 WPQ 전환으로 시간을 줄인다는
-근거를 얻지 못했다. 현재 기본 scheduler를 유지하며, 모든 시나리오에 WPQ를
-강제하거나 기존 timeout·assertion을 바꾸지 않는다.
+2026-10-08의 첫 3쌍 반복 실험에서는 기본 설정의 WPQ가 기본 mClock보다 느렸다.
+별도 WPQ 튜닝 비교에서는 HDD recovery sleep 두 값을 0으로 설정했을 때
+backfill과 recovery 구간이 빨라졌다. 첫 비교로 튜닝한 WPQ까지 불리하다고
+판단할 수 없다. 공통 suite의 기본 scheduler는 유지하며 선택한 fixture에서
+설정의 효과를 검증한다.
 
 Ceph의 mClock은 client I/O와 recovery 등 작업 종류별 자원을 조절한다.
 `osd_op_queue`를 WPQ로 바꾸는 것은 다른 queue와 관련 설정을 선택하는 변경이며
@@ -65,6 +67,55 @@ RGW policy의 의도적인 미복제 확인 시간과 RBD receiver의 election·
 관측 시간은 별도다. 이번 OSD 결과로 그 대기를 줄일 수 있다고 주장하지 않는다.
 독립 fixture를 runner별로 분리하는 [CI 구성](CI_FIXTURES.md)을 계속 사용한다.
 
+## WPQ recovery sleep 튜닝 비교
+
+두 arm 모두 queue는 WPQ다. 동일한 binary와 앞서 고정한 라이브러리·이미지,
+128 MiB 데이터·OSD 2→3→2 조건으로 기본→튜닝, 튜닝→기본, 기본→튜닝
+세 쌍을 실행했다. 변경한 값은 다음 두 개뿐이다.
+
+| 설정 | 기본 WPQ | 튜닝 WPQ |
+| --- | ---: | ---: |
+| `osd_recovery_sleep_hdd` | 0.1초 | 0초 |
+| `osd_recovery_sleep_degraded_hdd` | 0.1초 | 0초 |
+
+Ceph v20.2.4의 [원본 설정](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/osd.yaml.in)을
+고정하고 모든 실행에서 override 전 기본값을 확인했다. Generic recovery sleep은
+0, `osd_recovery_max_active`는 0, HDD active는 3, `osd_max_backfills`는 1을
+유지했다. 18개 OSD의 HDD·rotational·1 GiB BlueStore metadata와 원래 5개
+identity phase의 총 60개 관측에서 direct daemon·central config의 8개 값을
+대조했다. 추가 설정 조회는 backfill·제거의 기존 측정 구간 밖에 있다.
+
+| 구간 중앙값 | 기본 WPQ | sleep=0 WPQ |
+| --- | ---: | ---: |
+| OSD 증설·backfill·clean 확인 | 26.609초 | 12.592초 |
+| 원래 OSD 제거·recovery·clean 확인 | 18.192초 | 8.812초 |
+| 전체 native 실행 | 102.806초 | 77.130초 |
+
+세 쌍 모두 두 migration 구간은 튜닝한 쪽이 빨랐다. 전체 시간 비율은
+0.741·1.070·0.720으로, 두 번째 쌍에서는 튜닝한 전체 실행이 약 7% 느렸다.
+전체 시간에는 설정·identity·PG 보고·perf 조회 및 cleanup도 들어간다.
+새 FSID마다 실제 배치가 달랐고 증설 후 OSD 2의 logical object 수는
+159–190개였다. 제거 전 원래 OSD의 logical objects는 모든 실행에서 193개였고,
+같은 OSD 2 process의 제거 recovery counter는 각각 97 ops·50,855,936 bytes
+증가했다. 이 수치는 물리 디스크 throughput 측정이 아니다.
+
+6회 모두 원래 FSID·pool·OSD identity, 실제 데이터 이동과 전체 payload hash를
+검증했다. 각 실행의 cleanup이 통과했고 최초·최종 전체 컨테이너 수는 0개,
+이미지는 62개였다. 같은 엔진·4 CPU·4,107,141,120 bytes RAM을 확인했다.
+배타적 lock은 협조하는 실험을 직렬화하며, 전체 엔진의 연속 isolation·RSS를
+측정했다는 주장은 하지 않는다. Native batch는 648.537초에 EXIT0로 끝났다.
+
+이 결과는 작은 HDD file fixture에서 WPQ 튜닝으로 시간이 줄어들 가능성을
+실제로 확인한 것이다. 새 비교에는 mClock arm이 없고 설정 조회도 늘었으므로
+이전 mClock 전체 시간과 직접 비교하지 않는다. 동시 recovery·backfill 수를
+늘리는 튜닝, foreground I/O 경합, EC 및 나머지 CI 시나리오의 효과는 별도로
+검증해야 한다. 기존 timeout·assertion과 공통 scheduler는 바꾸지 않았다.
+
+새 binary SHA256은
+`f8b39e3ce2ad0f806a0de8115629c989f1422b31b4b388fa011d30af77a1d8ed`다.
+원본·실행별 CLI·daemon·payload·cleanup·검증 receipt는
+`artifacts/wpq-tuning-review-20261009/`에 보존한다.
+
 ## 필요한 경우 선택하는 방법
 
 기존 API로 최초 OSD 기동 전에 queue를 선택할 수 있다.
@@ -73,6 +124,11 @@ RGW policy의 의도적인 미복제 확인 시간과 RBD receiver의 election·
 2. `TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_op_queue", Value: "wpq"})`
    로 central config를 설정하고 오류와 partial override를 처리한다.
 3. `AddOSD(ctx)`로 원하는 OSD를 추가하고 각 daemon의 실제 queue를 확인한다.
+
+위의 sleep 튜닝을 재현하려면 첫 OSD 전에 두 HDD sleep 설정도 각각
+`TemporaryConfig`로 0을 적용한다. 각 호출의 오류와 partial override를 처리하고
+daemon의 실제 값을 확인한다. Recovery/backfill 동시성은 별도 비교를 위해
+기본값을 유지한다.
 
 Central config의 readback만으로 local config·argv·runtime override를 이겼다고
 판단하지 않는다. 실행 중 OSD에 설정하거나 override를 Restore하는 것만으로

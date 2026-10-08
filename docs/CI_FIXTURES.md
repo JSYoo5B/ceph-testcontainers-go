@@ -1,9 +1,22 @@
 # 시나리오 fixture CI
 
-검토 중인 CephFS original-process-quiescence 분리 후보는 **120개 distinct
+현재 CephFS original-process-quiescence 분리 구성은 **120개 distinct
 parent, primary 실행 instance 124개**를 선택합니다. 필수 job 71개,
 cleanup 70쌍, 주요 역할 이미지 준비 58개와 기존 12×9 matrix를 유지합니다.
-이는 candidate source의 선택·job 수이며 전체 native CI 완료 주장이 아닙니다.
+Source `3355e8acf822f5bd9b3e64549e24b8f7d46a89b4`의
+[run 37787341008](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37787341008)은
+2026-10-08 14:50:18 UTC에 SUCCESS로 완료됐습니다. 원본 job 로그,
+자체 artifact API·ZIP·upload 연결, source archive와 이미지 publication을
+대조하고 필수 71개 job·120개 parent·124회 실행 및 cleanup·준비 수를 확인했습니다.
+Required test skip은 0개이며 선택적 `rgw-native-regressions` job만 실행하지 않았습니다.
+
+Receiver는 두 network의 10 scope, quiescence는 네 leaf가 각각 RUN/PASS
+1회씩 완료됐습니다. Quiescence leaf마다 원래 세 process phase와 byte 8개,
+absence 3개, original-process 3개 증거를 유지했습니다. PoolPGs native 비교는
+13 contexts × 4 phases = 52개와 별도 cold/EC/4KiB boundary를 검증했습니다.
+Health native marker는 실제 75개이며 TTL expiry polling 때문에 실행마다
+관측 수가 달라질 수 있습니다. Public PG snapshot JSON은 보존했고 중간 native
+CLI JSON 전체를 보존했다는 주장은 하지 않습니다.
 
 기준 `b7daea9` 설정은 68 job·67 cleanup·55 prep·121 parent instance입니다.
 Quiescence parent의 `bridge|host × peer|directory` 네 leaf를 각각 독립
@@ -14,8 +27,9 @@ Distinct parent는 기존 완료 source `3ac07fe`의 119개에
 118개와 별도 Docker bridge SDK parent 2개를 선택합니다. Receiver parent는
 기존 bridge/host 두 job과 네트워크별 5 scope를 그대로 유지합니다.
 
-가장 최근 보존한 전체 완료 증거는 아래의 `3ac07fe` 67-job 결과입니다.
-기준 68-job 또는 이 후보 71-job의 성공 증거로 대신 사용하지 않습니다.
+최신 완료 증거는 `artifacts/heavy-scenario-split-20261008/ci-3355e8a/`와
+별도 원본 보존 receipt·독립 감사 결과에 있습니다. 아래의 `3ac07fe` 67-job
+결과는 해당 source의 과거 결과로 보존하며 최신 실행을 대신하지 않습니다.
 
 Source `b7daea9`의 run 37780571140에서는 12×9 이미지 native 테스트와
 52개 PG native 비교가 통과했지만, 새 receiver 로그 검증기의 PASS 순서
@@ -27,8 +41,11 @@ Go package는 각각 904.857초·1055.246초에 PASS했고 자체 cleanup도 통
 `09efe52`는 실제 Go의 parent→network→leaf PASS 순서를 따르도록 수정하고,
 모든 하위 PASS가 package 완료보다 앞서야 한다는 조건도 보존했습니다.
 실제 Go `testing.T` 출력의 Docker 없는 회귀와 6개 조기 package 완료 위치의
-부정 대조, 관련 helper 103개가 통과했습니다. 현재 분리 후보는 이 수정을
-포함하며, 새 source의 전체 native CI는 별도로 검증해야 합니다.
+부정 대조, 관련 helper 103개가 통과했습니다. 현재 분리 구성은 이 수정을
+포함하며 위의 `3355e8a` 전체 CI에서 새 own-job 로그로 검증했습니다.
+최초 b7 실행은 최종 63 success·2 failure·3 cancelled·1 optional skipped로
+끝났습니다. 그 원본은 `artifacts/heavy-scenario-split-20261008/ci-b7daea9/`에
+별도로 보존하며 최신 전체 성공으로 합산하지 않습니다.
 
 이전 O source는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용했습니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
