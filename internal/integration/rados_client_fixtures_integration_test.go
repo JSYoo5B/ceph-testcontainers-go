@@ -122,7 +122,7 @@ try:
     io.set_read(rados.LIBRADOS_SNAP_HEAD)
     assert io.read('compound',len(payload),0)==b'changed-head'
     io.remove_snap('checkpoint')
-    # The native CLI links libradosstriper and executes its object class. A
+    # The native CLI links libradosstriper and uses the OSD lock class. A
     # payload larger than its default object size verifies multiple shards.
     striped=b'native-striped-payload\0'*(420000)
     with tempfile.TemporaryDirectory() as directory:

@@ -1,18 +1,18 @@
 # 테스트용 클러스터 구성 목표와 검증
 
-이 문서는 기존 토폴로지 단계의 기준·증거와 현재 원본 Quay 검증 목표를 기록합니다. 클러스터 내부 리소스·정책 API의 제공 범위와 검증은 [CLUSTER_INTERNAL_FEATURES.md](CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
+이 문서는 기존 토폴로지 단계의 기준·증거와 현재 이미지 선택을 기록합니다. 클러스터 내부 리소스·정책 API의 제공 범위와 검증은 [CLUSTER_INTERNAL_FEATURES.md](CLUSTER_INTERNAL_FEATURES.md)에 정리합니다.
 
 목표는 **클라이언트 테스트에 필요한 Ceph 토폴로지를 testcontainers로 생성하고, 구성 요소의 추가·교체·중단·복구와 클러스터 간 연결이 가능한지** 확인하는 것입니다. CRUSH rule·EC·pool 정책·권한과 개별 RADOS/RBD/CephFS/S3 기능은 후속 확장으로 둡니다. 이들 기능의 제공 여부는 완료 조건에 포함하지 않습니다. go-ceph와 다른 native client의 읽기·쓰기는 구성의 연결성을 확인하는 증거로 사용합니다.
 
 공개 모듈은 CLI/파일로 제어하며 cgo에 의존하지 않습니다. go-ceph 소비자 테스트는 별도 Linux 전용 모듈에 둡니다. 기본 bridge에서는 클러스터별 전용 네트워크를 생성하고, 애플리케이션은 `WithClient`로 해당 네트워크에 연결합니다. host mode에서는 서로 다른 FSID·키와 자동 선택 MON/RGW 포트를 사용합니다. RADOS/RBD/CephFS 클라이언트는 MON뿐 아니라 광고된 OSD/MDS 주소에도 도달해야 합니다.
 
-## 원본 pinned Quay 검증 목표
+## 현재 이미지 선택과 기존 pinned Quay 검증 기록
 
-현재 필수 기준은 `ceph.DefaultImage`의 원본 Ceph 20.2.4입니다. 다른 이미지는 고정 [요구사항과 checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 소유자가 준비하며, custom `.deb`·native patch 제작은 이 검증의 사전 조건이 아닙니다. 경량 대안으로 이미지 프로젝트가 제공하는 공식 역할 추출·배포판 패키지 기반 이미지를 선택할 수 있습니다. 아래의 기존 성공 기록은 대부분 당시 Quay-derived 역할별 slim 이미지와 Docker Desktop Linux ARM64의 관측입니다. 같은 source에서 추출했다는 사실만으로 원본 전체 이미지나 새 역할 이미지의 실행을 PASS 처리하지 않습니다.
+로컬 `make scenario-*` 기본은 `SCENARIO_IMAGE_LAYOUT=all`로 `ceph.DefaultImage`의 원본 Ceph 20.2.4를 사용합니다. 현재 주요 CI는 `SCENARIO_IMAGE_LAYOUT=roles`와 준비된 공식 control/OSD/RGW/MDS 이미지 네 개를 명시적으로 선택합니다. 공개 모듈의 기본 이미지는 유지하며, 정확한 선택·필수 실행 범위는 [CI fixture 계약](CI_FIXTURES.md)을 따릅니다. 다른 이미지는 고정 [요구사항과 checker](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 소유자가 준비하며, custom `.deb`·native patch 제작은 Go 검증의 사전 조건이 아닙니다. 이미지 프로젝트가 제공하는 공식 역할 추출·배포판 패키지 기반 이미지를 선택할 수 있습니다. 아래의 기존 성공 기록은 당시 Quay-derived 역할별 slim 이미지 또는 원본 Quay의 관측이며 각 기록의 source·이미지·platform을 따릅니다. 같은 source에서 추출했다는 사실이나 CI의 선택 변경만으로 새 역할 이미지의 실행을 PASS 처리하지 않습니다.
 
 새 검증은 다음 대표 범위를 유지합니다. `topology-smoke`의 3 MON/2 MGR 및 RGW 2 zone만으로 전체 목표를 닫지 않습니다. 아래 runtime 성공 표는 IPAM 수정 전 기본·r2 배치입니다. 후속 `43099aa`와 RGW 공개망 우선순위 수정을 포함한 `3f79a78`의 Linux AMD64 CI에서도 같은 기본 14개와 토폴로지 38개 전체를 통과했습니다. 각 실행의 source와 SDK 회귀는 아래에 별도 기록합니다.
 
-| 필수 실행 경로 | 대표 구성·변경 기준 | 새 원본 Quay 실행 상태 |
+| 필수 실행 경로 | 대표 구성·변경 기준 | 당시 원본 Quay 실행 상태 |
 |---|---|---|
 | `make check` | Go unit·race·vet·전체 tag compile. 이미지 도구의 Python guard는 이미지 프로젝트 `make check`로 분리 | 기존 MON·IPAM 수정 후 PASS와 분리 후 Go 검사 PASS. Runtime 증거와 별도 |
 | `make scenario-default` | 기본 MON/MGR/OSD와 OSD 추가·제거·데이터 유지, RGW/RBD/CephFS 연결, bootstrap 실패 cleanup | PASS: 14개 top-level test, 725.243초, Linux ARM64 |
@@ -24,7 +24,7 @@
 
 위 표는 현재 `scenario-*` target 이름으로 범위를 안내합니다. 아래의 이전 로그·CI job·명령 이름은 당시 `quay-*` 기록을 보존하며, 이름 변경을 새 runtime 실행으로 취급하지 않습니다.
 
-각 runtime profile은 control/OSD/RGW/MDS 이미지 환경 변수 네 개를 해제하여 원본 Quay를 직접 선택하며 mirror도 source 클러스터의 control 이미지를 사용합니다. 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 이 절에 추가합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
+로컬 기본 `all` profile과 아래의 당시 원본 Quay 검증은 control/OSD/RGW/MDS 이미지 환경 변수 네 개를 해제하여 원본 Quay를 직접 선택합니다. 현재 CI의 `roles` profile은 네 override를 유지하며 mirror도 source 클러스터의 control 이미지를 사용합니다. 테스트와 cluster를 순차 실행합니다. 성공은 요청한 native identity·map·peer graph, 실제 client I/O 또는 복제 bytes, 변경 후 보존·복구, owned cleanup으로 확인합니다. 기존 artifact나 tag compile을 새 runtime PASS로 대체하지 않으며 실제 실행 결과·이미지·platform·로그를 별도로 기록합니다. Linux AMD64 CI 등록 자체도 해당 환경의 관측 PASS가 아닙니다.
 
 2026-10-04 새 원본 실행은 기존 `golang:1.27.1` 컨테이너의 host network에서 수행하며 서버·native client는 모두 고정 Quay 이미지를 사용합니다. Docker Desktop Linux ARM64, Engine 29.8.1/API 1.55, 4 CPU/3916 MiB 환경입니다. 새 서버 이미지나 Ceph source 빌드는 실행하지 않았습니다. Digest `6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9`는 AMD64·ARM64 manifest를 포함한 upstream OCI index입니다. 이 실행의 platform은 ARM64이며 manifest 존재만으로 AMD64 실행 성공을 주장하지 않습니다.
 

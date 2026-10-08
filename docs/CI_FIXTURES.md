@@ -197,7 +197,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
   IMAGE_PLATFORM=linux/arm64
 ```
 
-각 조합은 cluster/MGR lifecycle, RBD, CephFS, signed RGW-S3, RBD backup와 RBD/CephFS snapshot mirroring, RGW multisite의 **대표 9개 Go 이름**을 실행합니다. 이 이름들은 기존 상세 suite와 겹칩니다. 12 × 9회 선택을 108개 새로운 distinct test로 더하거나, 이미지 프로젝트의 독립 Python full 8개·기존 Quay 상세 101개와 하나의 성공 증거로 합치지 않습니다. Linux go-ceph·cryptsetup 등 추가 소비자 도구는 별도 조건으로 유지합니다. 정확한 실행 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따릅니다.
+각 조합은 cluster/MGR lifecycle, RBD, CephFS, signed RGW-S3, RBD backup와 RBD/CephFS snapshot mirroring, RGW multisite의 **대표 9개 Go 이름**을 실행합니다. 이 이름들은 기존 상세 suite와 겹칩니다. 12 × 9회 선택을 108개 새로운 distinct test로 더하거나, 이미지 프로젝트의 독립 Python full 11개·기존 Quay 상세 101개·현재 필수 상세 119개와 하나의 성공 증거로 합치지 않습니다. Cryptsetup·암호화·striper는 control/all의 필수 runtime 계약이고 hello·lock class는 osd/all 계약입니다. Linux go-ceph 프로그램·개발 헤더와 Vault 같은 외부 backend는 별도 조건으로 유지합니다. 정확한 실행 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따릅니다.
 
 ## 추가되는 named test 전체
 
@@ -384,9 +384,9 @@ TestGoCephLinux
 
 ## 원본 서버와 소비자 도구의 경계
 
-새 profile은 Ceph source를 컴파일하거나 MON/MGR/OSD/MDS/RGW/mirror 서버 이미지를 생성하지 않습니다. Control/OSD/RGW/MDS override 네 개를 해제하여 기존 원본 Quay 서버를 직접 소비하며 mirror는 source 클러스터의 control 이미지를 사용합니다. `ceph.Run`은 호출자가 선택한 이미지를 실행하며 이미지 builder를 호출하지 않습니다.
+필수 profile은 Ceph source를 컴파일하거나 MON/MGR/OSD/MDS/RGW/mirror 서버 이미지를 생성하지 않습니다. 기본 `SCENARIO_IMAGE_LAYOUT=all`은 control/OSD/RGW/MDS override 네 개를 해제하여 원본 Quay를 직접 사용합니다. 명시적인 `roles`는 준비된 역할 이미지 네 개를 유지하며 현재 주요 CI는 이 경로를 사용합니다. Mirror는 source 클러스터의 control 이미지를 사용합니다. `ceph.Run`은 호출자가 선택한 이미지를 실행하며 이미지 builder를 호출하지 않습니다.
 
-일반 fixture profile은 `CEPH_TEST_RBD_CLIENT_IMAGE`를 해제합니다. RBD native consumer는 기본 Quay의 Python bindings·cryptsetup을 사용합니다. ARM64 원본 이미지의 사전 도구 조회에서 bindings와 cryptsetup 2.8.6이 확인됐지만, 이 관측은 cluster I/O 또는 새 AMD64 CI 통과가 아닙니다. Slim consumer에 cryptsetup이 없다면 기존 [RBD client 준비 경로](RBD_CLIENT_FIXTURES.md)를 별도로 선택합니다.
+일반 fixture profile은 `CEPH_TEST_RBD_CLIENT_IMAGE`를 해제합니다. RBD native consumer는 선택한 control/all의 Python bindings·librbd 암호화·libcryptsetup·cryptsetup을 사용하며 이 구성요소는 현재 고정 이미지 계약의 필수 조건입니다. 별도 consumer로 필수 역할 검증을 우회하지 않습니다. 일반 client recipe의 선택적 override는 [RBD client 준비 경로](RBD_CLIENT_FIXTURES.md)를 따릅니다. 과거 ARM64 원본 이미지의 사전 도구 조회에서 bindings와 cryptsetup 2.8.6이 확인됐지만, 이 조회를 cluster I/O·새 배포 이미지 payload·새 AMD64 CI 통과로 확대하지 않습니다.
 
 `TestRGWProtocolBackends`는 RGW SSE-KMS 구성을 위해 `testcontainers-go/modules/vault`의 `Run`·`WithToken`으로 기본 `hashicorp/vault:1.21.4`의 실제 KV-v2 backend를 기동합니다. `CEPH_TEST_VAULT_IMAGE`를 지정하면 `scenario-rgw-fixtures`에서도 그 값을 유지하므로 사내 registry의 호환 Vault 이미지나 이미 로컬에 준비한 이미지를 사용할 수 있습니다. Vault는 외부 KMS 테스트 서비스이며 Ceph 역할 이미지 요구사항에 포함하지 않습니다. 허용·거부 audit transaction, STS/Swift 및 암호화 데이터를 확인하며 모의 backend로 성공을 대신하지 않습니다. [Backend recipe](RGW_PROTOCOL_BACKENDS.md)에 조건을 기록합니다.
 

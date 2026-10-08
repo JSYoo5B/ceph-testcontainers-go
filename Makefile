@@ -48,8 +48,8 @@ CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAddition
 
 # The default clears inherited image overrides and exercises ceph.DefaultImage.
 # CI can explicitly select prepared role images without changing module defaults.
-# Consumer-only overrides (e.g. the cryptsetup RBD image) are outside the required
-# baseline; full client-fixtures remains an explicit optional target.
+# Required native clients use the selected control/all image and its runtime
+# contract; full client-fixtures remains an explicit optional target.
 ifeq ($(SCENARIO_IMAGE_LAYOUT),roles)
 $(foreach name,CEPH_TEST_IMAGE CEPH_TEST_OSD_IMAGE CEPH_TEST_RGW_IMAGE CEPH_TEST_MDS_IMAGE,$(if $(strip $($(name))),,$(error $(name) is required for SCENARIO_IMAGE_LAYOUT=roles)))
 SCENARIO_TEST_ENV = env CGO_ENABLED=0
@@ -59,7 +59,8 @@ else
 $(error Unknown SCENARIO_IMAGE_LAYOUT)
 endif
 
-# Required fixture profiles select the default native RBD consumer.
+# Required fixture profiles verify the selected control/all image as the native
+# RBD consumer, including its required cryptsetup executable and libraries.
 # Vault is an external KMS fixture; preserve an explicitly selected registry
 # image and let the backend recipe select its default when unset.
 SCENARIO_FIXTURE_TEST_ENV = env -u CEPH_TEST_RBD_CLIENT_IMAGE $(SCENARIO_TEST_ENV)
@@ -163,14 +164,14 @@ scenario-cephfs-removal:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(SCENARIO_CEPHFS_REMOVAL_TIMEOUT) -run '$(CEPHFS_REMOVAL_TESTS_$(SCENARIO_CEPHFS_REMOVAL_CASE))' ./internal/integration
 
 # Receiver readiness and observed snapshot checkpoints use a separate budget.
-# Every scope and bridge/host case runs against the pinned original image.
+# Every scope and bridge/host case uses the explicitly selected scenario layout.
 scenario-rbd-receivers:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,multicluster -count=1 -v -timeout=$(SCENARIO_RBD_RECEIVERS_TIMEOUT) -run '$(SCENARIO_RBD_RECEIVERS_TESTS)' ./internal/integration
 
 scenario-topology-extensions:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology,hostnetwork,multicluster -count=1 -v -timeout=$(TOPOLOGY_EXTENSIONS_TIMEOUT) -run '$(TOPOLOGY_EXTENSION_TESTS)' ./internal/integration
 
-# Supported cluster/client fixtures consume the pinned default server directly.
+# Supported cluster/client fixtures consume the selected default/role images.
 # These profiles run every planned case, including bridge/host child scenarios.
 scenario-cluster-fixtures:
 	$(SCENARIO_FIXTURE_TEST_ENV) go test -mod=readonly -tags=$(SCENARIO_FIXTURE_TAGS) -count=1 -v -timeout=$(CLUSTER_FEATURES_TIMEOUT) -run '$(SCENARIO_CLUSTER_FIXTURE_TESTS)' ./internal/integration

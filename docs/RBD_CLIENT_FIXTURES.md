@@ -76,7 +76,7 @@ host mode에서는 `Run`에 `ceph.WithHostNetwork()`를 추가합니다. `WithCl
 | `group-snapshot` | GroupCreate/ImageAdd/SnapCreate/GetInfo/Rollback; 두 format 2 image, flushed/closed writers | native complete 상태와 두 image membership·pool/snapshot ID, 두 image 변경 뒤 rollback으로 각 원래 bytes 복구, group ID 보존 |
 | `exclusive-lock` | LockAcquire/GetOwners/IsExclusiveOwner/Release; `exclusive-lock`, 독립된 두 RADOS session | native EROFS/EBUSY의 정확한 contention 오류·기존 owner 유지, release 뒤 다른 session이 실제 owner가 됨, write/flush와 같은 image ID·bytes |
 | `encryption-format-load` | EncryptionFormat/Load/Load2 계열의 대표 단일 image; LUKS1/LUKS2, AES256, `librbd`·`libcryptsetup`, journaling 없음 | 틀린 key 거부, generic LUKS load의 양쪽 format 감지, raw LUKS header/ciphertext, fresh loaded client의 exact bytes와 native ID |
-| `encryption-rekey` | RBD 자체에 rekey API 없음; 같은 native client에 외부 `cryptsetup` 실행 파일 추가 | 원래 image ID·size 유지, 변경이 raw header에만 한정됨, 새 fresh load 성공·old key 실패, 원래 encrypted payload의 exact bytes 보존 |
+| `encryption-rekey` | RBD 자체에 rekey API 없음; `control`/`all` 계약의 외부 `cryptsetup` 실행 파일 사용 | 원래 image ID·size 유지, 변경이 raw header에만 한정됨, 새 fresh load 성공·old key 실패, 원래 encrypted payload의 exact bytes 보존 |
 
 group snapshot probe의 writers는 checkpoint 전에 flush하고 닫습니다. 이 증거는 두 image의 native group checkpoint/rollback을 확인합니다. 임의의 distributed application transaction이나 파일시스템 freeze의 일관성까지 입증하지 않습니다. lock probe는 수동 acquire/release와 협력 client의 ownership을 확인합니다. 죽은 client의 강제 lock break·blocklist fencing은 [별도 fencing fixture](../internal/integration/fencing_integration_test.go)에서 검증합니다.
 
@@ -86,11 +86,13 @@ migration은 이 테스트에서 같은 metadata pool·namespace 안의 image �
 
 ## cryptsetup이 있는 native client 이미지
 
-`control`의 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)은 Python rados/rbd를 포함하지만 `cryptsetup` 실행 파일은 요구하지 않습니다. 원본 Quay Ceph 20.2.4의 기존 실험에서는 cryptsetup이 있는 native client로 8개 phase를 통과했습니다. 다른 이미지를 선택할 때는 먼저 `python3 -c 'import rados, rbd'`와 `cryptsetup --version`을 확인하고, 필요하면 호출자가 Python bindings·librbd·libcryptsetup·cryptsetup을 갖춘 소비자 이미지를 준비합니다. 해당 이미지의 제작은 이미지 프로젝트가 제공하는 역할 추출이나 checker의 범위가 아닙니다. Go 테스트는 서버와 같은 Ceph release·ABI·Linux architecture의 준비된 이미지만 받습니다.
+`control`의 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)은 Python rados/rbd, LUKS1/LUKS2를 지원하는 librbd·libcryptsetup과 `PATH`의 `cryptsetup` 실행 파일을 포함합니다. `all`도 이 계약을 포함합니다. libcryptsetup만 있어서는 외부 passphrase 변경 명령을 실행할 수 없습니다. 기본 native consumer는 `CEPH_TEST_IMAGE`로 선택한 control/all이며, 계약을 만족하는 이미지를 사용하면 별도 RBD client 이미지를 준비할 필요가 없습니다. 필수 `scenario-rbd-fixtures`는 `CEPH_TEST_RBD_CLIENT_IMAGE` override를 해제하여 선택한 control/all 자체를 검증합니다.
+
+일반 client recipe에서는 필요할 때 `CEPH_TEST_RBD_CLIENT_IMAGE`로 준비된 별도 native consumer를 선택할 수 있습니다. 이는 기본 역할 이미지의 부족한 요구사항을 필수 CI에서 우회하는 경로가 아닙니다. `python3 -c 'import rados, rbd'`와 `cryptsetup --version`은 사전 도구 확인이며, 암호화 I/O와 passphrase 변경의 성공은 실제 native probe로 검증합니다. 이미지의 제작·역할 추출·quick/full 검사는 이미지 프로젝트의 책임이며 Go 테스트는 서버와 같은 Ceph release·ABI·Linux architecture의 준비된 이미지만 받습니다. 원본 Quay Ceph 20.2.4의 기존 8개 phase 통과 기록은 당시 실행의 증거로 보존하며 새 배포 이미지의 성공으로 대체하지 않습니다.
 
 ```sh
-# Prepare this client image locally before running the test.
-CEPH_TEST_RBD_CLIENT_IMAGE=my-company/ceph-rbd-client:20.2.4 \
+# Prepare compatible control/OSD images; the native client defaults to control.
+env -u CEPH_TEST_RBD_CLIENT_IMAGE \
 CEPH_TEST_IMAGE=ceph-testcontainers:official-20.2.4-control \
 CEPH_TEST_OSD_IMAGE=ceph-testcontainers:official-20.2.4-osd \
 CGO_ENABLED=0 go test -mod=readonly -count=1 \
@@ -98,9 +100,9 @@ CGO_ENABLED=0 go test -mod=readonly -count=1 \
   -run '^TestRBDClientFeatures$' -timeout 35m -v
 ```
 
-Linux x86-64에서는 준비한 서버와 소비자 이미지가 모두 `linux/amd64`여야 합니다. 새 Ceph release나 회사 native client도 서버와 ABI·release·architecture를 맞춥니다. Ubuntu/Debian client는 해당 배포판의 `python3-rados`, `python3-rbd`, `librbd`와 `cryptsetup`을 포함한 별도 이미지를 `CEPH_TEST_RBD_CLIENT_IMAGE`로 주입할 수 있습니다. 서로 다른 배포판의 바이너리·공유 라이브러리를 임의로 섞지 않습니다. 과거 test-only client Dockerfile의 빌드 결과는 당시 실험의 증거이며 현재 유지되는 제작 도구가 아닙니다.
+Linux x86-64에서는 준비한 서버와 소비자 이미지가 모두 `linux/amd64`여야 합니다. 새 Ceph release나 회사 native client도 서버와 ABI·release·architecture를 맞춥니다. 공식·Debian·Ubuntu 역할 이미지 모두 같은 control/all 실행 계약을 따릅니다. 별도 consumer를 시험하려면 위 직접 Go 실행에서 `env -u CEPH_TEST_RBD_CLIENT_IMAGE`를 제거하고 `CEPH_TEST_RBD_CLIENT_IMAGE=my-company/ceph-rbd-client:20.2.4`를 지정합니다. 서로 다른 배포판의 바이너리·공유 라이브러리를 임의로 섞지 않습니다. 과거 test-only client Dockerfile의 빌드 결과는 당시 실험의 증거이며 현재 유지되는 제작 도구가 아닙니다.
 
-rekey probe는 native writers를 닫고 raw RBD를 container의 임시 regular file로 export합니다. `cryptsetup luksChangeKey`가 변경한 header chunk만 동일 RBD에 기록한 후 fresh client에서 다시 load합니다. kernel RBD/NBD mapping, `/dev/mapper`, privileged container 또는 host native SDK가 필요하지 않습니다. test는 PBKDF2 iteration 1000을 명시해 작은 Docker VM에서 오래 걸리는 benchmark를 피합니다. 이 값은 테스트용이며 production key 정책이 아닙니다. format을 다시 호출해서 원래 bytes를 잃는 방식을 rekey로 취급하지 않습니다. `cryptsetup`이 없으면 rekey subtest는 원인을 표시하고 실패하며 미검증 경로를 skip으로 숨기지 않습니다.
+rekey probe는 native writers를 닫고 raw RBD를 container의 임시 regular file로 export합니다. `cryptsetup luksChangeKey`가 변경한 header chunk만 동일 RBD에 기록한 후 fresh client에서 다시 load합니다. kernel RBD/NBD mapping, `/dev/mapper`, privileged container 또는 host native SDK가 필요하지 않습니다. test는 PBKDF2 iteration 1000을 명시해 작은 Docker VM에서 오래 걸리는 benchmark를 피합니다. 이 값은 테스트용이며 production key 정책이 아닙니다. format을 다시 호출해서 원래 bytes를 잃는 방식을 rekey로 취급하지 않습니다. `cryptsetup`이 없는 control/all은 이미지 계약을 충족하지 못합니다. rekey subtest는 원인을 표시하고 실패하며 미검증 경로를 skip으로 숨기지 않습니다.
 
 ## 근거
 

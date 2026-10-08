@@ -404,7 +404,7 @@ elif phase == "exclusive-lock":
 elif phase in ["encryption-format-load", "encryption-rekey"]:
     cryptsetup = shutil.which("cryptsetup")
     if phase == "encryption-rekey" and cryptsetup is None:
-        raise RuntimeError("cryptsetup executable required: use CEPH_TEST_RBD_CLIENT_IMAGE with a compatible Linux native RBD client plus cryptsetup; rekey is not a native RBD API")
+        raise RuntimeError("cryptsetup executable required by the control/all image contract: repair the selected image or optionally supply a compatible CEPH_TEST_RBD_CLIENT_IMAGE; rekey is an external LUKS passphrase change, not a native RBD API")
     encrypted_ids = {}
     for label, fmt in [("luks1", rbd.RBD_ENCRYPTION_FORMAT_LUKS1), ("luks2", rbd.RBD_ENCRYPTION_FORMAT_LUKS2)]:
         name = phase + "-" + label

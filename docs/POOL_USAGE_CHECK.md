@@ -38,7 +38,7 @@ pool을 사용량 0으로 해석하지 않는다. compression·OMAP·allocation 
 근거: [Ceph Tentacle usage 설명](https://docs.ceph.com/en/tentacle/rados/operations/monitoring/#checking-a-cluster-s-usage-stats),
 [v20.2.4 native formatter](https://github.com/ceph/ceph/blob/v20.2.4/src/mon/PGMap.cc#L714-L950).
 
-원본 v20.2.4 이미지의 Linux ARM64에서 기존 `TestRBDLifecycle`과
+최초 구현의 원본 v20.2.4 이미지 Linux ARM64 실행에서 기존 `TestRBDLifecycle`과
 `TestHostNetworkRBDLifecycle`이 109.955초에 모두 통과했다. 각 경로에서
 8MiB nonzero import 뒤와 OSD 2→3→2 뒤에 원래 FSID/pool ID,
 최소 8MiB logical bytes·8개 객체와 양수 allocated bytes를 확인했다.
@@ -46,3 +46,17 @@ pool을 사용량 0으로 해석하지 않는다. compression·OMAP·allocation 
 실행 중 저장소 입력 320개의 manifest가 동일했고 자체 cleanup은 새
 container/network 0개였다. 이 focused 결과는 다른 이미지·플랫폼이나
 전체 CI 성공을 의미하지 않는다.
+
+필수 field의 case-folding 별칭 거부를 추가한 후보는 같은 원본 이미지의
+Linux ARM64에서 두 parent를 다시 실행해 **110.134초에 PASS**했다.
+[native 기록](../artifacts/pool-usage-alias-fix-20261008/native-proof.json)과
+[원문 로그](../artifacts/pool-usage-alias-fix-20261008/native.jsonl)는 import 뒤와
+OSD 2→3→2 뒤의 원래 FSID/pool ID 및 logical/object/allocated 관측 네 개를
+별도로 보존한다. [실행 전](../artifacts/pool-usage-alias-fix-20261008/source-before.json)·
+[실행 후](../artifacts/pool-usage-alias-fix-20261008/source-after.json) manifest는
+323개 입력과 SHA256 `df21b4dd40faf025bf2f5fcd6ca80e13a9fc721cc53f819d7ead7e7b5c802c75`가
+동일하다. 당시 HEAD는 `b0e4d47`이고 working-tree 후보를 실행했으며, 해당
+PoolUsage 구현·unit test·두 native test 입력은 후속 커밋 `457473e`와 일치한다.
+[자체 cleanup](../artifacts/pool-usage-alias-fix-20261008/own-cleanup/after.json)은
+새 container/network 0개다. 앞선 109.955초 실행, 이 focused 재검증과
+새 이미지·전체 CI의 성공은 각각 구분한다.

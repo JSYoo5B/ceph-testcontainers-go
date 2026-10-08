@@ -8,8 +8,8 @@
 
 | 이미지 역할 | Go API의 선택 | 실행 위치와 책임 |
 |---|---|---|
-| `control` | `ceph.Run(ctx, image, ...)` | 별도 MON/MGR, 필요 시 CLI container, Python client/probe와 관리 CLI |
-| `osd` | `ceph.WithOSDImage(image)` | OSD마다 sparse BlueStore 파일과 daemon; ID·키는 control에서 준비 |
+| `control` | `ceph.Run(ctx, image, ...)` | 별도 MON/MGR, 필요 시 CLI container, Python client/probe와 관리 CLI; librbd 암호화·libcryptsetup·`cryptsetup`, `rados --striper`·libradosstriper |
+| `osd` | `ceph.WithOSDImage(image)` | OSD마다 sparse BlueStore 파일과 daemon; `hello`·`lock`을 포함한 object class와 runtime dependencies; ID·키는 control에서 준비 |
 | `rgw` | `ceph.WithRGWImage(image)` 또는 `multicluster.RunRGWMultisite/RunRGWTopology`의 image | gateway, `radosgw-admin`, listener 소유권 확인용 `readlink`; HTTP/TLS readiness는 control에서 실행 |
 | `mds` | `ceph.WithMDSImage(image)` | active/standby/replay MDS; filesystem 구성과 Python I/O는 control에서 실행 |
 | `all` | `Run`과 역할 override에 같은 image 사용 | 네 역할의 합집합; 하나의 컨테이너에 모든 daemon을 실행한다는 의미는 아님 |
@@ -24,9 +24,9 @@ RGW multisite/topology의 image 인자는 gateway 역할만 선택합니다. 설
 
 ## 이미지 검사와 Go 검증
 
-[이미지 검사기](../../ceph-testcontainers-images/image/check.py)는 이미 준비된 로컬 이미지를 대상으로 동작합니다. `quick`은 역할별 구성요소를 검사하고, `full`은 quick 이후 자체 Docker harness로 cluster lifecycle, RBD, CephFS, RGW-S3, RBD backup, RBD snapshot mirror, CephFS snapshot mirror, RGW multisite의 8개 시나리오를 실행합니다. 검사기는 Go module이나 go-ceph에 의존하지 않습니다.
+[이미지 검사기](../../ceph-testcontainers-images/image/check.py)는 이미 준비된 로컬 이미지를 대상으로 동작합니다. `quick`은 역할별 실행 파일·라이브러리·class의 존재와 로딩을 검사하고, `full`은 quick 이후 자체 Docker harness로 cluster lifecycle, RBD, CephFS, RGW-S3, RBD encryption, RADOS object class, RADOS striper, RBD backup, RBD snapshot mirror, CephFS snapshot mirror, RGW multisite의 11개 시나리오를 실행합니다. 검사기는 Go module이나 go-ceph에 의존하지 않습니다.
 
-`full` 통과는 그 검사기의 8개 시나리오에 대한 증거입니다. Go 모듈의 모든 topology/fixture/SDK test 통과로 확대하지 않습니다. 이 프로젝트에서는 별도로 준비된 이미지를 Go API로 검증합니다.
+`full` 통과는 그 검사기의 11개 시나리오에 대한 증거입니다. 파일 존재나 `--version` 성공만으로 기능 호환성을 판단하지 않습니다. Go 모듈의 모든 topology/fixture/SDK test 통과로 확대하지 않습니다. 이 프로젝트에서는 별도로 준비된 이미지를 Go API로 검증합니다.
 
 ```sh
 # all 이미지 하나
@@ -40,7 +40,7 @@ CEPH_TEST_MDS_IMAGE=my-company/ceph-mds:dev \
 make image-compatibility
 ```
 
-이 target은 위 8개와 MGR candidate lifecycle을 합한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. 원본 기본 지원의 CI target인 `scenario-*`는 custom control/OSD/RGW/MDS override 네 개를 해제하므로 custom 이미지 검증에 사용하지 않습니다.
+이 target은 아래 matrix에 명시한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. `scenario-*`는 기본 `SCENARIO_IMAGE_LAYOUT=all`에서 control/OSD/RGW/MDS override 네 개를 해제하고 원본 Quay를 사용합니다. 명시적인 `roles` layout은 준비한 역할 이미지 네 개를 보존하며 주요 CI는 이 경로를 사용합니다.
 
 원본 필수 CI의 이름 목록과 검증 상태는 [CI_FIXTURES.md](CI_FIXTURES.md), 구성별 증거는 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다. 이미지 프로젝트의 검사 결과와 Go 프로젝트의 실행 결과는 각각 기록합니다.
 
@@ -67,7 +67,7 @@ make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles \
   IMAGE_PLATFORM=linux/arm64
 ```
 
-각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 8개 시나리오, Go matrix의 9개 대표 테스트, 상세 CI의 필수 119개 및 선택적 go-ceph 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. CI 실행 설정과 결과 상태는 [CI matrix](CI_FIXTURES.md#이미지-호환성-matrix)를 확인합니다.
+각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 11개 시나리오, Go matrix의 9개 대표 테스트, 상세 CI의 필수 119개 및 선택적 go-ceph 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. CI 실행 설정과 결과 상태는 [CI matrix](CI_FIXTURES.md#이미지-호환성-matrix)를 확인합니다.
 
 ## 주요 시나리오의 역할 이미지 선택
 
@@ -133,11 +133,27 @@ Linux go-ceph의 선택 실행 `make goceph-linux`/`make scenario-goceph-linux`�
 
 [run.py](../internal/integration/goceph/run.py)는 두 이미지의 로컬 Linux ID를 고정한 뒤 사용하며 build/pull을 하지 않습니다. Runner에 담긴 소스가 실제 검증 대상인지 확인하는 책임은 호출자에게 있습니다. 이미지 프로젝트가 이 소비자 이미지를 만들거나 SDK 검사를 실행한다는 전제는 없습니다.
 
-RBD encryption의 `cryptsetup`, RADOS striper, 별도 KMS/backend 등의 추가 소비자 도구·서비스 조건은 각 fixture 문서에 기록합니다. 이 조건을 공통 server 역할의 필수 이미지 정책으로 추가하지 않습니다.
+RBD encryption의 librbd·libcryptsetup·`cryptsetup` 실행 파일과 RADOS striper client는 control/all의 필수 실행 계약입니다. RBD native consumer는 기본적으로 선택한 control/all을 사용하며 별도 consumer override는 일반 client recipe의 선택 경로입니다. OSD의 `hello`·`lock` class와 그 runtime dependencies는 osd/all 계약입니다. Striper는 libradosstriper와 `lock`을 사용하므로 별도 `cls_striper`를 요구하지 않습니다. 이 구성요소의 위치·기능 계약은 [RBD recipe](RBD_CLIENT_FIXTURES.md)와 [RADOS recipe](CLIENT_FIXTURE_COVERAGE.md)에 기록합니다.
+
+Vault 같은 외부 KMS/backend 서비스와 애플리케이션별 SDK/probe는 해당 fixture의 별도 조건입니다. Ceph 역할 이미지에 Vault 서버나 go-ceph 프로그램·개발 헤더를 요구하지 않습니다.
 
 ## 정책 반영 기준
 
 2026-10-05 작업 시작 시 이미지 프로젝트 HEAD `062f80e`와 작업 중 정책을 읽었습니다. 고정한 `docs/IMAGE_REQUIREMENTS.md`의 SHA-256은 `4682819b3174a632b9da32eb955f9c52593a24112f780f64280380f0e6ccee62`입니다. 입력 파일의 내용·mode·Git 상태는 로컬 `artifacts/image-policy-alignment-20261005/policy-snapshot.json`에 보관합니다. 이 작업은 이미지 프로젝트 파일을 수정하지 않습니다.
+
+2026-10-08 목표 재개 시 이미지 프로젝트 HEAD `2b920d8c462bf4714f08e3061762e39bab452c93`의 정책을 새 입력으로 확인했습니다. `docs/IMAGE_REQUIREMENTS.md`의 SHA-256은 `0e7d125e4a9f1b05c2f61b71d990c9aa199ecff1d469408e6043808424ea9392`입니다. 위 2026-10-05 기록과 그 실행 결과는 당시 정책의 증거로 보존합니다. 새 정책은 control/all의 cryptsetup·암호화·striper와 osd/all의 hello·lock을 명시하며 이미지 checker의 full은 11개 시나리오입니다. 이미지 프로젝트는 읽기 전용으로 참조합니다.
+
+같은 source의 [이미지 배포 run 37735853373](https://github.com/JSYoo5B/ceph-testcontainers-images/actions/runs/37735853373)은 원본 Quay 검증, 세 계열의 AMD64/ARM64 빌드·검사·배포와 배포 digest 재검사까지 모두 성공했습니다. 아래 Go 검증은 그 run의 `promotion.json`에 기록된 ARM64 control/OSD digest를 직접 pull하고, native platform·RepoDigest를 확인한 로컬 immutable ID로 실행했습니다.
+
+| 계열 | Go native test 시간 | RBD bridge/host 단계 | RADOS bridge/host | cleanup |
+| --- | ---: | ---: | --- | --- |
+| official | 280.807초 | 16/16 PASS | PASS | PASS |
+| debian | 288.385초 | 16/16 PASS | PASS | PASS |
+| ubuntu | 276.855초 | 16/16 PASS | PASS | PASS |
+
+각 실행은 `TestRBDClientFeatures`와 `TestRADOSClientFixtures` 두 parent를 선택했습니다. 별도 RBD client override 없이 control의 Python native clients를 사용했고, LUKS1/LUKS2 재키잉 후 새 키로 원래 bytes를 읽고 이전 키를 거부했습니다. RADOS는 hello class, 두 client의 watch/notify, snapshot bytes, 세 striper shard·SHA256과 object 정리를 확인했습니다. Go host는 `CGO_ENABLED=0`이고 이미지 빌드는 수행하지 않았습니다.
+
+[실행 결과](../artifacts/image-contract-resume-20261008/native-summary.json), [이미지 계약·배포 입력](../artifacts/image-contract-resume-20261008/policy-snapshot.json)과 [실행 source](../artifacts/image-contract-resume-20261008/runtime-source.json)를 보관합니다. 실행 중 native 입력 269개와 SHA256 `0882f68eefc80e7600a92c11fc94f28259a4fa303da9dceadba158db1e56322d`는 동일했고, 각 실행 후 새 container/network는 0개였습니다. 이 focused ARM64 검증은 12개 Go matrix나 필수 상세 119개 전체 CI와 별도 증거입니다.
 
 ## 로컬 원본 실행 증거
 
