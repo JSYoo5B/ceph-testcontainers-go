@@ -116,6 +116,69 @@ identity phase의 총 60개 관측에서 direct daemon·central config의 8개 �
 원본·실행별 CLI·daemon·payload·cleanup·검증 receipt는
 `artifacts/wpq-tuning-review-20261009/`에 보존한다.
 
+## 최장 CI 시나리오에서의 비교
+
+2026-10-09 KST에 확인한 [source 4da2744의 성공 CI](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37804783231)에서
+최장 job은 RBD fixtures 2,107초였다. 최장 단일 Go parent는
+CephFS original-process recovery 1,455.33초이며 독립된 네 leaf의 합이다.
+여기서 recovery는 mirror process·정책·watcher·checkpoint를 복구하는
+동작이다. Site마다 OSD 한 개를 유지하며 OSD 증설·제거에 따른 PG migration을
+검사하지 않는다. RBD scope도 OSD membership을 유지한다.
+[Job·step 분석과 CI 분리](CI_FIXTURES.md)를 따른다.
+
+원래 CephFS `bridge/peer` leaf를 기본 mClock→WPQ sleep=0 순으로
+각각 새 pair에서 한 번 실행했다. 앞의 OSD 실험과 같은 엔진·자원,
+고정된 official control·OSD 이미지와 기존 MDS 역할 이미지를 사용했다.
+MDS digest는 `sha256:76885d63b94ca90bb6988df49f135a5a567b4fb29c2991ce26fdf3ee487206b1`이다.
+Library·원래 native 테스트는 source `4da2744`에 고정했다. 동일한 binary와
+MON `PostReadies` hook을 사용해 첫 OSD 전에 queue를 설정했다.
+원래 OSD 수·pool defaults·assertion·15분 context·Go timeout은 유지했다.
+Overlay는 설정 검증·이미지 identity·구간별 clock 기록만 추가했다.
+
+두 arm의 실제 daemon·central 조회에서 HDD/generic recovery sleep 네 값은
+모두 0이었다. 기본 mClock은 sleep을 이미 비활성화하며, WPQ arm은 두 HDD
+값을 명시적으로 0으로 적용했다. Queue 외의 recovery active 0/HDD 3과
+backfills 1은 같았다. 두 site의 OSD는 BlueStore·HDD·rotational·1 GiB였다.
+이 비교를 앞의 기본 WPQ 0.1초→0초 실험과 혼동하지 않는다.
+
+| 관측 구간 | 기본 mClock | WPQ sleep=0 |
+| --- | ---: | ---: |
+| Bootstrap·설정 검증 | 20.554초 | 21.233초 |
+| Mirror 원래 process 재시작·baseline | 39.424초 | 39.114초 |
+| 제거·outage·필수 negative 증거 | 97.255초 | 95.650초 |
+| Acknowledgment·replacement·backlog | 37.929초 | 38.085초 |
+| 테스트 본문 합계 | 270.771초 | 268.326초 |
+| Fixture cleanup | 30.415초 | 34.397초 |
+| Go leaf 전체 | 301.19초 | 302.73초 |
+
+본문은 WPQ가 약 2.45초 짧았지만 전체는 약 1.54초 길었다. 한 쌍의 탐색
+관측에서 전체 개선은 없었으며 작은 차이의 원인을 scheduler로 단정하지 않는다.
+구간은 CLI·native 수렴·관측 조건을 포함하며 순수 디스크 실행 시간이 아니다.
+Linux ARM64 로컬 결과를 Linux AMD64 CI 시간과 직접 비교하지 않는다.
+큰 데이터·foreground 경합·여러 OSD의 migration 결과로도 일반화하지 않는다.
+
+각 arm은 원래 native assertion, byte proof 14개, 10초 이상의 absence window
+3개, acknowledgment 5개와 replacement identity 검사를 통과했다.
+Actual role image·full CID·engine·platform을 client와 두 mirror process까지
+대조했고 두 실행 모두 자체 cleanup이 통과했다. 최초·각 실행 후 전체 container는
+0개, 이미지 수는 62개였다. 연속 engine isolation이나 RSS를 측정한 것은 아니다.
+
+첫 native 실행은 통과했으나 초기 검증기는 `go test -json`의 postorder PASS를
+plain `-v`의 preorder와 같다고 가정해 실패했다. 원본 실패 receipt를 보존하고
+별도 JSON 모드로 실제 구조화된 RUN/PASS·package 완료와 전체 native 증거를
+다시 검증했다. CI plain 모드와 원래 assertion은 유지했고 첫 native 실행을
+재실행하거나 성공 로그로 교체하지 않았다. 마지막 검증기는 두 arm 모두 통과했다.
+
+이 시나리오의 시간을 줄이는 우선 조치는 독립된 fixture의 runner 분리다.
+공통 scheduler는 유지한다. 추가 WPQ 튜닝은 실제 OSD out/add/remove를
+검증하는 `OSDPolicies`·`OSDRemovalLifecycle` 등에서 구간을 측정해 판단한다.
+이번에는 recovery 동시성·backfill 수를 늘리지 않았다.
+
+Binary SHA256은 `d3f467a0603e2bbfe11ddf493a5ebec76672ee77559a184115d3680432d160f4`다.
+Duration 원본, 273개 source pin, overlay 복원 검증, 실제 JSON·설정·이미지·
+cleanup·실패 및 수정 gate receipt는
+`artifacts/slow-scenario-wpq-20261009/`에 보존한다.
+
 ## 필요한 경우 선택하는 방법
 
 기존 API로 최초 OSD 기동 전에 queue를 선택할 수 있다.

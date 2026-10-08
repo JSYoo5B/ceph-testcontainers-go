@@ -1,6 +1,47 @@
 # 시나리오 fixture CI
 
-현재 CephFS original-process-quiescence 분리 구성은 **120개 distinct
+## 긴 시나리오 분리
+
+2026-10-09 KST에 확인한 source `4da2744`의
+[성공 run 37804783231](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37804783231)에서
+가장 긴 job은 RBD fixture 묶음이었다. Job/step 시간은 GitHub API의
+시작·종료 시각, Go package 시간은 각 job의 원본 로그에서 읽었다.
+
+| Job | 전체 | Make/test step | 이미지 준비 | 별도 cleanup 검사 |
+| --- | ---: | ---: | ---: | ---: |
+| RBD fixtures | 35분 7초 | 34분 27초 | 11초 | 12초 |
+| Cluster fixtures | 27분 8초 | 26분 31초 | 10초 | 11초 |
+| CephFS process recovery | 25분 13초 | 24분 23초 | 23초 | 12초 |
+
+Test step은 bootstrap·native 동작·CLI polling·각 fixture cleanup을
+포함한다. 별도 cleanup 검사는 테스트 안에서 이미 소비한 종료 시간을
+대신하지 않는다. 최장 단일 Go parent는 CephFS process recovery
+1,455.33초이며 독립된 네 leaf가 각각 355.06–372.80초를 소비했다.
+RBD 묶음의 여섯 parent 중 mirror scope가 983.54초, automatic schedule이
+393.24초였다. Schedule의 1분 주기와 각 leaf의 필수 negative window는
+실제 검사 조건이므로 그대로 유지한다.
+
+필수 CI는 RBD의 여섯 parent와 CephFS recovery의
+`bridge|host × peer|directory` 네 leaf를 독립 runner로 나눈다.
+각 leaf 내부의 원래 process·정책·checkpoint·bytes 검사는 함께 실행한다.
+Local `scenario-rbd-fixtures`와 `process-recovery` aggregate는 유지하며,
+선택 실행은 `SCENARIO_RBD_FIXTURE_CASE`와
+`SCENARIO_CEPHFS_REMOVAL_CASE=process-recovery-{network}-{kind}`를 사용한다.
+기존 Go·job timeout, role 이미지 준비와 cleanup 조건을 유지한다.
+Compiled selector와 workflow 검사는 distinct parent 120개를 유지하고
+primary instance 127개를 선택한다. 필수 job은 79개, cleanup은 78쌍,
+주요 role 이미지 준비는 66개이며 기존 12×9 이미지 matrix는 유지한다.
+이 숫자는 새 구성의 정적 선택 결과로, 아래 과거 실행의 완료 증거와 구분한다.
+
+분리는 가용 runner가 있을 때 wall time을 줄일 수 있다. 준비를 반복하므로
+runner 점유 합과 이미지 준비 비용이 줄었다고 주장하지 않는다.
+변경한 source의 새 CI 완료를 관측하기 전에는 성능 개선으로 표시하지 않는다.
+Timing 원본과 source별 hash receipt는
+`artifacts/slow-scenario-wpq-20261009/`에 보존한다.
+
+## 앞선 전체 CI 완료
+
+앞선 CephFS original-process-quiescence 분리 구성은 **120개 distinct
 parent, primary 실행 instance 124개**를 선택합니다. 필수 job 71개,
 cleanup 70쌍, 주요 역할 이미지 준비 58개와 기존 12×9 matrix를 유지합니다.
 Source `3355e8acf822f5bd9b3e64549e24b8f7d46a89b4`의
