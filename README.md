@@ -81,6 +81,10 @@ func TestTopology(t *testing.T) {
 
 ### 초기 클러스터 구성
 
+`WithMessengerMode(ceph.MessengerV2Secure)`로 v2 secure 전용 bootstrap을 선택할 수 있습니다.
+노드·client 설정 상속, legacy 포트 미노출과 실제 연결 검증 범위는
+[Messenger secure 구성 계약](docs/MESSENGER_SECURE.md)을 따릅니다.
+
 `Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다.
 
 ```go
