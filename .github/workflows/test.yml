@@ -282,7 +282,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [network-interruption, five-monitors, rbd-mirror-bridge, rbd-mirror-host, cephfs-mirror-bridge, cephfs-mirror-host, rgw-initial-bridge, rgw-initial-host, rgw-removal-bridge, rgw-removal-host, rbd-peer-network, rgw-peer-network]
+        case: [network-recovery, rbd-daemons, cephfs-mirror-bridge, cephfs-mirror-host, rgw-initial-bridge, rgw-initial-host, rgw-removal-bridge, rgw-removal-host, rgw-peer-network]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -300,13 +300,15 @@ jobs:
           phase: snapshot
           artifact_name: runtime-cleanup-scenario-topology-extensions-${{ matrix.case }}
       - name: Prepare published Ceph role images
+        id: scenario_role_images
         uses: ./.github/actions/scenario-images
         with:
           artifact_name: scenario-images-scenario-topology-extensions-${{ matrix.case }}
       - name: Verify Docker bridge endpoint recovery
-        if: ${{ matrix.case == 'network-interruption' }}
+        if: ${{ matrix.case == 'network-recovery' }}
         run: go test -mod=readonly -tags=integration -count=1 -v -timeout=5m -run '^TestRecoverableBridge(EndpointIdentity|PublishedPort)$' ./internal/dockerbridge
       - name: Run make scenario-topology-extensions
+        if: ${{ !cancelled() && steps.runtime_cleanup_baseline.outcome == 'success' && steps.scenario_role_images.outcome == 'success' }}
         shell: bash
         run: |
           set -o pipefail
@@ -376,7 +378,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [data-pools, clone-cancellation, quiesce, authorization, pins, retained-snapshot, ec-data-pool, host-filesystem]
+        case: [data-layout, clone-cancellation, quiesce, authorization, pins, retained-snapshot]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -468,7 +470,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [client-features, snapshot-schedule, mirror-scope, failback, split-brain, host-lifecycle]
+        case: [client-setup, snapshot-schedule, mirror-scope, failback, split-brain]
     env:
       CGO_ENABLED: '0'
     steps:
@@ -707,7 +709,7 @@ jobs:
           phase: check
           artifact_name: runtime-cleanup-scenario-rbd-namespaces
 
-  scenario-storage-bootstrap:
+  scenario-empty-bootstrap:
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -726,50 +728,34 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-storage-bootstrap
+          artifact_name: runtime-cleanup-scenario-empty-bootstrap
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-storage-bootstrap
-      - run: make scenario-storage-bootstrap
+          artifact_name: scenario-images-scenario-empty-bootstrap
+      - name: Run empty-component bootstrap fixtures
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-empty-bootstrap 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-storage-bootstrap
-
-  scenario-manager-bootstrap:
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      CGO_ENABLED: '0'
-    steps:
-      - uses: actions/checkout@v7
+          artifact_name: runtime-cleanup-scenario-empty-bootstrap
+      - name: Identify failed bootstrap fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile scenario-empty-bootstrap
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.25.x'
-          cache-dependency-path: go.sum
-      - name: Record Testcontainers resource identities
-        id: runtime_cleanup_baseline
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: snapshot
-          artifact_name: runtime-cleanup-scenario-manager-bootstrap
-      - name: Prepare published Ceph role images
-        uses: ./.github/actions/scenario-images
-        with:
-          artifact_name: scenario-images-scenario-manager-bootstrap
-      - run: make scenario-manager-bootstrap
-      - name: Verify Testcontainers resource cleanup
-        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: check
-          artifact_name: runtime-cleanup-scenario-manager-bootstrap
+          name: scenario-empty-bootstrap
+          path: artifacts/scenario/
+          if-no-files-found: warn
 
   scenario-rbd-namespace-observation:
     needs: test
@@ -803,7 +789,7 @@ jobs:
           phase: check
           artifact_name: runtime-cleanup-scenario-rbd-namespace-observation
 
-  scenario-mds-bootstrap:
+  scenario-mds-replacements:
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -822,79 +808,31 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-scenario-mds-bootstrap
+          artifact_name: runtime-cleanup-scenario-mds-replacements
       - name: Prepare published Ceph role images
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-scenario-mds-bootstrap
-      - run: make scenario-mds-bootstrap
+          artifact_name: scenario-images-scenario-mds-replacements
+      - name: Run MDS replacement fixtures
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/scenario
+          make scenario-mds-replacements 2>&1 | tee artifacts/scenario/test.log
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-scenario-mds-bootstrap
-
-  scenario-mds-replacement:
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      CGO_ENABLED: '0'
-    steps:
-      - uses: actions/checkout@v7
+          artifact_name: runtime-cleanup-scenario-mds-replacements
+      - name: Identify failed MDS replacement fixture cases
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/test.log --profile scenario-mds-replacements
+      - name: Save scenario results
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.25.x'
-          cache-dependency-path: go.sum
-      - name: Record Testcontainers resource identities
-        id: runtime_cleanup_baseline
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: snapshot
-          artifact_name: runtime-cleanup-scenario-mds-replacement
-      - name: Prepare published Ceph role images
-        uses: ./.github/actions/scenario-images
-        with:
-          artifact_name: scenario-images-scenario-mds-replacement
-      - run: make scenario-mds-replacement
-      - name: Verify Testcontainers resource cleanup
-        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: check
-          artifact_name: runtime-cleanup-scenario-mds-replacement
-
-  scenario-last-mds-replacement:
-    needs: test
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      CGO_ENABLED: '0'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.25.x'
-          cache-dependency-path: go.sum
-      - name: Record Testcontainers resource identities
-        id: runtime_cleanup_baseline
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: snapshot
-          artifact_name: runtime-cleanup-scenario-last-mds-replacement
-      - name: Prepare published Ceph role images
-        uses: ./.github/actions/scenario-images
-        with:
-          artifact_name: scenario-images-scenario-last-mds-replacement
-      - run: make scenario-last-mds-replacement
-      - name: Verify Testcontainers resource cleanup
-        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: check
-          artifact_name: runtime-cleanup-scenario-last-mds-replacement
+          name: scenario-mds-replacements
+          path: artifacts/scenario/
+          if-no-files-found: warn

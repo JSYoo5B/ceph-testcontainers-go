@@ -65,7 +65,7 @@ not race these fixture operations. The gates are not a Ceph/Docker transaction.
 
 The native parent
 [`TestLastMDSReplacementTopology`](../internal/integration/last_mds_replacement_integration_test.go)
-uses `integration,topology`, one fresh original Quay cluster each for bridge and
+uses `integration,topology`, one fresh supplied-image cluster each for bridge and
 Linux host, sequentially, with no next network after a failed child. Two OSDs
 and metadata/default/additional/sibling pools use replicas 2/min 1. The ordinary
 target starts 1 active / 0 standby; an active sibling protects original IDs,
@@ -74,6 +74,15 @@ actual effective readback and exact MON CID/env make stopped-but-registered
 negative Add preflight deterministic within the 15-minute operation umbrella.
 The caller then explicitly fails the saved GID and proves global absence and
 established rank0 failed, independently of the old exited CID.
+
+Required CI groups this whole parent with `TestStoppedMDSRetirementTopology`
+in `scenario-mds-replacements`, using published official role images. Both
+parents run sequentially with fresh fixtures and per-fixture cleanup under a
+shared Go 50-minute/job 60-minute ceiling. The grouped target omits global
+`-failfast`; each parent's existing failed-child guard remains, and a package
+timeout can still prevent the other parent from running. For an isolated local
+run, `make scenario-last-mds-replacement` retains its original flags and budget.
+Historical native measurements below retain their original source and images.
 
 The unavailable phase requires exactly three target-qualified native health
 checks: FS_WITH_FAILED_MDS and FS_DEGRADED at HEALTH_WARN, MDS_ALL_DOWN at

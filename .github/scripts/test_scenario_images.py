@@ -32,12 +32,17 @@ PRIMARY = (
     "scenario-cephfs-fixtures", "scenario-rados-fixtures",
     "scenario-rbd-fixtures", "scenario-rgw-fixtures", "scenario-rgw-sync-fixtures",
     "scenario-mirror-initial-daemons", "scenario-rbd-namespaces",
+    "scenario-empty-bootstrap", "scenario-rbd-namespace-observation",
+    "scenario-mds-replacements",
+)
+MANUAL_LIFECYCLE_TARGETS = (
     "scenario-storage-bootstrap", "scenario-manager-bootstrap",
-    "scenario-rbd-namespace-observation", "scenario-mds-bootstrap",
-    "scenario-mds-replacement", "scenario-last-mds-replacement",
+    "scenario-mds-bootstrap", "scenario-mds-replacement",
+    "scenario-last-mds-replacement",
 )
 FIXTURES = frozenset(name for name in PRIMARY if name.endswith("-fixtures"))
-DRY_RUN_TARGETS = (*PRIMARY, "scenario-rgw-sync-supported", "scenario-diagnostics")
+DRY_RUN_TARGETS = (*PRIMARY, *MANUAL_LIFECYCLE_TARGETS,
+                   "scenario-rgw-sync-supported", "scenario-diagnostics")
 PREP = "./.github/actions/scenario-images"
 CLEANUP = "./.github/actions/runtime-cleanup"
 
@@ -394,11 +399,11 @@ class ScenarioImageTests(unittest.TestCase):
             else 1 for name in PRIMARY)
         self.assertEqual(len(prepared), expanded_primary_count)
         self.assertEqual(len(cleanups), expanded_primary_count)
-        # The required cohort uses the same 66 role-backed scenario jobs plus
-        # host checks. Supplied-image matrix validation remains a manual target.
-        self.assertEqual(expanded_primary_count, 66)
-        self.assertEqual(len(prepared) + 1, 67)
-        self.assertEqual(len(cleanups), 66)
+        # Related short parents share 57 role-backed jobs plus host checks;
+        # supplied-image matrix validation remains a manual target.
+        self.assertEqual(expanded_primary_count, 57)
+        self.assertEqual(len(prepared) + 1, 58)
+        self.assertEqual(len(cleanups), 57)
         self.assertEqual(len(set(prepared)), len(prepared))
         self.assertEqual(len(set(cleanups)), len(cleanups))
         self.assertFalse(set(prepared) & set(cleanups))

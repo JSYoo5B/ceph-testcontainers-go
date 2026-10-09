@@ -82,6 +82,16 @@ and use the runtime filesystem constructor when testing a combined bootstrap.
 
 ## Focused native fixture
 
+Required CI runs this parent with the no-initial-OSD and no-initial-manager
+parents in `scenario-empty-bootstrap`, using published official role images.
+The three parents run sequentially with fresh fixtures and per-fixture cleanup,
+under a shared Go 80-minute/job 90-minute ceiling. The grouped target omits
+global `-failfast`; each parent's existing failed-child guard remains. A package
+timeout can still prevent later parents from running. For an isolated local run,
+`make scenario-mds-bootstrap` retains minimal topology tags, `-failfast` and its
+Go 50-minute budget. Historical validation below keeps its original source,
+image and CI selection.
+
 [TestNoInitialMDSTopology](../internal/integration/no_initial_mds_integration_test.go)
 uses one fresh cluster per bridge/host child, runs sequentially and stops before
 starting the next child after a failure. Each cluster has two OSDs, an ordinary
@@ -166,9 +176,9 @@ and [artifact correction](../artifacts/no-initial-mds-20261008/artifact-storage-
 
 Actual compiled selection is 117 names: 115 required internal tests plus two
 SDK tests. O's prior 116 gains only `TestNoInitialMDSTopology`; default 14, full
-SDK 11/selected 2 and old named profiles remain unchanged. The dedicated
-`scenario-mds-bootstrap` keeps minimal topology tags, -failfast, Go 50/job 60
-minutes and its own baseline/always cleanup. [Completed inventory](../artifacts/no-initial-mds-20261008/compiled-selection.json)
+SDK 11/selected 2 and old named profiles remain unchanged. At that source, the
+dedicated `scenario-mds-bootstrap` used minimal topology tags, -failfast,
+Go 50/job 60 minutes and its own baseline/always cleanup. [Completed inventory](../artifacts/no-initial-mds-20261008/compiled-selection.json)
 is separate from runtime. O116/N115/M114 and whole CI101 remain their original
 source outcomes, not a new full 117 runtime result.
 

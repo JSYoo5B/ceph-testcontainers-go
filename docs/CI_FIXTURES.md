@@ -11,23 +11,76 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 다른 이미지나 platform의 Go 연결 검사가 필요하면
 [수동 호환성 target](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)을 사용한다.
 
-| 필수 범위 | 이전 구성 | 현재 구성 |
-| --- | ---: | ---: |
-| Job | 79 | 67 |
-| 자체 resource cleanup | 78쌍 | 66쌍 |
-| 주요 roles 이미지 준비 | 66 | 66 |
-| Distinct test parent | 120 | 120 |
-| 주요 시나리오 parent 실행 instance | 127 | 127 |
-| 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 |
+| 필수 범위 | Matrix 포함 `8ef88e7` | Matrix 제거 `27d8008` | 현재 관련 시나리오 묶음 |
+| --- | ---: | ---: | ---: |
+| Job | 79 | 67 | 58 |
+| 자체 resource cleanup | 78쌍 | 66쌍 | 57쌍 |
+| 주요 roles 이미지 준비 | 66 | 66 | 57 |
+| Distinct test parent | 120 | 120 | 120 |
+| 주요 시나리오 parent 실행 instance | 127 | 127 | 127 |
+| 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 | 0 |
 
 이 수는 현재 workflow·compiled selector의 범위다. 제거한 대표 9개 이름은
 모두 남은 필수 시나리오에서 검증한다. 각 runner의 이미지 ID 기록·native
 assertion·완료 검사·항상 실행하는 cleanup을 유지하며 테스트 내부의 phase나
 negative window를 줄이지 않는다. `scenario-default`도 필수 검사다.
+Compiled selector 기준 Ceph integration parent 118개·125회 실행에
+Docker bridge SDK parent 2개·2회 실행을 더한 수다.
 선택적 `rgw-native-regressions`도 기본적으로 같은 roles를 준비하고,
 비어 있지 않은 `workflow_dispatch.rgw_image`는 RGW 역할만 덮어쓴다.
 그 명시 입력은 기본 이미지 준비 receipt와 구분한다. Vault와 Linux go-ceph
 소비자 container는 별도 입력이며 Ceph 역할 이미지의 의존성을 바꾸지 않는다.
+
+## 짧고 관련 있는 시나리오 묶음
+
+Source `27d8008`의 [run 37870121307](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37870121307)에서
+완료된 짧은 job을 기준으로 다음 여섯 묶음을 선택했다. 아래 시간은 각
+구성원의 기존 **job 전체 시간의 합**이며 새 묶음의 측정값이 아니다.
+선택에 사용한 중간 snapshot은 48개 SUCCESS·19개 실행 중이었다.
+해당 snapshot이나 선택 검사만으로 전체 CI 성공을 판정하지 않는다.
+후속 GitHub API 조회에서 이 실행은 2026-10-09 02:10:38 UTC에
+SUCCESS로 완료됐으며 필수 job 67개 SUCCESS·선택적 regression 1개 SKIP,
+생성부터 완료까지 39분 58초였다. 이는 묶음 변경 전 source의 결과다.
+
+| CI target / case | 함께 실행하는 기존 case | 기존 job 시간 합 |
+| --- | --- | ---: |
+| `scenario-empty-bootstrap` | 최초 OSD·MGR·MDS 없는 구성 | 11분 55초 |
+| `scenario-mds-replacements` | 중지 MDS 교체·마지막 MDS 교체 | 9분 9초 |
+| `scenario-topology-extensions` / `network-recovery` | cluster network interruption·5 MON quorum recovery | 5분 3초 |
+| `scenario-topology-extensions` / `rbd-daemons` | bridge·host mirror daemon·RBD peer network interruption | 10분 3초 |
+| `scenario-rbd-fixtures` / `client-setup` | RBD client features·host lifecycle | 6분 30초 |
+| `scenario-cephfs-fixtures` / `data-layout` | dynamic data pools·EC data pool·host filesystem | 9분 23초 |
+
+기존 15개 job을 6개로 묶어 필수 job 9개를 줄인다. 각 묶음은 한 Go
+process에서 whole parent를 순차 실행하며 각 parent는 원래대로 새 cluster와
+client를 만들고 정리한다. Cluster나 native I/O 결과를 다음 parent와
+공유하지 않는다. 각 묶음은 최초 resource baseline과 역할 이미지 준비를
+한 번 수행하고 마지막에 `always()` cleanup 검사를 한다. 중간에 baseline을
+다시 기록하지 않으므로 앞선 parent의 누수도 마지막 검사에 포함된다.
+Go 로그의 각 parent RUN/PASS/FAIL과 실패 요약·artifact를 보존한다.
+SDK endpoint recovery 2개는 `network-recovery`에서 한 번만 실행한다.
+SDK 실패는 job 실패로 유지한다. 최초 baseline과 이미지 준비가 성공하고
+취소되지 않았다면 SDK 실패 뒤에도 묶음의 Ceph parent를 시도한다.
+
+새 bootstrap 묶음의 Go process 제한은 80분, job 제한은 90분이며 MDS
+교체 묶음은 각각 50분·60분이다. 묶음의 process 전체가 공유하는 제한으로,
+각 parent에 그 시간을 별도로 배정하는 설정은 아니다. 두 새 target은
+`-failfast` 없이 실행해 일반적인 parent 실패 뒤에도 다음 parent를 시도한다.
+Package timeout이나 process 중단 뒤의 실행까지 보장하지는 않는다.
+기존 개별 Make target·case·aggregate와 시간 제한·`-failfast` 설정은
+유지하며 테스트 내부의 operation context와 failed-child guard도 바꾸지 않는다.
+기존 fixture·topology target에 추가한 묶음은 해당 target의 제한을 공유한다.
+
+Original-process quiescence·recovery의 네 leaf씩과 receiver의 bridge·host
+job 및 각각의 다섯 scope는 그대로 독립 실행한다. 긴 mirror scope·schedule·
+failback·split-brain·CephFS pins도 이번 짧은 시나리오 묶음에 넣지 않았다.
+Job 시작·이미지 준비·외부 cleanup의 반복을 줄이는 변경이며 native Ceph
+동작 자체의 시간이 줄었다고 주장하지 않는다. 현재 변경은 호스트 검사
+40개(이미지 선택 17개·compiled selector 23개)가 통과한 상태다. 새 묶음의
+native 실행과 전체 CI 시간은 사용자가 push한 뒤 별도로 확인해야 한다.
+실행 원본·선택 근거는 `artifacts/related-scenario-bundles-20261009/`에 보존한다.
+
+## Matrix 제거 전 작업량으로 계산한 예상
 
 아래 성공 source `8ef88e7`의 자동 matrix가 사용한 runner 시간은
 14,383초(약 240분)였다. 이를 제외한 같은 시나리오 작업량은
@@ -110,8 +163,8 @@ RBD 묶음의 여섯 parent 중 mirror scope가 983.54초, automatic schedule이
 393.24초였다. Schedule의 1분 주기와 각 leaf의 필수 negative window는
 실제 검사 조건이므로 그대로 유지한다.
 
-필수 CI는 RBD의 여섯 parent와 CephFS recovery의
-`bridge|host × peer|directory` 네 leaf를 독립 runner로 나눈다.
+Source `8ef88e7`에서는 RBD의 여섯 parent와 CephFS recovery의
+`bridge|host × peer|directory` 네 leaf를 독립 runner로 나눴다.
 각 leaf 내부의 원래 process·정책·checkpoint·bytes 검사는 함께 실행한다.
 Local `scenario-rbd-fixtures`와 `process-recovery` aggregate는 유지하며,
 선택 실행은 `SCENARIO_RBD_FIXTURE_CASE`와
@@ -120,7 +173,8 @@ Local `scenario-rbd-fixtures`와 `process-recovery` aggregate는 유지하며,
 당시 source `8ef88e7`의 compiled selector와 workflow 검사는 distinct
 parent 120개와 primary instance 127개를 선택했다. 필수 job 79개,
 cleanup 78쌍, 주요 role 이미지 준비 66개와 12×9 이미지 matrix를 사용했다.
-현재 matrix 제거 구성의 67개 필수 job과 source별 완료 증거를 구분한다.
+Source `27d8008`의 matrix 제거 구성은 67개 필수 job이며 현재 짧은
+시나리오 묶음 구성은 58개다. 각 source의 완료 증거를 구분한다.
 
 분리는 가용 runner가 있을 때 wall time을 줄일 수 있다. 준비를 반복하므로
 runner 점유 합과 이미지 준비 비용이 줄었다고 주장하지 않는다.
@@ -319,11 +373,12 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 
 [workflow](../.github/workflows/test.yml)는 호스트 `test`의 `make check`와 helper 검사 성공 뒤 모든 독립 시나리오를 허용합니다. 기본·topology·fixture job은 각각 Ubuntu 24.04 Linux AMD64 runner에서 실행하며 `scenario-default`도 필수 검사로 병행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
-현재 CI 설정은 `scenario-cephfs-fixtures`의 8개 parent와
-`scenario-topology-extensions`의 12개 parent를 각각 독립 case job으로
+현재 CI 설정은 `scenario-cephfs-fixtures`의 8개 parent를 6개 case job,
+`scenario-topology-extensions`의 12개 parent를 9개 case job으로
 선택합니다. 두 profile의 case별 Go 제한은 40분이고, runner 제한은
-cleanup을 포함해 50분입니다. Extensions의 Docker bridge SDK runtime
-2개는 `network-interruption` case에서만 한 번 실행합니다.
+cleanup을 포함해 50분입니다. 같은 case에 묶인 parent는 이 process 제한을
+공유합니다. Extensions의 Docker bridge SDK runtime 2개는
+`network-recovery` case에서만 한 번 실행합니다.
 
 `scenario-multicluster-topology`의 20개 parent는 `infra` 4개, `rbd` 6개,
 `cephfs` 4개를 기존 group으로 유지하고, RGW 6개는 parent별 독립 job으로
@@ -355,10 +410,10 @@ identity·source·native 판정·항상 실행하는 cleanup과 독립 artifact�
 검사합니다. 이 수는 `a388e6d`에서 완료한 분할의 범위입니다. 위 전체 CI 증거와
 측정값을 따르며, 이후 policy 분할 설정의 완료로 합산하지 않습니다.
 
-RGW sync의 새 CI 선택은 `policy-selective`, `policy-owned-bridge`,
+Source `3ac07fe`의 RGW sync CI 선택은 `policy-selective`, `policy-owned-bridge`,
 `policy-owned-host` 각 1개, `account` 2개, `translation` 2개의
 독립 job입니다. Policy parent는 각자 기존 fresh cluster 쌍을 사용합니다.
-새 설정의 필수 job은 **67개**, 자체 cleanup은 **66쌍**, 주요 이미지
+당시 설정의 필수 job은 **67개**, 자체 cleanup은 **66쌍**, 주요 이미지
 준비는 **54개**이며 distinct parent 119개와 matrix 12개×9개를 유지합니다.
 이 수는 설정의 완료 조건으로, 위 `a388e6d`의 65-job 성공을 새 설정의
 native 성공으로 표시하지 않습니다.
@@ -671,8 +726,10 @@ TestCephFSAdditionalErasureCodedDataPool
 TestHostNetworkCephFSFilesystem
 ```
 
-CI의 `SCENARIO_CEPHFS_FIXTURE_CASE`는 아래 parent 하나를 정확히
-선택합니다. 기본 `all`은 로컬 aggregate 선택 8개와 120분 제한을 유지하며,
+아래 `SCENARIO_CEPHFS_FIXTURE_CASE`는 개별 parent를 선택하는 수동 case입니다.
+CI는 `data-pools`·`ec-data-pool`·`host-filesystem`을 `data-layout` case에서
+함께 선택하고 나머지는 개별 case로 실행합니다. 기본 `all`은 로컬
+aggregate 선택 8개와 120분 제한을 유지하며,
 각 parent 안의 bridge/host·client·phase는 분리하거나 생략하지 않습니다.
 
 | case | 선택한 parent |
@@ -688,10 +745,12 @@ CI의 `SCENARIO_CEPHFS_FIXTURE_CASE`는 아래 parent 하나를 정확히
 
 ### scenario-topology-extensions · 12개와 SDK 2개
 
-CI의 `SCENARIO_TOPOLOGY_EXTENSION_CASE`는 아래 parent 하나를 정확히
-선택합니다. `network-interruption`은 기존 Docker bridge SDK runtime 2개도
-함께 실행합니다. 다른 case는 이 SDK 검사를 반복하지 않습니다. 기본 `all`은
-기존 로컬 aggregate 선택과 Go 90분 제한을 유지합니다.
+아래 `SCENARIO_TOPOLOGY_EXTENSION_CASE`는 개별 parent를 선택하는 수동
+case입니다. CI는 `network-interruption`·`five-monitors`를 `network-recovery`,
+`rbd-mirror-bridge`·`rbd-mirror-host`·`rbd-peer-network`를 `rbd-daemons`로
+묶으며 나머지는 개별 case로 실행합니다. 기존 Docker bridge SDK runtime
+2개는 CI의 `network-recovery`에서 한 번 실행합니다. 기본 `all`은 기존
+로컬 aggregate 선택과 Go 90분 제한을 유지합니다.
 
 | case | 선택한 parent |
 | --- | --- |
@@ -745,6 +804,10 @@ TestMultiClusterRBDFailback
 TestMultiClusterRBDSplitBrainResync
 TestHostNetworkRBDLifecycle
 ```
+
+CI는 `SCENARIO_RBD_FIXTURE_CASE=client-setup`에서 client features와
+host lifecycle을 함께 실행하며 나머지 네 parent는 개별 case로 실행합니다.
+수동 `client-features`·`host-lifecycle` case와 기본 `all`은 그대로 유지합니다.
 
 `TestRBDClientFeatures`의 layering/flatten, trash, migration commit/abort, group snapshot, exclusive lock, encryption format/load와 rekey 8개 phase를 bridge/host에서 모두 실행합니다. Phase를 일부 제외하여 기본 이미지의 통과를 만들지 않습니다.
 

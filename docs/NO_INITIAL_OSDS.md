@@ -100,6 +100,15 @@ reconfiguring the partial OSD.
 
 ## Validation
 
+Required CI runs this parent with the no-initial-manager and no-initial-MDS
+parents in `scenario-empty-bootstrap`, using published official role images.
+The three parents run sequentially with fresh fixtures and per-fixture cleanup,
+under a shared Go 80-minute/job 90-minute ceiling. The grouped target omits
+global `-failfast`; each parent's existing failed-child guard remains. A package
+timeout can still prevent later parents from running. For an isolated local
+run, `make scenario-storage-bootstrap` retains its original flags and budget.
+The measurements below belong to their original source and image selections.
+
 `TestNoInitialOSDTopology` has independent bridge/host normal-first and
 partial-first fixtures. The normal case uses a separate backend bridge in
 bridge mode. Native assertions require original canonical FSID, MON quorum,
@@ -164,10 +173,10 @@ under `artifacts/no-initial-osds-20261007/` in the validating checkout.
 
 Operational ceilings are 20 minutes for normal-first and eight minutes for
 partial-first per network; cleanup has separate bounded contexts. The dedicated
-CI profile uses Go 80 minutes and job 90 minutes, depends on `scenario-default`
-and stops after the first failed fixture. These ceilings are not runtime
-promises. This focused validation does not certify a new whole CI/image matrix,
-all Ceph APIs, production upgrades, hardware performance, global process absence
+CI profile at that source used Go 80 minutes and job 90 minutes, depended on
+`scenario-default` and stopped after the first failed fixture. These ceilings
+are not runtime promises. This focused validation does not certify a new whole
+CI/image matrix, all Ceph APIs, production upgrades, hardware performance, global process absence
 or every image/platform combination. No image-requirement violation was observed;
 a substantiated violation must stop dependent work and preserve the exact
 policy item, image digest, reproducing command and native failure evidence.

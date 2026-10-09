@@ -96,6 +96,15 @@ incomplete fixture, rather than a normally healthy cluster.
 
 ## Validation
 
+Required CI runs this parent with the no-initial-OSD and no-initial-MDS parents
+in `scenario-empty-bootstrap`, using published official role images. The three
+parents run sequentially with fresh fixtures and per-fixture cleanup, under a
+shared Go 80-minute/job 90-minute ceiling. The grouped target omits global
+`-failfast`; each parent's existing failed-child guard remains. A package timeout
+can still prevent later parents from running. `make scenario-manager-bootstrap`
+retains the original flags and budget for an isolated local run. The measurements
+below belong to their original source and image selections.
+
 `TestNoInitialManagerTopology` uses independent bridge/host cold-MGR and combined
 MON-only fixtures under minimal `integration,topology` tags. The normal case
 creates a pool with two OSDs, pins the original FSID, pool ID, OSD UUIDs and full
@@ -163,10 +172,11 @@ earlier whole CI remain attached to their original source.
 
 Operational ceilings are 15 minutes for cold-positive and ten minutes for
 combined MON-only per network, with separate three-minute whole-cluster cleanup;
-a failed leaf stops later fixtures. The dedicated CI profile uses Go 80 minutes
-and job 90 minutes, follows the host `test` checks; the focused run clears role
-overrides and retains its own baseline/always-cleanup artifact. These ceilings
-are not runtime promises. This focused validation does not certify a new whole
+a failed leaf stops later fixtures within this parent. The dedicated CI profile
+at that source used Go 80 minutes and job 90 minutes, followed the host `test`
+checks; the focused run cleared role overrides and retained its own
+baseline/always-cleanup artifact. These ceilings are not runtime promises.
+This focused validation does not certify a new whole
 CI/image matrix, all APIs, global process absence, every image/platform
 combination or recovery from an auth response loss. No image-requirement violation
 was observed; any substantiated violation must stop dependent work and preserve

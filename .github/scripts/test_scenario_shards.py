@@ -3,6 +3,7 @@
 import os
 import importlib.util
 from collections import Counter
+from itertools import product
 from pathlib import Path
 import re
 import shlex
@@ -12,6 +13,7 @@ import unittest
 import check_scenario_receivers as receiver_checker
 import check_scenario_quiescence as quiescence_checker
 import check_scenario_recovery as recovery_checker
+import report_test_failures as failure_reporter
 import test_scenario_images as image_helpers
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,6 +74,45 @@ TOPOLOGY_EXTENSION_CASES = {
     "rbd-peer-network": "TestMultiClusterRBDPeerNetworkInterruption",
     "rgw-peer-network": "TestMultiClusterRGWPeerNetworkTopology",
 }
+# CI bundles only whole independent parents. Exact per-parent Make cases and
+# the local all selectors above remain available for diagnosis.
+CEPHFS_CI_FIXTURE_CASES = {
+    "data-layout": tuple(CEPHFS_FIXTURE_CASES[case] for case in
+                         ("data-pools", "ec-data-pool", "host-filesystem")),
+    **{case: (CEPHFS_FIXTURE_CASES[case],) for case in
+       ("clone-cancellation", "quiesce", "authorization", "pins", "retained-snapshot")},
+}
+RBD_CI_FIXTURE_CASES = {
+    "client-setup": tuple(RBD_FIXTURE_CASES[case] for case in
+                          ("client-features", "host-lifecycle")),
+    **{case: (RBD_FIXTURE_CASES[case],) for case in
+       ("snapshot-schedule", "mirror-scope", "failback", "split-brain")},
+}
+TOPOLOGY_EXTENSION_CI_CASES = {
+    "network-recovery": tuple(TOPOLOGY_EXTENSION_CASES[case] for case in
+                              ("network-interruption", "five-monitors")),
+    "rbd-daemons": tuple(TOPOLOGY_EXTENSION_CASES[case] for case in
+                         ("rbd-mirror-bridge", "rbd-mirror-host", "rbd-peer-network")),
+    **{case: (TOPOLOGY_EXTENSION_CASES[case],) for case in
+       ("cephfs-mirror-bridge", "cephfs-mirror-host", "rgw-initial-bridge", "rgw-initial-host",
+        "rgw-removal-bridge", "rgw-removal-host", "rgw-peer-network")},
+}
+CI_GROUP_TARGETS = (
+    ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_CI_FIXTURE_CASES),
+    ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", RBD_CI_FIXTURE_CASES),
+    ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CI_CASES),
+)
+LIFECYCLE_BUNDLES = {
+    "scenario-empty-bootstrap": {
+        "scenario-storage-bootstrap": ("TestNoInitialOSDTopology", "80m"),
+        "scenario-manager-bootstrap": ("TestNoInitialManagerTopology", "80m"),
+        "scenario-mds-bootstrap": ("TestNoInitialMDSTopology", "50m"),
+    },
+    "scenario-mds-replacements": {
+        "scenario-mds-replacement": ("TestStoppedMDSRetirementTopology", "50m"),
+        "scenario-last-mds-replacement": ("TestLastMDSReplacementTopology", "50m"),
+    },
+}
 PARENT_CASE_TARGETS = (
     ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", RGW_TOPOLOGY_CASES),
     ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
@@ -83,10 +124,10 @@ PARENT_CASE_TARGETS = (
 class ScenarioShardTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        def compiled(tags):
+        def compiled(tags, package="./internal/integration"):
             result = subprocess.run(
                 ["go", "test", "-mod=readonly", "-tags=" + tags,
-                 "-list", "^Test", "./internal/integration"], cwd=ROOT,
+                 "-list", "^Test", package], cwd=ROOT,
                 env=os.environ | {"CGO_ENABLED": "0"}, capture_output=True,
                 text=True, timeout=180, check=True)
             names = set(re.findall(r"^Test\w+$", result.stdout, re.M))
@@ -95,6 +136,7 @@ class ScenarioShardTests(unittest.TestCase):
             return names
         cls.compiled = compiled("integration,auth,features,topology,hostnetwork,multicluster")
         cls.default_compiled = compiled("integration")
+        cls.bridge_compiled = compiled("integration", "./internal/dockerbridge")
 
     def commands(self, target, option=None, value=None, extra=()):
         args = ["make", "--no-print-directory", "-n", target]
@@ -153,6 +195,71 @@ class ScenarioShardTests(unittest.TestCase):
         for target, option, cases in PARENT_CASE_TARGETS[1:]:
             with self.subTest(target=target):
                 self.assert_partition(target, option, cases, (1,) * len(cases))
+
+    def test_related_ci_groups_preserve_exact_whole_parent_partitions(self):
+        for target, option, cases in CI_GROUP_TARGETS:
+            with self.subTest(target=target):
+                self.assert_partition(target, option, cases,
+                                      tuple(len(parents) for parents in cases.values()))
+            for case, parents in cases.items():
+                with self.subTest(target=target, case=case):
+                    self.assertEqual(self.selection(target, option, case), set(parents))
+                    command = self.command(target, option, case)
+                    expression = command[command.index("-run") + 1]
+                    self.assertTrue(expression.startswith("^") and expression.endswith("$"))
+                    self.assertNotIn("/", expression)  # retain all children and evidence phases
+                    for parent in parents:
+                        self.assertRegex(parent, expression)
+                        self.assertNotRegex(parent + "Other", expression)
+
+    def test_lifecycle_bundles_keep_manual_parents_flags_and_original_budgets(self):
+        workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        for target, manual_targets in LIFECYCLE_BUNDLES.items():
+            with self.subTest(target=target):
+                expected = {parent for parent, _ in manual_targets.values()}
+                self.assertEqual(self.selection(target), expected)
+                command = self.command(target)
+                process_budget = "80m" if target == "scenario-empty-bootstrap" else "50m"
+                job_budget = "90" if target == "scenario-empty-bootstrap" else "60"
+                self.assertIn("-timeout=" + process_budget, command)
+                expression = command[command.index("-run") + 1]
+                self.assertTrue(expression.startswith("^") and expression.endswith("$"))
+                self.assertNotIn("/", expression)
+                for flag in ("-tags=integration,topology", "-count=1", "-mod=readonly",
+                             "-v", "CGO_ENABLED=0"):
+                    self.assertIn(flag, command)
+                self.assertNotIn("-failfast", command)  # attempt later independent parents after a failure
+                block = re.search(r"^  " + target + r":\n.*?(?=^  \w[\w-]*:\n|\Z)",
+                                  workflow, re.M | re.S).group()
+                self.assertIn("timeout-minutes: " + job_budget, block)
+                self.assertRegex(block, r"(?m)^\s+make " + target +
+                                 r" 2>&1 \| tee artifacts/scenario/test\.log$")
+                self.assertIn("set -o pipefail", block)
+                self.assertEqual(block.count("artifact_name: runtime-cleanup-" + target), 2)
+                self.assertIn("artifact_name: scenario-images-" + target, block)
+                self.assertIn("--profile " + target, block)
+                self.assertIsNotNone(failure_reporter.PROFILE.fullmatch(target))
+                self.assertIn("uses: actions/upload-artifact@v7", block)
+                self.assertIn("name: " + target + "\n", block)
+                self.assertIn("if: always()", block)
+                self.assertLess(block.index("phase: snapshot"), block.index("make " + target))
+                self.assertLess(block.index("make " + target), block.index("phase: check"))
+                for manual, (parent, original_budget) in manual_targets.items():
+                    self.assertEqual(self.selection(manual), {parent})
+                    original = self.command(manual)
+                    self.assertEqual(original[original.index("-run") + 1], "^" + parent + "$")
+                    self.assertIn("-timeout=" + original_budget, original)
+                    self.assertIn("-failfast", original)
+                    self.assertNotRegex(parent + "Other", expression)
+                    # Keep every operational flag; a union must still attempt
+                    # later fresh parents when an earlier parent fails.
+                    def normalize(tokens):
+                        index = tokens.index("-run")
+                        return [token for i, token in enumerate(tokens)
+                                if i != index + 1 and not token.startswith("-timeout=")
+                                and token != "-failfast"]
+                    self.assertEqual(normalize(command), normalize(original))
+                    self.assertNotRegex(workflow, r"(?m)^  " + manual + r":$")
 
     def test_rbd_cases_preserve_six_whole_native_fixtures_and_original_budget(self):
         for case in RBD_FIXTURE_CASES:
@@ -257,6 +364,20 @@ class ScenarioShardTests(unittest.TestCase):
                          {receiver_checker.PARENT: 2, quiescence_checker.PARENT: 4,
                           recovery_checker.PARENT: 4})
         self.assertEqual(sum(counts.values()), len(self.compiled - OPTIONAL_NATIVE_SHUFFLE_PARENTS) + 7)
+        # The workflow totals include its two bridge SDK tests in addition to
+        # the Ceph integration parents and repeated exact network leaves.
+        sdk_commands = [shlex.split(image_helpers.step_run(step))
+                        for block in jobs.values() for step in image_helpers.steps(block)
+                        if "./internal/dockerbridge" in image_helpers.step_run(step)]
+        self.assertEqual(len(sdk_commands), 1)
+        sdk_expression = sdk_commands[0][sdk_commands[0].index("-run") + 1]
+        sdk_parents = {parent for parent in self.bridge_compiled if re.search(sdk_expression, parent)}
+        self.assertEqual(sdk_parents, {"TestRecoverableBridgeEndpointIdentity",
+                                      "TestRecoverableBridgePublishedPort"})
+        self.assertFalse(set(counts) & sdk_parents)
+        total_counts = counts + Counter(sdk_parents)
+        self.assertEqual(len(total_counts), 120)
+        self.assertEqual(sum(total_counts.values()), 127)
         self.assertEqual(set(quiescence_jobs), set(quiescence_checker.CASES))
         for case, command in quiescence_jobs.items():
             self.assertEqual(command[command.index("-run") + 1], quiescence_checker.SELECTORS[case])
@@ -390,9 +511,9 @@ class ScenarioShardTests(unittest.TestCase):
         for target, option, values in [
                 ("scenario-multicluster-topology", "SCENARIO_MULTICLUSTER_GROUP", GROUPS),
                 ("scenario-cephfs-removal", "SCENARIO_CEPHFS_REMOVAL_CASE", CEPHFS_CI_CASES),
-                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES),
-                ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", RBD_FIXTURE_CASES),
-                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES)]:
+                ("scenario-cephfs-fixtures", "SCENARIO_CEPHFS_FIXTURE_CASE", CEPHFS_FIXTURE_CASES | CEPHFS_CI_FIXTURE_CASES),
+                ("scenario-rbd-fixtures", "SCENARIO_RBD_FIXTURE_CASE", RBD_FIXTURE_CASES | RBD_CI_FIXTURE_CASES),
+                ("scenario-topology-extensions", "SCENARIO_TOPOLOGY_EXTENSION_CASE", TOPOLOGY_EXTENSION_CASES | TOPOLOGY_EXTENSION_CI_CASES)]:
             for value in values:
                 with self.subTest(target=target, value=value):
                     command = self.command(target, option, value)
@@ -418,10 +539,10 @@ class ScenarioShardTests(unittest.TestCase):
                 ("scenario-multicluster-topology", "group", GROUPS, "SCENARIO_MULTICLUSTER_GROUP"),
                 ("scenario-cephfs-removal", "case", CEPHFS_CI_CASES, "SCENARIO_CEPHFS_REMOVAL_CASE"),
                 ("scenario-rgw-sync-fixtures", "group", RGW_SYNC_GROUPS, "SCENARIO_RGW_SYNC_GROUP"),
-                ("scenario-cephfs-fixtures", "case", CEPHFS_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
+                ("scenario-cephfs-fixtures", "case", CEPHFS_CI_FIXTURE_CASES, "SCENARIO_CEPHFS_FIXTURE_CASE"),
+                ("scenario-topology-extensions", "case", TOPOLOGY_EXTENSION_CI_CASES, "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
                 ("scenario-rbd-receivers", "case", receiver_checker.NETWORKS, "SCENARIO_RBD_RECEIVERS_CASE"),
-                ("scenario-rbd-fixtures", "case", RBD_FIXTURE_CASES, "SCENARIO_RBD_FIXTURE_CASE")]:
+                ("scenario-rbd-fixtures", "case", RBD_CI_FIXTURE_CASES, "SCENARIO_RBD_FIXTURE_CASE")]:
             block = re.search(r"^  " + job + r":\n.*?(?=^  \w[\w-]*:\n|\Z)",
                               workflow, re.M | re.S).group()
             actual = re.search(r"^        " + key + r": \[(.*?)\]$", block, re.M)
@@ -499,16 +620,71 @@ class ScenarioShardTests(unittest.TestCase):
                 self.assertLess(block.index("check_scenario_receivers.py artifacts/scenario/test.log"),
                                 block.index("phase: check"))
 
-    def test_bridge_sdk_recovery_runs_only_once_in_network_interruption_case(self):
+    def test_bridge_sdk_recovery_runs_only_once_in_network_recovery_bundle(self):
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
         block = re.search(r"^  scenario-topology-extensions:\n.*?(?=^  \w[\w-]*:\n|\Z)",
                           workflow, re.M | re.S).group()
         sdk_steps = re.findall(r"^      - name: [^\n]*\n(?:(?!^      - ).)*?internal/dockerbridge[^\n]*",
                                block, re.M | re.S)
         self.assertEqual(len(sdk_steps), 1)
-        self.assertIn("if: ${{ matrix.case == 'network-interruption' }}", sdk_steps[0])
+        self.assertIn("if: ${{ matrix.case == 'network-recovery' }}", sdk_steps[0])
         self.assertIn("^TestRecoverableBridge(EndpointIdentity|PublishedPort)$", sdk_steps[0])
         self.assertEqual(workflow.count("./internal/dockerbridge"), 1)
+        command = shlex.split(image_helpers.step_run(sdk_steps[0]))
+        expression = command[command.index("-run") + 1]
+        selected = {parent for parent in self.bridge_compiled if re.search(expression, parent)}
+        self.assertEqual(selected, {"TestRecoverableBridgeEndpointIdentity",
+                                    "TestRecoverableBridgePublishedPort"})
+        for flag in ("-mod=readonly", "-tags=integration", "-count=1", "-v", "-timeout=5m"):
+            self.assertIn(flag, command)
+
+    def test_topology_parents_attempt_after_sdk_failure_only_with_prepared_resources(self):
+        workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        block = dict(image_helpers.blocks(workflow.split("\njobs:\n", 1)[1],
+                                          r"^  ([\w-]+):$"))["scenario-topology-extensions"]
+        job_steps = image_helpers.steps(block)
+        baseline = next(step for step in job_steps if "phase: snapshot" in step)
+        prep = next(step for step in job_steps if "uses: " + image_helpers.PREP in step)
+        sdk = next(step for step in job_steps if "./internal/dockerbridge" in image_helpers.step_run(step))
+        native = next(step for step in job_steps if re.search(
+            r"(?m)^\s*make scenario-topology-extensions(?:\s|$)", image_helpers.step_run(step)))
+        cleanup = next(step for step in job_steps if "phase: check" in step)
+        self.assertEqual(image_helpers.scalar(prep, "id"), "scenario_role_images")
+        self.assertNotRegex(prep, r"(?m)^\s+(?:if|continue-on-error):")
+        gate = image_helpers.scalar(native, "if")
+        self.assertEqual(gate, "${{ !cancelled() && steps.runtime_cleanup_baseline.outcome == 'success'"
+                              " && steps.scenario_role_images.outcome == 'success' }}")
+        # A status-check function overrides Actions' implicit success() gate.
+        # Resolve the checked-in conjunction against all relevant outcomes:
+        # SDK failure must allow both fresh parents without making the job green.
+        terms = gate.removeprefix("${{ ").removesuffix(" }}").split(" && ")
+        outcomes = ("success", "failure", "skipped", "cancelled")
+        for cancelled, before, images, bridge_sdk in product((False, True), outcomes, outcomes, outcomes):
+            with self.subTest(cancelled=cancelled, baseline=before, prep=images, sdk=bridge_sdk):
+                states = {"runtime_cleanup_baseline": before, "scenario_role_images": images,
+                          "bridge_sdk": bridge_sdk}
+                values = []
+                for term in terms:
+                    if term == "!cancelled()":
+                        values.append(not cancelled)
+                    else:
+                        match = re.fullmatch(r"steps\.(\w+)\.outcome == 'success'", term)
+                        self.assertIsNotNone(match, term)
+                        values.append(states[match.group(1)] == "success")
+                self.assertEqual(all(values), not cancelled and before == "success" and images == "success")
+        for step in (sdk, native):
+            self.assertNotRegex(step, r"(?m)^\s+continue-on-error:")
+        self.assertNotRegex(block, r"(?m)^    continue-on-error:")
+        self.assertEqual(image_helpers.scalar(sdk, "if"), "${{ matrix.case == 'network-recovery' }}")
+        self.assertEqual(image_helpers.scalar(cleanup, "if"),
+                         "${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}")
+        self.assertEqual(len([step for step in job_steps if "phase: snapshot" in step]), 1)
+        self.assertEqual(len([step for step in job_steps if "phase: check" in step]), 1)
+        self.assertEqual(image_helpers.scalar(baseline, "artifact_name"),
+                         image_helpers.scalar(cleanup, "artifact_name"))
+        self.assertLess(job_steps.index(prep), job_steps.index(sdk))
+        self.assertLess(job_steps.index(sdk), job_steps.index(native))
+        self.assertLess(job_steps.index(native), job_steps.index(cleanup))
 
 
 if __name__ == "__main__":

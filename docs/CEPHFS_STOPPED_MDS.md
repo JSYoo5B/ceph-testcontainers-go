@@ -73,6 +73,15 @@ retried both before and after replacement; it must preserve the new cohort,
 compatibility embed and replacement task. No replay-standby or foreign-standby
 native variant is claimed by this case.
 
+Required CI groups this whole parent with `TestLastMDSReplacementTopology` in
+`scenario-mds-replacements`, using published official role images. Both parents
+run sequentially with fresh fixtures and per-fixture cleanup under a shared
+Go 50-minute/job 60-minute ceiling. The grouped target omits global `-failfast`;
+each parent's existing failed-child guard remains, and a package timeout can
+still prevent the other parent from running. `make scenario-mds-replacement`
+retains its original flags and budget for an isolated local run. Historical
+native measurements below retain their original source and images.
+
 To make the stopped-but-still-registered rejection deterministic, the test
 uses the existing initial MON customizer with
 `CEPH_ARGS=--mds-beacon-grace=3600`. It requires fresh effective

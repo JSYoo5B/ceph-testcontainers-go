@@ -65,6 +65,9 @@ TOPOLOGY_EXTENSION_TESTS_rgw-removal-bridge = ^TestMultiClusterRGWZonegroupsAndR
 TOPOLOGY_EXTENSION_TESTS_rgw-removal-host = ^TestHostNetworkRGWZonegroupsAndRemovalTopology$$
 TOPOLOGY_EXTENSION_TESTS_rbd-peer-network = ^TestMultiClusterRBDPeerNetworkInterruption$$
 TOPOLOGY_EXTENSION_TESTS_rgw-peer-network = ^TestMultiClusterRGWPeerNetworkTopology$$
+# Related short CI cases share a Go process; every parent keeps its own fixture.
+TOPOLOGY_EXTENSION_TESTS_network-recovery = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery)$$
+TOPOLOGY_EXTENSION_TESTS_rbd-daemons = ^Test(MultiClusterRBDMirrorDaemonTopology|HostNetworkRBDMirrorDaemonTopology|MultiClusterRBDPeerNetworkInterruption)$$
 CEPHFS_REMOVAL_TESTS_all = $(SCENARIO_CEPHFS_REMOVAL_TESTS)
 CEPHFS_REMOVAL_TESTS_peer-drain = ^TestMultiClusterCephFSPeerRemovalDrain$$
 CEPHFS_REMOVAL_TESTS_directory-release = ^TestMultiClusterCephFSDirectoryRemovalRelease$$
@@ -110,6 +113,7 @@ CEPHFS_FIXTURE_TESTS_pins = ^TestCephFSPins$$
 CEPHFS_FIXTURE_TESTS_retained-snapshot = ^TestCephFSRetainedSnapshotAndMetadataRecipe$$
 CEPHFS_FIXTURE_TESTS_ec-data-pool = ^TestCephFSAdditionalErasureCodedDataPool$$
 CEPHFS_FIXTURE_TESTS_host-filesystem = ^TestHostNetworkCephFSFilesystem$$
+CEPHFS_FIXTURE_TESTS_data-layout = ^Test(CephFSDynamicDataPools|CephFSAdditionalErasureCodedDataPool|HostNetworkCephFSFilesystem)$$
 SCENARIO_RADOS_FIXTURE_TESTS = ^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement)$$
 SCENARIO_RBD_FIXTURE_TESTS = ^Test(RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces|MultiClusterRBDFailback|MultiClusterRBDSplitBrainResync|HostNetworkRBDLifecycle)$$
 RBD_FIXTURE_TESTS_all = $(SCENARIO_RBD_FIXTURE_TESTS)
@@ -119,6 +123,7 @@ RBD_FIXTURE_TESTS_mirror-scope = ^TestMultiClusterRBDMirrorScopeAndNamespaces$$
 RBD_FIXTURE_TESTS_failback = ^TestMultiClusterRBDFailback$$
 RBD_FIXTURE_TESTS_split-brain = ^TestMultiClusterRBDSplitBrainResync$$
 RBD_FIXTURE_TESTS_host-lifecycle = ^TestHostNetworkRBDLifecycle$$
+RBD_FIXTURE_TESTS_client-setup = ^Test(RBDClientFeatures|HostNetworkRBDLifecycle)$$
 SCENARIO_RGW_FIXTURE_TESTS = ^Test(RGWUserPlacementPolicy|HostNetworkRGWUserPlacementPolicy|RGWTenantsAndAccounts|HostNetworkRGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|HostNetworkHTTPTransportPreservesSignedRequest|RGWBackendSTSFormContentTypeIsSigned|RGWBackendRoleCleanupRefusesForeignPolicy|RGWBackendAuditProofRequiresCompletedVaultTransactions|RGWBackendStatusProbeReceivesBoundedContext)$$
 SCENARIO_RGW_SYNC_FIXTURE_TESTS = ^Test(MultiClusterRGWSelectivePolicy|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|AccountRootSync))$$
 SCENARIO_RGW_TRANSLATION_FIXTURE_TESTS = ^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(tag_owner_class|tenant_system_user_isolation)$$
@@ -359,3 +364,17 @@ SCENARIO_LAST_MDS_REPLACEMENT_TESTS = ^TestLastMDSReplacementTopology$$
 
 scenario-last-mds-replacement:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_LAST_MDS_REPLACEMENT_TIMEOUT) -run '$(SCENARIO_LAST_MDS_REPLACEMENT_TESTS)' ./internal/integration
+
+# Short related lifecycle parents retain independent fixtures in one Go process.
+# The individual targets above remain available with their original budgets.
+.PHONY: scenario-empty-bootstrap scenario-mds-replacements
+SCENARIO_EMPTY_BOOTSTRAP_TIMEOUT ?= 80m
+SCENARIO_EMPTY_BOOTSTRAP_TESTS = ^TestNoInitial(OSD|Manager|MDS)Topology$$
+SCENARIO_MDS_REPLACEMENTS_TIMEOUT ?= 50m
+SCENARIO_MDS_REPLACEMENTS_TESTS = ^Test(StoppedMDSRetirementTopology|LastMDSReplacementTopology)$$
+
+scenario-empty-bootstrap:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(SCENARIO_EMPTY_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_EMPTY_BOOTSTRAP_TESTS)' ./internal/integration
+
+scenario-mds-replacements:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(SCENARIO_MDS_REPLACEMENTS_TIMEOUT) -run '$(SCENARIO_MDS_REPLACEMENTS_TESTS)' ./internal/integration
