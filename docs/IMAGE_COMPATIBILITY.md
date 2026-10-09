@@ -24,6 +24,20 @@ RGW multisite/topology의 image 인자는 gateway 역할만 선택합니다. 설
 
 ## 이미지 검사와 Go 검증
 
+필수 Go CI는 공개 `official`의 네 역할 이미지로 Linux AMD64에서 Ceph
+시나리오를 실행합니다. 자동으로 실행하던 계열 3개 × layout 2개 ×
+architecture 2개의 Go 호환성 matrix는 제거합니다. 이미지 계열·architecture와
+`all`/역할 조합의 quick/full 검사·생성·배포 검증은
+[이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)가
+담당합니다. Go CI는 제공된 역할 이미지에서 모듈의 클러스터 구성·변경과
+native 데이터·상태 assertion, 실제 이미지 identity와 자체 cleanup을 검증합니다.
+
+이미지 검사기는 독립 Docker harness를 사용합니다. 그 multi-architecture
+PASS는 각 platform에서의 Go API·Testcontainers 연결까지 같은 방식으로
+검증한 결과가 아닙니다. 자동 Go matrix를 제거한 뒤 ARM64·다른 계열에 대한
+Go 연결 검증이 필요하면 아래 수동 target을 실행하고 그 source·입력·결과를
+별도로 기록합니다.
+
 [이미지 검사기](../../ceph-testcontainers-images/image/check.py)는 이미 준비된 로컬 이미지를 대상으로 동작합니다. `quick`은 역할별 실행 파일·라이브러리·class의 존재와 로딩을 검사하고, `full`은 quick 이후 자체 Docker harness로 cluster lifecycle, RBD, CephFS, RGW-S3, RBD encryption, RADOS object class, RADOS striper, RBD backup, RBD snapshot mirror, CephFS snapshot mirror, RGW multisite의 11개 시나리오를 실행합니다. 검사기는 Go module이나 go-ceph에 의존하지 않습니다.
 
 `full` 통과는 그 검사기의 11개 시나리오에 대한 증거입니다. 파일 존재나 `--version` 성공만으로 기능 호환성을 판단하지 않습니다. Go 모듈의 모든 topology/fixture/SDK test 통과로 확대하지 않습니다. 이 프로젝트에서는 별도로 준비된 이미지를 Go API로 검증합니다.
@@ -40,13 +54,18 @@ CEPH_TEST_MDS_IMAGE=my-company/ceph-mds:dev \
 make image-compatibility
 ```
 
-이 target은 아래 matrix에 명시한 **대표 9개 Go test**를 순차 실행합니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. `scenario-*`는 기본 `SCENARIO_IMAGE_LAYOUT=all`에서 control/OSD/RGW/MDS override 네 개를 해제하고 원본 Quay를 사용합니다. 명시적인 `roles` layout은 준비한 역할 이미지 네 개를 보존하며 주요 CI는 이 경로를 사용합니다.
+이 target은 아래 수동 matrix에 명시한 **대표 9개 Go test**를 순차 실행하는 선택 경로입니다. `CGO_ENABLED=0`이며 이미지 빌드를 수행하지 않습니다. 테스트는 testcontainers의 일반 이미지 선택/획득 동작을 사용합니다. 더 넓은 토폴로지에는 `make topology`, `make multicluster`, `make topology-extensions`를 사용합니다. `scenario-*`는 기본 `SCENARIO_IMAGE_LAYOUT=all`에서 control/OSD/RGW/MDS override 네 개를 해제하고 원본 Quay를 사용합니다. 명시적인 `roles` layout은 준비한 역할 이미지 네 개를 보존하며 주요 CI는 이 경로를 사용합니다.
 
-원본 필수 CI의 이름 목록과 검증 상태는 [CI_FIXTURES.md](CI_FIXTURES.md), 구성별 증거는 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다. 이미지 프로젝트의 검사 결과와 Go 프로젝트의 실행 결과는 각각 기록합니다.
+필수 CI의 이름 목록과 검증 상태는 [CI_FIXTURES.md](CI_FIXTURES.md), 구성별 증거는 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다. 이미지 프로젝트의 검사 결과와 Go 프로젝트의 실행 결과는 각각 기록합니다.
 
 ## 공식·Debian·Ubuntu 이미지 matrix
 
-Go 호환성 matrix는 `official`·`debian`·`ubuntu` 세 계열에 같은 대표 9개 테스트를 적용합니다. 각 계열을 `all` 하나와 네 역할을 조합하는 `roles` 방식으로 나누고, 각각 Linux AMD64·ARM64의 native Docker runner에서 실행합니다. CI는 AMD64에 `ubuntu-24.04`, ARM64에 `ubuntu-24.04-arm`을 사용합니다. Runner 이름은 [GitHub의 native runner 목록](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)을 따릅니다. 총 12개 조합이며 9개 이름을 반복 실행하는 것이지 108개의 서로 다른 테스트를 추가하는 것은 아닙니다. 주요 상세 CI의 필수 parent 119개는 별도 범위입니다.
+이 조합 목록은 수동 Go 검증의 입력 선택입니다. 자동 Go CI의 matrix로
+실행하지 않습니다. `make image-matrix`로 `official`·`debian`·`ubuntu`,
+`all`/`roles`, Linux AMD64/ARM64 중 한 조합을 선택해 같은 대표 9개를
+실행할 수 있습니다. 모든 조합을 수동으로 반복하면 12개 조합·108회 실행이지만
+서로 다른 테스트 이름은 9개입니다. 지정한 platform은 Docker 엔진과 실제
+이미지의 native architecture가 일치해야 하며 에뮬레이션 결과로 대신하지 않습니다.
 
 | 계열 | `all` 입력 | `roles` 입력 |
 |---|---|---|
@@ -67,12 +86,12 @@ make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles \
   IMAGE_PLATFORM=linux/arm64
 ```
 
-각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 11개 시나리오, Go matrix의 9개 대표 테스트, 상세 CI의 필수 119개 및 선택적 go-ceph 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. CI 실행 설정과 결과 상태는 [CI matrix](CI_FIXTURES.md#이미지-호환성-matrix)를 확인합니다.
+각 실행은 `TestClusterLifecycle`, `TestManagerLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`를 선택합니다. Image checker의 full 11개 시나리오, 수동 Go 호환성 검사의 9개 대표 테스트, 필수 Go 시나리오와 선택적 go-ceph 소비자 검증은 서로 다른 결과입니다. 한 계열·architecture·layout의 PASS를 다른 조합이나 전체 fixture 지원으로 확대하지 않습니다. [CI 구성과 기존 matrix 기록](CI_FIXTURES.md#이미지-호환성-matrix)을 구분하여 확인합니다. 수동 실행과 CI의 역할 이미지 준비는 같은 `run_image_matrix.py`를 사용하며, 준비 기능을 유지하기 위해 자동 12개 matrix를 실행할 필요는 없습니다.
 
 ## 주요 시나리오의 역할 이미지 선택
 
-CI의 `scenario-*` job은 먼저 자체 Docker resource baseline을 기록하고
-공개 `official-20.2.4-{control,osd,rgw,mds}`를 준비합니다. 같은 Ceph
+필수 Go CI의 Ceph 시나리오는 Linux AMD64 runner에서 먼저 자체 Docker
+resource baseline을 기록하고 공개 `official-20.2.4-{control,osd,rgw,mds}`를 준비합니다. 같은 Ceph
 upstream 빌드의 역할 조합으로 현재 fixed runtime 계약을 소비합니다.
 이미지를 빌드하거나 계약에 도구를 추가하지 않습니다. Python 준비 단계는
 native platform·로컬 immutable image ID·registry digest를 기록하고,
@@ -84,7 +103,8 @@ native platform·로컬 immutable image ID·registry digest를 기록하고,
 유지하며 Go/native 테스트의 성공으로 표시하지 않습니다. 네 역할을 모두
 검증한 뒤 `CEPH_TEST_*` 네 값만 전달하고, CI는
 `SCENARIO_IMAGE_LAYOUT=roles`로 기존 필수 selector를 실행합니다.
-모든 필수 parent/child·cleanup 판정과 12개 호환성 matrix는 유지합니다.
+필수 시나리오의 parent/child assertion과 cleanup 판정은 유지하며, 자동
+12개 호환성 matrix의 실행 범위와는 구분합니다.
 
 로컬 `make scenario-*`는 기본 `SCENARIO_IMAGE_LAYOUT=all`로 기존
 원본 Quay를 선택합니다. 준비된 네 역할을 지정하고
@@ -135,7 +155,7 @@ Linux go-ceph의 선택 실행 `make goceph-linux`/`make scenario-goceph-linux`�
 
 RBD encryption의 librbd·libcryptsetup·`cryptsetup` 실행 파일과 RADOS striper client는 control/all의 필수 실행 계약입니다. RBD native consumer는 기본적으로 선택한 control/all을 사용하며 별도 consumer override는 일반 client recipe의 선택 경로입니다. OSD의 `hello`·`lock` class와 그 runtime dependencies는 osd/all 계약입니다. Striper는 libradosstriper와 `lock`을 사용하므로 별도 `cls_striper`를 요구하지 않습니다. 이 구성요소의 위치·기능 계약은 [RBD recipe](RBD_CLIENT_FIXTURES.md)와 [RADOS recipe](CLIENT_FIXTURE_COVERAGE.md)에 기록합니다.
 
-Vault 같은 외부 KMS/backend 서비스와 애플리케이션별 SDK/probe는 해당 fixture의 별도 조건입니다. Ceph 역할 이미지에 Vault 서버나 go-ceph 프로그램·개발 헤더를 요구하지 않습니다.
+Vault 같은 외부 KMS/backend 서비스와 애플리케이션별 SDK/probe는 해당 fixture의 별도 조건입니다. Ceph 역할 이미지에 Vault 서버나 go-ceph 프로그램·개발 헤더를 요구하지 않습니다. RGW SSE-KMS 시나리오는 `testcontainers-go/modules/vault`로 별도 Vault 컨테이너를 구성하며 `CEPH_TEST_VAULT_IMAGE`로 사내 registry 등 사용할 이미지를 선택할 수 있습니다. Linux go-ceph client/runner와 Vault는 Ceph 역할 이미지 선택과 별도로 준비하는 소비자·외부 서비스 조건입니다.
 
 ## 정책 반영 기준
 
@@ -153,7 +173,7 @@ Vault 같은 외부 KMS/backend 서비스와 애플리케이션별 SDK/probe는 
 
 각 실행은 `TestRBDClientFeatures`와 `TestRADOSClientFixtures` 두 parent를 선택했습니다. 별도 RBD client override 없이 control의 Python native clients를 사용했고, LUKS1/LUKS2 재키잉 후 새 키로 원래 bytes를 읽고 이전 키를 거부했습니다. RADOS는 hello class, 두 client의 watch/notify, snapshot bytes, 세 striper shard·SHA256과 object 정리를 확인했습니다. Go host는 `CGO_ENABLED=0`이고 이미지 빌드는 수행하지 않았습니다.
 
-[실행 결과](../artifacts/image-contract-resume-20261008/native-summary.json), [이미지 계약·배포 입력](../artifacts/image-contract-resume-20261008/policy-snapshot.json)과 [실행 source](../artifacts/image-contract-resume-20261008/runtime-source.json)를 보관합니다. 실행 중 native 입력 269개와 SHA256 `0882f68eefc80e7600a92c11fc94f28259a4fa303da9dceadba158db1e56322d`는 동일했고, 각 실행 후 새 container/network는 0개였습니다. 이 focused ARM64 검증은 12개 Go matrix나 필수 상세 119개 전체 CI와 별도 증거입니다.
+[실행 결과](../artifacts/image-contract-resume-20261008/native-summary.json), [이미지 계약·배포 입력](../artifacts/image-contract-resume-20261008/policy-snapshot.json)과 [실행 source](../artifacts/image-contract-resume-20261008/runtime-source.json)를 보관합니다. 실행 중 native 입력 269개와 SHA256 `0882f68eefc80e7600a92c11fc94f28259a4fa303da9dceadba158db1e56322d`는 동일했고, 각 실행 후 새 container/network는 0개였습니다. 이 focused ARM64 검증은 당시의 12개 Go matrix나 필수 상세 119개 전체 CI와 별도 증거입니다.
 
 ## 로컬 원본 실행 증거
 
@@ -163,7 +183,11 @@ Vault 같은 외부 KMS/backend 서비스와 애플리케이션별 SDK/probe는 
 
 추가 `TestMonitorManagerTopology`도 bridge/host 모두 PASS했습니다. Parent test는 394.09초, harness의 Go 실행·cleanup은 394.264초였고 정상 Ryuk 유예 뒤 owned container·추가 network가 모두 0개였습니다. Quorum 상실 시 fresh session의 bounded 거부, 복구·MON 교체·MGR 승격 뒤 retained/fresh RADOS 데이터와 volumes 상태를 확인했습니다. 외부 `timeout`을 제거한 native watchdog 경로의 실제 증거이며 로그는 같은 artifact의 `monitor-watchdog/`입니다.
 
-## Native CI matrix 실행 증거
+## 이전 Native CI matrix 실행 증거
+
+아래 결과는 자동 12개 Go matrix를 운영하던 각 source의 실제 실행 기록입니다.
+새 CI 정책에서도 원문·이미지 identity·cleanup 증거를 보존하며, 현재 필수 CI의
+실행 범위나 새 source의 성공으로 표시하지 않습니다.
 
 ### be58018 이전 실행
 

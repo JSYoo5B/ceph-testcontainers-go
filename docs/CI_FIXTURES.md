@@ -1,5 +1,43 @@
 # 시나리오 fixture CI
 
+## 현재 필수 CI: 공식 roles 시나리오
+
+Go 모듈 CI는 준비된 `official-20.2.4-{control,osd,rgw,mds}`로
+Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·`all`/역할
+조합·AMD64/ARM64의 quick/full 검증과 배포는
+[이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)가
+담당하며, 이 저장소의 자동 `image-compatibility` matrix 12개 job은 제거했다.
+이미지 검사기의 성공을 모든 Go 조합의 성공으로 표시하지 않는다.
+다른 이미지나 platform의 Go 연결 검사가 필요하면
+[수동 호환성 target](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)을 사용한다.
+
+| 필수 범위 | 이전 구성 | 현재 구성 |
+| --- | ---: | ---: |
+| Job | 79 | 67 |
+| 자체 resource cleanup | 78쌍 | 66쌍 |
+| 주요 roles 이미지 준비 | 66 | 66 |
+| Distinct test parent | 120 | 120 |
+| 주요 시나리오 parent 실행 instance | 127 | 127 |
+| 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 |
+
+이 수는 현재 workflow·compiled selector의 범위다. 제거한 대표 9개 이름은
+모두 남은 필수 시나리오에서 검증한다. 각 runner의 이미지 ID 기록·native
+assertion·완료 검사·항상 실행하는 cleanup을 유지하며 테스트 내부의 phase나
+negative window를 줄이지 않는다. `scenario-default`도 필수 검사다.
+선택적 `rgw-native-regressions`도 기본적으로 같은 roles를 준비하고,
+비어 있지 않은 `workflow_dispatch.rgw_image`는 RGW 역할만 덮어쓴다.
+그 명시 입력은 기본 이미지 준비 receipt와 구분한다. Vault와 Linux go-ceph
+소비자 container는 별도 입력이며 Ceph 역할 이미지의 의존성을 바꾸지 않는다.
+
+아래 성공 source `8ef88e7`의 자동 matrix가 사용한 runner 시간은
+14,383초(약 240분)였다. 이를 제외한 같은 시나리오 작업량은
+34,841초(약 581분)이다. 기존 20개 동시 실행과 109초의 선행 호스트 검사를
+가정하면 이상적 하한은 **30분 46초**다. 고정된 기존 job 시간으로 배정
+지연을 0으로 놓은 계산은 관측 순서에서 35분 34초, 긴 job 우선에서
+31분 30초였다. 후자는 GitHub가 해당 순서로 배정한다는 보장이 아니다.
+새 CI의 실제 완료를 관측하기 전에는 30분 달성이나 성공으로 표시하지 않는다.
+범위 비교·원본·계산은 `artifacts/module-role-ci-20261009/`에 보존한다.
+
 ## 전체 workflow 시간과 runner 대기
 
 Source `8ef88e7`의 [run 37849665913](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37849665913)은
@@ -79,10 +117,10 @@ Local `scenario-rbd-fixtures`와 `process-recovery` aggregate는 유지하며,
 선택 실행은 `SCENARIO_RBD_FIXTURE_CASE`와
 `SCENARIO_CEPHFS_REMOVAL_CASE=process-recovery-{network}-{kind}`를 사용한다.
 기존 Go·job timeout, role 이미지 준비와 cleanup 조건을 유지한다.
-Compiled selector와 workflow 검사는 distinct parent 120개를 유지하고
-primary instance 127개를 선택한다. 필수 job은 79개, cleanup은 78쌍,
-주요 role 이미지 준비는 66개이며 기존 12×9 이미지 matrix는 유지한다.
-이 숫자는 새 구성의 정적 선택 결과로, 아래 과거 실행의 완료 증거와 구분한다.
+당시 source `8ef88e7`의 compiled selector와 workflow 검사는 distinct
+parent 120개와 primary instance 127개를 선택했다. 필수 job 79개,
+cleanup 78쌍, 주요 role 이미지 준비 66개와 12×9 이미지 matrix를 사용했다.
+현재 matrix 제거 구성의 67개 필수 job과 source별 완료 증거를 구분한다.
 
 분리는 가용 runner가 있을 때 wall time을 줄일 수 있다. 준비를 반복하므로
 runner 점유 합과 이미지 준비 비용이 줄었다고 주장하지 않는다.
@@ -150,7 +188,7 @@ Go package는 각각 904.857초·1055.246초에 PASS했고 자체 cleanup도 통
 앞선 두 실행에서 `TestMGRModules`가 bridge/host 모두 실패했습니다. 원본 Quay로 재현한 오류는 module 변경 직후 `TemporaryMGRModule`의 첫 조회가 `active MGR is not available`로 실패하는 재시작 구간이었습니다. 첫 snapshot의 bounded 읽기 재시도를 수정한 `5fe327653b325c8887d721cf47bd5ec08b39e187`의 [전체 CI 37181788541](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37181788541)는 2026-10-04 06:05:34 UTC에 시작했습니다. 테스트·시간 제한·native 판정 범위는 동일하며, 이 시작 기록만으로 전체 필수 CI 성공을 판정하지 않습니다.
 
 현재 주요 CI는 공식 역할 이미지 네 개를 검증해 immutable ID로 선택합니다.
-모듈의 기본 `ceph.DefaultImage`와 원본 Quay all의 대표 matrix는 유지합니다.
+모듈의 기본 `ceph.DefaultImage`와 원본 Quay all의 수동 호환성 경로는 유지합니다.
 이미지 준비 artifact는 native 테스트 성공을 뜻하지 않으며 각 job의 실제
 Go 결과·이미지 identity·자체 cleanup을 함께 확인합니다. 선택 방식은
 [이미지 호환성 문서](IMAGE_COMPATIBILITY.md#주요-시나리오의-역할-이미지-선택)를
@@ -440,11 +478,16 @@ job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며,
 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면
 원인을 추정하지 않고 미확인 notice를 남깁니다.
 
-Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID를 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 ID가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. `runtime-cleanup-scenario-*` 또는 matrix의 `runtime-cleanup-image-<variant>-<layout>-<architecture>` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
+Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID를 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 ID가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. 현재 `runtime-cleanup-scenario-*` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
 
 ## 이미지 호환성 matrix
 
-주요 공식 역할 이미지 상세 경로에 더해 [workflow](../.github/workflows/test.yml)의 `image-compatibility` job이 공식·GHCR Debian·Ubuntu 이미지에 같은 대표 9개 Go 테스트를 적용합니다. 세 계열 × `all`/`roles` × Linux AMD64/ARM64, 총 12개 조합입니다. `fail-fast: false`로 한 조합의 실패가 다른 조합의 결과 수집을 취소하지 않으며 각 job의 제한은 50분입니다. AMD64는 `ubuntu-24.04`, ARM64는 `ubuntu-24.04-arm`의 native Docker 엔진에서 실행하고 에뮬레이션 성공으로 다른 architecture를 지원한다고 표시하지 않습니다.
+이 조합 목록은 수동 Go 호환성 검사 입력과 과거 자동 matrix 결과입니다.
+현재 [workflow](../.github/workflows/test.yml)는 `image-compatibility` job을
+자동 실행하지 않고 공식 roles의 전체 필수 시나리오를 검사합니다. 이전 자동
+matrix는 세 계열 × `all`/`roles` × Linux AMD64/ARM64의 12개 조합에서
+같은 대표 9개를 반복했습니다. 다른 조합은 아래 수동 target에서 native
+Docker 엔진을 사용하며 에뮬레이션 결과로 대신하지 않습니다.
 
 | 계열 | `all` 방식 | `roles` 방식 | platform별 선택 수 |
 |---|---|---|---:|
@@ -452,7 +495,7 @@ Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)�
 | `debian` | GHCR `debian-20.2.4-all` | GHCR `debian-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 | `ubuntu` | GHCR `ubuntu-20.2.4-all` | GHCR `ubuntu-20.2.4-{control,osd,rgw,mds}` | 9개씩 |
 
-GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. CI와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS한 기존 기록을 보존합니다.
+GHCR repository는 `ghcr.io/jsyoo5b/ceph-testcontainers-images`입니다. `roles`는 control/OSD/RGW/MDS를 각 역할에 지정하며 mirror는 같은 control을 사용합니다. 현재 역할 이미지 준비와 로컬 matrix runner는 준비된 이미지를 선택하고 이미지를 빌드·패키징·배포하지 않습니다. 실제 image ID·digest·platform에 연결된 실행 결과를 확인해야 하며 tag 이름이나 registry manifest 존재만으로 PASS를 표시하지 않습니다. 2026-10-05 source `be58018`의 [CI run 37226924156](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37226924156)에서 12개 조합 전체가 PASS한 기존 기록을 보존합니다.
 
 후속 source `d9115f4`의 [CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)도 matrix 12개 각각 대표 9개 RUN/PASS·child FAIL/SKIP 0·package `ok`와 image ID·digest·native platform을 확인했습니다. Mirror 전용 role 선택을 제거하고 네 component 이미지와 source control mirror를 사용하는 경로입니다. 각 matrix cleanup 12개도 전후 동일 engine·source와 새 container/network 0개로 PASS했습니다. 같은 source manifest와 개별 artifact를 대조한 [최신 matrix 실행 증거](IMAGE_COMPATIBILITY.md#d9115f4-matrix-검증)에 기록합니다. 같은 run의 상세 101개·전체 cleanup 22개 성공은 [전체 CI 완료 증거](#d9115f4-전체-ci-완료)로 별도 확인합니다.
 
@@ -466,7 +509,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
   IMAGE_PLATFORM=linux/arm64
 ```
 
-각 조합은 cluster/MGR lifecycle, RBD, CephFS, signed RGW-S3, RBD backup와 RBD/CephFS snapshot mirroring, RGW multisite의 **대표 9개 Go 이름**을 실행합니다. 이 이름들은 기존 상세 suite와 겹칩니다. 12 × 9회 선택을 108개 새로운 distinct test로 더하거나, 이미지 프로젝트의 독립 Python full 11개·기존 Quay 상세 101개·현재 필수 상세 119개와 하나의 성공 증거로 합치지 않습니다. Cryptsetup·암호화·striper는 control/all의 필수 runtime 계약이고 hello·lock class는 osd/all 계약입니다. Linux go-ceph 프로그램·개발 헤더와 Vault 같은 외부 backend는 별도 조건으로 유지합니다. 정확한 실행 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따릅니다.
+각 조합은 cluster/MGR lifecycle, RBD, CephFS, signed RGW-S3, RBD backup와 RBD/CephFS snapshot mirroring, RGW multisite의 **대표 9개 Go 이름**을 실행합니다. 이 이름들은 기존 상세 suite와 겹칩니다. 12 × 9회 선택을 108개 새로운 distinct test로 더하거나, 이미지 프로젝트의 독립 Python full 11개·기존 Quay 상세 101개·당시 필수 상세 119개와 하나의 성공 증거로 합치지 않습니다. Cryptsetup·암호화·striper는 control/all의 필수 runtime 계약이고 hello·lock class는 osd/all 계약입니다. Linux go-ceph 프로그램·개발 헤더와 Vault 같은 외부 backend는 별도 조건으로 유지합니다. 정확한 실행 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따릅니다.
 
 ## 추가되는 named test 전체
 

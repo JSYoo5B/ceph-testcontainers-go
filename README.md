@@ -20,7 +20,7 @@ Ceph와 통신하는 애플리케이션을 테스트하기 위한 실험적 test
 
 client 테스트를 위한 서버 fixture의 전체 제공 기준과 항목별 검증 결과는 [CLIENT_FIXTURE_COVERAGE.md](docs/CLIENT_FIXTURE_COVERAGE.md)에서 추적합니다. 각 항목은 공개 구성 경로, native 상태, 실제 client 효과, 복원·정리까지 확인해야 완료로 표시합니다.
 
-기본 지원과 필수 통합 검증은 digest로 고정한 원본 Quay Ceph 20.2.4 이미지를 기준으로 합니다. 클러스터를 사용하기 위해 Ceph source를 빌드하거나 새 서버 이미지를 만들 필요가 없습니다. RGW selective replication의 numeric priority와 ordinary-user source 권한 거부는 원본 이미지에서 확인한 native 한계이며 기본 지원으로 표시하지 않습니다. API로 해당 정책을 저장할 수 있다는 사실과 실제 복제 효과를 구분합니다. [지원 범위와 실행 증거](docs/RGW_SYNC_POLICY.md)를 확인합니다.
+기본 이미지는 digest로 고정한 원본 Quay Ceph 20.2.4이며, 필수 Go CI는 같은 release의 공식 역할 이미지로 실행합니다. 클러스터를 사용하기 위해 Ceph source를 빌드하거나 새 서버 이미지를 만들 필요가 없습니다. RGW selective replication의 numeric priority와 ordinary-user source 권한 거부는 원본 이미지에서 확인한 native 한계이며 기본 지원으로 표시하지 않습니다. API로 해당 정책을 저장할 수 있다는 사실과 실제 복제 효과를 구분합니다. [지원 범위와 실행 증거](docs/RGW_SYNC_POLICY.md)를 확인합니다.
 
 ## 프로젝트 구성
 
@@ -372,7 +372,11 @@ cluster, err := ceph.Run(ctx, "ceph-testcontainers:official-20.2.4-control",
 
 이미지 프로젝트의 `quick`은 구성요소의 존재·로딩을, `full`은 자체 Docker harness의 기본 서비스·다중 클러스터·RBD 암호화/rekey·object class·striper를 포함한 11개 시나리오를 검사합니다. Go 모듈의 토폴로지·fixture·SDK 전체 검증과는 별개입니다. `make image-compatibility`는 준비된 이미지로 Go API 대표 9개 시나리오를 실행하며 역할별 환경 변수도 유지합니다. 사용 예와 역할별 명령 실행 위치, 추가 소비자 도구의 조건은 [IMAGE_COMPATIBILITY.md](docs/IMAGE_COMPATIBILITY.md)에 정리합니다.
 
-공식·GHCR Debian·Ubuntu 이미지에 `all`/역할 조합과 Linux AMD64/ARM64의 [12개 호환성 matrix](docs/IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 적용합니다. 로컬에서는 `make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles`로 현재 Docker 엔진의 native architecture에서 한 조합을 실행합니다. 주요 CI 시나리오는 준비된 공식 역할 이미지 네 개를 선택하며, 모듈 기본 이미지와 원본 Quay all의 대표 matrix 검증은 유지합니다. 추가 SDK 도구는 서버 이미지 조건에 넣지 않습니다.
+필수 Go CI의 Ceph 시나리오는 준비된 공식 역할 이미지 네 개로 Linux AMD64에서 실행하고, 실제 image ID·digest·platform과 native assertion·cleanup을 기록합니다. 공식·Debian·Ubuntu, `all`/역할 조합과 AMD64/ARM64의 quick/full 이미지 검증은 이미지 프로젝트 CI가 담당하며, 자동 12개 Go 호환성 matrix는 실행하지 않습니다. 이미지 검사기의 다른 platform PASS를 해당 platform의 Go 모듈 연결 검증과 동일하게 해석하지 않습니다.
+
+`make image-matrix IMAGE_VARIANT=debian IMAGE_LAYOUT=roles`와 `make image-compatibility`는 준비된 이미지로 대표 9개를 검사하는 수동 경로로 유지합니다. [수동 입력 선택과 이전 matrix 증거](docs/IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따르며 `ceph.DefaultImage`의 원본 Quay 기본값은 유지합니다.
+
+Linux go-ceph client/runner와 `CEPH_TEST_VAULT_IMAGE`로 선택하는 외부 Vault는 별도 fixture 입력이며, 추가 SDK·서비스 도구를 Ceph 서버 이미지 조건에 넣지 않습니다.
 
 ## 다중 클러스터 구성과 PoC
 

@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       rgw_image:
-        description: Existing RGW image for optional regressions (empty uses default image; no build)
+        description: Existing RGW role image for optional regressions (empty uses published RGW role; no build)
         type: string
         default: ''
 
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 # Tests and Docker share the Linux runner host. These jobs consume existing
-# Default/prebuilt images and never compile Ceph or generate/publish role images.
+# Published role images and never compile Ceph or generate/publish images.
 env:
   TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
 
@@ -39,7 +39,7 @@ jobs:
       - run: make check
       - name: Check supplied-image Linux runner without Docker
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
-      - name: Check image matrix selection without Docker
+      - name: Check supplied-image preparation and manual runner without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_run_image_matrix.py -v
       - name: Check cleanup observations without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_check_runtime_cleanup.py -v
@@ -53,58 +53,6 @@ jobs:
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_receivers.py -v
       - name: Check primary scenario image selection without Docker
         run: python3 -m unittest discover -s .github/scripts -p test_scenario_images.py -v
-
-  image-compatibility:
-    name: image / ${{ matrix.variant }} / ${{ matrix.layout }} / ${{ matrix.architecture.name }}
-    needs: test
-    runs-on: ${{ matrix.architecture.runner }}
-    timeout-minutes: 50
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [official, debian, ubuntu]
-        layout: [all, roles]
-        architecture:
-          - name: amd64
-            runner: ubuntu-24.04
-          - name: arm64
-            runner: ubuntu-24.04-arm
-    env:
-      CGO_ENABLED: '0'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v7
-        with:
-          go-version: '1.25.x'
-          cache-dependency-path: go.sum
-      - name: Record Testcontainers resource identities
-        id: runtime_cleanup_baseline
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: snapshot
-          artifact_name: runtime-cleanup-image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
-      - name: Verify published images with the Go module
-        run: >-
-          python3 .github/scripts/run_image_matrix.py
-          --variant '${{ matrix.variant }}'
-          --layout '${{ matrix.layout }}'
-          --platform 'linux/${{ matrix.architecture.name }}'
-          --output-dir artifacts/image-matrix
-      - name: Verify Testcontainers resource cleanup
-        if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
-        uses: ./.github/actions/runtime-cleanup
-        with:
-          phase: check
-          artifact_name: runtime-cleanup-image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
-      - name: Save image identities and test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: image-${{ matrix.variant }}-${{ matrix.layout }}-${{ matrix.architecture.name }}
-          path: artifacts/image-matrix/
-          if-no-files-found: error
 
   scenario-default:
     needs: test
@@ -666,7 +614,6 @@ jobs:
     timeout-minutes: 75
     env:
       CGO_ENABLED: '0'
-      CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -681,7 +628,14 @@ jobs:
         with:
           phase: snapshot
           artifact_name: runtime-cleanup-rgw-sync-native-regressions
-      - run: make rgw-sync-native-regressions
+      - name: Prepare published Ceph role images
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-rgw-sync-native-regressions
+      - name: Run strict RGW native regressions
+        env:
+          CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}
+        run: make rgw-sync-native-regressions
       - name: Verify Testcontainers resource cleanup
         if: ${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}
         uses: ./.github/actions/runtime-cleanup

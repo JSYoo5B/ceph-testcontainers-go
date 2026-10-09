@@ -69,7 +69,7 @@ def check_dry_run_source(text):
         raise AssertionError("dry-run boundary refuses forced recipe execution")
     targets = blocks(text, r"^([\w.-]+):[ \t]*$")
     target_bodies = dict(targets)
-    for name in DRY_RUN_TARGETS:
+    for name in (*DRY_RUN_TARGETS, "rgw-sync-native-regressions"):
         if name not in target_bodies or re.search(
                 r"\$\(\s*MAKE\s*\)|\$\{\s*MAKE\s*\}", target_bodies[name]):
             raise AssertionError("scenario dry-run cannot execute recursive recipes")
@@ -354,13 +354,12 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertIn("phase: snapshot", block)
                 self.assertIn("uses: " + PREP, block)
                 self.assertIn("phase: check", block)
-        self.assertEqual(scalar(self.jobs["image-compatibility"], "needs"), "test")
         self.assertEqual(scalar(self.jobs["rgw-native-regressions"], "needs"),
                          "[scenario-topology, scenario-multicluster-topology, scenario-topology-extensions]")
 
     def test_every_expanded_primary_job_has_distinct_image_and_cleanup_artifacts(self):
         self.assertEqual(set(self.jobs), set(PRIMARY) |
-                         {"test", "image-compatibility", "rgw-native-regressions"})
+                         {"test", "rgw-native-regressions"})
         prepared, cleanups = [], []
         for name in PRIMARY:
             block = self.jobs[name]
@@ -395,44 +394,69 @@ class ScenarioImageTests(unittest.TestCase):
             else 1 for name in PRIMARY)
         self.assertEqual(len(prepared), expanded_primary_count)
         self.assertEqual(len(cleanups), expanded_primary_count)
-        compatibility = self.jobs["image-compatibility"]
-        baseline = next(step for step in steps(compatibility)
-                        if "uses: " + CLEANUP in step and "phase: snapshot" in step)
-        compatibility_cases = [(variant, layout, architecture)
-                               for variant in ("official", "debian", "ubuntu")
-                               for layout in ("all", "roles")
-                               for architecture in ("amd64", "arm64")]
-        for variant, layout, architecture in compatibility_cases:
-            artifact = scalar(baseline, "artifact_name")
-            for key, value in (("variant", variant), ("layout", layout),
-                               ("architecture.name", architecture)):
-                artifact = artifact.replace("${{ matrix." + key + " }}", value)
-            self.assertNotIn("${{", artifact)
-            cleanups.append(artifact)
-        # The host unit job has no native resources; optional regressions are
-        # outside this required cohort. Compatibility still runs twelve cells.
-        self.assertEqual(len(prepared) + len(compatibility_cases) + 1,
-                         expanded_primary_count + len(compatibility_cases) + 1)
-        self.assertEqual(len(cleanups), expanded_primary_count + len(compatibility_cases))
+        # The required cohort uses the same 66 role-backed scenario jobs plus
+        # host checks. Supplied-image matrix validation remains a manual target.
+        self.assertEqual(expanded_primary_count, 66)
+        self.assertEqual(len(prepared) + 1, 67)
+        self.assertEqual(len(cleanups), 66)
         self.assertEqual(len(set(prepared)), len(prepared))
         self.assertEqual(len(set(cleanups)), len(cleanups))
         self.assertFalse(set(prepared) & set(cleanups))
 
-    def test_existing_compatibility_matrix_remains_twelve_native_cells(self):
-        job = self.jobs["image-compatibility"]
-        self.assertIn("variant: [official, debian, ubuntu]", job)
-        self.assertIn("layout: [all, roles]", job)
-        architectures = re.findall(r"- name: (amd64|arm64)\n\s+runner: ([\w.-]+)", job)
-        self.assertEqual(architectures, [("amd64", "ubuntu-24.04"),
-                                         ("arm64", "ubuntu-24.04-arm")])
-        self.assertEqual(3 * 2 * len(architectures), 12)
-        self.assertNotRegex(job, r"(?m)^\s+(?:include|exclude):")
-        self.assertNotIn("uses: " + PREP, job)
-        self.assertNotIn("--prepare-only", job)
-        for option in ("--variant '${{ matrix.variant }}'", "--layout '${{ matrix.layout }}'",
-                       "--platform 'linux/${{ matrix.architecture.name }}'"):
-            self.assertIn(option, job)
-        self.assertIn("python3 .github/scripts/run_image_matrix.py", job)
+    def test_image_matrix_is_manual_and_all_native_ci_jobs_prepare_roles(self):
+        self.assertNotIn("image-compatibility", self.jobs)
+        workflow = (ROOT / ".github/workflows/test.yml").read_text()
+        self.assertNotIn("--variant '${{ matrix.variant }}'", workflow)
+        self.assertNotIn("--layout '${{ matrix.layout }}'", workflow)
+        self.assertNotIn("quay.io/", workflow)
+        self.assertRegex(self.makefile, r"(?m)^image-compatibility:$")
+        self.assertRegex(self.makefile, r"(?m)^image-matrix:$")
+        self.assertIn("$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py", self.composite_script())
+        for name in (*PRIMARY, "rgw-native-regressions"):
+            self.assertEqual(self.jobs[name].count("uses: " + PREP), 1)
+        self.assertNotIn("uses: " + PREP, self.jobs["test"])
+
+    def test_optional_regressions_prepare_roles_and_override_only_the_rgw_role(self):
+        block = self.jobs["rgw-native-regressions"]
+        job_steps = steps(block)
+        prepare_index = next(i for i, step in enumerate(job_steps) if "uses: " + PREP in step)
+        run_index = next(i for i, step in enumerate(job_steps)
+                         if re.search(r"(?m)^\s*make rgw-sync-native-regressions$", step_run(step)))
+        cleanup = [(i, step) for i, step in enumerate(job_steps) if "uses: " + CLEANUP in step]
+        self.assertEqual(len(cleanup), 2)
+        self.assertLess(cleanup[0][0], prepare_index)
+        self.assertLess(prepare_index, run_index)
+        self.assertLess(run_index, cleanup[1][0])
+        prepare, run = job_steps[prepare_index], job_steps[run_index]
+        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-rgw-sync-native-regressions")
+        self.assertNotRegex(prepare, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertEqual(scalar(run, "CEPH_TEST_RGW_IMAGE"),
+                         "${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}")
+        self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE"])
+        self.assertNotIn("${{ inputs.rgw_image }}", block)
+        self.assertNotIn("quay.io/", block)
+        for selected_rgw in ("", "registry.example/ceph-rgw@sha256:" + "a" * 64):
+            with self.subTest(rgw_input=selected_rgw):
+                # Model the step's sole expression after the existing composite
+                # has exported all four role IDs. Execute only make dry-run and
+                # its env prefix against Python; no Docker or Go runs here.
+                env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
+                if selected_rgw:
+                    env["CEPH_TEST_RGW_IMAGE"] = selected_rgw
+                _, commands = self.dry_run("rgw-sync-native-regressions", env)
+                self.assertEqual(len(commands), 1)
+                command = ["env", *commands[0]]
+                actual = self.prepared_environment(command, env)
+                for name in ROLES:
+                    self.assertEqual(actual[name], selected_rgw if name == "CEPH_TEST_RGW_IMAGE"
+                                     and selected_rgw else IMAGES[name])
+                for name in CONSUMERS:
+                    self.assertEqual(actual[name], env[name])
+                self.assertEqual(actual["CGO_ENABLED"], "0")
+                self.assertIn("-mod=readonly", command)
+                self.assertIn("-tags=integration,features,multicluster", command)
+                self.assertEqual(command[command.index("-run") + 1],
+                    "^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$/(priority_tags_owner_class|ordinary_user_denial_grant)$")
 
     def composite_script(self):
         self.assertEqual(scalar(self.action, "using"), "composite")
