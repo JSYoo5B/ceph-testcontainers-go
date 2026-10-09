@@ -174,8 +174,9 @@ image ID를 사용했다. 원본 Quay all, Debian/Ubuntu role, amd64의 새 실�
 | mds | `sha256:76885d63b94ca90bb6988df49f135a5a567b4fb29c2991ce26fdf3ee487206b1` |
 
 `messenger_secure`는 2 parent + 4 child의 정확한 6 RUN/PASS,
-Go package 294.462초로 통과했다. Bridge는 separate public/cluster network이고
-host는 선택된 MON 포트를 사용했다. MON 1→3, MGR 1→2, OSD 2→3의
+Go package 294.462초로 통과했다. Topology bridge fixture는 separate
+public/cluster network, MDS/RGW fixture는 기본 bridge를 사용했고 host는
+선택된 MON 포트를 사용했다. MON 1→3, MGR 1→2, OSD 2→3의
 구성 변경·v2-only 주소·effective config와 RADOS 64 KiB retained/fresh bytes를
 확인했다. CRC-only CLI는 두 network 모두 timeout 없이 native exit 13과
 server allowed mode `[2]`로 거부됐고 fresh secure client가 다시 성공했다.
@@ -194,8 +195,9 @@ GID로 특정한 RGW→OSD 연결은 송수신 AES-GCM이었다. 외부 cleanup 
 Go package 441.829초로 통과했다. 각 case는 독립 FSID·CephX keyring·IPv4
 bridge network의 cold pair를 만들며 cluster당 512 MiB OSD 하나와 replica/min_size
 1을 사용한다. RBD 1 MiB와 CephFS 8 KiB의 initial/changed 두 checkpoint가
-실제로 destination에 전달됐고, 인증 session ID로 특정한 daemon 관측 40개에서
-secure-side MON/OSD 및 CephFS MDS가 양방향 AES-GCM임을 확인했다.
+실제로 destination에 전달됐다. 인증 session ID로 특정한 전체 daemon 관측
+40회 중 secure-side 관측 20회에서 MON/OSD 및 CephFS MDS가 양방향
+AES-GCM임을 확인했고, default-side 관측 20회는 아래 표로 구분했다.
 외부 cleanup checker도 새 owned resource가 남지 않았음을 확인했다.
 
 | Mirror / source→destination | Secure cluster 연결 | Default cluster에서 관측한 연결 |
