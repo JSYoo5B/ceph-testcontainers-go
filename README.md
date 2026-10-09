@@ -117,7 +117,7 @@ if err != nil {
 
 `ceph.WithNoInitialManagers()`는 초기 MGR 없이 MON quorum과 owned OSD up/in을 확인하고 반환합니다. 양수 OSD와 초기 pool 구성은 유지하며, 초기 CephFS·RGW는 첫 `AddManager` 뒤 명시적으로 구성합니다. `WithNoInitialOSDs()`와 함께 선택하면 MON-only 단계로 시작합니다. MGR 통계·module·clean 준비는 별도로 확인하며 기본 MGR 1개와 마지막 MGR 제거 보호를 바꾸지 않습니다. [최초 MGR 없는 bootstrap 계약](docs/NO_INITIAL_MANAGERS.md)을 따릅니다.
 
-각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
+각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 프로세스를 끝내지 않고 응답만 멈추려면 `PauseContainer`로 컨테이너를 일시정지하고 `ContainerPause.Resume`으로 되살립니다. Host network에서도 동작하며 [일시정지 계약](docs/CONTAINER_PAUSE.md)을 따릅니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
 
 `ceph.CephFSConfig{NoInitialMDS: true}`는 원래 filesystem과 pool을 먼저 구성하고 MDS auth·container·customizer 없이 반환합니다. Active/standby count는 생략하고 replay는 false로 두며, 같은 descriptor의 첫 `ScaleMDS(ctx, 1, 0)`으로 기동합니다. Cold 상태의 embedded `Container`는 nil이고 `WaitReady`는 client 준비를 성공으로 표시하지 않습니다. [최초 MDS 없는 filesystem 계약](docs/NO_INITIAL_MDS.md)을 따릅니다.
 

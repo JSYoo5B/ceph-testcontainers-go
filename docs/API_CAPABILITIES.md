@@ -15,7 +15,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 
 | 기능 축 | Operation: fixture 조건 준비·장애·복원 | Check: 확인하는 범위 |
 | --- | --- | --- |
-| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean |
+| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean |
 | Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 실행 중 PG 수·placement 변경, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량·PG target 도달, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
 | CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
-| Fixture Operation | 95 | 46 | 141 |
+| Fixture Operation | 97 | 46 | 143 |
 | Check: native 질의/Wait 또는 보존 정보 조회 | 78 | 33 | 111 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 197 | 90 | **287** |
+| 전체 | 199 | 90 | **289** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 287개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 289개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -90,13 +90,13 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (141개)
+### Fixture Operation (143개)
 
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.CreateClient](../ceph/auth.go#L101) · [Container.DeleteClient](../ceph/auth.go#L219) |
 | [ceph/auth_policy.go](../ceph/auth_policy.go) | [Container.UpdateClientCaps](../ceph/auth_policy.go#L25) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L88) · [Container.AddOSD](../ceph/ceph.go#L412) · [Container.AddOSDWithConfig](../ceph/ceph.go#L419) · [Container.RemoveOSD](../ceph/ceph.go#L536)<br>[Container.Terminate](../ceph/ceph.go#L759) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L89) · [Container.AddOSD](../ceph/ceph.go#L413) · [Container.AddOSDWithConfig](../ceph/ceph.go#L420) · [Container.RemoveOSD](../ceph/ceph.go#L537)<br>[Container.Terminate](../ceph/ceph.go#L760) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [Container.StartCephFS](../ceph/cephfs.go#L92) · [Container.StartCephFSWithConfig](../ceph/cephfs.go#L105) · [CephFSContainer.ScaleMDS](../ceph/cephfs.go#L247) |
 | [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSContainer.AuthorizeSubvolume](../ceph/cephfs_authorization.go#L67) · [CephFSContainer.DeauthorizeSubvolume](../ceph/cephfs_authorization.go#L396) · [CephFSContainer.EvictSubvolumeClients](../ceph/cephfs_authorization.go#L462) |
 | [ceph/cephfs_clone_lifecycle.go](../ceph/cephfs_clone_lifecycle.go) | [CephFSContainer.CancelSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L116) · [CephFSContainer.RemovePartialSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L187) |
@@ -116,6 +116,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [ceph/network.go](../ceph/network.go) | [Container.InterruptNetwork](../ceph/network.go#L96) · [InterruptNetwork](../ceph/network.go#L142) · [NetworkInterruption.Restore](../ceph/network.go#L199) |
 | [ceph/options.go](../ceph/options.go) | [WithMonitorCount](../ceph/options.go#L58) · [WithManagerCount](../ceph/options.go#L69) · [WithNoInitialManagers](../ceph/options.go#L86) · [WithHostNetwork](../ceph/options.go#L106)<br>[WithSeparateClusterNetwork](../ceph/options.go#L116) · [WithNoInitialOSDs](../ceph/options.go#L181) · [WithOSDCount](../ceph/options.go#L189) · [WithInitialOSDs](../ceph/options.go#L203)<br>[WithDefaultCRUSHRoot](../ceph/options.go#L233) · [WithPoolDefaults](../ceph/options.go#L246) · [WithOSDBlockSize](../ceph/options.go#L261) · [WithOSDInMemoryStorage](../ceph/options.go#L281) · [WithMessengerMode](../ceph/options.go#L46) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.SetOSDIn](../ceph/osd_policy.go#L57) · [Container.TemporaryOSDFlag](../ceph/osd_policy.go#L132) · [OSDFlagOverride.Restore](../ceph/osd_policy.go#L175) |
+| [ceph/pause.go](../ceph/pause.go) | [Container.PauseContainer](../ceph/pause.go#L43) · [ContainerPause.Resume](../ceph/pause.go#L109) |
 | [ceph/pool.go](../ceph/pool.go) | [Container.CreatePool](../ceph/pool.go#L62) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.SetPoolQuota](../ceph/pool_policy.go#L70) · [Container.SetPoolReplication](../ceph/pool_policy.go#L110) |
 | [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [Container.SetPoolPGCount](../ceph/pool_relocation.go#L31) · [Container.SetPoolPlacement](../ceph/pool_relocation.go#L179) |
@@ -192,7 +193,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [ClientConfig.Name](../ceph/auth.go#L45) · [ClientConfig.User](../ceph/auth.go#L49) · [ClientConfig.KeyringPath](../ceph/auth.go#L52) · [ClientConfig.ConnectionConfig](../ceph/auth.go#L64) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.ControlImage](../ceph/ceph.go#L236) · [Container.NetworkName](../ceph/ceph.go#L319) · [Container.UsesHostNetwork](../ceph/ceph.go#L330) · [Container.PublicAddress](../ceph/ceph.go#L333)<br>[Container.ConnectionConfig](../ceph/ceph.go#L342) · [Container.ManagerContainer](../ceph/ceph.go#L369) · [Container.OSDs](../ceph/ceph.go#L700) · [Container.ServiceContainers](../ceph/ceph.go#L713) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container.ControlImage](../ceph/ceph.go#L237) · [Container.NetworkName](../ceph/ceph.go#L320) · [Container.UsesHostNetwork](../ceph/ceph.go#L331) · [Container.PublicAddress](../ceph/ceph.go#L334)<br>[Container.ConnectionConfig](../ceph/ceph.go#L343) · [Container.ManagerContainer](../ceph/ceph.go#L370) · [Container.OSDs](../ceph/ceph.go#L701) · [Container.ServiceContainers](../ceph/ceph.go#L714) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSContainer.MDSs](../ceph/cephfs.go#L211) |
 | [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSQuiesce.ID](../ceph/cephfs_quiesce.go#L51) |
 | [ceph/client_monitor_config.go](../ceph/client_monitor_config.go) | [Container.MonitorBootstrapAddresses](../ceph/client_monitor_config.go#L20) |
@@ -220,7 +221,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.WithClientIdentity](../ceph/auth.go#L191) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L378) · [Container.Ceph](../ceph/ceph.go#L401) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L379) · [Container.Ceph](../ceph/ceph.go#L402) |
 | [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L99) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.Admin](../ceph/rgw_admin.go#L122) |
 | [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.SourceRBD](../multicluster/rbd.go#L571) · [RBDMirror.DestinationRBD](../multicluster/rbd.go#L580) |
@@ -252,12 +253,12 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 90개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 91개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [ClientCaps](../ceph/auth.go#L24) · [ClientConfig](../ceph/auth.go#L34) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container](../ceph/ceph.go#L36) · [OSDContainer](../ceph/ceph.go#L74) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container](../ceph/ceph.go#L36) · [OSDContainer](../ceph/ceph.go#L75) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSConfig](../ceph/cephfs.go#L24) · [MDSContainer](../ceph/cephfs.go#L41) · [CephFSContainer](../ceph/cephfs.go#L52) · [MDSStatus](../ceph/cephfs.go#L71)<br>[CephFSMDSStatus](../ceph/cephfs.go#L81) |
 | [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSSubvolumeAuthorizationConfig](../ceph/cephfs_authorization.go#L16) · [CephFSSubvolumeAuthorization](../ceph/cephfs_authorization.go#L26) · [CephFSSubvolumeAuthorizedClient](../ceph/cephfs_authorization.go#L41) |
 | [ceph/cephfs_data_pools.go](../ceph/cephfs_data_pools.go) | [CephFSDataPoolState](../ceph/cephfs_data_pools.go#L16) · [CephFSDataPool](../ceph/cephfs_data_pools.go#L25) |
@@ -275,6 +276,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/network.go](../ceph/network.go) | [NetworkPlane](../ceph/network.go#L17) · [NetworkInterruption](../ceph/network.go#L81) |
 | [ceph/options.go](../ceph/options.go) | [Option](../ceph/options.go#L96) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [OSDState](../ceph/osd_policy.go#L20) · [OSDFlagOverride](../ceph/osd_policy.go#L116) |
+| [ceph/pause.go](../ceph/pause.go) | [ContainerPause](../ceph/pause.go#L24) |
 | [ceph/placement.go](../ceph/placement.go) | [OSDConfig](../ceph/placement.go#L16) |
 | [ceph/pool.go](../ceph/pool.go) | [PoolConfig](../ceph/pool.go#L18) · [ErasureCodeConfig](../ceph/pool.go#L39) · [Pool](../ceph/pool.go#L48) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [PoolQuota](../ceph/pool_policy.go#L16) · [PoolState](../ceph/pool_policy.go#L26) |

@@ -52,6 +52,7 @@ type Container struct {
 	clusterSubnet         string
 	clusterNetworkRemoved bool
 	interruptions         map[string]*NetworkInterruption
+	pauses                map[string]*ContainerPause
 	manager               testcontainers.Container
 	monitors              map[string]*MonitorContainer
 	managers              map[string]*ManagerContainer
@@ -770,6 +771,12 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		if err := interruption.Restore(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("restore interrupted network: %w", err))
 			blockedNetworks[interruption.NetworkName] = true
+		}
+	}
+	// A frozen process cannot handle the stop signal until it is thawed.
+	for _, pause := range c.pauses {
+		if err := pause.Resume(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("resume paused container: %w", err))
 		}
 	}
 	for _, lease := range c.portLeases {
