@@ -15,8 +15,10 @@ if [ -n "${CEPH_RGW_TLS_PORT:-}" ]; then
     fi
     frontend="$frontend ssl_certificate=/tc/rgw-tls.pem"
 fi
+# A disposable gateway need not drain for the default 120 seconds on SIGTERM;
+# Docker would otherwise kill it after its own stop timeout.
 set -- radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring \
-    --rgw-frontends "$frontend" --rgw-thread-pool-size 4
+    --rgw-frontends "$frontend" --rgw-thread-pool-size 4 --rgw-exit-timeout-secs 1
 if [ -n "${CEPH_RGW_REALM:-}" ]; then
     set -- "$@" --rgw-realm "$CEPH_RGW_REALM" --rgw-sync-obj-etag-verify true \
         --osd-pool-default-pg-num 1 --osd-pool-default-pgp-num 0

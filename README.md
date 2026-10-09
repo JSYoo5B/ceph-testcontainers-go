@@ -130,8 +130,7 @@ if err != nil {
 ```go
 client, err := testcontainers.Run(ctx, ceph.DefaultImage,
     cluster.WithClient(),
-    testcontainers.WithEntrypoint("sleep"),
-    testcontainers.WithCmd("infinity"),
+    ceph.WithIdleEntrypoint(),
 )
 if client != nil {
     testcontainers.CleanupContainer(t, client)
@@ -142,7 +141,7 @@ if err != nil {
 // client.Exec(ctx, []string{"rados", "-p", "my-pool", "ls"}, ...)
 ```
 
-애플리케이션 컨테이너는 클러스터보다 나중에 cleanup을 등록하여 먼저 종료합니다. `WithClient`가 복사하는 admin 키는 신뢰할 수 있는 테스트 컨테이너용입니다. 자격 증명에는 현재 테스트 클러스터 전체에 대한 권한이 있습니다.
+`ceph.WithIdleEntrypoint()`는 명령을 실행할 대기용 컨테이너를 `sleep infinity`로 띄우되 Docker init 아래에서 실행합니다. PID 1인 `sleep`은 SIGTERM을 무시하므로 init 없이 띄우면 정지할 때마다 Docker 기본 timeout 10초를 기다립니다. 애플리케이션 컨테이너는 클러스터보다 나중에 cleanup을 등록하여 먼저 종료합니다. `WithClient`가 복사하는 admin 키는 신뢰할 수 있는 테스트 컨테이너용입니다. 자격 증명에는 현재 테스트 클러스터 전체에 대한 권한이 있습니다.
 
 Ceph 클라이언트는 MON에서 받은 OSD 주소로 직접 접속합니다. 기본 bridge 모드에서는 애플리케이션 컨테이너에 `WithClient()`를 적용하여 광고된 주소에 접근합니다. MON의 `MappedPort`만으로 macOS/Windows 호스트 프로세스에서 RADOS/RBD/CephFS 전체에 연결할 수 있다고 가정하면 안 됩니다. 근거: [Ceph 네트워크 문서](https://docs.ceph.com/en/tentacle/rados/configuration/network-config-ref/).
 

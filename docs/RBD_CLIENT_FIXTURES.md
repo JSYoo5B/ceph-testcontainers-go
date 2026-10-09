@@ -42,7 +42,7 @@ if err != nil {
 }
 client, err := testcontainers.Run(ctx, nativeClientImage,
     cluster.WithClientIdentity(identity),
-    testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+    ceph.WithIdleEntrypoint(),
     testcontainers.WithWaitStrategy(wait.ForExec([]string{
         "python3", "-c", "import rados, rbd",
     })),

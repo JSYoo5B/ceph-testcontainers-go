@@ -141,7 +141,7 @@ func validatePair(ctx context.Context, image string, source, destination *ceph.C
 }
 
 func runClient(ctx context.Context, image string, cluster *ceph.Container, peerNetwork string, owned *resources) (testcontainers.Container, error) {
-	opts := []testcontainers.ContainerCustomizer{cluster.WithClient(), testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity")}
+	opts := []testcontainers.ContainerCustomizer{cluster.WithClient(), ceph.WithIdleEntrypoint()}
 	if peerNetwork != "" && !cluster.UsesHostNetwork() {
 		opts = append(opts, network.WithNetworkName(nil, peerNetwork))
 	}

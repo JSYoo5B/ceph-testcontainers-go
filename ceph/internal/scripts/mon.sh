@@ -53,6 +53,9 @@ osd pool default pgp num = 0
 osd pool default pg autoscale mode = off
 mon allow pool size one = true
 ms bind ipv6 = false
+# Report daemon and PG statistics every second instead of five, so readiness
+# waits observe new PG states sooner in this small disposable cluster.
+mgr stats period = 1
 ${messenger_config}[osd]
 osd objectstore = bluestore
 bluestore block create = true

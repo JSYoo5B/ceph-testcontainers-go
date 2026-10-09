@@ -97,7 +97,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage string) {
 			t.Fatal(err)
 		}
 		client, err := testcontainers.Run(ctx, clientImage, cluster.WithClient(),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-x", "/usr/local/bin/go-ceph-probe"})),
 		)
 		if client != nil {

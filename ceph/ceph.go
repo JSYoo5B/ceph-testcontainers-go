@@ -756,8 +756,12 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 }
 
 // Terminate removes all owned daemons before removing the isolated network.
-// It also works on a partially initialized cluster returned by Run.
+// It also works on a partially initialized cluster returned by Run. The whole
+// cluster is discarded, so each container gets terminationStopTimeout instead
+// of Docker's 10 seconds to stop before it is killed; a StopTimeout option
+// passed by the caller still takes precedence.
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	opts = append([]testcontainers.TerminateOption{testcontainers.StopTimeout(terminationStopTimeout)}, opts...)
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -896,6 +900,10 @@ func (c *Container) waitOSD(ctx context.Context, id int, up bool) error {
 		return !up, nil
 	})
 }
+
+// A gracefully stopping MDS otherwise waits about five seconds; data in a
+// terminated cluster is never read again.
+const terminationStopTimeout = 2 * time.Second
 
 func (c *Container) poll(ctx context.Context, check func() (bool, error)) error {
 	ticker := time.NewTicker(500 * time.Millisecond)

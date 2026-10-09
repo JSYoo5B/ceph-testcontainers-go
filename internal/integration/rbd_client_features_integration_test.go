@@ -72,7 +72,7 @@ func TestRBDClientFeatures(t *testing.T) {
 				image = custom
 			}
 			client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
-				testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if client != nil {
 				testcontainers.CleanupContainer(t, client)

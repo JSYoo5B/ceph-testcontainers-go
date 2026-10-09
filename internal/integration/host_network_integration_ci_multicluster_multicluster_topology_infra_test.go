@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -52,7 +53,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 			t.Fatal(err)
 		}
 		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})),
 		)
 		if client != nil {

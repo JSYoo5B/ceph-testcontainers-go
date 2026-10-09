@@ -74,7 +74,7 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
 		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 		)
 		if client != nil {

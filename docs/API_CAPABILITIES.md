@@ -67,14 +67,14 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | --- | ---: | ---: | ---: |
 | Fixture Operation | 100 | 46 | 146 |
 | Check: native 질의/Wait 또는 보존 정보 조회 | 80 | 33 | 113 |
-| 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
+| 연결·raw CLI·customizer 접점 | 11 | 5 | 16 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 204 | 90 | **294** |
+| 전체 | 205 | 90 | **295** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 294개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 295개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -96,7 +96,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.CreateClient](../ceph/auth.go#L101) · [Container.DeleteClient](../ceph/auth.go#L219) |
 | [ceph/auth_policy.go](../ceph/auth_policy.go) | [Container.UpdateClientCaps](../ceph/auth_policy.go#L25) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L89) · [Container.AddOSD](../ceph/ceph.go#L413) · [Container.AddOSDWithConfig](../ceph/ceph.go#L420) · [Container.RemoveOSD](../ceph/ceph.go#L537)<br>[Container.Terminate](../ceph/ceph.go#L760) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L89) · [Container.AddOSD](../ceph/ceph.go#L413) · [Container.AddOSDWithConfig](../ceph/ceph.go#L420) · [Container.RemoveOSD](../ceph/ceph.go#L537)<br>[Container.Terminate](../ceph/ceph.go#L763) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [Container.StartCephFS](../ceph/cephfs.go#L92) · [Container.StartCephFSWithConfig](../ceph/cephfs.go#L105) · [CephFSContainer.ScaleMDS](../ceph/cephfs.go#L247) |
 | [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSContainer.AuthorizeSubvolume](../ceph/cephfs_authorization.go#L67) · [CephFSContainer.DeauthorizeSubvolume](../ceph/cephfs_authorization.go#L396) · [CephFSContainer.EvictSubvolumeClients](../ceph/cephfs_authorization.go#L462) |
 | [ceph/cephfs_clone_lifecycle.go](../ceph/cephfs_clone_lifecycle.go) | [CephFSContainer.CancelSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L116) · [CephFSContainer.RemovePartialSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L187) |
@@ -219,12 +219,13 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RGWMultisite.Zones](../multicluster/rgw_topology.go#L241) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.Zonegroups](../multicluster/rgw_zonegroups.go#L17) |
 
-### 연결·raw CLI·customizer 접점 (15개)
+### 연결·raw CLI·customizer 접점 (16개)
 
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.WithClientIdentity](../ceph/auth.go#L191) |
 | [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L379) · [Container.Ceph](../ceph/ceph.go#L402) |
+| [ceph/idle.go](../ceph/idle.go) | [WithIdleEntrypoint](../ceph/idle.go#L15) |
 | [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L99) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.Admin](../ceph/rgw_admin.go#L122) |
 | [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.SourceRBD](../multicluster/rbd.go#L571) · [RBDMirror.DestinationRBD](../multicluster/rbd.go#L580) |

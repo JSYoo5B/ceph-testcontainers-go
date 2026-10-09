@@ -68,7 +68,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 		return nil
 	}
 	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, c.WithClient(),
-		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 	if ctr != nil {
 		c.controlMu.Lock()

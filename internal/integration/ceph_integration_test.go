@@ -76,7 +76,7 @@ func TestClusterLifecycle(t *testing.T) {
 
 	// A separate container proves MON discovery and direct OSD connectivity.
 	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)
 	if client != nil {

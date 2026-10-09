@@ -63,7 +63,7 @@ explains allocation, swap and capacity limits.
 The module lazily creates a unique owned named volume and one idle keeper
 container from the selected control image before the first OSD allocation.
 `WithNoInitialOSDs()` therefore creates neither resource until the first
-`AddOSD` call. The keeper runs `sleep infinity` without a network connection.
+`AddOSD` call. The keeper runs `sleep infinity` under Docker's init process without a network connection, so termination does not wait for the Docker stop timeout.
 It holds the volume mounted while OSD containers stop and start.
 
 OSDs use separate `ceph-ID` directories on the shared volume. An ordinary

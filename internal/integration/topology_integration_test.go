@@ -50,7 +50,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-				testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 			if client != nil {
 				testcontainers.CleanupContainer(t, client)

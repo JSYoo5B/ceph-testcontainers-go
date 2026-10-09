@@ -90,7 +90,7 @@ func newServiceClusterWithOptions(t *testing.T, image string, opts ...testcontai
 		t.Fatal(err)
 	}
 	client, err := testcontainers.Run(t.Context(), image, cluster.WithClient(),
-		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)
 	if client != nil {

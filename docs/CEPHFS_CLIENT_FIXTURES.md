@@ -26,7 +26,7 @@ if err != nil {
 }
 client, err := testcontainers.Run(ctx, nativeClientImage,
     cluster.WithClientIdentity(grant.Client),
-    testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+    ceph.WithIdleEntrypoint(),
 )
 if client != nil { testcontainers.CleanupContainer(t, client) }
 if err != nil { return err }

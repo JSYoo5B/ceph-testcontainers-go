@@ -36,10 +36,12 @@ bridge와 host network 각각 다음을 확인한다.
 | persistent | 수신기 중지 후 `queued/c` 쓰기, 같은 포트로 수신기 재시작 | 쓰기가 10초 안에 성공, 중지 중에는 기록 없음, 재시작 뒤 `ObjectCreated:Put queued/c` 수신 |
 | 정리 | `DELETE ?notification`, `DeleteTopic`, object·bucket 삭제 | rule 제거 확인, 모든 요청 성공 |
 
-수신기를 `WithClient` 컨테이너에서 띄울 때는 그 컨테이너의 PID 1(예:
-`sleep infinity`)이 종료된 자식 프로세스를 회수하지 않는다는 점에 주의한다. 중지한
-수신기가 zombie로 남아 `kill -0`이 계속 성공하므로 종료 대기는 `/proc/<pid>/stat`의
-상태로 판정한다. Zombie는 socket을 잡고 있지 않아 같은 포트로 다시 띄울 수 있다.
+수신기를 `WithClient` 컨테이너에서 띄울 때는 그 컨테이너의 PID 1이 종료된 자식
+프로세스를 회수하는지 확인한다. Init 없이 `sleep infinity`를 PID 1로 쓰면 중지한
+수신기가 zombie로 남아 `kill -0`이 계속 성공한다. `ceph.WithIdleEntrypoint()`는
+Docker init이 자식을 회수한다. 테스트는 두 경우 모두를 위해 종료 대기를
+`/proc/<pid>/stat`의 상태로 판정한다. Zombie는 socket을 잡고 있지 않아 같은 포트로
+다시 띄울 수 있다.
 
 2026-10-09 macOS ARM64 Docker Desktop(Linux ARM64 VM, 메모리 4 GiB)에서 기본
 digest 고정 Quay Ceph 20.2.4 이미지로 실행한 결과는 bridge/host 각 2개 단계

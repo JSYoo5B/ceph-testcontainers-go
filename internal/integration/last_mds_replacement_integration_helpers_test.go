@@ -44,7 +44,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	if err != nil || fsid == uuid.Nil || fsid.String() != q.MonMap.FSID {
 		t.Fatal("original cluster FSID unavailable")
 	}
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(), testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import cephfs, rados"})))
+	client, err := testcontainers.Run(ctx, image, cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import cephfs, rados"})))
 	clientTerminated := false
 	if client != nil {
 		t.Cleanup(func() {

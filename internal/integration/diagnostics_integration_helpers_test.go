@@ -95,7 +95,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	t.Run("partial-container-error", func(t *testing.T) {
 		image, _ := integrationImages(t)
 		removed, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"))
+			ceph.WithIdleEntrypoint())
 		if removed != nil {
 			testcontainers.CleanupContainer(t, removed)
 		}

@@ -56,7 +56,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 		}
 	}
 	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 	if client != nil {
 		cleanupMultiClusterContainer(t, client)

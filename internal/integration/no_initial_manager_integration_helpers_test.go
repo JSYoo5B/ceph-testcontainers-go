@@ -101,7 +101,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		t.Fatal("canceled first manager changed owned state", err)
 	}
 	noInitialManagerAuth(t, ctx, cluster, nil)
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(), testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
+	client, err := testcontainers.Run(ctx, image, cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 	clientRemoved := false
 	if client != nil {
 		t.Cleanup(func() {

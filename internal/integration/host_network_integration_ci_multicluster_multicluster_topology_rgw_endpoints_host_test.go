@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -65,7 +66,7 @@ time.sleep(1200)
 		gateways[i] = s3HTTPClient{endpoint: endpoint, accessKey: rgw.AccessKey, secretKey: rgw.SecretKey,
 			region: rgw.Region, http: &http.Client{Timeout: 15 * time.Second}}
 		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import http.client"})),
 		)
 		if client != nil {

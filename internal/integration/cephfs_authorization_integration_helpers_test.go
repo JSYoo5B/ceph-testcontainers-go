@@ -83,7 +83,7 @@ finally:
 	newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
 		t.Helper()
 		client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
-			testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import cephfs, rados"})))
 		if client != nil {
 			testcontainers.CleanupContainer(t, client)

@@ -108,7 +108,7 @@ func TestRBDNamespaces(t *testing.T) {
 			}
 			image, _ := integrationImages(t)
 			client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
-				testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if client != nil {
 				testcontainers.CleanupContainer(t, client)
@@ -124,7 +124,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 					rbdNamespaceScopedProbe, pool, identity.Name(), identity.KeyringPath())
 			}
 			readerClient, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(reader),
-				testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if readerClient != nil {
 				testcontainers.CleanupContainer(t, readerClient)

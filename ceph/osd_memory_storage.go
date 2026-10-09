@@ -111,7 +111,7 @@ func (c *Container) ensureOSDMemory(ctx context.Context) error {
 		return err
 	}
 	keeper, err := testcontainers.Run(ctx, c.settings.controlImage,
-		testcontainers.WithEntrypoint("sleep"), testcontainers.WithCmd("infinity"),
+		WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) { host.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdMemoryOwnerLabel: s.owner}),
 		s.mount(osdMemoryKeeperPath),
