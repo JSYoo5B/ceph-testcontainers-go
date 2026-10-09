@@ -25,7 +25,8 @@ ROLES = ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE",
 CONSUMERS = ("CEPH_TEST_RBD_CLIENT_IMAGE", "CEPH_TEST_VAULT_IMAGE")
 IMAGES = {name: "sha256:" + digit * 64
           for name, digit in zip(ROLES, "1234")}
-PRIMARY = (
+# Historical manual targets, never the source of CI membership.
+MANUAL_SCENARIOS = (
     "scenario-default", "scenario-topology", "scenario-multicluster-topology",
     "scenario-cephfs-removal", "scenario-rbd-receivers",
     "scenario-topology-extensions", "scenario-cluster-fixtures",
@@ -42,8 +43,8 @@ MANUAL_LIFECYCLE_TARGETS = (
     "scenario-osd-memory",
     "scenario-small-osds",
 )
-FIXTURES = frozenset(name for name in PRIMARY if name.endswith("-fixtures"))
-DRY_RUN_TARGETS = (*PRIMARY, *MANUAL_LIFECYCLE_TARGETS,
+FIXTURES = frozenset(name for name in MANUAL_SCENARIOS if name.endswith("-fixtures"))
+DRY_RUN_TARGETS = (*MANUAL_SCENARIOS, *MANUAL_LIFECYCLE_TARGETS,
                    "scenario-rgw-sync-supported", "scenario-diagnostics")
 PREP = "./.github/actions/scenario-images"
 CLEANUP = "./.github/actions/runtime-cleanup"
@@ -284,17 +285,18 @@ class ScenarioImageTests(unittest.TestCase):
 
     def test_heavy_parent_cases_preserve_prepared_roles_and_consumer_boundary(self):
         env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
-        for target, key, option in (
-                ("scenario-multicluster-topology", "group", "SCENARIO_MULTICLUSTER_GROUP"),
-                ("scenario-rgw-sync-fixtures", "group", "SCENARIO_RGW_SYNC_GROUP"),
-                ("scenario-cephfs-fixtures", "case", "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                ("scenario-topology-extensions", "case", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
-                ("scenario-rbd-receivers", "case", "SCENARIO_RBD_RECEIVERS_CASE"),
-                ("scenario-rbd-fixtures", "case", "SCENARIO_RBD_FIXTURE_CASE"),
-                ("scenario-cephfs-removal", "case", "SCENARIO_CEPHFS_REMOVAL_CASE")):
-            matrix = re.search(r"^        " + key + r": \[(.*?)\]$", self.jobs[target], re.M)
-            self.assertIsNotNone(matrix)
-            values = [value.strip() for value in matrix.group(1).split(",")]
+        for target, prefix, option in (
+                ("scenario-multicluster-topology", "MULTICLUSTER_TOPOLOGY_TESTS", "SCENARIO_MULTICLUSTER_GROUP"),
+                ("scenario-rgw-sync-fixtures", "RGW_SYNC_FIXTURE_TESTS", "SCENARIO_RGW_SYNC_GROUP"),
+                ("scenario-cephfs-fixtures", "CEPHFS_FIXTURE_TESTS", "SCENARIO_CEPHFS_FIXTURE_CASE"),
+                ("scenario-topology-extensions", "TOPOLOGY_EXTENSION_TESTS", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
+                ("scenario-rbd-receivers", "RBD_RECEIVERS_TESTS", "SCENARIO_RBD_RECEIVERS_CASE"),
+                ("scenario-rbd-fixtures", "RBD_FIXTURE_TESTS", "SCENARIO_RBD_FIXTURE_CASE"),
+                ("scenario-cephfs-removal", "CEPHFS_REMOVAL_TESTS", "SCENARIO_CEPHFS_REMOVAL_CASE")):
+            # Diagnose manual Make targets without a maintained CI case list.
+            values = re.findall(r"^" + prefix + r"_([a-z][a-z-]*) =", self.makefile, re.M)
+            values = [value for value in values if value != "all"]
+            self.assertTrue(values)
             self.assertEqual(len(values), len(set(values)))
             for value in values:
                 with self.subTest(target=target, case=value):
@@ -315,102 +317,47 @@ class ScenarioImageTests(unittest.TestCase):
                     else:
                         self.assertNotIn("/", expression)
 
-    def test_every_primary_job_prepares_after_own_baseline_and_before_make(self):
-        self.assertEqual({name for name in self.jobs if name.startswith("scenario-")},
-                         set(PRIMARY))
-        artifacts = []
-        for name in PRIMARY:
-            with self.subTest(job=name):
-                job_steps = steps(self.jobs[name])
-                prep = [i for i, step in enumerate(job_steps) if "uses: " + PREP in step]
-                cleanups = [(i, step) for i, step in enumerate(job_steps)
-                            if "uses: " + CLEANUP in step]
-                self.assertEqual(len(prep), 1)
-                self.assertEqual(len(cleanups), 2)
-                (before_index, before), (after_index, after) = cleanups
-                make = [i for i, step in enumerate(job_steps)
-                        if re.search(r"(?m)^\s*make " + re.escape(name) + r"(?:\s|$)", step_run(step))]
-                self.assertEqual(len(make), 1)
-                self.assertLess(before_index, prep[0])
-                self.assertLess(prep[0], make[0])
-                self.assertLess(make[0], after_index)
-                self.assertEqual(scalar(before, "id"), "runtime_cleanup_baseline")
-                self.assertEqual(scalar(before, "phase"), "snapshot")
-                self.assertEqual(scalar(after, "phase"), "check")
-                self.assertEqual(scalar(before, "artifact_name"), scalar(after, "artifact_name"))
-                self.assertEqual(scalar(after, "if"),
-                                 "${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}")
-                preparation = job_steps[prep[0]]
-                self.assertNotRegex(preparation, r"(?m)^\s+(?:if|continue-on-error):")
-                artifacts.append(scalar(preparation, "artifact_name"))
-        self.assertEqual(len(set(artifacts)), len(PRIMARY))
+    def test_runtime_prepares_roles_between_baseline_and_native_proof(self):
+        job_steps = steps(self.jobs["runtime"])
+        prep_index = next(i for i, step in enumerate(job_steps) if "uses: " + PREP in step)
+        native_index = next(i for i, step in enumerate(job_steps)
+                            if "tag_scenarios.py run " in step_run(step))
+        cleanups = [(i, step) for i, step in enumerate(job_steps) if "uses: " + CLEANUP in step]
+        self.assertEqual(len(cleanups), 2)
+        (before_index, before), (after_index, after) = cleanups
+        self.assertLess(before_index, prep_index)
+        self.assertLess(prep_index, native_index)
+        self.assertLess(native_index, after_index)
+        self.assertEqual(scalar(before, "id"), "runtime_cleanup_baseline")
+        self.assertEqual(scalar(before, "phase"), "snapshot")
+        self.assertEqual(scalar(after, "phase"), "check")
+        self.assertEqual(scalar(before, "artifact_name"), scalar(after, "artifact_name"))
+        self.assertEqual(scalar(after, "if"),
+                         "${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}")
+        self.assertEqual(scalar(job_steps[prep_index], "if"), "matrix.requires_ceph")
+        self.assertNotIn("continue-on-error", job_steps[prep_index])
 
-    def test_independent_primary_jobs_follow_host_checks_with_own_runtime_resources(self):
-        # Every profile creates fresh fixtures on its own GitHub runner. The
-        # required default profile produces no workspace or image artifacts
-        # consumed by another job, so it need not serialize their admission.
-        for name in PRIMARY:
-            with self.subTest(job=name):
-                block = self.jobs[name]
-                self.assertEqual(scalar(block, "needs"), "test")
-                self.assertEqual(block.count("uses: actions/checkout@v7"), 1)
-                self.assertNotIn("actions/download-artifact", block)
-                self.assertNotRegex(block, r"(?m)^    (?:if|outputs):")
-                self.assertNotRegex(block, r"\bneeds\.")
-                self.assertIn("id: runtime_cleanup_baseline", block)
-                self.assertIn("phase: snapshot", block)
-                self.assertIn("uses: " + PREP, block)
-                self.assertIn("phase: check", block)
-        self.assertEqual(scalar(self.jobs["rgw-native-regressions"], "needs"),
-                         "[scenario-topology, scenario-multicluster-topology, scenario-topology-extensions]")
+    def test_generated_profiles_use_fresh_runner_resources_and_distinct_artifact_namespaces(self):
+        self.assertEqual(set(self.jobs), {"code-check", "plan", "runtime", "rgw-native-regressions"})
+        block = self.jobs["runtime"]
+        self.assertEqual(scalar(block, "needs"), "plan")
+        self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}", block)
+        self.assertNotIn("actions/download-artifact", block)
+        self.assertEqual(block.count("uses: actions/checkout@v7"), 1)
+        job_steps = steps(block)
+        prep = next(step for step in job_steps if "uses: " + PREP in step)
+        baseline = next(step for step in job_steps if "uses: " + CLEANUP in step and "phase: snapshot" in step)
+        native = next(step for step in job_steps if "uses: actions/upload-artifact" in step)
+        artifact_name = re.findall(r"^          name: (.+)$", native, re.M)
+        self.assertEqual(len(artifact_name), 1)
+        namespaces = [scalar(prep, "artifact_name"), scalar(baseline, "artifact_name"), artifact_name[0]]
+        self.assertEqual(len(set(namespaces)), len(namespaces))
+        self.assertTrue(all("${{ matrix.id }}" in value for value in namespaces))
+        # The discovery unit suite proves uniqueness of the source-generated id.
+        # No image/layout axis multiplies the source-owned runtime batches.
+        self.assertNotRegex(block, r"(?m)^        (?:variant|layout|case|group):")
 
-    def test_every_expanded_primary_job_has_distinct_image_and_cleanup_artifacts(self):
-        self.assertEqual(set(self.jobs), set(PRIMARY) |
-                         {"test", "rgw-native-regressions"})
-        prepared, cleanups = [], []
-        for name in PRIMARY:
-            block = self.jobs[name]
-            dimensions = re.findall(r"^        (group|case): \[(.*?)\]$", block, re.M)
-            self.assertLessEqual(len(dimensions), 1, name)
-            variants = [(None, None)]
-            if dimensions:
-                key, source = dimensions[0]
-                values = [value.strip() for value in source.split(",")]
-                self.assertTrue(all(values), name)
-                self.assertEqual(len(values), len(set(values)), name)
-                variants = [(key, value) for value in values]
-            job_steps = steps(block)
-            prep = next(step for step in job_steps if "uses: " + PREP in step)
-            baseline = next(step for step in job_steps
-                            if "uses: " + CLEANUP in step and "phase: snapshot" in step)
-            for key, value in variants:
-                def expand(artifact):
-                    if key is not None:
-                        artifact = artifact.replace("${{ matrix." + key + " }}", value)
-                    self.assertNotIn("${{", artifact, (name, key, value))
-                    return artifact
-                prepared.append(expand(scalar(prep, "artifact_name")))
-                cleanups.append(expand(scalar(baseline, "artifact_name")))
-        # Count the frozen workflow's own matrix dimensions rather than parent
-        # executions: receiver network and original-process quiescence/recovery leaves
-        # legitimately repeat only their exact selected parents.
-        expanded_primary_count = sum(
-            len(re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)
-                .group(1).split(","))
-            if re.search(r"^        (?:group|case): \[(.*?)\]$", self.jobs[name], re.M)
-            else 1 for name in PRIMARY)
-        self.assertEqual(len(prepared), expanded_primary_count)
-        self.assertEqual(len(cleanups), expanded_primary_count)
-        # Related short parents share 57 role-backed jobs plus host checks;
-        # supplied-image matrix validation remains a manual target.
-        self.assertEqual(expanded_primary_count, 57)
-        self.assertEqual(len(prepared) + 1, 58)
-        self.assertEqual(len(cleanups), 57)
-        self.assertEqual(len(set(prepared)), len(prepared))
-        self.assertEqual(len(set(cleanups)), len(cleanups))
-        self.assertFalse(set(prepared) & set(cleanups))
-
-    def test_image_matrix_is_manual_and_all_native_ci_jobs_prepare_roles(self):
+    def test_image_matrix_is_manual_and_ceph_runtime_jobs_prepare_roles(self):
         self.assertNotIn("image-compatibility", self.jobs)
         workflow = (ROOT / ".github/workflows/test.yml").read_text()
         self.assertNotIn("--variant '${{ matrix.variant }}'", workflow)
@@ -419,16 +366,18 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertRegex(self.makefile, r"(?m)^image-compatibility:$")
         self.assertRegex(self.makefile, r"(?m)^image-matrix:$")
         self.assertIn("$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py", self.composite_script())
-        for name in (*PRIMARY, "rgw-native-regressions"):
+        for name in ("runtime", "rgw-native-regressions"):
             self.assertEqual(self.jobs[name].count("uses: " + PREP), 1)
-        self.assertNotIn("uses: " + PREP, self.jobs["test"])
+        for name in ("code-check", "plan"):
+            self.assertNotIn("uses: " + PREP, self.jobs[name])
+            self.assertNotIn("uses: " + CLEANUP, self.jobs[name])
 
     def test_optional_regressions_prepare_roles_and_override_only_the_rgw_role(self):
         block = self.jobs["rgw-native-regressions"]
         job_steps = steps(block)
         prepare_index = next(i for i, step in enumerate(job_steps) if "uses: " + PREP in step)
         run_index = next(i for i, step in enumerate(job_steps)
-                         if re.search(r"(?m)^\s*make rgw-sync-native-regressions$", step_run(step)))
+                         if "tag_scenarios.py optional --batch native_rgw_translation " in step_run(step))
         cleanup = [(i, step) for i, step in enumerate(job_steps) if "uses: " + CLEANUP in step]
         self.assertEqual(len(cleanup), 2)
         self.assertLess(cleanup[0][0], prepare_index)
@@ -461,7 +410,7 @@ class ScenarioImageTests(unittest.TestCase):
                     self.assertEqual(actual[name], env[name])
                 self.assertEqual(actual["CGO_ENABLED"], "0")
                 self.assertIn("-mod=readonly", command)
-                self.assertIn("-tags=integration,features,multicluster", command)
+                self.assertIn("-tags=integration,features,multicluster,native_regression", command)
                 self.assertEqual(command[command.index("-run") + 1],
                     "^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$/(priority_tags_owner_class|ordinary_user_denial_grant)$")
 

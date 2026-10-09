@@ -11,12 +11,14 @@ import unittest
 
 import check_scenario_recovery as checker
 import check_scenario_quiescence as original_checker
+import test_scenario_quiescence as retained_source
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "cephfs-recovery-native.log"
 PROVENANCE = FIXTURE.with_suffix(".provenance.json")
 JSON_FIXTURE = FIXTURE.with_name("cephfs-recovery-native-json.log")
 JSON_PROVENANCE = JSON_FIXTURE.with_suffix(".provenance.json")
+SOURCE_FIXTURE = FIXTURE.with_name("cephfs-recovery-native.source.go.txt")
 
 
 def native_leaf_log(case):
@@ -67,10 +69,27 @@ class RecoveryCoverageTests(unittest.TestCase):
         self.assertEqual(provenance["job_id"], 113415201234)
         self.assertEqual(len(provenance["original_line_numbers"]), 120)
         self.assertEqual(provenance["original_line_numbers"], sorted(set(provenance["original_line_numbers"])))
-        native = Path(__file__).resolve().parents[2] / "internal/integration/cephfs_process_quiescence_acknowledgment_integration_test.go"
-        self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), provenance["original_test_file_sha256"])
+        self.assertEqual(hashlib.sha256(SOURCE_FIXTURE.read_bytes()).hexdigest(),
+                         provenance["original_test_file_sha256"])
+        # Both independently retained native formats share this original
+        # producer, rather than being rebound to today's split-file bytes.
+        json_provenance = json.loads(JSON_PROVENANCE.read_text())
+        self.assertEqual(json_provenance["source_sha"], provenance["source_sha"])
+        self.assertEqual(json_provenance["original_test_file_sha256"],
+                         provenance["original_test_file_sha256"])
         passes = re.findall(r"^\s*--- PASS: (\S+) ", FIXTURE.read_text(), re.M)
         self.assertEqual(passes[:3], [checker.PARENT, checker.PARENT + "/bridge", checker.PARENT + "/bridge/peer"])
+
+    def test_split_producer_parent_and_shared_recovery_assertions_preserve_original_declarations(self):
+        snapshot = SOURCE_FIXTURE.read_text()
+        root = Path(__file__).resolve().parents[2] / "internal/integration"
+        parent = (root / "cephfs_process_quiescence_acknowledgment_integration_test.go").read_text()
+        helpers = (root / "cephfs_process_quiescence_acknowledgment_integration_helpers_test.go").read_text()
+        self.assertEqual(retained_source.producer_parent(snapshot, checker.PARENT),
+                         retained_source.producer_parent(parent, checker.PARENT))
+        helper = "testCephFSOriginalProcessQuiescenceRecovery"
+        self.assertEqual(retained_source.producer_helpers(snapshot, helper),
+                         retained_source.producer_helpers(helpers, helper))
 
     def test_four_actual_leaf_views_require_complete_native_history(self):
         for case in checker.CASES:

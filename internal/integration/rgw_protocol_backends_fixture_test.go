@@ -1,4 +1,6 @@
-//go:build integration && features
+//go:build all || (integration && features && (!ci || (ci_code && (!ci_batch || ci_batch_pure))))
+
+//ci: timeout=20m job-timeout=30
 
 package integration_test
 

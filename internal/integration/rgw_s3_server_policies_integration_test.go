@@ -1,4 +1,4 @@
-//go:build integration && features
+//go:build all || (integration && features)
 
 package integration_test
 

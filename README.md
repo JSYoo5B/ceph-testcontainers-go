@@ -299,10 +299,22 @@ RGW/MDS는 클러스터가 소유하므로 별도 cleanup 등록이 필요하지
 
 ## 실행
 
-원본 pinned Quay의 기본·토폴로지 필수 경로는 다음과 같습니다. `check`는 호스트 검증만 수행하며, 나머지는 기존 서버 이미지를 직접 실행합니다. 서버 이미지 빌드가 필요하지 않습니다.
+태그 없이 `go test ./...`를 실행하면 호스트 단위 테스트가 실행됩니다. `make test-all`은 `CGO_ENABLED=0`과 `all` build tag로 일반 전체 suite를 실행하며 Docker와 준비된 Ceph 이미지가 필요합니다. Linux go-ceph와 알려진 native regression은 각각 `goceph`, `native_regression`을 추가해야 선택됩니다.
 
 ```sh
+make test
 make check
+make test-all
+
+# Docker 실행 없이 source-owned CI 목록과 실제 compiled coverage 확인
+python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
+```
+
+CI는 소스의 `ci_code`, `ci_short`, `ci_topology`, `ci_multicluster`, `ci_recovery`와 `ci_batch_*`를 읽어 자동으로 batch를 구성합니다. 같은 파일에 Test를 추가하거나 새 batch 파일을 추가할 때 workflow의 테스트 이름 목록을 수정하지 않습니다. 각 runtime job은 compile → environment → native → cleanup 단계로 결과를 기록합니다. `all`은 category 조건을 우회하므로 `all,ci,ci_short`는 선택 필터가 아닙니다. Category/batch 실행은 [TEST_TAGS.md](docs/TEST_TAGS.md)의 planner/runner를 사용합니다.
+
+기존 이름 기반 Make target과 `-run`은 수동 진단 경로로 유지합니다. `check`는 단위·race·vet와 tag 컴파일만 수행하며 Docker를 실행하지 않습니다. 아래 target은 준비된 서버 이미지를 직접 실행합니다.
+
+```sh
 make scenario-default
 make scenario-topology
 make scenario-multicluster-topology
@@ -328,7 +340,7 @@ O source에서 확인한 필수 compiled 선택은 N source의 115개에 `TestMu
 
 `scenario-mds-replacement`는 `TestStoppedMDSRetirementTopology`를 독립 Go 50분·job 60분 예산에서 선택합니다. Q 추가 당시 필수 compiled 선택은 P의 117개에 이 parent만 추가한 118개였으며 기본 14개·필수 internal 116개·SDK 전체 11개 중 선택 2개와 기존 selector를 확인했습니다. `RemoveStoppedMDS`는 전역 native 이름 부재와 건강한 owned rank를 확인한 뒤 원래 stopped CID만 retire하고, 기존 `ScaleMDS(ctx, 1, 1)`로 새 standby를 구성하도록 합니다. 원본 Quay Linux ARM64의 독립 bridge/host 실행은 3개 RUN/PASS·package 207.328초, 20개 128 KiB byte 기록(독립 dataset 8개), strict health/modules와 자체 outer cleanup의 새 리소스 0개를 확인했습니다. 같은 source의 기존 cold-MDS 회귀도 별도 3개 RUN/PASS·201.502초·자체 cleanup 0개로 완료했습니다. 이름/GID와 Docker CID의 관측은 별도이며 CID-to-GID process binding·replay/foreign-standby native 변형·전체 118개 CI나 다른 이미지/platform의 성공을 추가로 주장하지 않습니다. [계약과 실제 실행 범위](docs/CEPHFS_STOPPED_MDS.md)를 따릅니다.
 
-Go CI에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile을 유지합니다. 현재 각각 9/8/4/6/14/7개, 총 48개 이름입니다. Manager bootstrap 추가 시점에는 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, fixture 48개와 Docker bridge SDK 2개를 합한 실제 distinct top-level test 선택이 115개였습니다. storage bootstrap까지 실제 선택한 M source의 114개에 `TestNoInitialManagerTopology` 한 이름만 추가한 compiled 목록을 확인했습니다. 새 manager bootstrap의 원본 Quay Linux ARM64 bridge/host focused 실행은 7개 RUN/PASS·141.986초·자체 cleanup의 새 리소스 0개를 확인했으며, 이 N source의 115개 전체 CI 성공으로 표시하지 않습니다. 공유 namespace 관측 시점의 113개와 과거 전체 CI PASS도 각각의 source 증거로 유지합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`은 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
+이전 이름 기반 CI 구성에는 `scenario-cluster-fixtures`, `scenario-cephfs-fixtures`, `scenario-rados-fixtures`, `scenario-rbd-fixtures`, `scenario-rgw-fixtures`, `scenario-rgw-sync-fixtures`의 6개 추가 profile이 있었으며 당시 각각 9/8/4/6/14/7개, 총 48개 이름이었습니다. 이 이름 기반 target은 수동 실행에 유지합니다. Manager bootstrap 추가 시점에는 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, fixture 48개와 Docker bridge SDK 2개를 합한 실제 distinct top-level test 선택이 115개였습니다. storage bootstrap까지 실제 선택한 M source의 114개에 `TestNoInitialManagerTopology` 한 이름만 추가한 compiled 목록을 확인했습니다. 새 manager bootstrap의 원본 Quay Linux ARM64 bridge/host focused 실행은 7개 RUN/PASS·141.986초·자체 cleanup의 새 리소스 0개를 확인했으며, 이 N source의 115개 전체 CI 성공으로 표시하지 않습니다. 공유 namespace 관측 시점의 113개와 과거 전체 CI PASS도 각각의 source 증거로 유지합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 후속 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`은 아래 `d9115f4`의 전체 CI 증거 101개에 포함되지 않으며 각 로컬 실행 증거를 별도로 기록합니다. `scenario-goceph-linux`는 호출자가 준비한 client/runner 이미지로 별도 실행하는 선택 target입니다. 이미지 프로젝트 CI는 자체 이미지 검사기를 실행하며 Go integration이나 go-ceph를 실행하지 않습니다.
 
 Source `d9115f4`의 [전체 CI run 37240162309](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37240162309)는 terminal SUCCESS입니다. 상세 job 10개의 101개 named test와 선택된 child 121개가 모두 RUN/PASS했고 parent/child FAIL·SKIP은 0개였습니다. 101개는 Ceph runtime 90개·bootstrap 실패 cleanup 1개·Docker bridge SDK 2개·helper 검사 8개입니다. 공식·Debian·Ubuntu의 12개 native 이미지 조합도 각각 대표 9개를 통과했고 상세·matrix cleanup artifact 22개에서 새 container/network 0개를 확인했습니다. Matrix 반복이나 child 수를 distinct native I/O 수로 더하지 않습니다.
 
@@ -346,7 +358,7 @@ CGO_ENABLED=0 go test -tags=integration -run '^TestRBDLifecycle$' -count=1 -v -t
 CGO_ENABLED=0 go test -tags=integration -run '^TestCephFSFilesystem$' -count=1 -v -timeout=15m ./internal/integration
 ```
 
-통합 테스트는 `integration` build tag로 분리했습니다. Docker가 없을 때 조용히 skip하지 않으므로 PoC 실행 여부를 분명하게 알 수 있습니다. 다른 이미지로 같은 시나리오를 시험하려면:
+통합 테스트는 `all` 또는 기존 `integration`/capability build tag로 선택합니다. Docker가 없을 때 조용히 skip하지 않으므로 PoC 실행 여부를 분명하게 알 수 있습니다. 다른 이미지로 같은 시나리오를 시험하려면:
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:YOUR_VERSION make integration
@@ -435,4 +447,4 @@ RBD `BindNamespace`는 이미 설정된 여러 namespace mapping을 한 owner의
 
 Retained RBD namespace view에서도 `view.ImageStatus(ctx, "volume")`와 `view.WaitReplayReady(ctx, "volume")`를 사용할 수 있습니다. Source image의 실제 snapshot/journal mode를 따르며, 한 live owned receiver의 replay 준비와 실제 bytes·checkpoint 전달을 구분합니다. 원래 owner의 configured mode·mapping은 유지합니다. [사용법·대기 중 cohort 계약·검증 상태](docs/RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따르며 `make scenario-rbd-namespace-observation`으로 독립 실행합니다.
 
-`scenario-last-mds-replacement`는 `TestLastMDSReplacementTopology`를 별도 Go 50분·job 60분 예산으로 선택합니다. 현재 required compiled 선택은 Q의 118개에 이 parent만 추가한 실제 119개이며 기본 14개·필수 internal 117개·SDK 전체 11개 중 선택 2개를 유지합니다. Sole original 1 active / 0 standby의 stopped 등록 거부·caller fail·새 worker 추가·Q retire와 원래 additional-pool/sibling bytes를 검사합니다. 원본 Quay Linux ARM64의 독립 bridge/host 실행은 3개 RUN/PASS·package 223.931초, 24개 128 KiB full-reader 기록(독립 dataset 8개), strict failed-target health와 final HEALTH_OK/module closure·자체 cleanup의 새 리소스 0개를 확인했습니다. Native name/GID와 original Docker CID는 별도 관측이며 [계약과 실제 실행 범위](docs/CEPHFS_LAST_MDS_REPLACEMENT.md)를 따릅니다. Partial/lost reply/race·damaged/replay 변형과 전체 119개 CI·다른 image/platform의 성공은 추가로 주장하지 않습니다. Q118·P117 및 과거 focused/전체 CI101 결과는 해당 source의 기록으로 보존합니다. 같은 현재 262개 source의 기존 Q stopped-MDS 회귀도 별도 3개 RUN/PASS·212.955초, P cold-MDS 회귀는 별도 3개 RUN/PASS·197.593초와 각각 자체 cleanup 새 리소스 0개로 완료했습니다. 이 값들은 이전 Q의 source 259·207.328/201.502초나 P의 source 256·203.141/202.702초를 대체하지 않습니다.
+`scenario-last-mds-replacement`는 `TestLastMDSReplacementTopology`를 별도 Go 50분·job 60분 예산으로 선택합니다. Last-MDS 추가 당시 required compiled 선택은 Q의 118개에 이 parent만 추가한 실제 119개였으며 기본 14개·필수 internal 117개·SDK 전체 11개 중 선택 2개를 유지합니다. Sole original 1 active / 0 standby의 stopped 등록 거부·caller fail·새 worker 추가·Q retire와 원래 additional-pool/sibling bytes를 검사합니다. 원본 Quay Linux ARM64의 독립 bridge/host 실행은 3개 RUN/PASS·package 223.931초, 24개 128 KiB full-reader 기록(독립 dataset 8개), strict failed-target health와 final HEALTH_OK/module closure·자체 cleanup의 새 리소스 0개를 확인했습니다. Native name/GID와 original Docker CID는 별도 관측이며 [계약과 실제 실행 범위](docs/CEPHFS_LAST_MDS_REPLACEMENT.md)를 따릅니다. Partial/lost reply/race·damaged/replay 변형과 전체 119개 CI·다른 image/platform의 성공은 추가로 주장하지 않습니다. Q118·P117 및 과거 focused/전체 CI101 결과는 해당 source의 기록으로 보존합니다. 당시 같은 262개 source의 기존 Q stopped-MDS 회귀도 별도 3개 RUN/PASS·212.955초, P cold-MDS 회귀는 별도 3개 RUN/PASS·197.593초와 각각 자체 cleanup 새 리소스 0개로 완료했습니다. 이 값들은 이전 Q의 source 259·207.328/201.502초나 P의 source 256·203.141/202.702초를 대체하지 않습니다.

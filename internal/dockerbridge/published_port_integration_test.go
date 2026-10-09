@@ -1,4 +1,6 @@
-//go:build integration
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_sdk_network))))
+
+//ci: timeout=15m job-timeout=25
 
 package dockerbridge_test
 

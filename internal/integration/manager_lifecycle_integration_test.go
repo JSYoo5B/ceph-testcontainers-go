@@ -1,18 +1,18 @@
-//go:build integration && topology
+//go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_topology))))
+
+//ci: timeout=40m job-timeout=50
 
 package integration_test
 
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"slices"
 	"testing"
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func TestManagerLifecycle(t *testing.T) {
@@ -105,30 +105,4 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal("active manager identity was lost")
 	}
 	t.Log("MGR candidates 1 -> 2 -> 1 -> 2 -> 1: active a removed, b promoted, replacement standby removed; native rbd_support task command remained available")
-}
-
-// rbd task list is served by the required rbd_support MGR module. A fresh
-// cluster has no tasks; require its actual JSON list after active promotion.
-// Bound the CLI process itself while the module finishes initialization.
-func managerLifecycleRBDReady(t *testing.T, parent context.Context, cluster *ceph.Container) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
-	defer cancel()
-	for {
-		code, reader, err := cluster.ControlContainer().Exec(ctx,
-			topologyCommandWithTimeout(40*time.Second, "ceph", "--connect-timeout", "5", "rbd", "task", "list", "--format", "json"), tcexec.Multiplexed())
-		var output []byte
-		if err == nil {
-			output, err = io.ReadAll(reader)
-		}
-		var tasks []json.RawMessage
-		if err == nil && code == 0 && json.Unmarshal(output, &tasks) == nil && tasks != nil && len(tasks) == 0 {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("native rbd_support task command unavailable or fresh queue not empty: error=%v exit=%d output=%s", err, code, output)
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
 }

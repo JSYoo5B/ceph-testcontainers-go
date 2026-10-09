@@ -1,4 +1,4 @@
-.PHONY: test integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
+.PHONY: test test-all integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
 .PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
 .PHONY: scenario-topology scenario-multicluster-topology scenario-cephfs-removal scenario-topology-extensions scenario-rbd-receivers
 .PHONY: scenario-diagnostics
@@ -13,6 +13,7 @@ CLUSTER_FEATURE_EXTENSIONS_TIMEOUT ?= 40m
 CLIENT_FIXTURES_TIMEOUT ?= 120m
 RGW_CLIENT_FIXTURES_TIMEOUT ?= 40m
 INTEGRATION_TIMEOUT ?= 20m
+ALL_TEST_TIMEOUT ?= 180m
 TOPOLOGY_SMOKE_TIMEOUT ?= 45m
 IMAGE_COMPATIBILITY_TIMEOUT ?= 40m
 IMAGE_VARIANT ?= official
@@ -39,8 +40,8 @@ RBD_RECEIVERS_TESTS_all = $(SCENARIO_RBD_RECEIVERS_TESTS)
 RBD_RECEIVERS_TESTS_bridge = ^TestMultiClusterRBDReceiverReadiness$$/^bridge$$
 RBD_RECEIVERS_TESTS_host = ^TestMultiClusterRBDReceiverReadiness$$/^host$$
 
-# Keep the aggregate selectors for local runs. CI selects disjoint shards so
-# unrelated scenarios do not consume each other's Go process timeout.
+# Keep these selectors for manual diagnosis. Automated CI discovers disjoint
+# build-tag batches from the test sources and does not use these name lists.
 MULTICLUSTER_TOPOLOGY_TESTS_all = $(MULTICLUSTER_TOPOLOGY_TESTS)
 MULTICLUSTER_TOPOLOGY_TESTS_infra = ^Test(HostNetwork(MultiCluster|MonitorPortConflictRetry)|MultiCluster(MonitorBootstrapRefresh|TopologySnapshotsHonorBusyOwners))$$
 MULTICLUSTER_TOPOLOGY_TESTS_rbd = ^Test(HostNetworkRBDSnapshotMirror|MultiCluster(RBDSnapshotMirror|RBDJournalMirrorFailback|RBDSnapshotFanout|RBDBackup|RBDPeerLifecycle))$$
@@ -65,7 +66,7 @@ TOPOLOGY_EXTENSION_TESTS_rgw-removal-bridge = ^TestMultiClusterRGWZonegroupsAndR
 TOPOLOGY_EXTENSION_TESTS_rgw-removal-host = ^TestHostNetworkRGWZonegroupsAndRemovalTopology$$
 TOPOLOGY_EXTENSION_TESTS_rbd-peer-network = ^TestMultiClusterRBDPeerNetworkInterruption$$
 TOPOLOGY_EXTENSION_TESTS_rgw-peer-network = ^TestMultiClusterRGWPeerNetworkTopology$$
-# Related short CI cases share a Go process; every parent keeps its own fixture.
+# These manual groups match related cases; every parent keeps its own fixture.
 TOPOLOGY_EXTENSION_TESTS_network-recovery = ^Test(SeparateClusterNetworksAndInterruptions|FiveMonitorQuorumAndNetworkRecovery)$$
 TOPOLOGY_EXTENSION_TESTS_rbd-daemons = ^Test(MultiClusterRBDMirrorDaemonTopology|HostNetworkRBDMirrorDaemonTopology|MultiClusterRBDPeerNetworkInterruption)$$
 CEPHFS_REMOVAL_TESTS_all = $(SCENARIO_CEPHFS_REMOVAL_TESTS)
@@ -163,7 +164,7 @@ scenario-rgw-sync-supported:
 # image via CEPH_TEST_RGW_IMAGE. This target builds/publishes no image and has no
 # expected-failure conversion. The original full rgw-sync-fixtures is retained.
 rgw-sync-native-regressions:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(priority_tags_owner_class|ordinary_user_denial_grant)$$' ./internal/integration
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,features,multicluster,native_regression -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$$/(priority_tags_owner_class|ordinary_user_denial_grant)$$' ./internal/integration
 
 client-fixtures:
 	CGO_ENABLED=0 go test -tags=integration,features,multicluster -count=1 -v -timeout=$(CLIENT_FIXTURES_TIMEOUT) -run '^Test(ClientFencing|MGRModules|RADOSClientFixtures|NativePoolReplacement|CephFSDynamicDataPools|CephFSCloneCancellationAndPartialCleanup|CephFSQuiesceCheckpoints|CephFSSubvolumeClientAuthorization|CephFSPins|CephFSRetainedSnapshotAndMetadataRecipe|(HostNetwork)?RGWUserPlacementPolicy|(HostNetwork)?RGWTenantsAndAccounts|RGWBucketMaintenance|RGWS3ClientFeatures|RGWNativeTLS|RGWProtocolBackends|RGWAdminRecordsAndRateLimit|(HostNetwork)?MultiClusterRGW(OwnedSyncPolicy|SyncTranslationFiltering|AccountRootSync)|RBDClientFeatures|RBDAutomaticSnapshotSchedule|MultiClusterRBDMirrorScopeAndNamespaces)$$' ./internal/integration
@@ -177,6 +178,11 @@ cluster-feature-extensions:
 test:
 	CGO_ENABLED=0 go test -mod=readonly ./...
 
+# Normal supported runtime tests and host unit tests. SDK consumers and strict
+# native upstream regressions require their additional explicit opt-in tags.
+test-all:
+	CGO_ENABLED=0 go test -mod=readonly -tags=all -count=1 -v -timeout=$(ALL_TEST_TIMEOUT) ./...
+
 # Go host checks. Tag compilation does not execute Docker or native clients.
 # Image builder checks belong to ceph-testcontainers-images.
 check:
@@ -189,7 +195,8 @@ race:
 	CGO_ENABLED=1 go test -mod=readonly -race ./...
 
 tag-compile:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,auth,features,multicluster,topology,hostnetwork,goceph,diagnostics -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression -run '^$$' ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration

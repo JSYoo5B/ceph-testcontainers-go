@@ -1,0 +1,165 @@
+# 테스트 선택과 build tag
+
+태그 없이 `go test ./...`를 실행하면 Docker가 필요 없는 단위 테스트를
+실행한다. 통합 테스트를 선택하려면 `all`이나 기존 capability tag를 명시한다.
+`all`은 일반적으로 지원하는 전체 runtime suite를 한 번에 선택하는 로컬
+진입점이다. 테스트마다 `testing.Short()`나 category별 `t.Skip`을 붙이지 않고,
+선택하지 않은 Test 함수는 컴파일 대상에서 제외한다.
+
+```sh
+# 호스트 단위 테스트
+make test
+
+# 단위·race·vet 및 통합 테스트의 컴파일 확인; Docker 실행 없음
+make check
+
+# 일반 전체 suite: 단위 테스트와 Docker runtime 시나리오
+make test-all
+```
+
+`test-all`은 `CGO_ENABLED=0 go test -mod=readonly -tags=all -count=1 -v
+-timeout=180m ./...`를 실행한다. Docker와 실행할 Ceph 이미지가 필요하며,
+`CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`,
+`CEPH_TEST_MDS_IMAGE`로 준비된 이미지를 선택할 수 있다. 이미지 생성이나
+패키지 설치는 수행하지 않는다. `all` build tag와 Ceph의 `all` 역할 이미지는
+서로 다른 개념이다.
+
+전체 suite는 오래 걸릴 수 있다. `ALL_TEST_TIMEOUT=6h make test-all`처럼
+process 예산을 조정하거나 아래 runner로 필요한 batch만 실행할 수 있다.
+
+## CI category와 batch
+
+| Category | Build tag | 검사 범위 |
+| --- | --- | --- |
+| `code` | `ci_code` | Docker 없는 signer·fixture helper 검사 |
+| `short` | `ci_short` | 기본 기동·서비스와 관련 fixture 묶음 |
+| `topology` | `ci_topology` | 클러스터 구성·노드 lifecycle·진단 |
+| `multicluster` | `ci_multicluster` | 독립 cluster와 zone·peer 연결 |
+| `recovery` | `ci_recovery` | 장애·단절·제거 후 복구와 완료 관측 |
+
+`short`는 suite의 선택 유형이며 Go의 `-short` 옵션이나 정해진 실행시간
+상한을 뜻하지 않는다. 각 batch의 process/job 시간 예산은 소스에 기록한다.
+긴 독립 fixture는 같은 category 안의 별도 batch로 실행한다. 기존 native
+phase·negative window·데이터·완료 조건은 유지한다.
+
+소스에서 현재 목록을 생성하고, 실제 컴파일 결과와 비교할 수 있다.
+이 두 명령은 Docker를 실행하지 않는다.
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan \
+  --output artifacts/tag-plan.json
+python3 .github/scripts/tag_scenarios.py plan --verify \
+  --output artifacts/tag-plan-verified.json
+```
+
+생성된 목록의 `category`, `batch`, `package`로 하나를 실행한다.
+`--directory`는 결과를 새로 보존할 경로이며 기존 디렉터리를 덮어쓰지 않는다.
+
+```sh
+python3 .github/scripts/tag_scenarios.py run \
+  --category short --batch default --package ./internal/integration \
+  --directory artifacts/local-short-default
+```
+
+Runner는 실제 파일의 build expression과 Test 함수 목록에서 tag 조합을
+만들고 `go test -list` 결과를 검증한다. 실행 명령에는 테스트 이름의 `-run`,
+`-short`, category 환경 변수나 이름 필터를 넣지 않는다. 별도의 untagged
+단위 테스트가 같은 package에 있으면 함께 실행할 수 있다.
+
+`all`은 build expression의 우선 선택이므로 `all,ci,ci_short`를 category
+필터로 사용할 수 없다. Category/batch 선택에는 위의 planner/runner를
+사용한다. 기존 `make scenario-*`와 이름 기반 `-run` 명령은 개별 장애를
+조사하는 수동 경로로 유지한다.
+
+## 테스트 추가
+
+일반 wrapper 파일은 다음 형태를 사용한다.
+
+```go
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_default))))
+//ci: timeout=20m job-timeout=35
+
+package integration_test
+
+import "testing"
+
+func TestAnotherFixture(t *testing.T) {
+    // 기존 fixture API로 준비하고 실제 결과를 확인한다.
+}
+```
+
+같은 파일에 Test 함수를 추가하면 기존 category/batch에 자동으로 포함된다.
+새 파일은 적절한 category와 `ci_batch_<이름>`, 시간 예산을 지정한다. 기존
+batch에 합칠 때는 그 batch의 시간 예산을 공유한다. 새 batch도 source
+metadata에서 발견하므로 workflow의 matrix나 테스트 이름 목록을 수정하지
+않는다. `//ci:`는 package 선언 앞에 파일당 한 번만 기록한다.
+
+공용 helper·타입·상수는 `all || <기존 capability 조건>`의 별도 helper 파일에
+둔다. 서로 다른 category가 같은 helper를 사용할 수 있으며 Test 함수의
+컴파일 선택과 구분한다. Pure helper 검사는 `ci_code`로 분류한다.
+
+CephFS process quiescence/recovery와 RBD receiver 검사는 원래 parent와
+`bridge|host`, `peer|directory` ancestry를 유지한 CI leaf wrapper로 분리한다.
+각 leaf가 원래 helper 전체를 호출하고 기존 strict completion checker를
+실행한다. Category aggregate와 `all`의 로컬 전체 parent도 유지한다.
+미분류·누락·중복 category/batch와 실제 컴파일 목록의 불일치는 planner의
+검증에서 실패한다.
+
+## 명시적으로 선택하는 native/SDK 검사
+
+`all`만으로는 알려진 upstream native regression이나 Linux go-ceph SDK
+소비자 검사를 선택하지 않는다. 추가 build tag는 각각 `native_regression`,
+`goceph`이며 선택한 검사는 skip 없이 실행한다.
+
+```sh
+# 알려진 native regression만 source-owned optional batch로 조사
+python3 .github/scripts/tag_scenarios.py optional \
+  --batch native_shuffle --package ./internal/integration \
+  --directory artifacts/local-native-shuffle
+python3 .github/scripts/tag_scenarios.py optional \
+  --batch native_rgw_translation --package ./internal/integration \
+  --directory artifacts/local-native-rgw
+
+# SDK/native opt-in까지 컴파일 확인; Docker 실행 없음
+make tag-compile
+```
+
+RGW의 일반 `all`/CI dispatch는 `tag_owner_class`와
+`tenant_system_user_isolation`을 실행한다. Optional CI dispatch는
+`priority_tags_owner_class`와 `ordinary_user_denial_grant`를 실행한다.
+기존 capability tag의 수동 전체 parent와 `all,native_regression`의 로컬
+전체 parent는 네 child를 모두 실행한다. 원래 parent 이름과 child의
+assertion은 유지하며 알려진 실패를 지원 범위의 PASS로 표시하지 않는다.
+
+Linux go-ceph는 준비된 client/runner 이미지가 필요한 별도 소비자 계약이다.
+`make goceph-linux`와 [실행 조건](IMAGE_COMPATIBILITY.md)을 따른다. 해당 SDK의
+native linking은 Linux 안에서 수행하며 Go 모듈 자체에 go-ceph/cgo 의존성을
+추가하지 않는다.
+
+## 실패 단계와 증거
+
+Runtime CI는 각 실제 runner에서 다음 단계를 분리한다.
+
+1. **Compile**: 소스에서 tag 소유 관계를 확인하고 선택한 suite를 컴파일한다.
+2. **Environment**: Docker engine과 owned resource baseline을 기록하고,
+   Ceph가 필요한 batch는 배포된 roles 이미지를 해석·준비한다.
+3. **Native**: Test assertion, parent/package 완료와 필요한 strict checker를 확인한다.
+4. **Cleanup**: baseline이 성공한 경우 native 실패 뒤에도 같은 engine의
+   owned container·network·named volume 부재를 확인한다.
+
+Compile 실패와 이미지/Docker 준비 실패를 native assertion 실패와 별도로
+찾을 수 있다. Native의 assertion/completion 실패도 기록하지만 category나
+실패 단계만으로 코드 결함과 환경 결함의 근본 원인을 확정하지 않는다.
+`compile.log`, `compile-report.json`, `native.log`, `report.json`과 별도 이미지·
+cleanup receipt를 함께 확인한다. 분류와 자동 선택을 바꾼 것만으로 CI 시간
+단축이나 새 runtime 성공을 주장하지 않으며 [기존 실행 기록](CI_FIXTURES.md)은
+각 source의 역사적 증거로 유지한다.
+
+실제 컴파일된 Test 이름과 소스 목록의 비교는 `plan --verify`와 native 실행
+직전의 admission에서 수행한다. Compile 단계는 `go test -c`로 확인하며
+테스트를 실행하지 않는다.
+
+과거 CephFS 완료 검사 로그는 `.github/scripts/fixtures/`의 원본 소스
+snapshot과 당시 provenance 해시에 연결한다. 현재 wrapper/helper로 나눈
+assertion의 보존은 별도로 비교하며, 과거 로그를 현재 소스의 새 실행 결과로
+표시하지 않는다.

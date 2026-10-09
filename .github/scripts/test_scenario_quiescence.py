@@ -14,6 +14,35 @@ import check_scenario_quiescence as checker
 
 FIXTURE = Path(__file__).with_name("fixtures") / "cephfs-quiescence-native.log"
 PROVENANCE = FIXTURE.with_suffix(".provenance.json")
+SOURCE_FIXTURE = FIXTURE.with_name("cephfs-quiescence-native.source.go.txt")
+
+
+def retained_declaration_layout(source):
+    """Allow only the observed gofmt blank line between these type declarations.
+
+    Every other byte in the compared declarations stays significant, including
+    Go's newline-sensitive syntax and embedded native probe script literals.
+    This source parity is independent of retained native execution provenance.
+    """
+    before = "type cephFSOriginalProcessBaseline struct{ startedAt, instanceID string }\n"
+    after = "type cephFSOriginalProcessRawState struct {"
+    return source.replace(before + "\n" + after, before + after, 1)
+
+
+def producer_parent(source, parent):
+    # These retained producer parents contain only their nested t.Run loops;
+    # gofmt keeps the sole function-closing brace at column zero.
+    found = re.findall(r"(?ms)^func " + re.escape(parent) + r"\(.*?^\}", source)
+    if len(found) != 1:
+        raise ValueError("retained source must contain its exact original parent once")
+    return found[0]
+
+
+def producer_helpers(source, helper):
+    marker = "\nfunc " + helper + "("
+    if source.count(marker) != 1:
+        raise ValueError("retained source must contain its exact fixture helper once")
+    return source.split(marker, 1)[1]
 
 
 def native_leaf_log(case):
@@ -64,14 +93,40 @@ class QuiescenceCoverageTests(unittest.TestCase):
         self.assertEqual(provenance["source_sha"], "3ac07fe9525e5442fb646fdd67a92d321e0bc89d")
         self.assertEqual(provenance["run_id"], 37766891332)
         self.assertEqual(len(provenance["original_line_numbers"]), 72)
-        native = Path(__file__).resolve().parents[2] / "internal/integration/cephfs_process_quiescence_integration_test.go"
-        self.assertEqual(hashlib.sha256(native.read_bytes()).hexdigest(), provenance["original_test_file_sha256"])
+        # Historical logs bind the actual historical producer, independently
+        # of today's source layout. Keep the original provenance SHA intact.
+        self.assertEqual(hashlib.sha256(SOURCE_FIXTURE.read_bytes()).hexdigest(),
+                         provenance["original_test_file_sha256"])
         # Inspect the producer fixture, not a positive log generated from the
         # checker's expected tuple: actual Go PASS begins with the parent.
         passes = re.findall(r"^\s*--- PASS: (\S+) ", FIXTURE.read_text(), re.M)
         self.assertEqual(passes[0], checker.PARENT)
         self.assertEqual(passes[1], checker.PARENT + "/bridge")
         self.assertEqual(passes[2], checker.PARENT + "/bridge/peer")
+
+    def test_split_producer_parent_and_shared_assertions_preserve_original_declarations(self):
+        retained = SOURCE_FIXTURE.read_text()
+        root = Path(__file__).resolve().parents[2] / "internal/integration"
+        current_parent = (root / "cephfs_process_quiescence_integration_test.go").read_text()
+        current_helpers = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
+        self.assertEqual(producer_parent(retained, checker.PARENT),
+                         producer_parent(current_parent, checker.PARENT))
+        helper = "testCephFSOriginalProcessQuiescence"
+        self.assertEqual(retained_declaration_layout(producer_helpers(retained, helper)),
+                         retained_declaration_layout(producer_helpers(current_helpers, helper)))
+
+    def test_declaration_binding_retains_newlines_literals_operators_and_assertions(self):
+        source = 'func fixture() { value++; require(value == 2, "a b"); raw := `a\n b` }'
+        gap = ("type cephFSOriginalProcessBaseline struct{ startedAt, instanceID string }\n"
+               "type cephFSOriginalProcessRawState struct {")
+        self.assertEqual(retained_declaration_layout(gap),
+                         retained_declaration_layout(gap.replace("\ntype", "\n\ntype")))
+        for changed in (source.replace("++", "+ +"), source.replace("== 2", "== 3"),
+                        source.replace('"a b"', '"ab"'), source.replace("`a\n b`", "`a\nb`"),
+                        source.replace("require", "ignore")):
+            self.assertNotEqual(retained_declaration_layout(source), retained_declaration_layout(changed))
+        self.assertNotEqual(retained_declaration_layout("return call()"),
+                            retained_declaration_layout("return\ncall()"))
 
     def test_each_actual_leaf_view_has_eight_byte_three_absence_and_three_identity_records(self):
         leaves = []

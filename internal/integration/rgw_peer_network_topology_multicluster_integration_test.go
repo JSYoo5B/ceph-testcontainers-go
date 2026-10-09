@@ -1,4 +1,6 @@
-//go:build integration && multicluster
+//go:build all || (integration && multicluster && (!ci || (ci_topology && (!ci_batch || ci_batch_topology_extensions_rgw_peer_network))))
+
+//ci: timeout=40m job-timeout=50
 
 package integration_test
 

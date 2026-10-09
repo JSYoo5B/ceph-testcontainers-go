@@ -1,6 +1,6 @@
 # 시나리오 fixture CI
 
-## 현재 필수 CI: 공식 roles 시나리오
+## 현재 필수 CI: 공식 roles와 소스 기반 tag 선택
 
 Go 모듈 CI는 준비된 `official-20.2.4-{control,osd,rgw,mds}`로
 Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·`all`/역할
@@ -11,7 +11,55 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 다른 이미지나 platform의 Go 연결 검사가 필요하면
 [수동 호환성 target](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)을 사용한다.
 
-| 필수 범위 | Matrix 포함 `8ef88e7` | Matrix 제거 `27d8008` | 현재 관련 시나리오 묶음 |
+일반 전체 suite는 `all` build tag로 선택한다. 태그 없는 `go test ./...`는
+기존 호스트 단위 테스트를 실행하며, `make test-all`은 Docker가 필요한
+일반 전체 runtime까지 실행한다. `all`은 capability/category 조건을 우회하므로
+`all,ci,ci_short`를 category 필터로 사용하지 않는다. CI의 실제 선택은
+[tag planner/runner](TEST_TAGS.md#ci-category와-batch)를 사용한다.
+
+Workflow는 고정된 code 검사·계획 생성·runtime 실행 단계만 유지하고,
+`ci_code`, `ci_short`, `ci_topology`, `ci_multicluster`, `ci_recovery` 및
+`ci_batch_*`와 파일 header의 `//ci:`에서 category/batch·시간 예산을 읽는다.
+새 Test는 소스에서 자동으로 발견하며 workflow의 이름 selector를 수정하지
+않는다. Source AST와 실제 compiled inventory를 대조해 미분류·누락·중복을
+거부한다. 기존 `make scenario-*`와 이름 기반 `-run`은 수동 진단 경로다.
+
+현재 소스의 필수 plan은 code profile 하나와 runtime batch 59개를 선택한다.
+Named parent 124개·실행 instance 131개에는 Docker 없는 helper 검사 8개와
+Docker bridge runtime 2개가 포함된다. Bridge package의 untagged 단위 검사
+9개는 같은 package 실행에서 추가로 수행하며 이 runtime inventory에 합산하지
+않는다. 이 선택·컴파일 수는 새 전체 CI의 runtime 성공이나 시간 측정이 아니다.
+
+각 runtime batch는 같은 runner에서 다음 단계를 기록한다.
+
+1. **Compile**: 선택한 suite를 컴파일하고 source inventory를 확인한다.
+2. **Environment**: Docker engine·owned resource baseline과 실제 배포된
+   roles 이미지 ID·digest·platform을 기록한다. SDK bridge batch는 Ceph를 준비하지 않는다.
+3. **Native**: 컴파일된 Test 전체의 assertion·parent/package 완료와 strict
+   completion checker를 확인한다. `-run`이나 skip으로 일부를 통과 처리하지 않는다.
+4. **Cleanup**: baseline이 성공하면 native 실패 뒤에도 같은 engine의
+   owned container·network·named volume 부재를 확인한다.
+
+Compile·Docker/이미지 준비·native assertion/completion·cleanup 실패를
+단계별로 찾을 수 있다. Category와 단계만으로 근본 원인을 확정하지 않으며
+`compile.log`, `compile-report.json`, `native.log`, `report.json`과 별도 이미지·
+cleanup receipt를 함께 확인한다. 테스트 내부 phase·negative window·bytes와
+원래 process·checkpoint 완료 조건을 유지한다.
+
+일반 `all`과 필수 CI는 알려진 upstream regression과 Linux go-ceph 소비자를
+제외한다. `native_regression`의 optional native batch와 `goceph`는 추가 tag로
+명시적으로 선택하며 selected test를 skip하지 않는다. RGW 일반 dispatch는
+`tag_owner_class`·`tenant_system_user_isolation`, optional native dispatch는
+`priority_tags_owner_class`·`ordinary_user_denial_grant`를 실행한다. CephFS
+native shuffle도 환경 변수 대신 compile tag로 선택한다. Vault와 Linux go-ceph
+소비자 container는 별도 fixture 입력이며 Ceph 역할 이미지의 조건을 바꾸지 않는다.
+
+## 이전 이름 기반 CI 선택 범위
+
+아래 표는 tag 전환 전 source의 workflow·compiled selector 범위다. 현재의
+자동 plan이나 새 runtime 완료 수로 사용하지 않는다.
+
+| 필수 범위 | Matrix 포함 `8ef88e7` | Matrix 제거 `27d8008` | Tag 전환 전 관련 시나리오 묶음 |
 | --- | ---: | ---: | ---: |
 | Job | 79 | 67 | 58 |
 | 자체 resource cleanup | 78쌍 | 66쌍 | 57쌍 |
@@ -20,16 +68,11 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 | 주요 시나리오 parent 실행 instance | 127 | 127 | 129 |
 | 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 | 0 |
 
-이 수는 현재 workflow·compiled selector의 범위다. 제거한 대표 9개 이름은
-모두 남은 필수 시나리오에서 검증한다. 각 runner의 이미지 ID 기록·native
-assertion·완료 검사·항상 실행하는 cleanup을 유지하며 테스트 내부의 phase나
-negative window를 줄이지 않는다. `scenario-default`도 필수 검사다.
-Compiled selector 기준 Ceph integration parent 120개·127회 실행에
-Docker bridge SDK parent 2개·2회 실행을 더한 수다.
-선택적 `rgw-native-regressions`도 기본적으로 같은 roles를 준비하고,
-비어 있지 않은 `workflow_dispatch.rgw_image`는 RGW 역할만 덮어쓴다.
-그 명시 입력은 기본 이미지 준비 receipt와 구분한다. Vault와 Linux go-ceph
-소비자 container는 별도 입력이며 Ceph 역할 이미지의 의존성을 바꾸지 않는다.
+태그 전환 전 마지막 묶음은 Ceph integration parent 120개·127회 실행과
+Docker bridge SDK parent 2개·2회 실행을 선택했다. 제거한 대표 이미지 matrix의
+9개 이름은 필수 시나리오에 남겼다. 당시 선택적 `rgw-native-regressions`는
+같은 roles를 준비하고 명시적인 `workflow_dispatch.rgw_image`로 RGW 역할만
+덮어썼다. 그 입력과 과거 raw evidence는 해당 source의 기록으로 유지한다.
 
 ## 메모리 기반 OSD fixture
 
@@ -55,10 +98,10 @@ replacement와 데이터 보존을 검사한다. Ceph가 numeric ID를 재사용
 ID/UUID와 stopped keeper를 바꾸지 않는지 검사하며, 마지막 `Terminate` 뒤
 owned container·bridge·named volume의 부재를 Docker에서 직접 확인한다.
 
-개별 실행은 `make scenario-osd-memory`의 Go 20분 제한을 사용한다. 필수 CI는
-기존 `scenario-empty-bootstrap`에 이 whole parent를 더해 58개 job과 57쌍의
-cleanup·roles 준비를 유지한다. 묶음의 기존 80분 process 제한은 공유하며
-아래의 11분 55초는 메모리 fixture 추가 전 세 구성원의 기록이다. Phase 시간과
+개별 실행은 `make scenario-osd-memory`의 Go 20분 제한을 사용한다. 필수 tag
+plan에서는 기존 bootstrap 구성과 `ci_topology`의 `empty_bootstrap` batch를
+공유하며 80분 process 제한을 유지한다. Tag 전환 전의 58개 job·57쌍 cleanup
+구성에서 추가한 parent다. 아래의 11분 55초는 메모리 fixture 추가 전 세 구성원의 기록이다. Phase 시간과
 Docker cgroup usage의 phase snapshot 최대 합을 로그에 남기지만 disk 대비
 성능 향상이나 실제 순간 peak를 측정한 benchmark로 표시하지 않는다. 새로운
 native 실행과 전체 CI 결과는 별도 실행 receipt로 확인해야 한다.
@@ -83,9 +126,10 @@ benchmark를 자동으로 바꾸지는 않는다. 512 MiB native control은 skip
 RAM 상한은 logical block 크기의 네 배로 설정하고 저장소 크기와 daemon
 메모리를 구분한다. 계약은 [작은 OSD 저장소](SMALL_OSD_STORAGE.md)를 따른다.
 
-개별 실행은 `make scenario-small-osds`의 Go 25분 제한을 사용한다. 필수 CI는
-기존 `scenario-empty-bootstrap`의 whole parent union을 다섯 개로 늘리며
-58개 job·57쌍 cleanup·57회 roles 준비와 기존 80분 process 제한을 유지한다.
+개별 실행은 `make scenario-small-osds`의 Go 25분 제한을 사용한다. 필수 tag
+plan의 `ci_topology`/`empty_bootstrap`은 최초 OSD·MGR·MDS 없는 구성과
+메모리·작은 OSD의 다섯 whole parent를 선택하며 기존 80분 process 제한을
+유지한다. Tag 전환 전에는 같은 다섯 parent를 이름 selector로 묶었다.
 아래의 bootstrap 11분 55초 기록에는 두 새 저장소 parent가 포함되지 않는다.
 로컬 Docker Desktop Linux ARM64에서 준비된 Ceph 20.2.4 control·OSD roles로
 10개 case가 모두 PASS했다. Parent는 550.96초, package는 551.409초였고
@@ -94,7 +138,7 @@ RAM 상한은 logical block 크기의 네 배로 설정하고 저장소 크기�
 compiled selector 검사만으로 최소 용량의 보편적 보장을 주장하지 않는다.
 원문과 별도 cleanup receipt는 `artifacts/small-osd-storage-20261009/`에 보존한다.
 
-## 짧고 관련 있는 시나리오 묶음
+## 이전 짧고 관련 있는 시나리오 묶음
 
 Source `27d8008`의 [run 37870121307](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37870121307)에서
 완료된 짧은 job을 기준으로 다음 여섯 묶음을 선택했다. 아래 시간은 각
@@ -138,9 +182,9 @@ Original-process quiescence·recovery의 네 leaf씩과 receiver의 bridge·host
 job 및 각각의 다섯 scope는 그대로 독립 실행한다. 긴 mirror scope·schedule·
 failback·split-brain·CephFS pins도 이번 짧은 시나리오 묶음에 넣지 않았다.
 Job 시작·이미지 준비·외부 cleanup의 반복을 줄이는 변경이며 native Ceph
-동작 자체의 시간이 줄었다고 주장하지 않는다. 현재 변경은 호스트 검사
-40개(이미지 선택 17개·compiled selector 23개)가 통과한 상태다. 새 묶음의
-native 실행과 전체 CI 시간은 사용자가 push한 뒤 별도로 확인해야 한다.
+동작 자체의 시간이 줄었다고 주장하지 않는다. 당시 묶음 변경은 호스트 검사
+40개(이미지 선택 17개·compiled selector 23개)로 선택을 확인했다. 이 과거
+검사 결과를 tag 전환 뒤의 native 실행이나 전체 CI 시간으로 표시하지 않는다.
 실행 원본·선택 근거는 `artifacts/related-scenario-bundles-20261009/`에 보존한다.
 
 ## Matrix 제거 전 작업량으로 계산한 예상
@@ -161,7 +205,7 @@ GitHub API 기준 필수 79개 job이 SUCCESS이고 선택적 native regression
 1개만 SKIP이다. 생성부터 마지막 job 완료까지 **54분 15초**였으며,
 첫 job 시작부터 완료까지는 54분 12초였다. 앞선 `4da2744`의 생성부터
 완료까지 59분 39초와 구분한다. 최장 job은 분리 전 RBD fixture의
-35분 7초에서 현재 cluster fixture의 **25분 10초**로 바뀌었다.
+35분 7초에서 당시 cluster fixture의 **25분 10초**로 바뀌었다.
 최장 job만으로 전체 workflow 시간을 설명할 수 없다.
 
 마지막 `multicluster / rgw-multisite-host` job의 실제 경로는 다음과 같다.
@@ -178,10 +222,10 @@ Job API의 `created_at`부터 `started_at`까지를 실행 대기로 계산했�
 
 당시 독립 시나리오 job 65개는 `scenario-default` 완료 시점에 한꺼번에
 생성됐으며 대기는 중앙값 11분 36초, 최대 25분이었다. 이 job들은 이전
-runner의 cluster·workspace·artifact를 사용하지 않는다. 현재 workflow는
-모든 주요 시나리오를 호스트 `test` 성공 뒤 허용하며 `scenario-default`도
-필수 runtime job으로 병행한다. 각 job의 독립 checkout·역할 이미지 준비·
-자체 baseline·항상 실행하는 cleanup, 필수 선택과 기존 시간 제한은 유지한다.
+runner의 cluster·workspace·artifact를 사용하지 않았다. 후속 이름 기반
+workflow는 주요 시나리오를 호스트 `test` 성공 뒤 허용해 default runtime도
+병행하도록 바꿨다. 그 의존성 변경의 계산과 현재 source-driven plan의 실제
+실행은 구분하며 독립 checkout·이미지 준비·baseline·cleanup 조건을 유지한다.
 
 관측한 동시 실행 최대치는 20개이며 성공 job의 runner 점유 합은
 820.4분이었다. 작업량과 동시 용량을 그대로 유지하면 `820.4 / 20`인
@@ -200,8 +244,8 @@ runner의 cluster·workspace·artifact를 사용하지 않는다. 현재 workflo
 요금제별 차이와 지원팀을 통한 한도 증가 요청을 설명한다. 계정이나 runner
 용량은 이번 변경으로 수정하지 않는다.
 
-현재 결과는 기존 성공 실행의 API timing 분석과 workflow 의존성 변경의
-호스트 검사이다. 변경 후 실제 전체 시간은 새 CI가 완료돼야 확정한다.
+이 절의 결과는 당시 성공 실행의 API timing 분석과 이름 기반 workflow
+의존성 변경의 호스트 검사다. 현재 tag 구성의 전체 시간으로 합산하지 않는다.
 API 원본·계산·가정과 source별 receipt는
 `artifacts/ci-wall-time-20261009/`에 보존한다.
 
@@ -236,8 +280,8 @@ Local `scenario-rbd-fixtures`와 `process-recovery` aggregate는 유지하며,
 당시 source `8ef88e7`의 compiled selector와 workflow 검사는 distinct
 parent 120개와 primary instance 127개를 선택했다. 필수 job 79개,
 cleanup 78쌍, 주요 role 이미지 준비 66개와 12×9 이미지 matrix를 사용했다.
-Source `27d8008`의 matrix 제거 구성은 67개 필수 job이며 현재 짧은
-시나리오 묶음 구성은 58개다. 각 source의 완료 증거를 구분한다.
+Source `27d8008`의 matrix 제거 구성은 67개 필수 job이었으며 tag 전환 전
+짧은 시나리오 묶음 구성은 58개였다. 각 source의 완료 증거를 구분한다.
 
 분리는 가용 runner가 있을 때 wall time을 줄일 수 있다. 준비를 반복하므로
 runner 점유 합과 이미지 준비 비용이 줄었다고 주장하지 않는다.
@@ -288,7 +332,7 @@ Go package는 각각 904.857초·1055.246초에 PASS했고 자체 cleanup도 통
 `09efe52`는 실제 Go의 parent→network→leaf PASS 순서를 따르도록 수정하고,
 모든 하위 PASS가 package 완료보다 앞서야 한다는 조건도 보존했습니다.
 실제 Go `testing.T` 출력의 Docker 없는 회귀와 6개 조기 package 완료 위치의
-부정 대조, 관련 helper 103개가 통과했습니다. 현재 분리 구성은 이 수정을
+부정 대조, 관련 helper 103개가 통과했습니다. 후속 이름 기반 분리 구성은 이 수정을
 포함하며 위의 `3355e8a` 전체 CI에서 새 own-job 로그로 검증했습니다.
 최초 b7 실행은 최종 63 success·2 failure·3 cancelled·1 optional skipped로
 끝났습니다. 그 원본은 `artifacts/heavy-scenario-split-20261008/ci-b7daea9/`에
@@ -296,7 +340,7 @@ Go package는 각각 904.857초·1055.246초에 PASS했고 자체 cleanup도 통
 
 이전 O source는 digest로 고정한 `ceph.DefaultImage`의 원본 Quay Ceph 20.2.4를 사용했습니다. 기본·토폴로지 55개, 별도 CephFS 제거·재등록 복구 5개, RBD receiver 1개, 최초 daemon 없는 mirror 1개, 공유 RBD namespace 1개, scoped RBD image 관측 1개, 최초 OSD 없는 bootstrap 1개, 최초 MGR 없는 bootstrap 1개, 서버/client fixture 48개와 Docker bridge SDK 회귀 2개를 합해 새 profile를 포함한 **distinct top-level test 이름 116개**를 선택하도록 구성합니다. 이전 N source의 실제 선택 115개에서 `TestMultiClusterRBDNamespaceImageObservation` 한 parent만 추가한 실제 compiled 목록을 확인했습니다. 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. N115·M114와 과거 전체 CI101 결과는 각 source의 증거로 보존합니다. 이 선택 결과 자체는 O source의 116개 전체 CI의 새 runtime 성공을 뜻하지 않습니다. Scoped image 관측의 별도 원본 Quay Linux ARM64 bridge/host 실행은 아래 전용 profile의 실제 범위로 기록합니다. `scenario-multicluster-topology` 20개와 `scenario-cephfs-removal` 5개는 겹치지 않습니다. 2026-10-07의 추가 이름은 `TestOSDRemovalLifecycle`, `TestMonitorRollingReplacement`, `TestMultiClusterMonitorBootstrapRefresh`, `TestMultiClusterTopologySnapshotsHonorBusyOwners`, `TestMultiClusterCephFSPeerRemovalDrain`, `TestMultiClusterCephFSDirectoryRemovalRelease`, `TestMultiClusterCephFSOriginalProcessQuiescence`, `TestMultiClusterCephFSOriginalProcessQuiescenceRecovery`, `TestMultiClusterCephFSDirectoryAdditionIntent`, `TestMultiClusterRBDReceiverReadiness`, `TestMultiClusterNoInitialMirrorDaemons`, `TestMultiClusterRBDNamespaceBinding`, `TestNoInitialOSDTopology`, `TestNoInitialManagerTopology`, `TestMultiClusterRBDNamespaceImageObservation`이며 아래 전체 CI 101개 성공과 별도로 추적합니다. Linux go-ceph 1개는 호출자가 client/runner 이미지를 준비하여 별도 실행하는 선택 target입니다. [이미지 프로젝트 CI](../../ceph-testcontainers-images/.github/workflows/test.yml)는 독립된 quick/full 검사기를 실행하며 이 Go suite나 go-ceph를 실행하지 않습니다. Helper 검사도 포함한 이름 수이며, bridge/host·phase별 subtest 또는 native I/O 수와 같지 않습니다.
 
-분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 현재 Go 필수 CI는 6개 fixture profile·48개이며 go-ceph 1개는 선택 실행입니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
+분리 전에는 fixture profile 7개·새 이름 48개를 한 CI에 추가했습니다. 당시 Go 필수 CI는 6개 fixture profile·48개였으며 go-ceph 1개는 선택 실행이었습니다. **Source `d9115f4`의 전체 CI는 terminal SUCCESS이며 상세 101개·matrix 12개 조합·필수 cleanup 22개를 모두 확인했습니다.** 아래 목록의 기준은 `artifacts/quay-fixture-ci-inventory-20261004/coverage-plan.json`이며, 이전 실패와 후속 전체 성공은 source별로 다음 절에 기록합니다.
 
 첫 확대 CI는 source `efa5ee3655173c496cc00f8c3e0f78baa7bbedf0`의 [run 37179959997](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37179959997)로 2026-10-04 05:27:55 UTC에 시작했습니다. 05:30 UTC 관측에서는 `make check` job이 SUCCESS, `quay-default`는 실행 중이며 새 fixture runtime job은 모두 대기 상태였습니다. 이 중간 관측은 terminal 성공 증거가 아닙니다.
 
@@ -430,27 +474,36 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 
 후속 source `d9115f4`의 전체 성공은 [별도 CI 완료 증거](#d9115f4-전체-ci-완료)에 기록합니다. 위 focused 3개 결과와 source 검증 제한을 그 전체 실행의 증거로 대체하지 않습니다.
 
-## 실행 경로와 시간 제한
+## 기존 수동 실행 경로와 시간 제한
 
-현재 CI job과 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을 사용합니다. 이전 실행의 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존합니다. 로컬 Make 기본 실행은 `ceph.DefaultImage`를 사용하고, 주요 CI는 준비된 공식 역할 이미지 네 개를 명시적으로 선택합니다. 이 선택은 기존 이미지 runtime 계약과 필수 selector·판정을 유지하며, 이전 Quay 실행의 결과를 새 역할 이미지 결과로 표시하지 않습니다.
+기존 수동 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을
+사용한다. 과거 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존한다.
+로컬 Make 기본 실행은 `ceph.DefaultImage`를 사용하고, 주요 tag CI는 준비된
+공식 역할 이미지 네 개를 명시적으로 선택한다. 이전 Quay 실행의 결과를
+새 역할 이미지 실행 결과로 표시하지 않는다.
 
-[workflow](../.github/workflows/test.yml)는 호스트 `test`의 `make check`와 helper 검사 성공 뒤 모든 독립 시나리오를 허용합니다. 기본·topology·fixture job은 각각 Ubuntu 24.04 Linux AMD64 runner에서 실행하며 `scenario-default`도 필수 검사로 병행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
+[workflow](../.github/workflows/test.yml)는 호스트 `make check`·helper 검사와
+source 기반 plan 검증 뒤 독립 category/batch를 실행한다. Runtime batch는
+Ubuntu 24.04 Linux AMD64 runner와 `CGO_ENABLED=0`을 사용한다. 실제 go-ceph
+probe만 준비된 Linux 소비자 이미지 안에서 cgo/native 라이브러리를 사용한다.
+역할 이미지에 compiler나 개발 헤더를 요구하지 않는다.
 
-현재 CI 설정은 `scenario-cephfs-fixtures`의 8개 parent를 6개 case job,
-`scenario-topology-extensions`의 12개 parent를 9개 case job으로
-선택합니다. 두 profile의 case별 Go 제한은 40분이고, runner 제한은
-cleanup을 포함해 50분입니다. 같은 case에 묶인 parent는 이 process 제한을
-공유합니다. Extensions의 Docker bridge SDK runtime 2개는
-`network-recovery` case에서만 한 번 실행합니다.
+아래의 case/group별 선택·job 수는 태그 전환 전 이름 기반 CI의 기록이다.
+지금은 동일한 fixture 범위를 source-owned batch로 선택하며 실제 시간 예산과
+구성원은 `tag_scenarios.py plan` 결과를 사용한다. 수동 Make target의
+case/group과 개별 timeout override는 진단 목적으로 유지한다.
 
-`scenario-multicluster-topology`의 20개 parent는 `infra` 4개, `rbd` 6개,
-`cephfs` 4개를 기존 group으로 유지하고, RGW 6개는 parent별 독립 job으로
-선택합니다. `scenario-cephfs-removal`의 5개 parent도 각각 독립 job입니다.
-이 두 profile의 job별 Go 제한은 기존 60분, runner 제한은 cleanup을
-포함해 70분입니다. 모든 선택에서 기존 bridge/host 하위 케이스를 유지하며
-`fail-fast: false`로 다른 case의 결과도 수집합니다. 컴파일된 실제 이름을
-이용하는 selector 검사는 분할의 중복·누락·빈 선택과 잘못된 case/group
-인자를 거부합니다.
+태그 전환 전 `scenario-cephfs-fixtures`의 8개 parent는 6개 case job,
+`scenario-topology-extensions`의 12개 parent는 9개 case job으로 선택했다.
+두 profile의 case별 Go 제한은 40분, runner 제한은 cleanup 포함 50분이었다.
+같은 case에 묶인 parent는 process 제한을 공유했다. Extensions의 SDK
+검사와 별도 bridge runtime 범위는 당시 compiled selector로 확인했다.
+
+`scenario-multicluster-topology`의 20개 parent는 `infra` 4개·`rbd` 6개·
+`cephfs` 4개의 group과 RGW 6개의 독립 parent로 나눴다. Removal의 각
+독립 parent/leaf는 원래 bridge/host ancestry와 관측 조건을 유지했다.
+기존 selector 검사와 그 결과는 이 과거 분할의 중복·누락·빈 선택을
+확인한 증거이며 새 tag plan의 자동 검증과 구분한다.
 
 분할 이전 source `22d9371`의 [run 37729295117](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37729295117)에서
 CephFS fixtures, topology extensions, multicluster RGW의 Go package는
@@ -596,7 +649,7 @@ job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며,
 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면
 원인을 추정하지 않고 미확인 notice를 남깁니다.
 
-Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID와 volume 이름을 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Schema 2 baseline이 필요하며 schema 1이나 volume 목록이 없는 baseline은 Docker 조회 전에 거부합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 소유 리소스가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. 현재 `runtime-cleanup-scenario-*` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
+Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID와 volume 이름을 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Schema 2 baseline이 필요하며 schema 1이나 volume 목록이 없는 baseline은 Docker 조회 전에 거부합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 소유 리소스가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. 현재 `runtime-cleanup-*` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
 
 ## 이미지 호환성 matrix
 
@@ -629,11 +682,11 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 
 각 조합은 cluster/MGR lifecycle, RBD, CephFS, signed RGW-S3, RBD backup와 RBD/CephFS snapshot mirroring, RGW multisite의 **대표 9개 Go 이름**을 실행합니다. 이 이름들은 기존 상세 suite와 겹칩니다. 12 × 9회 선택을 108개 새로운 distinct test로 더하거나, 이미지 프로젝트의 독립 Python full 11개·기존 Quay 상세 101개·당시 필수 상세 119개와 하나의 성공 증거로 합치지 않습니다. Cryptsetup·암호화·striper는 control/all의 필수 runtime 계약이고 hello·lock class는 osd/all 계약입니다. Linux go-ceph 프로그램·개발 헤더와 Vault 같은 외부 backend는 별도 조건으로 유지합니다. 정확한 실행 계약은 [IMAGE_COMPATIBILITY.md](IMAGE_COMPATIBILITY.md#공식debianubuntu-이미지-matrix)를 따릅니다.
 
-## 추가되는 named test 전체
+## 이전 named test 목록과 수동 profile
 
-현재 긴 CephFS 제거·재등록 복구 시나리오는 별도 필수 profile에서 실행합니다. 각 parent의 bridge/host child 전체를 유지하며, 선택한 기존 이미지·각 runner 내부 순차 실행·자체 cleanup 조건을 따릅니다. 이 profile은 호스트 `test` 성공 뒤 독립 runner에서 실행합니다.
+아래는 이름 기반 profile을 추가하던 당시의 목록·시간 예산·artifact 이름입니다. 기존 수동 target과 focused 기록을 찾기 위한 자료이며 현재 tag plan의 전체 목록이나 실행 완료 수로 사용하지 않습니다. Tag CI도 같은 parent/child의 native 관측·cleanup 조건을 유지하며 현재 자동 선택은 이 문서 첫 절과 [TEST_TAGS.md](TEST_TAGS.md)를 따릅니다.
 
-| 현재 필수 profile | 이름 수 | 로컬 aggregate Go timeout | CI job timeout | cleanup artifact |
+| 태그 전환 전 profile | 이름 수 | 로컬 aggregate Go timeout | CI job timeout | cleanup artifact |
 | --- | ---: | --- | --- | --- |
 | `scenario-multicluster-topology` | 20 | 90분 | group별 70분 | `runtime-cleanup-multicluster-<group>` |
 | `scenario-cephfs-removal` | 5 distinct parent · 8 CI job | 90분 | case별 70분 | `runtime-cleanup-cephfs-removal-<case>` |
@@ -868,8 +921,8 @@ TestMultiClusterRBDSplitBrainResync
 TestHostNetworkRBDLifecycle
 ```
 
-CI는 `SCENARIO_RBD_FIXTURE_CASE=client-setup`에서 client features와
-host lifecycle을 함께 실행하며 나머지 네 parent는 개별 case로 실행합니다.
+이전 CI는 `SCENARIO_RBD_FIXTURE_CASE=client-setup`에서 client features와
+host lifecycle을 함께 실행하고 나머지 네 parent는 개별 case로 실행했습니다.
 수동 `client-features`·`host-lifecycle` case와 기본 `all`은 그대로 유지합니다.
 
 `TestRBDClientFeatures`의 layering/flatten, trash, migration commit/abort, group snapshot, exclusive lock, encryption format/load와 rekey 8개 phase를 bridge/host에서 모두 실행합니다. Phase를 일부 제외하여 기본 이미지의 통과를 만들지 않습니다.
@@ -948,9 +1001,9 @@ TestMultiClusterRGWSyncTranslationFiltering/ordinary_user_denial_grant
 TestHostNetworkMultiClusterRGWSyncTranslationFiltering/ordinary_user_denial_grant
 ```
 
-이 경로에는 expected-failure 변환이나 권한·데이터 판정 완화가 없습니다. CI에서는 `workflow_dispatch`의 `rgw_native_regressions`를 명시적으로 선택하며, 이미 준비된 patched RGW를 `rgw_image` 입력으로 지정할 수 있습니다. 빈 입력은 원본 Quay입니다. 이 job도 서버 이미지를 빌드하지 않습니다.
+이 경로에는 expected-failure 변환이나 권한·데이터 판정 완화가 없습니다. CI에서는 `workflow_dispatch`의 `rgw_native_regressions`를 명시적으로 선택하며, 이미 준비된 patched RGW를 `rgw_image` 입력으로 지정할 수 있습니다. 빈 입력은 준비된 기본 official RGW 역할 이미지입니다. 이 job은 `native_regression` tag의 `native_rgw_translation` batch를 실행하며 서버 이미지를 빌드하지 않습니다.
 
-선택적 native mirror shuffle 이름 `TestMultiClusterCephFSMirrorDaemonTopology`와 `TestHostNetworkCephFSMirrorDaemonTopology`는 Go CI 101개와 선택적 go-ceph 1개에 포함하지 않습니다. 필수 topology의 daemon rebalance/HA 이름과 구분하며 기존 선택적 실행 경로를 유지합니다.
+선택적 native mirror shuffle 이름 `TestMultiClusterCephFSMirrorDaemonTopology`와 `TestHostNetworkCephFSMirrorDaemonTopology`는 일반 `all`·필수 tag plan과 과거 Go CI 101개에 포함되지 않습니다. 필수 daemon rebalance/HA와 구분하며 `native_regression` tag의 `native_shuffle` batch로 명시적으로 실행합니다. 이전 환경 변수의 skip gate는 사용하지 않습니다.
 
 ## 완료 판정과 기존 증거
 

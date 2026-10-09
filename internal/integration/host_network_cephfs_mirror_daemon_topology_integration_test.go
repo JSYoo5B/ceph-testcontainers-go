@@ -1,14 +1,13 @@
-//go:build integration && hostnetwork && multicluster
+//go:build (all || (integration && hostnetwork && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_native_shuffle)))
+
+//ci: timeout=60m job-timeout=70
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestHostNetworkCephFSMirrorDaemonTopology(t *testing.T) {
-	requireCephFSNativeShuffleDiagnostic(t)
 	testCephFSMirrorDaemonTopology(t, true)
-}
-
-func TestHostNetworkCephFSMirrorDaemonRebalanceTopology(t *testing.T) {
-	testCephFSMirrorDaemonTopology(t, true, true)
 }

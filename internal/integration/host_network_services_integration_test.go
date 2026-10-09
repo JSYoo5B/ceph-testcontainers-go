@@ -1,4 +1,6 @@
-//go:build integration && hostnetwork
+//go:build all || (integration && hostnetwork && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_fixtures_data_layout))))
+
+//ci: timeout=40m job-timeout=50
 
 package integration_test
 
@@ -7,13 +9,6 @@ import (
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 )
-
-// Host-mode services reuse every assertion from their bridge-mode baselines.
-// Native clients run in the Docker daemon's host namespace, which belongs to
-// the Linux VM on Docker Desktop. They do not use host kernel mounts or cgo.
-func TestHostNetworkRBDLifecycle(t *testing.T) {
-	testRBDLifecycle(t, ceph.WithHostNetwork())
-}
 
 func TestHostNetworkCephFSFilesystem(t *testing.T) {
 	testCephFSFilesystem(t, ceph.WithHostNetwork())

@@ -1,4 +1,4 @@
-//go:build integration && multicluster
+//go:build all || (integration && multicluster)
 
 package integration_test
 

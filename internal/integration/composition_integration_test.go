@@ -1,4 +1,6 @@
-//go:build integration && topology
+//go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_topology))))
+
+//ci: timeout=40m job-timeout=50
 
 package integration_test
 
