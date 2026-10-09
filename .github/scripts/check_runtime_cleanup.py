@@ -2,8 +2,8 @@
 """Record and check Testcontainers resource cleanup without changing Docker.
 
 Use snapshot before a runtime profile and check afterwards, including failures.
-The comparison includes running/stopped containers, networks, and Ryuk, but
-excludes Testcontainers resources already present in the snapshot. This scope
+The comparison includes running/stopped containers, networks, named volumes,
+and Ryuk, but excludes resources already present in the snapshot. This scope
 assumes an exclusive CI Docker engine; concurrent unrelated new Testcontainers
 sessions on a shared engine cannot be attributed to the selected profile.
 """
@@ -21,15 +21,22 @@ import time
 
 
 LABEL = "org.testcontainers=true"
-RESOURCE_KINDS = ("containers", "networks")
+# Earlier snapshots did not observe volumes and cannot establish their baseline.
+SCHEMA = 2
+RESOURCE_KINDS = ("containers", "networks", "volumes")
 RESOURCE_COMMANDS = {
     "containers": ["docker", "container", "ls", "--all", "--quiet",
                    "--no-trunc", "--filter", "label=" + LABEL],
     "networks": ["docker", "network", "ls", "--quiet", "--no-trunc",
                  "--filter", "label=" + LABEL],
+    "volumes": ["docker", "volume", "ls", "--quiet",
+                "--filter", "label=" + LABEL],
 }
 ENGINE_COMMAND = ["docker", "info", "--format", "{{json .}}"]
 ID_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+# Docker's local driver uses these portable ASCII names, with at least two
+# characters. Volume names are identifiers in their own right, not hex IDs.
+VOLUME_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]+\Z")
 READINESS_SECONDS = 60
 STDERR_LIMIT = 65536
 
@@ -76,6 +83,21 @@ def validate_ids(value):
     return sorted(value)
 
 
+def validate_volume_names(value):
+    if not isinstance(value, list) or any(
+            not isinstance(item, str) or not VOLUME_NAME_PATTERN.fullmatch(item)
+            for item in value):
+        raise ValueError("Docker volume names must be portable ASCII names "
+                         "of at least two characters")
+    if len(value) != len(set(value)):
+        raise ValueError("Docker volume names must be distinct")
+    return sorted(value)
+
+
+def validate_resource_names(kind, value):
+    return validate_volume_names(value) if kind == "volumes" else validate_ids(value)
+
+
 def validate_engine(value):
     if not isinstance(value, dict) or set(value) != {"id", "platform"}:
         raise ValueError("Docker engine identity must contain id and platform")
@@ -90,14 +112,16 @@ def validate_engine(value):
 
 def validate_baseline(value):
     if (not isinstance(value, dict) or type(value.get("schema")) is not int
-            or value["schema"] != 1 or value.get("action") != "snapshot"
+            or value["schema"] != SCHEMA or value.get("action") != "snapshot"
             or value.get("label") != LABEL or value.get("passed") is not True):
         raise ValueError("Cleanup baseline is not a successful supported snapshot")
     engine = validate_engine(value.get("engine"))
     resources = value.get("resources")
     if not isinstance(resources, dict) or set(resources) != set(RESOURCE_KINDS):
-        raise ValueError("Cleanup baseline requires container and network ID lists")
-    return engine, {kind: validate_ids(resources[kind]) for kind in RESOURCE_KINDS}
+        raise ValueError("Cleanup baseline requires container and network ID "
+                         "lists and a volume name list")
+    return engine, {kind: validate_resource_names(kind, resources[kind])
+                    for kind in RESOURCE_KINDS}
 
 
 class DockerReader:
@@ -161,13 +185,13 @@ class DockerReader:
                                 "platform": "linux/" + (architecture or "unknown")})
 
     def resources(self, deadline=None):
-        return {kind: validate_ids(self.capture(RESOURCE_COMMANDS[kind], deadline)
-                                  .splitlines())
+        return {kind: validate_resource_names(
+                    kind, self.capture(RESOURCE_COMMANDS[kind], deadline).splitlines())
                 for kind in RESOURCE_KINDS}
 
 
 def new_report(action):
-    report = {"schema": 1, "action": action, "label": LABEL,
+    report = {"schema": SCHEMA, "action": action, "label": LABEL,
               "started_at": timestamp(), "passed": False, "commands": []}
     revision = os.environ.get("GITHUB_SHA")
     if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision):
@@ -284,7 +308,7 @@ def check(directory, grace_seconds=30, reader=None, monotonic=None, sleep=None):
             report["observations"] += 1
             report["resources"] = current
             report["new_resources"] = remaining
-            # Revalidate identity after both listings. An engine switch between
+            # Revalidate identity after all listings. An engine switch between
             # queries must not turn missing resources into a cleanup PASS.
             if reader.engine(deadline) != engine:
                 raise RuntimeError("Docker engine changed during cleanup observation")

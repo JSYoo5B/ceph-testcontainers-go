@@ -13,6 +13,7 @@ SPEC.loader.exec_module(cleanup)
 
 OLD_CONTAINER, NEW_CONTAINER = "a" * 64, "b" * 64
 OLD_NETWORK, NEW_NETWORK = "c" * 64, "d" * 64
+OLD_VOLUME, NEW_VOLUME = "foreign_existing-volume.01", "ceph-tc_RAM.01"
 
 
 class Clock:
@@ -32,6 +33,7 @@ class Docker:
         self.info = {"ID": "engine-original", "OSType": "linux", "Architecture": "aarch64"}
         self.containers = [OLD_CONTAINER]
         self.networks = [OLD_NETWORK]
+        self.volumes = [OLD_VOLUME]
         self.calls = []
         self.hook = None
 
@@ -47,6 +49,8 @@ class Docker:
             output = "\n".join(self.containers)
         elif command == cleanup.RESOURCE_COMMANDS["networks"]:
             output = "\n".join(self.networks)
+        elif command == cleanup.RESOURCE_COMMANDS["volumes"]:
+            output = "\n".join(self.volumes)
         else:
             raise AssertionError("Unexpected Docker command: " + repr(command))
         return subprocess.CompletedProcess(command, 0, output, "")
@@ -75,8 +79,12 @@ class CleanupTests(unittest.TestCase):
         after = self.check()
         self.assertTrue(before["passed"])
         self.assertTrue(after["passed"])
+        self.assertEqual(before["schema"], 2)
+        self.assertEqual(after["schema"], 2)
         self.assertEqual(after["resources"], before["resources"])
-        self.assertEqual(after["new_resources"], {"containers": [], "networks": []})
+        self.assertEqual(after["new_resources"], {"containers": [], "networks": [],
+                                                 "volumes": []})
+        self.assertEqual(after["resources"]["volumes"], [OLD_VOLUME])
         self.assertEqual(json.loads((self.directory / "before.json").read_text()), before)
         self.assertEqual(json.loads((self.directory / "after.json").read_text()), after)
 
@@ -84,11 +92,13 @@ class CleanupTests(unittest.TestCase):
         self.snapshot()
         self.docker.containers.append(NEW_CONTAINER)
         self.docker.networks.append(NEW_NETWORK)
+        self.docker.volumes.append(NEW_VOLUME)
 
         def after_grace(command, kwargs):
             if self.docker.clock.now >= 2:
                 self.docker.containers = [OLD_CONTAINER]
                 self.docker.networks = [OLD_NETWORK]
+                self.docker.volumes = [OLD_VOLUME]
 
         self.docker.hook = after_grace
         after = self.check()
@@ -96,8 +106,9 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(after["observations"], 3)
         self.assertEqual(self.docker.clock.now, 2)
 
-    def test_container_and_network_leaks_fail_after_bounded_grace(self):
-        for kind, identity in [("containers", NEW_CONTAINER), ("networks", NEW_NETWORK)]:
+    def test_container_network_and_volume_leaks_fail_after_bounded_grace(self):
+        for kind, identity in [("containers", NEW_CONTAINER), ("networks", NEW_NETWORK),
+                               ("volumes", NEW_VOLUME)]:
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as path:
                 directory = Path(path)
                 cleanup.snapshot(directory, self.docker.reader())
@@ -111,17 +122,43 @@ class CleanupTests(unittest.TestCase):
                 self.docker.clock.now = 0
 
     def test_docker_failure_is_never_an_empty_success(self):
-        self.snapshot()
+        for kind in cleanup.RESOURCE_KINDS:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+                cleanup.snapshot(path, docker.reader())
 
-        def failing_list(command, kwargs):
-            if command == cleanup.RESOURCE_COMMANDS["containers"]:
-                return subprocess.CompletedProcess(command, 7, "", "daemon unavailable")
+                def failing_list(command, kwargs):
+                    if command == cleanup.RESOURCE_COMMANDS[kind]:
+                        return subprocess.CompletedProcess(command, 7, "", "daemon unavailable")
 
-        self.docker.hook = failing_list
-        after = self.check()
-        self.assertFalse(after["passed"])
-        self.assertIn("exit 7", after["error"])
-        self.assertNotIn("new_resources", after)
+                docker.hook = failing_list
+                after = cleanup.check(path, 3, docker.reader(),
+                                      docker.clock.monotonic, docker.clock.sleep)
+                self.assertFalse(after["passed"])
+                self.assertIn("exit 7", after["error"])
+                self.assertNotIn("new_resources", after)
+
+    def test_volume_query_timeout_fails_snapshot_and_check_closed(self):
+        for action in ("snapshot", "check"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+                if action == "check":
+                    cleanup.snapshot(path, docker.reader())
+
+                def failing_volume_list(command, options):
+                    if command == cleanup.RESOURCE_COMMANDS["volumes"]:
+                        raise subprocess.TimeoutExpired(command, options["timeout"],
+                                                        stderr=b"volume listing timeout")
+
+                docker.hook = failing_volume_list
+                result = (cleanup.snapshot(path, docker.reader()) if action == "snapshot"
+                          else cleanup.check(path, 3, docker.reader(),
+                                             docker.clock.monotonic, docker.clock.sleep))
+                self.assertFalse(result["passed"])
+                self.assertIn("timed out", result["error"])
+                self.assertEqual(result["commands"][-1]["argv"],
+                                 cleanup.RESOURCE_COMMANDS["volumes"])
+                self.assertNotIn("new_resources", result)
 
     def test_timeout_and_missing_executable_fail_closed(self):
         for error in [FileNotFoundError("docker"), subprocess.TimeoutExpired("docker", 1)]:
@@ -160,46 +197,125 @@ class CleanupTests(unittest.TestCase):
                 self.docker.info = original
 
     def test_engine_switch_between_lists_and_confirmation_fails(self):
-        self.snapshot()
+        for kind in ("networks", "volumes"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
+                cleanup.snapshot(path, docker.reader())
 
-        def change_during_list(command, kwargs):
-            if command == cleanup.RESOURCE_COMMANDS["networks"]:
-                self.docker.info["ID"] = "changed-mid-observation"
+                def change_during_list(command, kwargs):
+                    if command == cleanup.RESOURCE_COMMANDS[kind]:
+                        docker.info["ID"] = "changed-mid-observation"
 
-        self.docker.hook = change_during_list
-        after = self.check()
-        self.assertFalse(after["passed"])
-        self.assertIn("changed during", after["error"])
+                docker.hook = change_during_list
+                after = cleanup.check(path, 3, docker.reader(),
+                                      docker.clock.monotonic, docker.clock.sleep)
+                self.assertFalse(after["passed"])
+                self.assertIn("changed during", after["error"])
 
     def test_snapshot_rejects_changed_engine(self):
-        def change_during_list(command, kwargs):
-            if command == cleanup.RESOURCE_COMMANDS["networks"]:
-                self.docker.info["ID"] = "changed-mid-snapshot"
+        for kind in ("networks", "volumes"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as path:
+                docker = Docker()
 
-        self.docker.hook = change_during_list
-        result = self.snapshot()
-        self.assertFalse(result["passed"])
-        self.assertIn("changed during", result["error"])
-        after = self.check()
-        self.assertFalse(after["passed"])
-        self.assertIn("successful supported snapshot", after["error"])
+                def change_during_list(command, kwargs):
+                    if command == cleanup.RESOURCE_COMMANDS[kind]:
+                        docker.info["ID"] = "changed-mid-snapshot"
+
+                docker.hook = change_during_list
+                result = cleanup.snapshot(path, docker.reader())
+                self.assertFalse(result["passed"])
+                self.assertIn("changed during", result["error"])
+                after = cleanup.check(path, 3, docker.reader(),
+                                      docker.clock.monotonic, docker.clock.sleep)
+                self.assertFalse(after["passed"])
+                self.assertIn("successful supported snapshot", after["error"])
 
     def test_invalid_docker_ids_cannot_pass_snapshot_or_check(self):
         for value in ["a" * 12, "G" * 64, "-" + "a" * 63, "\"foreign\"", "a" * 64 + "\n" + "a" * 64]:
-            with self.subTest(value=value), tempfile.TemporaryDirectory() as path:
-                cleanup.snapshot(path, self.docker.reader())
-                original = self.docker.containers
-                self.docker.containers = [value]
-                after = cleanup.check(path, 2, self.docker.reader(),
+            for kind in ("containers", "networks"):
+                for action in ("snapshot", "check"):
+                    with self.subTest(value=value, kind=kind, action=action), \
+                            tempfile.TemporaryDirectory() as path:
+                        docker = Docker()
+                        if action == "check":
+                            cleanup.snapshot(path, docker.reader())
+                        setattr(docker, kind, [value])
+                        result = (cleanup.snapshot(path, docker.reader()) if action == "snapshot"
+                                  else cleanup.check(path, 2, docker.reader(),
+                                                     docker.clock.monotonic, docker.clock.sleep))
+                        self.assertFalse(result["passed"])
+                        self.assertIn("resource IDs", result["error"])
+
+    def test_empty_volume_list_is_observed_and_valid(self):
+        self.docker.volumes = []
+        before = self.snapshot()
+        after = self.check()
+        self.assertTrue(before["passed"])
+        self.assertTrue(after["passed"])
+        self.assertEqual(before["resources"]["volumes"], [])
+        self.assertEqual(after["resources"]["volumes"], [])
+        self.assertEqual(after["new_resources"]["volumes"], [])
+        self.assertIn(cleanup.RESOURCE_COMMANDS["volumes"],
+                      [command for command, options in self.docker.calls])
+
+    def test_valid_volume_names_are_independent_of_hex_resource_ids(self):
+        names = ["aa", "RAM-data_01.2", "9-start", "a" * 64, OLD_VOLUME]
+        self.docker.volumes = names
+        before = self.snapshot()
+        after = self.check()
+        self.assertTrue(before["passed"])
+        self.assertTrue(after["passed"])
+        self.assertEqual(before["resources"]["volumes"], sorted(names))
+        self.assertEqual(after["baseline_resources"]["volumes"], sorted(names))
+        self.assertEqual(after["new_resources"]["volumes"], [])
+
+    def test_invalid_volume_names_cannot_pass_snapshot_or_check(self):
+        values = ["", "a", "-name", "_name", ".name", "../name",
+                  "/tmp/name", "name/path", "name:tag", "with space", "한글-volume",
+                  "name\tvalue", "name\x00value", '"foreign"', "name;rm",
+                  NEW_VOLUME + "\n" + NEW_VOLUME]
+        for value in values:
+            for action in ("snapshot", "check"):
+                with self.subTest(value=value, action=action), tempfile.TemporaryDirectory() as path:
+                    docker = Docker()
+                    if action == "check":
+                        cleanup.snapshot(path, docker.reader())
+                    docker.volumes = [value]
+                    if value == "":
+                        docker.volumes = ["", "valid-name"]
+                    result = (cleanup.snapshot(path, docker.reader()) if action == "snapshot"
+                              else cleanup.check(path, 3, docker.reader(),
+                                                 docker.clock.monotonic, docker.clock.sleep))
+                    self.assertFalse(result["passed"])
+                    self.assertIn("volume names", result["error"])
+
+    def test_old_schema_and_missing_volume_baselines_are_rejected_before_reads(self):
+        valid = self.snapshot()
+        legacy_resources = {kind: valid["resources"][kind]
+                            for kind in ("containers", "networks")}
+        for delta in [{"schema": 1, "resources": legacy_resources}, {"schema": 1},
+                      {"resources": legacy_resources}]:
+            with self.subTest(delta=delta), tempfile.TemporaryDirectory() as path:
+                (Path(path) / "before.json").write_text(json.dumps(valid | delta))
+                prior = len(self.docker.calls)
+                after = cleanup.check(path, 3, self.docker.reader(),
                                       self.docker.clock.monotonic, self.docker.clock.sleep)
                 self.assertFalse(after["passed"])
-                self.docker.containers = original
+                self.assertEqual(len(self.docker.calls), prior)
+                self.assertEqual(after["schema"], 2)
+                self.assertNotIn("new_resources", after)
 
     def test_invalid_baseline_shapes_fail_before_docker_reads(self):
         valid = self.snapshot()
-        for delta in [{"schema": True}, {"schema": 2}, {"action": "check"}, {"passed": False},
+        for delta in [{"schema": True}, {"schema": 3}, {"action": "check"}, {"passed": False},
                       {"label": "foreign=true"}, {"resources": []}, {"resources": {"containers": []}},
-                      {"resources": {"containers": ["a" * 12], "networks": []}},
+                      {"resources": {"containers": ["a" * 12], "networks": [], "volumes": []}},
+                      {"resources": {"containers": [], "networks": [], "volumes": "name"}},
+                      {"resources": {"containers": [], "networks": [], "volumes": [None]}},
+                      {"resources": {"containers": [], "networks": [], "volumes": [123]}},
+                      {"resources": {"containers": [], "networks": [], "volumes": ["a"]}},
+                      {"resources": {"containers": [], "networks": [],
+                                     "volumes": [NEW_VOLUME, NEW_VOLUME]}},
                       {"engine": []}, {"engine": {"id": "", "platform": "linux/arm64"}}]:
             with self.subTest(delta=delta), tempfile.TemporaryDirectory() as path:
                 directory = Path(path)
@@ -246,9 +362,13 @@ class CleanupTests(unittest.TestCase):
             self.assertFalse(options["check"])
             self.assertEqual(options["stdin"], subprocess.DEVNULL)
         self.assertIn("--all", cleanup.RESOURCE_COMMANDS["containers"])
-        for command in cleanup.RESOURCE_COMMANDS.values():
-            self.assertIn("--no-trunc", command)
+        for kind, command in cleanup.RESOURCE_COMMANDS.items():
+            if kind != "volumes":
+                self.assertIn("--no-trunc", command)
             self.assertIn("label=" + cleanup.LABEL, command)
+        self.assertEqual(cleanup.RESOURCE_COMMANDS["volumes"],
+                         ["docker", "volume", "ls", "--quiet", "--filter",
+                          "label=" + cleanup.LABEL])
 
     def test_a_slow_docker_call_cannot_report_success_after_deadline(self):
         self.snapshot()
@@ -288,7 +408,7 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual([a["passed"] for a in attempts], [False, False, True])
         self.assertEqual([(a["command_begin"], a["command_end"]) for a in attempts],
                          [(0, 1), (1, 2), (2, 3)])
-        self.assertEqual(len(before["commands"]), 7)
+        self.assertEqual(len(before["commands"]), 8)
         for command in before["commands"][:2]:
             self.assertEqual(command["argv"], cleanup.ENGINE_COMMAND)
             self.assertEqual(command["stderr"], "daemon startup still pending")
@@ -297,7 +417,8 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(self.docker.clock.now, 22)
         self.assertEqual(before["engine"], before["readiness"]["engine"])
         self.assertEqual(before["resources"], {"containers": [OLD_CONTAINER],
-                                               "networks": [OLD_NETWORK]})
+                                               "networks": [OLD_NETWORK],
+                                               "volumes": [OLD_VOLUME]})
         self.assertEqual(json.loads((self.directory / "before.json").read_text()), before)
 
     def test_snapshot_retries_only_recognized_socket_startup_errors(self):

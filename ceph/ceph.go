@@ -58,6 +58,7 @@ type Container struct {
 	filesystems           map[string]*CephFSContainer
 	gateways              map[string]*RGWContainer
 	osds                  map[int]*OSDContainer
+	osdMemory             *osdMemoryStorage
 	config                []byte
 	keyring               []byte
 	portLeases            []*hostPortLease
@@ -66,7 +67,8 @@ type Container struct {
 	networkRemoved        bool
 }
 
-// OSDContainer is one storage daemon backed by a container-local sparse file.
+// OSDContainer is one storage daemon backed by a sparse BlueStore file.
+// The file is container-local unless WithOSDInMemoryStorage is selected.
 // Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
@@ -443,6 +445,9 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := c.ensureOSDMemory(ctx); err != nil {
+		return nil, err
+	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
 	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
@@ -484,6 +489,12 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		}),
 		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", keyring, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", fmt.Sprintf("/var/run/ceph/ceph-osd.%d.asok", id)}).WithStartupTimeout(c.settings.startupTimeout)),
+	}
+	if c.osdMemory != nil {
+		if err := c.osdMemory.requireFreshOSD(ctx, id); err != nil {
+			return osd, err
+		}
+		osdOptions = append(osdOptions, c.osdMemory.mount("/var/lib/ceph/osd"))
 	}
 	if c.clusterNetwork != nil {
 		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
@@ -615,6 +626,11 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	if osd.Container != nil {
 		if err := osd.Terminate(ctx); !onlyMissingHostResource(err) {
 			return fmt.Errorf("terminate %s: %w", name, err)
+		}
+	}
+	if c.osdMemory != nil {
+		if err := c.osdMemory.discardOSD(ctx, id); err != nil {
+			return err
 		}
 	}
 	delete(c.osds, id)
@@ -775,6 +791,13 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			}
 		}
 		delete(c.osds, id)
+	}
+	if c.osdMemory != nil && len(c.osds) == 0 {
+		if err := c.osdMemory.release(ctx); err != nil {
+			errs = append(errs, err)
+		} else {
+			c.osdMemory = nil
+		}
 	}
 	if c.manager != nil {
 		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {

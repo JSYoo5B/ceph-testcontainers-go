@@ -16,20 +16,52 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 | Job | 79 | 67 | 58 |
 | 자체 resource cleanup | 78쌍 | 66쌍 | 57쌍 |
 | 주요 roles 이미지 준비 | 66 | 66 | 57 |
-| Distinct test parent | 120 | 120 | 120 |
-| 주요 시나리오 parent 실행 instance | 127 | 127 | 127 |
+| Distinct test parent | 120 | 120 | 121 |
+| 주요 시나리오 parent 실행 instance | 127 | 127 | 128 |
 | 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 | 0 |
 
 이 수는 현재 workflow·compiled selector의 범위다. 제거한 대표 9개 이름은
 모두 남은 필수 시나리오에서 검증한다. 각 runner의 이미지 ID 기록·native
 assertion·완료 검사·항상 실행하는 cleanup을 유지하며 테스트 내부의 phase나
 negative window를 줄이지 않는다. `scenario-default`도 필수 검사다.
-Compiled selector 기준 Ceph integration parent 118개·125회 실행에
+Compiled selector 기준 Ceph integration parent 119개·126회 실행에
 Docker bridge SDK parent 2개·2회 실행을 더한 수다.
 선택적 `rgw-native-regressions`도 기본적으로 같은 roles를 준비하고,
 비어 있지 않은 `workflow_dispatch.rgw_image`는 RGW 역할만 덮어쓴다.
 그 명시 입력은 기본 이미지 준비 receipt와 구분한다. Vault와 Linux go-ceph
 소비자 container는 별도 입력이며 Ceph 역할 이미지의 의존성을 바꾸지 않는다.
+
+## 메모리 기반 OSD fixture
+
+`TestOSDInMemoryStorageTopology`는 `WithOSDInMemoryStorage(2 << 30)`을
+명시한 bridge cluster 하나로 검사한다. 초기 OSD가 없으면 volume과 keeper도
+생기지 않으며, 첫 `AddOSD` 때 cluster 전체가 공유하는 최대 2 GiB의 tmpfs
+named volume과 control-image `sleep` keeper를 만든다. 기본 sparse-file
+OSD 저장소와 다른 시나리오의 설정은 바꾸지 않는다. 제한은 저장소의 상한이며
+RAM을 미리 예약하거나 daemon 메모리까지 제한하는 설정은 아니다.
+
+초기 1 GiB 상한 실험에서는 128 MiB replica 데이터 읽기까지 통과했지만
+OSD 재시작의 mClock 자체 benchmark 중 shared volume의 남은 byte가 0이 됐다.
+Ceph의 64 KiB AIO가 일부 byte만 기록해 native abort한 로그와 keeper의
+`statvfs` 결과를 보존했다. 이에 fixture 상한을 2 GiB로 잡으며 scheduler나
+benchmark를 끄지 않는다. 이 크기는 모든 토폴로지의 최소 요구량을 뜻하지 않는다.
+
+두 OSD에 replica 2의 결정적 128 MiB 데이터를 쓰고 전체 reader/hash로 확인한다.
+두 OSD를 모두 중지한 동안 원래 keeper가 계속 실행하는지 확인한 뒤 동일
+CID·native UUID·FSID·pool ID로 다시 시작해 데이터를 읽는다. 세 번째 OSD의
+데이터가 있는 clean PG 배치, 원래 OSD drain·directory 제거, 새 CID/UUID의
+replacement와 데이터 보존을 검사한다. Ceph가 numeric ID를 재사용했는지도
+기록한다. Keeper를 중지한 뒤에는 `AddOSD`가 등록 전에 거부되고 원래 native
+ID/UUID와 stopped keeper를 바꾸지 않는지 검사하며, 마지막 `Terminate` 뒤
+owned container·bridge·named volume의 부재를 Docker에서 직접 확인한다.
+
+개별 실행은 `make scenario-osd-memory`의 Go 20분 제한을 사용한다. 필수 CI는
+기존 `scenario-empty-bootstrap`에 이 whole parent를 더해 58개 job과 57쌍의
+cleanup·roles 준비를 유지한다. 묶음의 기존 80분 process 제한은 공유하며
+아래의 11분 55초는 메모리 fixture 추가 전 세 구성원의 기록이다. Phase 시간과
+Docker cgroup usage의 phase snapshot 최대 합을 로그에 남기지만 disk 대비
+성능 향상이나 실제 순간 peak를 측정한 benchmark로 표시하지 않는다. 새로운
+native 실행과 전체 CI 결과는 별도 실행 receipt로 확인해야 한다.
 
 ## 짧고 관련 있는 시나리오 묶음
 
@@ -533,7 +565,7 @@ job만 [reporter](../.github/scripts/report_test_failures.py)를 실행하며,
 않습니다. Consumer image 준비 실패·timeout 등으로 완료된 testcase가 없으면
 원인을 추정하지 않고 미확인 notice를 남깁니다.
 
-Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID를 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 ID가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. 현재 `runtime-cleanup-scenario-*` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
+Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)으로 테스트 전에 `org.testcontainers=true`인 container/network ID와 volume 이름을 기록하고, 테스트 뒤 성공·실패에 관계없이 새로 남은 소유 리소스를 조회합니다. Schema 2 baseline이 필요하며 schema 1이나 volume 목록이 없는 baseline은 Docker 조회 전에 거부합니다. Ryuk의 정상 종료를 최대 30초 기다린 뒤에도 새 소유 리소스가 남으면 job이 실패합니다. 기존 리소스는 baseline으로 보존하며 검사기는 삭제·stop·prune를 수행하지 않습니다. Docker 조회 오류나 엔진 변경도 빈 목록의 성공으로 처리하지 않습니다. 현재 `runtime-cleanup-scenario-*` artifact에 실행 source와 전후 identity·잔존 결과를 보관합니다. Test PASS만으로 이 별도 정리 검사의 성공을 대신하지 않습니다.
 
 ## 이미지 호환성 matrix
 

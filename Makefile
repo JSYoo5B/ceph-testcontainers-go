@@ -367,14 +367,19 @@ scenario-last-mds-replacement:
 
 # Short related lifecycle parents retain independent fixtures in one Go process.
 # The individual targets above remain available with their original budgets.
-.PHONY: scenario-empty-bootstrap scenario-mds-replacements
+.PHONY: scenario-empty-bootstrap scenario-mds-replacements scenario-osd-memory
 SCENARIO_EMPTY_BOOTSTRAP_TIMEOUT ?= 80m
-SCENARIO_EMPTY_BOOTSTRAP_TESTS = ^TestNoInitial(OSD|Manager|MDS)Topology$$
+SCENARIO_EMPTY_BOOTSTRAP_TESTS = ^Test(NoInitial(OSD|Manager|MDS)Topology|OSDInMemoryStorageTopology)$$
 SCENARIO_MDS_REPLACEMENTS_TIMEOUT ?= 50m
 SCENARIO_MDS_REPLACEMENTS_TESTS = ^Test(StoppedMDSRetirementTopology|LastMDSReplacementTopology)$$
+SCENARIO_OSD_MEMORY_TIMEOUT ?= 20m
+SCENARIO_OSD_MEMORY_TESTS = ^TestOSDInMemoryStorageTopology$$
 
 scenario-empty-bootstrap:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(SCENARIO_EMPTY_BOOTSTRAP_TIMEOUT) -run '$(SCENARIO_EMPTY_BOOTSTRAP_TESTS)' ./internal/integration
 
 scenario-mds-replacements:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=$(SCENARIO_MDS_REPLACEMENTS_TIMEOUT) -run '$(SCENARIO_MDS_REPLACEMENTS_TESTS)' ./internal/integration
+
+scenario-osd-memory:
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_OSD_MEMORY_TIMEOUT) -run '$(SCENARIO_OSD_MEMORY_TESTS)' ./internal/integration

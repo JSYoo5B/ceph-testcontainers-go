@@ -107,6 +107,8 @@ if err != nil {
 
 `ceph.WithNoInitialOSDs()`를 선택하면 초기 OSD 없이 MON/MGR부터 구성하고 `AddOSD`·`AddOSDWithConfig`로 storage를 추가할 수 있습니다. 초기 user pool·CephFS·RGW를 함께 요청할 수 없으며, storage 이전의 health와 데이터 준비는 구분합니다. 기본 `Run`의 OSD 2개와 마지막 owned OSD 제거 보호는 유지합니다. [최초 OSD 없는 bootstrap 계약](docs/NO_INITIAL_OSDS.md)을 확인합니다.
 
+`ceph.WithOSDInMemoryStorage(maxBytes)`는 해당 cluster의 모든 OSD 저장소를 크기 제한이 있는 shared tmpfs named volume에 둡니다. 첫 OSD가 생길 때 control-image keeper를 함께 만들고 모든 OSD의 Stop/Start 동안 데이터를 보존하며 `Terminate`에서 함께 정리합니다. 기본 sparse-file 저장소는 유지하며 [용량과 수명 계약](docs/OSD_MEMORY_STORAGE.md)을 따릅니다. 개별 `make scenario-osd-memory`와 기존 bootstrap CI 묶음에서 [메모리 OSD 토폴로지 fixture](docs/CI_FIXTURES.md#메모리-기반-osd-fixture)를 검사합니다.
+
 `ceph.WithNoInitialManagers()`는 초기 MGR 없이 MON quorum과 owned OSD up/in을 확인하고 반환합니다. 양수 OSD와 초기 pool 구성은 유지하며, 초기 CephFS·RGW는 첫 `AddManager` 뒤 명시적으로 구성합니다. `WithNoInitialOSDs()`와 함께 선택하면 MON-only 단계로 시작합니다. MGR 통계·module·clean 준비는 별도로 확인하며 기본 MGR 1개와 마지막 MGR 제거 보호를 바꾸지 않습니다. [최초 MGR 없는 bootstrap 계약](docs/NO_INITIAL_MANAGERS.md)을 따릅니다.
 
 각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
@@ -308,6 +310,7 @@ make scenario-mirror-initial-daemons
 make scenario-rbd-namespaces
 make scenario-rbd-namespace-observation
 make scenario-storage-bootstrap
+make scenario-osd-memory
 make scenario-manager-bootstrap
 make scenario-mds-bootstrap
 make scenario-mds-replacement

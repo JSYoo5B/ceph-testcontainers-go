@@ -39,6 +39,7 @@ MANUAL_LIFECYCLE_TARGETS = (
     "scenario-storage-bootstrap", "scenario-manager-bootstrap",
     "scenario-mds-bootstrap", "scenario-mds-replacement",
     "scenario-last-mds-replacement",
+    "scenario-osd-memory",
 )
 FIXTURES = frozenset(name for name in PRIMARY if name.endswith("-fixtures"))
 DRY_RUN_TARGETS = (*PRIMARY, *MANUAL_LIFECYCLE_TARGETS,

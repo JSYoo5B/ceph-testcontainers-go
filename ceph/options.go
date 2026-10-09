@@ -26,6 +26,7 @@ type options struct {
 	managerCountExplicit   bool
 	noInitialManagers      bool
 	blockSize              int64
+	osdMemorySize          int64
 	startupTimeout         time.Duration
 	osdImage               string
 	rgwImage               string
@@ -245,6 +246,26 @@ func WithOSDBlockSize(size int64) Option {
 			return fmt.Errorf("OSD block size must be at least 1 GiB")
 		}
 		o.blockSize = size
+		return nil
+	}
+}
+
+// WithOSDInMemoryStorage keeps all OSD stores in one Docker-managed tmpfs
+// volume. maxBytes is a positive cluster-wide filesystem allocation ceiling,
+// independent of each sparse file's logical WithOSDBlockSize. It does not
+// reserve RAM or limit daemon RSS; tmpfs may swap, and a full volume fails I/O.
+// An owned helper using the control image preserves data across OSD Stop/Start.
+// Cluster termination discards the volume. Helper loss or Docker host/VM
+// restart can lose data. Requires a Linux Docker engine with local tmpfs
+// volume support, including compatible Docker Desktop engines. No host mount,
+// privileged container or additional image is required. The default remains
+// container-local sparse files. NoInitialOSDs defers allocation until AddOSD.
+func WithOSDInMemoryStorage(maxBytes int64) Option {
+	return func(o *options) error {
+		if maxBytes <= 0 {
+			return fmt.Errorf("OSD in-memory storage size must be positive")
+		}
+		o.osdMemorySize = maxBytes
 		return nil
 	}
 }
