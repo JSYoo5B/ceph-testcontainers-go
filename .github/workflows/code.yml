@@ -1,0 +1,96 @@
+name: Code checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run host unit tests
+        run: make test
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Run race detector
+        run: make race
+
+  static:
+    name: Vet, compile and CI tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Vet Go packages
+        run: make vet
+      - name: Compile all and explicit optional tags without Docker
+        run: make tag-compile
+      - name: Check CI selection, image, cleanup and completion tooling without Docker
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check supplied-image Linux consumer harness without Docker
+        run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
+
+  tag-coverage:
+    name: Compiled tag coverage and helpers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Verify the full compiled all, category and batch partition
+        run: python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
+      - name: Run code-only tagged helpers
+        run: python3 .github/scripts/tag_scenarios.py code --directory artifacts/tag-code
+      - name: Save compiled coverage and code-only results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: code-tag-coverage
+          path: |
+            artifacts/tag-plan.json
+            artifacts/tag-code/
+          if-no-files-found: warn

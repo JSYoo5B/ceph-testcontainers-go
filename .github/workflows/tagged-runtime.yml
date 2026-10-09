@@ -1,0 +1,141 @@
+name: Tagged runtime template
+
+on:
+  workflow_call:
+    inputs:
+      category:
+        description: Source-owned required category or explicit optional profile
+        required: true
+        type: string
+      check_name:
+        description: Workflow family used in phase annotations and summaries
+        required: true
+        type: string
+      optional_batch:
+        description: Source-owned optional batch (optional category only)
+        default: ''
+        type: string
+      rgw_image:
+        description: Existing RGW role override for explicitly requested regressions
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: '0'
+  TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Discover only this workflow family from source tags
+        id: plan
+        env:
+          SCENARIO_CATEGORY: ${{ inputs.category }}
+          SCENARIO_OPTIONAL_BATCH: ${{ inputs.optional_batch }}
+        run: |
+          if [ "$SCENARIO_CATEGORY" = optional ]; then
+            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+          else
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+          fi
+      - name: Save family plan
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: plan-${{ inputs.category }}
+          path: artifacts/tag-plan.json
+          if-no-files-found: error
+
+  runtime:
+    name: ${{ matrix.batch }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.job_timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: go.sum
+      - name: Compile selected tagged suite
+        id: compile
+        env:
+          SCENARIO_CATEGORY: ${{ matrix.category }}
+          SCENARIO_BATCH: ${{ matrix.batch }}
+          SCENARIO_PACKAGE: ${{ matrix.package }}
+        run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/compile
+      - name: Docker baseline and engine identity
+        id: docker_baseline
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: snapshot
+          artifact_name: runtime-cleanup-${{ matrix.id }}
+      - name: Resolve native published Ceph roles
+        id: role_images
+        if: matrix.requires_ceph
+        uses: ./.github/actions/scenario-images
+        with:
+          artifact_name: scenario-images-${{ matrix.id }}
+      - name: Native assertions and completion proof
+        id: native
+        env:
+          SCENARIO_CATEGORY: ${{ matrix.category }}
+          SCENARIO_BATCH: ${{ matrix.batch }}
+          SCENARIO_PACKAGE: ${{ matrix.package }}
+          CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}
+        run: |
+          if [ "$SCENARIO_CATEGORY" = optional ]; then
+            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/native
+          else
+            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/native
+          fi
+      - name: Verify owned Docker resource cleanup
+        id: cleanup
+        if: ${{ always() && steps.docker_baseline.outcome == 'success' }}
+        uses: ./.github/actions/runtime-cleanup
+        with:
+          phase: check
+          artifact_name: runtime-cleanup-${{ matrix.id }}
+      - name: Show actual failure phases in PR check annotations and summary
+        if: always()
+        env:
+          SCENARIO_CHECK_NAME: ${{ inputs.check_name }}
+          SCENARIO_PROFILE: ${{ matrix.id }}
+          SCENARIO_REQUIRES_CEPH: ${{ matrix.requires_ceph }}
+          SCENARIO_COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+          SCENARIO_DOCKER_OUTCOME: ${{ steps.docker_baseline.outcome }}
+          SCENARIO_IMAGES_OUTCOME: ${{ steps.role_images.outcome }}
+          SCENARIO_NATIVE_OUTCOME: ${{ steps.native.outcome }}
+          SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        run: python3 .github/scripts/report_workflow_phases.py
+      - name: Save compile, native and phase results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tag-scenario-${{ matrix.id }}
+          path: artifacts/scenario/
+          if-no-files-found: warn
+      - name: Identify completed failing tests
+        if: failure()
+        continue-on-error: true
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/native/native.log --profile '${{ matrix.id }}'

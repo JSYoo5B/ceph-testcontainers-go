@@ -27,11 +27,59 @@ make test-all
 전체 suite는 오래 걸릴 수 있다. `ALL_TEST_TIMEOUT=6h make test-all`처럼
 process 예산을 조정하거나 아래 runner로 필요한 batch만 실행할 수 있다.
 
+## PR에 표시되는 workflow 종류
+
+자동 검증은 다음 workflow로 나눈다. PR의 Checks와 Actions 목록에서 실패한
+검사 유형을 먼저 확인할 수 있다. 각 workflow는 main의 `push`·`pull_request`·
+수동 실행으로 시작하며 다른 유형의 완료를 기다리지 않는다. PR 브랜치의
+`push`에서는 자동 실행하지 않아 같은 변경의 push/PR suite 중복을 막는다.
+PR 업데이트는 이전 CI를 취소하고 최신 커밋으로 검사한다. 각 자동 workflow는
+workflow 이름·event·PR 번호로 concurrency group을 나눠 같은 PR·같은 유형의
+이전 실행만 취소한다. Main push와 수동 실행은 run ID를 사용해 독립적으로
+진행하며, reusable template에는 중복 concurrency 설정을 넣지 않는다.
+
+| Workflow 이름 | 파일 | PR 검사 범위 |
+| --- | --- | --- |
+| `Code checks` | [code.yml](../.github/workflows/code.yml) | 독립 `unit`, `race`, `static`, `tag-coverage` job |
+| `Docker checks` | [docker.yml](../.github/workflows/docker.yml) | Ceph 없이 Docker bridge SDK 환경 검증 |
+| `Ceph short` | [ceph-short.yml](../.github/workflows/ceph-short.yml) | 기본 기동·서비스·관련 fixture |
+| `Ceph topology` | [ceph-topology.yml](../.github/workflows/ceph-topology.yml) | 클러스터 구성·노드 lifecycle·진단 |
+| `Ceph multicluster` | [ceph-multicluster.yml](../.github/workflows/ceph-multicluster.yml) | 독립 cluster와 zone·peer 연결 |
+| `Ceph recovery` | [ceph-recovery.yml](../.github/workflows/ceph-recovery.yml) | 장애·단절·제거 후 복구 관측 |
+
+`Code checks`의 `tag-coverage`가 전체 source/compiled inventory와 Docker 없는
+helper 검사를 확인한다. `static`은 vet·tag 컴파일과 CI harness 검사를 수행한다.
+Runtime workflow의 planner는 전체 source tag에서 자기 category의 batch만 선택하므로
+각 workflow가 전체 컴파일 검사를 반복하거나 다른 category를 실행하지 않는다.
+
+Runtime 실행은 [tagged-runtime.yml](../.github/workflows/tagged-runtime.yml)의
+`workflow_call`을 공유한다. 이 파일은 별도 `push`·PR 이벤트를 받지 않으며
+실제 compile·Docker 준비·native·cleanup은 각 batch의 같은 runner에서 진행한다.
+같은 batch를 다시 실행하는 이미지 matrix도 추가하지 않는다.
+
+[Native regressions](../.github/workflows/native-regressions.yml)는 별도 수동
+workflow다. `rgw_image` 입력으로 준비된 RGW 이미지 하나만 바꿀 수 있으며
+기본 PR 검증에 포함하지 않는다. Linux go-ceph 소비자 검사는 기존 수동
+harness와 이미지 입력 계약을 유지한다.
+
+표시 이름의 각 단계는 역할을 나눈다. Workflow는 검사 유형, reusable 호출은
+`Scenarios`, 실제 job은 `Plan` 또는 batch 이름을 사용한다. 같은 유형을 호출과
+job 이름에 다시 붙이지 않는다. 예를 들어 `Ceph multicluster / Scenarios /
+mirror_initial_daemons`에서 시나리오를 바로 찾을 수 있다. 정확한 표시는 GitHub의
+화면에 따라 workflow 이름과 check 이름을 함께 읽는다.
+
+예를 들어 `Code checks`의 `Race detector` 실패는 race 검사의 결과이고,
+`Ceph recovery`에서 `Native` 실패는 해당 복구 시나리오의 assertion 또는
+완료 gate 실패다. `Environment`나 `Cleanup` 실패도 별도로 표시한다.
+유형과 실제 실패 단계는 탐색 기준이며, Ceph timeout이 무조건 실행환경
+결함이라는 의미는 아니다. 아래의 로그와 receipt로 원인을 확인한다.
+
 ## CI category와 batch
 
 | Category | Build tag | 검사 범위 |
 | --- | --- | --- |
 | `code` | `ci_code` | Docker 없는 signer·fixture helper 검사 |
+| `environment` | `ci_environment` | Ceph 없는 Docker bridge SDK 검증 |
 | `short` | `ci_short` | 기본 기동·서비스와 관련 fixture 묶음 |
 | `topology` | `ci_topology` | 클러스터 구성·노드 lifecycle·진단 |
 | `multicluster` | `ci_multicluster` | 독립 cluster와 zone·peer 연결 |
@@ -65,6 +113,15 @@ Runner는 실제 파일의 build expression과 Test 함수 목록에서 tag 조�
 만들고 `go test -list` 결과를 검증한다. 실행 명령에는 테스트 이름의 `-run`,
 `-short`, category 환경 변수나 이름 필터를 넣지 않는다. 별도의 untagged
 단위 테스트가 같은 package에 있으면 함께 실행할 수 있다.
+
+Tag runner의 AST 수집·compiled inventory·compile·실행은 모두
+`CGO_ENABLED=0`, `GOWORK=off`, `GOFLAGS=-mod=readonly`로 진행한다.
+환경 변수나 persisted `GOENV`의 overlay·추가 tag·이름 필터와 외부 workspace
+replacement가 기록한 소스와 다른 코드를 실행하지 않도록 이 세 값을 고정한다.
+Cache·proxy·Docker 연결과 준비된 role 이미지 설정은 상속하며, compile/native
+receipt에는 고정한 세 값만 기록한다. 이는 tag runner의 실행 계약이며 직접
+`go test`나 수동 Make target의 환경을 바꾸지 않는다. 실행 도중의 소스 변경이나
+Go toolchain 자체의 무결성을 검증하는 계약은 아니다.
 
 `all`은 build expression의 우선 선택이므로 `all,ci,ci_short`를 category
 필터로 사용할 수 없다. Category/batch 선택에는 위의 planner/runner를
@@ -138,7 +195,10 @@ native linking은 Linux 안에서 수행하며 Go 모듈 자체에 go-ceph/cgo �
 
 ## 실패 단계와 증거
 
-Runtime CI는 각 실제 runner에서 다음 단계를 분리한다.
+Runtime CI는 각 실제 runner에서 다음 단계를 분리하고, 각 step의 실제 outcome을
+job summary와 실패 annotation에 기록한다. Workflow 이름은 검사 유형을,
+runtime job 이름은 source-owned batch를 표시한다. Summary와 annotation에는
+해당 유형과 profile 식별자를 함께 기록한다.
 
 1. **Compile**: 소스에서 tag 소유 관계를 확인하고 선택한 suite를 컴파일한다.
 2. **Environment**: Docker engine과 owned resource baseline을 기록하고,

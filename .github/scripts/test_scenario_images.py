@@ -121,9 +121,14 @@ class ScenarioImageTests(unittest.TestCase):
         cls.makefile = (ROOT / "Makefile").read_text()
         # GNU make may evaluate functions and recursive recipes during -n.
         check_dry_run_source(cls.makefile)
-        workflow = (ROOT / ".github/workflows/test.yml").read_text()
-        cls.jobs = dict(blocks(workflow.split("\njobs:\n", 1)[1],
+        cls.workflows = {path.name: path.read_text()
+                         for path in (ROOT / ".github/workflows").glob("*.yml")}
+        cls.jobs = dict(blocks(cls.workflows["tagged-runtime.yml"].split("\njobs:\n", 1)[1],
                               r"^  ([\w-]+):$"))
+        optional_jobs = dict(blocks(cls.workflows["native-regressions.yml"].split("\njobs:\n", 1)[1],
+                                   r"^  ([\w-]+):$"))
+        cls.optional_entry = next(iter(optional_jobs.values()))
+        cls.optional = cls.jobs["runtime"]
         cls.action = (ROOT / ".github/actions/scenario-images/action.yml").read_text()
 
     def environment(self, overrides=None):
@@ -328,17 +333,17 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertLess(before_index, prep_index)
         self.assertLess(prep_index, native_index)
         self.assertLess(native_index, after_index)
-        self.assertEqual(scalar(before, "id"), "runtime_cleanup_baseline")
+        self.assertEqual(scalar(before, "id"), "docker_baseline")
         self.assertEqual(scalar(before, "phase"), "snapshot")
         self.assertEqual(scalar(after, "phase"), "check")
         self.assertEqual(scalar(before, "artifact_name"), scalar(after, "artifact_name"))
         self.assertEqual(scalar(after, "if"),
-                         "${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}")
+                         "${{ always() && steps.docker_baseline.outcome == 'success' }}")
         self.assertEqual(scalar(job_steps[prep_index], "if"), "matrix.requires_ceph")
         self.assertNotIn("continue-on-error", job_steps[prep_index])
 
     def test_generated_profiles_use_fresh_runner_resources_and_distinct_artifact_namespaces(self):
-        self.assertEqual(set(self.jobs), {"code-check", "plan", "runtime", "rgw-native-regressions"})
+        self.assertEqual(set(self.jobs), {"plan", "runtime"})
         block = self.jobs["runtime"]
         self.assertEqual(scalar(block, "needs"), "plan")
         self.assertIn("matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}", block)
@@ -357,39 +362,49 @@ class ScenarioImageTests(unittest.TestCase):
         # No image/layout axis multiplies the source-owned runtime batches.
         self.assertNotRegex(block, r"(?m)^        (?:variant|layout|case|group):")
 
-    def test_image_matrix_is_manual_and_ceph_runtime_jobs_prepare_roles(self):
-        self.assertNotIn("image-compatibility", self.jobs)
-        workflow = (ROOT / ".github/workflows/test.yml").read_text()
-        self.assertNotIn("--variant '${{ matrix.variant }}'", workflow)
-        self.assertNotIn("--layout '${{ matrix.layout }}'", workflow)
-        self.assertNotIn("quay.io/", workflow)
+    def test_image_matrix_is_manual_and_only_ceph_runtime_jobs_prepare_roles(self):
+        for workflow in self.workflows.values():
+            self.assertNotIn("--variant '${{ matrix.variant }}'", workflow)
+            self.assertNotIn("--layout '${{ matrix.layout }}'", workflow)
+            self.assertNotIn("quay.io/", workflow)
+            self.assertNotIn("image-compatibility:", workflow)
         self.assertRegex(self.makefile, r"(?m)^image-compatibility:$")
         self.assertRegex(self.makefile, r"(?m)^image-matrix:$")
         self.assertIn("$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py", self.composite_script())
-        for name in ("runtime", "rgw-native-regressions"):
-            self.assertEqual(self.jobs[name].count("uses: " + PREP), 1)
-        for name in ("code-check", "plan"):
-            self.assertNotIn("uses: " + PREP, self.jobs[name])
-            self.assertNotIn("uses: " + CLEANUP, self.jobs[name])
+        self.assertEqual(self.jobs["runtime"].count("uses: " + PREP), 1)
+        self.assertEqual(self.optional.count("uses: " + PREP), 1)
+        prepare = next(step for step in steps(self.jobs["runtime"]) if "uses: " + PREP in step)
+        self.assertEqual(scalar(prepare, "if"), "matrix.requires_ceph")
+        for workflow in (self.workflows["code.yml"], self.jobs["plan"]):
+            self.assertNotIn("uses: " + PREP, workflow)
+            self.assertNotIn("uses: " + CLEANUP, workflow)
+        for filename in ("docker.yml", "ceph-short.yml", "ceph-topology.yml",
+                         "ceph-multicluster.yml", "ceph-recovery.yml"):
+            self.assertIn("uses: ./.github/workflows/tagged-runtime.yml", self.workflows[filename])
+            self.assertNotIn("uses: " + PREP, self.workflows[filename])
 
     def test_optional_regressions_prepare_roles_and_override_only_the_rgw_role(self):
-        block = self.jobs["rgw-native-regressions"]
+        block = self.optional
         job_steps = steps(block)
         prepare_index = next(i for i, step in enumerate(job_steps) if "uses: " + PREP in step)
         run_index = next(i for i, step in enumerate(job_steps)
-                         if "tag_scenarios.py optional --batch native_rgw_translation " in step_run(step))
+                         if "tag_scenarios.py optional --batch " in step_run(step))
         cleanup = [(i, step) for i, step in enumerate(job_steps) if "uses: " + CLEANUP in step]
         self.assertEqual(len(cleanup), 2)
         self.assertLess(cleanup[0][0], prepare_index)
         self.assertLess(prepare_index, run_index)
         self.assertLess(run_index, cleanup[1][0])
         prepare, run = job_steps[prepare_index], job_steps[run_index]
-        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-rgw-sync-native-regressions")
-        self.assertNotRegex(prepare, r"(?m)^\s+(?:if|continue-on-error):")
+        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-${{ matrix.id }}")
+        self.assertEqual(scalar(prepare, "if"), "matrix.requires_ceph")
+        self.assertNotIn("continue-on-error", prepare)
+        self.assertEqual(scalar(self.optional_entry, "category"), "optional")
+        self.assertEqual(scalar(self.optional_entry, "optional_batch"), "native_rgw_translation")
+        self.assertEqual(scalar(self.optional_entry, "rgw_image"), "${{ inputs.rgw_image }}")
         self.assertEqual(scalar(run, "CEPH_TEST_RGW_IMAGE"),
                          "${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}")
         self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE"])
-        self.assertNotIn("${{ inputs.rgw_image }}", block)
+        self.assertNotIn("run:", self.optional_entry)
         self.assertNotIn("quay.io/", block)
         for selected_rgw in ("", "registry.example/ceph-rgw@sha256:" + "a" * 64):
             with self.subTest(rgw_input=selected_rgw):
