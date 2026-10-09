@@ -16,15 +16,15 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 | Job | 79 | 67 | 58 |
 | 자체 resource cleanup | 78쌍 | 66쌍 | 57쌍 |
 | 주요 roles 이미지 준비 | 66 | 66 | 57 |
-| Distinct test parent | 120 | 120 | 121 |
-| 주요 시나리오 parent 실행 instance | 127 | 127 | 128 |
+| Distinct test parent | 120 | 120 | 122 |
+| 주요 시나리오 parent 실행 instance | 127 | 127 | 129 |
 | 자동 이미지 조합 반복 | 12개 × 대표 9개 | 0 | 0 |
 
 이 수는 현재 workflow·compiled selector의 범위다. 제거한 대표 9개 이름은
 모두 남은 필수 시나리오에서 검증한다. 각 runner의 이미지 ID 기록·native
 assertion·완료 검사·항상 실행하는 cleanup을 유지하며 테스트 내부의 phase나
 negative window를 줄이지 않는다. `scenario-default`도 필수 검사다.
-Compiled selector 기준 Ceph integration parent 119개·126회 실행에
+Compiled selector 기준 Ceph integration parent 120개·127회 실행에
 Docker bridge SDK parent 2개·2회 실행을 더한 수다.
 선택적 `rgw-native-regressions`도 기본적으로 같은 roles를 준비하고,
 비어 있지 않은 `workflow_dispatch.rgw_image`는 RGW 역할만 덮어쓴다.
@@ -62,6 +62,37 @@ cleanup·roles 준비를 유지한다. 묶음의 기존 80분 process 제한은 
 Docker cgroup usage의 phase snapshot 최대 합을 로그에 남기지만 disk 대비
 성능 향상이나 실제 순간 peak를 측정한 benchmark로 표시하지 않는다. 새로운
 native 실행과 전체 CI 결과는 별도 실행 receipt로 확인해야 한다.
+
+## 작은 OSD fixture
+
+`TestSmallOSDBlockSizeTopology`는 64·128·256·512 MiB의 logical block
+크기를 disk·RAM 저장소에서 각각 확인하고, 512 MiB의 native 설정을 유지한
+disk·RAM control 두 개를 더해 fresh bridge cluster 10개를 순차 실행한다.
+각 cluster에 두 OSD와 replica 2의 결정적 8 MiB 데이터를 만들고 전체
+reader/hash를 확인한다. 두 OSD의 Stop/Start 때 같은 CID·native UUID·FSID·
+pool ID와 bytes를 보존하고, 세 번째 OSD의 populated clean PG 배치와
+원래 OSD drain 뒤에도 데이터를 확인한다. Docker 파일 크기와 native
+BlueStore metadata의 logical capacity, 마지막 owned resource 부재도 검사한다.
+
+작은 크기의 여덟 case는 OSD가 없는 cluster에서 기존 `TemporaryConfig`로
+`osd_mclock_skip_benchmark=true`를 준비한 뒤 첫 `AddOSD`를 호출한다.
+추가 OSD까지 같은 설정을 유지하며 실제 daemon의 skip 값과
+`osd_op_queue=mclock_scheduler`를 확인한다. 크기 옵션이 scheduler나
+benchmark를 자동으로 바꾸지는 않는다. 512 MiB native control은 skip 값이
+`false`인지만 확인하며, 이 값으로 실제 benchmark I/O 실행을 증명하지 않는다.
+RAM 상한은 logical block 크기의 네 배로 설정하고 저장소 크기와 daemon
+메모리를 구분한다. 계약은 [작은 OSD 저장소](SMALL_OSD_STORAGE.md)를 따른다.
+
+개별 실행은 `make scenario-small-osds`의 Go 25분 제한을 사용한다. 필수 CI는
+기존 `scenario-empty-bootstrap`의 whole parent union을 다섯 개로 늘리며
+58개 job·57쌍 cleanup·57회 roles 준비와 기존 80분 process 제한을 유지한다.
+아래의 bootstrap 11분 55초 기록에는 두 새 저장소 parent가 포함되지 않는다.
+로컬 Docker Desktop Linux ARM64에서 준비된 Ceph 20.2.4 control·OSD roles로
+10개 case가 모두 PASS했다. Parent는 550.96초, package는 551.409초였고
+각 case의 native capacity·데이터·토폴로지 변경·owned cleanup을 확인했다.
+전체 AMD64 CI 결과나 disk 대비 RAM 성능 비교를 뜻하지 않으며,
+compiled selector 검사만으로 최소 용량의 보편적 보장을 주장하지 않는다.
+원문과 별도 cleanup receipt는 `artifacts/small-osd-storage-20261009/`에 보존한다.
 
 ## 짧고 관련 있는 시나리오 묶음
 

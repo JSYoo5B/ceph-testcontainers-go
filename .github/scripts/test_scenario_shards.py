@@ -108,6 +108,7 @@ LIFECYCLE_BUNDLES = {
         "scenario-manager-bootstrap": ("TestNoInitialManagerTopology", "80m"),
         "scenario-mds-bootstrap": ("TestNoInitialMDSTopology", "50m"),
         "scenario-osd-memory": ("TestOSDInMemoryStorageTopology", "20m"),
+        "scenario-small-osds": ("TestSmallOSDBlockSizeTopology", "25m"),
     },
     "scenario-mds-replacements": {
         "scenario-mds-replacement": ("TestStoppedMDSRetirementTopology", "50m"),
@@ -377,8 +378,8 @@ class ScenarioShardTests(unittest.TestCase):
                                       "TestRecoverableBridgePublishedPort"})
         self.assertFalse(set(counts) & sdk_parents)
         total_counts = counts + Counter(sdk_parents)
-        self.assertEqual(len(total_counts), 121)
-        self.assertEqual(sum(total_counts.values()), 128)
+        self.assertEqual(len(total_counts), 122)
+        self.assertEqual(sum(total_counts.values()), 129)
         self.assertEqual(set(quiescence_jobs), set(quiescence_checker.CASES))
         for case, command in quiescence_jobs.items():
             self.assertEqual(command[command.index("-run") + 1], quiescence_checker.SELECTORS[case])

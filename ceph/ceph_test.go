@@ -39,6 +39,8 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"conflicting OSD host", WithInitialOSDs(OSDConfig{Host: "host1", Rack: "rack1"}, OSDConfig{Host: "host1", Rack: "rack2"})},
 		{"invalid pool defaults", WithPoolDefaults(2, 3)},
 		{"OSD block size", WithOSDBlockSize(0)},
+		{"negative OSD block size", WithOSDBlockSize(-1)},
+		{"small OSD block size", WithOSDBlockSize((64 << 20) - 1)},
 		{"startup timeout", WithStartupTimeout(0)},
 		{"OSD image", WithOSDImage("")},
 		{"RGW image", WithRGWImage(" \t")},

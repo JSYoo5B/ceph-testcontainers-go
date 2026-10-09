@@ -31,14 +31,18 @@ Size the cap for replicas, BlueStore/BlueFS metadata and temporary writes,
 including startup and recovery work. With the default mClock scheduler,
 Ceph 20.2.4's startup capacity calibration can prefill 100 objects of 4 MiB
 per OSD before removing them.
-[Ceph's startup benchmark](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/OSD.cc#L9644-L9693)
-and [prefill implementation](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/OSD.cc#L11036-L11063)
+[Ceph's startup benchmark](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/osd/OSD.cc#L10211-L10270)
+and [prefill implementation](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/osd/OSD.cc#L11687-L11714)
 show this temporary footprint. Removing a Ceph object does not necessarily
 release the allocated tmpfs pages in its sparse BlueStore backing file.
 Later writes or another startup can therefore need more backing capacity than
 the current live payload suggests. There is no universal minimum cap: size it
 for the chosen OSD count and workload, and leave headroom. This option does not
 disable the startup benchmark or change the scheduler implicitly.
+
+For a bounded workload with smaller logical files, see
+[small OSD fixtures](SMALL_OSD_STORAGE.md). That recipe explicitly skips startup
+calibration before adding OSDs and keeps the setting for their whole lifetime.
 
 The volume uses the Docker daemon's Linux memory. On macOS with Docker Desktop,
 this is the Docker Linux VM's memory. A remote Docker daemon uses that remote

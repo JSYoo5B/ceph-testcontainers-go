@@ -109,6 +109,8 @@ if err != nil {
 
 `ceph.WithOSDInMemoryStorage(maxBytes)`는 해당 cluster의 모든 OSD 저장소를 크기 제한이 있는 shared tmpfs named volume에 둡니다. 첫 OSD가 생길 때 control-image keeper를 함께 만들고 모든 OSD의 Stop/Start 동안 데이터를 보존하며 `Terminate`에서 함께 정리합니다. 기본 sparse-file 저장소는 유지하며 [용량과 수명 계약](docs/OSD_MEMORY_STORAGE.md)을 따릅니다. 개별 `make scenario-osd-memory`와 기존 bootstrap CI 묶음에서 [메모리 OSD 토폴로지 fixture](docs/CI_FIXTURES.md#메모리-기반-osd-fixture)를 검사합니다.
 
+`ceph.WithOSDBlockSize(bytes)`의 기본 크기는 1 GiB이며 최소 64 MiB를 허용합니다. 작은 OSD의 기능 검사는 첫 OSD 추가 전에 기존 `TemporaryConfig`로 benchmark skip을 명시적으로 준비하며 scheduler는 그대로 둡니다. 옵션이 scheduler나 benchmark 설정을 자동으로 바꾸지는 않습니다. `make scenario-small-osds`와 기존 bootstrap CI 묶음의 [작은 OSD fixture](docs/CI_FIXTURES.md#작은-osd-fixture), [용량과 준비 조건](docs/SMALL_OSD_STORAGE.md)을 따릅니다. 전체 native 검증 결과는 해당 실행 receipt로 확인해야 합니다.
+
 `ceph.WithNoInitialManagers()`는 초기 MGR 없이 MON quorum과 owned OSD up/in을 확인하고 반환합니다. 양수 OSD와 초기 pool 구성은 유지하며, 초기 CephFS·RGW는 첫 `AddManager` 뒤 명시적으로 구성합니다. `WithNoInitialOSDs()`와 함께 선택하면 MON-only 단계로 시작합니다. MGR 통계·module·clean 준비는 별도로 확인하며 기본 MGR 1개와 마지막 MGR 제거 보호를 바꾸지 않습니다. [최초 MGR 없는 bootstrap 계약](docs/NO_INITIAL_MANAGERS.md)을 따릅니다.
 
 각 daemon handle의 `Stop`/`Start`로 장애를 주입합니다. 초기 생성과 이후 변경 모두 같은 클러스터가 cleanup을 소유합니다. MON 여러 개를 선택하면 별도 CLI control container가 있어 첫 MON이 정지해도 남은 quorum을 통해 관리할 수 있습니다. `WaitForQuorum`은 현재 monmap의 다수결을, filesystem의 `WaitReady`는 요청한 active rank와 standby 수를 확인합니다.
@@ -249,7 +251,7 @@ python3 internal/integration/goceph/run.py \
 | `WithNoInitialOSDs()` | MON/MGR부터 시작하고 이후 명시적 OSD 추가 |
 | `WithNoInitialManagers()` | 초기 MGR 없이 MON/OSD로 시작하고 이후 명시적 MGR 추가 |
 | `WithCephFS(configs...)` / `WithRGW(configs...)` | 초기 filesystem별 active/standby/replay MDS와 이름별 gateway 구성 |
-| `WithOSDBlockSize(bytes)` | OSD sparse 파일 크기, 기본/최소 1 GiB |
+| `WithOSDBlockSize(bytes)` | OSD sparse 파일 크기, 기본 1 GiB·최소 64 MiB, [작은 OSD 준비 조건](docs/SMALL_OSD_STORAGE.md) |
 | `WithStartupTimeout(duration)` | 부트스트랩 및 개별 토폴로지 작업 제한, 기본 3분 |
 | `WithHostNetwork()` | 모든 daemon과 클라이언트의 Docker host network, MON/RGW 자동 포트 선택 |
 | `WithHostAddress(address)` | host mode의 실제 bind·광고 IPv4 주소, 기본 `127.0.0.1` |
@@ -311,6 +313,7 @@ make scenario-rbd-namespaces
 make scenario-rbd-namespace-observation
 make scenario-storage-bootstrap
 make scenario-osd-memory
+make scenario-small-osds
 make scenario-manager-bootstrap
 make scenario-mds-bootstrap
 make scenario-mds-replacement
