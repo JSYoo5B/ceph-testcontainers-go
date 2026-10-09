@@ -15,7 +15,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 
 | 기능 축 | Operation: fixture 조건 준비·장애·복원 | Check: 확인하는 범위 |
 | --- | --- | --- |
-| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, replica 읽기 오류 주입·deep scrub·repair, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean, scrub 불일치 object |
+| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, replica 읽기 오류 주입·deep scrub·repair, owned cleanup | quorum, native health code·원인·mute, manager/module 준비·service URL, OSD 상태·flag, PG clean, scrub 불일치 object |
 | Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 실행 중 PG 수·placement 변경, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량·PG target 도달, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
 | CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
@@ -66,15 +66,15 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
 | Fixture Operation | 100 | 46 | 146 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 79 | 33 | 112 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 80 | 33 | 113 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 203 | 90 | **293** |
+| 전체 | 204 | 90 | **294** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 293개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 294개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -143,7 +143,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (69개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (70개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -161,6 +161,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [ceph/full_ratios.go](../ceph/full_ratios.go) | [Container.FullRatios](../ceph/full_ratios.go) |
 | [ceph/health_details.go](../ceph/health_details.go) | [Container.HealthDetails](../ceph/health_details.go#L55) |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
+| [ceph/mgr_services.go](../ceph/mgr_services.go) | [Container.ManagerServices](../ceph/mgr_services.go#L17) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L44) · [Container.PoolStatus](../ceph/pool_policy.go#L54) |
 | [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [Container.PoolPGs](../ceph/pool_pgs.go) |
