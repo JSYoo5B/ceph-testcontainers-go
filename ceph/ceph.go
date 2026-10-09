@@ -249,7 +249,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		var lease *hostPortLease
 		var err error
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, 2, c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout)
 			c.trackHostPortLease(lease)
 			if err != nil {
 				return nil, err
@@ -267,16 +267,17 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
 		if lease == nil {
-			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts("3300/tcp", "6789/tcp"), network.WithNetwork([]string{"ceph-mon"}, c.network))
+			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network))
 		} else {
+			monEnv := c.settings.monitorPortEnvironment(lease.Ports)
+			monEnv["CEPH_PUBLIC_ADDRESS"] = c.settings.publicAddress
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart(),
-				testcontainers.WithEnv(map[string]string{
-					"CEPH_PUBLIC_ADDRESS": c.settings.publicAddress,
-					"CEPH_MON_PORT_V2":    strconv.Itoa(lease.Ports[0]),
-					"CEPH_MON_PORT_V1":    strconv.Itoa(lease.Ports[1]),
-				}))
+				testcontainers.WithEnv(monEnv))
 		}
 		moduleOpts = append(moduleOpts, opts...)
+		if c.settings.messengerMode == MessengerV2Secure {
+			moduleOpts = append(moduleOpts, testcontainers.WithEnv(map[string]string{messengerV2SecureEnvironment: "true"}))
+		}
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}

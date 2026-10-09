@@ -198,7 +198,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	for attempt := range attempts {
 		var lease *hostPortLease
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), 2, c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout)
 			// c.mu is already held, so register ownership without re-locking it.
 			if lease != nil {
 				c.portLeases = append(c.portLeases, lease)
@@ -208,17 +208,20 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
+		monEnv := map[string]string{"CEPH_MON_ID": name}
+		if c.settings.messengerMode == MessengerV2Secure {
+			monEnv[messengerV2SecureEnvironment] = "true"
+		}
 		opts := []testcontainers.ContainerCustomizer{c.WithClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
-			testcontainers.WithEnv(map[string]string{"CEPH_MON_ID": name}),
+			testcontainers.WithEnv(monEnv),
 			testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", config, 0o644),
 				textFile("/etc/ceph/mon.keyring", key, 0o600), textFile("/tc/monmap", monmap, 0o600)),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mon." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))}
 		if lease != nil {
-			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(map[string]string{
-				"CEPH_PUBLIC_ADDRESS": c.PublicAddress(),
-				"CEPH_MON_PORT_V2":    fmt.Sprint(lease.Ports[0]), "CEPH_MON_PORT_V1": fmt.Sprint(lease.Ports[1]),
-			}))
+			portEnv := c.settings.monitorPortEnvironment(lease.Ports)
+			portEnv["CEPH_PUBLIC_ADDRESS"] = c.PublicAddress()
+			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
 		}
 		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, opts...)
 		if lease != nil {
