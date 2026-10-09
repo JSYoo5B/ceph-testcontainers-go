@@ -68,6 +68,10 @@ func integrationNativePoolPGs(t *testing.T, ctx context.Context, cluster *ceph.C
 				Size               *int    `json:"size"`
 				MinSize            *int    `json:"min_size"`
 				PGNum              *int    `json:"pg_num"`
+				PGNumTarget        int     `json:"pg_num_target"`
+				PGNumPending       int     `json:"pg_num_pending"`
+				PGPlacementNum     int     `json:"pg_placement_num"`
+				PGPlacementTarget  int     `json:"pg_placement_num_target"`
 				CRUSHRule          *int    `json:"crush_rule"`
 				AutoscaleMode      *string `json:"pg_autoscale_mode"`
 				ErasureCodeProfile *string `json:"erasure_code_profile"`
@@ -99,7 +103,8 @@ func integrationNativePoolPGs(t *testing.T, ctx context.Context, cluster *ceph.C
 				t.Fatal("native PG oracle pool type unavailable")
 			}
 			result = ceph.PoolState{ID: *p.ID, Name: p.Name, Type: kind, Size: *p.Size, MinSize: *p.MinSize,
-				PGNum: *p.PGNum, CRUSHRule: *p.CRUSHRule, AutoscaleMode: *p.AutoscaleMode, ErasureCodeProfile: *p.ErasureCodeProfile,
+				PGNum: *p.PGNum, PGNumTarget: p.PGNumTarget, PGNumPending: p.PGNumPending, PGPlacementNum: p.PGPlacementNum,
+				PGPlacementNumTarget: p.PGPlacementTarget, CRUSHRule: *p.CRUSHRule, AutoscaleMode: *p.AutoscaleMode, ErasureCodeProfile: *p.ErasureCodeProfile,
 				Flags: *p.Flags, Quota: ceph.PoolQuota{MaxBytes: *p.QuotaBytes, MaxObjects: *p.QuotaObjects}}
 		}
 		if result.Name != name {
