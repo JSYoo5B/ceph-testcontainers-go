@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       check_name:
-        description: Distinct workflow family shown in PR checks and phase reports
+        description: Workflow family used in phase annotations and summaries
         required: true
         type: string
       optional_batch:
@@ -29,7 +29,7 @@ env:
 
 jobs:
   plan:
-    name: ${{ inputs.check_name }} / source plan
+    name: Plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -62,7 +62,7 @@ jobs:
           if-no-files-found: error
 
   runtime:
-    name: ${{ inputs.check_name }} / ${{ matrix.batch }}
+    name: ${{ matrix.batch }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.job_timeout }}

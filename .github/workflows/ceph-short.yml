@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   scenarios:
-    name: Ceph short
+    name: Scenarios
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: short

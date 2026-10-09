@@ -58,7 +58,13 @@ workflow다. `rgw_image` 입력으로 준비된 RGW 이미지 하나만 바꿀 �
 기본 PR 검증에 포함하지 않는다. Linux go-ceph 소비자 검사는 기존 수동
 harness와 이미지 입력 계약을 유지한다.
 
-예를 들어 `Code checks`의 `Code / race detector` 실패는 race 검사의 결과이고,
+표시 이름의 각 단계는 역할을 나눈다. Workflow는 검사 유형, reusable 호출은
+`Scenarios`, 실제 job은 `Plan` 또는 batch 이름을 사용한다. 같은 유형을 호출과
+job 이름에 다시 붙이지 않는다. 예를 들어 `Ceph multicluster / Scenarios /
+mirror_initial_daemons`에서 시나리오를 바로 찾을 수 있다. 정확한 표시는 GitHub의
+화면에 따라 workflow 이름과 check 이름을 함께 읽는다.
+
+예를 들어 `Code checks`의 `Race detector` 실패는 race 검사의 결과이고,
 `Ceph recovery`에서 `Native` 실패는 해당 복구 시나리오의 assertion 또는
 완료 gate 실패다. `Environment`나 `Cleanup` 실패도 별도로 표시한다.
 유형과 실제 실패 단계는 탐색 기준이며, Ceph timeout이 무조건 실행환경
@@ -186,8 +192,9 @@ native linking은 Linux 안에서 수행하며 Go 모듈 자체에 go-ceph/cgo �
 ## 실패 단계와 증거
 
 Runtime CI는 각 실제 runner에서 다음 단계를 분리하고, 각 step의 실제 outcome을
-job summary와 실패 annotation에 기록한다. Runtime job 이름에는 workflow 유형과
-source-owned batch 이름을 표시한다.
+job summary와 실패 annotation에 기록한다. Workflow 이름은 검사 유형을,
+runtime job 이름은 source-owned batch를 표시한다. Summary와 annotation에는
+해당 유형과 profile 식별자를 함께 기록한다.
 
 1. **Compile**: 소스에서 tag 소유 관계를 확인하고 선택한 suite를 컴파일한다.
 2. **Environment**: Docker engine과 owned resource baseline을 기록하고,

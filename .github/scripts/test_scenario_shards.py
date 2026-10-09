@@ -108,6 +108,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 callers = [job for job in self.jobs[filename].values()
                            if "uses: ./.github/workflows/tagged-runtime.yml" in job]
                 self.assertEqual(len(callers), 1)
+                self.assertEqual(scalar(callers[0].split("    with:", 1)[0], "name"), "Scenarios")
                 self.assertEqual(scalar(callers[0], "category"), category)
                 self.assertEqual(scalar(callers[0], "check_name"), name)
                 self.assertNotIn("steps:", callers[0])
@@ -153,7 +154,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.plan.outputs.matrix) }}")
         self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
-        self.assertIn("${{ inputs.check_name }}", scalar(runtime.split("    steps:", 1)[0], "name"))
+        self.assertEqual(scalar(plan.split("    steps:", 1)[0], "name"), "Plan")
+        self.assertEqual(scalar(runtime.split("    steps:", 1)[0], "name"), "${{ matrix.batch }}")
         self.assertNotRegex(runtime, r"(?m)^        (?:case|group|include|exclude):")
 
     def test_runtime_compiles_before_environment_then_runs_and_cleans_on_same_runner(self):
@@ -201,6 +203,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         jobs = self.jobs["code.yml"]
         self.assertRegex(workflow, r"(?m)^name: Code checks$")
         self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage"})
+        self.assertEqual({scalar(job.split("    steps:", 1)[0], "name") for job in jobs.values()},
+                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
@@ -256,6 +260,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         jobs = self.jobs["native-regressions.yml"]
         self.assertEqual(len(jobs), 1)
         caller = next(iter(jobs.values()))
+        self.assertEqual(scalar(caller.split("    with:", 1)[0], "name"), "Scenarios")
         self.assertNotRegex(caller, r"(?m)^    needs:")
         self.assertEqual(scalar(caller, "uses"), "./.github/workflows/tagged-runtime.yml")
         self.assertEqual(scalar(caller, "category"), "optional")

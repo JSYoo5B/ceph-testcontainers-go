@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   unit:
-    name: Code / unit tests
+    name: Unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -26,7 +26,7 @@ jobs:
         run: make test
 
   race:
-    name: Code / race detector
+    name: Race detector
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -41,7 +41,7 @@ jobs:
         run: make race
 
   static:
-    name: Code / vet, compile and CI tooling
+    name: Vet, compile and CI tooling
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -64,7 +64,7 @@ jobs:
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 
   tag-coverage:
-    name: Code / compiled tag coverage and helpers
+    name: Compiled tag coverage and helpers
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:

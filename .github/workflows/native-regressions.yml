@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   regressions:
-    name: RGW upstream regressions
+    name: Scenarios
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: optional
