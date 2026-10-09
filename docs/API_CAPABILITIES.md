@@ -15,7 +15,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 
 | 기능 축 | Operation: fixture 조건 준비·장애·복원 | Check: 확인하는 범위 |
 | --- | --- | --- |
-| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean |
+| 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, replica 읽기 오류 주입·deep scrub·repair, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean, scrub 불일치 object |
 | Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 실행 중 PG 수·placement 변경, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량·PG target 도달, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
 | CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
-| Fixture Operation | 97 | 46 | 143 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 78 | 33 | 111 |
+| Fixture Operation | 100 | 46 | 146 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 79 | 33 | 112 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 199 | 90 | **289** |
+| 전체 | 203 | 90 | **293** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 289개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 293개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -90,7 +90,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (143개)
+### Fixture Operation (146개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -126,6 +126,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.CreatePlacement](../ceph/rgw_placement.go#L139) · [RGWContainer.ApplyPlacement](../ceph/rgw_placement.go#L279) · [RGWContainer.ReloadPlacement](../ceph/rgw_placement.go#L377) |
 | [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.CreateAccount](../ceph/rgw_tenants_accounts.go#L134) · [RGWContainer.CreateAccountRootUser](../ceph/rgw_tenants_accounts.go#L318) · [RGWContainer.SetAccountQuota](../ceph/rgw_tenants_accounts.go#L328) · [RGWContainer.SetAccountBucketQuota](../ceph/rgw_tenants_accounts.go#L334)<br>[RGWContainer.RemoveAccount](../ceph/rgw_tenants_accounts.go#L387) |
 | [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWContainer.SetUserPlacement](../ceph/rgw_user_placement.go#L67) |
+| [ceph/scrub.go](../ceph/scrub.go) | [Container.InjectObjectDataError](../ceph/scrub.go#L66) · [Container.DeepScrubPG](../ceph/scrub.go#L124) · [Container.RepairPG](../ceph/scrub.go#L133) |
 | [ceph/topology.go](../ceph/topology.go) | [Container.AddMonitor](../ceph/topology.go#L146) · [Container.RemoveMonitor](../ceph/topology.go#L263) · [Container.RefreshMonitorConfig](../ceph/topology.go#L350) · [Container.AddManager](../ceph/topology.go#L686)<br>[Container.RemoveManager](../ceph/topology.go#L767) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorDaemon.Terminate](../multicluster/cephfs.go#L60) · [RunCephFSMirror](../multicluster/cephfs.go#L133) · [CephFSMirror.AddDaemon](../multicluster/cephfs.go#L494) · [CephFSMirror.RemoveDaemon](../multicluster/cephfs.go#L567)<br>[CephFSMirror.Terminate](../multicluster/cephfs.go#L606) · [CephFSMirror.AttachManagers](../multicluster/cephfs.go#L629) · [CephFSMirror.AddDirectory](../multicluster/cephfs.go#L829) · [CephFSMirror.RemoveDirectory](../multicluster/cephfs.go#L865)<br>[CephFSMirror.RebalanceDirectories](../multicluster/cephfs.go#L916) · [CephFSMirror.RemovePeer](../multicluster/cephfs.go#L1081) · [CephFSMirror.RebootstrapPeer](../multicluster/cephfs.go#L1123) |
 | [multicluster/cephfs_connection_refresh.go](../multicluster/cephfs_connection_refresh.go) | [CephFSMirror.RefreshMonitorConfig](../multicluster/cephfs_connection_refresh.go#L24) · [CephFSMirror.RefreshPeerMonitorConfig](../multicluster/cephfs_connection_refresh.go#L87) |
@@ -142,7 +143,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (68개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (69개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -170,6 +171,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.PlacementStatus](../ceph/rgw_placement.go#L250) |
 | [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.AccountInfo](../ceph/rgw_tenants_accounts.go#L299) |
 | [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWContainer.UserUsage](../ceph/rgw_usage.go#L35) |
+| [ceph/scrub.go](../ceph/scrub.go) | [Container.PGInconsistencies](../ceph/scrub.go#L224) |
 | [ceph/status.go](../ceph/status.go) | [Container.Status](../ceph/status.go#L34) · [Container.WaitForClean](../ceph/status.go#L48) |
 | [ceph/topology.go](../ceph/topology.go) | [Container.QuorumStatus](../ceph/topology.go#L125) · [Container.WaitForQuorum](../ceph/topology.go#L135) · [Container.ManagerStatus](../ceph/topology.go#L869) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirror.PeerIDs](../multicluster/cephfs.go#L1033) |
@@ -253,7 +255,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 91개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 93개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
@@ -291,6 +293,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/rgw_tls.go](../ceph/rgw_tls.go) | [RGWTLSConfig](../ceph/rgw_tls.go#L24) |
 | [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWUserUsage](../ceph/rgw_usage.go#L21) |
 | [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWUserPlacementConfig](../ceph/rgw_user_placement.go#L18) |
+| [ceph/scrub.go](../ceph/scrub.go) | [InconsistentObject](../ceph/scrub.go#L18) · [InconsistentShard](../ceph/scrub.go#L27) |
 | [ceph/status.go](../ceph/status.go) | [Status](../ceph/status.go#L11) |
 | [ceph/topology.go](../ceph/topology.go) | [MonitorContainer](../ceph/topology.go#L26) · [ManagerContainer](../ceph/topology.go#L32) · [QuorumStatus](../ceph/topology.go#L109) · [ManagerStatus](../ceph/topology.go#L859) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorConfig](../multicluster/cephfs.go#L26) · [CephFSMirrorDaemon](../multicluster/cephfs.go#L48) · [CephFSMirror](../multicluster/cephfs.go#L82) |

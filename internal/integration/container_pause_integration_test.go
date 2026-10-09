@@ -6,14 +6,11 @@ package integration_test
 
 import (
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown
@@ -61,7 +58,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			}
 			probe := func(t *testing.T, phase string) {
 				t.Helper()
-				t.Logf("CONTAINER_PAUSE_CLIENT %s", pauseExec(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
+				t.Logf("CONTAINER_PAUSE_CLIENT %s", execOutput(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
 			}
 			probe(t, "seed")
 			target := cluster.OSDs()[1]
@@ -91,7 +88,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal("overlapping pause was admitted", err)
 				}
 				probe(t, "blocked")
-				waitPauseHealth(t, ctx, cluster, fsid, "SLOW_OPS", true)
+				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
 				status, err := cluster.Status(ctx)
 				if err != nil || status.OSDMap.NumUpOSDs != 2 {
 					t.Fatalf("nodown did not keep the frozen OSD up: %+v %v", status.OSDMap, err)
@@ -109,7 +106,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal(err)
 				}
 				probe(t, "thawed")
-				waitPauseHealth(t, ctx, cluster, fsid, "SLOW_OPS", false)
+				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", false)
 			})
 
 			t.Run("frozen_down", func(t *testing.T) {
@@ -136,15 +133,6 @@ func TestPausedOSDFaults(t *testing.T) {
 	}
 }
 
-func mustCeph(t *testing.T, ctx context.Context, cluster *ceph.Container, args ...string) []byte {
-	t.Helper()
-	data, err := cluster.Ceph(ctx, args...)
-	if err != nil {
-		t.Fatal(args, err)
-	}
-	return data
-}
-
 func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverride) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -158,24 +146,6 @@ func resumePause(t *testing.T, pause *ceph.ContainerPause) {
 	defer cancel()
 	if err := pause.Resume(ctx); err != nil {
 		t.Errorf("resume paused container: %v", err)
-	}
-}
-
-func waitPauseHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, code string, present bool) {
-	t.Helper()
-	phaseCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	for {
-		state := integrationHealthDetails(t, phaseCtx, cluster, fsid, code)
-		if check, found := state.Checks[code]; found == present {
-			t.Logf("CONTAINER_PAUSE health=%s present=%v details=%q", code, present, check.Details)
-			return
-		}
-		select {
-		case <-phaseCtx.Done():
-			t.Fatalf("native %s present=%v not observed: %v", code, present, phaseCtx.Err())
-		case <-time.After(2 * time.Second):
-		}
 	}
 }
 
@@ -196,24 +166,6 @@ func waitOSDsUp(t *testing.T, ctx context.Context, cluster *ceph.Container, up i
 		case <-time.After(time.Second):
 		}
 	}
-}
-
-func pauseExec(t *testing.T, ctx context.Context, ctr testcontainers.Container, args ...string) string {
-	t.Helper()
-	execCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	code, r, err := ctr.Exec(execCtx, args, tcexec.Multiplexed())
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 0 {
-		t.Fatalf("%s exited %d: %s", args[0], code, out)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // blocked: every PG includes the frozen OSD, so each write must end with the
