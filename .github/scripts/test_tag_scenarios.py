@@ -365,7 +365,10 @@ class CompletionTests(unittest.TestCase):
             with patch.object(engine, "compile_inventory", return_value=file["tests"]), \
                     patch.object(engine.subprocess, "Popen", return_value=process) as popen, \
                     patch("sys.stdout", new=io.StringIO()), \
-                    patch.dict(os.environ, {"CEPH_TEST_RBD_CLIENT_IMAGE": "override", "CEPH_TEST_VAULT_IMAGE": "vault-custom"}):
+                    patch.dict(os.environ, {"CEPH_TEST_RBD_CLIENT_IMAGE": "override", "CEPH_TEST_VAULT_IMAGE": "vault-custom",
+                                            "GOFLAGS": "-overlay=/unrelated/source.json", "GOWORK": "/unrelated/go.work",
+                                            "GOENV": "/custom/goenv", "GOCACHE": "/custom/cache", "GOPROXY": "off",
+                                            "DOCKER_HOST": "unix:///custom/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE": "localhost"}):
                 report = engine.run_profile([file], plan, "short", "basic", None, output, root)
             self.assertTrue(report["passed"])
             command = popen.call_args.args[0]
@@ -375,6 +378,12 @@ class CompletionTests(unittest.TestCase):
             self.assertIn("-timeout=20m", command)
             self.assertNotIn("CEPH_TEST_RBD_CLIENT_IMAGE", popen.call_args.kwargs["env"])
             self.assertEqual(popen.call_args.kwargs["env"]["CEPH_TEST_VAULT_IMAGE"], "vault-custom")
+            for key, value in engine.GO_EXECUTION_ENV.items():
+                self.assertEqual(popen.call_args.kwargs["env"][key], value)
+            for key, value in {"GOENV": "/custom/goenv", "GOCACHE": "/custom/cache", "GOPROXY": "off",
+                               "DOCKER_HOST": "unix:///custom/docker.sock", "TESTCONTAINERS_HOST_OVERRIDE": "localhost"}.items():
+                self.assertEqual(popen.call_args.kwargs["env"][key], value)
+            self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
             self.assertTrue((output / "native.log").is_file())
             self.assertTrue((output / "report.json").is_file())
 
@@ -384,9 +393,145 @@ class CompletionTests(unittest.TestCase):
                 patch.object(engine.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as compiler:
             report = engine.compile_profile(plan, "short", "basic", None, Path(temporary) / "compile")
         self.assertTrue(report["passed"])
+        self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
         command = compiler.call_args.args[0]
         self.assertIn("-c", command)
         self.assertFalse(any(argument.startswith(("-run", "-short", "-list")) for argument in command))
+
+
+class GoSourceEnvironmentTests(unittest.TestCase):
+    """Execute real, offline Go controls to prove injected sources are ignored."""
+
+    def source(self, root, body='t.Fatal("original assertion executed")', imports='"testing"'):
+        root.mkdir()
+        (root / "go.mod").write_text("module example\ngo 1.25\n")
+        path = root / "fixture_test.go"
+        path.write_text('''//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_basic))))
+//ci: timeout=20s job-timeout=1
+
+package fixture
+import (''' + imports + ''')
+func TestOriginal(t *testing.T) { ''' + body + " }\n")
+        return path
+
+    def offline_environment(self):
+        return os.environ | {"CGO_ENABLED": "0", "GOENV": "off", "GOWORK": "off", "GOFLAGS": "",
+                             "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local"}
+
+    def control(self, root, environment, *arguments):
+        return subprocess.run(["go", *arguments], cwd=root, env=environment, text=True,
+                              capture_output=True, timeout=60)
+
+    def overlay(self, directory, original, replacement, name="overlay"):
+        path = directory / (name + ".json")
+        path.write_text(json.dumps({"Replace": {str(original.resolve()): str(replacement.resolve())}}))
+        return "-overlay=" + str(path)
+
+    def test_inherited_and_persisted_overlays_cannot_replace_native_assertions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            source = self.source(root)
+            replacement = directory / "replacement.go"
+            replacement.write_text(source.read_text().replace('t.Fatal("original assertion executed")', ""))
+            overlay = self.overlay(directory, source, replacement)
+            environment = self.offline_environment()
+            command = ["test", "-mod=readonly", "-tags=all", "-count=1", "-v", "-timeout=20s", "."]
+            original = self.control(root, environment, *command)
+            self.assertNotEqual(original.returncode, 0, original.stdout + original.stderr)
+            self.assertIn("original assertion executed", original.stdout)
+            persisted = directory / "goenv"
+            persisted.write_text("GOFLAGS=" + overlay + "\n")
+            for kind in ("inherited", "persisted"):
+                with self.subTest(kind=kind):
+                    injected = environment | {"GOFLAGS": overlay}
+                    if kind == "persisted":
+                        injected.pop("GOFLAGS")
+                        injected["GOENV"] = str(persisted)
+                    rewritten = self.control(root, injected, *command)
+                    self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
+                    self.assertNotIn("original assertion executed", rewritten.stdout)
+                    with patch.dict(os.environ, injected, clear=True), patch("sys.stdout", new=io.StringIO()):
+                        catalog = engine.load_catalog(root)
+                        plan = engine.discover(catalog)
+                        report = engine.run_profile(catalog, plan, "short", "basic", ".",
+                                                    directory / (kind + "-native"), root)
+                    self.assertFalse(report["passed"])
+                    self.assertEqual(report["classification"], "native-test-failure")
+                    self.assertEqual(report["compiled_tests"], ["TestOriginal"])
+                    self.assertIn("TestOriginal", report["completion"]["failed_tests"])
+                    self.assertIn("original assertion executed", (directory / (kind + "-native") / "native.log").read_text())
+                    self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
+                    self.assertNotIn("GOENV", report["go_environment"])
+
+    def test_catalog_and_compiled_inventory_ignore_source_replacement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            source = self.source(root)
+            environment = self.offline_environment()
+            replacement = directory / "catalog.go"
+            replacement.write_text('package main\nimport "fmt"\nfunc main() { fmt.Println("[]") }\n')
+            tool = engine.ROOT / "tools/tagcatalog/main.go"
+            injected = environment | {"GOFLAGS": self.overlay(directory, tool, replacement, "catalog-overlay")}
+            rewritten = self.control(root, injected, "run", "-mod=readonly", str(tool), str(root))
+            self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
+            self.assertEqual(json.loads(rewritten.stdout), [])
+            with patch.dict(os.environ, injected, clear=True):
+                catalog = engine.load_catalog(root)
+            self.assertEqual(catalog[0]["tests"], ["TestOriginal"])
+            replacement = directory / "inventory.go"
+            replacement.write_text(source.read_text().replace("TestOriginal", "TestInjected"))
+            injected["GOFLAGS"] = self.overlay(directory, source, replacement, "inventory-overlay")
+            rewritten = self.control(root, injected, "test", "-mod=readonly", "-tags=all", "-list=.", ".")
+            self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
+            self.assertIn("TestInjected\n", rewritten.stdout)
+            with patch.dict(os.environ, injected, clear=True):
+                self.assertEqual(engine.compile_inventory(".", "all", root), ["TestOriginal"])
+
+    def test_compile_artifact_contains_original_assertion_despite_overlay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            source = self.source(root)
+            replacement = directory / "replacement.go"
+            replacement.write_text(source.read_text().replace('t.Fatal("original assertion executed")', ""))
+            injected = self.offline_environment() | {"GOFLAGS": self.overlay(directory, source, replacement)}
+            with patch.dict(os.environ, injected, clear=True):
+                plan = engine.discover(engine.load_catalog(root))
+                compiled = engine.compile_profile(plan, "short", "basic", ".", directory / "compile", root)
+            self.assertTrue(compiled["passed"])
+            self.assertEqual(compiled["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
+            actual = subprocess.run([str(directory / "compile/test-binary"), "-test.v", "-test.timeout=20s"],
+                                    text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(actual.returncode, 0, actual.stdout + actual.stderr)
+            self.assertIn("original assertion executed", actual.stdout)
+
+    def test_external_workspace_cannot_replace_local_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            self.source(root, 'if !value.Valid() { t.Fatal("original dependency executed") }',
+                        '"testing"; "fixture.invalid/value"')
+            for name, value in (("original", "false"), ("replacement", "true")):
+                dependency = directory / name
+                dependency.mkdir()
+                (dependency / "go.mod").write_text("module fixture.invalid/value\ngo 1.25\n")
+                (dependency / "value.go").write_text("package value\nfunc Valid() bool { return " + value + " }\n")
+            with (root / "go.mod").open("a") as module:
+                module.write("require fixture.invalid/value v0.0.0\nreplace fixture.invalid/value => ../original\n")
+            workspace = directory / "go.work"
+            workspace.write_text("go 1.25\nuse ./source\nreplace fixture.invalid/value => ./replacement\n")
+            injected = self.offline_environment() | {"GOWORK": str(workspace)}
+            rewritten = self.control(root, injected, "test", "-tags=all", "-count=1", "-v", "-timeout=20s", ".")
+            self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
+            with patch.dict(os.environ, injected, clear=True), patch("sys.stdout", new=io.StringIO()):
+                catalog = engine.load_catalog(root)
+                plan = engine.discover(catalog)
+                report = engine.run_profile(catalog, plan, "short", "basic", ".", directory / "native", root)
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["classification"], "native-test-failure")
+            self.assertIn("original dependency executed", (directory / "native/native.log").read_text())
 
 
 class GoASTCatalogTests(unittest.TestCase):

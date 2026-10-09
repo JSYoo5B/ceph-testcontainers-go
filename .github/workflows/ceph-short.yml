@@ -2,6 +2,7 @@ name: Ceph short
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

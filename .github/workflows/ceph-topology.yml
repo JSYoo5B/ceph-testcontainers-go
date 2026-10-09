@@ -2,6 +2,7 @@ name: Ceph topology
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

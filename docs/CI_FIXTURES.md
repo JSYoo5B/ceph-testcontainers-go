@@ -23,7 +23,8 @@ unit·race·static·tag-coverage를 독립 job으로 표시한다.
 [Ceph short](../.github/workflows/ceph-short.yml),
 [Ceph topology](../.github/workflows/ceph-topology.yml),
 [Ceph multicluster](../.github/workflows/ceph-multicluster.yml),
-[Ceph recovery](../.github/workflows/ceph-recovery.yml)는 별도 `push`·PR workflow다.
+[Ceph recovery](../.github/workflows/ceph-recovery.yml)는 별도 main `push`·PR workflow다.
+PR 브랜치의 `push`는 자동 실행하지 않아 같은 suite를 중복 실행하지 않는다.
 어떤 유형이 실패했는지 PR Checks와 Actions 목록에서 바로 구분하고 각 유형을
 따로 재실행할 수 있다. [Native regressions](../.github/workflows/native-regressions.yml)는
 준비된 optional RGW 이미지를 받는 별도 수동 workflow이며 PR 필수 범위에 넣지 않는다.

@@ -103,6 +103,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
                 for event in ("push", "pull_request", "workflow_dispatch"):
                     self.assertRegex(workflow, r"(?m)^  " + event + r":")
+                self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
                 self.assertNotRegex(workflow, r"(?m)^    needs:")
                 callers = [job for job in self.jobs[filename].values()
                            if "uses: ./.github/workflows/tagged-runtime.yml" in job]
@@ -202,6 +203,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
+        self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
         for block in jobs.values():
             self.assertNotIn("./.github/actions/scenario-images", block)
             self.assertNotIn("./.github/actions/runtime-cleanup", block)

@@ -30,8 +30,9 @@ process 예산을 조정하거나 아래 runner로 필요한 batch만 실행할 
 ## PR에 표시되는 workflow 종류
 
 자동 검증은 다음 workflow로 나눈다. PR의 Checks와 Actions 목록에서 실패한
-검사 유형을 먼저 확인할 수 있다. 각 workflow는 `push`·`pull_request`·수동
-실행으로 시작하며 다른 유형의 완료를 기다리지 않는다.
+검사 유형을 먼저 확인할 수 있다. 각 workflow는 main의 `push`·`pull_request`·
+수동 실행으로 시작하며 다른 유형의 완료를 기다리지 않는다. PR 브랜치의
+`push`에서는 자동 실행하지 않아 같은 변경의 push/PR suite 중복을 막는다.
 
 | Workflow 이름 | 파일 | PR 검사 범위 |
 | --- | --- | --- |
@@ -102,6 +103,15 @@ Runner는 실제 파일의 build expression과 Test 함수 목록에서 tag 조�
 만들고 `go test -list` 결과를 검증한다. 실행 명령에는 테스트 이름의 `-run`,
 `-short`, category 환경 변수나 이름 필터를 넣지 않는다. 별도의 untagged
 단위 테스트가 같은 package에 있으면 함께 실행할 수 있다.
+
+Tag runner의 AST 수집·compiled inventory·compile·실행은 모두
+`CGO_ENABLED=0`, `GOWORK=off`, `GOFLAGS=-mod=readonly`로 진행한다.
+환경 변수나 persisted `GOENV`의 overlay·추가 tag·이름 필터와 외부 workspace
+replacement가 기록한 소스와 다른 코드를 실행하지 않도록 이 세 값을 고정한다.
+Cache·proxy·Docker 연결과 준비된 role 이미지 설정은 상속하며, compile/native
+receipt에는 고정한 세 값만 기록한다. 이는 tag runner의 실행 계약이며 직접
+`go test`나 수동 Make target의 환경을 바꾸지 않는다. 실행 도중의 소스 변경이나
+Go toolchain 자체의 무결성을 검증하는 계약은 아니다.
 
 `all`은 build expression의 우선 선택이므로 `all,ci,ci_short`를 category
 필터로 사용할 수 없다. Category/batch 선택에는 위의 planner/runner를

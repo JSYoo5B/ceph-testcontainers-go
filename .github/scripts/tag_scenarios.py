@@ -30,12 +30,19 @@ CHECKERS = {
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
 DURATION = re.compile(r"([1-9][0-9]*)(ms|s|m|h)\Z")
 SCHEMA = "ceph-tag-scenarios/v1"
+GO_EXECUTION_ENV = {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"}
 GO_PLATFORMS = frozenset((
     "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "js", "linux", "netbsd",
     "openbsd", "plan9", "solaris", "wasip1", "windows", "386", "amd64", "arm", "arm64", "loong64",
     "mips", "mipsle", "mips64", "mips64le", "ppc64", "ppc64le", "riscv64", "s390x", "wasm",
 ))
 GO_TOOL_TAGS = frozenset(("cgo", "gc", "gccgo", "unix", "race", "msan", "asan", "boringcrypto"))
+
+
+def go_environment():
+    # A nonempty GOFLAGS also overrides persisted GOENV flags such as -overlay.
+    # Keep proxy/cache settings, Docker connectivity and supplied role images.
+    return os.environ | GO_EXECUTION_ENV
 
 
 def reserved_go_tag(value):
@@ -255,7 +262,7 @@ def select_required_plan(plan, category=None):
 def load_catalog(root=ROOT):
     result = subprocess.run(["go", "run", "-mod=readonly", str(ROOT / "tools/tagcatalog/main.go"), str(root)],
                             cwd=root, text=True, capture_output=True, timeout=180,
-                            env=os.environ | {"CGO_ENABLED": "0"})
+                            env=go_environment())
     if result.returncode:
         raise ValueError("Go AST test catalog failed: " + result.stderr.strip())
     return json.loads(result.stdout)
@@ -324,7 +331,7 @@ def selected_tests(catalog, package, tags):
 def compile_inventory(package, tags, root=ROOT):
     command = ["go", "test", "-mod=readonly", "-tags=" + tags, "-list=.", package]
     result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180,
-                            env=os.environ | {"CGO_ENABLED": "0"})
+                            env=go_environment())
     if result.returncode:
         raise ValueError("tag profile did not compile: " + tags + "\n" + result.stdout + result.stderr)
     tests = re.findall(r"^Test[^\s/]+$", result.stdout, re.MULTILINE)
@@ -439,15 +446,16 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
                "-timeout=" + profile["timeout"], profile["package"]]
     started = time.time()
     with (directory / "native.log").open("w", encoding="utf-8") as log:
-        environment = os.environ | {"CGO_ENABLED": "0"}
+        environment = go_environment()
         environment.pop("CEPH_TEST_RBD_CLIENT_IMAGE", None)
         child = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, encoding="utf-8", errors="replace",
                                  env=environment)
-        for line in child.stdout:
-            log.write(line)
-            log.flush()
-            print(line, end="", flush=True)
+        with child.stdout:
+            for line in child.stdout:
+                log.write(line)
+                log.flush()
+                print(line, end="", flush=True)
         exit_code = child.wait()
     text = (directory / "native.log").read_text(encoding="utf-8")
     module = re.search(r"^module\s+(\S+)\s*$", (root / "go.mod").read_text(), re.MULTILINE)
@@ -458,6 +466,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
     strict = strict_completion(text, profile)
     result = {"schema": SCHEMA, "profile": profile, "command": command,
               "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
+              "go_environment": dict(GO_EXECUTION_ENV),
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
               "classification": failure_kind(exit_code, completed, strict),
               "source": [{"path": file["path"], "sha256": file["sha256"]} for file in catalog]}
@@ -476,9 +485,10 @@ def compile_profile(plan, category, batch, package, directory, root=ROOT):
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o",
                str((directory / "test-binary").resolve()), profile["package"]]
     result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180,
-                            env=os.environ | {"CGO_ENABLED": "0"})
+                            env=go_environment())
     (directory / "compile.log").write_text(result.stdout + result.stderr)
     report = {"schema": SCHEMA, "profile": profile, "command": command, "exit_code": result.returncode,
+              "go_environment": dict(GO_EXECUTION_ENV),
               "passed": result.returncode == 0,
               "classification": "compiled" if result.returncode == 0 else "compile-failure"}
     (directory / "compile-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
