@@ -41,6 +41,7 @@ type Container struct {
 	configMu              sync.RWMutex
 	configOverrides       map[string]*ConfigOverride
 	flagOverrides         map[string]*OSDFlagOverride
+	fullRatiosOverride    *FullRatiosOverride
 	blocklistOverrides    map[string]*BlocklistOverride
 	moduleOverrides       map[string]*MGRModuleOverride
 	controlPlane          testcontainers.Container

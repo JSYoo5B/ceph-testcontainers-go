@@ -79,6 +79,7 @@ tag compile·단위 테스트 통과만으로 완료로 표시하지 않습니�
 | D01 | runtime 설정·OSD out/in·global 장애 flag·PG 복구 | `TemporaryConfig`, `SetOSDIn`, `TemporaryOSDFlag`, `WaitForPGClean`; native 상태와 I/O·restore | 완료: [fixture 확장](CLUSTER_FIXTURE_EXTENSIONS.md) |
 | D02 | OSD 등록 identity와 삭제 실패 재시도 | `RemoveOSD`, `AddOSD`; 실제 purge 응답 유실·외부 UUID 거부·등록 개수 guard | 완료: 원본 Quay bridge/host `TestOSDRemovalLifecycle`, 8개 object 원문 및 owned cleanup; [삭제 계약](TOPOLOGY_EXTENSIONS.md#osd-삭제의-소유권과-재시도) |
 | D03 | 전체 MON 교체 후 기존 daemon 재시작 | `AddMonitor`, `RemoveMonitor`, `RefreshMonitorConfig`; running/stopped 소유 config 갱신과 개별 설정 유지 | 완료: 원본 Quay bridge/host `TestMonitorRollingReplacement`, MGR/MDS 새 native GID·RADOS/S3 원문·owned cleanup; [bootstrap 계약](TOPOLOGY_EXTENSIONS.md#mon-교체-후-bootstrap-설정) |
+| D04 | cluster nearfull·backfillfull·full 조건과 복원 | `FullRatios`, `TemporaryFullRatios`, `FullRatiosOverride.Restore`; OSDMap native identity/epoch·health code·RADOS 거부와 복구 | 완료: 공식 역할 이미지 Linux ARM64 bridge/host의 6개 fault 단계, errno 28 `FULL_TRY` 거부·객체 부재·기존 bytes 및 일반 write 복구·원래 ratio/pool ID 보존·copied handle 반복 복원, 9개 RUN/PASS·182.29초·outer cleanup PASS; [계약과 실행 범위](OSD_FULL_RATIOS.md) |
 
 Cephx·subvolume authorization의 잠금 대기 취소, 부분 client/grant 보존, secret-safe canonical context cause와 최신 bridge/host 회귀는 [인증 admission 계약](TOPOLOGY_CONTEXT.md#cephxsubvolume-authorization의-context-admission)을 따릅니다.
 
