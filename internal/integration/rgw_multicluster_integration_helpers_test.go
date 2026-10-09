@@ -146,7 +146,9 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 
 func waitMultisiteObject(t *testing.T, ctx context.Context, client s3HTTPClient, path string, wantStatus int, payload []byte) {
 	t.Helper()
-	pollCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	// The first object of a freshly synced bucket regularly takes about two
+	// minutes on CI runners; keep enough headroom for one extra sync round.
+	pollCtx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
 	started := time.Now()
 	var lastErr error
