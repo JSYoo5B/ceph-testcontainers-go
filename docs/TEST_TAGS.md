@@ -38,6 +38,19 @@ workflow 이름·event·PR 번호로 concurrency group을 나눠 같은 PR·같�
 이전 실행만 취소한다. Main push와 수동 실행은 run ID를 사용해 독립적으로
 진행하며, reusable template에는 중복 concurrency 설정을 넣지 않는다.
 
+Stacked PR은 바로 앞 PR의 head 브랜치를 새 PR의 base로 지정한다. PR 번호가
+다르면 concurrency group도 달라 부모 PR의 검증이 유지된다. 브랜치 이름이
+달라서가 아니라 PR 번호가 취소 범위를 나누기 때문이다. 새 PR을 열 때 부모의
+CI를 취소하지 않고, 같은 PR을 갱신할 때만 이전 실행을 취소한다.
+[GitHub concurrency 규칙](https://docs.github.com/en/actions/using-jobs/using-concurrency)을 따른다.
+
+부모 PR merge 후 자식의 base를 바꾸거나 부모 브랜치가 갱신됐을 때는 자식
+head를 rebase하고 push해 새 `synchronize` 검증을 시작한다. 현재 기본
+`pull_request` 활동은 `opened`, `synchronize`, `reopened`이므로 base 변경만으로
+새 검증이 실행된다고 가정하지 않는다. 제목·본문 수정도 받는 `edited`를
+추가하면 CI 취소 범위가 늘어나므로 사용하지 않는다.
+[GitHub PR 이벤트](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)를 참고한다.
+
 | Workflow 이름 | 파일 | PR 검사 범위 |
 | --- | --- | --- |
 | `Code checks` | [code.yml](../.github/workflows/code.yml) | 독립 `unit`, `race`, `static`, `tag-coverage` job |

@@ -40,6 +40,12 @@ func newServiceCluster(t *testing.T, customizers ...testcontainers.ContainerCust
 	image, opts := integrationImages(t)
 	opts = append(opts, ceph.WithOSDCount(2))
 	opts = append(opts, customizers...)
+	return newServiceClusterWithOptions(t, image, opts...)
+}
+
+// This variant keeps the caller's initial topology, including zero OSDs.
+func newServiceClusterWithOptions(t *testing.T, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
+	t.Helper()
 	cluster, err := ceph.Run(t.Context(), image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
