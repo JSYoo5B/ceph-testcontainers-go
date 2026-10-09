@@ -3,6 +3,7 @@
 package apiinventory_test
 
 import (
+	"flag"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -21,6 +22,10 @@ const (
 )
 
 var packages = []string{"ceph", "multicluster"}
+
+// Run "go test ./internal/apiinventory -update" after moving declarations to
+// rewrite stale line anchors. Missing or extra entries still need editing.
+var update = flag.Bool("update", false, "rewrite stale line anchors in "+document)
 
 type declaration struct {
 	file string
@@ -109,11 +114,36 @@ var (
 
 func readDocument(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, document))
+	path := filepath.Join(root, document)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	if !*update {
+		return string(data)
+	}
+	callables, types := declarations(t)
+	text := rowLink.ReplaceAllStringFunc(string(data), func(link string) string {
+		match := rowLink.FindStringSubmatch(link)
+		if match[3] == "" {
+			return link
+		}
+		pkg, _, _ := strings.Cut(match[2], "/")
+		source, exists := callables[pkg+":"+match[1]]
+		if !exists {
+			source, exists = types[pkg+":"+match[1]]
+		}
+		if !exists || source.file != match[2] {
+			return link
+		}
+		return "[" + match[1] + "](../" + match[2] + "#L" + strconv.Itoa(source.line) + ")"
+	})
+	if text != string(data) {
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return text
 }
 
 func block(t *testing.T, text, name string) []string {
