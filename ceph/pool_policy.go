@@ -20,12 +20,18 @@ type PoolQuota struct {
 
 // PoolState is an authoritative snapshot of a native pool, including pools
 // created by services or through Ceph. Size is replica count or EC shard count.
-// It does not change when a policy is subsequently updated.
+// It does not change when a policy is subsequently updated. PGNum is the
+// current count; the target and pending fields show a split or merge still in
+// progress and are zero when the native map omits them.
 type PoolState struct {
 	ID                   int64
 	Name                 string
 	Type                 string
 	Size, MinSize, PGNum int
+	PGNumTarget          int
+	PGNumPending         int
+	PGPlacementNum       int
+	PGPlacementNumTarget int
 	CRUSHRule            int
 	AutoscaleMode        string
 	ErasureCodeProfile   string
@@ -192,6 +198,10 @@ func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
 		Size               int    `json:"size"`
 		MinSize            int    `json:"min_size"`
 		PGNum              int    `json:"pg_num"`
+		PGNumTarget        int    `json:"pg_num_target"`
+		PGNumPending       int    `json:"pg_num_pending"`
+		PGPlacementNum     int    `json:"pg_placement_num"`
+		PGPlacementTarget  int    `json:"pg_placement_num_target"`
 		CRUSHRule          int    `json:"crush_rule"`
 		AutoscaleMode      string `json:"pg_autoscale_mode"`
 		ErasureCodeProfile string `json:"erasure_code_profile"`
@@ -216,7 +226,7 @@ func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
 			return nil, errors.New("incomplete native pool policy")
 		}
 		seenIDs[*pool.ID], seenNames[pool.Name] = true, true
-		states = append(states, PoolState{ID: *pool.ID, Name: pool.Name, Type: kind, Size: pool.Size, MinSize: pool.MinSize, PGNum: pool.PGNum, CRUSHRule: pool.CRUSHRule, AutoscaleMode: pool.AutoscaleMode, ErasureCodeProfile: pool.ErasureCodeProfile, Flags: pool.Flags, Quota: PoolQuota{MaxBytes: pool.MaxBytes, MaxObjects: pool.MaxObjects}})
+		states = append(states, PoolState{ID: *pool.ID, Name: pool.Name, Type: kind, Size: pool.Size, MinSize: pool.MinSize, PGNum: pool.PGNum, PGNumTarget: pool.PGNumTarget, PGNumPending: pool.PGNumPending, PGPlacementNum: pool.PGPlacementNum, PGPlacementNumTarget: pool.PGPlacementTarget, CRUSHRule: pool.CRUSHRule, AutoscaleMode: pool.AutoscaleMode, ErasureCodeProfile: pool.ErasureCodeProfile, Flags: pool.Flags, Quota: PoolQuota{MaxBytes: pool.MaxBytes, MaxObjects: pool.MaxObjects}})
 	}
 	return states, nil
 }

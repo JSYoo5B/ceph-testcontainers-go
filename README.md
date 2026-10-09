@@ -85,7 +85,7 @@ func TestTopology(t *testing.T) {
 노드·client 설정 상속, legacy 포트 미노출과 실제 연결 검증 범위는
 [Messenger secure 구성 계약](docs/MESSENGER_SECURE.md)을 따릅니다.
 
-`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다.
+`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `WithCephFS`와 `WithRGW`는 초기 역할 구성을, `StartCephFSWithConfig`, `StartRGWWithConfig`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다. 실행 중 PG split·merge와 CRUSH placement 이동은 `SetPoolPGCount`·`WaitForPoolPGCount`·`SetPoolPlacement`로 만들며 [PG 재배치 계약](docs/POOL_RELOCATION.md)을 따릅니다.
 
 ```go
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,

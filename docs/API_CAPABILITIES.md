@@ -16,7 +16,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 | 기능 축 | Operation: fixture 조건 준비·장애·복원 | Check: 확인하는 범위 |
 | --- | --- | --- |
 | 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, owned cleanup | quorum, native health code·원인·mute, manager/module 준비, OSD 상태·flag, PG clean |
-| Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량, caps, blocklist·설정 조회 |
+| Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 실행 중 PG 수·placement 변경, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량·PG target 도달, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
 | CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
 | RGW client 조건 | gateway, user/account/caps·quota, placement/storage class, native TLS 설정 | endpoint와 native identity·placement·quota/caps 설정·user/account 저장량 |
@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
-| Fixture Operation | 93 | 46 | 139 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 77 | 33 | 110 |
+| Fixture Operation | 95 | 46 | 141 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 78 | 33 | 111 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 194 | 90 | **284** |
+| 전체 | 197 | 90 | **287** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 284개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 287개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 
 실행 검증은 [fixture 범위와 native 기록](CLUSTER_SCENARIOS.md),
@@ -87,7 +87,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (139개)
+### Fixture Operation (141개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -114,7 +114,8 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/options.go](../ceph/options.go) | [WithMonitorCount](../ceph/options.go#L58) · [WithManagerCount](../ceph/options.go#L69) · [WithNoInitialManagers](../ceph/options.go#L86) · [WithHostNetwork](../ceph/options.go#L106)<br>[WithSeparateClusterNetwork](../ceph/options.go#L116) · [WithNoInitialOSDs](../ceph/options.go#L181) · [WithOSDCount](../ceph/options.go#L189) · [WithInitialOSDs](../ceph/options.go#L203)<br>[WithDefaultCRUSHRoot](../ceph/options.go#L233) · [WithPoolDefaults](../ceph/options.go#L246) · [WithOSDBlockSize](../ceph/options.go#L261) · [WithOSDInMemoryStorage](../ceph/options.go#L281) · [WithMessengerMode](../ceph/options.go#L46) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.SetOSDIn](../ceph/osd_policy.go#L57) · [Container.TemporaryOSDFlag](../ceph/osd_policy.go#L132) · [OSDFlagOverride.Restore](../ceph/osd_policy.go#L175) |
 | [ceph/pool.go](../ceph/pool.go) | [Container.CreatePool](../ceph/pool.go#L62) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.SetPoolQuota](../ceph/pool_policy.go#L64) · [Container.SetPoolReplication](../ceph/pool_policy.go#L104) |
+| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.SetPoolQuota](../ceph/pool_policy.go#L70) · [Container.SetPoolReplication](../ceph/pool_policy.go#L110) |
+| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [Container.SetPoolPGCount](../ceph/pool_relocation.go#L31) · [Container.SetPoolPlacement](../ceph/pool_relocation.go#L179) |
 | [ceph/rbd.go](../ceph/rbd.go) | [Container.InitRBDPool](../ceph/rbd.go#L41) · [Container.CreateRBDNamespace](../ceph/rbd.go#L71) · [Container.RemoveRBDNamespace](../ceph/rbd.go#L131) |
 | [ceph/rgw.go](../ceph/rgw.go) | [Container.StartRGW](../ceph/rgw.go#L53) · [Container.RemoveRGW](../ceph/rgw.go#L61) · [Container.StartRGWWithConfig](../ceph/rgw.go#L89) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.CreateUser](../ceph/rgw_admin.go#L258) · [RGWContainer.SetUserQuota](../ceph/rgw_admin.go#L469) · [RGWContainer.SetBucketQuota](../ceph/rgw_admin.go#L475) · [RGWContainer.SuspendUser](../ceph/rgw_admin.go#L526)<br>[RGWContainer.RemoveUser](../ceph/rgw_admin.go#L555) |
@@ -137,7 +138,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
 | [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (67개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (68개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -156,8 +157,9 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/health_details.go](../ceph/health_details.go) | [Container.HealthDetails](../ceph/health_details.go#L55) |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L38) · [Container.PoolStatus](../ceph/pool_policy.go#L48) |
+| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L44) · [Container.PoolStatus](../ceph/pool_policy.go#L54) |
 | [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [Container.PoolPGs](../ceph/pool_pgs.go) |
+| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [Container.WaitForPoolPGCount](../ceph/pool_relocation.go#L73) |
 | [ceph/pool_usage.go](../ceph/pool_usage.go) | [Container.PoolUsage](../ceph/pool_usage.go#L44) |
 | [ceph/rbd.go](../ceph/rbd.go) | [Container.ListRBDNamespaces](../ceph/rbd.go#L107) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.UserInfo](../ceph/rgw_admin.go#L457) |
@@ -216,7 +218,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.WithClientIdentity](../ceph/auth.go#L191) |
 | [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L378) · [Container.Ceph](../ceph/ceph.go#L401) |
-| [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L83) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
+| [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L99) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.Admin](../ceph/rgw_admin.go#L122) |
 | [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.SourceRBD](../multicluster/rbd.go#L571) · [RBDMirror.DestinationRBD](../multicluster/rbd.go#L580) |
 | [multicluster/rgw.go](../multicluster/rgw.go) | [RGWMultisite.SourceAdmin](../multicluster/rgw.go#L465) · [RGWMultisite.DestinationAdmin](../multicluster/rgw.go#L471) |
@@ -247,7 +249,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 89개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 90개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
@@ -272,8 +274,9 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [OSDState](../ceph/osd_policy.go#L20) · [OSDFlagOverride](../ceph/osd_policy.go#L116) |
 | [ceph/placement.go](../ceph/placement.go) | [OSDConfig](../ceph/placement.go#L16) |
 | [ceph/pool.go](../ceph/pool.go) | [PoolConfig](../ceph/pool.go#L18) · [ErasureCodeConfig](../ceph/pool.go#L39) · [Pool](../ceph/pool.go#L48) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [PoolQuota](../ceph/pool_policy.go#L16) · [PoolState](../ceph/pool_policy.go#L24) |
+| [ceph/pool_policy.go](../ceph/pool_policy.go) | [PoolQuota](../ceph/pool_policy.go#L16) · [PoolState](../ceph/pool_policy.go#L26) |
 | [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [PoolPGSnapshot](../ceph/pool_pgs.go) · [PGState](../ceph/pool_pgs.go) · [PGStats](../ceph/pool_pgs.go) |
+| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [PoolPlacement](../ceph/pool_relocation.go#L17) |
 | [ceph/pool_usage.go](../ceph/pool_usage.go) | [PoolUsageSnapshot](../ceph/pool_usage.go#L23) |
 | [ceph/rbd.go](../ceph/rbd.go) | [RBDNamespace](../ceph/rbd.go#L15) |
 | [ceph/rgw.go](../ceph/rgw.go) | [RGWContainer](../ceph/rgw.go#L24) · [RGWConfig](../ceph/rgw.go#L43) |

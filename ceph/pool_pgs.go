@@ -168,6 +168,10 @@ func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, erro
 			Size               *uint8  `json:"size"`
 			MinSize            *uint8  `json:"min_size"`
 			PGNum              *uint32 `json:"pg_num"`
+			PGNumTarget        *uint32 `json:"pg_num_target"`
+			PGNumPending       *uint32 `json:"pg_num_pending"`
+			PGPlacementNum     *uint32 `json:"pg_placement_num"`
+			PGPlacementTarget  *uint32 `json:"pg_placement_num_target"`
 			CRUSHRule          *uint8  `json:"crush_rule"`
 			AutoscaleMode      *string `json:"pg_autoscale_mode"`
 			ErasureCodeProfile *string `json:"erasure_code_profile"`
@@ -207,6 +211,15 @@ func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, erro
 		result = PoolState{ID: *pool.ID, Name: *pool.Name, Type: kind, Size: int(*pool.Size), MinSize: int(*pool.MinSize), PGNum: int(*pool.PGNum),
 			CRUSHRule: int(*pool.CRUSHRule), AutoscaleMode: *pool.AutoscaleMode, ErasureCodeProfile: *pool.ErasureCodeProfile,
 			Flags: *pool.Flags, Quota: PoolQuota{MaxBytes: *pool.MaxBytes, MaxObjects: *pool.MaxObjects}}
+		// Progress fields are optional; an omitted value remains zero.
+		for _, field := range []struct {
+			value  *uint32
+			target *int
+		}{{pool.PGNumTarget, &result.PGNumTarget}, {pool.PGNumPending, &result.PGNumPending}, {pool.PGPlacementNum, &result.PGPlacementNum}, {pool.PGPlacementTarget, &result.PGPlacementNumTarget}} {
+			if field.value != nil {
+				*field.target = int(*field.value)
+			}
+		}
 		found = true
 	}
 	if !found {
