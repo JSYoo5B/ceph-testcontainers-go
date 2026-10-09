@@ -104,6 +104,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 for event in ("push", "pull_request", "workflow_dispatch"):
                     self.assertRegex(workflow, r"(?m)^  " + event + r":")
                 self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
+                self.assertEqual(scalar(workflow, "group"),
+                                 "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}")
+                self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
                 self.assertNotRegex(workflow, r"(?m)^    needs:")
                 callers = [job for job in self.jobs[filename].values()
                            if "uses: ./.github/workflows/tagged-runtime.yml" in job]
@@ -116,9 +119,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         reusable = self.workflows["tagged-runtime.yml"]
         self.assertRegex(reusable, r"(?m)^  workflow_call:")
         self.assertNotRegex(reusable, r"(?m)^  (?:push|pull_request|workflow_dispatch):")
+        self.assertNotIn("concurrency:", reusable)
         optional = self.workflows["native-regressions.yml"]
         self.assertRegex(optional, r"(?m)^  workflow_dispatch:")
         self.assertNotRegex(optional, r"(?m)^  (?:push|pull_request|workflow_call):")
+        self.assertNotIn("concurrency:", optional)
 
     def test_entry_categories_partition_source_profiles_without_ci_name_inventories(self):
         categories = [category for _, category in self.ENTRY_POINTS.values()]
@@ -208,6 +213,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
+        self.assertEqual(scalar(workflow, "group"),
+                         "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}")
+        self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
         for block in jobs.values():
             self.assertNotIn("./.github/actions/scenario-images", block)
             self.assertNotIn("./.github/actions/runtime-cleanup", block)

@@ -33,6 +33,10 @@ process 예산을 조정하거나 아래 runner로 필요한 batch만 실행할 
 검사 유형을 먼저 확인할 수 있다. 각 workflow는 main의 `push`·`pull_request`·
 수동 실행으로 시작하며 다른 유형의 완료를 기다리지 않는다. PR 브랜치의
 `push`에서는 자동 실행하지 않아 같은 변경의 push/PR suite 중복을 막는다.
+PR 업데이트는 이전 CI를 취소하고 최신 커밋으로 검사한다. 각 자동 workflow는
+workflow 이름·event·PR 번호로 concurrency group을 나눠 같은 PR·같은 유형의
+이전 실행만 취소한다. Main push와 수동 실행은 run ID를 사용해 독립적으로
+진행하며, reusable template에는 중복 concurrency 설정을 넣지 않는다.
 
 | Workflow 이름 | 파일 | PR 검사 범위 |
 | --- | --- | --- |
