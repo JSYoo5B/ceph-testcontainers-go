@@ -306,7 +306,26 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 		if remaining <= len(status.MonMap.Mons)/2 || len(status.MonMap.Mons) <= 1 {
 			return errors.New("removing this monitor would lose quorum; add a replacement first")
 		}
-		if _, err := c.Ceph(ctx, "mon", "remove", name); err != nil {
+		// A CLI session on the monitor being removed can lose the reply and
+		// wait until its deadline, so send the command only to survivors.
+		survivors := status
+		survivors.MonMap.Mons = slices.DeleteFunc(slices.Clone(status.MonMap.Mons), func(current struct {
+			Name        string `json:"name"`
+			PublicAddrs struct {
+				Addrvec []struct {
+					Type string `json:"type"`
+					Addr string `json:"addr"`
+				} `json:"addrvec"`
+			} `json:"public_addrs"`
+		}) bool {
+			return current.Name == name
+		})
+		survivors.QuorumNames = slices.DeleteFunc(slices.Clone(status.QuorumNames), func(current string) bool { return current == name })
+		hosts, err := monitorBootstrapAddresses(survivors)
+		if err != nil {
+			return fmt.Errorf("select surviving monitors before removing %s: %w", name, err)
+		}
+		if _, err := c.Ceph(ctx, "-m", hosts, "mon", "remove", name); err != nil {
 			return fmt.Errorf("remove monitor %s from native membership: %w", name, err)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -350,11 +351,15 @@ func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string,
 		}
 		members := make([]map[string]any, 0, len(nativeMembers))
 		for _, name := range nativeMembers {
-			members = append(members, map[string]any{"name": name, "public_addrs": map[string]any{"addrvec": []map[string]string{{"type": "v2", "addr": "127.0.0.1:3300/0"}}}})
+			members = append(members, map[string]any{"name": name, "public_addrs": map[string]any{"addrvec": []map[string]string{{"type": "v2", "addr": monitorLifecycleAddress(name) + "/0"}}}})
 		}
 		output, _ = json.Marshal(map[string]any{"quorum_names": nativeQuorum, "monmap": map[string]any{"mons": members}})
-	case strings.HasPrefix(call, "mon remove "):
-		name := strings.TrimPrefix(call, "mon remove ")
+	case strings.HasPrefix(call, "-m ") && strings.Contains(call, " mon remove "):
+		hosts, name, _ := strings.Cut(strings.TrimPrefix(call, "-m "), " mon remove ")
+		// The removal must be sent only to surviving members.
+		if hosts == "" || strings.Contains(hosts, monitorLifecycleAddress(name)) {
+			return 0, nil, errors.New("monitor removal was not limited to survivors: " + call)
+		}
 		control.members = slices.DeleteFunc(control.members, func(member string) bool { return member == name })
 		control.quorum = slices.DeleteFunc(control.quorum, func(member string) bool { return member == name })
 		control.removals++
@@ -368,6 +373,11 @@ func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string,
 }
 
 func (control *monitorLifecycleControl) GetContainerID() string { return "control" }
+
+// Each fixture member has its own address so survivor selection is visible.
+func monitorLifecycleAddress(name string) string {
+	return "127.0.0.1:" + strconv.Itoa(3300+int(name[0]))
+}
 
 func (control *monitorLifecycleControl) CopyFileFromContainer(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(control.config)), nil
