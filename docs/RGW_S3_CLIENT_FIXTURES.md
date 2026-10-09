@@ -2,6 +2,8 @@
 
 S3 object·bucket API는 실제 application client가 호출합니다. testcontainers는 `Run` → `StartRGWWithConfig` → fresh `CreateUser` → `Credentials`와 `S3Endpoint`로 서버와 principal을 제공합니다. 아래 테스트는 이 공개 API와 `Admin`/`TemporaryConfig`를 조합한 실행 가능한 recipe입니다. 공개 library에 S3 CRUD wrapper나 SDK 의존성을 추가하지 않습니다.
 
+Bucket notification topic과 HTTP push 수신은 [notification recipe](RGW_NOTIFICATIONS.md)를 따릅니다.
+
 ## 개별 bucket quota와 reshard
 
 [TestRGWBucketMaintenance](../internal/integration/rgw_bucket_maintenance_integration_test.go)는 fresh user가 만든 두 bucket의 native ID·owner를 확인합니다. 한 bucket에만 `quota set/enable --quota-scope bucket --bucket <name>`을 적용하고, 실제 추가 object가 `QuotaExceeded`로 거부되는지, 기존 bytes와 sibling bucket의 쓰기가 유지되는지 확인합니다. quota를 끄면 같은 bucket의 쓰기가 복구되어야 합니다.
