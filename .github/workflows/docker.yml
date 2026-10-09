@@ -1,0 +1,17 @@
+name: Docker checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    name: Docker checks
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: environment
+      check_name: Docker checks

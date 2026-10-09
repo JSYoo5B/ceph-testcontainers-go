@@ -178,10 +178,114 @@ class TagPlannerTests(unittest.TestCase):
 
     def test_code_and_sdk_bridge_profiles_have_no_ceph_requirement(self):
         code = fixture(path="internal/integration/code_test.go", category="code", batch="code", tests=("TestCode",))
-        sdk = fixture(path="internal/dockerbridge/runtime_test.go", tests=("TestSDKBridge",), batch="sdk")
+        sdk = fixture(path="internal/dockerbridge/runtime_test.go", tests=("TestSDKBridge",),
+                      category="environment", batch="sdk")
         plan = engine.discover([code, sdk])
         self.assertEqual([profile["requires_ceph"] for profile in plan["include"]], [False, False])
         self.assertEqual(len({profile["id"] for profile in plan["include"]}), 2)
+        self.assertTrue(engine.evaluate(sdk["constraint"], {"all"}))
+        self.assertTrue(engine.evaluate(sdk["constraint"], {"integration"}))
+        self.assertFalse(engine.evaluate(sdk["constraint"], {"integration", "ci", "ci_short"}))
+        self.assertTrue(engine.evaluate(sdk["constraint"], {"integration", "ci", "ci_environment"}))
+
+    def test_category_plans_are_disjoint_and_exhaustive_without_narrowing_coverage(self):
+        catalog = [fixture(path="internal/integration/" + category + "_test.go",
+                           tests=("Test" + category.title(),), category=category, batch=category)
+                   for category in engine.CATEGORIES]
+        plan = engine.discover(catalog)
+        selected = [engine.select_required_plan(plan, category) for category in engine.RUNTIME_CATEGORIES]
+        global_profiles = [profile for profile in plan["include"] if profile["category"] != "code"]
+        self.assertEqual(sorted(profile["id"] for item in selected for profile in item["include"]),
+                         sorted(profile["id"] for profile in global_profiles))
+        self.assertEqual(sum(len(item["include"]) for item in selected), len(global_profiles))
+        for category, item in zip(engine.RUNTIME_CATEGORIES, selected):
+            self.assertEqual({profile["category"] for profile in item["include"]}, {category})
+            self.assertEqual(item["coverage_scope"], "required")
+            self.assertEqual(item["required_include"], plan["include"])
+            self.assertEqual(item["required_parents"], plan["required_parents"])
+            self.assertEqual(item["required_executions"], plan["required_executions"])
+            self.assertEqual(item["required_profiles"], plan["required_profiles"])
+        self.assertEqual(len(plan["include"]), len(engine.CATEGORIES))
+
+    def test_empty_or_unsupported_category_cannot_produce_a_matrix(self):
+        plan = engine.discover([fixture()])
+        for category in ("code", "unknown", "environment"):
+            with self.subTest(category=category), self.assertRaises(ValueError):
+                engine.select_required_plan(plan, category)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch("sys.stderr", new=io.StringIO()), patch.object(engine, "verify") as verifier:
+            output = Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--category", "environment", "--verify", "--github-output", str(output)]), 1)
+            self.assertFalse(output.exists())
+            verifier.assert_not_called()
+
+    def test_filtered_plan_verification_still_covers_the_entire_required_universe(self):
+        catalog = [fixture(), fixture(path="internal/dockerbridge/runtime_test.go", category="environment",
+                                     batch="sdk", tests=("TestEnvironment",))]
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch.object(engine, "verify", return_value={"passed": True}) as verifier, \
+                patch("sys.stdout", new=io.StringIO()):
+            output = Path(temporary) / "plan.json"
+            github_output = Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--category", "environment", "--verify", "--output", str(output),
+                                          "--github-output", str(github_output)]), 0)
+            report = json.loads(output.read_text())
+            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+        verified_plan = verifier.call_args.args[1]
+        self.assertEqual(len(verified_plan["include"]), 2)
+        self.assertEqual(report["required_profiles"], 2)
+        self.assertEqual(report["selected_profiles"], 1)
+        self.assertEqual(report["compiled_coverage"], {"passed": True})
+        self.assertEqual(matrix["include"], report["include"])
+        self.assertEqual(matrix["include"][0]["category"], "environment")
+        self.assertFalse(matrix["include"][0]["requires_ceph"])
+
+    def test_optional_plan_is_explicit_and_cannot_claim_required_coverage(self):
+        optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
+        optional["constraint"] = combine("and", optional["constraint"], tag("native_regression"))
+        optional["tags"].append("native_regression")
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[fixture(), optional]), \
+                patch.object(engine, "verify") as verifier, patch("sys.stdout", new=io.StringIO()):
+            output = Path(temporary) / "plan.json"
+            github_output = Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--optional", "--batch", "native_rgw_translation",
+                                          "--output", str(output), "--github-output", str(github_output)]), 0)
+            report = json.loads(output.read_text())
+            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+        self.assertEqual(report["coverage_scope"], "optional")
+        self.assertEqual(report["selected_batch"], "native_rgw_translation")
+        self.assertEqual(matrix["include"], report["include"])
+        self.assertEqual(matrix["include"][0]["category"], "optional")
+        self.assertFalse(any(key.startswith("required_") for key in report))
+        self.assertNotIn("compiled_coverage", report)
+        verifier.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "unsupported or empty"):
+            engine.select_optional_plan(engine.discover_optional([optional]), "not_declared")
+
+    def test_optional_plan_requires_explicit_batch_and_rejects_required_flags(self):
+        arguments = (["plan", "--optional"], ["plan", "--batch", "native_rgw_translation"],
+                     ["plan", "--optional", "--batch", "native_rgw_translation", "--verify"],
+                     ["plan", "--optional", "--batch", "native_rgw_translation", "--category", "short"])
+        for command in arguments:
+            with self.subTest(command=command), patch.object(engine, "load_catalog") as catalog, \
+                    patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(engine.main(command), 1)
+                catalog.assert_not_called()
+
+    def test_optional_compile_uses_only_the_explicit_optional_source_profile(self):
+        optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
+        optional["constraint"] = combine("and", optional["constraint"], tag("native_regression"))
+        optional["tags"].append("native_regression")
+        with patch.object(engine, "load_catalog", return_value=[fixture(), optional]), \
+                patch.object(engine, "compile_profile", return_value={"passed": True}) as compiler, \
+                patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(engine.main(["compile", "--category", "optional", "--batch", "native_rgw_translation",
+                                          "--directory", "/never/create"]), 0)
+        selected_plan = compiler.call_args.args[0]
+        self.assertEqual(selected_plan["coverage_scope"], "optional")
+        self.assertEqual(len(selected_plan["include"]), 1)
+        self.assertEqual(selected_plan["include"][0]["category"], "optional")
+        self.assertIn("native_regression", selected_plan["include"][0]["tags"].split(","))
 
     def test_compiled_inventory_must_match_all_category_and_batch_sources(self):
         file = fixture()

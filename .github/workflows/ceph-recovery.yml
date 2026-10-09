@@ -1,0 +1,17 @@
+name: Ceph recovery
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    name: Ceph recovery
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: recovery
+      check_name: Ceph recovery

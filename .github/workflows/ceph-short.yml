@@ -1,0 +1,17 @@
+name: Ceph short
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    name: Ceph short
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: short
+      check_name: Ceph short

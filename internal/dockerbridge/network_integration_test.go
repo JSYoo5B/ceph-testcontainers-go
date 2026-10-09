@@ -1,4 +1,4 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_sdk_network))))
+//go:build all || (integration && (!ci || (ci_environment && (!ci_batch || ci_batch_sdk_network))))
 
 //ci: timeout=15m job-timeout=25
 

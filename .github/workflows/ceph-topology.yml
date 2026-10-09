@@ -1,0 +1,17 @@
+name: Ceph topology
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    name: Ceph topology
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: topology
+      check_name: Ceph topology

@@ -310,7 +310,9 @@ make test-all
 python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
 ```
 
-CI는 소스의 `ci_code`, `ci_short`, `ci_topology`, `ci_multicluster`, `ci_recovery`와 `ci_batch_*`를 읽어 자동으로 batch를 구성합니다. 같은 파일에 Test를 추가하거나 새 batch 파일을 추가할 때 workflow의 테스트 이름 목록을 수정하지 않습니다. 각 runtime job은 compile → environment → native → cleanup 단계로 결과를 기록합니다. `all`은 category 조건을 우회하므로 `all,ci,ci_short`는 선택 필터가 아닙니다. Category/batch 실행은 [TEST_TAGS.md](docs/TEST_TAGS.md)의 planner/runner를 사용합니다.
+PR 검증은 `Code checks`, `Docker checks`, `Ceph short`, `Ceph topology`, `Ceph multicluster`, `Ceph recovery` workflow로 나눕니다. `Code checks` 안에서도 unit·race·static·tag coverage를 독립 job으로 표시합니다. Runtime 결과는 유형과 batch 이름으로 표시하며 compile → environment → native → cleanup 중 실제 실패한 단계의 summary와 annotation을 남깁니다. 알려진 native regression은 별도 수동 `Native regressions` workflow로 실행합니다.
+
+CI는 소스의 `ci_code`, `ci_environment`, `ci_short`, `ci_topology`, `ci_multicluster`, `ci_recovery`와 `ci_batch_*`를 읽어 자동으로 batch를 구성합니다. 각 runtime workflow는 자기 category만 선택하며, 전체 compiled coverage는 `Code checks`에서 확인합니다. 같은 파일에 Test를 추가하거나 새 batch 파일을 추가할 때 workflow의 테스트 이름 목록을 수정하지 않습니다. `all`은 category 조건을 우회하므로 `all,ci,ci_short`는 선택 필터가 아닙니다. Workflow 구분과 category/batch 실행은 [TEST_TAGS.md](docs/TEST_TAGS.md)의 planner/runner를 사용합니다.
 
 기존 이름 기반 Make target과 `-run`은 수동 진단 경로로 유지합니다. `check`는 단위·race·vet와 tag 컴파일만 수행하며 Docker를 실행하지 않습니다. 아래 target은 준비된 서버 이미지를 직접 실행합니다.
 

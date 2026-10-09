@@ -17,12 +17,29 @@ Linux AMD64에서 전체 필수 시나리오를 실행한다. 이미지 계열·
 `all,ci,ci_short`를 category 필터로 사용하지 않는다. CI의 실제 선택은
 [tag planner/runner](TEST_TAGS.md#ci-category와-batch)를 사용한다.
 
-Workflow는 고정된 code 검사·계획 생성·runtime 실행 단계만 유지하고,
-`ci_code`, `ci_short`, `ci_topology`, `ci_multicluster`, `ci_recovery` 및
-`ci_batch_*`와 파일 header의 `//ci:`에서 category/batch·시간 예산을 읽는다.
+PR 검증은 실제 workflow 종류로 나눈다. [Code checks](../.github/workflows/code.yml)는
+unit·race·static·tag-coverage를 독립 job으로 표시한다.
+[Docker checks](../.github/workflows/docker.yml),
+[Ceph short](../.github/workflows/ceph-short.yml),
+[Ceph topology](../.github/workflows/ceph-topology.yml),
+[Ceph multicluster](../.github/workflows/ceph-multicluster.yml),
+[Ceph recovery](../.github/workflows/ceph-recovery.yml)는 별도 `push`·PR workflow다.
+어떤 유형이 실패했는지 PR Checks와 Actions 목록에서 바로 구분하고 각 유형을
+따로 재실행할 수 있다. [Native regressions](../.github/workflows/native-regressions.yml)는
+준비된 optional RGW 이미지를 받는 별도 수동 workflow이며 PR 필수 범위에 넣지 않는다.
+
+각 runtime workflow는 소스의 `ci_environment`, `ci_short`, `ci_topology`,
+`ci_multicluster`, `ci_recovery`와 `ci_batch_*`, 파일 header의 `//ci:`에서 자기
+category/batch·시간 예산을 읽는다. 실제 runner의 공통 실행은
+[tagged-runtime.yml](../.github/workflows/tagged-runtime.yml)의 `workflow_call`로
+공유하며, 이 reusable 파일은 별도 PR 이벤트를 받지 않는다. Source AST와 실제
+compiled inventory의 전체 대조는 `Code checks`의 `tag-coverage`에서 수행하므로
+runtime planner가 그 검사를 category마다 반복하지 않는다.
+
 새 Test는 소스에서 자동으로 발견하며 workflow의 이름 selector를 수정하지
-않는다. Source AST와 실제 compiled inventory를 대조해 미분류·누락·중복을
-거부한다. 기존 `make scenario-*`와 이름 기반 `-run`은 수동 진단 경로다.
+않는다. 미분류·누락·중복은 compiled coverage 검사에서 실패한다. 기존
+`make scenario-*`와 이름 기반 `-run`은 수동 진단 경로다. 자세한 workflow와
+source 추가 방법은 [테스트 선택 계약](TEST_TAGS.md)을 따른다.
 
 현재 소스의 필수 plan은 code profile 하나와 runtime batch 59개를 선택한다.
 Named parent 124개·실행 instance 131개에는 Docker 없는 helper 검사 8개와
@@ -40,8 +57,8 @@ Docker bridge runtime 2개가 포함된다. Bridge package의 untagged 단위 �
 4. **Cleanup**: baseline이 성공하면 native 실패 뒤에도 같은 engine의
    owned container·network·named volume 부재를 확인한다.
 
-Compile·Docker/이미지 준비·native assertion/completion·cleanup 실패를
-단계별로 찾을 수 있다. Category와 단계만으로 근본 원인을 확정하지 않으며
+실제 step outcome의 summary와 실패 annotation으로 Compile·Docker/이미지 준비·
+native assertion/completion·cleanup 실패를 단계별로 찾을 수 있다. Category와 단계만으로 근본 원인을 확정하지 않으며
 `compile.log`, `compile-report.json`, `native.log`, `report.json`과 별도 이미지·
 cleanup receipt를 함께 확인한다. 테스트 내부 phase·negative window·bytes와
 원래 process·checkpoint 완료 조건을 유지한다.
@@ -482,8 +499,9 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 공식 역할 이미지 네 개를 명시적으로 선택한다. 이전 Quay 실행의 결과를
 새 역할 이미지 실행 결과로 표시하지 않는다.
 
-[workflow](../.github/workflows/test.yml)는 호스트 `make check`·helper 검사와
-source 기반 plan 검증 뒤 독립 category/batch를 실행한다. Runtime batch는
+[Code checks](../.github/workflows/code.yml)는 호스트 unit·race·vet·tag 컴파일과
+helper 검사, 전체 source/compiled coverage를 확인한다. 각 runtime workflow는
+독립적으로 자신의 category/batch를 실행한다. Runtime batch는
 Ubuntu 24.04 Linux AMD64 runner와 `CGO_ENABLED=0`을 사용한다. 실제 go-ceph
 probe만 준비된 Linux 소비자 이미지 안에서 cgo/native 라이브러리를 사용한다.
 역할 이미지에 compiler나 개발 헤더를 요구하지 않는다.
@@ -654,8 +672,8 @@ Runtime job은 [cleanup action](../.github/actions/runtime-cleanup/action.yml)�
 ## 이미지 호환성 matrix
 
 이 조합 목록은 수동 Go 호환성 검사 입력과 과거 자동 matrix 결과입니다.
-현재 [workflow](../.github/workflows/test.yml)는 `image-compatibility` job을
-자동 실행하지 않고 공식 roles의 전체 필수 시나리오를 검사합니다. 이전 자동
+현재 [runtime workflow](../.github/workflows/tagged-runtime.yml)는 `image-compatibility`
+job을 자동 실행하지 않고 공식 roles의 전체 필수 시나리오를 유형별로 검사합니다. 이전 자동
 matrix는 세 계열 × `all`/`roles` × Linux AMD64/ARM64의 12개 조합에서
 같은 대표 9개를 반복했습니다. 다른 조합은 아래 수동 target에서 native
 Docker 엔진을 사용하며 에뮬레이션 결과로 대신하지 않습니다.
@@ -1001,7 +1019,7 @@ TestMultiClusterRGWSyncTranslationFiltering/ordinary_user_denial_grant
 TestHostNetworkMultiClusterRGWSyncTranslationFiltering/ordinary_user_denial_grant
 ```
 
-이 경로에는 expected-failure 변환이나 권한·데이터 판정 완화가 없습니다. CI에서는 `workflow_dispatch`의 `rgw_native_regressions`를 명시적으로 선택하며, 이미 준비된 patched RGW를 `rgw_image` 입력으로 지정할 수 있습니다. 빈 입력은 준비된 기본 official RGW 역할 이미지입니다. 이 job은 `native_regression` tag의 `native_rgw_translation` batch를 실행하며 서버 이미지를 빌드하지 않습니다.
+이 경로에는 expected-failure 변환이나 권한·데이터 판정 완화가 없습니다. CI에서는 별도 `Native regressions` workflow를 수동 실행하며, 이미 준비된 patched RGW를 `rgw_image` 입력으로 지정할 수 있습니다. 빈 입력은 준비된 기본 official RGW 역할 이미지입니다. 이 job은 `native_regression` tag의 `native_rgw_translation` batch를 실행하며 서버 이미지를 빌드하지 않습니다.
 
 선택적 native mirror shuffle 이름 `TestMultiClusterCephFSMirrorDaemonTopology`와 `TestHostNetworkCephFSMirrorDaemonTopology`는 일반 `all`·필수 tag plan과 과거 Go CI 101개에 포함되지 않습니다. 필수 daemon rebalance/HA와 구분하며 `native_regression` tag의 `native_shuffle` batch로 명시적으로 실행합니다. 이전 환경 변수의 skip gate는 사용하지 않습니다.
 

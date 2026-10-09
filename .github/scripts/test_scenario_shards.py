@@ -38,8 +38,19 @@ def scalar(text, key):
 
 
 def run_command(step):
-    match = re.search(r"^\s+(?:-\s+)?run:\s*(.*?)\s*$", step, re.MULTILINE)
-    return match[1] if match else ""
+    match = re.search(r"^( +)(?:-\s+)?run:\s*(.*?)\s*$", step, re.MULTILINE)
+    if not match:
+        return ""
+    if match[2] not in ("|", "|-", "|+", ">", ">-", ">+"):
+        return match[2]
+    indent = len(match[1])
+    lines = []
+    for line in step[match.end():].splitlines():
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        if line.strip():
+            lines.append(line.strip())
+    return "\n".join(lines)
 
 
 def engine_step(job_steps, operation):
@@ -50,33 +61,103 @@ def engine_step(job_steps, operation):
     return matches[0]
 
 
+def engine_command(job_steps, operation, option=None):
+    commands = [shlex.split(line) for line in run_command(engine_step(job_steps, operation)).splitlines()
+                if re.search(r"\btag_scenarios\.py " + re.escape(operation) + r"(?:\s|$)", line)]
+    if option:
+        commands = [command for command in commands if option in command]
+    if len(commands) != 1:
+        raise AssertionError("expected one engine command for selected operation/option")
+    return commands[0]
+
+
 class SourceDrivenWorkflowTests(unittest.TestCase):
+    # Workflow categories are public check types, never a list of Test names.
+    ENTRY_POINTS = {
+        "docker.yml": ("Docker checks", "environment"),
+        "ceph-short.yml": ("Ceph short", "short"),
+        "ceph-topology.yml": ("Ceph topology", "topology"),
+        "ceph-multicluster.yml": ("Ceph multicluster", "multicluster"),
+        "ceph-recovery.yml": ("Ceph recovery", "recovery"),
+    }
+
     @classmethod
     def setUpClass(cls):
-        cls.workflow = (ROOT / ".github/workflows/test.yml").read_text()
-        cls.jobs = dict(blocks(cls.workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        cls.workflows = {path.name: path.read_text()
+                         for path in (ROOT / ".github/workflows").glob("*.yml")}
+        cls.jobs = {}
+        for filename, workflow in cls.workflows.items():
+            cls.jobs[filename] = dict(blocks(workflow.split("\njobs:\n", 1)[1],
+                                             r"^  ([\w-]+):$"))
         cls.catalog = engine.load_catalog()
         cls.plan = engine.discover(cls.catalog)
         cls.optional = engine.discover_optional(cls.catalog)
 
-    def test_workflow_uses_discovered_matrix_and_source_owned_job_budgets(self):
-        plan, runtime = self.jobs["plan"], self.jobs["runtime"]
-        self.assertEqual(scalar(plan, "needs"), "code-check")
-        self.assertIn("matrix: ${{ steps.plan.outputs.matrix }}", plan)
-        command = shlex.split(run_command(engine_step(steps(plan), "plan")))
-        self.assertIn("--verify", command)
+    def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
+        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", *self.ENTRY_POINTS}
+        self.assertEqual(set(self.workflows), expected)
+        self.assertNotIn("test.yml", self.workflows)
+        for filename, (name, category) in self.ENTRY_POINTS.items():
+            with self.subTest(workflow=filename):
+                workflow = self.workflows[filename]
+                self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
+                for event in ("push", "pull_request", "workflow_dispatch"):
+                    self.assertRegex(workflow, r"(?m)^  " + event + r":")
+                self.assertNotRegex(workflow, r"(?m)^    needs:")
+                callers = [job for job in self.jobs[filename].values()
+                           if "uses: ./.github/workflows/tagged-runtime.yml" in job]
+                self.assertEqual(len(callers), 1)
+                self.assertEqual(scalar(callers[0], "category"), category)
+                self.assertEqual(scalar(callers[0], "check_name"), name)
+                self.assertNotIn("steps:", callers[0])
+                self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
+        reusable = self.workflows["tagged-runtime.yml"]
+        self.assertRegex(reusable, r"(?m)^  workflow_call:")
+        self.assertNotRegex(reusable, r"(?m)^  (?:push|pull_request|workflow_dispatch):")
+        optional = self.workflows["native-regressions.yml"]
+        self.assertRegex(optional, r"(?m)^  workflow_dispatch:")
+        self.assertNotRegex(optional, r"(?m)^  (?:push|pull_request|workflow_call):")
+
+    def test_entry_categories_partition_source_profiles_without_ci_name_inventories(self):
+        categories = [category for _, category in self.ENTRY_POINTS.values()]
+        self.assertEqual(set(categories), set(engine.RUNTIME_CATEGORIES))
+        self.assertEqual(len(categories), len(set(categories)))
+        selected = []
+        for category in categories:
+            plan = engine.select_required_plan(self.plan, category)
+            self.assertTrue(plan["include"])
+            self.assertTrue(all(profile["category"] == category for profile in plan["include"]))
+            selected.extend(profile["id"] for profile in plan["include"])
+        expected = [profile["id"] for profile in self.plan["include"]
+                    if profile["category"] != "code"]
+        self.assertEqual(set(selected), set(expected))
+        self.assertEqual(len(selected), len(set(selected)))
+        self.assertTrue(any(profile["category"] == "code" for profile in self.plan["include"]))
+        for workflow in self.workflows.values():
+            self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
+            self.assertNotRegex(workflow, r"(?:^|\s)-run(?:=|\s)")
+            self.assertNotRegex(workflow, r"(?:^|\s)-short(?:=|\s)")
+
+    def test_reusable_plan_filters_category_and_keeps_source_owned_job_budgets(self):
+        plan, runtime = self.jobs["tagged-runtime.yml"]["plan"], self.jobs["tagged-runtime.yml"]["runtime"]
+        command = engine_command(steps(plan), "plan", "--category")
+        self.assertNotIn("--verify", command)
+        self.assertEqual(command[command.index("--category") + 1], "$SCENARIO_CATEGORY")
+        self.assertEqual(scalar(engine_step(steps(plan), "plan"), "SCENARIO_CATEGORY"), "${{ inputs.category }}")
         self.assertIn("--github-output", command)
         self.assertEqual(command[command.index("--github-output") + 1], "$GITHUB_OUTPUT")
         self.assertIn("--output", command)
+        self.assertIn("matrix: ${{ steps.plan.outputs.matrix }}", plan)
         self.assertEqual(scalar(runtime, "needs"), "plan")
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.plan.outputs.matrix) }}")
         self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
+        self.assertIn("${{ inputs.check_name }}", scalar(runtime.split("    steps:", 1)[0], "name"))
         self.assertNotRegex(runtime, r"(?m)^        (?:case|group|include|exclude):")
-        self.assertNotRegex(self.workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
 
-    def test_runtime_compiles_before_environment_then_runs_and_cleans(self):
-        runtime_steps = steps(self.jobs["runtime"])
+    def test_runtime_compiles_before_environment_then_runs_and_cleans_on_same_runner(self):
+        runtime = self.jobs["tagged-runtime.yml"]["runtime"]
+        runtime_steps = steps(runtime)
         compiled = engine_step(runtime_steps, "compile")
         native = engine_step(runtime_steps, "run")
         baseline = next(step for step in runtime_steps if "phase: snapshot" in step)
@@ -88,43 +169,55 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertLess(runtime_steps.index(native), runtime_steps.index(cleanup))
         self.assertEqual(scalar(prepared, "if"), "matrix.requires_ceph")
         self.assertEqual(scalar(cleanup, "if"),
-                         "${{ always() && steps.runtime_cleanup_baseline.outcome == 'success' }}")
+                         "${{ always() && steps.docker_baseline.outcome == 'success' }}")
         self.assertEqual(scalar(baseline, "artifact_name"), scalar(cleanup, "artifact_name"))
         self.assertIn("${{ matrix.id }}", scalar(cleanup, "artifact_name"))
         for step in (compiled, baseline, native):
             self.assertNotRegex(step, r"(?m)^\s+(?:if|continue-on-error):")
-        self.assertNotRegex(self.jobs["runtime"], r"(?m)^    continue-on-error:")
+        self.assertNotRegex(runtime, r"(?m)^    continue-on-error:")
+        self.assertNotIn("actions/download-artifact", runtime)
 
     def test_selected_source_profile_is_recomputed_and_no_name_selector_reaches_native(self):
+        runtime_steps = steps(self.jobs["tagged-runtime.yml"]["runtime"])
         for operation in ("compile", "run"):
-            command = shlex.split(run_command(engine_step(steps(self.jobs["runtime"]), operation)))
+            step = engine_step(runtime_steps, operation)
+            command = engine_command(runtime_steps, operation)
             self.assertEqual(command[:3], ["python3", ".github/scripts/tag_scenarios.py", operation])
             for name in ("category", "batch", "package"):
-                self.assertEqual(command[command.index("--" + name) + 1], "${{ matrix." + name + " }}")
+                variable = "SCENARIO_" + name.upper()
+                self.assertEqual(command[command.index("--" + name) + 1], "$" + variable)
+                self.assertEqual(scalar(step, variable), "${{ matrix." + name + " }}")
             self.assertFalse(any(argument.startswith(("-run", "-short", "-failfast", "--timeout", "--tags"))
                                  for argument in command))
             self.assertNotIn("make", command)
-        compile_command = shlex.split(run_command(engine_step(steps(self.jobs["runtime"]), "compile")))
-        native_command = shlex.split(run_command(engine_step(steps(self.jobs["runtime"]), "run")))
-        self.assertNotEqual(compile_command[compile_command.index("--directory") + 1],
-                            native_command[native_command.index("--directory") + 1])
+        compiled = engine_command(runtime_steps, "compile")
+        native = engine_command(runtime_steps, "run")
+        self.assertNotEqual(compiled[compiled.index("--directory") + 1],
+                            native[native.index("--directory") + 1])
 
-    def test_code_and_plan_stages_do_not_allocate_docker_or_prepare_images(self):
-        for name in ("code-check", "plan"):
-            block = self.jobs[name]
+    def test_code_workflow_has_visible_unit_race_static_and_coverage_jobs(self):
+        workflow = self.workflows["code.yml"]
+        jobs = self.jobs["code.yml"]
+        self.assertRegex(workflow, r"(?m)^name: Code checks$")
+        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage"})
+        for event in ("push", "pull_request", "workflow_dispatch"):
+            self.assertRegex(workflow, r"(?m)^  " + event + r":")
+        for block in jobs.values():
             self.assertNotIn("./.github/actions/scenario-images", block)
             self.assertNotIn("./.github/actions/runtime-cleanup", block)
             self.assertNotRegex(block, r"\bdocker\s|docker://|docker/setup-")
-        code = self.jobs["code-check"]
-        self.assertIn("run: make check", code)
-        self.assertIn("test_tag_scenarios.py", code)
-        self.assertIn("test_scenario_shards.py", code)
-        self.assertIn("test_scenario_images.py", code)
-        self.assertIn("test_scenario_quiescence.py", code)
-        self.assertIn("test_scenario_recovery.py", code)
-        self.assertIn("test_scenario_receivers.py", code)
-        self.assertTrue(any(profile["category"] == "code" for profile in self.plan["include"]))
-        code_step = engine_step(steps(code), "code")
+            self.assertNotRegex(block, r"(?m)^    needs:")
+        self.assertIn("make test", jobs["unit"])
+        self.assertIn("make race", jobs["race"])
+        self.assertIn("make vet", jobs["static"])
+        self.assertIn("make tag-compile", jobs["static"])
+        self.assertIn("python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v", jobs["static"])
+        self.assertTrue(list((ROOT / ".github/scripts").glob("test_*.py")))
+        coverage_steps = steps(jobs["tag-coverage"])
+        coverage = shlex.split(run_command(engine_step(coverage_steps, "plan")))
+        self.assertIn("--verify", coverage)
+        self.assertNotIn("--category", coverage)
+        code_step = engine_step(coverage_steps, "code")
         self.assertNotIn("--batch", run_command(code_step))
         self.assertNotIn("--category", run_command(code_step))
 
@@ -148,50 +241,74 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(set(actual), expected)
             self.assertEqual(len(actual), len(set(actual)))
 
-    def test_sdk_bridge_profiles_are_source_owned_and_do_not_require_ceph_images(self):
-        profiles = [profile for profile in self.plan["include"] if profile["package"] == "./internal/dockerbridge"]
+    def test_docker_environment_checks_are_source_owned_and_do_not_require_ceph_images(self):
+        profiles = engine.select_required_plan(self.plan, "environment")["include"]
         self.assertTrue(profiles)
         self.assertTrue(all(not profile["requires_ceph"] for profile in profiles))
-        native = run_command(engine_step(steps(self.jobs["runtime"]), "run"))
-        self.assertIn("--package '${{ matrix.package }}'", native)
-        self.assertNotIn("./internal/dockerbridge", self.workflow)
+        self.assertTrue(all(profile["package"] == "./internal/dockerbridge" for profile in profiles))
+        for category in ("short", "topology", "multicluster", "recovery"):
+            self.assertTrue(all(profile["requires_ceph"] for profile in
+                                engine.select_required_plan(self.plan, category)["include"]))
 
     def test_optional_native_regressions_have_explicit_tag_runner_and_source_budget(self):
-        optional_jobs = [block for block in self.jobs.values() if "tag_scenarios.py optional " in block]
-        self.assertEqual(len(optional_jobs), 1)
-        block = optional_jobs[0]
-        header = block.split("    steps:\n", 1)[0]
-        self.assertIn("github.event_name == 'workflow_dispatch'", scalar(header, "if"))
-        self.assertIn("inputs.rgw_native_regressions", scalar(header, "if"))
-        self.assertEqual(scalar(block, "needs"), "plan")
-        command = shlex.split(run_command(engine_step(steps(block), "optional")))
-        batch = command[command.index("--batch") + 1]
+        jobs = self.jobs["native-regressions.yml"]
+        self.assertEqual(len(jobs), 1)
+        caller = next(iter(jobs.values()))
+        self.assertNotRegex(caller, r"(?m)^    needs:")
+        self.assertEqual(scalar(caller, "uses"), "./.github/workflows/tagged-runtime.yml")
+        self.assertEqual(scalar(caller, "category"), "optional")
+        batch = scalar(caller, "optional_batch")
         profiles = [profile for profile in self.optional["include"] if profile["batch"] == batch]
         self.assertEqual(len(profiles), 1)
-        self.assertEqual(int(scalar(block, "timeout-minutes")), profiles[0]["job_timeout"])
+        selected = engine.select_optional_plan(self.optional, batch)
+        self.assertEqual(selected["include"], profiles)
         self.assertIn("ci_optional", profiles[0]["tags"].split(","))
         self.assertIn("native_regression", profiles[0]["tags"].split(","))
         self.assertFalse(any(profile["batch"] == batch for profile in self.plan["include"]))
-        self.assertFalse(any(argument.startswith(("-run", "-short", "-failfast")) for argument in command))
-        self.assertIn("CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}", block)
-        self.assertNotRegex(block, r"(?m)^    continue-on-error:")
+        runtime = self.jobs["tagged-runtime.yml"]["runtime"]
+        self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
+        optional = engine_command(steps(runtime), "optional")
+        self.assertEqual(optional[optional.index("--batch") + 1], "$SCENARIO_BATCH")
+        self.assertFalse(any(argument.startswith(("-run", "-short", "-failfast")) for argument in optional))
+        self.assertIn("CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}", runtime)
+        self.assertNotRegex(runtime, r"(?m)^    continue-on-error:")
+        plan = self.jobs["tagged-runtime.yml"]["plan"]
+        plan_command = engine_command(steps(plan), "plan", "--optional")
+        self.assertEqual(plan_command[plan_command.index("--batch") + 1], "$SCENARIO_OPTIONAL_BATCH")
+        self.assertNotIn("--verify", plan_command)
 
-    def test_every_result_upload_is_unconditional_and_native_reporter_cannot_mask_failure(self):
-        for name in ("code-check", "plan", "runtime"):
-            uploads = [step for step in steps(self.jobs[name]) if "uses: actions/upload-artifact" in step]
-            self.assertTrue(uploads)
-            for upload in uploads:
-                self.assertEqual(scalar(upload, "if"), "always()")
-        runtime_steps = steps(self.jobs["runtime"])
+    def test_result_uploads_and_failure_reports_preserve_native_failure(self):
+        for filename, jobs in self.jobs.items():
+            for name, block in jobs.items():
+                uploads = [step for step in steps(block) if "uses: actions/upload-artifact" in step]
+                for upload in uploads:
+                    with self.subTest(workflow=filename, job=name):
+                        self.assertEqual(scalar(upload, "if"), "always()")
+        runtime_steps = steps(self.jobs["tagged-runtime.yml"]["runtime"])
         native = engine_step(runtime_steps, "run")
         reporter = next(step for step in runtime_steps if "report_test_failures.py" in run_command(step))
         self.assertLess(runtime_steps.index(native), runtime_steps.index(reporter))
         self.assertEqual(scalar(reporter, "if"), "failure()")
         self.assertEqual(scalar(reporter, "continue-on-error"), "true")
         command = shlex.split(run_command(reporter))
-        directory = shlex.split(run_command(native))[-1]
+        directory = engine_command(runtime_steps, "run")[-1]
         self.assertEqual(command[2], directory + "/native.log")
-        self.assertIsNotNone(failure_reporter.PROFILE.fullmatch(command[command.index("--profile") + 1]))
+        self.assertEqual(command[command.index("--profile") + 1], "${{ matrix.id }}")
+        for profile in self.plan["include"]:
+            self.assertIsNotNone(failure_reporter.PROFILE.fullmatch(profile["id"]))
+        phases = next(step for step in runtime_steps if "report_workflow_phases.py" in run_command(step))
+        self.assertEqual(scalar(phases, "if"), "always()")
+        self.assertNotIn("continue-on-error", phases)
+        self.assertLess(runtime_steps.index(native), runtime_steps.index(phases))
+        cleanup = next(step for step in runtime_steps if "phase: check" in step)
+        self.assertLess(runtime_steps.index(cleanup), runtime_steps.index(phases))
+        for name, step_id in (("COMPILE", "compile"), ("DOCKER", "docker_baseline"),
+                              ("IMAGES", "role_images"), ("NATIVE", "native"), ("CLEANUP", "cleanup")):
+            self.assertEqual(scalar(phases, "SCENARIO_" + name + "_OUTCOME"),
+                             "${{ steps." + step_id + ".outcome }}")
+        self.assertEqual(scalar(phases, "SCENARIO_CHECK_NAME"), "${{ inputs.check_name }}")
+        self.assertEqual(scalar(phases, "SCENARIO_PROFILE"), "${{ matrix.id }}")
+        self.assertEqual(scalar(phases, "SCENARIO_REQUIRES_CEPH"), "${{ matrix.requires_ceph }}")
 
     def test_all_target_selects_source_union_and_tag_compile_covers_explicit_opt_ins(self):
         for target in ("test-all", "tag-compile"):

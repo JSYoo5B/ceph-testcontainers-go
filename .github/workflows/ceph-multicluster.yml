@@ -1,0 +1,17 @@
+name: Ceph multicluster
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scenarios:
+    name: Ceph multicluster
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: multicluster
+      check_name: Ceph multicluster

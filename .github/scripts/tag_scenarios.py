@@ -19,7 +19,8 @@ import time
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CATEGORIES = ("code", "short", "topology", "multicluster", "recovery")
+CATEGORIES = ("code", "environment", "short", "topology", "multicluster", "recovery")
+RUNTIME_CATEGORIES = tuple(category for category in CATEGORIES if category != "code")
 LEGACY_TAGS = ("integration", "auth", "features", "topology", "hostnetwork", "multicluster", "diagnostics")
 CHECKERS = {
     "quiescence": ("check_scenario_quiescence", "TestMultiClusterCephFSOriginalProcessQuiescence"),
@@ -232,10 +233,23 @@ def discover(catalog):
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = (profile["category"] + "-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = profile["package"] == "./internal/integration" and profile["category"] != "code"
-    return {"schema": SCHEMA, "include": result,
+    return {"schema": SCHEMA, "coverage_scope": "required", "include": result,
             "required_parents": {package: sorted(names) for package, names in sorted(all_parents.items())},
             "required_executions": sum(len(assignments) for assignments in owners.values()),
             "required_profiles": len(result), "capability_tags": list(capabilities)}
+
+
+def select_required_plan(plan, category=None):
+    """Select one workflow's matrix without narrowing required coverage facts."""
+    if category is None:
+        return dict(plan)
+    if category not in RUNTIME_CATEGORIES:
+        raise ValueError("unsupported required runtime category")
+    selected = [profile for profile in plan["include"] if profile["category"] == category]
+    if not selected:
+        raise ValueError("requested required runtime category is empty")
+    return {**plan, "include": selected, "required_include": plan["include"],
+            "selected_category": category, "selected_profiles": len(selected)}
 
 
 def load_catalog(root=ROOT):
@@ -283,7 +297,18 @@ def discover_optional(catalog):
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = ("optional-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = profile["package"] == "./internal/integration"
-    return {"schema": SCHEMA, "include": [profiles[key] for key in sorted(profiles)]}
+    return {"schema": SCHEMA, "coverage_scope": "optional",
+            "include": [profiles[key] for key in sorted(profiles)]}
+
+
+def select_optional_plan(plan, batch):
+    """An explicit source-owned optional batch never claims required coverage."""
+    if not batch or not IDENTIFIER.fullmatch(batch):
+        raise ValueError("optional plan needs a valid explicit batch")
+    selected = [profile for profile in plan["include"] if profile["batch"] == batch]
+    if not selected:
+        raise ValueError("requested optional batch is unsupported or empty")
+    return {**plan, "include": selected, "selected_batch": batch, "selected_profiles": len(selected)}
 
 
 def selected_tests(catalog, package, tags):
@@ -469,9 +494,13 @@ def main(argv=None):
         if name == "plan":
             command.add_argument("--github-output", type=Path)
             command.add_argument("--verify", action="store_true")
+            command.add_argument("--category", choices=RUNTIME_CATEGORIES)
+            command.add_argument("--optional", action="store_true")
+            command.add_argument("--batch")
     for name in ("compile", "run"):
         command = commands.add_parser(name)
-        command.add_argument("--category", required=True, choices=CATEGORIES)
+        command.add_argument("--category", required=True,
+                             choices=(*CATEGORIES, "optional") if name == "compile" else CATEGORIES)
         command.add_argument("--batch", required=True)
         command.add_argument("--package")
         command.add_argument("--directory", required=True, type=Path)
@@ -483,12 +512,18 @@ def main(argv=None):
     command.add_argument("--directory", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == "plan":
+            if args.optional and (not args.batch or args.category is not None or args.verify):
+                raise ValueError("optional plan requires --batch and excludes --category and --verify")
+            if args.batch is not None and not args.optional:
+                raise ValueError("plan --batch requires explicit --optional")
         catalog = load_catalog()
         plan = discover(catalog)
         if args.command == "run":
             report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory)
         elif args.command == "compile":
-            report = compile_profile(plan, args.category, args.batch, args.package, args.directory)
+            selected_plan = discover_optional(catalog) if args.category == "optional" else plan
+            report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory)
         elif args.command == "code":
             profiles = [profile for profile in plan["include"] if profile["category"] == "code"]
             if not profiles:
@@ -502,15 +537,23 @@ def main(argv=None):
             optional = discover_optional(catalog)
             report = run_profile(catalog, optional, "optional", args.batch, args.package, args.directory)
         else:
-            report = plan if args.command == "plan" else verify(catalog, plan)
-            if args.command == "plan" and args.verify:
-                report["compiled_coverage"] = verify(catalog, plan)
+            if args.command == "plan":
+                if args.optional:
+                    report = select_optional_plan(discover_optional(catalog), args.batch)
+                else:
+                    report = select_required_plan(plan, args.category)
+                    if args.verify:
+                        # The source filter affects workflow execution only;
+                        # verification always proves the whole required suite.
+                        report["compiled_coverage"] = verify(catalog, plan)
+            else:
+                report = verify(catalog, plan)
             if args.output is not None:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
             if args.command == "plan" and args.github_output is not None:
                 with args.github_output.open("a", encoding="utf-8") as output:
-                    output.write("matrix=" + json.dumps({"include": [profile for profile in plan["include"] if profile["category"] != "code"]}, separators=(",", ":")) + "\n")
+                    output.write("matrix=" + json.dumps({"include": [profile for profile in report["include"] if profile["category"] != "code"]}, separators=(",", ":")) + "\n")
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report.get("passed", True) else 1
     except (ValueError, OSError, subprocess.SubprocessError) as error:
