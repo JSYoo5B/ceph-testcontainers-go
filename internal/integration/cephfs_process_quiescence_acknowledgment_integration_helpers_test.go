@@ -162,7 +162,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		t.Fatal("pre-Begin start on original binding", err)
 	}
 	original, session = cephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1, creationGID)
 	ready = cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != session.gid || owners[directory] != session.gid || daemon.ProcessObserverBindingStatus() != binding || factoryCalls.Load() != 1 || customizerCalls.Load() != 1 {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")
@@ -385,7 +385,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	}
 	policy.expected = expected
 	_, newSession := cephFSWaitOriginalProcessFreshSession(t, ctx, newDaemon, oracle.Client, newBinding, policy, baseline.startedAt, baseline.instanceID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1, baseline.instanceID)
 	if owners[directory] != newSession.gid || newSession.gid == baseline.instanceID {
 		t.Fatal("recovery did not acquire a fresh native watcher/assignment")
 	}

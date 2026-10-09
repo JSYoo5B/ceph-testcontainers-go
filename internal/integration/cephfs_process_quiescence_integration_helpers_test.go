@@ -168,7 +168,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		t.Fatal("pre-Begin start on original binding", err)
 	}
 	original, session = cephFSWaitOriginalProcessFreshSession(t, ctx, daemon, oracle.Client, binding, policy, creationStartedAt, creationGID)
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, []string{directory}, 1, creationGID)
 	ready = cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, initial)
 	if ready.InstanceID != session.gid || owners[directory] != session.gid || daemon.ProcessObserverBindingStatus() != binding || factoryCalls.Load() != 1 || customizerCalls.Load() != 1 {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")

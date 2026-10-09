@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -211,7 +212,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	if _, err := mirror.AddDaemon(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
+	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1, slices.Collect(maps.Values(owners))...)
 	waitCheckpoints(allRemoved, owners, "")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "all-removed")
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "initial")
@@ -293,13 +294,22 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 }
 
-func cephFSWaitForMirrorDaemonAssignments(t *testing.T, ctx context.Context, source *ceph.Container, filesystem, peerID string, directories []string, daemonCount int) map[string]string {
+// Retired lists instance IDs of processes that have already been removed or
+// restarted. The manager can keep reporting such an instance until it notices
+// the loss, and a replacement can leave the instance count unchanged; without
+// this, a stale map with the expected count would satisfy the wait.
+func cephFSWaitForMirrorDaemonAssignments(t *testing.T, ctx context.Context, source *ceph.Container, filesystem, peerID string, directories []string, daemonCount int, retired ...string) map[string]string {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	last := ""
 	for {
 		owners, detail, err := cephFSObserveMirrorDaemonAssignments(waitCtx, source, filesystem, peerID, directories, daemonCount)
+		for _, owner := range owners {
+			if err == nil && slices.Contains(retired, owner) {
+				err = fmt.Errorf("native map still reports retired instance %s", owner)
+			}
+		}
 		last = detail
 		if err == nil {
 			t.Logf("native CephFS mirror assignments (%d instances): %s", daemonCount, detail)
