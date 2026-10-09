@@ -23,6 +23,7 @@ import (
 // be healthy, active, complete, or current. Pool preparation uses the raw CLI:
 // CreatePool correctly requires sufficient owned placement domains.
 func TestPoolPGReportedBoundaries(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)

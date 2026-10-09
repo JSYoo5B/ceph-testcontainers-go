@@ -17,6 +17,7 @@ import (
 )
 
 func TestHostFailureDomainPool(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	layout := []ceph.OSDConfig{

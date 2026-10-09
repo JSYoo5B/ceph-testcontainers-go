@@ -23,14 +23,17 @@ import (
 )
 
 func TestRGWPlacementStorageClasses(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWPlacementStorageClasses(t)
 }
 
 func TestHostNetworkRGWPlacementStorageClasses(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWPlacementStorageClasses(t, ceph.WithHostNetwork())
 }
 
 func TestRGWPlacementRealmStorageClasses(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, options := integrationImages(t)

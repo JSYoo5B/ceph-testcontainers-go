@@ -11,5 +11,6 @@ import (
 // TestRBDLifecycle verifies userspace RBD I/O via the image's CLI. It does not
 // map a kernel block device or mount a filesystem on an RBD image.
 func TestRBDLifecycle(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRBDLifecycle(t)
 }

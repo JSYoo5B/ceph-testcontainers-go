@@ -22,6 +22,7 @@ import (
 // Replace every original MON and cold-start original stopped services to prove
 // that their persistent bootstrap addresses also follow the live membership.
 func TestMonitorRollingReplacement(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		if host {

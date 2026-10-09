@@ -14,6 +14,7 @@ import (
 )
 
 func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithCephFS(
@@ -69,6 +70,7 @@ func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 }
 
 func TestCephFSStandbyReplayFailover(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t)

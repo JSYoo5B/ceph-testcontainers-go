@@ -17,6 +17,7 @@ import (
 // These are client operations. The fixture supplies an ordinary authenticated
 // replicated pool and native OSD classes; it does not duplicate librados CRUD.
 func TestRADOSClientFixtures(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		if host {

@@ -142,6 +142,23 @@ Go toolchain 자체의 무결성을 검증하는 계약은 아니다.
 사용한다. 기존 `make scenario-*`와 이름 기반 `-run` 명령은 개별 장애를
 조사하는 수동 경로로 유지한다.
 
+### Batch 안의 병렬 실행
+
+`CEPH_TEST_PARALLEL`이 2 이상이면 `parallelWhenEnabled(t)`를 첫 줄에서 호출한
+top-level 테스트가 같은 process 안에서 함께 실행된다. 동시에 실행되는 테스트 수는
+이 값으로 제한되고, 각 테스트는 자기 클러스터 정리가 끝날 때까지 자리를 차지한다.
+값이 없으면 지금처럼 순차 실행하므로 4 GiB Docker VM의 로컬 실행은 바뀌지 않는다.
+[tagged-runtime.yml](../.github/workflows/tagged-runtime.yml)은 16 GB runner에서
+2를 사용한다.
+
+Opt-in하는 테스트는 자기가 만든 클러스터와 컨테이너만 다뤄야 한다. Docker 엔진
+전체의 컨테이너·network·volume 목록이나 이벤트를 세는 테스트, 고정된 host 포트를
+쓰는 테스트, `t.Setenv`를 쓰는 테스트는 opt-in하지 않는다. 현재는 `default`,
+`cluster_fixtures`, `rgw_fixtures`, `topology`, `rados_fixtures`,
+`cephfs_fixtures_data_layout` batch의 테스트가 opt-in한다. 병렬 실행에서는 Go의 `-v`
+출력에 `=== PAUSE`, `=== CONT`, `=== NAME` 줄이 섞이지만 runner의 RUN/PASS 완료 판정은
+그대로 적용된다.
+
 ## 테스트 추가
 
 일반 wrapper 파일은 다음 형태를 사용한다.

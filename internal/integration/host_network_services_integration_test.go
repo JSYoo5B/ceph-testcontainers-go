@@ -11,5 +11,6 @@ import (
 )
 
 func TestHostNetworkCephFSFilesystem(t *testing.T) {
+	parallelWhenEnabled(t)
 	testCephFSFilesystem(t, ceph.WithHostNetwork())
 }

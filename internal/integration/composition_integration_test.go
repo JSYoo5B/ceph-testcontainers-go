@@ -14,6 +14,7 @@ import (
 )
 
 func TestInitialClusterComposition(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)

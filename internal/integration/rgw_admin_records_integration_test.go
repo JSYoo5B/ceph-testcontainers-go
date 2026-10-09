@@ -20,6 +20,7 @@ import (
 // Native server prerequisites composed from public config, RGW identity and
 // Admin APIs. HTTP AdminOps remains a consumer, not a new production CRUD API.
 func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		if host {

@@ -18,6 +18,7 @@ import (
 )
 
 func TestRGWS3(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t)

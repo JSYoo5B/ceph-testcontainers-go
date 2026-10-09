@@ -9,9 +9,11 @@ import (
 )
 
 func TestCephFSMDSScaleTopology(t *testing.T) {
+	parallelWhenEnabled(t)
 	testCephFSMDSScaleTopology(t, false)
 }
 
 func TestCephFSMDSScaleStandbyReplayTopology(t *testing.T) {
+	parallelWhenEnabled(t)
 	testCephFSMDSScaleTopology(t, true)
 }

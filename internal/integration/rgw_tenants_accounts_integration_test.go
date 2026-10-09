@@ -10,8 +10,12 @@ import (
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 )
 
-func TestRGWTenantsAndAccounts(t *testing.T) { testRGWTenantsAndAccounts(t) }
+func TestRGWTenantsAndAccounts(t *testing.T) {
+	parallelWhenEnabled(t)
+	testRGWTenantsAndAccounts(t)
+}
 
 func TestHostNetworkRGWTenantsAndAccounts(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWTenantsAndAccounts(t, ceph.WithHostNetwork())
 }

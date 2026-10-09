@@ -20,6 +20,7 @@ import (
 // Public composition for caller-created S3 buckets. It keeps the actual bucket
 // identity before scoped Admin mutations; this is not a general adoption API.
 func TestRGWBucketMaintenance(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		network := "bridge"
 		if host {

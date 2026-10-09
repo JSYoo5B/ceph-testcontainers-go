@@ -19,6 +19,7 @@ import (
 )
 
 func TestClusterLifecycle(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	started := time.Now()

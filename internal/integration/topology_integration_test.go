@@ -17,6 +17,7 @@ import (
 )
 
 func TestMonitorManagerTopology(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		if host {

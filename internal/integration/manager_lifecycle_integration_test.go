@@ -16,6 +16,7 @@ import (
 )
 
 func TestManagerLifecycle(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Minute)
 	defer cancel()
 	image, options := integrationImages(t)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestRGWTopology(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		var options []testcontainers.ContainerCustomizer

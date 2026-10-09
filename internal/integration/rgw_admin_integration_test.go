@@ -11,9 +11,11 @@ import (
 )
 
 func TestRGWUserAdministration(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWUserAdministration(t)
 }
 
 func TestHostNetworkRGWUserAdministration(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWUserAdministration(t, ceph.WithHostNetwork())
 }

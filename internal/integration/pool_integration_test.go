@@ -14,6 +14,7 @@ import (
 )
 
 func TestErasureCodedPools(t *testing.T) {
+	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))

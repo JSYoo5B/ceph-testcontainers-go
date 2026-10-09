@@ -24,6 +24,7 @@ import (
 // registration with another owned ID. These exercise cleanup retry and UUID
 // rejection independently while preserving the same client data.
 func TestOSDRemovalLifecycle(t *testing.T) {
+	parallelWhenEnabled(t)
 	for _, host := range []bool{false, true} {
 		name := "bridge"
 		if host {

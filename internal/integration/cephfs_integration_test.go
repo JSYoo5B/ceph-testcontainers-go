@@ -9,5 +9,6 @@ import (
 )
 
 func TestCephFSFilesystem(t *testing.T) {
+	parallelWhenEnabled(t)
 	testCephFSFilesystem(t)
 }

@@ -26,6 +26,8 @@ permissions:
 env:
   CGO_ENABLED: '0'
   TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
+  # Opted-in independent tests run two clusters at a time on 16 GB runners.
+  CEPH_TEST_PARALLEL: '2'
 
 jobs:
   plan:

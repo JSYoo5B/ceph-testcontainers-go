@@ -11,9 +11,11 @@ import (
 )
 
 func TestRGWUserPlacementPolicy(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWUserPlacementPolicy(t)
 }
 
 func TestHostNetworkRGWUserPlacementPolicy(t *testing.T) {
+	parallelWhenEnabled(t)
 	testRGWUserPlacementPolicy(t, ceph.WithHostNetwork())
 }
