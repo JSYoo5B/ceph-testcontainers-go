@@ -36,6 +36,21 @@ type options struct {
 	separateClusterNetwork bool
 	publicAddress          string
 	hostAddressSet         bool
+	messengerMode          MessengerMode
+}
+
+// WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
+// retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
+// encrypted v2 connections without CRC-mode or v1 fallback, including later
+// daemons and WithClient containers. This option does not enable RGW HTTP TLS.
+func WithMessengerMode(mode MessengerMode) Option {
+	return func(o *options) error {
+		if mode != MessengerDefault && mode != MessengerV2Secure {
+			return fmt.Errorf("unsupported Messenger mode %d", mode)
+		}
+		o.messengerMode = mode
+		return nil
+	}
 }
 
 // WithMonitorCount selects the initial monitor count. Three enables quorum

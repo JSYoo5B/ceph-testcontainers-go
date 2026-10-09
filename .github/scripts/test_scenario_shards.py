@@ -105,7 +105,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                     self.assertRegex(workflow, r"(?m)^  " + event + r":")
                 self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
                 self.assertEqual(scalar(workflow, "group"),
-                                 "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}")
+                                 "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}")
                 self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
                 self.assertNotRegex(workflow, r"(?m)^    needs:")
                 callers = [job for job in self.jobs[filename].values()
@@ -214,7 +214,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
         self.assertEqual(scalar(workflow, "group"),
-                         "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}")
+                         "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}")
         self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
         for block in jobs.values():
             self.assertNotIn("./.github/actions/scenario-images", block)

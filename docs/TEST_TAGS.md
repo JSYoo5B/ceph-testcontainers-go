@@ -34,11 +34,12 @@ process 예산을 조정하거나 아래 runner로 필요한 batch만 실행할 
 수동 실행으로 시작하며 다른 유형의 완료를 기다리지 않는다. PR 브랜치의
 `push`에서는 자동 실행하지 않아 같은 변경의 push/PR suite 중복을 막는다.
 PR 업데이트는 이전 CI를 취소하고 최신 커밋으로 검사한다. 각 자동 workflow는
-workflow 이름·event·PR 번호로 concurrency group을 나눠 같은 PR·같은 유형의
-이전 실행만 취소한다. Main push와 수동 실행은 run ID를 사용해 독립적으로
-진행하며, reusable template에는 중복 concurrency 설정을 넣지 않는다.
+workflow 이름·event로 concurrency group을 나누고, PR은 PR 번호, push는
+ref를 사용한다. 같은 PR·같은 유형의 이전 실행과 같은 main ref·같은 유형의
+이전 push 실행을 취소해 최신 커밋을 검사한다. 수동 실행은 run ID를 사용해
+독립적으로 진행하며, reusable template에는 중복 concurrency 설정을 넣지 않는다.
 
-Stacked PR은 바로 앞 PR의 head 브랜치를 새 PR의 base로 지정한다. PR 번호가
+Stacked PR을 사용할 때는 바로 앞 PR의 head 브랜치를 새 PR의 base로 지정한다. PR 번호가
 다르면 concurrency group도 달라 부모 PR의 검증이 유지된다. 브랜치 이름이
 달라서가 아니라 PR 번호가 취소 범위를 나누기 때문이다. 새 PR을 열 때 부모의
 CI를 취소하지 않고, 같은 PR을 갱신할 때만 이전 실행을 취소한다.

@@ -5,6 +5,20 @@ mkdir -p /etc/ceph /var/lib/ceph/mon/ceph-a /var/run/ceph
 mon_ip=${CEPH_PUBLIC_ADDRESS:-$(hostname -i | awk '{print $1}')}
 mon_v2=${CEPH_MON_PORT_V2:-3300}
 mon_v1=${CEPH_MON_PORT_V1:-6789}
+mon_addrs="[v2:${mon_ip}:${mon_v2},v1:${mon_ip}:${mon_v1}]"
+messenger_config=
+if [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+    mon_addrs="[v2:${mon_ip}:${mon_v2}]"
+    messenger_config='ms cluster mode = secure
+ms service mode = secure
+ms client mode = secure
+ms mon cluster mode = secure
+ms mon service mode = secure
+ms mon client mode = secure
+ms bind msgr1 = false
+ms bind msgr2 = true
+'
+fi
 public_config=
 network_config=
 if [ -n "${CEPH_PUBLIC_NETWORK:-}" ]; then
@@ -19,7 +33,7 @@ if [ ! -d /var/lib/ceph/mon/ceph-a/store.db ]; then
     cat > /etc/ceph/ceph.conf <<EOF
 [global]
 fsid = ${CEPH_FSID}
-mon host = [v2:${mon_ip}:${mon_v2},v1:${mon_ip}:${mon_v1}]
+mon host = ${mon_addrs}
 mon initial members = a
 ${public_config}
 ${network_config}
@@ -39,7 +53,7 @@ osd pool default pgp num = 0
 osd pool default pg autoscale mode = off
 mon allow pool size one = true
 ms bind ipv6 = false
-[osd]
+${messenger_config}[osd]
 osd objectstore = bluestore
 bluestore block create = true
 bluestore block size = ${CEPH_OSD_BLOCK_SIZE}
@@ -55,7 +69,7 @@ EOF
     ceph-authtool --create-keyring /etc/ceph/ceph.client.admin.keyring --gen-key -n client.admin \
         --cap mon 'allow *' --cap osd 'allow *' --cap mgr 'allow *' --cap mds 'allow *'
     ceph-authtool /etc/ceph/mon.keyring --import-keyring /etc/ceph/ceph.client.admin.keyring
-    monmaptool --create --fsid "$CEPH_FSID" --addv a "[v2:${mon_ip}:${mon_v2},v1:${mon_ip}:${mon_v1}]" /tmp/monmap
+    monmaptool --create --fsid "$CEPH_FSID" --addv a "$mon_addrs" /tmp/monmap
     ceph-mon --mkfs -i a --monmap /tmp/monmap --keyring /etc/ceph/mon.keyring
 fi
 # Use the complete address vector from monmap. An IP-only public_bind_addr

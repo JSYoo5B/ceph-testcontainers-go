@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | multicluster | 합계 |
 | --- | ---: | ---: | ---: |
-| Fixture Operation | 92 | 46 | 138 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 76 | 33 | 109 |
+| Fixture Operation | 93 | 46 | 139 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 77 | 33 | 110 |
 | 연결·raw CLI·customizer 접점 | 10 | 5 | 15 |
 | 조건부 archive helper | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 192 | 90 | **282** |
+| 전체 | 194 | 90 | **284** |
 
 집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 282개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 284개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 
 실행 검증은 [fixture 범위와 native 기록](CLUSTER_SCENARIOS.md),
@@ -87,13 +87,13 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (138개)
+### Fixture Operation (139개)
 
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.CreateClient](../ceph/auth.go#L101) · [Container.DeleteClient](../ceph/auth.go#L219) |
 | [ceph/auth_policy.go](../ceph/auth_policy.go) | [Container.UpdateClientCaps](../ceph/auth_policy.go#L25) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L85) · [Container.AddOSD](../ceph/ceph.go#L408) · [Container.AddOSDWithConfig](../ceph/ceph.go#L415) · [Container.RemoveOSD](../ceph/ceph.go#L523)<br>[Container.Terminate](../ceph/ceph.go#L741) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L88) · [Container.AddOSD](../ceph/ceph.go#L412) · [Container.AddOSDWithConfig](../ceph/ceph.go#L419) · [Container.RemoveOSD](../ceph/ceph.go#L536)<br>[Container.Terminate](../ceph/ceph.go#L759) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [Container.StartCephFS](../ceph/cephfs.go#L92) · [Container.StartCephFSWithConfig](../ceph/cephfs.go#L105) · [CephFSContainer.ScaleMDS](../ceph/cephfs.go#L247) |
 | [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSContainer.AuthorizeSubvolume](../ceph/cephfs_authorization.go#L67) · [CephFSContainer.DeauthorizeSubvolume](../ceph/cephfs_authorization.go#L396) · [CephFSContainer.EvictSubvolumeClients](../ceph/cephfs_authorization.go#L462) |
 | [ceph/cephfs_clone_lifecycle.go](../ceph/cephfs_clone_lifecycle.go) | [CephFSContainer.CancelSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L116) · [CephFSContainer.RemovePartialSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L187) |
@@ -106,12 +106,12 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/cephfs_subvolume.go](../ceph/cephfs_subvolume.go) | [CephFSContainer.CreateSubvolumeGroup](../ceph/cephfs_subvolume.go#L282) · [CephFSContainer.CreateSubvolume](../ceph/cephfs_subvolume.go#L323) · [CephFSContainer.ResizeSubvolumeGroup](../ceph/cephfs_subvolume.go#L525) · [CephFSContainer.ResizeSubvolume](../ceph/cephfs_subvolume.go#L557)<br>[CephFSContainer.RemoveSubvolumeGroup](../ceph/cephfs_subvolume.go#L591) · [CephFSContainer.RemoveSubvolume](../ceph/cephfs_subvolume.go#L639) |
 | [ceph/client_monitor_config.go](../ceph/client_monitor_config.go) | [Container.RefreshClientMonitorConfig](../ceph/client_monitor_config.go#L44) |
 | [ceph/composition.go](../ceph/composition.go) | [WithPools](../ceph/composition.go#L12) · [WithCephFS](../ceph/composition.go#L26) · [WithRGW](../ceph/composition.go#L43) |
-| [ceph/config.go](../ceph/config.go) | [Container.TemporaryConfig](../ceph/config.go#L73) · [ConfigOverride.Restore](../ceph/config.go#L127) |
+| [ceph/config.go](../ceph/config.go) | [Container.TemporaryConfig](../ceph/config.go#L76) · [ConfigOverride.Restore](../ceph/config.go#L141) |
 | [ceph/fencing.go](../ceph/fencing.go) | [Container.TemporaryBlocklist](../ceph/fencing.go#L64) · [BlocklistOverride.Restore](../ceph/fencing.go#L115) |
 | [ceph/full_ratios.go](../ceph/full_ratios.go) | [Container.TemporaryFullRatios](../ceph/full_ratios.go) · [FullRatiosOverride.Restore](../ceph/full_ratios.go) |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.TemporaryMGRModule](../ceph/mgr_modules.go#L60) · [MGRModuleOverride.Restore](../ceph/mgr_modules.go#L121) |
 | [ceph/network.go](../ceph/network.go) | [Container.InterruptNetwork](../ceph/network.go#L96) · [InterruptNetwork](../ceph/network.go#L142) · [NetworkInterruption.Restore](../ceph/network.go#L199) |
-| [ceph/options.go](../ceph/options.go) | [WithMonitorCount](../ceph/options.go#L42) · [WithManagerCount](../ceph/options.go#L53) · [WithNoInitialManagers](../ceph/options.go#L70) · [WithHostNetwork](../ceph/options.go#L90)<br>[WithSeparateClusterNetwork](../ceph/options.go#L100) · [WithNoInitialOSDs](../ceph/options.go#L165) · [WithOSDCount](../ceph/options.go#L173) · [WithInitialOSDs](../ceph/options.go#L187)<br>[WithDefaultCRUSHRoot](../ceph/options.go#L217) · [WithPoolDefaults](../ceph/options.go#L230) · [WithOSDBlockSize](../ceph/options.go#L242) · [WithOSDInMemoryStorage](../ceph/options.go) |
+| [ceph/options.go](../ceph/options.go) | [WithMonitorCount](../ceph/options.go#L58) · [WithManagerCount](../ceph/options.go#L69) · [WithNoInitialManagers](../ceph/options.go#L86) · [WithHostNetwork](../ceph/options.go#L106)<br>[WithSeparateClusterNetwork](../ceph/options.go#L116) · [WithNoInitialOSDs](../ceph/options.go#L181) · [WithOSDCount](../ceph/options.go#L189) · [WithInitialOSDs](../ceph/options.go#L203)<br>[WithDefaultCRUSHRoot](../ceph/options.go#L233) · [WithPoolDefaults](../ceph/options.go#L246) · [WithOSDBlockSize](../ceph/options.go#L261) · [WithOSDInMemoryStorage](../ceph/options.go#L281) · [WithMessengerMode](../ceph/options.go#L46) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.SetOSDIn](../ceph/osd_policy.go#L57) · [Container.TemporaryOSDFlag](../ceph/osd_policy.go#L132) · [OSDFlagOverride.Restore](../ceph/osd_policy.go#L175) |
 | [ceph/pool.go](../ceph/pool.go) | [Container.CreatePool](../ceph/pool.go#L62) |
 | [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.SetPoolQuota](../ceph/pool_policy.go#L64) · [Container.SetPoolReplication](../ceph/pool_policy.go#L104) |
@@ -121,7 +121,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.CreatePlacement](../ceph/rgw_placement.go#L139) · [RGWContainer.ApplyPlacement](../ceph/rgw_placement.go#L279) · [RGWContainer.ReloadPlacement](../ceph/rgw_placement.go#L377) |
 | [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.CreateAccount](../ceph/rgw_tenants_accounts.go#L134) · [RGWContainer.CreateAccountRootUser](../ceph/rgw_tenants_accounts.go#L318) · [RGWContainer.SetAccountQuota](../ceph/rgw_tenants_accounts.go#L328) · [RGWContainer.SetAccountBucketQuota](../ceph/rgw_tenants_accounts.go#L334)<br>[RGWContainer.RemoveAccount](../ceph/rgw_tenants_accounts.go#L387) |
 | [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWContainer.SetUserPlacement](../ceph/rgw_user_placement.go#L67) |
-| [ceph/topology.go](../ceph/topology.go) | [Container.AddMonitor](../ceph/topology.go#L146) · [Container.RemoveMonitor](../ceph/topology.go#L260) · [Container.RefreshMonitorConfig](../ceph/topology.go#L347) · [Container.AddManager](../ceph/topology.go#L683)<br>[Container.RemoveManager](../ceph/topology.go#L764) |
+| [ceph/topology.go](../ceph/topology.go) | [Container.AddMonitor](../ceph/topology.go#L146) · [Container.RemoveMonitor](../ceph/topology.go#L263) · [Container.RefreshMonitorConfig](../ceph/topology.go#L350) · [Container.AddManager](../ceph/topology.go#L686)<br>[Container.RemoveManager](../ceph/topology.go#L767) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorDaemon.Terminate](../multicluster/cephfs.go#L60) · [RunCephFSMirror](../multicluster/cephfs.go#L133) · [CephFSMirror.AddDaemon](../multicluster/cephfs.go#L494) · [CephFSMirror.RemoveDaemon](../multicluster/cephfs.go#L567)<br>[CephFSMirror.Terminate](../multicluster/cephfs.go#L606) · [CephFSMirror.AttachManagers](../multicluster/cephfs.go#L629) · [CephFSMirror.AddDirectory](../multicluster/cephfs.go#L829) · [CephFSMirror.RemoveDirectory](../multicluster/cephfs.go#L865)<br>[CephFSMirror.RebalanceDirectories](../multicluster/cephfs.go#L916) · [CephFSMirror.RemovePeer](../multicluster/cephfs.go#L1081) · [CephFSMirror.RebootstrapPeer](../multicluster/cephfs.go#L1123) |
 | [multicluster/cephfs_connection_refresh.go](../multicluster/cephfs_connection_refresh.go) | [CephFSMirror.RefreshMonitorConfig](../multicluster/cephfs_connection_refresh.go#L24) · [CephFSMirror.RefreshPeerMonitorConfig](../multicluster/cephfs_connection_refresh.go#L87) |
 | [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirror.BeginDirectoryAddition](../multicluster/cephfs_directory_addition.go#L43) |
@@ -165,7 +165,7 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.AccountInfo](../ceph/rgw_tenants_accounts.go#L299) |
 | [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWContainer.UserUsage](../ceph/rgw_usage.go#L35) |
 | [ceph/status.go](../ceph/status.go) | [Container.Status](../ceph/status.go#L34) · [Container.WaitForClean](../ceph/status.go#L48) |
-| [ceph/topology.go](../ceph/topology.go) | [Container.QuorumStatus](../ceph/topology.go#L125) · [Container.WaitForQuorum](../ceph/topology.go#L135) · [Container.ManagerStatus](../ceph/topology.go#L866) |
+| [ceph/topology.go](../ceph/topology.go) | [Container.QuorumStatus](../ceph/topology.go#L125) · [Container.WaitForQuorum](../ceph/topology.go#L135) · [Container.ManagerStatus](../ceph/topology.go#L869) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirror.PeerIDs](../multicluster/cephfs.go#L1033) |
 | [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirrorDirectoryAddition.Status](../multicluster/cephfs_directory_addition.go#L289) |
 | [multicluster/cephfs_directory_removal.go](../multicluster/cephfs_directory_removal.go) | [CephFSMirrorDirectoryRemoval.Status](../multicluster/cephfs_directory_removal.go#L374) · [CephFSMirrorDirectoryRemoval.WaitReleased](../multicluster/cephfs_directory_removal.go#L480) |
@@ -182,17 +182,18 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | [multicluster/rgw_sync_policy_ready.go](../multicluster/rgw_sync_policy_ready.go) | [RGWMultisite.WaitBucketSyncPolicyReady](../multicluster/rgw_sync_policy_ready.go#L38) |
 | [multicluster/rgw_sync_status.go](../multicluster/rgw_sync_status.go) | [RGWMultisite.SyncStatus](../multicluster/rgw_sync_status.go#L48) · [RGWMultisite.WaitSyncReady](../multicluster/rgw_sync_status.go#L66) |
 
-### Check: 보존된 정보·소유 목록·접속 정보 (42개)
+### Check: 보존된 정보·소유 목록·접속 정보 (43개)
 
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [ClientConfig.Name](../ceph/auth.go#L45) · [ClientConfig.User](../ceph/auth.go#L49) · [ClientConfig.KeyringPath](../ceph/auth.go#L52) · [ClientConfig.ConnectionConfig](../ceph/auth.go#L64) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.ControlImage](../ceph/ceph.go#L233) · [Container.NetworkName](../ceph/ceph.go#L315) · [Container.UsesHostNetwork](../ceph/ceph.go#L326) · [Container.PublicAddress](../ceph/ceph.go#L329)<br>[Container.ConnectionConfig](../ceph/ceph.go#L338) · [Container.ManagerContainer](../ceph/ceph.go#L365) · [Container.OSDs](../ceph/ceph.go#L682) · [Container.ServiceContainers](../ceph/ceph.go#L695) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container.ControlImage](../ceph/ceph.go#L236) · [Container.NetworkName](../ceph/ceph.go#L319) · [Container.UsesHostNetwork](../ceph/ceph.go#L330) · [Container.PublicAddress](../ceph/ceph.go#L333)<br>[Container.ConnectionConfig](../ceph/ceph.go#L342) · [Container.ManagerContainer](../ceph/ceph.go#L369) · [Container.OSDs](../ceph/ceph.go#L700) · [Container.ServiceContainers](../ceph/ceph.go#L713) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSContainer.MDSs](../ceph/cephfs.go#L211) |
 | [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSQuiesce.ID](../ceph/cephfs_quiesce.go#L51) |
 | [ceph/client_monitor_config.go](../ceph/client_monitor_config.go) | [Container.MonitorBootstrapAddresses](../ceph/client_monitor_config.go#L20) |
 | [ceph/composition.go](../ceph/composition.go) | [Container.Gateways](../ceph/composition.go#L55) · [Container.Filesystems](../ceph/composition.go#L68) |
 | [ceph/fencing.go](../ceph/fencing.go) | [BlocklistOverride.Address](../ceph/fencing.go#L42) |
+| [ceph/messenger.go](../ceph/messenger.go) | [Container.MessengerMode](../ceph/messenger.go#L22) |
 | [ceph/network.go](../ceph/network.go) | [Container.ClusterNetworkName](../ceph/network.go#L26) · [Container.HasSeparateClusterNetwork](../ceph/network.go#L34) |
 | [ceph/placement.go](../ceph/placement.go) | [OSDContainer.Placement](../ceph/placement.go#L24) |
 | [ceph/rbd.go](../ceph/rbd.go) | [RBDNamespace.Name](../ceph/rbd.go#L31) · [RBDNamespace.PoolName](../ceph/rbd.go#L34) |
@@ -214,8 +215,8 @@ private receiver의 exported-name method, dependency가 승격하는 container m
 | source | 공개 callable |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [Container.WithClientIdentity](../ceph/auth.go#L191) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L374) · [Container.Ceph](../ceph/ceph.go#L397) |
-| [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L83) · [WithHostAddress](../ceph/options.go#L111) · [WithOSDImage](../ceph/options.go#L125) · [WithRGWImage](../ceph/options.go#L137)<br>[WithMDSImage](../ceph/options.go#L149) · [WithStartupTimeout](../ceph/options.go#L254) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L378) · [Container.Ceph](../ceph/ceph.go#L401) |
+| [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L83) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
 | [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.Admin](../ceph/rgw_admin.go#L122) |
 | [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.SourceRBD](../multicluster/rbd.go#L571) · [RBDMirror.DestinationRBD](../multicluster/rbd.go#L580) |
 | [multicluster/rgw.go](../multicluster/rgw.go) | [RGWMultisite.SourceAdmin](../multicluster/rgw.go#L465) · [RGWMultisite.DestinationAdmin](../multicluster/rgw.go#L471) |
@@ -246,12 +247,12 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 88개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 89개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
 | [ceph/auth.go](../ceph/auth.go) | [ClientCaps](../ceph/auth.go#L24) · [ClientConfig](../ceph/auth.go#L34) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container](../ceph/ceph.go#L36) · [OSDContainer](../ceph/ceph.go#L71) |
+| [ceph/ceph.go](../ceph/ceph.go) | [Container](../ceph/ceph.go#L36) · [OSDContainer](../ceph/ceph.go#L74) |
 | [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSConfig](../ceph/cephfs.go#L24) · [MDSContainer](../ceph/cephfs.go#L41) · [CephFSContainer](../ceph/cephfs.go#L52) · [MDSStatus](../ceph/cephfs.go#L71)<br>[CephFSMDSStatus](../ceph/cephfs.go#L81) |
 | [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSSubvolumeAuthorizationConfig](../ceph/cephfs_authorization.go#L16) · [CephFSSubvolumeAuthorization](../ceph/cephfs_authorization.go#L26) · [CephFSSubvolumeAuthorizedClient](../ceph/cephfs_authorization.go#L41) |
 | [ceph/cephfs_data_pools.go](../ceph/cephfs_data_pools.go) | [CephFSDataPoolState](../ceph/cephfs_data_pools.go#L16) · [CephFSDataPool](../ceph/cephfs_data_pools.go#L25) |
@@ -264,9 +265,10 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/fencing.go](../ceph/fencing.go) | [BlocklistEntry](../ceph/fencing.go#L20) · [BlocklistOverride](../ceph/fencing.go#L31) |
 | [ceph/full_ratios.go](../ceph/full_ratios.go) | [FullRatios](../ceph/full_ratios.go) · [FullRatioSnapshot](../ceph/full_ratios.go) · [FullRatiosOverride](../ceph/full_ratios.go) |
 | [ceph/health_details.go](../ceph/health_details.go) | [HealthSnapshot](../ceph/health_details.go#L21) · [HealthCheck](../ceph/health_details.go#L29) · [HealthMute](../ceph/health_details.go#L41) |
+| [ceph/messenger.go](../ceph/messenger.go) | [MessengerMode](../ceph/messenger.go#L8), `MessengerDefault`, `MessengerV2Secure` |
 | [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [MGRModuleState](../ceph/mgr_modules.go#L19) · [MGRModuleOverride](../ceph/mgr_modules.go#L42) |
 | [ceph/network.go](../ceph/network.go) | [NetworkPlane](../ceph/network.go#L17) · [NetworkInterruption](../ceph/network.go#L81) |
-| [ceph/options.go](../ceph/options.go) | [Option](../ceph/options.go#L80) |
+| [ceph/options.go](../ceph/options.go) | [Option](../ceph/options.go#L96) |
 | [ceph/osd_policy.go](../ceph/osd_policy.go) | [OSDState](../ceph/osd_policy.go#L20) · [OSDFlagOverride](../ceph/osd_policy.go#L116) |
 | [ceph/placement.go](../ceph/placement.go) | [OSDConfig](../ceph/placement.go#L16) |
 | [ceph/pool.go](../ceph/pool.go) | [PoolConfig](../ceph/pool.go#L18) · [ErasureCodeConfig](../ceph/pool.go#L39) · [Pool](../ceph/pool.go#L48) |
@@ -282,7 +284,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWUserUsage](../ceph/rgw_usage.go#L21) |
 | [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWUserPlacementConfig](../ceph/rgw_user_placement.go#L18) |
 | [ceph/status.go](../ceph/status.go) | [Status](../ceph/status.go#L11) |
-| [ceph/topology.go](../ceph/topology.go) | [MonitorContainer](../ceph/topology.go#L26) · [ManagerContainer](../ceph/topology.go#L32) · [QuorumStatus](../ceph/topology.go#L109) · [ManagerStatus](../ceph/topology.go#L856) |
+| [ceph/topology.go](../ceph/topology.go) | [MonitorContainer](../ceph/topology.go#L26) · [ManagerContainer](../ceph/topology.go#L32) · [QuorumStatus](../ceph/topology.go#L109) · [ManagerStatus](../ceph/topology.go#L859) |
 | [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorConfig](../multicluster/cephfs.go#L26) · [CephFSMirrorDaemon](../multicluster/cephfs.go#L48) · [CephFSMirror](../multicluster/cephfs.go#L82) |
 | [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirrorDirectoryAddition](../multicluster/cephfs_directory_addition.go#L16) · [CephFSMirrorDirectoryAdditionStatus](../multicluster/cephfs_directory_addition.go#L27) |
 | [multicluster/cephfs_directory_removal.go](../multicluster/cephfs_directory_removal.go) | [CephFSMirrorDirectoryRemoval](../multicluster/cephfs_directory_removal.go#L18) · [CephFSMirrorDirectoryRemovalStatus](../multicluster/cephfs_directory_removal.go#L30) · [CephFSMirrorDirectoryRemovalDaemonStatus](../multicluster/cephfs_directory_removal.go#L38) |

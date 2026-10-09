@@ -70,12 +70,26 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // and rejects overlapping handles for the same section/mask/name. On command or
 // readback failure, the handle remains tracked for Restore. Never race external
 // writes to this key with application/restoration; Ceph has no config CAS.
+// MessengerV2Secure reserves its six ms_*_mode options and ms_bind_msgr1/2 in
+// every section and mask: central overrides cannot change the fixed local
+// bootstrap policy. Select a MessengerMode when creating a new cluster instead.
 func (c *Container) TemporaryConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	setting, err := normalizeConfigSetting(setting)
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
+	if c == nil {
+		return nil, errors.New("ceph cluster is unavailable")
+	}
+	if c.settings.messengerMode == MessengerV2Secure && messengerBootstrapSetting(setting.Name) {
+		return nil, fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name)
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
