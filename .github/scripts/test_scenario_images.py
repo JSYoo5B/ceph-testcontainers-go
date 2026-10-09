@@ -338,6 +338,26 @@ class ScenarioImageTests(unittest.TestCase):
                 artifacts.append(scalar(preparation, "artifact_name"))
         self.assertEqual(len(set(artifacts)), len(PRIMARY))
 
+    def test_independent_primary_jobs_follow_host_checks_with_own_runtime_resources(self):
+        # Every profile creates fresh fixtures on its own GitHub runner. The
+        # required default profile produces no workspace or image artifacts
+        # consumed by another job, so it need not serialize their admission.
+        for name in PRIMARY:
+            with self.subTest(job=name):
+                block = self.jobs[name]
+                self.assertEqual(scalar(block, "needs"), "test")
+                self.assertEqual(block.count("uses: actions/checkout@v7"), 1)
+                self.assertNotIn("actions/download-artifact", block)
+                self.assertNotRegex(block, r"(?m)^    (?:if|outputs):")
+                self.assertNotRegex(block, r"\bneeds\.")
+                self.assertIn("id: runtime_cleanup_baseline", block)
+                self.assertIn("phase: snapshot", block)
+                self.assertIn("uses: " + PREP, block)
+                self.assertIn("phase: check", block)
+        self.assertEqual(scalar(self.jobs["image-compatibility"], "needs"), "test")
+        self.assertEqual(scalar(self.jobs["rgw-native-regressions"], "needs"),
+                         "[scenario-topology, scenario-multicluster-topology, scenario-topology-extensions]")
+
     def test_every_expanded_primary_job_has_distinct_image_and_cleanup_artifacts(self):
         self.assertEqual(set(self.jobs), set(PRIMARY) |
                          {"test", "image-compatibility", "rgw-native-regressions"})

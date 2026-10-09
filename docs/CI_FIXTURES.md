@@ -1,5 +1,56 @@
 # 시나리오 fixture CI
 
+## 전체 workflow 시간과 runner 대기
+
+Source `8ef88e7`의 [run 37849665913](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37849665913)은
+GitHub API 기준 필수 79개 job이 SUCCESS이고 선택적 native regression
+1개만 SKIP이다. 생성부터 마지막 job 완료까지 **54분 15초**였으며,
+첫 job 시작부터 완료까지는 54분 12초였다. 앞선 `4da2744`의 생성부터
+완료까지 59분 39초와 구분한다. 최장 job은 분리 전 RBD fixture의
+35분 7초에서 현재 cluster fixture의 **25분 10초**로 바뀌었다.
+최장 job만으로 전체 workflow 시간을 설명할 수 없다.
+
+마지막 `multicluster / rgw-multisite-host` job의 실제 경로는 다음과 같다.
+Job API의 `created_at`부터 `started_at`까지를 실행 대기로 계산했다.
+
+| 구간 | 시간 |
+| --- | ---: |
+| 호스트 `test` job | 1분 49초 |
+| 다음 job 배정 | 2초 |
+| 필수 `scenario-default` job | 16분 44초 |
+| 마지막 RGW job의 생성 후 runner 대기 | 24분 3초 |
+| 마지막 RGW job 실행 | 11분 34초 |
+| 첫 job 시작부터 전체 완료 | 54분 12초 |
+
+당시 독립 시나리오 job 65개는 `scenario-default` 완료 시점에 한꺼번에
+생성됐으며 대기는 중앙값 11분 36초, 최대 25분이었다. 이 job들은 이전
+runner의 cluster·workspace·artifact를 사용하지 않는다. 현재 workflow는
+모든 주요 시나리오를 호스트 `test` 성공 뒤 허용하며 `scenario-default`도
+필수 runtime job으로 병행한다. 각 job의 독립 checkout·역할 이미지 준비·
+자체 baseline·항상 실행하는 cleanup, 필수 선택과 기존 시간 제한은 유지한다.
+
+관측한 동시 실행 최대치는 20개이며 성공 job의 runner 점유 합은
+820.4분이었다. 작업량과 동시 용량을 그대로 유지하면 `820.4 / 20`인
+**41분 1초**가 작업량만 고려한 하한이다. 호스트 검사를 먼저 완료하는
+조건까지 포함한 이상적 하한은 **42분 45초**이다. 이 관측만으로 계정의
+요금제나 공식 동시 실행 quota를 판정하지 않는다.
+
+같은 job 시간을 고정하고 배정 지연을 0으로 가정한 계산에서, 직렬
+의존성 제거와 기존 관측 순서를 사용하면 47분 42초, 긴 job 우선 배정이면
+44분 4초다. 30개 slot의 긴 job 우선 계산은 30분 25초, 32개는 28분 53초다.
+이 값들은 실제 GitHub 실행 결과가 아니며 workflow 선언 순서가 실행
+우선순위를 보장한다고 가정하지 않는다. 같은 호스트 검사 조건과 작업량으로
+30분에 도달하려면 적어도 30개의 동시 slot이 필요하고, 20개를 유지하려면
+총 runner 작업량을 최소 약 31.1% 줄여야 한다. 이 값도 충분조건은 아니다.
+[GitHub 공식 한도](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)는
+요금제별 차이와 지원팀을 통한 한도 증가 요청을 설명한다. 계정이나 runner
+용량은 이번 변경으로 수정하지 않는다.
+
+현재 결과는 기존 성공 실행의 API timing 분석과 workflow 의존성 변경의
+호스트 검사이다. 변경 후 실제 전체 시간은 새 CI가 완료돼야 확정한다.
+API 원본·계산·가정과 source별 receipt는
+`artifacts/ci-wall-time-20261009/`에 보존한다.
+
 ## 긴 시나리오 분리
 
 2026-10-09 KST에 확인한 source `4da2744`의
@@ -35,7 +86,7 @@ primary instance 127개를 선택한다. 필수 job은 79개, cleanup은 78쌍,
 
 분리는 가용 runner가 있을 때 wall time을 줄일 수 있다. 준비를 반복하므로
 runner 점유 합과 이미지 준비 비용이 줄었다고 주장하지 않는다.
-변경한 source의 새 CI 완료를 관측하기 전에는 성능 개선으로 표시하지 않는다.
+이 분리 구성의 새 성공 실행과 전체 대기는 위 절에 구분해 기록한다.
 Timing 원본과 source별 hash receipt는
 `artifacts/slow-scenario-wpq-20261009/`에 보존한다.
 
@@ -228,7 +279,7 @@ Strict audit는 `artifacts/scenario-fixture-completion-20261005/cleanup-ci-snaps
 
 현재 CI job과 Make target은 검증할 시나리오를 나타내는 `scenario-*` 이름을 사용합니다. 이전 실행의 `quay-*` job 이름과 artifact 경로는 당시 증거 그대로 보존합니다. 로컬 Make 기본 실행은 `ceph.DefaultImage`를 사용하고, 주요 CI는 준비된 공식 역할 이미지 네 개를 명시적으로 선택합니다. 이 선택은 기존 이미지 runtime 계약과 필수 selector·판정을 유지하며, 이전 Quay 실행의 결과를 새 역할 이미지 결과로 표시하지 않습니다.
 
-[workflow](../.github/workflows/test.yml)는 `make check` 성공 후 `scenario-default`를 실행합니다. Go 프로젝트의 기존 topology job과 새 fixture job은 모두 `scenario-default` 성공 뒤 Ubuntu 24.04 Linux AMD64 runner에서 실행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
+[workflow](../.github/workflows/test.yml)는 호스트 `test`의 `make check`와 helper 검사 성공 뒤 모든 독립 시나리오를 허용합니다. 기본·topology·fixture job은 각각 Ubuntu 24.04 Linux AMD64 runner에서 실행하며 `scenario-default`도 필수 검사로 병행합니다. 공개 모듈·integration runner는 `CGO_ENABLED=0`이며, 실제 go-ceph probe만 호출자가 준비하는 Linux 소비자 이미지에서 cgo/native 라이브러리를 사용합니다. 역할 이미지에는 compiler나 개발 헤더를 요구하지 않습니다.
 
 현재 CI 설정은 `scenario-cephfs-fixtures`의 8개 parent와
 `scenario-topology-extensions`의 12개 parent를 각각 독립 case job으로
@@ -419,7 +470,7 @@ make image-matrix IMAGE_VARIANT=official IMAGE_LAYOUT=roles \
 
 ## 추가되는 named test 전체
 
-현재 긴 CephFS 제거·재등록 복구 시나리오는 별도 필수 profile에서 실행합니다. 각 parent의 bridge/host child 전체를 유지하며, 선택한 기존 이미지·각 runner 내부 순차 실행·자체 cleanup 조건을 따릅니다. 이 profile은 `scenario-default` 성공 뒤 독립 runner에서 실행합니다.
+현재 긴 CephFS 제거·재등록 복구 시나리오는 별도 필수 profile에서 실행합니다. 각 parent의 bridge/host child 전체를 유지하며, 선택한 기존 이미지·각 runner 내부 순차 실행·자체 cleanup 조건을 따릅니다. 이 profile은 호스트 `test` 성공 뒤 독립 runner에서 실행합니다.
 
 | 현재 필수 profile | 이름 수 | 로컬 aggregate Go timeout | CI job timeout | cleanup artifact |
 | --- | ---: | --- | --- | --- |
@@ -496,7 +547,7 @@ TestMultiClusterRBDReceiverReadiness
 
 Image 없는 receiver의 default/named namespace 매핑 네 종류와 named pool journal 모드를 검증합니다. Leader·membership readiness, explicit snapshot checkpoint, 실제 destination bytes를 별도로 확인합니다. CI는 `SCENARIO_RBD_RECEIVERS_CASE=bridge|host`로 서로 독립적인 두 runner에서 실행합니다. 네트워크별 `scope-0`부터 `scope-4`까지는 같은 원래 클러스터 쌍을 공유하며 원래 phase history·election·CID/UUID·bytes·negative window를 유지합니다. 추가 클러스터 bootstrap은 없습니다. 로컬 기본값과 `CASE=all`은 기존 bridge/host 순차 실행을 유지합니다.
 
-전용 Go 90분·job별 100분과 `scenario-default` 의존성은 유지합니다. Job별 log/prep/cleanup artifact는 case 이름을 포함합니다. [실행 검사기](../.github/scripts/check_scenario_receivers.py)는 선택한 parent·network·5 scope가 정확히 한 번씩 RUN/PASS했는지 확인하며 다른 network·누락·중복·FAIL·SKIP·비어 있는 filtered 실행을 거부합니다. 같은 parent를 두 job에서 선택하므로 distinct 이름 수와 실행 instance 수를 구분합니다.
+전용 Go 90분·job별 100분을 유지하며 호스트 `test` 성공 뒤 실행합니다. Job별 log/prep/cleanup artifact는 case 이름을 포함합니다. [실행 검사기](../.github/scripts/check_scenario_receivers.py)는 선택한 parent·network·5 scope가 정확히 한 번씩 RUN/PASS했는지 확인하며 다른 network·누락·중복·FAIL·SKIP·비어 있는 filtered 실행을 거부합니다. 같은 parent를 두 job에서 선택하므로 distinct 이름 수와 실행 instance 수를 구분합니다.
 
 첫 로컬 Linux ARM64 묶음 실행은 package 1705.518초로 PASS했습니다. 이는 분리한 새 job의 실행 시간이나 성공 증거가 아닙니다. 항상 실행하는 자체 cleanup 검사를 유지하며 [RBD receiver 계약](RBD_RECEIVER_READINESS.md)을 따릅니다.
 
@@ -506,7 +557,7 @@ Image 없는 receiver의 default/named namespace 매핑 네 종류와 named pool
 TestMultiClusterNoInitialMirrorDaemons
 ```
 
-Bridge/host 각각 RBD 정상 첫 추가·journal partial 첫 추가·CephFS 정상 첫 추가의 fresh pair를 순차 실행합니다. 최초 zero 설정·명시적 Add·실제 데이터와 resource oracle을 검사합니다. 전용 Go 150분·job 160분은 여섯 child의 caller budget 및 cleanup을 고려한 예산입니다. 첫 로컬 Linux ARM64 실행은 package 931.698초로 PASS했으며 이 측정은 다른 runner의 시간 보장이 아닙니다. `scenario-default` 뒤 별도 runner에서 자체 baseline·always cleanup을 유지합니다. [구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다.
+Bridge/host 각각 RBD 정상 첫 추가·journal partial 첫 추가·CephFS 정상 첫 추가의 fresh pair를 순차 실행합니다. 최초 zero 설정·명시적 Add·실제 데이터와 resource oracle을 검사합니다. 전용 Go 150분·job 160분은 여섯 child의 caller budget 및 cleanup을 고려한 예산입니다. 첫 로컬 Linux ARM64 실행은 package 931.698초로 PASS했으며 이 측정은 다른 runner의 시간 보장이 아닙니다. 호스트 `test` 성공 뒤 별도 runner에서 자체 baseline·always cleanup을 유지합니다. [구성 계약](NO_INITIAL_MIRROR_DAEMONS.md)을 따릅니다.
 
 다음 목록은 profile별로 고정합니다. Test 내부에 bridge/host child가 있는 경우 모두 유지합니다. Host 전용 wrapper와 helper 이름도 그대로 포함하며, `-list` 또는 tag compile은 runtime 통과 증거로 사용하지 않습니다.
 
@@ -526,7 +577,7 @@ TestMultiClusterRBDNamespaceImageObservation
 
 같은 shared pool·owner·cohort의 두 image-snapshot mapping과 한 pool-journal mapping을 retained view의 `ImageStatus`·`WaitReplayReady`로 관측합니다. Bridge/host 각각 두 OSD·pool replicas2/min1로 strict HEALTH_OK를 유지하고, zero-daemon source 관측·명시적 Add·원래 same-name image IDs·Stop/Start·Remove/Add replacement·live attribution과 실제 nonce bytes·source checkpoint ID를 구분합니다. Receiver election 준비는 별도 API의 계약이며 image replay 관측에 추가 조건으로 만들지 않습니다.
 
-`integration,multicluster`의 정확한 한 parent를 `-count=1 -failfast`로 선택하며 Go90분·job100분, `scenario-default` dependency, 기존 네 역할 override 해제, 자체 baseline·always cleanup과 별도 artifact를 사용합니다. Network별30분 context가 bootstrap/client 생성부터 operation까지 덮고 cleanup은 별도 bounded Background context를 유지합니다. 실패한 child는 다음 network를 시작하지 않습니다. 첫 native35557은 size1/one-OSD의 POOL_NO_REDUNDANCY로 package156.187초 FAIL했고 host는 시작하지 않았으며 자체 cleanup을 확인했습니다. 두 OSD·size2로 바꾼 Final3는 원본 Quay Linux ARM64 bridge/host에서 실제3개 RUN/PASS·package886.778초(parent886.38초,bridge450.08초/host436.31초), FAIL/SKIP0개로 종료했습니다. 18 READY·18 BYTES·12 source CHECKPOINT·18 PENDING·8 rawHEALTH_OK/checks{}·8 MODULES·2 ownerCLEANUP·2 COMPLETE를 확인했고 별도 outer cleanup의 새 container/network는0개였습니다. 같은253개 source input과 고정 policy를 유지했으며 [실제 종료·marker 요약](../artifacts/rbd-namespace-image-observation-20261007/native-summary.json)과 [원문·체크 기록](../artifacts/rbd-namespace-image-observation-20261007/checks-provenance.json), [별도 cleanup](../artifacts/rbd-namespace-image-observation-20261007/runtime-cleanup-final3/after.json)을 보관합니다. 경고를 성공으로 허용하거나 image/module 요구사항을 완화하지 않았습니다. 이 measured focused 결과는116개 전체 CI나 다른 image/platform 조합의 새 성공을 뜻하지 않습니다. [관측 계약·보존된 실패와 검증 상태](RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따릅니다.
+`integration,multicluster`의 정확한 한 parent를 `-count=1 -failfast`로 선택하며 Go90분·job100분, 호스트 `test` dependency, 기존 네 역할 override 해제, 자체 baseline·always cleanup과 별도 artifact를 사용합니다. Network별30분 context가 bootstrap/client 생성부터 operation까지 덮고 cleanup은 별도 bounded Background context를 유지합니다. 실패한 child는 다음 network를 시작하지 않습니다. 첫 native35557은 size1/one-OSD의 POOL_NO_REDUNDANCY로 package156.187초 FAIL했고 host는 시작하지 않았으며 자체 cleanup을 확인했습니다. 두 OSD·size2로 바꾼 Final3는 원본 Quay Linux ARM64 bridge/host에서 실제3개 RUN/PASS·package886.778초(parent886.38초,bridge450.08초/host436.31초), FAIL/SKIP0개로 종료했습니다. 18 READY·18 BYTES·12 source CHECKPOINT·18 PENDING·8 rawHEALTH_OK/checks{}·8 MODULES·2 ownerCLEANUP·2 COMPLETE를 확인했고 별도 outer cleanup의 새 container/network는0개였습니다. 같은253개 source input과 고정 policy를 유지했으며 [실제 종료·marker 요약](../artifacts/rbd-namespace-image-observation-20261007/native-summary.json)과 [원문·체크 기록](../artifacts/rbd-namespace-image-observation-20261007/checks-provenance.json), [별도 cleanup](../artifacts/rbd-namespace-image-observation-20261007/runtime-cleanup-final3/after.json)을 보관합니다. 경고를 성공으로 허용하거나 image/module 요구사항을 완화하지 않았습니다. 이 measured focused 결과는116개 전체 CI나 다른 image/platform 조합의 새 성공을 뜻하지 않습니다. [관측 계약·보존된 실패와 검증 상태](RBD_NAMESPACE_IMAGE_OBSERVATION.md)를 따릅니다.
 
 ### `scenario-storage-bootstrap` · 1개
 
@@ -534,7 +585,7 @@ TestMultiClusterRBDNamespaceImageObservation
 TestNoInitialOSDTopology
 ```
 
-`ceph.WithNoInitialOSDs()`로 MON/MGR만 먼저 구성한 뒤 명시적 OSD 추가·pool 생성·native client I/O를 검사합니다. Bridge/host 각각 정상 첫 추가와 등록 후 partial 첫 추가의 fresh fixture를 순차 실행합니다. 기본 OSD 수와 마지막 owned OSD 제거 보호를 바꾸지 않습니다. `integration,topology`의 정확한 한 parent만 선택하고 Go 80분·job 90분, `scenario-default` dependency, 기존 역할 override 해제, 자체 baseline·always cleanup을 유지합니다. 새 profile의 `-failfast`와 parent의 failed-leaf 중단은 실패 뒤 후속 fixture를 시작하지 않도록 합니다. 실제 실패를 skip이나 PASS로 변환하지 않습니다.
+`ceph.WithNoInitialOSDs()`로 MON/MGR만 먼저 구성한 뒤 명시적 OSD 추가·pool 생성·native client I/O를 검사합니다. Bridge/host 각각 정상 첫 추가와 등록 후 partial 첫 추가의 fresh fixture를 순차 실행합니다. 기본 OSD 수와 마지막 owned OSD 제거 보호를 바꾸지 않습니다. `integration,topology`의 정확한 한 parent만 선택하고 Go 80분·job 90분, 호스트 `test` dependency, 기존 역할 override 해제, 자체 baseline·always cleanup을 유지합니다. 새 profile의 `-failfast`와 parent의 failed-leaf 중단은 실패 뒤 후속 fixture를 시작하지 않도록 합니다. 실제 실패를 skip이나 PASS로 변환하지 않습니다.
 
 storage bootstrap 추가 시점의 실제 compiled 선택 114개는 공유 namespace 관측 시점의 113개에 이 parent 한 개만 더한 목록이며, `d9115f4`의 전체 CI 101개 성공과 별도입니다. 첫 native 실행의 FAIL과 별도 config 진단을 보존했고, 실제 MON admin socket을 검증하는 수정 시나리오는 원본 Quay Linux ARM64 bridge/host에서 7개 RUN/PASS·89.354초·자체 cleanup의 새 리소스 0개를 확인했습니다. 기존 양수 OSD·pool·CephFS 초기 구성도 별도 실행과 cleanup을 통과했습니다. 고정 이미지 요구사항·역할 payload는 완화하지 않고, 확인된 이미지 요구사항 충돌이 있으면 후속 작업을 즉시 중지하고 증거를 기록합니다. [구성·검증 계약](NO_INITIAL_OSDS.md)을 따릅니다.
 
@@ -546,7 +597,7 @@ TestNoInitialManagerTopology
 
 `ceph.WithNoInitialManagers()`로 최초 MGR identity/process 없이 MON/OSD부터 구성합니다. Bridge/host 각각 초기 pool·양수 OSD의 관리 이전 data path와 `WithNoInitialOSDs()`를 함께 쓰는 MON-only 조합을 독립 fixture에서 순차 검사합니다. 원래 FSID·pool·OSD identity, 명시적 첫 `AddManager`, native active GID·module command·clean/health closure와 실제 client bytes를 구분합니다. 기본 MGR 1개·양수 count validation·마지막 MGR 제거 보호는 유지합니다.
 
-`integration,topology`의 정확한 한 parent, Go 80분·job 90분, `scenario-default` dependency, 기존 네 역할 override 해제, 자체 baseline·always cleanup과 별도 artifact를 사용합니다. Operational context는 network별 15분 cold-positive·10분 MON-only이며 별도 cleanup이 있습니다. 새 profile의 `-failfast`와 parent의 failed-leaf 중단은 후속 fixture를 시작하지 않도록 합니다. 이 시간 예산은 runtime PASS 약속이 아닙니다. 실제 compiled 필수 선택은 M의 114개에 이 parent만 추가한 115개이며 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. 원본 Quay Linux ARM64 bridge/host의 독립 네 fixture는 7개 RUN/PASS·package 141.986초·자체 cleanup의 새 container/network 0개를 확인했습니다. 같은 250개 source input과 고정 image/policy를 유지했으며, [원문·종료 기록](../artifacts/no-initial-managers-20261007/checks-provenance.json)과 [실제 selector](../artifacts/no-initial-managers-20261007/compiled-selection.json)를 validating checkout에 보관합니다. 현재 source의 기존 storage bootstrap도 별도 원본 Quay bridge/host 실행에서 7개 RUN/PASS·89.109초·자체 cleanup의 새 리소스 0개를 확인했으며, [자체 종료 증거](../artifacts/no-initial-managers-20261007/storage-bootstrap-regression/provenance.json)를 따로 기록합니다. 이 focused 결과를 전체 CI 115개나 다른 image/platform 조합의 성공으로 합산하지 않습니다. 고정 이미지 요구사항은 그대로 유지하고, 증명된 이미지 충돌은 후속 작업을 즉시 중지하여 기록합니다. [구성 계약과 실행 범위](NO_INITIAL_MANAGERS.md)를 따릅니다.
+`integration,topology`의 정확한 한 parent, Go 80분·job 90분, 호스트 `test` dependency, 기존 네 역할 override 해제, 자체 baseline·always cleanup과 별도 artifact를 사용합니다. Operational context는 network별 15분 cold-positive·10분 MON-only이며 별도 cleanup이 있습니다. 새 profile의 `-failfast`와 parent의 failed-leaf 중단은 후속 fixture를 시작하지 않도록 합니다. 이 시간 예산은 runtime PASS 약속이 아닙니다. 실제 compiled 필수 선택은 M의 114개에 이 parent만 추가한 115개이며 기본 14개와 SDK 전체 11개 중 선택 2개는 유지했습니다. 원본 Quay Linux ARM64 bridge/host의 독립 네 fixture는 7개 RUN/PASS·package 141.986초·자체 cleanup의 새 container/network 0개를 확인했습니다. 같은 250개 source input과 고정 image/policy를 유지했으며, [원문·종료 기록](../artifacts/no-initial-managers-20261007/checks-provenance.json)과 [실제 selector](../artifacts/no-initial-managers-20261007/compiled-selection.json)를 validating checkout에 보관합니다. 현재 source의 기존 storage bootstrap도 별도 원본 Quay bridge/host 실행에서 7개 RUN/PASS·89.109초·자체 cleanup의 새 리소스 0개를 확인했으며, [자체 종료 증거](../artifacts/no-initial-managers-20261007/storage-bootstrap-regression/provenance.json)를 따로 기록합니다. 이 focused 결과를 전체 CI 115개나 다른 image/platform 조합의 성공으로 합산하지 않습니다. 고정 이미지 요구사항은 그대로 유지하고, 증명된 이미지 충돌은 후속 작업을 즉시 중지하여 기록합니다. [구성 계약과 실행 범위](NO_INITIAL_MANAGERS.md)를 따릅니다.
 
 ### scenario-cluster-fixtures · 현재 9개
 
@@ -815,7 +866,7 @@ libcephfs mount의 non-ready/가용성 관측 뒤 같은 descriptor의 첫
 독립 identity·live task·nonce control로 유지하며 bridge/host를 순차 검사합니다.
 
 정확한 한 parent와 최소 `integration,topology` 태그, `-mod=readonly`,
-`-count=1`, `-failfast`, Go 50분·job 60분, `scenario-default` dependency,
+`-count=1`, `-failfast`, Go 50분·job 60분, 호스트 `test` dependency,
 기존 네 역할 override 해제와 자체 baseline·always cleanup·별도 artifact를
 사용합니다. 각 network의 setup을 포함하는 operation context는 15분이며
 독립 cleanup과 실패 로그 상한을 둡니다. Pool은 두 OSD·두 replica로 구성하고
@@ -861,7 +912,7 @@ TestStoppedMDSRetirementTopology
 ```
 
 정확한 `integration,topology` parent·`-count=1`·`-failfast`, Go 50분/job 60분,
-`scenario-default` dependency, 기존 네 역할 override 해제, 자체 baseline·always
+호스트 `test` dependency, 기존 네 역할 override 해제, 자체 baseline·always
 cleanup·별도 artifact를 사용합니다. Setup부터 network별 15분 context와 별도
 cleanup/실패 로그 상한을 적용하며 두 OSD·두 replica의 ordinary target/sibling을
 구성합니다. [공개 계약](CEPHFS_STOPPED_MDS.md)에 따라 API는 native fail·auth

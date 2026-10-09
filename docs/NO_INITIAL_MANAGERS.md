@@ -164,7 +164,7 @@ earlier whole CI remain attached to their original source.
 Operational ceilings are 15 minutes for cold-positive and ten minutes for
 combined MON-only per network, with separate three-minute whole-cluster cleanup;
 a failed leaf stops later fixtures. The dedicated CI profile uses Go 80 minutes
-and job 90 minutes, depends on `scenario-default`, clears the existing role
+and job 90 minutes, follows the host `test` checks; the focused run clears role
 overrides and retains its own baseline/always-cleanup artifact. These ceilings
 are not runtime promises. This focused validation does not certify a new whole
 CI/image matrix, all APIs, global process absence, every image/platform

@@ -138,8 +138,10 @@ jobs:
           phase: check
           artifact_name: runtime-cleanup-scenario-default
 
+  # Independent profiles own their runner, checkout, image preparation and cleanup.
+  # The default profile remains a required runtime check alongside these jobs.
   scenario-topology:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -172,7 +174,7 @@ jobs:
 
   scenario-multicluster-topology:
     name: multicluster / ${{ matrix.group }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     strategy:
@@ -221,7 +223,7 @@ jobs:
 
   scenario-cephfs-removal:
     name: cephfs removal / ${{ matrix.case }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     strategy:
@@ -276,7 +278,7 @@ jobs:
 
   scenario-rbd-receivers:
     name: rbd receivers / ${{ matrix.case }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     strategy:
@@ -326,7 +328,7 @@ jobs:
 
   scenario-topology-extensions:
     name: topology extension / ${{ matrix.case }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     strategy:
@@ -381,7 +383,7 @@ jobs:
           if-no-files-found: warn
 
   scenario-cluster-fixtures:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
@@ -420,7 +422,7 @@ jobs:
 
   scenario-cephfs-fixtures:
     name: cephfs fixture / ${{ matrix.case }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     strategy:
@@ -473,7 +475,7 @@ jobs:
           if-no-files-found: warn
 
   scenario-rados-fixtures:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -512,7 +514,7 @@ jobs:
 
   scenario-rbd-fixtures:
     name: rbd fixture / ${{ matrix.case }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     strategy:
@@ -564,7 +566,7 @@ jobs:
           if-no-files-found: warn
 
   scenario-rgw-fixtures:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
@@ -603,7 +605,7 @@ jobs:
 
   scenario-rgw-sync-fixtures:
     name: rgw sync / ${{ matrix.group }}
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     strategy:
@@ -688,7 +690,7 @@ jobs:
           artifact_name: runtime-cleanup-rgw-sync-native-regressions
 
   scenario-mirror-initial-daemons:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 160
     env:
@@ -720,7 +722,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-mirror-initial-daemons
 
   scenario-rbd-namespaces:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -752,7 +754,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-rbd-namespaces
 
   scenario-storage-bootstrap:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -784,7 +786,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-storage-bootstrap
 
   scenario-manager-bootstrap:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -816,7 +818,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-manager-bootstrap
 
   scenario-rbd-namespace-observation:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -848,7 +850,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-rbd-namespace-observation
 
   scenario-mds-bootstrap:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -880,7 +882,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-mds-bootstrap
 
   scenario-mds-replacement:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -912,7 +914,7 @@ jobs:
           artifact_name: runtime-cleanup-scenario-mds-replacement
 
   scenario-last-mds-replacement:
-    needs: scenario-default
+    needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
