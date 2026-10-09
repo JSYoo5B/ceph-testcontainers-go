@@ -8,7 +8,7 @@
 |---|---|---|
 | Pool | `Pools`, `PoolStatus`, `SetPoolReplication`, `SetPoolQuota` | native pool ID·현재 정책 조회, replicated size/min-size 변경, logical byte/object quota 변경·해제 |
 | Cephx | `ClientCapabilities`, `UpdateClientCaps` | 생성한 identity의 키를 유지하며 전체 caps 조회·교체 |
-| RBD | `InitRBDPool`, `CreateRBDNamespace`, `ListRBDNamespaces`, `RemoveRBDNamespace` | replicated metadata pool 초기화, namespace 분리와 비어 있는 owned namespace 제거 |
+| RBD | `rbd.InitPool`, `rbd.CreateNamespace`, `rbd.ListNamespaces`, `rbd.RemoveNamespace` | replicated metadata pool 초기화, namespace 분리와 비어 있는 owned namespace 제거 |
 | CephFS | `CreateSubvolumeGroup`, `CreateSubvolume`, 조회·목록·resize·remove | 기존 filesystem의 volumes 모듈, data pool/layout·namespace 선택, directory quota |
 | RGW | `Admin`, `CreateUser`, `UserInfo`, `SetUserQuota`, `SetBucketQuota`, `SuspendUser`, `RemoveUser` | gateway 범위의 CLI, 일반 S3 계정, 명시적 Admin Ops caps와 quota·정지·복구 |
 
@@ -43,12 +43,12 @@ Pool quota의 0은 해당 제한 해제입니다. PG 통계 보고와 full flag 
 ## RBD namespace
 
 ```go
-if err := cluster.InitRBDPool(ctx, "rbd-metadata"); err != nil { return err }
-namespace, err := cluster.CreateRBDNamespace(ctx, "rbd-metadata", "tenant-a")
+if err := rbd.InitPool(ctx, cluster, "rbd-metadata"); err != nil { return err }
+namespace, err := rbd.CreateNamespace(ctx, cluster, "rbd-metadata", "tenant-a")
 if err != nil { return err }
 // librbd에서 pool=rbd-metadata, namespace=namespace.Name()를 사용합니다.
 // image/snapshot/trash를 소비자 client로 정리한 후:
-return cluster.RemoveRBDNamespace(ctx, namespace)
+return rbd.RemoveNamespace(ctx, cluster, namespace)
 ```
 
 pool은 미리 생성해야 합니다. EC pool은 image data에 사용할 수 있지만 RBD metadata pool로 초기화할 수 없습니다. CLI exit code뿐 아니라 native application과 초기화 object를 확인합니다. 제거는 owned descriptor와 native pool ID를 확인하고, Ceph가 nonempty namespace를 거부하도록 합니다. namespace에는 generation ID가 없으므로 활성 descriptor를 사용하면서 외부에서 동일 이름을 삭제·재생성하면 안 됩니다.
@@ -56,11 +56,11 @@ pool은 미리 생성해야 합니다. EC pool은 image data에 사용할 수 �
 ## CephFS subvolume
 
 ```go
-group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{
+group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{
     Name: "app", SizeBytes: 128 << 20,
 })
 if err != nil { return err }
-volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{
+volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{
     Name: "tenant-a", GroupName: group.Name, SizeBytes: 16 << 20,
     NamespaceIsolated: true,
 })
@@ -74,7 +74,7 @@ return fs.ResizeSubvolume(ctx, volume, 32 << 20)
 ## RGW 사용자 정책
 
 ```go
-user, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{
+user, err := gateway.CreateUser(ctx, rgw.UserConfig{
     ID: "app-user", AdminCaps: "users=read;usage=read",
 })
 if err != nil { return err }
@@ -82,7 +82,7 @@ accessKey, secretKey, err := user.Credentials()
 if err != nil { return err }
 // S3 client에 gateway.S3Endpoint(ctx)와 자격 증명을 전달합니다.
 _, _ = accessKey, secretKey
-if err := gateway.SetUserQuota(ctx, user, ceph.RGWQuota{
+if err := gateway.SetUserQuota(ctx, user, rgw.Quota{
     Enabled: true, MaxSizeBytes: 64 << 20, MaxObjects: 1000,
 }); err != nil { return err }
 return gateway.SuspendUser(ctx, user, true)

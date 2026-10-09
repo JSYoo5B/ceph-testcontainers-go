@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 // Explicit synchronization prepares deterministic native accounting for the
 // fixture assertion. UserUsage itself performs only read-only stats queries.
-func rgwFixtureUserUsage(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, user *ceph.RGWUser, stage string, objects, sizeBytes uint64) {
+func rgwFixtureUserUsage(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, stage string, objects, sizeBytes uint64) {
 	t.Helper()
 	if _, err := gateway.Admin(ctx, "user", "stats", "--uid", user.ID(), "--sync-stats"); err != nil {
 		t.Fatal(err)

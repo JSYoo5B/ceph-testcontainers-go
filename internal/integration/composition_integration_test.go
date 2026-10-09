@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -20,7 +21,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	image, opts := integrationImages(t)
 	opts = append(opts, ceph.WithOSDCount(1),
 		ceph.WithPools(ceph.PoolConfig{Name: "tc-initial", Application: "rados"}),
-		ceph.WithCephFS(ceph.CephFSConfig{Name: "small"}))
+		cephfs.WithFilesystems(cephfs.Config{Name: "small"}))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
@@ -28,10 +29,10 @@ func TestInitialClusterComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cluster.OSDs()) != 1 || len(cluster.Filesystems()) != 1 {
+	if len(cluster.OSDs()) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
 		t.Fatal("Run did not build the requested initial topology")
 	}
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	if fs.FilesystemName != "small" || len(fs.MDSs()) != 1 {
 		t.Fatal("Run did not expose the initialized filesystem")
 	}

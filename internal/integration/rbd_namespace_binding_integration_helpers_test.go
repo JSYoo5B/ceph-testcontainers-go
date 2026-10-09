@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -65,11 +65,11 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 		if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if err := cluster.InitRBDPool(ctx, pool); err != nil {
+		if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 			t.Fatal(err)
 		}
 		for _, ns := range []string{"ns-a", "ns-b", "ns-c", "ns-d", "ns-e", "ns-f", "isolated"} {
-			if _, err := cluster.CreateRBDNamespace(ctx, pool, ns); err != nil {
+			if _, err := rbd.CreateNamespace(ctx, cluster, pool, ns); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -113,7 +113,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	owner, err := multicluster.RunRBDMirror(ctx, source.ControlImage(), multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	owner, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if owner != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -150,7 +150,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 			}
 		}
 	}
-	views := make([]*multicluster.RBDMirrorNamespace, len(mappings))
+	views := make([]*rbd.MirrorNamespace, len(mappings))
 	policies := make([][2]rbdReceiverIndependentPolicy, len(mappings))
 	for index, mapping := range mappings {
 		views[index], err = owner.BindNamespace(ctx, mapping[0], mapping[1])
@@ -189,10 +189,10 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 		rbdReceiverNativeOriginalClusterPool(t, ctx, destinationClient, pool, destinationStatus.FSID, destinationPool.ID)
 		rbdReceiverNativePeerMatches(t, rbdReceiverNativeIdentity(t, ctx, destinationClient, pool), identity, base[0].mirrorUUID)
 	}
-	check := func(phase string) []multicluster.RBDMirrorReceiverStatus {
+	check := func(phase string) []rbd.MirrorReceiverStatus {
 		t.Helper()
 		checkPolicies()
-		statuses := make([]multicluster.RBDMirrorReceiverStatus, len(views))
+		statuses := make([]rbd.MirrorReceiverStatus, len(views))
 		for index, view := range views {
 			status, err := view.WaitReceiverReady(ctx)
 			if err != nil || !status.Ready || status.SourceNamespace != mappings[index][0] || status.DestinationNamespace != mappings[index][1] || status.PeerID != identity.peerUUID || status.SourceFSID != sourceStatus.FSID || status.DestinationFSID != destinationStatus.FSID || status.SourcePoolID != sourcePool.ID || status.DestinationPoolID != destinationPool.ID {

@@ -93,9 +93,10 @@ def source_manifest(root):
     # label as proof of unmodified source. Generated output is never included.
     paths = {root / "Makefile", root / "go.mod", root / "go.sum",
              root / ".github/scripts/run_image_matrix.py"}
-    for directory in ("ceph", "multicluster", "internal/dockerbridge", "internal/integration"):
+    for directory in ("ceph", "cephfs", "rgw", "rbd", "internal/cluster", "internal/multicluster",
+                      "internal/dockerbridge", "internal/integration"):
         paths.update((root / directory).rglob("*.go"))
-    paths.update(path for path in (root / "ceph/internal/scripts").rglob("*") if path.is_file())
+    paths.update(path for path in (root / "internal/cluster/internal/scripts").rglob("*") if path.is_file())
     files = []
     for path in sorted(paths, key=lambda value: value.relative_to(root).as_posix()):
         if path.is_symlink() or not path.is_file():

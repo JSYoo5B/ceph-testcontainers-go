@@ -36,7 +36,7 @@
 
 ## RGW/S3
 
-`StartRGW`는 Beast HTTP frontend를 7480 포트로 실행하고, `radosgw-admin user create`로 일반 S3 사용자의 access/secret key를 생성합니다. `S3Endpoint`는 호스트에서 사용할 매핑된 HTTP endpoint를 반환합니다. 테스트 클라이언트는 Go 표준 라이브러리 `net/http`와 암호화 패키지로 AWS Signature V4 요청을 구성하며 path-style bucket 주소를 사용합니다. [Ceph S3 API 문서](https://docs.ceph.com/en/tentacle/radosgw/s3/)와 [RGW 관리 문서](https://docs.ceph.com/en/tentacle/radosgw/admin/)를 기준으로 구성했습니다.
+`rgw.Start`는 Beast HTTP frontend를 7480 포트로 실행하고, `radosgw-admin user create`로 일반 S3 사용자의 access/secret key를 생성합니다. `S3Endpoint`는 호스트에서 사용할 매핑된 HTTP endpoint를 반환합니다. 테스트 클라이언트는 Go 표준 라이브러리 `net/http`와 암호화 패키지로 AWS Signature V4 요청을 구성하며 path-style bucket 주소를 사용합니다. [Ceph S3 API 문서](https://docs.ceph.com/en/tentacle/radosgw/s3/)와 [RGW 관리 문서](https://docs.ceph.com/en/tentacle/radosgw/admin/)를 기준으로 구성했습니다.
 
 검증 항목은 다음과 같습니다.
 
@@ -67,7 +67,7 @@ snapshot/clone 데이터 분리와 flatten 이후 부모 의존성 제거까지 
 
 ## CephFS
 
-`StartCephFS`는 metadata/data 풀을 생성하고 `ceph fs new`로 `tc-cephfs` 파일시스템을 등록합니다. 공식 수동 배포 방식의 `mds.a` credentials로 MDS 1개를 시작하고 JSON filesystem map에서 rank 0의 `up:active` 상태를 기다립니다. MDS cache memory limit는 작은 테스트 VM에 맞춰 128 MiB로 설정했습니다. [CephFS 생성 문서](https://docs.ceph.com/en/tentacle/cephfs/createfs/)와 [MDS 수동 배포 문서](https://docs.ceph.com/en/tentacle/cephfs/add-remove-mds/)를 기준으로 구성했습니다.
+`cephfs.Start`는 metadata/data 풀을 생성하고 `ceph fs new`로 `tc-cephfs` 파일시스템을 등록합니다. 공식 수동 배포 방식의 `mds.a` credentials로 MDS 1개를 시작하고 JSON filesystem map에서 rank 0의 `up:active` 상태를 기다립니다. MDS cache memory limit는 작은 테스트 VM에 맞춰 128 MiB로 설정했습니다. [CephFS 생성 문서](https://docs.ceph.com/en/tentacle/cephfs/createfs/)와 [MDS 수동 배포 문서](https://docs.ceph.com/en/tentacle/cephfs/add-remove-mds/)를 기준으로 구성했습니다.
 
 클라이언트는 이미지에 이미 설치된 Python `cephfs` 모듈을 사용합니다. 검증 항목은 다음과 같습니다.
 

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -22,10 +22,10 @@ import (
 func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	control, rgw, clusters := rgwTopologyClusters(t, ctx, 2, false)
-	fixture, err := multicluster.RunRGWTopology(ctx, rgw, multicluster.RGWTopologyConfig{
+	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
 		ControlImage: control, Zonegroup: "us", MetadataMaster: "a",
-		Zones: []multicluster.RGWZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
 	})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {

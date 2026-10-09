@@ -18,7 +18,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -61,7 +61,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	fixture, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{Source: clusters[0], Destination: clusters[1], ControlImage: image})
+	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1], ControlImage: image})
 	if fixture != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -82,7 +82,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 		defer diagnosticCancel()
 		for _, site := range []struct {
 			name    string
-			gateway *ceph.RGWContainer
+			gateway *rgw.Gateway
 		}{{"source", fixture.Source}, {"destination", fixture.Destination}} {
 			for _, command := range [][]string{{"sync", "status"}, {"metadata", "sync", "status"}, {"data", "sync", "status", "--source-zone", fixture.SourceZoneID}, {"sync", "error", "list"}} {
 				data, err := site.gateway.Admin(diagnosticCtx, command...)
@@ -102,7 +102,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 			}
 		}
 	})
-	config := ceph.RGWPlacementConfig{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []ceph.RGWStorageClassConfig{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}
+	config := rgw.PlacementConfig{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}
 	sourcePlacement, err := fixture.Source.CreatePlacement(ctx, config)
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 		t.Logf("native destination central config %s=%s (seconds)", option, strings.TrimSpace(string(value)))
 	}
 	endpoints := make([]string, 2)
-	for i, gateway := range []*ceph.RGWContainer{fixture.Source, fixture.Destination} {
+	for i, gateway := range []*rgw.Gateway{fixture.Source, fixture.Destination} {
 		endpoints[i], err = gateway.S3Endpoint(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -191,8 +191,8 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 		t.Fatalf("replica did not retain STANDARD_IA: %+v error=%v", replicaListing, err)
 	}
 	rgwPlacementPoolPayload(t, ctx, clusters[1], "tc-realm-ia", "replicated STANDARD_IA", payload)
-	for _, gateway := range []*ceph.RGWContainer{fixture.Source, fixture.Destination} {
-		state, err := gateway.PlacementStatus(ctx, map[*ceph.RGWContainer]*ceph.RGWPlacement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway])
+	for _, gateway := range []*rgw.Gateway{fixture.Source, fixture.Destination} {
+		state, err := gateway.PlacementStatus(ctx, map[*rgw.Gateway]*rgw.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway])
 		if err != nil || state.DefaultPlacement != "default-placement" {
 			t.Fatal("realm publication changed native default or lost zone-local mapping")
 		}

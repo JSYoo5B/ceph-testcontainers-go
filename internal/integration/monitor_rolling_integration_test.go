@@ -15,6 +15,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -34,7 +36,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			opts := []testcontainers.ContainerCustomizer{
 				ceph.WithMonitorCount(3), ceph.WithManagerCount(1), ceph.WithOSDCount(2),
 				ceph.WithPools(ceph.PoolConfig{Name: "tc-mon-rolling", Application: "rados"}),
-				ceph.WithCephFS(ceph.CephFSConfig{Name: "tc-mon-rolling-fs"}), ceph.WithRGW(),
+				cephfs.WithFilesystems(cephfs.Config{Name: "tc-mon-rolling-fs"}), rgw.WithGateways(),
 				ceph.WithStartupTimeout(3 * time.Minute),
 			}
 			if host {
@@ -44,10 +46,10 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Monitors()) != 3 || len(cluster.Managers()) != 1 || len(cluster.OSDs()) != 2 || len(cluster.Gateways()) != 1 || len(cluster.Filesystems()) != 1 {
+			if len(cluster.Monitors()) != 3 || len(cluster.Managers()) != 1 || len(cluster.OSDs()) != 2 || len(rgw.Gateways(cluster)) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
 				t.Fatal("initial MON/MGR/OSD/RGW/MDS topology differs")
 			}
-			manager, gateway, filesystem := cluster.Managers()[0], cluster.Gateways()[0], cluster.Filesystems()[0]
+			manager, gateway, filesystem := cluster.Managers()[0], rgw.Gateways(cluster)[0], cephfs.Filesystems(cluster)[0]
 			if len(filesystem.MDSs()) != 1 {
 				t.Fatal("initial filesystem lacks its one owned metadata daemon")
 			}

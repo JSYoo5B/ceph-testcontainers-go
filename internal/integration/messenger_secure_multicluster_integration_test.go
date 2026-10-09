@@ -15,7 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -36,14 +37,14 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 				if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 4, Replicas: 1, MinSize: 1}); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.InitRBDPool(ctx, pool); err != nil {
+				if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 					t.Fatal(err)
 				}
 				if err := cluster.WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := multicluster.RunRBDMirror(ctx, source.ControlImage(), multicluster.RBDMirrorConfig{
+			mirror, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{
 				Source: source, Destination: destination, Pool: pool,
 			})
 			if mirror != nil {
@@ -67,7 +68,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if err := mirror.EnableImage(ctx, name); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, multicluster.RBDMirrorModeSnapshot, "", "")
+			rbdMirrorReplayReady(t, ctx, mirror, name, rbd.MirrorModeSnapshot, "", "")
 			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			// Native bootstrap names the remote CephX user separately from the
 			// destination-owned daemon. Observe those exact authenticated users.
@@ -93,7 +94,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if _, err := mirror.SourceRBD(ctx, "mirror", "image", "snapshot", image); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, multicluster.RBDMirrorModeSnapshot, "", "")
+			rbdMirrorReplayReady(t, ctx, mirror, name, rbd.MirrorModeSnapshot, "", "")
 			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			checkMixedMessengerPeers(t, ctx, source, policy.Peers[0].ClientName, daemons[0], nil)
 			checkMixedMessengerPeers(t, ctx, destination, daemons[0].ClientName, daemons[0], nil)
@@ -109,9 +110,9 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 			defer cancel()
 			started := time.Now()
 			source, destination, sourceClient, destinationClient := newMixedMessengerPair(t, ctx, secureSource)
-			filesystems := make([]*ceph.CephFSContainer, 2)
+			filesystems := make([]*cephfs.Filesystem, 2)
 			for index, cluster := range []*ceph.Container{source, destination} {
-				filesystem, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{
+				filesystem, err := cephfs.Start(ctx, cluster, cephfs.Config{
 					Name:         []string{"tc-messenger-source", "tc-messenger-destination"}[index],
 					MetadataPool: ceph.PoolConfig{PGNum: 4, Replicas: 1, MinSize: 1},
 					DataPool:     ceph.PoolConfig{PGNum: 4, Replicas: 1, MinSize: 1},
@@ -131,7 +132,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{
+			mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
 			})
@@ -247,7 +248,7 @@ sys.exit(result.returncode if result.returncode>=0 else 128-result.returncode)`}
 	return output
 }
 
-func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.Container, clientName string, mirror testcontainers.Container, filesystem *ceph.CephFSContainer) {
+func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.Container, clientName string, mirror testcontainers.Container, filesystem *cephfs.Filesystem) {
 	t.Helper()
 	status, err := cluster.Status(ctx)
 	if err != nil {

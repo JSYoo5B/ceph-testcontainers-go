@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -35,13 +35,13 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 			source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
 			for index, tc := range []struct {
 				name, sourceNamespace, destinationNamespace string
-				scope                                       multicluster.RBDMirrorScope
+				scope                                       rbd.MirrorScope
 			}{
-				{"pool-default", "", "", multicluster.RBDMirrorScopePool},
-				{"pool-named", "ns-a", "ns-b", multicluster.RBDMirrorScopePool},
-				{"pool-named-to-default", "ns-a", "", multicluster.RBDMirrorScopePool},
-				{"pool-default-to-named", "", "ns-b", multicluster.RBDMirrorScopePool},
-				{"image-snapshot-named", "ns-a", "ns-b", multicluster.RBDMirrorScopeImage},
+				{"pool-default", "", "", rbd.MirrorScopePool},
+				{"pool-named", "ns-a", "ns-b", rbd.MirrorScopePool},
+				{"pool-named-to-default", "ns-a", "", rbd.MirrorScopePool},
+				{"pool-default-to-named", "", "ns-b", rbd.MirrorScopePool},
+				{"image-snapshot-named", "ns-a", "ns-b", rbd.MirrorScopeImage},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
@@ -51,11 +51,11 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 						if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
 							t.Fatal(err)
 						}
-						if err := cluster.InitRBDPool(ctx, pool); err != nil {
+						if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 							t.Fatal(err)
 						}
 						for _, namespace := range []string{"isolated", "ns-a", "ns-b"} {
-							if _, err := cluster.CreateRBDNamespace(ctx, pool, namespace); err != nil {
+							if _, err := rbd.CreateNamespace(ctx, cluster, pool, namespace); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -92,17 +92,17 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 						}
 					}
 					existingName := "existing"
-					if tc.scope == multicluster.RBDMirrorScopeImage {
+					if tc.scope == rbd.MirrorScopeImage {
 						existingName = "volume"
 					}
-					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, existingName, tc.scope == multicluster.RBDMirrorScopePool)
+					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, existingName, tc.scope == rbd.MirrorScopePool)
 					rbdScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, tc.sourceNamespace, existingName, 0, before)
 					rbdScopeAssertUnmirrored(t, ctx, sourceClient, rbdScopeImage(pool, tc.sourceNamespace, existingName))
 					// A plain image in pool scope is intentionally not eligible for
 					// journal enrollment, even while journaling images are mirrored.
 					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "plain", false)
 					mirrorImage := source.ControlImage()
-					link, err := multicluster.RunRBDMirror(ctx, mirrorImage, multicluster.RBDMirrorConfig{
+					link, err := rbd.RunMirror(ctx, mirrorImage, rbd.MirrorConfig{
 						Source: source, Destination: destination, Pool: pool, Scope: tc.scope,
 						SourceNamespace: tc.sourceNamespace, DestinationNamespace: tc.destinationNamespace,
 					})
@@ -140,10 +140,10 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							}
 						}
 					}
-					if tc.scope == multicluster.RBDMirrorScopePool {
+					if tc.scope == rbd.MirrorScopePool {
 						// Existing journaling images are enrolled when pool scope is
 						// enabled. Future images enroll without EnableImage or snapshots.
-						rbdMirrorReplayReady(t, ctx, link, existingName, multicluster.RBDMirrorModeJournal, tc.sourceNamespace, tc.destinationNamespace)
+						rbdMirrorReplayReady(t, ctx, link, existingName, rbd.MirrorModeJournal, tc.sourceNamespace, tc.destinationNamespace)
 						rbdScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, tc.destinationNamespace, existingName, before)
 						rbdScopeAssertReplicaIdentity(t, ctx, sourceClient, destinationClient, pool, tc.sourceNamespace, tc.destinationNamespace, existingName, "journal")
 						rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "volume", true)
@@ -153,9 +153,9 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					mirrorMode := multicluster.RBDMirrorModeJournal
-					if tc.scope == multicluster.RBDMirrorScopeImage {
-						mirrorMode = multicluster.RBDMirrorModeSnapshot
+					mirrorMode := rbd.MirrorModeJournal
+					if tc.scope == rbd.MirrorScopeImage {
+						mirrorMode = rbd.MirrorModeSnapshot
 					}
 					rbdMirrorReplayReady(t, ctx, link, "volume", mirrorMode, tc.sourceNamespace, tc.destinationNamespace)
 					rbdScopeWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, tc.destinationNamespace, "volume", before)
@@ -164,7 +164,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					copy(after[512<<10:], patch)
 					rbdScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, tc.sourceNamespace, "volume", 512<<10, patch)
 					mode := "journal"
-					if tc.scope == multicluster.RBDMirrorScopeImage {
+					if tc.scope == rbd.MirrorScopeImage {
 						mode = "snapshot"
 						execCommand(t, ctx, sourceClient, "rbd", "mirror", "image", "snapshot", rbdScopeImage(pool, tc.sourceNamespace, "volume"))
 					}

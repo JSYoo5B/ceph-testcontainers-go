@@ -13,12 +13,13 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func cephFSTopologyStatus(t *testing.T, ctx context.Context, fs *ceph.CephFSContainer) *ceph.CephFSMDSStatus {
+func cephFSTopologyStatus(t *testing.T, ctx context.Context, fs *cephfs.Filesystem) *cephfs.FilesystemStatus {
 	t.Helper()
 	status, err := fs.MDSStatus(ctx)
 	if err != nil {
@@ -27,7 +28,7 @@ func cephFSTopologyStatus(t *testing.T, ctx context.Context, fs *ceph.CephFSCont
 	return status
 }
 
-func cephFSOwnedMDS(t *testing.T, fs *ceph.CephFSContainer, name string) *ceph.MDSContainer {
+func cephFSOwnedMDS(t *testing.T, fs *cephfs.Filesystem, name string) *cephfs.MDS {
 	t.Helper()
 	for _, daemon := range fs.MDSs() {
 		if daemon.ID == name {
@@ -38,9 +39,9 @@ func cephFSOwnedMDS(t *testing.T, fs *ceph.CephFSContainer, name string) *ceph.M
 	return nil
 }
 
-func cephFSOwnedFilesystem(t *testing.T, cluster *ceph.Container, name string) *ceph.CephFSContainer {
+func cephFSOwnedFilesystem(t *testing.T, cluster *ceph.Container, name string) *cephfs.Filesystem {
 	t.Helper()
-	for _, fs := range cluster.Filesystems() {
+	for _, fs := range cephfs.Filesystems(cluster) {
 		if fs.FilesystemName == name {
 			return fs
 		}
@@ -49,7 +50,7 @@ func cephFSOwnedFilesystem(t *testing.T, cluster *ceph.Container, name string) *
 	return nil
 }
 
-func cephFSKillMDS(t *testing.T, parent context.Context, daemon *ceph.MDSContainer) {
+func cephFSKillMDS(t *testing.T, parent context.Context, daemon *cephfs.MDS) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
@@ -77,11 +78,11 @@ func cephFSKillMDS(t *testing.T, parent context.Context, daemon *ceph.MDSContain
 	}
 }
 
-func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *ceph.CephFSContainer, old, standby ceph.MDSStatus) {
+func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *cephfs.Filesystem, old, standby cephfs.MDSStatus) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
-	var last *ceph.CephFSMDSStatus
+	var last *cephfs.FilesystemStatus
 	var lastErr error
 	for {
 		last, lastErr = fs.MDSStatus(ctx)
@@ -101,7 +102,7 @@ func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *ceph.Cep
 	}
 }
 
-func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *ceph.Container, fs *ceph.CephFSContainer, path string, rank int) {
+func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, path string, rank int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()

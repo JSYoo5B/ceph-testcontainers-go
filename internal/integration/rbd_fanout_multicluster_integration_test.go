@@ -12,7 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -49,7 +49,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 	execCommand(t, ctx, aClient, "rbd", "create", image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
 	before := rbdMultiClusterPayload(size, 41)
 	rbdFanoutWrite(t, ctx, aClient, fsids[0], pool, name, 0, before)
-	for _, link := range []*multicluster.RBDMirror{ab, ac} {
+	for _, link := range []*rbd.Mirror{ab, ac} {
 		if err := link.EnableImage(ctx, name); err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +98,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 		}
 	}
 
-	for _, link := range []*multicluster.RBDMirror{ab, ac} {
+	for _, link := range []*rbd.Mirror{ab, ac} {
 		if err := link.Stop(ctx, &stopGrace); err != nil {
 			t.Fatal(err)
 		}

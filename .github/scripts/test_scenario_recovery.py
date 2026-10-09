@@ -81,7 +81,7 @@ class RecoveryCoverageTests(unittest.TestCase):
         self.assertEqual(passes[:3], [checker.PARENT, checker.PARENT + "/bridge", checker.PARENT + "/bridge/peer"])
 
     def test_split_producer_parent_and_shared_recovery_assertions_preserve_original_declarations(self):
-        snapshot = SOURCE_FIXTURE.read_text()
+        snapshot = retained_source.package_split(SOURCE_FIXTURE.read_text())
         root = Path(__file__).resolve().parents[2] / "internal/integration"
         parent = (root / "cephfs_process_quiescence_acknowledgment_integration_test.go").read_text()
         helpers = (root / "cephfs_process_quiescence_acknowledgment_integration_helpers_test.go").read_text()

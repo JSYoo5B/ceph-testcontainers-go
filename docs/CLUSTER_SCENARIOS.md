@@ -102,17 +102,17 @@ CephFS mirror 증설은 기본 20.2.4의 자동 shuffle 오류와 검증 가능�
 | 빠른 단일 클러스터 | `Run`, `WithOSDCount`, `AddOSD`, `RemoveOSD` | 기존 PoC 통과. 기본 MON 1/MGR 1/OSD 2, sparse BlueStore. Linux go-ceph의 RADOS/RBD/CephFS 통신도 통과 |
 | MON quorum / MGR standby | `WithMonitorCount(3)`, `WithManagerCount(2)`, `Monitors`, `Managers`, `AddMonitor`, `RemoveMonitor`, 독립 `ControlContainer` | bridge/host 통과. MON 중단·재시작·3→4→3 교체 동안 같은 native RADOS 연결 유지. quorum 상실 시 새 인증 실패, 복구 후 기존/새 연결 성공. active MGR 변경 및 volumes 명령 확인 |
 | 실행 중 MGR 증감 | `AddManager`, `RemoveManager` | bridge 통과. 1→2→1→2→1에서 active 제거·standby 승격, 교체 standby 추가·제거 후 native MGR 명령과 실제 map 확인. 마지막 candidate 제거 거부 |
-| CephFS active/standby/replay | `WithCephFS`, `StartCephFSWithConfig`, `CephFSConfig` | standalone standby-replay 장애·승격·재가입 통과. 요청한 rank와 standby의 실제 FSMap 확인 |
-| 다중 active MDS / 여러 filesystem | `WithCephFS`의 이름·active/standby 수·MDS affinity | Run에서 두 filesystem, 2 active + 1 standby 구성 통과. rank1 중단·승격 후 통신과 다른 filesystem의 독립성 확인 |
-| 실행 중 MDS 증감 | `CephFSContainer.ScaleMDS` | bridge 통과. 일반 standby의 1/0→2/1→1/1→1/0과 replay follower의 1/1→2/1→1/1→1/0 확인. rank handoff·남는 standby 제거, 실제 FSMap/컨테이너 수 확인. 같은 filesystem/pool ID와 기존 파일, 다른 filesystem MDS의 GID 유지 |
-| RGW 단독 / 같은 zone의 여러 gateway | `WithRGW`, `StartRGWWithConfig`, `Gateways`, `RemoveRGW` | bridge/host 통과. 초기 Run의 gateway, 동적 추가, 2→1→2 제거·교체, 중단·재시작 뒤 같은 zone의 기존 데이터 확인 |
+| CephFS active/standby/replay | `cephfs.WithFilesystems`, `cephfs.Start`, `cephfs.Config` | standalone standby-replay 장애·승격·재가입 통과. 요청한 rank와 standby의 실제 FSMap 확인 |
+| 다중 active MDS / 여러 filesystem | `cephfs.WithFilesystems`의 이름·active/standby 수·MDS affinity | Run에서 두 filesystem, 2 active + 1 standby 구성 통과. rank1 중단·승격 후 통신과 다른 filesystem의 독립성 확인 |
+| 실행 중 MDS 증감 | `cephfs.Filesystem.ScaleMDS` | bridge 통과. 일반 standby의 1/0→2/1→1/1→1/0과 replay follower의 1/1→2/1→1/1→1/0 확인. rank handoff·남는 standby 제거, 실제 FSMap/컨테이너 수 확인. 같은 filesystem/pool ID와 기존 파일, 다른 filesystem MDS의 GID 유지 |
+| RGW 단독 / 같은 zone의 여러 gateway | `rgw.WithGateways`, `rgw.Start`, `rgw.Gateways`, `rgw.Remove` | bridge/host 통과. 초기 Run의 gateway, 동적 추가, 2→1→2 제거·교체, 중단·재시작 뒤 같은 zone의 기존 데이터 확인 |
 | 독립 클러스터 2개 동시 사용 | 독립 `Run`과 `WithClient`/`ConnectionConfig` | bridge/host 통과. 동일 pool/object 이름의 서로 다른 데이터, 양쪽 OSD 교체, Linux go-ceph의 실제 session 확인 |
-| RGW multisite 2 zone | `multicluster.RunRGWMultisite` | 복제·gateway 중단/복구는 bridge/host 통과. host의 자동 선택 gateway endpoint를 양쪽 최종 period에서 확인. metadata master 전환/복귀는 bridge에서 검증 |
-| RGW multisite 여러 zone | `RunRGWTopology`, `RGWTopologyConfig.Zones/MetadataMaster`, `AddZone`, `Zones`, `ZoneAdmin` | 3 zone bridge/host 통과. 초기 MON a 제거 후 남은 quorum으로 구성, 입력 순서와 다른 metadata master 지정, 실제 zone ID/endpoint, secondary 중단·재가입과 각 zone의 통신, master gateway 중단 후 보조 zone의 독립 읽기 확인 |
-| RBD snapshot mirror / journal mirror | `multicluster.RunRBDMirror`, `RBDMirrorConfig.Mode` | snapshot은 bridge/host 통과. journal의 receiver 재시작·A→B→A 구성도 통과 |
+| RGW multisite 2 zone | `rgw.RunMultisite` | 복제·gateway 중단/복구는 bridge/host 통과. host의 자동 선택 gateway endpoint를 양쪽 최종 period에서 확인. metadata master 전환/복귀는 bridge에서 검증 |
+| RGW multisite 여러 zone | `rgw.RunTopology`, `rgw.TopologyConfig.Zones/MetadataMaster`, `AddZone`, `Zones`, `ZoneAdmin` | 3 zone bridge/host 통과. 초기 MON a 제거 후 남은 quorum으로 구성, 입력 순서와 다른 metadata master 지정, 실제 zone ID/endpoint, secondary 중단·재가입과 각 zone의 통신, master gateway 중단 후 보조 zone의 독립 읽기 확인 |
+| RBD snapshot mirror / journal mirror | `rbd.RunMirror`, `rbd.MirrorConfig.Mode` | snapshot은 bridge/host 통과. journal의 receiver 재시작·A→B→A 구성도 통과 |
 | RBD 3 cluster fanout | 기존 pair API를 A→B, A→C로 조합 | bridge 통과. 서로 다른 FSID/네트워크/키, 실제 tx/rx peer graph, 한 receiver 중단 중 다른 receiver 유지, 재시작 후 catch-up. source MON/OSD와 두 receiver 중단 후 B/C의 독립 읽기 확인 |
 | RBD backup/restore | 전체·증분 export/restore API | 실제 source 중단 후 복원·새 session 통과 |
-| CephFS snapshot mirror / archive restore | `multicluster.RunCephFSMirror`, `AttachManagers`, directory/peer 변경 | bridge/host 통과. 초기 MGR a 제거 후 b active/c standby로 생성, d 추가·연결 준비, b 제거 후 c 승격·peer 재등록과 새 snapshot 도달 확인. 기존 snapshot 및 양쪽 클러스터 유지, fixture가 추가한 attachment만 cleanup. 기존 daemon 재시작·OSD 교체·source 중단 사례도 통과 |
+| CephFS snapshot mirror / archive restore | `cephfs.RunMirror`, `AttachManagers`, directory/peer 변경 | bridge/host 통과. 초기 MGR a 제거 후 b active/c standby로 생성, d 추가·연결 준비, b 제거 후 c 승격·peer 재등록과 새 snapshot 도달 확인. 기존 snapshot 및 양쪽 클러스터 유지, fixture가 추가한 attachment만 cleanup. 기존 daemon 재시작·OSD 교체·source 중단 사례도 통과 |
 
 기존 세부 결과와 로그 경로는 [MULTICLUSTER_POC.md](MULTICLUSTER_POC.md), [HOST_NETWORK_POC.md](HOST_NETWORK_POC.md), [SERVICES_POC.md](SERVICES_POC.md)에 있습니다. 위 “통과”는 각 케이스의 최종 실행 결과이며 전체 테스트가 한 번의 명령에서 모두 통과했다는 뜻은 아닙니다.
 

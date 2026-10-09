@@ -1,6 +1,6 @@
 # CephFS mirror peer 제거와 replayer 종료 관측
 
-`RemovePeer(ctx, id)`는 소유 peer의 제거 정책을 요청하는 기존 API입니다. `BeginPeerRemoval(ctx, id)`는 제거 전에 현재 소유한 live daemon cohort를 확인하고, 제거 요청과 원래 identity를 보존하는 `CephFSMirrorPeerRemoval` handle을 반환합니다. `Status(ctx)`와 `WaitDrained(ctx)`로 그 cohort의 종료 처리를 확인할 수 있습니다.
+`RemovePeer(ctx, id)`는 소유 peer의 제거 정책을 요청하는 기존 API입니다. `BeginPeerRemoval(ctx, id)`는 제거 전에 현재 소유한 live daemon cohort를 확인하고, 제거 요청과 원래 identity를 보존하는 `cephfs.MirrorPeerRemoval` handle을 반환합니다. `Status(ctx)`와 `WaitDrained(ctx)`로 그 cohort의 종료 처리를 확인할 수 있습니다.
 
 ```go
 receipt, err := mirror.BeginPeerRemoval(ctx, peerID)

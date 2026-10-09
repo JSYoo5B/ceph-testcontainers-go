@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
-func rgwTestCertificate(t *testing.T) (*ceph.RGWTLSConfig, *x509.CertPool) {
+func rgwTestCertificate(t *testing.T) (*rgw.TLSConfig, *x509.CertPool) {
 	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -48,5 +48,5 @@ func rgwTestCertificate(t *testing.T) (*ceph.RGWTLSConfig, *x509.CertPool) {
 	if !roots.AppendCertsFromPEM(caPEM) {
 		t.Fatal("fixture CA not parsed")
 	}
-	return &ceph.RGWTLSConfig{CertificatePEM: certificate, PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})}, roots
+	return &rgw.TLSConfig{CertificatePEM: certificate, PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})}, roots
 }

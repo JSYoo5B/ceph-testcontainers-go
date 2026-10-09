@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -51,11 +52,11 @@ time.sleep(1200)
 	clients := make([]testcontainers.Container, 2)
 	payloads := [][]byte{[]byte("host RGW cluster A"), []byte("host RGW cluster B")}
 	for i, cluster := range clusters {
-		rgw, err := cluster.StartRGW(ctx)
+		rgwGateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		endpoint, err := rgw.S3Endpoint(ctx)
+		endpoint, err := rgwGateway.S3Endpoint(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,8 +64,8 @@ time.sleep(1200)
 		if err != nil || parsed.Port() == "" || parsed.Port() == "7480" {
 			t.Fatalf("RGW must use an allocated port while 7480 is occupied: %q (%v)", endpoint, err)
 		}
-		gateways[i] = s3HTTPClient{endpoint: endpoint, accessKey: rgw.AccessKey, secretKey: rgw.SecretKey,
-			region: rgw.Region, http: &http.Client{Timeout: 15 * time.Second}}
+		gateways[i] = s3HTTPClient{endpoint: endpoint, accessKey: rgwGateway.AccessKey, secretKey: rgwGateway.SecretKey,
+			region: rgwGateway.Region, http: &http.Client{Timeout: 15 * time.Second}}
 		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import http.client"})),

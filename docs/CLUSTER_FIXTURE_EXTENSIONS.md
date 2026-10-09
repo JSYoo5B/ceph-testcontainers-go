@@ -62,14 +62,14 @@ OSDMap weight는 CRUSH weight와 다릅니다. out은 map weight를 0으로 만�
 기존 filesystem의 owned subvolume에서 snapshot을 생성합니다. `SubvolumeSnapshots`는 native 목록, `SubvolumeSnapshotInfo`는 frozen data 경로와 pending clone 정보를 조회합니다. 외부에서 생성한 snapshot을 조회하더라도 제거·clone 소유권이 생기지 않습니다.
 
 ```go
-source, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{
+source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{
     Name: "app-data", SizeBytes: 32 << 20, NamespaceIsolated: true,
 })
 if err != nil { return err }
 // 소비자 client의 쓰기와 checkpoint를 먼저 동기화합니다.
 snapshot, err := fs.CreateSubvolumeSnapshot(ctx, source, "checkpoint")
 if err != nil { return err }
-clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{
+clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{
     Name: "restored-data",
 })
 if err != nil { return err }
@@ -79,7 +79,7 @@ if err != nil { return err }
 return fs.RemoveSubvolumeSnapshot(ctx, snapshot)
 ```
 
-동일 이름의 기존 snapshot과 clone target을 거부합니다. `CephFSCloneConfig.GroupName`은 기존 target group을 선택하며 비어 있으면 default group입니다. `DataPool`은 filesystem에 등록된 data pool 중에서 선택합니다. 기본 clone은 snapshot의 quota·layout·RADOS namespace를 상속합니다. pool을 명시해서 override하면 native Ceph가 상속된 namespace를 비웁니다. clone quota는 복사 완료 후 적용됩니다. [native clone 생성 구현](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/volumes/fs/operations/versions/subvolume_v2.py).
+동일 이름의 기존 snapshot과 clone target을 거부합니다. `cephfs.CloneConfig.GroupName`은 기존 target group을 선택하며 비어 있으면 default group입니다. `DataPool`은 filesystem에 등록된 data pool 중에서 선택합니다. 기본 clone은 snapshot의 quota·layout·RADOS namespace를 상속합니다. pool을 명시해서 override하면 native Ceph가 상속된 namespace를 비웁니다. clone quota는 복사 완료 후 적용됩니다. [native clone 생성 구현](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/volumes/fs/operations/versions/subvolume_v2.py).
 
 `SubvolumeCloneStatus`는 `pending`, `in-progress`, `complete`, `failed`, `canceled`를 조회합니다. wait timeout은 복사를 취소하지 않으며 같은 handle로 다시 기다릴 수 있습니다. 실패·취소 상태는 오류를 즉시 반환하고 partial data를 보존합니다. 완료한 handle은 기존 `ResizeSubvolume`·`RemoveSubvolume`에 사용할 수 있습니다. `CancelSubvolumeClone`은 owned clone만 취소하며 `RemovePartialSubvolumeClone`은 native canceled/failed 상태와 target identity를 다시 확인한 뒤 명시적으로 정리합니다. source나 성공한 clone은 삭제하지 않습니다.
 
@@ -96,10 +96,10 @@ snapshot 생성은 writer를 자동으로 quiesce하지 않습니다. 여러 cli
 ```go
 // indexPool, extraPool, standardPool, coldPool은 이미 생성한 pool입니다.
 inline := false
-placement, err := gateway.CreatePlacement(ctx, ceph.RGWPlacementConfig{
+placement, err := gateway.CreatePlacement(ctx, rgw.PlacementConfig{
     Name: "app-tiered", IndexPool: indexPool, DataExtraPool: extraPool,
     InlineData: &inline,
-    StorageClasses: []ceph.RGWStorageClassConfig{
+    StorageClasses: []rgw.StorageClassConfig{
         {Name: "STANDARD", DataPool: standardPool},
         {Name: "STANDARD_IA", DataPool: coldPool},
     },
@@ -117,7 +117,7 @@ _ = endpoint
 
 realm 구성에서는 현재 metadata master만 `ApplyPlacement`로 period를 publish할 수 있습니다. 생성 당시 current period와 zone/zonegroup을 다시 확인합니다. 기존 staging의 정책을 먼저 읽어 관련 없는 변경이 있으면 `period update` 전에 거부하므로 unpublished 변경도 보존합니다. 새 staging 역시 owned target 추가 외의 변경이 있으면 commit을 거부합니다. 다른 zone들의 compatible local mapping을 먼저 준비하고 master에서 publish합니다.
 
-그 다음 `multicluster` fixture의 `PullDestinationPeriod`로 상대 cluster에 period를 전달하고, 해당 gateway의 `ReloadPlacement`로 로컬 서비스를 재시작합니다. `ReloadPlacement`는 로컬의 committed period에 정확한 target·zonegroup·zone이 있는지, pool ID와 class mapping이 그대로인지 확인합니다. secondary zone에서도 사용할 수 있으며 publish나 peer 연결은 수행하지 않습니다. 재시작 후 `S3Endpoint`를 다시 조회합니다. 여러 destination을 구성한 경우 각 cluster에 period를 전달하고 각 gateway를 활성화합니다.
+그 다음 `rgw.Multisite`의 `PullDestinationPeriod`로 상대 cluster에 period를 전달하고, 해당 gateway의 `ReloadPlacement`로 로컬 서비스를 재시작합니다. `ReloadPlacement`는 로컬의 committed period에 정확한 target·zonegroup·zone이 있는지, pool ID와 class mapping이 그대로인지 확인합니다. secondary zone에서도 사용할 수 있으며 publish나 peer 연결은 수행하지 않습니다. 재시작 후 `S3Endpoint`를 다시 조회합니다. 여러 destination을 구성한 경우 각 cluster에 period를 전달하고 각 gateway를 활성화합니다.
 
 ```go
 // 양쪽 CreatePlacement를 완료한 뒤 metadata master에서 publish합니다.
@@ -164,7 +164,7 @@ Ceph 20.2.4의 `rbd_support`와 `volumes`는 always-on입니다. enable true의 
 ```go
 attachment, err := fs.AddDataPool(ctx, "app-ec-data")
 if err != nil { return err }
-subvolume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{
+subvolume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{
     Name: "dynamic-data", DataPool: attachment.Name, NamespaceIsolated: true,
 })
 if err != nil { return err }
@@ -180,10 +180,10 @@ pool은 미리 만들며 EC에는 `AllowOverwrites`가 필요합니다. `DataPoo
 
 ## RGW user placement 정책
 
-새 placement의 `RGWPlacementConfig.Tags`에 required tags를 지정하고 활성화한 뒤, owned 사용자에 기본 target/class와 허용 tags를 지정합니다.
+새 placement의 `rgw.PlacementConfig.Tags`에 required tags를 지정하고 활성화한 뒤, owned 사용자에 기본 target/class와 허용 tags를 지정합니다.
 
 ```go
-err := gateway.SetUserPlacement(ctx, user, placement, ceph.RGWUserPlacementConfig{
+err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{
     StorageClass: "STANDARD_IA", Tags: []string{"app-tier"},
 })
 ```
@@ -197,8 +197,8 @@ User handle은 생성한 key와 원래 native user type/account 연결을 함께
 ## CephFS quiesce checkpoint
 
 ```go
-pause, err := fs.QuiesceSubvolumes(ctx, []*ceph.CephFSSubvolume{first, second},
-    ceph.CephFSQuiesceConfig{Timeout: 20*time.Second, Expiration: time.Minute})
+pause, err := fs.QuiesceSubvolumes(ctx, []*cephfs.Subvolume{first, second},
+    cephfs.QuiesceConfig{Timeout: 20*time.Second, Expiration: time.Minute})
 if err != nil { return err }
 // 여러 client의 durable writes가 멈춘 동안 snapshot을 만듭니다.
 snapshot, err := fs.CreateSubvolumeSnapshot(ctx, first, "checkpoint")

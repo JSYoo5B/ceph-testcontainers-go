@@ -16,7 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -30,11 +30,11 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,17 +51,17 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 		}
 	}
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
-	checkpoint := func(name string) map[string]multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(name string) map[string]cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", name)
-		result := make(map[string]multicluster.CephFSMirrorSnapshot, len(directories))
+		result := make(map[string]cephfs.MirrorSnapshot, len(directories))
 		for _, directory := range directories {
 			result[directory] = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
 		}
 		return result
 	}
 	initial := checkpoint("before-peer-removal")
-	mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, Directories: directories, DaemonCount: 2})
+	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, Directories: directories, DaemonCount: 2})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -85,7 +85,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	}
 	originalPeer := peers[0]
 	expected.PeerID = originalPeer
-	waitCheckpoints := func(name string, snapshots map[string]multicluster.CephFSMirrorSnapshot) {
+	waitCheckpoints := func(name string, snapshots map[string]cephfs.MirrorSnapshot) {
 		t.Helper()
 		owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, directories, 2)
 		for _, directory := range directories {
@@ -182,7 +182,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 
 type cephFSPeerRemovalNativeWitness struct{ cid, startedAt, address, gid string }
 
-func cephFSReadRemovalWitness(t *testing.T, ctx context.Context, source *ceph.Container, filesystem *ceph.CephFSContainer, fsID int, daemon *multicluster.CephFSMirrorDaemon, peerID string, present bool) cephFSPeerRemovalNativeWitness {
+func cephFSReadRemovalWitness(t *testing.T, ctx context.Context, source *ceph.Container, filesystem *cephfs.Filesystem, fsID int, daemon *cephfs.MirrorDaemon, peerID string, present bool) cephFSPeerRemovalNativeWitness {
 	t.Helper()
 	state, err := daemon.Inspect(ctx)
 	if err != nil || state == nil || state.ID != daemon.GetContainerID() || state.State == nil || !state.State.Running || state.State.Paused || state.State.Restarting || state.State.Dead {

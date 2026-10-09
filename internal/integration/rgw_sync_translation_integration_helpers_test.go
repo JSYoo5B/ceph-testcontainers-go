@@ -11,11 +11,11 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup) {
+func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup) {
 	t.Helper()
 	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
 	if err != nil || !status.Imported || !status.PeriodImported || !status.PolicyImported || !status.BucketsImported || status.Bucket.ID == "" || len(status.Buckets) == 0 {
@@ -27,7 +27,7 @@ func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *mult
 // Child cleanups run before the next sequential t.Run, including after Fatal.
 // The public removal guard verifies the owned bucket instance and unchanged
 // group, and successful explicit removals make this cleanup idempotent.
-func cleanupRGWTranslationSyncGroup(t *testing.T, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup, pipeIDs ...string) {
+func cleanupRGWTranslationSyncGroup(t *testing.T, link *rgw.Multisite, group *rgw.SyncGroup, pipeIDs ...string) {
 	t.Helper()
 	pipeIDs = append([]string(nil), pipeIDs...)
 	t.Cleanup(func() {
@@ -73,10 +73,10 @@ func assertRGWSyncClass(t *testing.T, ctx context.Context, client s3HTTPClient, 
 type rgwSyncTranslationFixture struct {
 	ctx                                  context.Context
 	source, destination                  *ceph.Container
-	link                                 *multicluster.RGWMultisite
-	primaryPlacement, secondaryPlacement *ceph.RGWPlacement
-	ownerA, ownerB                       *ceph.RGWUser
-	client                               func(t *testing.T, user *ceph.RGWUser, endpoint string) s3HTTPClient
+	link                                 *rgw.Multisite
+	primaryPlacement, secondaryPlacement *rgw.Placement
+	ownerA, ownerB                       *rgw.User
+	client                               func(t *testing.T, user *rgw.User, endpoint string) s3HTTPClient
 	sourceEndpoint, destEndpoint         string
 	a, b, destA, destB                   s3HTTPClient
 	body                                 []byte
@@ -92,7 +92,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{Source: source, Destination: destination, ControlImage: image, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: image, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -124,7 +124,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 		}
 	}
 	inline := false
-	placementConfig := ceph.RGWPlacementConfig{Name: "tc-sync-tiered", IndexPool: "tc-sync-index", DataExtraPool: "tc-sync-extra", InlineData: &inline, StorageClasses: []ceph.RGWStorageClassConfig{{Name: "STANDARD", DataPool: "tc-sync-standard"}, {Name: "STANDARD_IA", DataPool: "tc-sync-ia"}}}
+	placementConfig := rgw.PlacementConfig{Name: "tc-sync-tiered", IndexPool: "tc-sync-index", DataExtraPool: "tc-sync-extra", InlineData: &inline, StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-sync-standard"}, {Name: "STANDARD_IA", DataPool: "tc-sync-ia"}}}
 	primaryPlacement, err := link.Source.CreatePlacement(ctx, placementConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -142,14 +142,14 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if err := link.Destination.ReloadPlacement(ctx, secondaryPlacement); err != nil {
 		t.Fatal(err)
 	}
-	global, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{}, multicluster.RGWSyncGroupConfig{ID: "permission", Status: multicluster.RGWSyncAllowed})
+	global, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "permission", Status: rgw.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, global, multicluster.RGWSyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, global, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, global, multicluster.RGWSyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, global, rgw.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, global); err != nil {
@@ -158,11 +158,11 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
 		t.Fatal(err)
 	}
-	ownerA, err := link.Source.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-sync-owner-a"})
+	ownerA, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-owner-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ownerB, err := link.Source.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-sync-owner-b"})
+	ownerB, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-owner-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := func(t *testing.T, user *ceph.RGWUser, endpoint string) s3HTTPClient {
+	client := func(t *testing.T, user *rgw.User, endpoint string) s3HTTPClient {
 		t.Helper()
 		access, secret, err := user.Credentials()
 		if err != nil {

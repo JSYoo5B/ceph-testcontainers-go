@@ -2,7 +2,7 @@
 
 ## RBD image replay
 
-`RBDMirror.ImageStatus(ctx, name)`은 연결이 선택한 pool·source/destination namespace 안의 image를 읽습니다. 이름에 pool/namespace/snapshot 또는 option 문법을 넣지 않습니다. `RBDMirrorImageStatus`는 양쪽 local image ID와 global mirror ID, primary 방향, mirror mode/state, destination local replay 상태와 실제 소유 receiver의 daemon/instance를 제공합니다. Source primary에는 local replay report가 없을 수 있으므로 destination report를 사용합니다.
+`rbd.Mirror.ImageStatus(ctx, name)`은 연결이 선택한 pool·source/destination namespace 안의 image를 읽습니다. 이름에 pool/namespace/snapshot 또는 option 문법을 넣지 않습니다. `rbd.MirrorImageStatus`는 양쪽 local image ID와 global mirror ID, primary 방향, mirror mode/state, destination local replay 상태와 실제 소유 receiver의 daemon/instance를 제공합니다. Source primary에는 local replay report가 없을 수 있으므로 destination report를 사용합니다.
 
 `ReplayReady`는 source primary·destination secondary, 같은 global ID, destination의 `up+replaying`, 현재 실행 중인 소유 Docker receiver와 일치하는 native pool instance를 함께 확인합니다. 중지·pause·restart 중인 process나 다른 daemon을 readiness 근거로 쓰지 않습니다. 이 값은 특정 write나 snapshot의 복제 완료를 뜻하지 않습니다. Application bytes 또는 별도의 checkpoint를 계속 확인합니다. Native `last_update`도 freshness token으로 해석하지 않습니다.
 
@@ -44,12 +44,12 @@ Native `daemon_service.daemon_id`는 fixture가 생성한 인증 이름 `client.
 
 ## CephFS directory와 source checkpoint
 
-`CephFSMirror.DirectoryStatus(ctx, directory)`는 현재 연결이 소유한 canonical directory 정책을 읽습니다. `CephFSMirrorDirectoryStatus`는 양쪽 filesystem 이름·원래 ID, 현재 peer UUID, MGR mapping 상태, native filesystem watcher instance, 실제 소유 daemon, replay 상태·실패 이유, current/last source snapshot 및 세 native counter를 제공합니다. Counter는 process 재시작이나 directory 재할당 때 0부터 시작할 수 있습니다.
+`cephfs.Mirror.DirectoryStatus(ctx, directory)`는 현재 연결이 소유한 canonical directory 정책을 읽습니다. `cephfs.MirrorDirectoryStatus`는 양쪽 filesystem 이름·원래 ID, 현재 peer UUID, MGR mapping 상태, native filesystem watcher instance, 실제 소유 daemon, replay 상태·실패 이유, current/last source snapshot 및 세 native counter를 제공합니다. Counter는 process 재시작이나 directory 재할당 때 0부터 시작할 수 있습니다.
 
 `Ready`는 해당 directory가 현재 실행 중인 소유 daemon과 정확한 destination peer에 연결되어 `idle`/`syncing`인지를 나타냅니다. 멈춘 다른 구성원은 `DaemonProblems`에 남고 `DirectoryStatus`는 partial 오류도 반환합니다. `WaitDirectoryReady`와 `WaitSnapshotSynced`는 선택된 owner가 ready일 때에만 이 다른 구성원의 partial 오류를 허용하며, 성공한 결과에도 문제를 보존합니다. 선택된 owner의 조회 오류, identity/schema 오류, cancellation은 이 예외에 포함되지 않습니다. 전체 fixture의 건강이나 payload 일치를 보장하는 값은 아닙니다.
 
 ```go
-checkpoint := multicluster.CephFSMirrorSnapshot{
+checkpoint := cephfs.MirrorSnapshot{
     ID: sourceSnapshotID, // source native client에서 독립적으로 읽은 ID
     Name: "checkpoint-1",
 }

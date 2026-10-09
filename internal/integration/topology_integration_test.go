@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -129,7 +130,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			session.check(t, ctx, client, "monitor-replaced")
 			t.Log("MON replacement: 3 -> 4 -> 3, primary a removed, both retained and fresh client sessions retained data")
 			cephCommand(t, ctx, cluster, "mgr", "module", "enable", "volumes")
-			fs, err := cluster.StartCephFS(ctx)
+			fs, err := cephfs.Start(ctx, cluster, cephfs.Config{})
 			if err != nil {
 				t.Fatal(err)
 			}

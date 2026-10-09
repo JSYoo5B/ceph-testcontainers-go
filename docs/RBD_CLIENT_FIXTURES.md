@@ -23,10 +23,10 @@ if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 }); err != nil {
     t.Fatal(err)
 }
-if err := cluster.InitRBDPool(ctx, pool); err != nil {
+if err := rbd.InitPool(ctx, cluster, pool); err != nil {
     t.Fatal(err)
 }
-if _, err := cluster.CreateRBDNamespace(ctx, pool, namespace); err != nil {
+if _, err := rbd.CreateNamespace(ctx, cluster, pool, namespace); err != nil {
     t.Fatal(err)
 }
 if err := cluster.WaitForClean(ctx); err != nil {

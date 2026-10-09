@@ -63,18 +63,18 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 ## 현재 공개 callable 수
 
-| 분류 | ceph | multicluster | 합계 |
-| --- | ---: | ---: | ---: |
-| Fixture Operation | 100 | 46 | 146 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 80 | 33 | 113 |
-| 연결·raw CLI·customizer 접점 | 11 | 5 | 16 |
-| 조건부 archive helper | 0 | 4 | 4 |
-| 로컬 문자열 표현 | 14 | 2 | 16 |
-| 전체 | 205 | 90 | **295** |
+| 분류 | ceph | cephfs | rgw | rbd | 합계 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Fixture Operation | 52 | 46 | 36 | 14 | 148 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 47 | 31 | 20 | 15 | 113 |
+| 연결·raw CLI·customizer 접점 | 8 | 1 | 5 | 2 | 16 |
+| 조건부 archive helper | 0 | 0 | 0 | 4 | 4 |
+| 로컬 문자열 표현 | 4 | 0 | 12 | 0 | 16 |
+| 전체 | 111 | 78 | 73 | 35 | **297** |
 
-집계는 패키지 자체의 공개 함수와 공개 receiver의 공개 method다. Test/Example,
+집계는 공개 패키지 네 개(`ceph`, `cephfs`, `rgw`, `rbd`)의 공개 함수와 공개 타입의 공개 method다. 서비스 패키지의 타입은 `internal/cluster`·`internal/multicluster` 구현 타입의 alias이므로 method와 줄 anchor는 구현 선언을 가리킨다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 295개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 297개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -90,165 +90,167 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (146개)
+### Fixture Operation (148개)
 
 | source | 공개 callable |
 | --- | --- |
-| [ceph/auth.go](../ceph/auth.go) | [Container.CreateClient](../ceph/auth.go#L101) · [Container.DeleteClient](../ceph/auth.go#L219) |
-| [ceph/auth_policy.go](../ceph/auth_policy.go) | [Container.UpdateClientCaps](../ceph/auth_policy.go#L25) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Run](../ceph/ceph.go#L89) · [Container.AddOSD](../ceph/ceph.go#L413) · [Container.AddOSDWithConfig](../ceph/ceph.go#L420) · [Container.RemoveOSD](../ceph/ceph.go#L537)<br>[Container.Terminate](../ceph/ceph.go#L763) |
-| [ceph/cephfs.go](../ceph/cephfs.go) | [Container.StartCephFS](../ceph/cephfs.go#L92) · [Container.StartCephFSWithConfig](../ceph/cephfs.go#L105) · [CephFSContainer.ScaleMDS](../ceph/cephfs.go#L247) |
-| [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSContainer.AuthorizeSubvolume](../ceph/cephfs_authorization.go#L67) · [CephFSContainer.DeauthorizeSubvolume](../ceph/cephfs_authorization.go#L396) · [CephFSContainer.EvictSubvolumeClients](../ceph/cephfs_authorization.go#L462) |
-| [ceph/cephfs_clone_lifecycle.go](../ceph/cephfs_clone_lifecycle.go) | [CephFSContainer.CancelSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L116) · [CephFSContainer.RemovePartialSubvolumeClone](../ceph/cephfs_clone_lifecycle.go#L187) |
-| [ceph/cephfs_data_pools.go](../ceph/cephfs_data_pools.go) | [CephFSContainer.AddDataPool](../ceph/cephfs_data_pools.go#L229) · [CephFSContainer.RemoveUnusedDataPool](../ceph/cephfs_data_pools.go#L362) |
-| [ceph/cephfs_mds_replacement.go](../ceph/cephfs_mds_replacement.go) | [CephFSContainer.AddMDSReplacement](../ceph/cephfs_mds_replacement.go#L40) |
-| [ceph/cephfs_pin.go](../ceph/cephfs_pin.go) | [CephFSContainer.TemporarySubvolumePin](../ceph/cephfs_pin.go#L96) · [CephFSContainer.TemporarySubvolumeGroupPin](../ceph/cephfs_pin.go#L104) · [CephFSPinOverride.Restore](../ceph/cephfs_pin.go#L182) |
-| [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSContainer.QuiesceSubvolumes](../ceph/cephfs_quiesce.go#L64) · [CephFSQuiesce.Release](../ceph/cephfs_quiesce.go#L159) |
-| [ceph/cephfs_snapshot.go](../ceph/cephfs_snapshot.go) | [CephFSContainer.CreateSubvolumeSnapshot](../ceph/cephfs_snapshot.go#L131) · [CephFSContainer.RemoveSubvolumeSnapshot](../ceph/cephfs_snapshot.go#L270) · [CephFSContainer.CloneSubvolumeSnapshot](../ceph/cephfs_snapshot.go#L320) |
-| [ceph/cephfs_stopped_mds.go](../ceph/cephfs_stopped_mds.go) | [CephFSContainer.RemoveStoppedMDS](../ceph/cephfs_stopped_mds.go#L81) |
-| [ceph/cephfs_subvolume.go](../ceph/cephfs_subvolume.go) | [CephFSContainer.CreateSubvolumeGroup](../ceph/cephfs_subvolume.go#L282) · [CephFSContainer.CreateSubvolume](../ceph/cephfs_subvolume.go#L323) · [CephFSContainer.ResizeSubvolumeGroup](../ceph/cephfs_subvolume.go#L525) · [CephFSContainer.ResizeSubvolume](../ceph/cephfs_subvolume.go#L557)<br>[CephFSContainer.RemoveSubvolumeGroup](../ceph/cephfs_subvolume.go#L591) · [CephFSContainer.RemoveSubvolume](../ceph/cephfs_subvolume.go#L639) |
-| [ceph/client_monitor_config.go](../ceph/client_monitor_config.go) | [Container.RefreshClientMonitorConfig](../ceph/client_monitor_config.go#L44) |
-| [ceph/composition.go](../ceph/composition.go) | [WithPools](../ceph/composition.go#L12) · [WithCephFS](../ceph/composition.go#L26) · [WithRGW](../ceph/composition.go#L43) |
-| [ceph/config.go](../ceph/config.go) | [Container.TemporaryConfig](../ceph/config.go#L76) · [ConfigOverride.Restore](../ceph/config.go#L141) |
-| [ceph/fencing.go](../ceph/fencing.go) | [Container.TemporaryBlocklist](../ceph/fencing.go#L64) · [BlocklistOverride.Restore](../ceph/fencing.go#L115) |
-| [ceph/full_ratios.go](../ceph/full_ratios.go) | [Container.TemporaryFullRatios](../ceph/full_ratios.go) · [FullRatiosOverride.Restore](../ceph/full_ratios.go) |
-| [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.TemporaryMGRModule](../ceph/mgr_modules.go#L60) · [MGRModuleOverride.Restore](../ceph/mgr_modules.go#L121) |
-| [ceph/network.go](../ceph/network.go) | [Container.InterruptNetwork](../ceph/network.go#L96) · [InterruptNetwork](../ceph/network.go#L142) · [NetworkInterruption.Restore](../ceph/network.go#L199) |
-| [ceph/options.go](../ceph/options.go) | [WithMonitorCount](../ceph/options.go#L58) · [WithManagerCount](../ceph/options.go#L69) · [WithNoInitialManagers](../ceph/options.go#L86) · [WithHostNetwork](../ceph/options.go#L106)<br>[WithSeparateClusterNetwork](../ceph/options.go#L116) · [WithNoInitialOSDs](../ceph/options.go#L181) · [WithOSDCount](../ceph/options.go#L189) · [WithInitialOSDs](../ceph/options.go#L203)<br>[WithDefaultCRUSHRoot](../ceph/options.go#L233) · [WithPoolDefaults](../ceph/options.go#L246) · [WithOSDBlockSize](../ceph/options.go#L261) · [WithOSDInMemoryStorage](../ceph/options.go#L281) · [WithMessengerMode](../ceph/options.go#L46) |
-| [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.SetOSDIn](../ceph/osd_policy.go#L57) · [Container.TemporaryOSDFlag](../ceph/osd_policy.go#L132) · [OSDFlagOverride.Restore](../ceph/osd_policy.go#L175) |
-| [ceph/pause.go](../ceph/pause.go) | [Container.PauseContainer](../ceph/pause.go#L43) · [ContainerPause.Resume](../ceph/pause.go#L109) |
-| [ceph/pool.go](../ceph/pool.go) | [Container.CreatePool](../ceph/pool.go#L62) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.SetPoolQuota](../ceph/pool_policy.go#L70) · [Container.SetPoolReplication](../ceph/pool_policy.go#L110) |
-| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [Container.SetPoolPGCount](../ceph/pool_relocation.go#L31) · [Container.SetPoolPlacement](../ceph/pool_relocation.go#L179) |
-| [ceph/rbd.go](../ceph/rbd.go) | [Container.InitRBDPool](../ceph/rbd.go#L41) · [Container.CreateRBDNamespace](../ceph/rbd.go#L71) · [Container.RemoveRBDNamespace](../ceph/rbd.go#L131) |
-| [ceph/rgw.go](../ceph/rgw.go) | [Container.StartRGW](../ceph/rgw.go#L53) · [Container.RemoveRGW](../ceph/rgw.go#L61) · [Container.StartRGWWithConfig](../ceph/rgw.go#L89) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.CreateUser](../ceph/rgw_admin.go#L258) · [RGWContainer.SetUserQuota](../ceph/rgw_admin.go#L469) · [RGWContainer.SetBucketQuota](../ceph/rgw_admin.go#L475) · [RGWContainer.SuspendUser](../ceph/rgw_admin.go#L526)<br>[RGWContainer.RemoveUser](../ceph/rgw_admin.go#L555) |
-| [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.CreatePlacement](../ceph/rgw_placement.go#L139) · [RGWContainer.ApplyPlacement](../ceph/rgw_placement.go#L279) · [RGWContainer.ReloadPlacement](../ceph/rgw_placement.go#L377) |
-| [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.CreateAccount](../ceph/rgw_tenants_accounts.go#L134) · [RGWContainer.CreateAccountRootUser](../ceph/rgw_tenants_accounts.go#L318) · [RGWContainer.SetAccountQuota](../ceph/rgw_tenants_accounts.go#L328) · [RGWContainer.SetAccountBucketQuota](../ceph/rgw_tenants_accounts.go#L334)<br>[RGWContainer.RemoveAccount](../ceph/rgw_tenants_accounts.go#L387) |
-| [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWContainer.SetUserPlacement](../ceph/rgw_user_placement.go#L67) |
-| [ceph/scrub.go](../ceph/scrub.go) | [Container.InjectObjectDataError](../ceph/scrub.go#L66) · [Container.DeepScrubPG](../ceph/scrub.go#L124) · [Container.RepairPG](../ceph/scrub.go#L133) |
-| [ceph/topology.go](../ceph/topology.go) | [Container.AddMonitor](../ceph/topology.go#L146) · [Container.RemoveMonitor](../ceph/topology.go#L263) · [Container.RefreshMonitorConfig](../ceph/topology.go#L369) · [Container.AddManager](../ceph/topology.go#L705)<br>[Container.RemoveManager](../ceph/topology.go#L786) |
-| [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorDaemon.Terminate](../multicluster/cephfs.go#L60) · [RunCephFSMirror](../multicluster/cephfs.go#L133) · [CephFSMirror.AddDaemon](../multicluster/cephfs.go#L494) · [CephFSMirror.RemoveDaemon](../multicluster/cephfs.go#L567)<br>[CephFSMirror.Terminate](../multicluster/cephfs.go#L606) · [CephFSMirror.AttachManagers](../multicluster/cephfs.go#L629) · [CephFSMirror.AddDirectory](../multicluster/cephfs.go#L829) · [CephFSMirror.RemoveDirectory](../multicluster/cephfs.go#L865)<br>[CephFSMirror.RebalanceDirectories](../multicluster/cephfs.go#L916) · [CephFSMirror.RemovePeer](../multicluster/cephfs.go#L1081) · [CephFSMirror.RebootstrapPeer](../multicluster/cephfs.go#L1123) |
-| [multicluster/cephfs_connection_refresh.go](../multicluster/cephfs_connection_refresh.go) | [CephFSMirror.RefreshMonitorConfig](../multicluster/cephfs_connection_refresh.go#L24) · [CephFSMirror.RefreshPeerMonitorConfig](../multicluster/cephfs_connection_refresh.go#L87) |
-| [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirror.BeginDirectoryAddition](../multicluster/cephfs_directory_addition.go#L43) |
-| [multicluster/cephfs_directory_removal.go](../multicluster/cephfs_directory_removal.go) | [CephFSMirror.BeginDirectoryRemoval](../multicluster/cephfs_directory_removal.go#L50) |
-| [multicluster/cephfs_peer_removal.go](../multicluster/cephfs_peer_removal.go) | [CephFSMirror.BeginPeerRemoval](../multicluster/cephfs_peer_removal.go#L76) |
-| [multicluster/cephfs_process_quiescence_acknowledgment.go](../multicluster/cephfs_process_quiescence_acknowledgment.go) | [CephFSMirrorPeerRemoval.AcknowledgeProcessQuiescence](../multicluster/cephfs_process_quiescence_acknowledgment.go#L22) · [CephFSMirrorDirectoryRemoval.AcknowledgeProcessQuiescence](../multicluster/cephfs_process_quiescence_acknowledgment.go#L38) |
-| [multicluster/network.go](../multicluster/network.go) | [RBDMirror.InterruptPeerLink](../multicluster/network.go#L24) · [CephFSMirror.InterruptPeerLink](../multicluster/network.go#L47) · [RGWMultisite.InterruptZoneLink](../multicluster/network.go#L70) |
-| [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirrorDaemon.Terminate](../multicluster/rbd.go#L142) · [RunRBDMirror](../multicluster/rbd.go#L191) · [RBDMirror.AddDaemon](../multicluster/rbd.go#L265) · [RBDMirror.RemoveDaemon](../multicluster/rbd.go#L329)<br>[RBDMirror.Rebootstrap](../multicluster/rbd.go#L374) · [RBDMirror.EnableImage](../multicluster/rbd.go#L596) · [RBDMirror.Terminate](../multicluster/rbd.go#L658) |
-| [multicluster/rbd_connection_refresh.go](../multicluster/rbd_connection_refresh.go) | [RBDMirror.RefreshMonitorConfig](../multicluster/rbd_connection_refresh.go#L27) |
-| [multicluster/rgw.go](../multicluster/rgw.go) | [RunRGWMultisite](../multicluster/rgw.go#L62) · [RGWMultisite.PullSourcePeriod](../multicluster/rgw.go#L482) · [RGWMultisite.PullDestinationPeriod](../multicluster/rgw.go#L494) · [RGWMultisite.Terminate](../multicluster/rgw.go#L504) |
-| [multicluster/rgw_sync_period.go](../multicluster/rgw_sync_period.go) | [RGWMultisite.ApplySyncGroup](../multicluster/rgw_sync_period.go#L20) |
-| [multicluster/rgw_sync_policy.go](../multicluster/rgw_sync_policy.go) | [RGWMultisite.CreateSyncGroup](../multicluster/rgw_sync_policy.go#L125) · [RGWMultisite.CreateSyncFlow](../multicluster/rgw_sync_policy.go#L183) · [RGWMultisite.RemoveSyncFlow](../multicluster/rgw_sync_policy.go#L204) · [RGWMultisite.CreateSyncPipe](../multicluster/rgw_sync_policy.go#L229)<br>[RGWMultisite.SetSyncPipePrefix](../multicluster/rgw_sync_policy.go#L265) · [RGWMultisite.RemoveSyncPipe](../multicluster/rgw_sync_policy.go#L298) · [RGWMultisite.SetSyncGroupStatus](../multicluster/rgw_sync_policy.go#L317) · [RGWMultisite.RemoveSyncGroup](../multicluster/rgw_sync_policy.go#L336) |
-| [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RunRGWTopology](../multicluster/rgw_topology.go#L80) · [RGWMultisite.AddZone](../multicluster/rgw_topology.go#L304) |
-| [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.AddZonegroup](../multicluster/rgw_zonegroups.go#L46) · [RGWMultisite.RemoveZone](../multicluster/rgw_zonegroups.go#L116) |
+| [cephfs/run.go](../cephfs/run.go) | [cephfs.Run](../cephfs/run.go#L18) |
+| [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.Container.CreateClient](../internal/cluster/auth.go#L101) · [ceph.Container.DeleteClient](../internal/cluster/auth.go#L219) |
+| [internal/cluster/auth_policy.go](../internal/cluster/auth_policy.go) | [ceph.Container.UpdateClientCaps](../internal/cluster/auth_policy.go#L25) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Run](../internal/cluster/ceph.go#L89) · [ceph.Container.AddOSD](../internal/cluster/ceph.go#L418) · [ceph.Container.AddOSDWithConfig](../internal/cluster/ceph.go#L425) · [ceph.Container.RemoveOSD](../internal/cluster/ceph.go#L542)<br>[ceph.Container.Terminate](../internal/cluster/ceph.go#L768) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.ScaleMDS](../internal/cluster/cephfs.go#L241) |
+| [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.Filesystem.AuthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L67) · [cephfs.Filesystem.DeauthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L396) · [cephfs.Filesystem.EvictSubvolumeClients](../internal/cluster/cephfs_authorization.go#L462) |
+| [internal/cluster/cephfs_clone_lifecycle.go](../internal/cluster/cephfs_clone_lifecycle.go) | [cephfs.Filesystem.CancelSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L116) · [cephfs.Filesystem.RemovePartialSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L187) |
+| [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.Filesystem.AddDataPool](../internal/cluster/cephfs_data_pools.go#L229) · [cephfs.Filesystem.RemoveUnusedDataPool](../internal/cluster/cephfs_data_pools.go#L362) |
+| [internal/cluster/cephfs_mds_replacement.go](../internal/cluster/cephfs_mds_replacement.go) | [cephfs.Filesystem.AddMDSReplacement](../internal/cluster/cephfs_mds_replacement.go#L40) |
+| [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.Filesystem.TemporarySubvolumePin](../internal/cluster/cephfs_pin.go#L96) · [cephfs.Filesystem.TemporarySubvolumeGroupPin](../internal/cluster/cephfs_pin.go#L104) · [cephfs.PinOverride.Restore](../internal/cluster/cephfs_pin.go#L182) |
+| [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Filesystem.QuiesceSubvolumes](../internal/cluster/cephfs_quiesce.go#L64) · [cephfs.Quiesce.Release](../internal/cluster/cephfs_quiesce.go#L159) |
+| [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.Filesystem.CreateSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L131) · [cephfs.Filesystem.RemoveSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L270) · [cephfs.Filesystem.CloneSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L320) |
+| [internal/cluster/cephfs_stopped_mds.go](../internal/cluster/cephfs_stopped_mds.go) | [cephfs.Filesystem.RemoveStoppedMDS](../internal/cluster/cephfs_stopped_mds.go#L81) |
+| [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.Filesystem.CreateSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L282) · [cephfs.Filesystem.CreateSubvolume](../internal/cluster/cephfs_subvolume.go#L323) · [cephfs.Filesystem.ResizeSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L525) · [cephfs.Filesystem.ResizeSubvolume](../internal/cluster/cephfs_subvolume.go#L557)<br>[cephfs.Filesystem.RemoveSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L591) · [cephfs.Filesystem.RemoveSubvolume](../internal/cluster/cephfs_subvolume.go#L639) |
+| [internal/cluster/client_monitor_config.go](../internal/cluster/client_monitor_config.go) | [ceph.Container.RefreshClientMonitorConfig](../internal/cluster/client_monitor_config.go#L44) |
+| [internal/cluster/composition.go](../internal/cluster/composition.go) | [ceph.WithPools](../internal/cluster/composition.go#L12) · [cephfs.WithFilesystems](../internal/cluster/composition.go#L26) · [rgw.WithGateways](../internal/cluster/composition.go#L43) |
+| [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.Container.TemporaryConfig](../internal/cluster/config.go#L76) · [ceph.ConfigOverride.Restore](../internal/cluster/config.go#L141) |
+| [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.Container.TemporaryBlocklist](../internal/cluster/fencing.go#L64) · [ceph.BlocklistOverride.Restore](../internal/cluster/fencing.go#L115) |
+| [internal/cluster/full_ratios.go](../internal/cluster/full_ratios.go) | [ceph.Container.TemporaryFullRatios](../internal/cluster/full_ratios.go#L78) · [ceph.FullRatiosOverride.Restore](../internal/cluster/full_ratios.go#L122) |
+| [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.Container.TemporaryMGRModule](../internal/cluster/mgr_modules.go#L60) · [ceph.MGRModuleOverride.Restore](../internal/cluster/mgr_modules.go#L121) |
+| [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.Container.InterruptNetwork](../internal/cluster/network.go#L96) · [ceph.InterruptNetwork](../internal/cluster/network.go#L142) · [ceph.NetworkInterruption.Restore](../internal/cluster/network.go#L199) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.WithMessengerMode](../internal/cluster/options.go#L48) · [ceph.WithMonitorCount](../internal/cluster/options.go#L60) · [ceph.WithManagerCount](../internal/cluster/options.go#L71) · [ceph.WithNoInitialManagers](../internal/cluster/options.go#L88)<br>[ceph.WithHostNetwork](../internal/cluster/options.go#L108) · [ceph.WithSeparateClusterNetwork](../internal/cluster/options.go#L118) · [ceph.WithNoInitialOSDs](../internal/cluster/options.go#L183) · [ceph.WithOSDCount](../internal/cluster/options.go#L191)<br>[ceph.WithInitialOSDs](../internal/cluster/options.go#L205) · [ceph.WithDefaultCRUSHRoot](../internal/cluster/options.go#L235) · [ceph.WithPoolDefaults](../internal/cluster/options.go#L248) · [ceph.WithOSDBlockSize](../internal/cluster/options.go#L263)<br>[ceph.WithOSDInMemoryStorage](../internal/cluster/options.go#L283) |
+| [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.Container.SetOSDIn](../internal/cluster/osd_policy.go#L57) · [ceph.Container.TemporaryOSDFlag](../internal/cluster/osd_policy.go#L132) · [ceph.OSDFlagOverride.Restore](../internal/cluster/osd_policy.go#L175) |
+| [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.Container.PauseContainer](../internal/cluster/pause.go#L43) · [ceph.ContainerPause.Resume](../internal/cluster/pause.go#L109) |
+| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.Container.CreatePool](../internal/cluster/pool.go#L62) |
+| [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.SetPoolQuota](../internal/cluster/pool_policy.go#L70) · [ceph.Container.SetPoolReplication](../internal/cluster/pool_policy.go#L110) |
+| [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.SetPoolPGCount](../internal/cluster/pool_relocation.go#L31) · [ceph.Container.SetPoolPlacement](../internal/cluster/pool_relocation.go#L179) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.CreateUser](../internal/cluster/rgw_admin.go#L258) · [rgw.Gateway.SetUserQuota](../internal/cluster/rgw_admin.go#L469) · [rgw.Gateway.SetBucketQuota](../internal/cluster/rgw_admin.go#L475) · [rgw.Gateway.SuspendUser](../internal/cluster/rgw_admin.go#L526)<br>[rgw.Gateway.RemoveUser](../internal/cluster/rgw_admin.go#L555) |
+| [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Gateway.CreatePlacement](../internal/cluster/rgw_placement.go#L139) · [rgw.Gateway.ApplyPlacement](../internal/cluster/rgw_placement.go#L279) · [rgw.Gateway.ReloadPlacement](../internal/cluster/rgw_placement.go#L377) |
+| [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Gateway.CreateAccount](../internal/cluster/rgw_tenants_accounts.go#L134) · [rgw.Gateway.CreateAccountRootUser](../internal/cluster/rgw_tenants_accounts.go#L318) · [rgw.Gateway.SetAccountQuota](../internal/cluster/rgw_tenants_accounts.go#L328) · [rgw.Gateway.SetAccountBucketQuota](../internal/cluster/rgw_tenants_accounts.go#L334)<br>[rgw.Gateway.RemoveAccount](../internal/cluster/rgw_tenants_accounts.go#L387) |
+| [internal/cluster/rgw_user_placement.go](../internal/cluster/rgw_user_placement.go) | [rgw.Gateway.SetUserPlacement](../internal/cluster/rgw_user_placement.go#L67) |
+| [internal/cluster/scrub.go](../internal/cluster/scrub.go) | [ceph.Container.InjectObjectDataError](../internal/cluster/scrub.go#L66) · [ceph.Container.DeepScrubPG](../internal/cluster/scrub.go#L124) · [ceph.Container.RepairPG](../internal/cluster/scrub.go#L133) |
+| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Start](../internal/cluster/services.go#L29) · [rgw.Start](../internal/cluster/services.go#L51) · [rgw.Remove](../internal/cluster/services.go#L62) · [rbd.InitPool](../internal/cluster/services.go#L93)<br>[rbd.CreateNamespace](../internal/cluster/services.go#L105) · [rbd.RemoveNamespace](../internal/cluster/services.go#L129) · [rbd.WithPools](../internal/cluster/services.go#L140) |
+| [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.AddMonitor](../internal/cluster/topology.go#L146) · [ceph.Container.RemoveMonitor](../internal/cluster/topology.go#L263) · [ceph.Container.RefreshMonitorConfig](../internal/cluster/topology.go#L369) · [ceph.Container.AddManager](../internal/cluster/topology.go#L705)<br>[ceph.Container.RemoveManager](../internal/cluster/topology.go#L786) |
+| [internal/multicluster/cephfs.go](../internal/multicluster/cephfs.go) | [cephfs.MirrorDaemon.Terminate](../internal/multicluster/cephfs.go#L60) · [cephfs.RunMirror](../internal/multicluster/cephfs.go#L133) · [cephfs.Mirror.AddDaemon](../internal/multicluster/cephfs.go#L494) · [cephfs.Mirror.RemoveDaemon](../internal/multicluster/cephfs.go#L567)<br>[cephfs.Mirror.Terminate](../internal/multicluster/cephfs.go#L606) · [cephfs.Mirror.AttachManagers](../internal/multicluster/cephfs.go#L629) · [cephfs.Mirror.AddDirectory](../internal/multicluster/cephfs.go#L829) · [cephfs.Mirror.RemoveDirectory](../internal/multicluster/cephfs.go#L865)<br>[cephfs.Mirror.RebalanceDirectories](../internal/multicluster/cephfs.go#L916) · [cephfs.Mirror.RemovePeer](../internal/multicluster/cephfs.go#L1081) · [cephfs.Mirror.RebootstrapPeer](../internal/multicluster/cephfs.go#L1123) |
+| [internal/multicluster/cephfs_connection_refresh.go](../internal/multicluster/cephfs_connection_refresh.go) | [cephfs.Mirror.RefreshMonitorConfig](../internal/multicluster/cephfs_connection_refresh.go#L24) · [cephfs.Mirror.RefreshPeerMonitorConfig](../internal/multicluster/cephfs_connection_refresh.go#L87) |
+| [internal/multicluster/cephfs_directory_addition.go](../internal/multicluster/cephfs_directory_addition.go) | [cephfs.Mirror.BeginDirectoryAddition](../internal/multicluster/cephfs_directory_addition.go#L43) |
+| [internal/multicluster/cephfs_directory_removal.go](../internal/multicluster/cephfs_directory_removal.go) | [cephfs.Mirror.BeginDirectoryRemoval](../internal/multicluster/cephfs_directory_removal.go#L50) |
+| [internal/multicluster/cephfs_peer_removal.go](../internal/multicluster/cephfs_peer_removal.go) | [cephfs.Mirror.BeginPeerRemoval](../internal/multicluster/cephfs_peer_removal.go#L76) |
+| [internal/multicluster/cephfs_process_quiescence_acknowledgment.go](../internal/multicluster/cephfs_process_quiescence_acknowledgment.go) | [cephfs.MirrorPeerRemoval.AcknowledgeProcessQuiescence](../internal/multicluster/cephfs_process_quiescence_acknowledgment.go#L22) · [cephfs.MirrorDirectoryRemoval.AcknowledgeProcessQuiescence](../internal/multicluster/cephfs_process_quiescence_acknowledgment.go#L38) |
+| [internal/multicluster/network.go](../internal/multicluster/network.go) | [rbd.Mirror.InterruptPeerLink](../internal/multicluster/network.go#L24) · [cephfs.Mirror.InterruptPeerLink](../internal/multicluster/network.go#L47) · [rgw.Multisite.InterruptZoneLink](../internal/multicluster/network.go#L70) |
+| [internal/multicluster/rbd.go](../internal/multicluster/rbd.go) | [rbd.MirrorDaemon.Terminate](../internal/multicluster/rbd.go#L142) · [rbd.RunMirror](../internal/multicluster/rbd.go#L191) · [rbd.Mirror.AddDaemon](../internal/multicluster/rbd.go#L265) · [rbd.Mirror.RemoveDaemon](../internal/multicluster/rbd.go#L329)<br>[rbd.Mirror.Rebootstrap](../internal/multicluster/rbd.go#L374) · [rbd.Mirror.EnableImage](../internal/multicluster/rbd.go#L596) · [rbd.Mirror.Terminate](../internal/multicluster/rbd.go#L658) |
+| [internal/multicluster/rbd_connection_refresh.go](../internal/multicluster/rbd_connection_refresh.go) | [rbd.Mirror.RefreshMonitorConfig](../internal/multicluster/rbd_connection_refresh.go#L27) |
+| [internal/multicluster/rgw.go](../internal/multicluster/rgw.go) | [rgw.RunMultisite](../internal/multicluster/rgw.go#L62) · [rgw.Multisite.PullSourcePeriod](../internal/multicluster/rgw.go#L482) · [rgw.Multisite.PullDestinationPeriod](../internal/multicluster/rgw.go#L494) · [rgw.Multisite.Terminate](../internal/multicluster/rgw.go#L504) |
+| [internal/multicluster/rgw_sync_period.go](../internal/multicluster/rgw_sync_period.go) | [rgw.Multisite.ApplySyncGroup](../internal/multicluster/rgw_sync_period.go#L20) |
+| [internal/multicluster/rgw_sync_policy.go](../internal/multicluster/rgw_sync_policy.go) | [rgw.Multisite.CreateSyncGroup](../internal/multicluster/rgw_sync_policy.go#L125) · [rgw.Multisite.CreateSyncFlow](../internal/multicluster/rgw_sync_policy.go#L183) · [rgw.Multisite.RemoveSyncFlow](../internal/multicluster/rgw_sync_policy.go#L204) · [rgw.Multisite.CreateSyncPipe](../internal/multicluster/rgw_sync_policy.go#L229)<br>[rgw.Multisite.SetSyncPipePrefix](../internal/multicluster/rgw_sync_policy.go#L265) · [rgw.Multisite.RemoveSyncPipe](../internal/multicluster/rgw_sync_policy.go#L298) · [rgw.Multisite.SetSyncGroupStatus](../internal/multicluster/rgw_sync_policy.go#L317) · [rgw.Multisite.RemoveSyncGroup](../internal/multicluster/rgw_sync_policy.go#L336) |
+| [internal/multicluster/rgw_topology.go](../internal/multicluster/rgw_topology.go) | [rgw.RunTopology](../internal/multicluster/rgw_topology.go#L80) · [rgw.Multisite.AddZone](../internal/multicluster/rgw_topology.go#L304) |
+| [internal/multicluster/rgw_zonegroups.go](../internal/multicluster/rgw_zonegroups.go) | [rgw.Multisite.AddZonegroup](../internal/multicluster/rgw_zonegroups.go#L47) · [rgw.Multisite.RemoveZone](../internal/multicluster/rgw_zonegroups.go#L117) |
+| [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L18) |
+| [rgw/run.go](../rgw/run.go) | [rgw.Run](../rgw/run.go#L18) |
 
 ### Check: 현재 상태 질의·policy/process 관측·Wait (70개)
 
 | source | 공개 callable |
 | --- | --- |
-| [ceph/auth_policy.go](../ceph/auth_policy.go) | [Container.ClientCapabilities](../ceph/auth_policy.go#L12) |
-| [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSContainer.MDSStatus](../ceph/cephfs.go#L629) · [CephFSContainer.WaitReady](../ceph/cephfs.go#L649) |
-| [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSContainer.SubvolumeAuthorizedClients](../ceph/cephfs_authorization.go#L196) |
-| [ceph/cephfs_data_pools.go](../ceph/cephfs_data_pools.go) | [CephFSContainer.DataPools](../ceph/cephfs_data_pools.go#L184) |
-| [ceph/cephfs_pin.go](../ceph/cephfs_pin.go) | [CephFSContainer.SubvolumePinPolicy](../ceph/cephfs_pin.go#L78) · [CephFSContainer.SubvolumeGroupPinPolicy](../ceph/cephfs_pin.go#L86) |
-| [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSQuiesce.Status](../ceph/cephfs_quiesce.go#L139) |
-| [ceph/cephfs_snapshot.go](../ceph/cephfs_snapshot.go) | [CephFSContainer.SubvolumeSnapshots](../ceph/cephfs_snapshot.go#L109) · [CephFSContainer.SubvolumeSnapshotInfo](../ceph/cephfs_snapshot.go#L173) · [CephFSContainer.SubvolumeCloneStatus](../ceph/cephfs_snapshot.go#L462) · [CephFSContainer.WaitForSubvolumeClone](../ceph/cephfs_snapshot.go#L481) |
-| [ceph/cephfs_subvolume.go](../ceph/cephfs_subvolume.go) | [CephFSContainer.SubvolumeGroups](../ceph/cephfs_subvolume.go#L367) · [CephFSContainer.Subvolumes](../ceph/cephfs_subvolume.go#L378) · [CephFSContainer.SubvolumeGroupInfo](../ceph/cephfs_subvolume.go#L391) · [CephFSContainer.SubvolumeInfo](../ceph/cephfs_subvolume.go#L406) |
-| [ceph/config.go](../ceph/config.go) | [Container.Configuration](../ceph/config.go#L59) |
-| [ceph/diagnostics.go](../ceph/diagnostics.go) | [Container.CollectDiagnostics](../ceph/diagnostics.go#L85) |
-| [ceph/fencing.go](../ceph/fencing.go) | [Container.BlocklistEntries](../ceph/fencing.go#L45) |
-| [ceph/full_ratios.go](../ceph/full_ratios.go) | [Container.FullRatios](../ceph/full_ratios.go) |
-| [ceph/health_details.go](../ceph/health_details.go) | [Container.HealthDetails](../ceph/health_details.go#L55) |
-| [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [Container.MGRModules](../ceph/mgr_modules.go#L29) · [Container.WaitMGRModuleReady](../ceph/mgr_modules.go#L187) |
-| [ceph/mgr_services.go](../ceph/mgr_services.go) | [Container.ManagerServices](../ceph/mgr_services.go#L17) |
-| [ceph/osd_policy.go](../ceph/osd_policy.go) | [Container.OSDStates](../ceph/osd_policy.go#L29) · [Container.OSDFlags](../ceph/osd_policy.go#L99) · [Container.WaitForPGClean](../ceph/osd_policy.go#L307) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [Container.Pools](../ceph/pool_policy.go#L44) · [Container.PoolStatus](../ceph/pool_policy.go#L54) |
-| [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [Container.PoolPGs](../ceph/pool_pgs.go) |
-| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [Container.WaitForPoolPGCount](../ceph/pool_relocation.go#L73) |
-| [ceph/pool_usage.go](../ceph/pool_usage.go) | [Container.PoolUsage](../ceph/pool_usage.go#L44) |
-| [ceph/rbd.go](../ceph/rbd.go) | [Container.ListRBDNamespaces](../ceph/rbd.go#L107) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.UserInfo](../ceph/rgw_admin.go#L457) |
-| [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWContainer.PlacementStatus](../ceph/rgw_placement.go#L250) |
-| [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWContainer.AccountInfo](../ceph/rgw_tenants_accounts.go#L299) |
-| [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWContainer.UserUsage](../ceph/rgw_usage.go#L35) |
-| [ceph/scrub.go](../ceph/scrub.go) | [Container.PGInconsistencies](../ceph/scrub.go#L224) |
-| [ceph/status.go](../ceph/status.go) | [Container.Status](../ceph/status.go#L34) · [Container.WaitForClean](../ceph/status.go#L48) |
-| [ceph/topology.go](../ceph/topology.go) | [Container.QuorumStatus](../ceph/topology.go#L125) · [Container.WaitForQuorum](../ceph/topology.go#L135) · [Container.ManagerStatus](../ceph/topology.go#L888) |
-| [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirror.PeerIDs](../multicluster/cephfs.go#L1033) |
-| [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirrorDirectoryAddition.Status](../multicluster/cephfs_directory_addition.go#L289) |
-| [multicluster/cephfs_directory_removal.go](../multicluster/cephfs_directory_removal.go) | [CephFSMirrorDirectoryRemoval.Status](../multicluster/cephfs_directory_removal.go#L374) · [CephFSMirrorDirectoryRemoval.WaitReleased](../multicluster/cephfs_directory_removal.go#L480) |
-| [multicluster/cephfs_directory_status.go](../multicluster/cephfs_directory_status.go) | [CephFSMirror.DirectoryStatus](../multicluster/cephfs_directory_status.go#L49) · [CephFSMirror.WaitDirectoryReady](../multicluster/cephfs_directory_status.go#L203) · [CephFSMirror.WaitSnapshotSynced](../multicluster/cephfs_directory_status.go#L218) |
-| [multicluster/cephfs_peer_removal.go](../multicluster/cephfs_peer_removal.go) | [CephFSMirrorPeerRemoval.Status](../multicluster/cephfs_peer_removal.go#L238) · [CephFSMirrorPeerRemoval.WaitDrained](../multicluster/cephfs_peer_removal.go#L331) |
-| [multicluster/cephfs_process_quiescence.go](../multicluster/cephfs_process_quiescence.go) | [CephFSMirrorPeerRemoval.ProcessQuiescence](../multicluster/cephfs_process_quiescence.go#L286) · [CephFSMirrorDirectoryRemoval.ProcessQuiescence](../multicluster/cephfs_process_quiescence.go#L298) |
-| [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirrorDaemon.Status](../multicluster/rbd.go#L121) |
-| [multicluster/rbd_image_status.go](../multicluster/rbd_image_status.go) | [RBDMirror.ImageStatus](../multicluster/rbd_image_status.go#L38) · [RBDMirror.WaitReplayReady](../multicluster/rbd_image_status.go#L228) |
-| [multicluster/rbd_namespace.go](../multicluster/rbd_namespace.go) | [RBDMirror.PolicyStatus](../multicluster/rbd_namespace.go#L43) |
-| [multicluster/rbd_namespace_binding.go](../multicluster/rbd_namespace_binding.go) | [RBDMirror.BindNamespace](../multicluster/rbd_namespace_binding.go#L61) · [RBDMirrorNamespace.ReceiverStatus](../multicluster/rbd_namespace_binding.go#L100) · [RBDMirrorNamespace.WaitReceiverReady](../multicluster/rbd_namespace_binding.go#L113) |
-| [multicluster/rbd_namespace_image_status.go](../multicluster/rbd_namespace_image_status.go) | [RBDMirrorNamespace.ImageStatus](../multicluster/rbd_namespace_image_status.go#L18) · [RBDMirrorNamespace.WaitReplayReady](../multicluster/rbd_namespace_image_status.go#L30) |
-| [multicluster/rbd_receiver_status.go](../multicluster/rbd_receiver_status.go) | [RBDMirror.ReceiverStatus](../multicluster/rbd_receiver_status.go#L66) · [RBDMirror.WaitReceiverReady](../multicluster/rbd_receiver_status.go#L78) |
-| [multicluster/rgw_sync_bucket_status.go](../multicluster/rgw_sync_bucket_status.go) | [RGWMultisite.BucketSyncStatus](../multicluster/rgw_sync_bucket_status.go#L45) · [RGWMultisite.WaitBucketSyncReady](../multicluster/rgw_sync_bucket_status.go#L66) |
-| [multicluster/rgw_sync_policy_ready.go](../multicluster/rgw_sync_policy_ready.go) | [RGWMultisite.WaitBucketSyncPolicyReady](../multicluster/rgw_sync_policy_ready.go#L38) |
-| [multicluster/rgw_sync_status.go](../multicluster/rgw_sync_status.go) | [RGWMultisite.SyncStatus](../multicluster/rgw_sync_status.go#L48) · [RGWMultisite.WaitSyncReady](../multicluster/rgw_sync_status.go#L66) |
+| [internal/cluster/auth_policy.go](../internal/cluster/auth_policy.go) | [ceph.Container.ClientCapabilities](../internal/cluster/auth_policy.go#L12) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSStatus](../internal/cluster/cephfs.go#L623) · [cephfs.Filesystem.WaitReady](../internal/cluster/cephfs.go#L643) |
+| [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.Filesystem.SubvolumeAuthorizedClients](../internal/cluster/cephfs_authorization.go#L196) |
+| [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.Filesystem.DataPools](../internal/cluster/cephfs_data_pools.go#L184) |
+| [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.Filesystem.SubvolumePinPolicy](../internal/cluster/cephfs_pin.go#L78) · [cephfs.Filesystem.SubvolumeGroupPinPolicy](../internal/cluster/cephfs_pin.go#L86) |
+| [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Quiesce.Status](../internal/cluster/cephfs_quiesce.go#L139) |
+| [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.Filesystem.SubvolumeSnapshots](../internal/cluster/cephfs_snapshot.go#L109) · [cephfs.Filesystem.SubvolumeSnapshotInfo](../internal/cluster/cephfs_snapshot.go#L173) · [cephfs.Filesystem.SubvolumeCloneStatus](../internal/cluster/cephfs_snapshot.go#L462) · [cephfs.Filesystem.WaitForSubvolumeClone](../internal/cluster/cephfs_snapshot.go#L481) |
+| [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.Filesystem.SubvolumeGroups](../internal/cluster/cephfs_subvolume.go#L367) · [cephfs.Filesystem.Subvolumes](../internal/cluster/cephfs_subvolume.go#L378) · [cephfs.Filesystem.SubvolumeGroupInfo](../internal/cluster/cephfs_subvolume.go#L391) · [cephfs.Filesystem.SubvolumeInfo](../internal/cluster/cephfs_subvolume.go#L406) |
+| [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.Container.Configuration](../internal/cluster/config.go#L59) |
+| [internal/cluster/diagnostics.go](../internal/cluster/diagnostics.go) | [ceph.Container.CollectDiagnostics](../internal/cluster/diagnostics.go#L85) |
+| [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.Container.BlocklistEntries](../internal/cluster/fencing.go#L45) |
+| [internal/cluster/full_ratios.go](../internal/cluster/full_ratios.go) | [ceph.Container.FullRatios](../internal/cluster/full_ratios.go#L36) |
+| [internal/cluster/health_details.go](../internal/cluster/health_details.go) | [ceph.Container.HealthDetails](../internal/cluster/health_details.go#L55) |
+| [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.Container.MGRModules](../internal/cluster/mgr_modules.go#L29) · [ceph.Container.WaitMGRModuleReady](../internal/cluster/mgr_modules.go#L187) |
+| [internal/cluster/mgr_services.go](../internal/cluster/mgr_services.go) | [ceph.Container.ManagerServices](../internal/cluster/mgr_services.go#L17) |
+| [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.Container.OSDStates](../internal/cluster/osd_policy.go#L29) · [ceph.Container.OSDFlags](../internal/cluster/osd_policy.go#L99) · [ceph.Container.WaitForPGClean](../internal/cluster/osd_policy.go#L307) |
+| [internal/cluster/pool_pgs.go](../internal/cluster/pool_pgs.go) | [ceph.Container.PoolPGs](../internal/cluster/pool_pgs.go#L62) |
+| [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.Pools](../internal/cluster/pool_policy.go#L44) · [ceph.Container.PoolStatus](../internal/cluster/pool_policy.go#L54) |
+| [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.WaitForPoolPGCount](../internal/cluster/pool_relocation.go#L73) |
+| [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.Container.PoolUsage](../internal/cluster/pool_usage.go#L44) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.UserInfo](../internal/cluster/rgw_admin.go#L457) |
+| [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Gateway.PlacementStatus](../internal/cluster/rgw_placement.go#L250) |
+| [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Gateway.AccountInfo](../internal/cluster/rgw_tenants_accounts.go#L299) |
+| [internal/cluster/rgw_usage.go](../internal/cluster/rgw_usage.go) | [rgw.Gateway.UserUsage](../internal/cluster/rgw_usage.go#L35) |
+| [internal/cluster/scrub.go](../internal/cluster/scrub.go) | [ceph.Container.PGInconsistencies](../internal/cluster/scrub.go#L224) |
+| [internal/cluster/services.go](../internal/cluster/services.go) | [rbd.ListNamespaces](../internal/cluster/services.go#L115) |
+| [internal/cluster/status.go](../internal/cluster/status.go) | [ceph.Container.Status](../internal/cluster/status.go#L34) · [ceph.Container.WaitForClean](../internal/cluster/status.go#L48) |
+| [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.QuorumStatus](../internal/cluster/topology.go#L125) · [ceph.Container.WaitForQuorum](../internal/cluster/topology.go#L135) · [ceph.Container.ManagerStatus](../internal/cluster/topology.go#L888) |
+| [internal/multicluster/cephfs.go](../internal/multicluster/cephfs.go) | [cephfs.Mirror.PeerIDs](../internal/multicluster/cephfs.go#L1033) |
+| [internal/multicluster/cephfs_directory_addition.go](../internal/multicluster/cephfs_directory_addition.go) | [cephfs.MirrorDirectoryAddition.Status](../internal/multicluster/cephfs_directory_addition.go#L289) |
+| [internal/multicluster/cephfs_directory_removal.go](../internal/multicluster/cephfs_directory_removal.go) | [cephfs.MirrorDirectoryRemoval.Status](../internal/multicluster/cephfs_directory_removal.go#L374) · [cephfs.MirrorDirectoryRemoval.WaitReleased](../internal/multicluster/cephfs_directory_removal.go#L480) |
+| [internal/multicluster/cephfs_directory_status.go](../internal/multicluster/cephfs_directory_status.go) | [cephfs.Mirror.DirectoryStatus](../internal/multicluster/cephfs_directory_status.go#L49) · [cephfs.Mirror.WaitDirectoryReady](../internal/multicluster/cephfs_directory_status.go#L203) · [cephfs.Mirror.WaitSnapshotSynced](../internal/multicluster/cephfs_directory_status.go#L218) |
+| [internal/multicluster/cephfs_peer_removal.go](../internal/multicluster/cephfs_peer_removal.go) | [cephfs.MirrorPeerRemoval.Status](../internal/multicluster/cephfs_peer_removal.go#L238) · [cephfs.MirrorPeerRemoval.WaitDrained](../internal/multicluster/cephfs_peer_removal.go#L331) |
+| [internal/multicluster/cephfs_process_quiescence.go](../internal/multicluster/cephfs_process_quiescence.go) | [cephfs.MirrorPeerRemoval.ProcessQuiescence](../internal/multicluster/cephfs_process_quiescence.go#L286) · [cephfs.MirrorDirectoryRemoval.ProcessQuiescence](../internal/multicluster/cephfs_process_quiescence.go#L298) |
+| [internal/multicluster/rbd.go](../internal/multicluster/rbd.go) | [rbd.MirrorDaemon.Status](../internal/multicluster/rbd.go#L121) |
+| [internal/multicluster/rbd_image_status.go](../internal/multicluster/rbd_image_status.go) | [rbd.Mirror.ImageStatus](../internal/multicluster/rbd_image_status.go#L38) · [rbd.Mirror.WaitReplayReady](../internal/multicluster/rbd_image_status.go#L228) |
+| [internal/multicluster/rbd_namespace.go](../internal/multicluster/rbd_namespace.go) | [rbd.Mirror.PolicyStatus](../internal/multicluster/rbd_namespace.go#L43) |
+| [internal/multicluster/rbd_namespace_binding.go](../internal/multicluster/rbd_namespace_binding.go) | [rbd.Mirror.BindNamespace](../internal/multicluster/rbd_namespace_binding.go#L61) · [rbd.MirrorNamespace.ReceiverStatus](../internal/multicluster/rbd_namespace_binding.go#L100) · [rbd.MirrorNamespace.WaitReceiverReady](../internal/multicluster/rbd_namespace_binding.go#L113) |
+| [internal/multicluster/rbd_namespace_image_status.go](../internal/multicluster/rbd_namespace_image_status.go) | [rbd.MirrorNamespace.ImageStatus](../internal/multicluster/rbd_namespace_image_status.go#L18) · [rbd.MirrorNamespace.WaitReplayReady](../internal/multicluster/rbd_namespace_image_status.go#L30) |
+| [internal/multicluster/rbd_receiver_status.go](../internal/multicluster/rbd_receiver_status.go) | [rbd.Mirror.ReceiverStatus](../internal/multicluster/rbd_receiver_status.go#L66) · [rbd.Mirror.WaitReceiverReady](../internal/multicluster/rbd_receiver_status.go#L78) |
+| [internal/multicluster/rgw_sync_bucket_status.go](../internal/multicluster/rgw_sync_bucket_status.go) | [rgw.Multisite.BucketSyncStatus](../internal/multicluster/rgw_sync_bucket_status.go#L45) · [rgw.Multisite.WaitBucketSyncReady](../internal/multicluster/rgw_sync_bucket_status.go#L66) |
+| [internal/multicluster/rgw_sync_policy_ready.go](../internal/multicluster/rgw_sync_policy_ready.go) | [rgw.Multisite.WaitBucketSyncPolicyReady](../internal/multicluster/rgw_sync_policy_ready.go#L38) |
+| [internal/multicluster/rgw_sync_status.go](../internal/multicluster/rgw_sync_status.go) | [rgw.Multisite.SyncStatus](../internal/multicluster/rgw_sync_status.go#L48) · [rgw.Multisite.WaitSyncReady](../internal/multicluster/rgw_sync_status.go#L66) |
 
 ### Check: 보존된 정보·소유 목록·접속 정보 (43개)
 
 | source | 공개 callable |
 | --- | --- |
-| [ceph/auth.go](../ceph/auth.go) | [ClientConfig.Name](../ceph/auth.go#L45) · [ClientConfig.User](../ceph/auth.go#L49) · [ClientConfig.KeyringPath](../ceph/auth.go#L52) · [ClientConfig.ConnectionConfig](../ceph/auth.go#L64) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.ControlImage](../ceph/ceph.go#L237) · [Container.NetworkName](../ceph/ceph.go#L320) · [Container.UsesHostNetwork](../ceph/ceph.go#L331) · [Container.PublicAddress](../ceph/ceph.go#L334)<br>[Container.ConnectionConfig](../ceph/ceph.go#L343) · [Container.ManagerContainer](../ceph/ceph.go#L370) · [Container.OSDs](../ceph/ceph.go#L701) · [Container.ServiceContainers](../ceph/ceph.go#L714) |
-| [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSContainer.MDSs](../ceph/cephfs.go#L211) |
-| [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSQuiesce.ID](../ceph/cephfs_quiesce.go#L51) |
-| [ceph/client_monitor_config.go](../ceph/client_monitor_config.go) | [Container.MonitorBootstrapAddresses](../ceph/client_monitor_config.go#L20) |
-| [ceph/composition.go](../ceph/composition.go) | [Container.Gateways](../ceph/composition.go#L55) · [Container.Filesystems](../ceph/composition.go#L68) |
-| [ceph/fencing.go](../ceph/fencing.go) | [BlocklistOverride.Address](../ceph/fencing.go#L42) |
-| [ceph/messenger.go](../ceph/messenger.go) | [Container.MessengerMode](../ceph/messenger.go#L22) |
-| [ceph/network.go](../ceph/network.go) | [Container.ClusterNetworkName](../ceph/network.go#L26) · [Container.HasSeparateClusterNetwork](../ceph/network.go#L34) |
-| [ceph/placement.go](../ceph/placement.go) | [OSDContainer.Placement](../ceph/placement.go#L24) |
-| [ceph/rbd.go](../ceph/rbd.go) | [RBDNamespace.Name](../ceph/rbd.go#L31) · [RBDNamespace.PoolName](../ceph/rbd.go#L34) |
-| [ceph/rgw.go](../ceph/rgw.go) | [RGWContainer.DaemonEndpoint](../ceph/rgw.go#L366) · [RGWContainer.S3Endpoint](../ceph/rgw.go#L402) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWUser.ID](../ceph/rgw_admin.go#L67) · [RGWUser.Credentials](../ceph/rgw_admin.go#L76) |
-| [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWAccount.ID](../ceph/rgw_tenants_accounts.go#L68) |
-| [ceph/rgw_tls.go](../ceph/rgw_tls.go) | [RGWContainer.S3SecureEndpoint](../ceph/rgw_tls.go#L57) |
-| [ceph/topology.go](../ceph/topology.go) | [Container.ControlContainer](../ceph/topology.go#L59) · [Container.Monitors](../ceph/topology.go#L82) · [Container.Managers](../ceph/topology.go#L97) |
-| [ceph/topology_snapshot_context.go](../ceph/topology_snapshot_context.go) | [Container.ConnectionConfigContext](../ceph/topology_snapshot_context.go#L15) · [Container.ManagersContext](../ceph/topology_snapshot_context.go#L38) · [Container.GatewaysContext](../ceph/topology_snapshot_context.go#L56) · [Container.ControlContainerContext](../ceph/topology_snapshot_context.go#L75) |
-| [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirror.Daemons](../multicluster/cephfs.go#L473) |
-| [multicluster/cephfs_process_quiescence.go](../multicluster/cephfs_process_quiescence.go) | [CephFSMirrorDaemon.ProcessObserverBindingStatus](../multicluster/cephfs_process_quiescence.go#L45) |
-| [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.Daemons](../multicluster/rbd.go#L250) |
-| [multicluster/rgw_sync_policy.go](../multicluster/rgw_sync_policy.go) | [RGWSyncGroup.ID](../multicluster/rgw_sync_policy.go#L101) |
-| [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RGWMultisite.Zones](../multicluster/rgw_topology.go#L241) |
-| [multicluster/rgw_zonegroups.go](../multicluster/rgw_zonegroups.go) | [RGWMultisite.Zonegroups](../multicluster/rgw_zonegroups.go#L17) |
+| [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientConfig.Name](../internal/cluster/auth.go#L45) · [ceph.ClientConfig.User](../internal/cluster/auth.go#L49) · [ceph.ClientConfig.KeyringPath](../internal/cluster/auth.go#L52) · [ceph.ClientConfig.ConnectionConfig](../internal/cluster/auth.go#L64) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.ControlImage](../internal/cluster/ceph.go#L242) · [ceph.Container.NetworkName](../internal/cluster/ceph.go#L325) · [ceph.Container.UsesHostNetwork](../internal/cluster/ceph.go#L336) · [ceph.Container.PublicAddress](../internal/cluster/ceph.go#L339)<br>[ceph.Container.ConnectionConfig](../internal/cluster/ceph.go#L348) · [ceph.Container.ManagerContainer](../internal/cluster/ceph.go#L375) · [ceph.Container.OSDs](../internal/cluster/ceph.go#L706) · [ceph.Container.ServiceContainers](../internal/cluster/ceph.go#L719) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSs](../internal/cluster/cephfs.go#L205) |
+| [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Quiesce.ID](../internal/cluster/cephfs_quiesce.go#L51) |
+| [internal/cluster/client_monitor_config.go](../internal/cluster/client_monitor_config.go) | [ceph.Container.MonitorBootstrapAddresses](../internal/cluster/client_monitor_config.go#L20) |
+| [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.BlocklistOverride.Address](../internal/cluster/fencing.go#L42) |
+| [internal/cluster/messenger.go](../internal/cluster/messenger.go) | [ceph.Container.MessengerMode](../internal/cluster/messenger.go#L22) |
+| [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.Container.ClusterNetworkName](../internal/cluster/network.go#L26) · [ceph.Container.HasSeparateClusterNetwork](../internal/cluster/network.go#L34) |
+| [internal/cluster/placement.go](../internal/cluster/placement.go) | [ceph.OSDContainer.Placement](../internal/cluster/placement.go#L24) |
+| [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace.Name](../internal/cluster/rbd.go#L31) · [rbd.Namespace.PoolName](../internal/cluster/rbd.go#L34) |
+| [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway.DaemonEndpoint](../internal/cluster/rgw.go#L358) · [rgw.Gateway.S3Endpoint](../internal/cluster/rgw.go#L394) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.User.ID](../internal/cluster/rgw_admin.go#L67) · [rgw.User.Credentials](../internal/cluster/rgw_admin.go#L76) |
+| [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Account.ID](../internal/cluster/rgw_tenants_accounts.go#L68) |
+| [internal/cluster/rgw_tls.go](../internal/cluster/rgw_tls.go) | [rgw.Gateway.S3SecureEndpoint](../internal/cluster/rgw_tls.go#L57) |
+| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Filesystems](../internal/cluster/services.go#L39) · [rgw.Gateways](../internal/cluster/services.go#L72) · [rgw.GatewaysContext](../internal/cluster/services.go#L81) |
+| [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.ControlContainer](../internal/cluster/topology.go#L59) · [ceph.Container.Monitors](../internal/cluster/topology.go#L82) · [ceph.Container.Managers](../internal/cluster/topology.go#L97) |
+| [internal/cluster/topology_snapshot_context.go](../internal/cluster/topology_snapshot_context.go) | [ceph.Container.ConnectionConfigContext](../internal/cluster/topology_snapshot_context.go#L15) · [ceph.Container.ManagersContext](../internal/cluster/topology_snapshot_context.go#L38) · [ceph.Container.ControlContainerContext](../internal/cluster/topology_snapshot_context.go#L75) |
+| [internal/multicluster/cephfs.go](../internal/multicluster/cephfs.go) | [cephfs.Mirror.Daemons](../internal/multicluster/cephfs.go#L473) |
+| [internal/multicluster/cephfs_process_quiescence.go](../internal/multicluster/cephfs_process_quiescence.go) | [cephfs.MirrorDaemon.ProcessObserverBindingStatus](../internal/multicluster/cephfs_process_quiescence.go#L45) |
+| [internal/multicluster/rbd.go](../internal/multicluster/rbd.go) | [rbd.Mirror.Daemons](../internal/multicluster/rbd.go#L250) |
+| [internal/multicluster/rgw_sync_policy.go](../internal/multicluster/rgw_sync_policy.go) | [rgw.SyncGroup.ID](../internal/multicluster/rgw_sync_policy.go#L101) |
+| [internal/multicluster/rgw_topology.go](../internal/multicluster/rgw_topology.go) | [rgw.Multisite.Zones](../internal/multicluster/rgw_topology.go#L241) |
+| [internal/multicluster/rgw_zonegroups.go](../internal/multicluster/rgw_zonegroups.go) | [rgw.Multisite.Zonegroups](../internal/multicluster/rgw_zonegroups.go#L18) |
 
 ### 연결·raw CLI·customizer 접점 (16개)
 
 | source | 공개 callable |
 | --- | --- |
-| [ceph/auth.go](../ceph/auth.go) | [Container.WithClientIdentity](../ceph/auth.go#L191) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container.WithClient](../ceph/ceph.go#L379) · [Container.Ceph](../ceph/ceph.go#L402) |
-| [ceph/idle.go](../ceph/idle.go) | [WithIdleEntrypoint](../ceph/idle.go#L15) |
-| [ceph/options.go](../ceph/options.go) | [Option.Customize](../ceph/options.go#L99) · [WithHostAddress](../ceph/options.go#L127) · [WithOSDImage](../ceph/options.go#L141) · [WithRGWImage](../ceph/options.go#L153)<br>[WithMDSImage](../ceph/options.go#L165) · [WithStartupTimeout](../ceph/options.go#L293) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWContainer.Admin](../ceph/rgw_admin.go#L122) |
-| [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirror.SourceRBD](../multicluster/rbd.go#L571) · [RBDMirror.DestinationRBD](../multicluster/rbd.go#L580) |
-| [multicluster/rgw.go](../multicluster/rgw.go) | [RGWMultisite.SourceAdmin](../multicluster/rgw.go#L465) · [RGWMultisite.DestinationAdmin](../multicluster/rgw.go#L471) |
-| [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RGWMultisite.ZoneAdmin](../multicluster/rgw_topology.go#L271) |
+| [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.Container.WithClientIdentity](../internal/cluster/auth.go#L191) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.WithClient](../internal/cluster/ceph.go#L384) · [ceph.Container.Ceph](../internal/cluster/ceph.go#L407) |
+| [internal/cluster/idle.go](../internal/cluster/idle.go) | [ceph.WithIdleEntrypoint](../internal/cluster/idle.go#L15) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option.Customize](../internal/cluster/options.go#L101) · [ceph.WithHostAddress](../internal/cluster/options.go#L129) · [ceph.WithOSDImage](../internal/cluster/options.go#L143) · [rgw.WithImage](../internal/cluster/options.go#L155)<br>[cephfs.WithMDSImage](../internal/cluster/options.go#L167) · [ceph.WithStartupTimeout](../internal/cluster/options.go#L295) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.Admin](../internal/cluster/rgw_admin.go#L122) |
+| [internal/multicluster/rbd.go](../internal/multicluster/rbd.go) | [rbd.Mirror.SourceRBD](../internal/multicluster/rbd.go#L571) · [rbd.Mirror.DestinationRBD](../internal/multicluster/rbd.go#L580) |
+| [internal/multicluster/rgw.go](../internal/multicluster/rgw.go) | [rgw.Multisite.SourceAdmin](../internal/multicluster/rgw.go#L465) · [rgw.Multisite.DestinationAdmin](../internal/multicluster/rgw.go#L471) |
+| [internal/multicluster/rgw_topology.go](../internal/multicluster/rgw_topology.go) | [rgw.Multisite.ZoneAdmin](../internal/multicluster/rgw_topology.go#L271) |
 
 ### 조건부 archive helper (4개)
 
 | source | 공개 callable |
 | --- | --- |
-| [multicluster/rbd_backup.go](../multicluster/rbd_backup.go) | [ExportRBDBackup](../multicluster/rbd_backup.go#L19) · [ExportRBDIncremental](../multicluster/rbd_backup.go#L25) · [RestoreRBDBackup](../multicluster/rbd_backup.go#L34) · [RestoreRBDIncremental](../multicluster/rbd_backup.go#L40) |
+| [internal/multicluster/rbd_backup.go](../internal/multicluster/rbd_backup.go) | [rbd.ExportBackup](../internal/multicluster/rbd_backup.go#L19) · [rbd.ExportIncremental](../internal/multicluster/rbd_backup.go#L25) · [rbd.RestoreBackup](../internal/multicluster/rbd_backup.go#L34) · [rbd.RestoreIncremental](../internal/multicluster/rbd_backup.go#L40) |
 
 ### 로컬 문자열 표현 (16개)
 
 | source | 공개 callable |
 | --- | --- |
-| [ceph/auth.go](../ceph/auth.go) | [ClientConfig.String](../ceph/auth.go#L55) · [ClientConfig.GoString](../ceph/auth.go#L58) |
-| [ceph/config.go](../ceph/config.go) | [ConfigOverride.String](../ceph/config.go#L51) · [ConfigOverride.GoString](../ceph/config.go#L54) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWUser.String](../ceph/rgw_admin.go#L83) · [RGWUser.GoString](../ceph/rgw_admin.go#L84) |
-| [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWPlacement.String](../ceph/rgw_placement.go#L61) · [RGWPlacement.GoString](../ceph/rgw_placement.go#L62) |
-| [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWAccount.String](../ceph/rgw_tenants_accounts.go#L75) · [RGWAccount.GoString](../ceph/rgw_tenants_accounts.go#L76) |
-| [ceph/rgw_tls.go](../ceph/rgw_tls.go) | [RGWTLSConfig.String](../ceph/rgw_tls.go#L28) · [RGWTLSConfig.GoString](../ceph/rgw_tls.go#L29) · [RGWContainer.String](../ceph/rgw_tls.go#L32) · [RGWContainer.GoString](../ceph/rgw_tls.go#L33) |
-| [multicluster/rgw_sync_policy.go](../multicluster/rgw_sync_policy.go) | [RGWSyncGroup.String](../multicluster/rgw_sync_policy.go#L107) · [RGWSyncGroup.GoString](../multicluster/rgw_sync_policy.go#L108) |
+| [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientConfig.String](../internal/cluster/auth.go#L55) · [ceph.ClientConfig.GoString](../internal/cluster/auth.go#L58) |
+| [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.ConfigOverride.String](../internal/cluster/config.go#L51) · [ceph.ConfigOverride.GoString](../internal/cluster/config.go#L54) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.User.String](../internal/cluster/rgw_admin.go#L83) · [rgw.User.GoString](../internal/cluster/rgw_admin.go#L84) |
+| [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Placement.String](../internal/cluster/rgw_placement.go#L61) · [rgw.Placement.GoString](../internal/cluster/rgw_placement.go#L62) |
+| [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Account.String](../internal/cluster/rgw_tenants_accounts.go#L75) · [rgw.Account.GoString](../internal/cluster/rgw_tenants_accounts.go#L76) |
+| [internal/cluster/rgw_tls.go](../internal/cluster/rgw_tls.go) | [rgw.TLSConfig.String](../internal/cluster/rgw_tls.go#L28) · [rgw.TLSConfig.GoString](../internal/cluster/rgw_tls.go#L29) · [rgw.Gateway.String](../internal/cluster/rgw_tls.go#L32) · [rgw.Gateway.GoString](../internal/cluster/rgw_tls.go#L33) |
+| [internal/multicluster/rgw_sync_policy.go](../internal/multicluster/rgw_sync_policy.go) | [rgw.SyncGroup.String](../internal/multicluster/rgw_sync_policy.go#L107) · [rgw.SyncGroup.GoString](../internal/multicluster/rgw_sync_policy.go#L108) |
 <!-- callables:end -->
 
 ## Config·타입·option 계약
@@ -257,64 +259,64 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 93개, `multicluster` 51개다. 다음 source 묶음에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 46개, `cephfs` 46개, `rgw` 38개, `rbd` 14개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
-| [ceph/auth.go](../ceph/auth.go) | [ClientCaps](../ceph/auth.go#L24) · [ClientConfig](../ceph/auth.go#L34) |
-| [ceph/ceph.go](../ceph/ceph.go) | [Container](../ceph/ceph.go#L36) · [OSDContainer](../ceph/ceph.go#L75) |
-| [ceph/cephfs.go](../ceph/cephfs.go) | [CephFSConfig](../ceph/cephfs.go#L24) · [MDSContainer](../ceph/cephfs.go#L41) · [CephFSContainer](../ceph/cephfs.go#L52) · [MDSStatus](../ceph/cephfs.go#L71)<br>[CephFSMDSStatus](../ceph/cephfs.go#L81) |
-| [ceph/cephfs_authorization.go](../ceph/cephfs_authorization.go) | [CephFSSubvolumeAuthorizationConfig](../ceph/cephfs_authorization.go#L16) · [CephFSSubvolumeAuthorization](../ceph/cephfs_authorization.go#L26) · [CephFSSubvolumeAuthorizedClient](../ceph/cephfs_authorization.go#L41) |
-| [ceph/cephfs_data_pools.go](../ceph/cephfs_data_pools.go) | [CephFSDataPoolState](../ceph/cephfs_data_pools.go#L16) · [CephFSDataPool](../ceph/cephfs_data_pools.go#L25) |
-| [ceph/cephfs_pin.go](../ceph/cephfs_pin.go) | [CephFSPinType](../ceph/cephfs_pin.go#L16) · [CephFSPinSetting](../ceph/cephfs_pin.go#L29) · [CephFSPinPolicy](../ceph/cephfs_pin.go#L40) · [CephFSPinOverride](../ceph/cephfs_pin.go#L56) |
-| [ceph/cephfs_quiesce.go](../ceph/cephfs_quiesce.go) | [CephFSQuiesceConfig](../ceph/cephfs_quiesce.go#L18) · [CephFSQuiesceState](../ceph/cephfs_quiesce.go#L24) · [CephFSQuiesce](../ceph/cephfs_quiesce.go#L37) |
-| [ceph/cephfs_snapshot.go](../ceph/cephfs_snapshot.go) | [CephFSSubvolumeSnapshot](../ceph/cephfs_snapshot.go#L18) · [CephFSSnapshotPendingClone](../ceph/cephfs_snapshot.go#L25) · [CephFSSubvolumeSnapshotInfo](../ceph/cephfs_snapshot.go#L32) · [CephFSCloneConfig](../ceph/cephfs_snapshot.go#L43)<br>[CephFSSubvolumeClone](../ceph/cephfs_snapshot.go#L51) · [CephFSSubvolumeCloneStatus](../ceph/cephfs_snapshot.go#L59) |
-| [ceph/cephfs_subvolume.go](../ceph/cephfs_subvolume.go) | [CephFSSubvolumeGroupConfig](../ceph/cephfs_subvolume.go#L19) · [CephFSSubvolumeConfig](../ceph/cephfs_subvolume.go#L30) · [CephFSSubvolumeGroup](../ceph/cephfs_subvolume.go#L42) · [CephFSSubvolume](../ceph/cephfs_subvolume.go#L53)<br>[CephFSSubvolumeGroupInfo](../ceph/cephfs_subvolume.go#L65) · [CephFSSubvolumeInfo](../ceph/cephfs_subvolume.go#L78) |
-| [ceph/config.go](../ceph/config.go) | [ConfigSetting](../ceph/config.go#L19) · [ConfigEntry](../ceph/config.go#L25) · [ConfigOverride](../ceph/config.go#L38) |
-| [ceph/diagnostics.go](../ceph/diagnostics.go) | [DiagnosticsConfig](../ceph/diagnostics.go#L33) · [DiagnosticsContainer](../ceph/diagnostics.go#L46) · [DiagnosticArtifact](../ceph/diagnostics.go#L55) · [DiagnosticsReport](../ceph/diagnostics.go#L68) |
-| [ceph/fencing.go](../ceph/fencing.go) | [BlocklistEntry](../ceph/fencing.go#L20) · [BlocklistOverride](../ceph/fencing.go#L31) |
-| [ceph/full_ratios.go](../ceph/full_ratios.go) | [FullRatios](../ceph/full_ratios.go) · [FullRatioSnapshot](../ceph/full_ratios.go) · [FullRatiosOverride](../ceph/full_ratios.go) |
-| [ceph/health_details.go](../ceph/health_details.go) | [HealthSnapshot](../ceph/health_details.go#L21) · [HealthCheck](../ceph/health_details.go#L29) · [HealthMute](../ceph/health_details.go#L41) |
-| [ceph/messenger.go](../ceph/messenger.go) | [MessengerMode](../ceph/messenger.go#L8), `MessengerDefault`, `MessengerV2Secure` |
-| [ceph/mgr_modules.go](../ceph/mgr_modules.go) | [MGRModuleState](../ceph/mgr_modules.go#L19) · [MGRModuleOverride](../ceph/mgr_modules.go#L42) |
-| [ceph/network.go](../ceph/network.go) | [NetworkPlane](../ceph/network.go#L17) · [NetworkInterruption](../ceph/network.go#L81) |
-| [ceph/options.go](../ceph/options.go) | [Option](../ceph/options.go#L96) |
-| [ceph/osd_policy.go](../ceph/osd_policy.go) | [OSDState](../ceph/osd_policy.go#L20) · [OSDFlagOverride](../ceph/osd_policy.go#L116) |
-| [ceph/pause.go](../ceph/pause.go) | [ContainerPause](../ceph/pause.go#L24) |
-| [ceph/placement.go](../ceph/placement.go) | [OSDConfig](../ceph/placement.go#L16) |
-| [ceph/pool.go](../ceph/pool.go) | [PoolConfig](../ceph/pool.go#L18) · [ErasureCodeConfig](../ceph/pool.go#L39) · [Pool](../ceph/pool.go#L48) |
-| [ceph/pool_policy.go](../ceph/pool_policy.go) | [PoolQuota](../ceph/pool_policy.go#L16) · [PoolState](../ceph/pool_policy.go#L26) |
-| [ceph/pool_pgs.go](../ceph/pool_pgs.go) | [PoolPGSnapshot](../ceph/pool_pgs.go) · [PGState](../ceph/pool_pgs.go) · [PGStats](../ceph/pool_pgs.go) |
-| [ceph/pool_relocation.go](../ceph/pool_relocation.go) | [PoolPlacement](../ceph/pool_relocation.go#L17) |
-| [ceph/pool_usage.go](../ceph/pool_usage.go) | [PoolUsageSnapshot](../ceph/pool_usage.go#L23) |
-| [ceph/rbd.go](../ceph/rbd.go) | [RBDNamespace](../ceph/rbd.go#L15) |
-| [ceph/rgw.go](../ceph/rgw.go) | [RGWContainer](../ceph/rgw.go#L24) · [RGWConfig](../ceph/rgw.go#L43) |
-| [ceph/rgw_admin.go](../ceph/rgw_admin.go) | [RGWUserConfig](../ceph/rgw_admin.go#L25) · [RGWUser](../ceph/rgw_admin.go#L37) · [RGWQuota](../ceph/rgw_admin.go#L90) · [RGWAdminCapability](../ceph/rgw_admin.go#L96)<br>[RGWUserInfo](../ceph/rgw_admin.go#L105) |
-| [ceph/rgw_placement.go](../ceph/rgw_placement.go) | [RGWStorageClassConfig](../ceph/rgw_placement.go#L25) · [RGWPlacementConfig](../ceph/rgw_placement.go#L34) · [RGWPlacement](../ceph/rgw_placement.go#L51) · [RGWPlacementState](../ceph/rgw_placement.go#L67) |
-| [ceph/rgw_tenants_accounts.go](../ceph/rgw_tenants_accounts.go) | [RGWAccountConfig](../ceph/rgw_tenants_accounts.go#L47) · [RGWAccount](../ceph/rgw_tenants_accounts.go#L55) · [RGWAccountInfo](../ceph/rgw_tenants_accounts.go#L81) |
-| [ceph/rgw_tls.go](../ceph/rgw_tls.go) | [RGWTLSConfig](../ceph/rgw_tls.go#L24) |
-| [ceph/rgw_usage.go](../ceph/rgw_usage.go) | [RGWUserUsage](../ceph/rgw_usage.go#L21) |
-| [ceph/rgw_user_placement.go](../ceph/rgw_user_placement.go) | [RGWUserPlacementConfig](../ceph/rgw_user_placement.go#L18) |
-| [ceph/scrub.go](../ceph/scrub.go) | [InconsistentObject](../ceph/scrub.go#L18) · [InconsistentShard](../ceph/scrub.go#L27) |
-| [ceph/status.go](../ceph/status.go) | [Status](../ceph/status.go#L11) |
-| [ceph/topology.go](../ceph/topology.go) | [MonitorContainer](../ceph/topology.go#L26) · [ManagerContainer](../ceph/topology.go#L32) · [QuorumStatus](../ceph/topology.go#L109) · [ManagerStatus](../ceph/topology.go#L878) |
-| [multicluster/cephfs.go](../multicluster/cephfs.go) | [CephFSMirrorConfig](../multicluster/cephfs.go#L26) · [CephFSMirrorDaemon](../multicluster/cephfs.go#L48) · [CephFSMirror](../multicluster/cephfs.go#L82) |
-| [multicluster/cephfs_directory_addition.go](../multicluster/cephfs_directory_addition.go) | [CephFSMirrorDirectoryAddition](../multicluster/cephfs_directory_addition.go#L16) · [CephFSMirrorDirectoryAdditionStatus](../multicluster/cephfs_directory_addition.go#L27) |
-| [multicluster/cephfs_directory_removal.go](../multicluster/cephfs_directory_removal.go) | [CephFSMirrorDirectoryRemoval](../multicluster/cephfs_directory_removal.go#L18) · [CephFSMirrorDirectoryRemovalStatus](../multicluster/cephfs_directory_removal.go#L30) · [CephFSMirrorDirectoryRemovalDaemonStatus](../multicluster/cephfs_directory_removal.go#L38) |
-| [multicluster/cephfs_directory_status.go](../multicluster/cephfs_directory_status.go) | [CephFSMirrorSnapshot](../multicluster/cephfs_directory_status.go#L18) · [CephFSMirrorDirectoryStatus](../multicluster/cephfs_directory_status.go#L32) |
-| [multicluster/cephfs_peer_removal.go](../multicluster/cephfs_peer_removal.go) | [CephFSMirrorPeerRemoval](../multicluster/cephfs_peer_removal.go#L22) · [CephFSMirrorPeerRemovalStatus](../multicluster/cephfs_peer_removal.go#L43) · [CephFSMirrorPeerRemovalDaemonStatus](../multicluster/cephfs_peer_removal.go#L51) |
-| [multicluster/cephfs_process_quiescence.go](../multicluster/cephfs_process_quiescence.go) | [CephFSMirrorProcessBindingStatus](../multicluster/cephfs_process_quiescence.go#L38) · [CephFSMirrorProcessQuiescenceStatus](../multicluster/cephfs_process_quiescence.go#L270) · [CephFSMirrorOriginalProcessStatus](../multicluster/cephfs_process_quiescence.go#L279) |
-| [multicluster/cephfs_process_quiescence_acknowledgment.go](../multicluster/cephfs_process_quiescence_acknowledgment.go) | [CephFSMirrorProcessQuiescenceAcknowledgment](../multicluster/cephfs_process_quiescence_acknowledgment.go#L13) |
-| [multicluster/rbd.go](../multicluster/rbd.go) | [RBDMirrorMode](../multicluster/rbd.go#L25) · [RBDMirrorConfig](../multicluster/rbd.go#L35) · [RBDMirror](../multicluster/rbd.go#L66) · [RBDMirrorDaemon](../multicluster/rbd.go#L88)<br>[RBDMirrorDaemonStatus](../multicluster/rbd.go#L102) · [RBDMirrorPoolReplayerStatus](../multicluster/rbd.go#L109) |
-| [multicluster/rbd_image_status.go](../multicluster/rbd_image_status.go) | [RBDMirrorImageStatus](../multicluster/rbd_image_status.go#L22) |
-| [multicluster/rbd_namespace.go](../multicluster/rbd_namespace.go) | [RBDMirrorScope](../multicluster/rbd_namespace.go#L18) · [RBDMirrorNamespaceState](../multicluster/rbd_namespace.go#L29) · [RBDMirrorPolicies](../multicluster/rbd_namespace.go#L36) |
-| [multicluster/rbd_namespace_binding.go](../multicluster/rbd_namespace_binding.go) | [RBDMirrorNamespace](../multicluster/rbd_namespace_binding.go#L17) |
-| [multicluster/rbd_receiver_status.go](../multicluster/rbd_receiver_status.go) | [RBDMirrorReceiverStatus](../multicluster/rbd_receiver_status.go#L21) · [RBDMirrorReceiverDaemonStatus](../multicluster/rbd_receiver_status.go#L36) |
-| [multicluster/rgw.go](../multicluster/rgw.go) | [RGWMultisiteConfig](../multicluster/rgw.go#L23) · [RGWMultisite](../multicluster/rgw.go#L33) |
-| [multicluster/rgw_sync_bucket_status.go](../multicluster/rgw_sync_bucket_status.go) | [RGWSyncBucketIdentity](../multicluster/rgw_sync_bucket_status.go#L17) · [RGWBucketSyncStatus](../multicluster/rgw_sync_bucket_status.go#L24) |
-| [multicluster/rgw_sync_pipe.go](../multicluster/rgw_sync_pipe.go) | [RGWSyncBucketSelector](../multicluster/rgw_sync_pipe.go#L21) · [RGWSyncObjectTag](../multicluster/rgw_sync_pipe.go#L26) |
-| [multicluster/rgw_sync_policy.go](../multicluster/rgw_sync_policy.go) | [RGWSyncPolicyScope](../multicluster/rgw_sync_policy.go#L25) · [RGWSyncGroupStatus](../multicluster/rgw_sync_policy.go#L30) · [RGWSyncGroupConfig](../multicluster/rgw_sync_policy.go#L38) · [RGWSyncFlowConfig](../multicluster/rgw_sync_policy.go#L48)<br>[RGWSyncPipeConfig](../multicluster/rgw_sync_policy.go#L62) · [RGWSyncGroup](../multicluster/rgw_sync_policy.go#L80) |
-| [multicluster/rgw_sync_policy_ready.go](../multicluster/rgw_sync_policy_ready.go) | [RGWBucketSyncPolicyStatus](../multicluster/rgw_sync_policy_ready.go#L17) |
-| [multicluster/rgw_sync_status.go](../multicluster/rgw_sync_status.go) | [RGWMetadataSyncStatus](../multicluster/rgw_sync_status.go#L17) · [RGWDataSyncStatus](../multicluster/rgw_sync_status.go#L28) · [RGWSyncStatus](../multicluster/rgw_sync_status.go#L35) |
-| [multicluster/rgw_topology.go](../multicluster/rgw_topology.go) | [RGWZoneConfig](../multicluster/rgw_topology.go#L19) · [RGWZonegroupConfig](../multicluster/rgw_topology.go#L27) · [RGWTopologyConfig](../multicluster/rgw_topology.go#L39) · [RGWZone](../multicluster/rgw_topology.go#L50)<br>[RGWZonegroup](../multicluster/rgw_topology.go#L58) |
+| [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientCaps](../internal/cluster/auth.go#L24) · [ceph.ClientConfig](../internal/cluster/auth.go#L34) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container](../internal/cluster/ceph.go#L36) · [ceph.OSDContainer](../internal/cluster/ceph.go#L75) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Config](../internal/cluster/cephfs.go#L24) · [cephfs.MDS](../internal/cluster/cephfs.go#L41) · [cephfs.Filesystem](../internal/cluster/cephfs.go#L52) · [cephfs.MDSStatus](../internal/cluster/cephfs.go#L71)<br>[cephfs.FilesystemStatus](../internal/cluster/cephfs.go#L81) |
+| [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.SubvolumeAuthorizationConfig](../internal/cluster/cephfs_authorization.go#L16) · [cephfs.SubvolumeAuthorization](../internal/cluster/cephfs_authorization.go#L26) · [cephfs.SubvolumeAuthorizedClient](../internal/cluster/cephfs_authorization.go#L41) |
+| [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.DataPoolState](../internal/cluster/cephfs_data_pools.go#L16) · [cephfs.DataPool](../internal/cluster/cephfs_data_pools.go#L25) |
+| [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.PinType](../internal/cluster/cephfs_pin.go#L16) · [cephfs.PinSetting](../internal/cluster/cephfs_pin.go#L29) · [cephfs.PinPolicy](../internal/cluster/cephfs_pin.go#L40) · [cephfs.PinOverride](../internal/cluster/cephfs_pin.go#L56) |
+| [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.QuiesceConfig](../internal/cluster/cephfs_quiesce.go#L18) · [cephfs.QuiesceState](../internal/cluster/cephfs_quiesce.go#L24) · [cephfs.Quiesce](../internal/cluster/cephfs_quiesce.go#L37) |
+| [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.SubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L18) · [cephfs.SnapshotPendingClone](../internal/cluster/cephfs_snapshot.go#L25) · [cephfs.SubvolumeSnapshotInfo](../internal/cluster/cephfs_snapshot.go#L32) · [cephfs.CloneConfig](../internal/cluster/cephfs_snapshot.go#L43)<br>[cephfs.SubvolumeClone](../internal/cluster/cephfs_snapshot.go#L51) · [cephfs.SubvolumeCloneStatus](../internal/cluster/cephfs_snapshot.go#L59) |
+| [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.SubvolumeGroupConfig](../internal/cluster/cephfs_subvolume.go#L19) · [cephfs.SubvolumeConfig](../internal/cluster/cephfs_subvolume.go#L30) · [cephfs.SubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L42) · [cephfs.Subvolume](../internal/cluster/cephfs_subvolume.go#L53)<br>[cephfs.SubvolumeGroupInfo](../internal/cluster/cephfs_subvolume.go#L65) · [cephfs.SubvolumeInfo](../internal/cluster/cephfs_subvolume.go#L78) |
+| [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.ConfigSetting](../internal/cluster/config.go#L19) · [ceph.ConfigEntry](../internal/cluster/config.go#L25) · [ceph.ConfigOverride](../internal/cluster/config.go#L38) |
+| [internal/cluster/diagnostics.go](../internal/cluster/diagnostics.go) | [ceph.DiagnosticsConfig](../internal/cluster/diagnostics.go#L33) · [ceph.DiagnosticsContainer](../internal/cluster/diagnostics.go#L46) · [ceph.DiagnosticArtifact](../internal/cluster/diagnostics.go#L55) · [ceph.DiagnosticsReport](../internal/cluster/diagnostics.go#L68) |
+| [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.BlocklistEntry](../internal/cluster/fencing.go#L20) · [ceph.BlocklistOverride](../internal/cluster/fencing.go#L31) |
+| [internal/cluster/full_ratios.go](../internal/cluster/full_ratios.go) | [ceph.FullRatios](../internal/cluster/full_ratios.go#L17) · [ceph.FullRatioSnapshot](../internal/cluster/full_ratios.go#L24) · [ceph.FullRatiosOverride](../internal/cluster/full_ratios.go#L58) |
+| [internal/cluster/health_details.go](../internal/cluster/health_details.go) | [ceph.HealthSnapshot](../internal/cluster/health_details.go#L21) · [ceph.HealthCheck](../internal/cluster/health_details.go#L29) · [ceph.HealthMute](../internal/cluster/health_details.go#L41) |
+| [internal/cluster/messenger.go](../internal/cluster/messenger.go) | [ceph.MessengerMode](../internal/cluster/messenger.go#L8) |
+| [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.MGRModuleState](../internal/cluster/mgr_modules.go#L19) · [ceph.MGRModuleOverride](../internal/cluster/mgr_modules.go#L42) |
+| [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.NetworkPlane](../internal/cluster/network.go#L17) · [ceph.NetworkInterruption](../internal/cluster/network.go#L81) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option](../internal/cluster/options.go#L98) |
+| [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.OSDState](../internal/cluster/osd_policy.go#L20) · [ceph.OSDFlagOverride](../internal/cluster/osd_policy.go#L116) |
+| [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.ContainerPause](../internal/cluster/pause.go#L24) |
+| [internal/cluster/placement.go](../internal/cluster/placement.go) | [ceph.OSDConfig](../internal/cluster/placement.go#L16) |
+| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.PoolConfig](../internal/cluster/pool.go#L18) · [ceph.ErasureCodeConfig](../internal/cluster/pool.go#L39) · [ceph.Pool](../internal/cluster/pool.go#L48) |
+| [internal/cluster/pool_pgs.go](../internal/cluster/pool_pgs.go) | [ceph.PoolPGSnapshot](../internal/cluster/pool_pgs.go#L17) · [ceph.PGState](../internal/cluster/pool_pgs.go#L31) · [ceph.PGStats](../internal/cluster/pool_pgs.go#L45) |
+| [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.PoolQuota](../internal/cluster/pool_policy.go#L16) · [ceph.PoolState](../internal/cluster/pool_policy.go#L26) |
+| [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.PoolPlacement](../internal/cluster/pool_relocation.go#L17) |
+| [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.PoolUsageSnapshot](../internal/cluster/pool_usage.go#L23) |
+| [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace](../internal/cluster/rbd.go#L15) |
+| [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway](../internal/cluster/rgw.go#L24) · [rgw.Config](../internal/cluster/rgw.go#L43) |
+| [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.UserConfig](../internal/cluster/rgw_admin.go#L25) · [rgw.User](../internal/cluster/rgw_admin.go#L37) · [rgw.Quota](../internal/cluster/rgw_admin.go#L90) · [rgw.AdminCapability](../internal/cluster/rgw_admin.go#L96)<br>[rgw.UserInfo](../internal/cluster/rgw_admin.go#L105) |
+| [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.StorageClassConfig](../internal/cluster/rgw_placement.go#L25) · [rgw.PlacementConfig](../internal/cluster/rgw_placement.go#L34) · [rgw.Placement](../internal/cluster/rgw_placement.go#L51) · [rgw.PlacementState](../internal/cluster/rgw_placement.go#L67) |
+| [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.AccountConfig](../internal/cluster/rgw_tenants_accounts.go#L47) · [rgw.Account](../internal/cluster/rgw_tenants_accounts.go#L55) · [rgw.AccountInfo](../internal/cluster/rgw_tenants_accounts.go#L81) |
+| [internal/cluster/rgw_tls.go](../internal/cluster/rgw_tls.go) | [rgw.TLSConfig](../internal/cluster/rgw_tls.go#L24) |
+| [internal/cluster/rgw_usage.go](../internal/cluster/rgw_usage.go) | [rgw.UserUsage](../internal/cluster/rgw_usage.go#L21) |
+| [internal/cluster/rgw_user_placement.go](../internal/cluster/rgw_user_placement.go) | [rgw.UserPlacementConfig](../internal/cluster/rgw_user_placement.go#L18) |
+| [internal/cluster/scrub.go](../internal/cluster/scrub.go) | [ceph.InconsistentObject](../internal/cluster/scrub.go#L18) · [ceph.InconsistentShard](../internal/cluster/scrub.go#L27) |
+| [internal/cluster/status.go](../internal/cluster/status.go) | [ceph.Status](../internal/cluster/status.go#L11) |
+| [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.MonitorContainer](../internal/cluster/topology.go#L26) · [ceph.ManagerContainer](../internal/cluster/topology.go#L32) · [ceph.QuorumStatus](../internal/cluster/topology.go#L109) · [ceph.ManagerStatus](../internal/cluster/topology.go#L878) |
+| [internal/multicluster/cephfs.go](../internal/multicluster/cephfs.go) | [cephfs.MirrorConfig](../internal/multicluster/cephfs.go#L26) · [cephfs.MirrorDaemon](../internal/multicluster/cephfs.go#L48) · [cephfs.Mirror](../internal/multicluster/cephfs.go#L82) |
+| [internal/multicluster/cephfs_directory_addition.go](../internal/multicluster/cephfs_directory_addition.go) | [cephfs.MirrorDirectoryAddition](../internal/multicluster/cephfs_directory_addition.go#L16) · [cephfs.MirrorDirectoryAdditionStatus](../internal/multicluster/cephfs_directory_addition.go#L27) |
+| [internal/multicluster/cephfs_directory_removal.go](../internal/multicluster/cephfs_directory_removal.go) | [cephfs.MirrorDirectoryRemoval](../internal/multicluster/cephfs_directory_removal.go#L18) · [cephfs.MirrorDirectoryRemovalStatus](../internal/multicluster/cephfs_directory_removal.go#L30) · [cephfs.MirrorDirectoryRemovalDaemonStatus](../internal/multicluster/cephfs_directory_removal.go#L38) |
+| [internal/multicluster/cephfs_directory_status.go](../internal/multicluster/cephfs_directory_status.go) | [cephfs.MirrorSnapshot](../internal/multicluster/cephfs_directory_status.go#L18) · [cephfs.MirrorDirectoryStatus](../internal/multicluster/cephfs_directory_status.go#L32) |
+| [internal/multicluster/cephfs_peer_removal.go](../internal/multicluster/cephfs_peer_removal.go) | [cephfs.MirrorPeerRemoval](../internal/multicluster/cephfs_peer_removal.go#L22) · [cephfs.MirrorPeerRemovalStatus](../internal/multicluster/cephfs_peer_removal.go#L43) · [cephfs.MirrorPeerRemovalDaemonStatus](../internal/multicluster/cephfs_peer_removal.go#L51) |
+| [internal/multicluster/cephfs_process_quiescence.go](../internal/multicluster/cephfs_process_quiescence.go) | [cephfs.MirrorProcessBindingStatus](../internal/multicluster/cephfs_process_quiescence.go#L38) · [cephfs.MirrorProcessQuiescenceStatus](../internal/multicluster/cephfs_process_quiescence.go#L270) · [cephfs.MirrorOriginalProcessStatus](../internal/multicluster/cephfs_process_quiescence.go#L279) |
+| [internal/multicluster/cephfs_process_quiescence_acknowledgment.go](../internal/multicluster/cephfs_process_quiescence_acknowledgment.go) | [cephfs.MirrorProcessQuiescenceAcknowledgment](../internal/multicluster/cephfs_process_quiescence_acknowledgment.go#L13) |
+| [internal/multicluster/rbd.go](../internal/multicluster/rbd.go) | [rbd.MirrorMode](../internal/multicluster/rbd.go#L25) · [rbd.MirrorConfig](../internal/multicluster/rbd.go#L35) · [rbd.Mirror](../internal/multicluster/rbd.go#L66) · [rbd.MirrorDaemon](../internal/multicluster/rbd.go#L88)<br>[rbd.MirrorDaemonStatus](../internal/multicluster/rbd.go#L102) · [rbd.MirrorPoolReplayerStatus](../internal/multicluster/rbd.go#L109) |
+| [internal/multicluster/rbd_image_status.go](../internal/multicluster/rbd_image_status.go) | [rbd.MirrorImageStatus](../internal/multicluster/rbd_image_status.go#L22) |
+| [internal/multicluster/rbd_namespace.go](../internal/multicluster/rbd_namespace.go) | [rbd.MirrorScope](../internal/multicluster/rbd_namespace.go#L18) · [rbd.MirrorNamespaceState](../internal/multicluster/rbd_namespace.go#L29) · [rbd.MirrorPolicies](../internal/multicluster/rbd_namespace.go#L36) |
+| [internal/multicluster/rbd_namespace_binding.go](../internal/multicluster/rbd_namespace_binding.go) | [rbd.MirrorNamespace](../internal/multicluster/rbd_namespace_binding.go#L17) |
+| [internal/multicluster/rbd_receiver_status.go](../internal/multicluster/rbd_receiver_status.go) | [rbd.MirrorReceiverStatus](../internal/multicluster/rbd_receiver_status.go#L21) · [rbd.MirrorReceiverDaemonStatus](../internal/multicluster/rbd_receiver_status.go#L36) |
+| [internal/multicluster/rgw.go](../internal/multicluster/rgw.go) | [rgw.MultisiteConfig](../internal/multicluster/rgw.go#L23) · [rgw.Multisite](../internal/multicluster/rgw.go#L33) |
+| [internal/multicluster/rgw_sync_bucket_status.go](../internal/multicluster/rgw_sync_bucket_status.go) | [rgw.SyncBucketIdentity](../internal/multicluster/rgw_sync_bucket_status.go#L17) · [rgw.BucketSyncStatus](../internal/multicluster/rgw_sync_bucket_status.go#L24) |
+| [internal/multicluster/rgw_sync_pipe.go](../internal/multicluster/rgw_sync_pipe.go) | [rgw.SyncBucketSelector](../internal/multicluster/rgw_sync_pipe.go#L21) · [rgw.SyncObjectTag](../internal/multicluster/rgw_sync_pipe.go#L26) |
+| [internal/multicluster/rgw_sync_policy.go](../internal/multicluster/rgw_sync_policy.go) | [rgw.SyncPolicyScope](../internal/multicluster/rgw_sync_policy.go#L25) · [rgw.SyncGroupStatus](../internal/multicluster/rgw_sync_policy.go#L30) · [rgw.SyncGroupConfig](../internal/multicluster/rgw_sync_policy.go#L38) · [rgw.SyncFlowConfig](../internal/multicluster/rgw_sync_policy.go#L48)<br>[rgw.SyncPipeConfig](../internal/multicluster/rgw_sync_policy.go#L62) · [rgw.SyncGroup](../internal/multicluster/rgw_sync_policy.go#L80) |
+| [internal/multicluster/rgw_sync_policy_ready.go](../internal/multicluster/rgw_sync_policy_ready.go) | [rgw.BucketSyncPolicyStatus](../internal/multicluster/rgw_sync_policy_ready.go#L17) |
+| [internal/multicluster/rgw_sync_status.go](../internal/multicluster/rgw_sync_status.go) | [rgw.MetadataSyncStatus](../internal/multicluster/rgw_sync_status.go#L17) · [rgw.DataSyncStatus](../internal/multicluster/rgw_sync_status.go#L28) · [rgw.SyncStatus](../internal/multicluster/rgw_sync_status.go#L35) |
+| [internal/multicluster/rgw_topology.go](../internal/multicluster/rgw_topology.go) | [rgw.ZoneConfig](../internal/multicluster/rgw_topology.go#L19) · [rgw.ZonegroupConfig](../internal/multicluster/rgw_topology.go#L27) · [rgw.TopologyConfig](../internal/multicluster/rgw_topology.go#L39) · [rgw.Zone](../internal/multicluster/rgw_topology.go#L50)<br>[rgw.Zonegroup](../internal/multicluster/rgw_topology.go#L58) |
 <!-- schemas:end -->

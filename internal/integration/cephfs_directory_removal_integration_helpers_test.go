@@ -15,7 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -29,11 +29,11 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,10 +54,10 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		}
 	}
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
-	checkpoint := func(name string) map[string]multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(name string) map[string]cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", name)
-		result := make(map[string]multicluster.CephFSMirrorSnapshot, len(directories))
+		result := make(map[string]cephfs.MirrorSnapshot, len(directories))
 		for _, directory := range directories {
 			result[directory] = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
 		}
@@ -65,7 +65,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	}
 	initial := checkpoint("before-directory-removal")
 	const destinationSite = "directory-release-target"
-	mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: destinationSite, Directories: directories, DaemonCount: 2})
+	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: destinationSite, Directories: directories, DaemonCount: 2})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -88,7 +88,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		t.Fatalf("original owned peer: %v %v", peers, err)
 	}
 	expected.PeerID = peers[0]
-	waitCheckpoints := func(selected []string, snapshots map[string]multicluster.CephFSMirrorSnapshot) map[string]string {
+	waitCheckpoints := func(selected []string, snapshots map[string]cephfs.MirrorSnapshot) map[string]string {
 		t.Helper()
 		owners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, expected.PeerID, selected, 2)
 		for _, directory := range selected {
@@ -217,7 +217,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	t.Logf("public strict directory release: path=%s original peer=%s two original CID/StartedAt/watcher sessions preserved; real lost reply reconciled without another delete; other three paths copied bytes while removed path stayed absent; same-path re-add superseded old receipt and copied independent checkpoints", selected, expected.PeerID)
 }
 
-func cephFSReadDirectoryRemovalStats(t *testing.T, ctx context.Context, daemon *multicluster.CephFSMirrorDaemon, filesystem string, id int, peer string) map[string]json.RawMessage {
+func cephFSReadDirectoryRemovalStats(t *testing.T, ctx context.Context, daemon *cephfs.MirrorDaemon, filesystem string, id int, peer string) map[string]json.RawMessage {
 	t.Helper()
 	data := multiClusterExecOutput(t, ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", filesystem, id), peer)
 	var result map[string]json.RawMessage
@@ -238,7 +238,7 @@ func cephFSReadDirectoryRemovalStats(t *testing.T, ctx context.Context, daemon *
 	return result
 }
 
-func cephFSAssertDirectoryRemovalPeerTuple(t *testing.T, ctx context.Context, daemon *multicluster.CephFSMirrorDaemon, filesystem string, id int, peer, client, site, destination string) {
+func cephFSAssertDirectoryRemovalPeerTuple(t *testing.T, ctx context.Context, daemon *cephfs.MirrorDaemon, filesystem string, id int, peer, client, site, destination string) {
 	t.Helper()
 	data := multiClusterExecOutput(t, ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", filesystem, id))
 	var session struct {

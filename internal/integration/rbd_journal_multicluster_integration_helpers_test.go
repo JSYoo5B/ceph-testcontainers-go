@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -46,7 +46,7 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	if err := forward.EnableImage(ctx, name); err != nil {
 		t.Fatal(err)
 	}
-	initialReplay := rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
+	initialReplay := rbdMirrorReplayReady(t, ctx, forward, name, rbd.MirrorModeJournal, "", "")
 	rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, name, before)
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, true)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, false)
@@ -79,7 +79,7 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	if err := forward.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	restarted := rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
+	restarted := rbdMirrorReplayReady(t, ctx, forward, name, rbd.MirrorModeJournal, "", "")
 	if restarted.GlobalID != initialReplay.GlobalID || restarted.SourceImageID != initialReplay.SourceImageID || restarted.DestinationImageID != initialReplay.DestinationImageID || restarted.InstanceID == initialReplay.InstanceID {
 		t.Fatal("receiver restart changed images or retained a stale process instance")
 	}
@@ -95,7 +95,7 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	rbdJournalAssertPrimary(t, ctx, sourceClient, image, false)
 	rbdJournalAssertPrimary(t, ctx, destinationClient, image, true)
 	rbdScenarioStop(t, ctx, forward)
-	rbdMirrorReplayReady(t, ctx, reverse, name, multicluster.RBDMirrorModeJournal, "", "")
+	rbdMirrorReplayReady(t, ctx, reverse, name, rbd.MirrorModeJournal, "", "")
 	onB := bytes.Clone(backlog)
 	patchB := rbdMultiClusterPayload(1<<20, 137)
 	copy(onB[5<<20:], patchB)
@@ -110,7 +110,7 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	if err := forward.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rbdMirrorReplayReady(t, ctx, forward, name, multicluster.RBDMirrorModeJournal, "", "")
+	rbdMirrorReplayReady(t, ctx, forward, name, rbd.MirrorModeJournal, "", "")
 	after := bytes.Clone(onB)
 	patchA := rbdMultiClusterPayload(256<<10, 167)
 	copy(after[2<<20:], patchA)
@@ -121,12 +121,12 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	t.Logf("native RBD journal: full 8 MiB equality, receiver restart backlog, non-forced A -> B -> A, B-only writes retained, resumed A writes; final sha256=%x; no mirror snapshot commands", sha256.Sum256(after))
 }
 
-func rbdJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *multicluster.RBDMirror {
+func rbdJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbd.Mirror {
 	t.Helper()
 	image := source.ControlImage()
-	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
+	link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
-		SourceSite: sourceSite, DestinationSite: destinationSite, Mode: multicluster.RBDMirrorModeJournal,
+		SourceSite: sourceSite, DestinationSite: destinationSite, Mode: rbd.MirrorModeJournal,
 	})
 	if link != nil {
 		t.Cleanup(func() {

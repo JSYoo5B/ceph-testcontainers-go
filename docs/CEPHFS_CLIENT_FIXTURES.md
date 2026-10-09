@@ -4,19 +4,19 @@
 
 ## subvolume별 새 client 권한
 
-이미 만든 `cluster`와 `fs := cluster.Filesystems()[0]`를 사용합니다. `WithCephFS` 또는 `StartCephFSWithConfig`로 filesystem을 먼저 준비하고, namespace가 분리된 subvolume을 생성합니다.
+이미 만든 `cluster`와 `fs := cephfs.Filesystems(cluster)[0]`를 사용합니다. `cephfs.WithFilesystems` 또는 `cephfs.Start`로 filesystem을 먼저 준비하고, namespace가 분리된 subvolume을 생성합니다.
 
 ```go
 group, err := fs.CreateSubvolumeGroup(ctx,
-    ceph.CephFSSubvolumeGroupConfig{Name: "tenants"})
+    cephfs.SubvolumeGroupConfig{Name: "tenants"})
 if err != nil { return err }
-volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{
+volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{
     Name: "consumer", GroupName: group.Name,
     SizeBytes: 8 << 20, NamespaceIsolated: true,
 })
 if err != nil { return err }
 grant, err := fs.AuthorizeSubvolume(ctx, volume,
-    ceph.CephFSSubvolumeAuthorizationConfig{
+    cephfs.SubvolumeAuthorizationConfig{
         ClientID: "consumer-writer", Access: "rw", // "r" 또는 "rw"
     })
 if err != nil {

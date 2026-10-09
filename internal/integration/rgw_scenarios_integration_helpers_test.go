@@ -14,11 +14,10 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
-func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, group *multicluster.RGWSyncGroup) {
+func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup) {
 	t.Helper()
 	// Import is a prerequisite for future writes. It does not prove effective
 	// discovery hints, data checkpoints, object bytes or permission effects.
@@ -30,7 +29,7 @@ func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *
 	t.Logf("bucket policy metadata imported before future writes: elapsed=%s group=%s period=%s zone=%s/%s bucket=%s/%s:%s", time.Since(started).Round(time.Millisecond), status.GroupID, status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID)
 }
 
-func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multicluster.RGWMultisite, s3HTTPClient, s3HTTPClient) {
+func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*rgw.Multisite, s3HTTPClient, s3HTTPClient) {
 	t.Helper()
 	source, destination, _, _ := newMultiClusterPair(t)
 	controlImage, _ := integrationImages(t)
@@ -38,11 +37,11 @@ func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multiclus
 	if image == "" {
 		image = controlImage
 	}
-	link, err := multicluster.RunRGWMultisite(ctx, image, multicluster.RGWMultisiteConfig{Source: source, Destination: destination, ControlImage: controlImage, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: controlImage, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
-				for _, gateway := range []*ceph.RGWContainer{link.Source, link.Destination} {
+				for _, gateway := range []*rgw.Gateway{link.Source, link.Destination} {
 					if gateway != nil {
 						logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
 						multiClusterLogContainer(t, logCtx, gateway.Container)
@@ -83,7 +82,7 @@ func rgwScenarioAdmin(t *testing.T, ctx context.Context, admin func(context.Cont
 	return output
 }
 
-func fenceRGWScenarioGateway(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer) {
+func fenceRGWScenarioGateway(t *testing.T, ctx context.Context, gateway *rgw.Gateway) {
 	t.Helper()
 	if gateway.IsRunning() {
 		grace := 3 * time.Second
@@ -96,7 +95,7 @@ func fenceRGWScenarioGateway(t *testing.T, ctx context.Context, gateway *ceph.RG
 	}
 }
 
-func restartRGWScenarioGateway(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, client *s3HTTPClient) {
+func restartRGWScenarioGateway(t *testing.T, ctx context.Context, gateway *rgw.Gateway, client *s3HTTPClient) {
 	t.Helper()
 	fenceRGWScenarioGateway(t, ctx, gateway)
 	if err := gateway.Start(ctx); err != nil {

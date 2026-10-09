@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -21,22 +22,22 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const filesystem, extraPool = "subvolumes", "subvolumes-additional"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithCephFS(ceph.CephFSConfig{
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{
 		Name: filesystem, AdditionalDataPools: []ceph.PoolConfig{{Name: extraPool}},
 	})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, options...)
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: "tenant", SizeBytes: 32 << 20, DataPool: extraPool})
+	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "tenant", SizeBytes: 32 << 20, DataPool: extraPool})
 	if err != nil {
 		t.Fatal(err)
 	}
-	subvolume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "data", GroupName: group.Name, SizeBytes: 1 << 20, NamespaceIsolated: true})
+	subvolume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data", GroupName: group.Name, SizeBytes: 1 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +49,10 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err != nil || groupInfo.DataPool != extraPool || groupInfo.QuotaBytes != 32<<20 || groupInfo.Path != group.Path {
 		t.Fatalf("unexpected native group metadata: %+v error=%v", groupInfo, err)
 	}
-	if duplicate, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
+	if duplicate, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
 		t.Fatal("duplicate group accepted and could have changed quota/layout")
 	}
-	if duplicate, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: subvolume.Name, GroupName: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
+	if duplicate, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: subvolume.Name, GroupName: group.Name, SizeBytes: 1, DataPool: fs.DataPool}); err == nil || duplicate != nil {
 		t.Fatal("duplicate subvolume accepted and could have changed quota/layout")
 	}
 	unchanged, err := fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
@@ -60,7 +61,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	}
 
 	// The same name in the default group has a different path, layout and data.
-	defaultSubvolume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "data"})
+	defaultSubvolume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data"})
 	if err != nil || defaultSubvolume.Path == subvolume.Path {
 		t.Fatalf("default group did not isolate same-named subvolume: %+v error=%v", defaultSubvolume, err)
 	}
@@ -158,7 +159,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err := fs.RemoveSubvolumeGroup(ctx, group); err == nil {
 		t.Fatal("nonempty group was removed")
 	}
-	if err := fs.RemoveSubvolume(ctx, &ceph.CephFSSubvolume{Name: subvolume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: subvolume.Path}); err == nil {
+	if err := fs.RemoveSubvolume(ctx, &cephfs.Subvolume{Name: subvolume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: subvolume.Path}); err == nil {
 		t.Fatal("unowned public descriptor removed a native subvolume")
 	}
 
@@ -181,7 +182,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	// Recreating a name must not let a stale copied handle affect the new group.
-	replacementGroup, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: "tenant"})
+	replacementGroup, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "tenant"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	t.Log("native CephFS volumes: existing filesystem/MDS/pools, group/default-group isolation, selected additional pool and RADOS namespace, duplicate refusal, actual subvolume/group EDQUOT write denial with preexisting bytes and independent neighbor retained, quota extension recovered the same payload in a fresh session, unlimited/no-shrink, safe removal and copied-handle replacement protection passed")
 }
 
-func cephFSSubvolumeIO(t *testing.T, parent context.Context, client testcontainers.Container, filesystem string, info *ceph.CephFSSubvolumeInfo, phase, token string, quota int64, ancestorQuota ...string) {
+func cephFSSubvolumeIO(t *testing.T, parent context.Context, client testcontainers.Container, filesystem string, info *cephfs.SubvolumeInfo, phase, token string, quota int64, ancestorQuota ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()

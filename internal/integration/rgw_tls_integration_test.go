@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -35,7 +36,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			}
 			cluster, _ := newServiceCluster(t, opts...)
 			material, roots := rgwTestCertificate(t)
-			gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "tls", TLS: material, SkipUserCreation: true})
+			gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "tls", TLS: material, SkipUserCreation: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +63,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			if secureURL.Scheme != "https" || plainURL.Scheme != "http" || secureURL.Port() == "" || secureURL.Port() == plainURL.Port() {
 				t.Fatal("TLS and HTTP endpoints share a port")
 			}
-			user, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-tls-client"})
+			user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-tls-client"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,7 +118,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			if err := gateway.RemoveUser(ctx, user); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.RemoveRGW(ctx, gateway.GatewayName); err != nil {
+			if err := rgw.Remove(ctx, cluster, gateway.GatewayName); err != nil {
 				t.Fatal(err)
 			}
 			t.Log("native Beast dual listeners with separate mapped/selected ports; trusted CA+SAN+TLS12 verification and exact S3 bytes, unknown CA rejected, HTTP reads same data, owned resource cleanup")

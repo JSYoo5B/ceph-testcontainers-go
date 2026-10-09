@@ -13,7 +13,9 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -27,7 +29,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	type state struct {
 		config, keyring []byte
 		managers        []*ceph.ManagerContainer
-		gateways        []*ceph.RGWContainer
+		gateways        []*rgw.Gateway
 		osdIDs          []int
 	}
 	before := make([]state, 2)
@@ -44,7 +46,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		before[i].gateways, err = cluster.GatewaysContext(ctx)
+		before[i].gateways, err = rgw.GatewaysContext(ctx, cluster)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,25 +68,25 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 					topologySnapshotQueue(t, releaseOwner, func(callCtx context.Context) (topologySnapshotPartial, error) {
 						switch kind {
 						case "rbd":
-							result, err := multicluster.RunRBDMirror(callCtx, source.ControlImage(), multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool})
+							result, err := rbd.RunMirror(callCtx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "cephfs":
-							result, err := multicluster.RunCephFSMirror(callCtx, source.ControlImage(), multicluster.CephFSMirrorConfig{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
+							result, err := cephfs.RunMirror(callCtx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "rgw":
-							result, err := multicluster.RunRGWMultisite(callCtx, source.ControlImage(), multicluster.RGWMultisiteConfig{Source: source, Destination: destination})
+							result, err := rgw.RunMultisite(callCtx, source.ControlImage(), rgw.MultisiteConfig{Source: source, Destination: destination})
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						default:
-							result, err := multicluster.RunRGWTopology(callCtx, source.ControlImage(), multicluster.RGWTopologyConfig{Zones: []multicluster.RGWZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}})
+							result, err := rgw.RunTopology(callCtx, source.ControlImage(), rgw.TopologyConfig{Zones: []rgw.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}})
 							if result == nil {
 								return nil, err
 							}
@@ -115,7 +117,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		if err != nil || !slices.Equal(managers, before[i].managers) {
 			t.Fatalf("manager descriptors changed: %v", err)
 		}
-		gateways, err := cluster.GatewaysContext(ctx)
+		gateways, err := rgw.GatewaysContext(ctx, cluster)
 		if err != nil || !slices.Equal(gateways, before[i].gateways) {
 			t.Fatalf("gateway descriptors changed: %v", err)
 		}

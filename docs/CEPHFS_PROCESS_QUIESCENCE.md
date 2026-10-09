@@ -4,7 +4,7 @@ Peer/directory 제거 receipt의 `ProcessQuiescence(ctx)`는 제거를 시작할
 
 ## 선택적 observer
 
-`CephFSMirrorConfig.OriginalProcessClientFactory`로 새 raw Docker client를 제공해야 합니다. 각 nonnil client의 소유권은 fixture로 넘기며 동일 client를 여러 fixture에 공유하지 않습니다. Factory가 없으면 이 capability는 비활성입니다. 준비된 container 이미지를 그대로 사용하고 일반 Testcontainers Run·customizer·reuse·partial startup 계약을 유지합니다.
+`cephfs.MirrorConfig.OriginalProcessClientFactory`로 새 raw Docker client를 제공해야 합니다. 각 nonnil client의 소유권은 fixture로 넘기며 동일 client를 여러 fixture에 공유하지 않습니다. Factory가 없으면 이 capability는 비활성입니다. 준비된 container 이미지를 그대로 사용하고 일반 Testcontainers Run·customizer·reuse·partial startup 계약을 유지합니다.
 
 ```go
 config.OriginalProcessClientFactory = func(ctx context.Context) (*client.Client, error) {
@@ -14,7 +14,7 @@ config.OriginalProcessClientFactory = func(ctx context.Context) (*client.Client,
     }
     return docker.Client, nil
 }
-mirror, err := multicluster.RunCephFSMirror(ctx, image, config)
+mirror, err := cephfs.RunMirror(ctx, image, config)
 ```
 
 예제의 `client`는 `github.com/moby/moby/client`입니다. Testcontainers wrapper의 `Info`는 [v0.44.0에서 전역 캐시](https://github.com/testcontainers/testcontainers-go/blob/v0.44.0/docker_client.go#L26-L56)를 사용하므로 process observer는 반환된 raw client의 Info를 매번 호출합니다.

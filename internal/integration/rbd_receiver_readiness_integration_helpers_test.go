@@ -15,7 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -83,7 +83,7 @@ func rbdReceiverNativePolicy(t *testing.T, ctx context.Context, client testconta
 	return rbdReceiverIndependentPolicy{*native.Mode, *native.MirrorUUID, *native.Remote, site}
 }
 
-func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *multicluster.RBDMirror, status multicluster.RBDMirrorReceiverStatus, identity rbdReceiverIndependentIdentity, mapping [2]string) {
+func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *rbd.Mirror, status rbd.MirrorReceiverStatus, identity rbdReceiverIndependentIdentity, mapping [2]string) {
 	t.Helper()
 	peer := "uuid: " + identity.peerUUID + " cluster: " + identity.site + " client: " + identity.client
 	var actualIDs, leaderMembers []string
@@ -224,20 +224,20 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 			defer cancel()
 			pool := fmt.Sprintf("tc-rbd-receiver-%d", index)
-			scope := multicluster.RBDMirrorScopeImage
+			scope := rbd.MirrorScopeImage
 			mode := "snapshot"
 			if index == 4 {
-				scope, mode = multicluster.RBDMirrorScopePool, "journal"
+				scope, mode = rbd.MirrorScopePool, "journal"
 			}
 			for _, cluster := range []*ceph.Container{source, destination} {
 				if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.InitRBDPool(ctx, pool); err != nil {
+				if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 					t.Fatal(err)
 				}
 				for _, ns := range []string{"ns-a", "ns-b"} {
-					if _, err := cluster.CreateRBDNamespace(ctx, pool, ns); err != nil {
+					if _, err := rbd.CreateNamespace(ctx, cluster, pool, ns); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -261,7 +261,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			link, err := multicluster.RunRBDMirror(ctx, source.ControlImage(), multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2})
+			link, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2})
 			if link != nil {
 				t.Cleanup(func() {
 					cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -285,7 +285,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 				t.Fatal("independent original native selected policy differs from configured scope/mapping")
 			}
 			rbdReceiverNativePeerMatches(t, identity, identity, originalPolicies[0].mirrorUUID)
-			check := func(phase string, names ...string) multicluster.RBDMirrorReceiverStatus {
+			check := func(phase string, names ...string) rbd.MirrorReceiverStatus {
 				t.Helper()
 				status, err := link.WaitReceiverReady(ctx, names...)
 				if err != nil || !status.Ready {
@@ -321,7 +321,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 					t.Fatalf("initial readiness used nonempty image namespace: %v %v", images, err)
 				}
 			}
-			var leader, survivor *multicluster.RBDMirrorDaemon
+			var leader, survivor *rbd.MirrorDaemon
 			for _, daemon := range link.Daemons() {
 				if daemon.DaemonName == initial.LeaderDaemonName {
 					leader = daemon
@@ -376,15 +376,15 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 				t.Fatalf("zero receiver deadline: %+v %v", zero, err)
 			}
 			payload := rbdMultiClusterPayload(2<<20, 43+index)
-			rbdScopeCreate(t, ctx, sourceClient, pool, mapping[0], "backlog", scope == multicluster.RBDMirrorScopePool)
-			if scope == multicluster.RBDMirrorScopeImage {
+			rbdScopeCreate(t, ctx, sourceClient, pool, mapping[0], "backlog", scope == rbd.MirrorScopePool)
+			if scope == rbd.MirrorScopeImage {
 				if err := link.EnableImage(ctx, "backlog"); err != nil {
 					t.Fatal(err)
 				}
 			}
 			rbdScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, mapping[0], "backlog", 0, payload)
 			var checkpointID uint64
-			if scope == multicluster.RBDMirrorScopeImage {
+			if scope == rbd.MirrorScopeImage {
 				// Enrollment's initial snapshot predates payload; this explicit
 				// checkpoint causally includes the write made with zero receivers.
 				checkpointID = rbdReceiverNativeSnapshot(t, ctx, sourceClient, pool, mapping[0], "backlog")

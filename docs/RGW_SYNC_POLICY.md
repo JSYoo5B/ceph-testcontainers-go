@@ -1,6 +1,6 @@
 # RGW 선택적 복제와 sync checkpoint
 
-`multicluster.RunRGWMultisite`로 독립된 Ceph cluster를 같은 realm의 zone으로 연결한 뒤, `CreateSyncGroup`·`CreateSyncFlow`·`CreateSyncPipe`로 복제 조건을 준비합니다. S3 bucket·object·ACL·bucket policy는 소비자 client가 생성합니다. 공개 fixture는 container 내부 `radosgw-admin`을 사용하며 go-ceph 의존성을 추가하지 않습니다.
+`rgw.RunMultisite`로 독립된 Ceph cluster를 같은 realm의 zone으로 연결한 뒤, `CreateSyncGroup`·`CreateSyncFlow`·`CreateSyncPipe`로 복제 조건을 준비합니다. S3 bucket·object·ACL·bucket policy는 소비자 client가 생성합니다. 공개 fixture는 container 내부 `radosgw-admin`을 사용하며 go-ceph 의존성을 추가하지 않습니다.
 
 기본 지원과 필수 검증은 digest로 고정한 원본 Quay Ceph 20.2.4를 기준으로 합니다. 기존 Quay-derived unpatched role 이미지에서는 기본 선택·lifecycle, single tag·owner/class 및 same-tenant system/user 조건을 bridge/host에서 실제 데이터와 cleanup으로 확인했습니다. 이 기록은 해당 이미지 조합의 증거이며 원본 전체 이미지의 새 필수 suite 실행을 대신하지 않습니다. Numeric priority와 ordinary-user source 권한 거부는 원본 Ceph 20.2.4에서 실패한 native 한계이며, 정책 저장 또는 checkpoint 성공만으로 이 조건을 지원한다고 표시하지 않습니다.
 
@@ -12,23 +12,23 @@ Group은 zonegroup 또는 기존 bucket에 저장합니다. `allowed`는 bucket�
 
 ```go
 permission, err := fixture.CreateSyncGroup(ctx,
-    multicluster.RGWSyncPolicyScope{},
-    multicluster.RGWSyncGroupConfig{ID: "app-permission", Status: multicluster.RGWSyncAllowed})
+    rgw.SyncPolicyScope{},
+    rgw.SyncGroupConfig{ID: "app-permission", Status: rgw.SyncAllowed})
 if err != nil { return err }
-if err := fixture.CreateSyncFlow(ctx, permission, multicluster.RGWSyncFlowConfig{
+if err := fixture.CreateSyncFlow(ctx, permission, rgw.SyncFlowConfig{
     SourceZone: "source", DestinationZone: "destination",
 }); err != nil { return err }
-if err := fixture.CreateSyncPipe(ctx, permission, multicluster.RGWSyncPipeConfig{
+if err := fixture.CreateSyncPipe(ctx, permission, rgw.SyncPipeConfig{
     ID: "direction", SourceZones: []string{"source"}, DestinationZones: []string{"destination"},
 }); err != nil { return err }
 if err := fixture.ApplySyncGroup(ctx, permission); err != nil { return err }
 // Gateway reload 후 mapped endpoint를 다시 구합니다.
 // S3 client로 app-data bucket을 생성한 다음 bucket policy를 준비합니다.
 selected, err := fixture.CreateSyncGroup(ctx,
-    multicluster.RGWSyncPolicyScope{Bucket: "app-data"},
-    multicluster.RGWSyncGroupConfig{ID: "app-selection", Status: multicluster.RGWSyncEnabled})
+    rgw.SyncPolicyScope{Bucket: "app-data"},
+    rgw.SyncGroupConfig{ID: "app-selection", Status: rgw.SyncEnabled})
 if err != nil { return err }
-if err := fixture.CreateSyncPipe(ctx, selected, multicluster.RGWSyncPipeConfig{
+if err := fixture.CreateSyncPipe(ctx, selected, rgw.SyncPipeConfig{
     ID: "published", SourceZones: []string{"source"}, DestinationZones: []string{"destination"},
     Prefix: "published/",
 }); err != nil { return err }
@@ -45,7 +45,7 @@ Zonegroup의 `ApplySyncGroup`은 정확한 current period와 모든 stored zoneg
 
 ## 선택·변환과 소유권
 
-`RGWSyncPipeConfig`는 prefix, OR로 결합한 exact object tag pairs, priority, 별도 source/destination bucket, destination owner/storage class 및 user mode를 제공합니다. Prefix와 tags를 함께 지정하면 두 조건을 모두 만족해야 합니다. CLI의 comma 구분자 때문에 comma를 포함하는 tag key/value는 거부합니다. Tag를 삭제하거나 ACL을 부여하는 object CRUD는 S3 client의 역할입니다.
+`rgw.SyncPipeConfig`는 prefix, OR로 결합한 exact object tag pairs, priority, 별도 source/destination bucket, destination owner/storage class 및 user mode를 제공합니다. Prefix와 tags를 함께 지정하면 두 조건을 모두 만족해야 합니다. CLI의 comma 구분자 때문에 comma를 포함하는 tag key/value는 거부합니다. Tag를 삭제하거나 ACL을 부여하는 object CRUD는 S3 client의 역할입니다.
 
 Bucket selector는 이름뿐 아니라 native instance ID를 캡처합니다. 같은 이름을 삭제·재생성하면 stale handle의 변경·제거·checkpoint를 거부합니다. Owner/user는 fixture가 생성해 key identity와 생성 시 account 연결을 확인한 principal이며, 선택한 bucket과 tenant가 일치해야 합니다. `DestinationOwner`는 ordinary principal만 허용합니다. `User`는 ordinary principal 또는 `CreateAccountRootUser`가 생성한 root principal을 받습니다. Account root는 양쪽의 concrete bucket이 같은 생성 소유 account에 속하고 owner translation이 없는 경우만 허용합니다. IAM non-root, cross-account 및 cross-tenant principal translation은 현재 helper의 검증 범위에 포함되지 않아 거부합니다. 이를 Ceph 자체의 지원 여부에 대한 주장으로 해석하지 않습니다.
 
@@ -59,7 +59,7 @@ Storage class 변환은 concrete destination bucket과 각 concrete destination 
 
 ## 관측과 데이터 검증
 
-`WaitBucketSyncPolicyReady`는 source traffic 전에 destination-local metadata import를 확인하는 읽기 전용 prerequisite입니다. 생성·확인된 bucket-scoped group과 그 pipe가 선택한 explicit attached destination zone을 받으며, master의 unchanged owned group·committed period와 destination의 같은 period, source-scope group snapshot 및 필요한 concrete source/destination bucket instance ID를 비교합니다. `RGWBucketSyncPolicyStatus`의 `PeriodImported`·`PolicyImported`·`BucketsImported`가 모두 참이면 `Imported`가 참입니다. Wildcard bucket selector는 group이 캡처한 scope instance로 해석하며, 새 instance를 같은 이름으로 adopt하지 않습니다. Pending mutation, 제거된 handle, zonegroup-scoped group 또는 선택 범위 밖의 zone은 거부합니다.
+`WaitBucketSyncPolicyReady`는 source traffic 전에 destination-local metadata import를 확인하는 읽기 전용 prerequisite입니다. 생성·확인된 bucket-scoped group과 그 pipe가 선택한 explicit attached destination zone을 받으며, master의 unchanged owned group·committed period와 destination의 같은 period, source-scope group snapshot 및 필요한 concrete source/destination bucket instance ID를 비교합니다. `rgw.BucketSyncPolicyStatus`의 `PeriodImported`·`PolicyImported`·`BucketsImported`가 모두 참이면 `Imported`가 참입니다. Wildcard bucket selector는 group이 캡처한 scope instance로 해석하며, 새 instance를 같은 이름으로 adopt하지 않습니다. Pending mutation, 제거된 handle, zonegroup-scoped group 또는 선택 범위 밖의 zone은 거부합니다.
 
 이 wait는 mutex 대기를 포함해 최대 4분, 각 native read는 최대 30초이며 더 짧은 caller context를 따릅니다. Local metadata lag는 기다리지만 master policy 변경, 다른 realm/namespace 또는 재생성된 bucket은 거부합니다. Period pull·gateway restart·replay·marker 변경은 하지 않습니다. `Imported`는 effective peer-discovery hints, checkpoint, payload 또는 authorization의 성공을 증명하지 않으므로 아래 data 관측과 client 검증이 여전히 필요합니다.
 

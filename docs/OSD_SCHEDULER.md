@@ -196,7 +196,7 @@ daemon의 실제 값을 확인한다. Recovery/backfill 동시성은 별도 비�
 Central config의 readback만으로 local config·argv·runtime override를 이겼다고
 판단하지 않는다. 실행 중 OSD에 설정하거나 override를 Restore하는 것만으로
 queue가 즉시 바뀌지는 않는다. Cluster 종료는 fixture의 config DB도 폐기한다.
-[ConfigSetting 계약](../ceph/config.go)과 Ceph의 restart 조건을 따른다.
+[ConfigSetting 계약](../internal/cluster/config.go)과 Ceph의 restart 조건을 따른다.
 
 ## 증거
 

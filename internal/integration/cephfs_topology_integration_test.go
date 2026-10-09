@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -22,7 +23,7 @@ func TestCephFSAdditionalErasureCodedDataPool(t *testing.T) {
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
 	const ecPool = "ecfs-file-data"
-	fs, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "ecfs", AdditionalDataPools: []ceph.PoolConfig{{
+	fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "ecfs", AdditionalDataPools: []ceph.PoolConfig{{
 		Name: ecPool, PGNum: 8, MinSize: 3, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
 	}}})
 	if err != nil {

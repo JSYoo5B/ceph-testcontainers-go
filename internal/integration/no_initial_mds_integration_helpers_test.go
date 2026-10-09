@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -67,7 +68,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	pool := func(name string) ceph.PoolConfig {
 		return ceph.PoolConfig{Name: name, PGNum: 8, Replicas: 2, MinSize: 1}
 	}
-	sibling, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "warm-sibling", MetadataPool: pool("warm-sibling-meta"), DataPool: pool("warm-sibling-data")})
+	sibling, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "warm-sibling", MetadataPool: pool("warm-sibling-meta"), DataPool: pool("warm-sibling-data")})
 	if err != nil || sibling == nil {
 		t.Fatal("ordinary sibling setup failed", err)
 	}
@@ -85,7 +86,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	coldMDSHealth(t, ctx, cluster, "before-cold-target", "cold-target", true)
 	coldMDSResources(t, ctx, oracle, cluster, client, "before-cold-target")
 	var customizers atomic.Int32
-	target, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "cold-target", MetadataPool: pool("cold-target-meta"), DataPool: pool("cold-target-data"), AdditionalDataPools: []ceph.PoolConfig{pool("cold-target-extra")}, NoInitialMDS: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	target, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "cold-target", MetadataPool: pool("cold-target-meta"), DataPool: pool("cold-target-data"), AdditionalDataPools: []ceph.PoolConfig{pool("cold-target-extra")}, NoInitialMDS: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if err != nil || target == nil {
 		t.Fatal("cold target construction failed", err)
 	}
@@ -94,7 +95,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 		t.Fatal("cold target launched or customized an MDS")
 	}
 	identities := map[string]int64{}
-	for _, fs := range []*ceph.CephFSContainer{sibling, target} {
+	for _, fs := range []*cephfs.Filesystem{sibling, target} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
 			p, err := cluster.PoolStatus(ctx, name)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
@@ -210,7 +211,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 
 // coldMDSWaitReadyChannel carries one terminal error to one caller. It does not
 // change WaitReady's predicate, create a library worker, or broadcast progress.
-func coldMDSWaitReadyChannel(t *testing.T, ctx context.Context, fs *ceph.CephFSContainer) error {
+func coldMDSWaitReadyChannel(t *testing.T, ctx context.Context, fs *cephfs.Filesystem) error {
 	t.Helper()
 	waitCtx, cancel := context.WithCancel(ctx)
 	resultCh := make(chan error, 1)
@@ -424,7 +425,7 @@ type coldMDSTask struct {
 	pid       int
 }
 
-func coldMDSProcess(t *testing.T, parent context.Context, o *noInitialOSDOracle, mds *ceph.MDSContainer) coldMDSTask {
+func coldMDSProcess(t *testing.T, parent context.Context, o *noInitialOSDOracle, mds *cephfs.MDS) coldMDSTask {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -478,7 +479,7 @@ func coldMDSResources(t *testing.T, parent context.Context, o *noInitialOSDOracl
 	for _, osd := range cluster.OSDs() {
 		add(osd.Container, "osd")
 	}
-	for _, fs := range cluster.Filesystems() {
+	for _, fs := range cephfs.Filesystems(cluster) {
 		for _, mds := range fs.MDSs() {
 			add(mds.Container, "mds")
 		}
@@ -549,7 +550,7 @@ func coldMDSResources(t *testing.T, parent context.Context, o *noInitialOSDOracl
 	t.Logf("NO_INITIAL_MDS_RESOURCES phase=%s engine=%s owned=%d auxiliary=%d", phase, o.engine, len(expected), auxiliary)
 }
 
-func coldMDSBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid string, fs *ceph.CephFSContainer, nonce, phase, pool string) {
+func coldMDSBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid string, fs *cephfs.Filesystem, nonce, phase, pool string) {
 	t.Helper()
 	data := topologyExecOutput(t, ctx, client, "python3", "-c", coldMDSBytesScript, fsid, fs.FilesystemName, nonce, phase, pool)
 	var result struct {

@@ -14,8 +14,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -31,13 +30,13 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	}
 	// The RGW role needs no Python or Ceph CLI. Setup must select the
 	// source and destination control images without an explicit override.
-	multisite, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{
+	multisite, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{
 		Source: source, Destination: destination,
 	})
 	if multisite != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
-				for _, gateway := range []*ceph.RGWContainer{multisite.Source, multisite.Destination} {
+				for _, gateway := range []*rgw.Gateway{multisite.Source, multisite.Destination} {
 					if gateway == nil {
 						continue
 					}

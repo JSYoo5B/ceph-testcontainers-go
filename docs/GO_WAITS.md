@@ -4,12 +4,12 @@ The synchronous `Wait(ctx, ...)` APIs work with caller-owned goroutines. A
 buffered channel can carry one terminal result to one consumer; it is neither a
 broadcast nor a progress stream. No library Async/Watch or callback API is needed.
 
-For an existing owned `*multicluster.RBDMirrorNamespace` named `view`, retain
+For an existing owned `*rbd.MirrorNamespace` named `view`, retain
 both its partial status and error:
 
 ```go
 type replayResult struct {
-    Status multicluster.RBDMirrorImageStatus
+    Status rbd.MirrorImageStatus
     Err    error
 }
 
@@ -77,12 +77,12 @@ channel wrapper does not make fixture methods universally concurrent: current
 RGW waits retain the topology gate, so avoid blocking in same-fixture
 context-free inventory access before reaching cancellation.
 
-[The executable external Example](../ceph/wait_example_test.go) exercises the
+[The executable external Example](../internal/cluster/wait_example_test.go) exercises the
 real `WaitReady` API's unavailable-descriptor error and one-shot lifecycle without
 Docker. It demonstrates error transport, not a usable or ready filesystem.
 [The existing cold-MDS native fixture](../internal/integration/no_initial_mds_integration_test.go)
 uses an actual owned filesystem for a completed deadline and later readiness,
-then re-enters `MDSStatus` from the consumer before its existing byte/identity/
+then re-enters `cephfs.MDSStatus` from the consumer before its existing byte/identity/
 health/cleanup assertions. Its live phase also directly checks quorum, PG clean,
 and the supported `rbd_support`/`volumes` module readiness commands under the
 same operation context. These remain distinct readiness predicates.
@@ -99,7 +99,7 @@ the fixes retain useful partial reports and canonical cancellation causes.
 `make scenario-mds-bootstrap` passed on the pinned original Quay Ceph 20.2.4
 image on Linux ARM64, with separate bridge and host cases (198.468 seconds for
 the package). Each case received one deadline and one successful channel result,
-confirmed channel closure and worker join, and re-entered `MDSStatus` from the
+confirmed channel closure and worker join, and re-entered `cephfs.MDSStatus` from the
 consumer. Both cases directly passed quorum, PG-clean and the supported
 `rbd_support`/`volumes` module waits. The original 10 full-reader records across
 four independent 128 KiB datasets, 14 filesystem-map checks, six strict health

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -24,21 +25,21 @@ func TestRGWTopology(t *testing.T) {
 			name = "host"
 			options = append(options, ceph.WithHostNetwork())
 		}
-		options = append(options, ceph.WithRGW(ceph.RGWConfig{Name: "gateway-a"}))
+		options = append(options, rgw.WithGateways(rgw.Config{Name: "gateway-a"}))
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			cluster, _ := newServiceCluster(t, options...)
-			initial := cluster.Gateways()
+			initial := rgw.Gateways(cluster)
 			if len(initial) != 1 || initial[0].GatewayName != "gateway-a" {
 				t.Fatal("Run did not expose its initially configured gateway")
 			}
 			first := initial[0]
-			second, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "gateway-b", SkipUserCreation: true})
+			second, err := rgw.Start(ctx, cluster, rgw.Config{Name: "gateway-b", SkipUserCreation: true})
 			if err != nil {
 				t.Fatal(err)
 			}
-			gateways := cluster.Gateways()
+			gateways := rgw.Gateways(cluster)
 			if len(gateways) != 2 || gateways[0] != first || gateways[1] != second || first.GatewayName != "gateway-a" || second.GatewayName != "gateway-b" || first.GetContainerID() == second.GetContainerID() || len(cluster.ServiceContainers()) != 2 {
 				t.Fatal("fixture did not own two separately named gateways")
 			}
@@ -99,15 +100,15 @@ func TestRGWTopology(t *testing.T) {
 			check(a, "from-b", reverse)
 			check(a, "during-outage", outage)
 			oldID := second.GetContainerID()
-			if err := cluster.RemoveRGW(ctx, "gateway-b"); err != nil {
+			if err := rgw.Remove(ctx, cluster, "gateway-b"); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Gateways()) != 1 || len(cluster.ServiceContainers()) != 1 {
+			if len(rgw.Gateways(cluster)) != 1 || len(cluster.ServiceContainers()) != 1 {
 				t.Fatal("removed gateway is still owned")
 			}
 			check(a, "from-b", reverse)
-			second, err = cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "gateway-b", SkipUserCreation: true})
-			if err != nil || second.GetContainerID() == oldID || len(cluster.Gateways()) != 2 {
+			second, err = rgw.Start(ctx, cluster, rgw.Config{Name: "gateway-b", SkipUserCreation: true})
+			if err != nil || second.GetContainerID() == oldID || len(rgw.Gateways(cluster)) != 2 {
 				t.Fatalf("replacement gateway was not created: %v", err)
 			}
 			b.endpoint, err = second.S3Endpoint(ctx)

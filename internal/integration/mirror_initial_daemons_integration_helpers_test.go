@@ -14,7 +14,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -114,20 +115,20 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	source, destination, sourceClient, destinationClient := mirrorInitialPair(t, host)
 	const pool = "tc-zero-rbd"
 	mapping := [2]string{}
-	scope, mode := multicluster.RBDMirrorScopeImage, "snapshot"
+	scope, mode := rbd.MirrorScopeImage, "snapshot"
 	if journal {
-		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, multicluster.RBDMirrorScopePool, "journal"
+		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, rbd.MirrorScopePool, "journal"
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
 		if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if err := cluster.InitRBDPool(ctx, pool); err != nil {
+		if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 			t.Fatal(err)
 		}
 		if journal {
 			for _, ns := range mapping {
-				if _, err := cluster.CreateRBDNamespace(ctx, pool, ns); err != nil {
+				if _, err := rbd.CreateNamespace(ctx, cluster, pool, ns); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -154,7 +155,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	link, err := multicluster.RunRBDMirror(ctx, source.ControlImage(), multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	link, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if link != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -265,11 +266,11 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	source, destination, sourceClient, destinationClient := mirrorInitialPair(t, host)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +286,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(directory, name string) multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(directory, name string) cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
@@ -294,7 +295,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers, factoryCalls atomic.Int32
-	mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
+	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
 		factoryCalls.Add(1)
 		client, err := testcontainers.NewDockerClientWithOpts(ctx)
 		if err != nil {
@@ -353,7 +354,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	if err != nil || receiver == nil || mirror.Container != receiver || len(mirror.Daemons()) != 1 || customizers.Load() != 1 || factoryCalls.Load() != 1 || !receiver.ProcessObserverBindingStatus().Available {
 		t.Fatal("normal first explicit Add lost process/binding", err)
 	}
-	verify := func(directory string, snapshot multicluster.CephFSMirrorSnapshot, stage string) {
+	verify := func(directory string, snapshot cephfs.MirrorSnapshot, stage string) {
 		t.Helper()
 		cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, snapshot)
 		for _, role := range []string{"source", "destination"} {

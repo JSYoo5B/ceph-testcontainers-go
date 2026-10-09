@@ -52,7 +52,7 @@ combined with an explicit positive `WithOSDCount` or nonempty `WithInitialOSDs`,
 regardless of order. Repeating `WithNoInitialOSDs()` is harmless.
 
 The final initial user pool, filesystem and gateway lists must be empty. Thus
-`WithPools(nonempty...)`, `WithCephFS(...)` and `WithRGW(...)` are rejected before
+`WithPools(nonempty...)`, `cephfs.WithFilesystems(...)` and `rgw.WithGateways(...)` are rejected before
 network/port/container allocation or request customizers run. Their ordinary
 positive-storage validation and readiness contracts remain unchanged. Existing
 list replacement semantics still apply; a final `WithPools()` may clear an

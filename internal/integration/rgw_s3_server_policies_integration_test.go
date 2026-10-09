@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
-func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, owner s3HTTPClient, user *ceph.RGWUser) {
+func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner s3HTTPClient, user *rgw.User) {
 	t.Helper()
 	req := func(method, path string, payload []byte, headers http.Header, want int) ([]byte, http.Header) {
 		t.Helper()

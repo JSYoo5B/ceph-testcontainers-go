@@ -1,6 +1,6 @@
 # RGW S3 client fixture recipes
 
-S3 object·bucket API는 실제 application client가 호출합니다. testcontainers는 `Run` → `StartRGWWithConfig` → fresh `CreateUser` → `Credentials`와 `S3Endpoint`로 서버와 principal을 제공합니다. 아래 테스트는 이 공개 API와 `Admin`/`TemporaryConfig`를 조합한 실행 가능한 recipe입니다. 공개 library에 S3 CRUD wrapper나 SDK 의존성을 추가하지 않습니다.
+S3 object·bucket API는 실제 application client가 호출합니다. testcontainers는 `Run` → `rgw.Start` → fresh `CreateUser` → `Credentials`와 `S3Endpoint`로 서버와 principal을 제공합니다. 아래 테스트는 이 공개 API와 `Admin`/`TemporaryConfig`를 조합한 실행 가능한 recipe입니다. 공개 library에 S3 CRUD wrapper나 SDK 의존성을 추가하지 않습니다.
 
 Bucket notification topic과 HTTP push 수신은 [notification recipe](RGW_NOTIFICATIONS.md)를 따릅니다.
 

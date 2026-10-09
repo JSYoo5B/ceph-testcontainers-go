@@ -20,6 +20,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -51,7 +52,7 @@ func testRGWS3ClientFeatures(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{SkipUserCreation: true})
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,10 +60,10 @@ func testRGWS3ClientFeatures(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	users := make([]*ceph.RGWUser, 2)
+	users := make([]*rgw.User, 2)
 	clients := make([]s3HTTPClient, 2)
 	for i, id := range []string{"tc-s3-owner", "tc-s3-reader"} {
-		users[i], err = gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: id})
+		users[i], err = gateway.CreateUser(ctx, rgw.UserConfig{ID: id})
 		if err != nil {
 			t.Fatal(err)
 		}

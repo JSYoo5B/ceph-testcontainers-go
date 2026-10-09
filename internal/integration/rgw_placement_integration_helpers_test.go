@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -58,7 +59,7 @@ func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTP
 	}
 }
 
-func rgwPlacementSafeDiagnostic(data []byte, gateway *ceph.RGWContainer) string {
+func rgwPlacementSafeDiagnostic(data []byte, gateway *rgw.Gateway) string {
 	text := string(data)
 	for _, secret := range []string{gateway.AccessKey, gateway.SecretKey} {
 		if secret != "" {
@@ -114,7 +115,7 @@ func rgwPlacementSafeDiagnostic(data []byte, gateway *ceph.RGWContainer) string 
 	return text
 }
 
-func rgwPlacementSafeLogDiagnostic(data []byte, gateway *ceph.RGWContainer) string {
+func rgwPlacementSafeLogDiagnostic(data []byte, gateway *rgw.Gateway) string {
 	var selected []string
 	for _, line := range strings.Split(string(data), "\n") {
 		lower := strings.ToLower(line)
@@ -181,7 +182,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := cluster.StartRGW(ctx)
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,8 +196,8 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	client.request(t, ctx, http.MethodPut, defaultBucket, nil, http.StatusOK)
 	client.request(t, ctx, http.MethodPut, defaultBucket+"/original", defaultPayload, http.StatusOK)
 	inline := false
-	config := ceph.RGWPlacementConfig{Name: "tc-tiered", IndexPool: "tc-rgw-index", DataExtraPool: "tc-rgw-extra", InlineData: &inline,
-		StorageClasses: []ceph.RGWStorageClassConfig{{Name: "STANDARD", DataPool: "tc-rgw-standard"}, {Name: "STANDARD_IA", DataPool: "tc-rgw-ec"}}}
+	config := rgw.PlacementConfig{Name: "tc-tiered", IndexPool: "tc-rgw-index", DataExtraPool: "tc-rgw-extra", InlineData: &inline,
+		StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-rgw-standard"}, {Name: "STANDARD_IA", DataPool: "tc-rgw-ec"}}}
 	placement, err := gateway.CreatePlacement(ctx, config)
 	if err != nil {
 		t.Fatal(err)

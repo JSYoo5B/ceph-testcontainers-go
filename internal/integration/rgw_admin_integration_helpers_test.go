@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -23,7 +23,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t, customizers...)
-	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "fixture", SkipUserCreation: true})
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "fixture", SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +31,9 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := func(id, caps string) (*ceph.RGWUser, s3HTTPClient) {
+	create := func(id, caps string) (*rgw.User, s3HTTPClient) {
 		t.Helper()
-		user, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: id, AdminCaps: caps})
+		user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: id, AdminCaps: caps})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,7 +46,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	alice, aliceS3 := create("tc-fixture-alice", "")
 	bob, bobS3 := create("tc-fixture-bob", "")
 	observer, observerS3 := create("tc-fixture-observer", "users=read")
-	if _, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: alice.ID(), DisplayName: "overwrite"}); err == nil {
+	if _, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: alice.ID(), DisplayName: "overwrite"}); err == nil {
 		t.Fatal("existing RGW identity was accepted")
 	}
 	const bucket = "/tc-rgw-internal-alice"
@@ -72,15 +72,15 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observerInfo.Admin || observerInfo.System || !slices.ContainsFunc(observerInfo.AdminCaps, func(cap ceph.RGWAdminCapability) bool {
+	if observerInfo.Admin || observerInfo.System || !slices.ContainsFunc(observerInfo.AdminCaps, func(cap rgw.AdminCapability) bool {
 		return cap.Type == "users" && cap.Permission == "read"
 	}) {
 		t.Fatal("Admin Ops user did not retain only its explicitly requested capability")
 	}
 	t.Log("ordinary user Admin Ops denied; explicit users=read permits Admin Ops GET without global admin/system flags")
 
-	userQuota := ceph.RGWQuota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
-	bucketQuota := ceph.RGWQuota{Enabled: true, MaxSizeBytes: 1 << 19, MaxObjects: 4}
+	userQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
+	bucketQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 19, MaxObjects: 4}
 	if err := gateway.SetUserQuota(ctx, alice, userQuota); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 		bobS3.request(t, ctx, http.MethodDelete, bobBucket+"/"+key, nil, http.StatusNoContent)
 	}
 	bobS3.request(t, ctx, http.MethodDelete, bobBucket, nil, http.StatusNoContent)
-	for _, user := range []*ceph.RGWUser{bob, observer} {
+	for _, user := range []*rgw.User{bob, observer} {
 		if err := gateway.RemoveUser(ctx, user); err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +144,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 
 // An ordinary user's quota is shared by its buckets. Account aggregate quota
 // and an individual bucket quota are separate server admission conditions.
-func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, user *ceph.RGWUser, client s3HTTPClient, neighbor *ceph.RGWUser, neighborS3 s3HTTPClient) {
+func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, client s3HTTPClient, neighbor *rgw.User, neighborS3 s3HTTPClient) {
 	t.Helper()
 	before, err := gateway.UserInfo(ctx, user)
 	if err != nil || before.ID != user.ID() || before.Type != "rgw" || before.AccountID != "" || before.Admin || before.System || before.Suspended || before.UserQuota.Enabled || before.BucketQuota.Enabled {
@@ -156,7 +156,7 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *ce
 	}
 	const first, second, outside = "/tc-user-quota-first", "/tc-user-quota-second", "/tc-user-quota-outside"
 	bucketIDs := make(map[string]string)
-	readBucketID := func(bucket string, owner *ceph.RGWUser) string {
+	readBucketID := func(bucket string, owner *rgw.User) string {
 		t.Helper()
 		var native struct {
 			ID, Bucket, Owner string
@@ -173,7 +173,7 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *ce
 	}
 	neighborS3.request(t, ctx, http.MethodPut, outside, nil, http.StatusOK)
 	bucketIDs[outside] = readBucketID(outside, neighbor)
-	limited := ceph.RGWQuota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
+	limited := rgw.Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
 	if err := gateway.SetUserQuota(ctx, user, limited); err != nil {
 		t.Fatal(err)
 	}

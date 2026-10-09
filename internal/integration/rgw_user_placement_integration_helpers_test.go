@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -32,19 +33,19 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "placement-user", SkipUserCreation: true})
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "placement-user", SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	maxBuckets := 12
-	user, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-placement-writer", DisplayName: "Placement fixture writer", Email: "writer@example.test", AdminCaps: "users=read", MaxBuckets: &maxBuckets})
+	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-placement-writer", DisplayName: "Placement fixture writer", Email: "writer@example.test", AdminCaps: "users=read", MaxBuckets: &maxBuckets})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, quota := range []struct {
-		set   func(context.Context, *ceph.RGWUser, ceph.RGWQuota) error
-		value ceph.RGWQuota
-	}{{gateway.SetUserQuota, ceph.RGWQuota{Enabled: true, MaxSizeBytes: 4 << 20, MaxObjects: 20}}, {gateway.SetBucketQuota, ceph.RGWQuota{Enabled: true, MaxSizeBytes: 2 << 20, MaxObjects: 10}}} {
+		set   func(context.Context, *rgw.User, rgw.Quota) error
+		value rgw.Quota
+	}{{gateway.SetUserQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 4 << 20, MaxObjects: 20}}, {gateway.SetBucketQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 2 << 20, MaxObjects: 10}}} {
 		if err := quota.set(ctx, user, quota.value); err != nil {
 			t.Fatal(err)
 		}
@@ -67,8 +68,8 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	client.request(t, ctx, http.MethodPut, original, nil, http.StatusOK)
 	client.request(t, ctx, http.MethodPut, original+"/original", oldPayload, http.StatusOK)
 	inline := false
-	placement, err := gateway.CreatePlacement(ctx, ceph.RGWPlacementConfig{Name: "tc-user-tiered", IndexPool: "tc-user-index", DataExtraPool: "tc-user-extra", InlineData: &inline, Tags: []string{"premium"},
-		StorageClasses: []ceph.RGWStorageClassConfig{{Name: "STANDARD", DataPool: "tc-user-standard"}, {Name: "STANDARD_IA", DataPool: "tc-user-ia"}}})
+	placement, err := gateway.CreatePlacement(ctx, rgw.PlacementConfig{Name: "tc-user-tiered", IndexPool: "tc-user-index", DataExtraPool: "tc-user-extra", InlineData: &inline, Tags: []string{"premium"},
+		StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-user-standard"}, {Name: "STANDARD_IA", DataPool: "tc-user-ia"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,12 +91,12 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	}
 	// Public descriptor fields cannot redirect this owned native operation.
 	placement.Name, placement.ZoneID = "caller-mutated", "caller-mutated"
-	if err := gateway.SetUserPlacement(ctx, user, placement, ceph.RGWUserPlacementConfig{Tags: []string{"premium"}}); err != nil {
+	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{Tags: []string{"premium"}}); err != nil {
 		t.Fatal(err)
 	}
 	rgwPlacementWaitCreateBucket(t, ctx, client, granted, createBody)
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := gateway.SetUserPlacement(ctx, user, placement, ceph.RGWUserPlacementConfig{StorageClass: "STANDARD_IA"}); err != nil {
+	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA"}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := gateway.UserInfo(ctx, user)
@@ -132,7 +133,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	// even after the user's default class changes.
 	requireRGWUserBucketPlacement(t, ctx, gateway, original, "default-placement")
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := gateway.SetUserPlacement(ctx, user, placement, ceph.RGWUserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
+	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
 		t.Fatal(err)
 	}
 	info, err = gateway.UserInfo(ctx, user)
@@ -162,7 +163,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	t.Log("fresh target tags denied ungranted creation; grant allowed explicit location; user defaults selected STANDARD_IA without S3 selectors and exact native pool payload; explicit STANDARD override worked; prior buckets stayed immutable; revoke denied new buckets while existing objects/credentials remained usable and unrelated user policy stayed intact")
 }
 
-func requireRGWUserBucketPlacement(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, bucket, expected string) {
+func requireRGWUserBucketPlacement(t *testing.T, ctx context.Context, gateway *rgw.Gateway, bucket, expected string) {
 	t.Helper()
 	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", strings.TrimPrefix(bucket, "/"))
 	var stats struct {
@@ -173,7 +174,7 @@ func requireRGWUserBucketPlacement(t *testing.T, ctx context.Context, gateway *c
 	}
 }
 
-func requireRGWUserPlacementUnrelatedPolicy(t *testing.T, before, after ceph.RGWUserInfo) {
+func requireRGWUserPlacementUnrelatedPolicy(t *testing.T, before, after rgw.UserInfo) {
 	t.Helper()
 	after.DefaultPlacement, after.DefaultStorageClass, after.PlacementTags = before.DefaultPlacement, before.DefaultStorageClass, before.PlacementTags
 	if !reflect.DeepEqual(before, after) {

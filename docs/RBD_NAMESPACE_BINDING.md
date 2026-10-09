@@ -1,6 +1,6 @@
 # Observe existing namespace mappings through one RBD mirror owner
 
-`RBDMirror.BindNamespace` creates a read-only view of existing native namespace
+`rbd.Mirror.BindNamespace` creates a read-only view of existing native namespace
 policies. The view uses the original owner's setup clients, receiving peer,
 daemon inventory and gate. It creates no container, peer, image or mirror
 policy, and it has no independent cleanup lifecycle.
@@ -34,7 +34,7 @@ authoritative, and a conflicting nonempty selected site is rejected.
 Use the owner's existing `SourceRBD` and `DestinationRBD` methods to configure
 another namespace pair explicitly before binding it. Pass complete scoped CLI
 arguments, including the intended remote namespace. Do not start another
-`RunRBDMirror` to reuse the first fixture's cohort.
+`rbd.RunMirror` to reuse the first fixture's cohort.
 
 For example, after both namespace catalogs exist, these explicit commands
 configure one named sibling while preserving the owner's captured base:

@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
-func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, owner, operatorUser *ceph.RGWUser, client, operator, noCaps s3HTTPClient, payload []byte, addWriteCaps func()) {
+func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner, operatorUser *rgw.User, client, operator, noCaps s3HTTPClient, payload []byte, addWriteCaps func()) {
 	t.Helper()
 	const limited, outside = "tc-records-rate-limited", "tc-records-rate-outside"
 	for _, bucket := range []string{limited, outside} {
@@ -150,7 +150,7 @@ func (policy rgwRecordsRatePolicy) values() url.Values {
 	}
 }
 
-func rgwRecordsRequireCaps(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, user *ceph.RGWUser, permission string) {
+func rgwRecordsRequireCaps(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, permission string) {
 	t.Helper()
 	info, err := gateway.UserInfo(ctx, user)
 	if err != nil || info.ID != user.ID() || info.Admin || info.System || len(info.AdminCaps) != 2 {

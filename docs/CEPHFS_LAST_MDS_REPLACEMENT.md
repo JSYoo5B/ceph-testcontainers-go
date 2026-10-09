@@ -1,6 +1,6 @@
 # Replace the only stopped CephFS MDS
 
-`fs.AddMDSReplacement(ctx, originalStopped) (*MDSContainer, error)` starts one
+`fs.AddMDSReplacement(ctx, originalStopped) (*cephfs.MDS, error)` starts one
 new indexed owned MDS after the only original confirmed worker has stopped and
 its immutable name has disappeared from the complete native FSMap. The initial
 scope is desired active 1 / standby 0, no replay, with the established rank 0

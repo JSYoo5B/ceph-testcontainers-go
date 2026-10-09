@@ -1103,7 +1103,7 @@ TestSeparateClusterNetworksAndInterruptions
 TestNoInitialMDSTopology
 ```
 
-`CephFSConfig.NoInitialMDS`로 원래 FS와 metadata/default/additional pool을
+`cephfs.Config.NoInitialMDS`로 원래 FS와 metadata/default/additional pool을
 생성하고 MDS auth·container·customizer 없이 유지합니다. `WaitReady`와 fresh
 libcephfs mount의 non-ready/가용성 관측 뒤 같은 descriptor의 첫
 `ScaleMDS(ctx, 1, 0)`으로 기동합니다. 한 fresh cluster의 ready sibling을

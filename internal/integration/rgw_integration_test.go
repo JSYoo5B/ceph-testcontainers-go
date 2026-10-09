@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 func TestRGWS3(t *testing.T) {
@@ -22,15 +22,15 @@ func TestRGWS3(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t)
-	rgw, err := cluster.StartRGW(ctx)
+	rgwGateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint, err := rgw.S3Endpoint(ctx)
+	endpoint, err := rgwGateway.S3Endpoint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := rgw.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-rgw-storage-check"})
+	user, err := rgwGateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-rgw-storage-check"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestRGWS3(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrap := s3HTTPClient{
-		endpoint: endpoint, accessKey: rgw.AccessKey, secretKey: rgw.SecretKey, region: rgw.Region,
+		endpoint: endpoint, accessKey: rgwGateway.AccessKey, secretKey: rgwGateway.SecretKey, region: rgwGateway.Region,
 		http: &http.Client{Timeout: 45 * time.Second},
 	}
 	owned := bootstrap
@@ -49,7 +49,7 @@ func TestRGWS3(t *testing.T) {
 	fixtures := []struct {
 		name, bucket string
 		client       s3HTTPClient
-		user         *ceph.RGWUser
+		user         *rgw.User
 	}{
 		{name: "bootstrap", bucket: "/tc-rgw-poc", client: bootstrap},
 		{name: "owned", bucket: "/tc-rgw-storage-check", client: owned, user: user},
@@ -85,14 +85,14 @@ func TestRGWS3(t *testing.T) {
 			t.Fatalf("unexpected %s S3 bucket listing: %+v", fixture.name, buckets)
 		}
 		if fixture.user != nil {
-			rgwFixtureUserUsage(t, ctx, rgw, fixture.user, "zero-before-writes", 0, 0)
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-before-writes", 0, 0)
 		}
 		for _, key := range keys {
 			client.request(t, ctx, http.MethodPut, bucket+"/"+key, payload, http.StatusOK)
 		}
 		verify(client, bucket)
 		if fixture.user != nil {
-			rgwFixtureUserUsage(t, ctx, rgw, fixture.user, "four-objects", uint64(len(keys)), uint64(len(keys)*len(payload)))
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "four-objects", uint64(len(keys)), uint64(len(keys)*len(payload)))
 		}
 
 		// Private buckets must reject both unsigned and incorrectly signed requests.
@@ -125,7 +125,7 @@ func TestRGWS3(t *testing.T) {
 		}
 		t.Logf("%s S3 payloads survived OSD add/remove; new writes/read after replacement succeeded", fixture.name)
 		if fixture.user != nil {
-			rgwFixtureUserUsage(t, ctx, rgw, fixture.user, "after-topology-five-objects", uint64(len(keys)+1), uint64((len(keys)+1)*len(payload)))
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "after-topology-five-objects", uint64(len(keys)+1), uint64((len(keys)+1)*len(payload)))
 		}
 
 		for _, key := range append(keys, "after-topology") {
@@ -136,7 +136,7 @@ func TestRGWS3(t *testing.T) {
 			t.Fatalf("%s S3 delete left objects: %v", fixture.name, listed)
 		}
 		if fixture.user != nil {
-			rgwFixtureUserUsage(t, ctx, rgw, fixture.user, "zero-after-object-delete", 0, 0)
+			rgwFixtureUserUsage(t, ctx, rgwGateway, fixture.user, "zero-after-object-delete", 0, 0)
 		}
 		client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
 		t.Logf("%s S3 object deletion, missing-object 404, empty listing and bucket deletion succeeded", fixture.name)

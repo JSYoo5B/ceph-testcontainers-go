@@ -10,8 +10,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
@@ -31,16 +30,16 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 			a.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
 		}
 		b.request(t, ctx, http.MethodPut, output, body, http.StatusOK)
-		selected, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multicluster.RGWSyncGroupConfig{ID: "translation", Status: multicluster.RGWSyncEnabled})
+		selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "translation", Status: rgw.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "low-standard", "high-ia")
-		base := multicluster.RGWSyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*ceph.RGWPlacement{"destination": secondaryPlacement}}
+		base := rgw.SyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
 		low := base
 		low.ID = "low-standard"
 		low.Priority = 1
-		low.Tags = []multicluster.RGWSyncObjectTag{{Key: "color", Value: "blue"}}
+		low.Tags = []rgw.SyncObjectTag{{Key: "color", Value: "blue"}}
 		low.DestinationStorageClass = "STANDARD"
 		if err := link.CreateSyncPipe(ctx, selected, low); err != nil {
 			t.Fatal(err)
@@ -48,7 +47,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		high := base
 		high.ID = "high-ia"
 		high.Priority = 7
-		high.Tags = []multicluster.RGWSyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}
+		high.Tags = []rgw.SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}
 		high.DestinationStorageClass = "STANDARD_IA"
 		if err := link.CreateSyncPipe(ctx, selected, high); err != nil {
 			t.Fatal(err)
@@ -114,12 +113,12 @@ func (f *rgwSyncTranslationFixture) ordinary_user_denial_grant(t *testing.T) {
 		const modeInput, modeOutput = "/tc-sync-mode-input", "/tc-sync-mode-output"
 		a.request(t, ctx, http.MethodPut, modeInput, body, http.StatusOK)
 		b.request(t, ctx, http.MethodPut, modeOutput, body, http.StatusOK)
-		modeGroup, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(modeInput, "/")}, multicluster.RGWSyncGroupConfig{ID: "user-mode", Status: multicluster.RGWSyncEnabled})
+		modeGroup, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(modeInput, "/")}, rgw.SyncGroupConfig{ID: "user-mode", Status: rgw.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, modeGroup, "authorized-principal")
-		modePipe := multicluster.RGWSyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
+		modePipe := rgw.SyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
 		if err := link.CreateSyncPipe(ctx, modeGroup, modePipe); err != nil {
 			t.Fatal(err)
 		}

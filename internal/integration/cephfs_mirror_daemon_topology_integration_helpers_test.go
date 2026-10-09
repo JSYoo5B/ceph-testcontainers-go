@@ -15,7 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -30,11 +30,11 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,10 +50,10 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		}
 	}
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
-	checkpoint := func(name string) map[string]multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(name string) map[string]cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
-		checkpoints := make(map[string]multicluster.CephFSMirrorSnapshot, len(directories))
+		checkpoints := make(map[string]cephfs.MirrorSnapshot, len(directories))
 		for _, directory := range directories {
 			checkpoints[directory] = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-mirror-daemons.py", directory, name)
 		}
@@ -61,7 +61,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	initial := checkpoint("initial")
 	image := source.ControlImage()
-	mirror, err := multicluster.RunCephFSMirror(ctx, image, multicluster.CephFSMirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, image, cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,
@@ -107,7 +107,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	peerID := peers[0]
 	expected.PeerID = peerID
-	waitCheckpoints := func(checkpoints map[string]multicluster.CephFSMirrorSnapshot, owners map[string]string, stoppedMember string) {
+	waitCheckpoints := func(checkpoints map[string]cephfs.MirrorSnapshot, owners map[string]string, stoppedMember string) {
 		t.Helper()
 		for _, directory := range directories {
 			status := cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-mirror-daemons.py", expected, directory, checkpoints[directory])

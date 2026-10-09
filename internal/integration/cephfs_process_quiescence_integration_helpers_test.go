@@ -18,7 +18,7 @@ import (
 
 	"github.com/containerd/errdefs"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -34,11 +34,11 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(name string) multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(name string) cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
@@ -68,7 +68,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		customizerCalls.Add(1)
 		return nil
 	})
-	mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{directory}, DaemonCount: 1,
@@ -174,7 +174,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		t.Fatal("pre-Begin restart changed creation binding/customizer or retained old assignment")
 	}
 	baseline := cephFSOriginalProcessBaseline{startedAt: original.state.StartedAt, instanceID: session.gid}
-	var observe func(context.Context) (multicluster.CephFSMirrorProcessQuiescenceStatus, error)
+	var observe func(context.Context) (cephfs.MirrorProcessQuiescenceStatus, error)
 	var legacyComplete func(context.Context) bool
 	if kind == "peer" {
 		receipt, err := mirror.BeginPeerRemoval(ctx, expected.PeerID)
@@ -193,7 +193,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 	}
 	// Do not call live Status/WaitDrained/WaitReleased before stopping. Those are
 	// separate completion contracts and could legitimately release overlap gates.
-	var pending multicluster.CephFSMirrorSnapshot
+	var pending cephfs.MirrorSnapshot
 	originalControl := source.Container
 	control, err := source.ControlContainerContext(ctx)
 	if err != nil || control != originalControl {
@@ -264,7 +264,7 @@ type cephFSOriginalProcessRawState struct {
 	state   *container.State
 }
 
-func cephFSOriginalProcessRawInspect(ctx context.Context, raw *mobycl.Client, binding multicluster.CephFSMirrorProcessBindingStatus) (cephFSOriginalProcessRawState, error) {
+func cephFSOriginalProcessRawInspect(ctx context.Context, raw *mobycl.Client, binding cephfs.MirrorProcessBindingStatus) (cephFSOriginalProcessRawState, error) {
 	var result cephFSOriginalProcessRawState
 	before, err := raw.Info(ctx, mobycl.InfoOptions{}) // Uncached GET /info.
 	if err != nil || before.Info.ID != binding.EngineID {
@@ -305,7 +305,7 @@ func cephFSOriginalProcessSameRawState(a, b cephFSOriginalProcessRawState) bool 
 	return a.state != nil && b.state != nil && a.state.Status == b.state.Status && a.state.Running == b.state.Running && a.state.Paused == b.state.Paused && a.state.Restarting == b.state.Restarting && a.state.Dead == b.state.Dead && a.state.Pid == b.state.Pid && a.state.Error == b.state.Error && a.state.StartedAt == b.state.StartedAt && a.state.FinishedAt == b.state.FinishedAt
 }
 
-func cephFSWaitOriginalProcessQuiescence(t *testing.T, ctx context.Context, evidence, kind string, daemon *multicluster.CephFSMirrorDaemon, raw *mobycl.Client, binding multicluster.CephFSMirrorProcessBindingStatus, baseline cephFSOriginalProcessBaseline, policy cephFSOriginalProcessPolicy, observe func(context.Context) (multicluster.CephFSMirrorProcessQuiescenceStatus, error)) {
+func cephFSWaitOriginalProcessQuiescence(t *testing.T, ctx context.Context, evidence, kind string, daemon *cephfs.MirrorDaemon, raw *mobycl.Client, binding cephfs.MirrorProcessBindingStatus, baseline cephFSOriginalProcessBaseline, policy cephFSOriginalProcessPolicy, observe func(context.Context) (cephfs.MirrorProcessQuiescenceStatus, error)) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -343,7 +343,7 @@ func cephFSWaitOriginalProcessQuiescence(t *testing.T, ctx context.Context, evid
 	}
 }
 
-func cephFSCheckOriginalProcessEvidence(ctx context.Context, evidence, kind string, daemon *multicluster.CephFSMirrorDaemon, raw *mobycl.Client, binding multicluster.CephFSMirrorProcessBindingStatus, baseline cephFSOriginalProcessBaseline, policy cephFSOriginalProcessPolicy) error {
+func cephFSCheckOriginalProcessEvidence(ctx context.Context, evidence, kind string, daemon *cephfs.MirrorDaemon, raw *mobycl.Client, binding cephfs.MirrorProcessBindingStatus, baseline cephFSOriginalProcessBaseline, policy cephFSOriginalProcessPolicy) error {
 	if err := policy.check(ctx, kind); err != nil {
 		return err
 	}
@@ -408,7 +408,7 @@ func cephFSCheckOriginalProcessEvidence(ctx context.Context, evidence, kind stri
 
 type cephFSOriginalProcessSessionWitness struct{ address, gid string }
 
-func cephFSWaitOriginalProcessFreshSession(t *testing.T, ctx context.Context, daemon *multicluster.CephFSMirrorDaemon, raw *mobycl.Client, binding multicluster.CephFSMirrorProcessBindingStatus, policy cephFSOriginalProcessPolicy, previousStartedAt, previousGID string) (cephFSOriginalProcessRawState, cephFSOriginalProcessSessionWitness) {
+func cephFSWaitOriginalProcessFreshSession(t *testing.T, ctx context.Context, daemon *cephfs.MirrorDaemon, raw *mobycl.Client, binding cephfs.MirrorProcessBindingStatus, policy cephFSOriginalProcessPolicy, previousStartedAt, previousGID string) (cephFSOriginalProcessRawState, cephFSOriginalProcessSessionWitness) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -459,7 +459,7 @@ func cephFSWaitOriginalProcessFreshSession(t *testing.T, ctx context.Context, da
 	}
 }
 
-func cephFSOriginalProcessSession(ctx context.Context, daemon *multicluster.CephFSMirrorDaemon, expected multicluster.CephFSMirrorDirectoryStatus, hasPeer bool, directoryCount int, watchers map[string]string) (cephFSOriginalProcessSessionWitness, error) {
+func cephFSOriginalProcessSession(ctx context.Context, daemon *cephfs.MirrorDaemon, expected cephfs.MirrorDirectoryStatus, hasPeer bool, directoryCount int, watchers map[string]string) (cephFSOriginalProcessSessionWitness, error) {
 	var result cephFSOriginalProcessSessionWitness
 	fsCommand := fmt.Sprintf("%s@%d", expected.SourceFilesystem, expected.SourceFilesystemID)
 	data, err := cephFSOriginalProcessExec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fsCommand)
@@ -543,8 +543,8 @@ func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, 
 
 type cephFSOriginalProcessPolicy struct {
 	source, destination     *ceph.Container
-	sourceFS, destinationFS *ceph.CephFSContainer
-	expected                multicluster.CephFSMirrorDirectoryStatus
+	sourceFS, destinationFS *cephfs.Filesystem
+	expected                cephfs.MirrorDirectoryStatus
 	directory, client, site string
 	fsids                   [2]string
 	pools                   [2]int64
@@ -557,7 +557,7 @@ func (p *cephFSOriginalProcessPolicy) capture(ctx context.Context) error {
 			return err
 		}
 		p.fsids[i] = strings.TrimSpace(string(data))
-		filesystem := []*ceph.CephFSContainer{p.sourceFS, p.destinationFS}[i]
+		filesystem := []*cephfs.Filesystem{p.sourceFS, p.destinationFS}[i]
 		data, err = cluster.Ceph(ctx, "fs", "get", filesystem.FilesystemName, "--format", "json")
 		if err != nil {
 			return err
@@ -585,7 +585,7 @@ func (p cephFSOriginalProcessPolicy) check(ctx context.Context, kind string) err
 		if err != nil || strings.TrimSpace(string(data)) != p.fsids[i] {
 			return errors.Join(err, errors.New("independent native original cluster FSID changed"))
 		}
-		filesystem := []*ceph.CephFSContainer{p.sourceFS, p.destinationFS}[i]
+		filesystem := []*cephfs.Filesystem{p.sourceFS, p.destinationFS}[i]
 		id := []int{p.expected.SourceFilesystemID, p.expected.DestinationFilesystemID}[i]
 		data, err = cluster.Ceph(ctx, "fs", "get", filesystem.FilesystemName, "--format", "json")
 		if err != nil {

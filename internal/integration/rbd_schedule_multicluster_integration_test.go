@@ -12,7 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -38,7 +38,7 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rbd", PGNum: 1}); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.InitRBDPool(ctx, pool); err != nil {
+				if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 					t.Fatal(err)
 				}
 				if err := cluster.WaitForClean(ctx); err != nil {
@@ -49,7 +49,7 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				t.Fatal(err)
 			}
 			runtimeImage := source.ControlImage()
-			mirror, err := multicluster.RunRBDMirror(ctx, runtimeImage, multicluster.RBDMirrorConfig{Source: source, Destination: destination, Pool: pool})
+			mirror, err := rbd.RunMirror(ctx, runtimeImage, rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
 			if mirror != nil {
 				t.Cleanup(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

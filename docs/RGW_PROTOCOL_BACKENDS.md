@@ -1,6 +1,6 @@
 # STS·Swift·외부 KMS를 위한 RGW fixture
 
-RGW는 S3 외에도 STS·Swift endpoint와 외부 KMS 연결을 제공합니다. 이 경로의 준비는 `Run` → `TemporaryConfig` → `StartRGWWithConfig` → `CreateUser`와 scope를 보존하는 `gateway.Admin`으로 조합합니다. protocol CRUD를 새 Go wrapper로 추가하지 않습니다. [실행 가능한 조합과 실제 HTTP client probe](../internal/integration/rgw_protocol_backends_integration_test.go)의 selector는 `TestRGWProtocolBackends`입니다.
+RGW는 S3 외에도 STS·Swift endpoint와 외부 KMS 연결을 제공합니다. 이 경로의 준비는 `Run` → `TemporaryConfig` → `rgw.Start` → `CreateUser`와 scope를 보존하는 `gateway.Admin`으로 조합합니다. protocol CRUD를 새 Go wrapper로 추가하지 않습니다. [실행 가능한 조합과 실제 HTTP client probe](../internal/integration/rgw_protocol_backends_integration_test.go)의 selector는 `TestRGWProtocolBackends`입니다.
 
 테스트는 같은 cluster/zone의 gateway 두 개를 bridge와 host networking에서 각각 실행합니다. STS session-token CryptoKey와 KMS 설정은 **gateway를 시작하기 전에** `client.admin` section에 적용합니다. 현재 bootstrap의 RGW daemon identity가 `client.admin`이기 때문입니다. `TemporaryConfig`의 exact stored-entry readback은 설정 DB의 증거이고, 아래 실제 credential·Vault 동작이 runtime 적용의 증거입니다. 설정은 각 override의 `Restore`로 복원하며, 실패한 partial fixture는 disposable cluster 종료로 정리합니다.
 

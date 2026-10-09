@@ -7,8 +7,8 @@ fresh user와 event를 받을 HTTP endpoint뿐이다. Ceph 20.2.4 기본 설정�
 
 ## 구성 순서
 
-1. `Run`과 `StartRGWWithConfig`로 gateway를 시작하고 `CreateUser`로 user를 만든다.
-   S3 요청은 `S3Endpoint`와 `RGWUser.Credentials`로 서명한다.
+1. `Run`과 `rgw.Start`로 gateway를 시작하고 `CreateUser`로 user를 만든다.
+   S3 요청은 `S3Endpoint`와 `rgw.User.Credentials`로 서명한다.
 2. Event를 받을 HTTP 서버를 `WithClient`로 연결한 컨테이너에서 실행한다.
    Bridge 모드에서는 그 컨테이너의 cluster network IP가, host 모드에서는
    `PublicAddress()`가 RGW에서 닿는 주소다.

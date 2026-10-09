@@ -24,7 +24,7 @@ source에서 이를 import하고 `/federation`을 mirror directory로 등록한�
 별도 `cephfs-mirror` daemon이 destination에 실제 snapshot을 만든다.
 source MGR도 peer 등록 시 destination filesystem에 연결하여 FSID와 filesystem
 ID를 확인하고 root의 `ceph.mirror.info`를 기록하므로 원격 network 접근이 필요하다.
-`multicluster.RunCephFSMirror`가 Docker SDK로 기존 MGR에 destination network를
+`cephfs.RunMirror`가 Docker SDK로 기존 MGR에 destination network를
 추가하고, cluster network 삭제 전에 자신이 추가한 연결을 해제한다.
 고정 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라
 `control`과 `all`은 `cephfs-mirror`를 포함해야 한다. 통합 테스트의 mirror 이미지는

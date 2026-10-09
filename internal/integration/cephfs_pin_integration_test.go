@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -26,12 +27,12 @@ func TestCephFSPins(t *testing.T) {
 		t.Run(network, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 16*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithCephFS(ceph.CephFSConfig{Name: "pins", ActiveMDS: 2})}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: "pins", ActiveMDS: 2})}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceCluster(t, opts...)
-			fs := cluster.Filesystems()[0]
+			fs := cephfs.Filesystems(cluster)[0]
 			if err := fs.WaitReady(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -55,11 +56,11 @@ func TestCephFSPins(t *testing.T) {
 				}
 				cephFSPinWaitConfig(t, ctx, cluster, fs, setting.Name, setting.Value)
 			}
-			group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: "export"})
+			group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "export"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "data", GroupName: group.Name})
+			volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data", GroupName: group.Name})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -71,19 +72,19 @@ func TestCephFSPins(t *testing.T) {
 			if err != nil || volumePrior.Path != path.Dir(volume.Path) || volumePrior.Path == volume.Path {
 				t.Fatalf("pin query did not address native base directory: %+v error=%v", volumePrior, err)
 			}
-			for _, kind := range []ceph.CephFSPinType{ceph.CephFSPinDistributed, ceph.CephFSPinRandom} {
-				cephFSPinGroupLease(t, ctx, fs, group, ceph.CephFSPinSetting{Type: kind, Value: 0})
-				cephFSPinVolumeLease(t, ctx, fs, volume, ceph.CephFSPinSetting{Type: kind, Value: 0})
+			for _, kind := range []cephfs.PinType{cephfs.PinDistributed, cephfs.PinRandom} {
+				cephFSPinGroupLease(t, ctx, fs, group, cephfs.PinSetting{Type: kind, Value: 0})
+				cephFSPinVolumeLease(t, ctx, fs, volume, cephfs.PinSetting{Type: kind, Value: 0})
 			}
 			paths := []string{volume.Path}
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "write", paths)
-			groupExport := cephFSPinGroupLease(t, ctx, fs, group, ceph.CephFSPinSetting{Type: ceph.CephFSPinExport, Value: 1})
-			cephFSPinWaitAuthority(t, ctx, cluster, fs, map[string]bool{group.Path: true}, 1, ceph.CephFSPinExport)
+			groupExport := cephFSPinGroupLease(t, ctx, fs, group, cephfs.PinSetting{Type: cephfs.PinExport, Value: 1})
+			cephFSPinWaitAuthority(t, ctx, cluster, fs, map[string]bool{group.Path: true}, 1, cephfs.PinExport)
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "read", paths)
 			// A closer subvolume pin overrides the parent group's rank. Verify
 			// actual native authority rather than only the assigned xattr.
-			volumeExport := cephFSPinVolumeLease(t, ctx, fs, volume, ceph.CephFSPinSetting{Type: ceph.CephFSPinExport, Value: 0})
-			cephFSPinWaitAuthority(t, ctx, cluster, fs, map[string]bool{volumePrior.Path: true}, 0, ceph.CephFSPinExport)
+			volumeExport := cephFSPinVolumeLease(t, ctx, fs, volume, cephfs.PinSetting{Type: cephfs.PinExport, Value: 0})
+			cephFSPinWaitAuthority(t, ctx, cluster, fs, map[string]bool{volumePrior.Path: true}, 0, cephfs.PinExport)
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "read", paths)
 			if err := volumeExport.Restore(ctx); err != nil {
 				t.Fatal(err)
@@ -100,10 +101,10 @@ func TestCephFSPins(t *testing.T) {
 				t.Fatalf("subvolume original export policy/inode not restored: %+v error=%v", volumeAfter, err)
 			}
 			cephFSPinIO(t, ctx, client, fs.FilesystemName, "read", paths)
-			for _, kind := range []ceph.CephFSPinType{ceph.CephFSPinDistributed, ceph.CephFSPinRandom} {
+			for _, kind := range []cephfs.PinType{cephfs.PinDistributed, cephfs.PinRandom} {
 				name := string(kind)
 				t.Run(name, func(t *testing.T) {
-					group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: name})
+					group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: name})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -111,17 +112,17 @@ func TestCephFSPins(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					cephFSPinGroupLease(t, ctx, fs, group, ceph.CephFSPinSetting{Type: ceph.CephFSPinExport, Value: -1})
-					other := ceph.CephFSPinDistributed
+					cephFSPinGroupLease(t, ctx, fs, group, cephfs.PinSetting{Type: cephfs.PinExport, Value: -1})
+					other := cephfs.PinDistributed
 					if kind == other {
-						other = ceph.CephFSPinRandom
+						other = cephfs.PinRandom
 					}
-					cephFSPinGroupLease(t, ctx, fs, group, ceph.CephFSPinSetting{Type: other, Value: 0})
-					change := cephFSPinGroupLease(t, ctx, fs, group, ceph.CephFSPinSetting{Type: kind, Value: 1})
+					cephFSPinGroupLease(t, ctx, fs, group, cephfs.PinSetting{Type: other, Value: 0})
+					change := cephFSPinGroupLease(t, ctx, fs, group, cephfs.PinSetting{Type: kind, Value: 1})
 					var paths []string
 					ownedBases := make(map[string]bool)
 					for index := range 16 {
-						volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: fmt.Sprintf("data-%02d", index), GroupName: group.Name})
+						volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: fmt.Sprintf("data-%02d", index), GroupName: group.Name})
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -129,7 +130,7 @@ func TestCephFSPins(t *testing.T) {
 						ownedBases[path.Dir(volume.Path)] = true
 					}
 					cephFSPinIO(t, ctx, client, fs.FilesystemName, "write", paths)
-					if kind == ceph.CephFSPinDistributed {
+					if kind == cephfs.PinDistributed {
 						// Distributed pins fragment the group directory itself;
 						// its children reside under those dirfrag subtrees. Random
 						// pins instead export the descendant directory inodes.
@@ -141,7 +142,7 @@ func TestCephFSPins(t *testing.T) {
 						t.Fatal(err)
 					}
 					after, err := fs.SubvolumeGroupPinPolicy(ctx, group)
-					if err != nil || after.Inode != prior.Inode || (kind == ceph.CephFSPinDistributed && after.Distributed != prior.Distributed) || (kind == ceph.CephFSPinRandom && after.RandomProbability != prior.RandomProbability) {
+					if err != nil || after.Inode != prior.Inode || (kind == cephfs.PinDistributed && after.Distributed != prior.Distributed) || (kind == cephfs.PinRandom && after.RandomProbability != prior.RandomProbability) {
 						t.Fatalf("ephemeral policy restoration changed original field/identity: %+v error=%v", after, err)
 					}
 					cephFSPinIO(t, ctx, client, fs.FilesystemName, "read", paths)

@@ -1,6 +1,6 @@
 # Create CephFS before its first MDS
 
-`CephFSConfig.NoInitialMDS` creates an owned filesystem and its pools without
+`cephfs.Config.NoInitialMDS` creates an owned filesystem and its pools without
 starting its first metadata service. Use it for deferred provisioning and client
 availability tests, then call the retained descriptor's existing
 `ScaleMDS(ctx, 1, 0)` when the first MDS should start.
@@ -12,7 +12,7 @@ from actual fresh client I/O.
 
 ## Construction and first start
 
-The flag is accepted by `WithCephFS` and `StartCephFSWithConfig`. With the flag
+The flag is accepted by `cephfs.WithFilesystems` and `cephfs.Start`. With the flag
 set, leave `ActiveMDS` and `StandbyMDS` zero and `StandbyReplay` false. Conflicting
 counts or replay are rejected before allocation or mutation. The prospective
 native `max_mds` remains one; zero owned MDSs does not mean `max_mds=0`.
@@ -37,7 +37,7 @@ if cluster != nil {
 if err != nil {
     return err
 }
-fs, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{
+fs, err := cephfs.Start(ctx, cluster, cephfs.Config{
     Name:         "deferred",
     NoInitialMDS: true,
     MetadataPool: ceph.PoolConfig{Name: "deferred-meta", Replicas: 2, MinSize: 1},

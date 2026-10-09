@@ -1,6 +1,6 @@
 # Images in a shared RBD namespace view
 
-`RBDMirrorNamespace.ImageStatus` and `WaitReplayReady` observe an existing image
+`rbd.MirrorNamespace.ImageStatus` and `WaitReplayReady` observe an existing image
 in a mapping retained by `BindNamespace`. They share the original mirror owner,
 clients and receiver cohort. They create no pool, namespace policy, peer, image,
 checkpoint, daemon or separate cleanup owner.
@@ -29,7 +29,7 @@ it valid. There is no implicit rebind.
 
 ## Readiness and image mode
 
-The result is the existing `RBDMirrorImageStatus`. It contains the selected
+The result is the existing `rbd.MirrorImageStatus`. It contains the selected
 pool/namespaces/name, source and destination local IDs, global ID, actual mode,
 primary/mirroring states, destination local status and attributed daemon/instance.
 It does not expose new FSID, pool-ID or peer fields; those remain retained guard

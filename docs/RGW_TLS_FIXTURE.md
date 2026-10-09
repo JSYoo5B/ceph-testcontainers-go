@@ -1,11 +1,11 @@
 # Native RGW TLS fixture
 
-`RGWConfig.TLS`는 native Beast의 HTTPS listener를 HTTP와 함께 시작합니다. certificate chain과 matching private key를 PEM으로 전달합니다. 공개 module은 Go 표준 TLS validation과 container 파일·CLI만 사용합니다.
+`rgw.Config.TLS`는 native Beast의 HTTPS listener를 HTTP와 함께 시작합니다. certificate chain과 matching private key를 PEM으로 전달합니다. 공개 module은 Go 표준 TLS validation과 container 파일·CLI만 사용합니다.
 
 ```go
-gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{
+gateway, err := rgw.Start(ctx, cluster, rgw.Config{
     Name: "secure",
-    TLS: &ceph.RGWTLSConfig{
+    TLS: &rgw.TLSConfig{
         CertificatePEM: certificateChain,
         PrivateKeyPEM: privateKey,
     },

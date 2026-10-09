@@ -1,6 +1,6 @@
 # RGW 사용자 저장량 Check
 
-`gateway.UserUsage(ctx, user)`는 이 gateway를 통해 생성한 `*ceph.RGWUser`의 현재 native 저장량을 읽습니다. `UserInfo`의 identity/quota policy와 별개입니다.
+`gateway.UserUsage(ctx, user)`는 이 gateway를 통해 생성한 `*rgw.User`의 현재 native 저장량을 읽습니다. `UserInfo`의 identity/quota policy와 별개입니다.
 
 ```go
 usage, err := gateway.UserUsage(ctx, user)

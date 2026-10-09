@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 )
 
 func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithCephFS(
-		ceph.CephFSConfig{Name: "alpha", ActiveMDS: 2, StandbyMDS: 1},
-		ceph.CephFSConfig{Name: "beta"},
+	cluster, client := newServiceCluster(t, cephfs.WithFilesystems(
+		cephfs.Config{Name: "alpha", ActiveMDS: 2, StandbyMDS: 1},
+		cephfs.Config{Name: "beta"},
 	))
 	alpha, beta := cephFSOwnedFilesystem(t, cluster, "alpha"), cephFSOwnedFilesystem(t, cluster, "beta")
 	alphaBefore := cephFSTopologyStatus(t, ctx, alpha)
@@ -74,7 +74,7 @@ func TestCephFSStandbyReplayFailover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t)
-	fs, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "hot", StandbyMDS: 1, StandbyReplay: true})
+	fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "hot", StandbyMDS: 1, StandbyReplay: true})
 	if err != nil {
 		t.Fatal(err)
 	}

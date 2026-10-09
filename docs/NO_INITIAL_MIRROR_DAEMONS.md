@@ -1,7 +1,7 @@
 # Configure mirroring before starting receivers
 
-`RBDMirrorConfig.NoInitialDaemons` and
-`CephFSMirrorConfig.NoInitialDaemons` configure a mirror link without starting
+`rbd.MirrorConfig.NoInitialDaemons` and
+`cephfs.MirrorConfig.NoInitialDaemons` configure a mirror link without starting
 its initial mirror daemons. Start processes later with that fixture's
 `AddDaemon`. This option controls the fixture's initial process count; it does
 not prove that a shared pool or filesystem has no external mirror processes.
@@ -25,7 +25,7 @@ just like other partial setup failures.
 ## RBD
 
 ```go
-link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
+link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
     Source: source, Destination: destination, Pool: "rbd",
     NoInitialDaemons: true,
 })
@@ -65,8 +65,8 @@ explicit image enrollment or mirror snapshot.
 ## CephFS
 
 ```go
-link, err := multicluster.RunCephFSMirror(ctx, image,
-    multicluster.CephFSMirrorConfig{
+link, err := cephfs.RunMirror(ctx, image,
+    cephfs.MirrorConfig{
         Source: source, Destination: destination,
         SourceFilesystem: sourceFS, DestinationFilesystem: destinationFS,
         Directories: []string{"/data"}, NoInitialDaemons: true,

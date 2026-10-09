@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -16,20 +17,20 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const filesystem = "clone-lifecycle"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithCephFS(ceph.CephFSConfig{Name: filesystem})}
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, options...)
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: "restores"})
+	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "restores"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
+	source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	}
 	noWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	delay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "30")
-	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "partial", GroupName: group.Name})
+	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "partial", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 		t.Fatalf("clone did not remain pending during native delay: %+v error=%v", status, err)
 	}
 	snapshotInfo, err := fs.SubvolumeSnapshotInfo(ctx, source.Name, source.GroupName, snapshot.Name)
-	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, ceph.CephFSSnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
+	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, cephfs.SnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
 		t.Fatalf("source snapshot did not protect pending target: %+v error=%v", snapshotInfo, err)
 	}
 	if err := fs.RemovePartialSubvolumeClone(ctx, clone); err == nil {
@@ -123,7 +124,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 
 	// Reuse the public name after successful cleanup. A copied old descriptor
 	// shares its removed state and must never force-remove the new incarnation.
-	replacement, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: clone.Name, GroupName: clone.GroupName})
+	replacement, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: clone.Name, GroupName: clone.GroupName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	// source snapshot, target UUID, metadata or root inode/birth time.
 	failureNoWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	failureDelay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "60")
-	failed, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "faulted", GroupName: group.Name})
+	failed, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "faulted", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +199,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	if err := fs.RemoveSubvolumeSnapshot(ctx, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	for _, volume := range []*ceph.CephFSSubvolume{restored, source} {
+	for _, volume := range []*cephfs.Subvolume{restored, source} {
 		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
 			t.Fatal(err)
 		}

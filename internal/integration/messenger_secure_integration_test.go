@@ -12,6 +12,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 func TestMessengerV2SecureOnly(t *testing.T) {
@@ -110,11 +112,11 @@ func TestMessengerV2SecureServices(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fs, err := cluster.StartCephFS(ctx)
+			fs, err := cephfs.Start(ctx, cluster, cephfs.Config{})
 			if err != nil {
 				t.Fatal("secure MDS bootstrap", err)
 			}
-			gateway, err := cluster.StartRGW(ctx)
+			gateway, err := rgw.Start(ctx, cluster, rgw.Config{})
 			if err != nil {
 				t.Fatal("secure RGW bootstrap", err)
 			}

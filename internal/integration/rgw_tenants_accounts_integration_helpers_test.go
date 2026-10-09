@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -21,7 +21,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t, options...)
-	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: "identities", SkipUserCreation: true})
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{Name: "identities", SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientFor := func(user *ceph.RGWUser) s3HTTPClient {
+	clientFor := func(user *rgw.User) s3HTTPClient {
 		t.Helper()
 		access, secret, err := user.Credentials()
 		if err != nil {
@@ -37,12 +37,12 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 		}
 		return s3HTTPClient{endpoint: endpoint, accessKey: access, secretKey: secret, region: gateway.Region, http: &http.Client{Timeout: 20 * time.Second}}
 	}
-	users := make([]*ceph.RGWUser, 3)
+	users := make([]*rgw.User, 3)
 	clients := make([]s3HTTPClient, 3)
 	const localID, sharedBucket = "tc-same-user", "/tc-same-bucket"
 	payloads := [][]byte{[]byte("legacy namespace payload"), []byte("tenant alpha payload"), []byte("tenant beta payload")}
 	for i, tenant := range []string{"", "tenant_alpha", "tenant_beta"} {
-		users[i], err = gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: localID, Tenant: tenant, AdminCaps: "users=read"})
+		users[i], err = gateway.CreateUser(ctx, rgw.UserConfig{ID: localID, Tenant: tenant, AdminCaps: "users=read"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,10 +75,10 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	// for another tenant's ordinary identity, rather than fail authentication.
 	denied := rgwTenantRequest(t, ctx, clients[2], http.MethodGet, "/tenant_alpha:"+strings.TrimPrefix(sharedBucket, "/")+"/object", nil, http.StatusForbidden)
 	requireRGWUserPlacementDenied(t, denied)
-	if _, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: localID, Tenant: "tenant_alpha"}); err == nil {
+	if _, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: localID, Tenant: "tenant_alpha"}); err == nil {
 		t.Fatal("existing tenant UID could be overwritten")
 	}
-	quota := ceph.RGWQuota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
+	quota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
 	if err := gateway.SetUserQuota(ctx, users[1], quota); err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +90,8 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	if err != nil || betaErr != nil || alpha.UserQuota != quota || alpha.BucketQuota != quota || beta.UserQuota == quota || beta.BucketQuota == quota {
 		t.Fatal("tenant quota operation changed the wrong native user")
 	}
-	unlimited := ceph.RGWQuota{MaxSizeBytes: -1, MaxObjects: -1}
-	for _, user := range []*ceph.RGWUser{users[0], users[1]} {
+	unlimited := rgw.Quota{MaxSizeBytes: -1, MaxObjects: -1}
+	for _, user := range []*rgw.User{users[0], users[1]} {
 		if err := gateway.SetUserQuota(ctx, user, unlimited); err != nil {
 			t.Fatal(err)
 		}
@@ -131,17 +131,17 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	}
 	t.Log("legacy plus two tenants reused identical local UID/bucket/object names with distinct native full IDs and bytes; explicit cross-tenant access denied; quota/suspend/removal affected only the selected identity")
 
-	account, err := gateway.CreateAccount(ctx, ceph.RGWAccountConfig{Name: "Fixture Account", Tenant: "account_tenant"})
+	account, err := gateway.CreateAccount(ctx, rgw.AccountConfig{Name: "Fixture Account", Tenant: "account_tenant"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.CreateAccount(ctx, ceph.RGWAccountConfig{ID: account.ID(), Name: "overwrite"}); err == nil {
+	if _, err := gateway.CreateAccount(ctx, rgw.AccountConfig{ID: account.ID(), Name: "overwrite"}); err == nil {
 		t.Fatal("fresh account API adopted existing ID")
 	}
-	roots := make([]*ceph.RGWUser, 2)
+	roots := make([]*rgw.User, 2)
 	rootClients := make([]s3HTTPClient, 2)
 	for i := range roots {
-		roots[i], err = gateway.CreateAccountRootUser(ctx, account, ceph.RGWUserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i)})
+		roots[i], err = gateway.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,8 +151,8 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 		}
 		rootClients[i] = clientFor(roots[i])
 	}
-	accountQuota := ceph.RGWQuota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
-	accountBucketQuota := ceph.RGWQuota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
+	accountQuota := rgw.Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
+	accountBucketQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
 	if err := gateway.SetAccountQuota(ctx, account, accountQuota); err != nil {
 		info, readErr := gateway.AccountInfo(ctx, account)
 		t.Fatalf("set account quota failed: %v; readback_error=%v actual_account_quota=%+v actual_bucket_quota=%+v requested=%+v", err, readErr, info.AccountQuota, info.BucketQuota, accountQuota)
@@ -248,7 +248,7 @@ func rgwTenantRequest(t *testing.T, ctx context.Context, client s3HTTPClient, me
 	return data
 }
 
-func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, gateway *ceph.RGWContainer, account *ceph.RGWAccount, client s3HTTPClient, bucket string) {
+func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, gateway *rgw.Gateway, account *rgw.Account, client s3HTTPClient, bucket string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()

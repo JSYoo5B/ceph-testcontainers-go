@@ -17,6 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -43,7 +44,7 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, opts...)
-	gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{SkipUserCreation: true})
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-notify"})
+	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "tc-notify"})
 	if err != nil {
 		t.Fatal(err)
 	}

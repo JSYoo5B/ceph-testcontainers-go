@@ -15,7 +15,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -54,15 +55,15 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := rbdMirror.EnableImage(ctx, image); err != nil {
 				t.Fatal(err)
 			}
-			initialRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, multicluster.RBDMirrorModeJournal, "", "")
+			initialRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbd.MirrorModeJournal, "", "")
 			originalRBDPeer := rbdScenarioPeer(t, ctx, rbdMirror, pool)
 			originalRBDHosts, originalRBDKey := monitorBootstrapRBDPeerConfig(t, ctx, destination, pool, originalRBDPeer)
 			rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
-			sourceFS, err := source.StartCephFS(ctx)
+			sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			destinationFS, err := destination.StartCephFS(ctx)
+			destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +78,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				multiClusterExecOutput(t, ctx, client, command...)
 			}
 			fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
-			mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{
+			mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
 				Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName,
 				DestinationFilesystem: destinationFS.FilesystemName, Directories: []string{"/federation"},
 			})
@@ -232,7 +233,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 					t.Fatal("cold-started client connected to a different cluster")
 				}
 			}
-			restartedRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, multicluster.RBDMirrorModeJournal, "", "")
+			restartedRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbd.MirrorModeJournal, "", "")
 			if rbdScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
 				t.Fatal("RBD cold restart replaced the original receiving peer")
 			}

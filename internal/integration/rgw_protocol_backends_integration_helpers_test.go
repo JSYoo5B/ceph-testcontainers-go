@@ -23,6 +23,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	testcontainervault "github.com/testcontainers/testcontainers-go/modules/vault"
@@ -77,10 +78,10 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	gateways := make([]*ceph.RGWContainer, 2)
+	gateways := make([]*rgw.Gateway, 2)
 	endpoints := make([]string, 2)
 	for i, name := range []string{"protocol-a", "protocol-b"} {
-		gateways[i], err = cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{Name: name, SkipUserCreation: true},
+		gateways[i], err = rgw.Start(ctx, cluster, rgw.Config{Name: name, SkipUserCreation: true},
 			testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader([]byte(vault.gatewayToken)), ContainerFilePath: "/tc/vault-token", FileMode: 0o600}))
 		if err != nil {
 			t.Fatal(err)
@@ -90,10 +91,10 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	users := make([]*ceph.RGWUser, 2)
+	users := make([]*rgw.User, 2)
 	clients := make([]s3HTTPClient, 2)
 	for i, id := range []string{"tc-backend-owner", "tc-backend-assumer"} {
-		users[i], err = gateways[0].CreateUser(ctx, ceph.RGWUserConfig{ID: id})
+		users[i], err = gateways[0].CreateUser(ctx, rgw.UserConfig{ID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +114,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 	}
 }
 
-func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, gateways []*ceph.RGWContainer, endpoints []string, users []*ceph.RGWUser, clients []s3HTTPClient) {
+func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, gateways []*rgw.Gateway, endpoints []string, users []*rgw.User, clients []s3HTTPClient) {
 	t.Helper()
 	const roleName, policyName, bucket = "tc-backend-read", "read-owned", "/tc-backend-sts"
 	trust := rgwBackendJSON(t, map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
@@ -302,7 +303,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, g
 	t.Log("STS: shared-key two-gateway temporary credentials, exact allowed bytes, trust/action/resource denial, existing-session role-policy revoke/restore and future-session trust revoke; owned role and bucket removed")
 }
 
-func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, endpoints []string, user *ceph.RGWUser, owner s3HTTPClient) {
+func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *rgw.Gateway, endpoints []string, user *rgw.User, owner s3HTTPClient) {
 	t.Helper()
 	const bucket = "tc-backend-swift"
 	subuser := user.ID() + ":swift"
@@ -494,7 +495,7 @@ func (vault *rgwBackendVault) call(t *testing.T, ctx context.Context, method, pa
 	return response.body
 }
 
-func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*ceph.RGWContainer, endpoints []string, owner s3HTTPClient, vault *rgwBackendVault) {
+func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*rgw.Gateway, endpoints []string, owner s3HTTPClient, vault *rgwBackendVault) {
 	t.Helper()
 	const bucket = "/tc-backend-kms"
 	encoded := http.Header{"X-Amz-Server-Side-Encryption": {"aws:kms"}, "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id": {"allowed"}}
@@ -757,7 +758,7 @@ func rgwBackendVaultAuditProof(data []byte) (map[string]int, error) {
 	return counts, nil
 }
 
-func rgwBackendAdmin(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, args ...string) []byte {
+func rgwBackendAdmin(t *testing.T, ctx context.Context, gateway *rgw.Gateway, args ...string) []byte {
 	t.Helper()
 	result, err := gateway.Admin(ctx, args...)
 	if err != nil {

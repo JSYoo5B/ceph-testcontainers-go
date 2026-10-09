@@ -12,7 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -73,10 +73,10 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 	return cluster, client
 }
 
-func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *multicluster.RBDMirror {
+func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *rbd.Mirror {
 	t.Helper()
 	image := a.ControlImage()
-	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
+	link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
 		Source: a, Destination: destination, Pool: pool, SourceSite: "a", DestinationSite: destinationSite,
 	})
 	if link != nil {

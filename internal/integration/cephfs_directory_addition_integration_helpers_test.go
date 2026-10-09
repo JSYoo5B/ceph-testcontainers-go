@@ -16,7 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -30,11 +30,11 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,12 +59,12 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(directory, name string) multicluster.CephFSMirrorSnapshot {
+	checkpoint := func(directory, name string) cephfs.MirrorSnapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
 	}
-	verify := func(directory string, snapshot multicluster.CephFSMirrorSnapshot, stage string) {
+	verify := func(directory string, snapshot cephfs.MirrorSnapshot, stage string) {
 		t.Helper()
 		for _, role := range []string{"source", "destination"} {
 			client, filesystem := sourceClient, sourceFS.FilesystemName
@@ -80,7 +80,7 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	seedCheckpoint := checkpoint(seed, "seed-before-zero-inventory")
 	const site = "directory-addition-target"
 	var customizers atomic.Int32
-	mirror, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), multicluster.CephFSMirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
 		Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{seed}, DaemonCount: 1,
 	}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
@@ -301,14 +301,14 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
 }
 
-func cephFSDirectoryAdditionAssertStatus(t *testing.T, status multicluster.CephFSMirrorDirectoryAdditionStatus, expected multicluster.CephFSMirrorDirectoryStatus, directory string, present, registered bool) {
+func cephFSDirectoryAdditionAssertStatus(t *testing.T, status cephfs.MirrorDirectoryAdditionStatus, expected cephfs.MirrorDirectoryStatus, directory string, present, registered bool) {
 	t.Helper()
 	if status.Directory != directory || status.PeerID != expected.PeerID || status.SourceFilesystem != expected.SourceFilesystem || status.DestinationFilesystem != expected.DestinationFilesystem || status.SourceFilesystemID != expected.SourceFilesystemID || status.DestinationFilesystemID != expected.DestinationFilesystemID || status.PolicyPresent != present || status.Registered != registered {
 		t.Fatalf("retained directory addition changed original identity or state: %+v", status)
 	}
 }
 
-func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *multicluster.CephFSMirror, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
+func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
 	t.Helper()
 	ops := []struct {
 		name string
@@ -338,7 +338,7 @@ func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context
 	}
 }
 
-func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *multicluster.CephFSMirror, directory string, receipt *multicluster.CephFSMirrorDirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
+func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, directory string, receipt *cephfs.MirrorDirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -363,7 +363,7 @@ func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, 
 	}
 }
 
-func cephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *multicluster.CephFSMirror, directory string, receipt *multicluster.CephFSMirrorDirectoryAddition) {
+func cephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, directory string, receipt *cephfs.MirrorDirectoryAddition) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -432,7 +432,7 @@ func cephFSDirectoryAdditionCheckScope(ctx context.Context, p cephFSOriginalProc
 		if err != nil || strings.TrimSpace(string(data)) != p.fsids[i] {
 			return errors.Join(err, errors.New("independent original addition cluster FSID changed"))
 		}
-		fs := []*ceph.CephFSContainer{p.sourceFS, p.destinationFS}[i]
+		fs := []*cephfs.Filesystem{p.sourceFS, p.destinationFS}[i]
 		data, err = cluster.Ceph(ctx, "fs", "get", fs.FilesystemName, "--format", "json")
 		if err != nil {
 			return err
@@ -591,11 +591,11 @@ func cephFSDirectoryAdditionPathCount(paths []string, selected string) int {
 	return count
 }
 
-func cephFSDirectoryAdditionLog(t *testing.T, stage string, status multicluster.CephFSMirrorDirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *multicluster.CephFSMirror, policy cephFSOriginalProcessPolicy) {
+func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfs.MirrorDirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *cephfs.Mirror, policy cephFSOriginalProcessPolicy) {
 	t.Helper()
 	data, err := json.Marshal(struct {
 		Case, Stage                                                                                                                            string
-		Status                                                                                                                                 multicluster.CephFSMirrorDirectoryAdditionStatus
+		Status                                                                                                                                 cephfs.MirrorDirectoryAdditionStatus
 		OwnedDirectories                                                                                                                       []string
 		OwnedDaemons                                                                                                                           int
 		AddedAttempts, AddedDispatches, AppliedLosses, UnappliedAttempts, UnappliedDispatches, UnappliedFaults, RemoveDispatches, RemoveLosses int32

@@ -1,12 +1,12 @@
 # RBD receiver 구성 준비 관측
 
-`RBDMirror.ReceiverStatus`와 `WaitReceiverReady`는 link의 configured
+`rbd.Mirror.ReceiverStatus`와 `WaitReceiverReady`는 link의 configured
 Pool/SourceNamespace/DestinationNamespace를 발견한 receiver들의 native
 leader/member 합의를 관측합니다. Mirrored image가 없어도 사용할 수 있습니다.
 `ImageStatus`와 `WaitReplayReady`의 image replay 의미는 그대로 유지합니다.
 
 ```go
-link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
+link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
     Source: source, Destination: destination, Pool: "rbd",
     SourceNamespace: "app", DestinationNamespace: "standby", DaemonCount: 2,
 })

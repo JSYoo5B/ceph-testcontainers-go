@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -19,12 +20,12 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	const filesystem, replicated, erasure, unused = "dynamic", "dynamic-replicated", "dynamic-erasure", "dynamic-unused"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(3), ceph.WithCephFS(ceph.CephFSConfig{Name: filesystem})}
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(3), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, options...)
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	for _, config := range []ceph.PoolConfig{
 		{Name: replicated, Application: "cephfs"}, {Name: unused, Application: "cephfs"},
 		{Name: erasure, Application: "cephfs", ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}},
@@ -52,9 +53,9 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil || len(states) != 4 || !states[0].Default || states[0].Name != fs.DataPool {
 		t.Fatalf("dynamic native registration=%+v error=%v", states, err)
 	}
-	for _, handle := range []*ceph.CephFSDataPool{replicatedHandle, erasureHandle, unusedHandle} {
+	for _, handle := range []*cephfs.DataPool{replicatedHandle, erasureHandle, unusedHandle} {
 		pool, err := cluster.PoolStatus(ctx, handle.Name)
-		if err != nil || pool.ID != handle.ID || !slices.Contains(states, ceph.CephFSDataPoolState{Name: handle.Name, ID: handle.ID}) {
+		if err != nil || pool.ID != handle.ID || !slices.Contains(states, cephfs.DataPoolState{Name: handle.Name, ID: handle.ID}) {
 			t.Fatalf("pool identity was not registered: %+v state=%+v error=%v", handle, pool, err)
 		}
 	}
@@ -88,11 +89,11 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if _, err := fs.AddDataPool(ctx, unused); err == nil {
 		t.Fatal("native retained tag was silently cleared for reattachment")
 	}
-	if volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "detached", DataPool: unused}); err == nil || volume != nil {
+	if volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "detached", DataPool: unused}); err == nil || volume != nil {
 		t.Fatal("detached pool accepted for volume creation")
 	}
 	// A pool attached after startup can serve namespace-isolated volume data.
-	volume, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "live", DataPool: replicated, NamespaceIsolated: true})
+	volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "live", DataPool: replicated, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "ec-copy", DataPool: erasure})
+	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "ec-copy", DataPool: erasure})
 	if err != nil {
 		t.Fatal(err)
 	}

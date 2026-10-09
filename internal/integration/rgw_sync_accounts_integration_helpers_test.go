@@ -17,7 +17,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -30,7 +30,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := multicluster.RunRGWMultisite(ctx, rgwImage, multicluster.RGWMultisiteConfig{Source: source, Destination: destination, ControlImage: image, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: image, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -49,14 +49,14 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	permission, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{}, multicluster.RGWSyncGroupConfig{ID: "account-permission", Status: multicluster.RGWSyncAllowed})
+	permission, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "account-permission", Status: rgw.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, permission, multicluster.RGWSyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, permission, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, permission, multicluster.RGWSyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, permission, rgw.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, permission); err != nil {
@@ -73,11 +73,11 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	account, err := link.Source.CreateAccount(ctx, ceph.RGWAccountConfig{Name: "tc-sync-account"})
+	account, err := link.Source.CreateAccount(ctx, rgw.AccountConfig{Name: "tc-sync-account"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := link.Source.CreateAccountRootUser(ctx, account, ceph.RGWUserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root"})
+	root, err := link.Source.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +91,11 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	for _, bucket := range []string{input, output} {
 		primary.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 	}
-	selected, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multicluster.RGWSyncGroupConfig{ID: "account-root", Status: multicluster.RGWSyncEnabled})
+	selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "account-root", Status: rgw.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe := multicluster.RGWSyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
+	pipe := rgw.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
 	if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 }
 
-func rgwSyncUserClient(t *testing.T, user *ceph.RGWUser, endpoint, region string) s3HTTPClient {
+func rgwSyncUserClient(t *testing.T, user *rgw.User, endpoint, region string) s3HTTPClient {
 	t.Helper()
 	access, secret, err := user.Credentials()
 	if err != nil {
@@ -211,7 +211,7 @@ func waitRGWSyncBucketPolicy(t *testing.T, ctx context.Context, client s3HTTPCli
 	}
 }
 
-func captureRGWSyncAccountBucket(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, path, owner, expectedID string) string {
+func captureRGWSyncAccountBucket(t *testing.T, ctx context.Context, gateway *rgw.Gateway, path, owner, expectedID string) string {
 	t.Helper()
 	name := strings.TrimPrefix(path, "/")
 	data, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", name)
@@ -229,13 +229,13 @@ func captureRGWSyncAccountBucket(t *testing.T, ctx context.Context, gateway *cep
 	return native.ID
 }
 
-func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multicluster.RGWMultisite, sourceEndpoint, destinationEndpoint string) {
+func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *rgw.Multisite, sourceEndpoint, destinationEndpoint string) {
 	t.Helper()
-	alpha, err := link.Source.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-system-cross-tenant", Tenant: "system_alpha"})
+	alpha, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-system-cross-tenant", Tenant: "system_alpha"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := link.Source.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-system-cross-tenant", Tenant: "system_beta"})
+	beta, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-system-cross-tenant", Tenant: "system_beta"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,11 +246,11 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 	const input, output = "/tc-system-tenant-input", "/tc-system-tenant-output"
 	primaryAlpha.request(t, ctx, http.MethodPut, input, nil, http.StatusOK)
 	primaryBeta.request(t, ctx, http.MethodPut, output, nil, http.StatusOK)
-	group, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, multicluster.RGWSyncGroupConfig{ID: "system-cross-tenant", Status: multicluster.RGWSyncEnabled})
+	group, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, rgw.SyncGroupConfig{ID: "system-cross-tenant", Status: rgw.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe := multicluster.RGWSyncPipeConfig{ID: "exact-tenant-instances", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/"), Tenant: "system_beta"}, Prefix: "system/"}
+	pipe := rgw.SyncPipeConfig{ID: "exact-tenant-instances", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/"), Tenant: "system_beta"}, Prefix: "system/"}
 	if err := link.CreateSyncPipe(ctx, group, pipe); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func rgwSyncDiagnosticError(err error) string {
 	}
 }
 
-func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *ceph.RGWContainer, identity multicluster.RGWSyncBucketIdentity) {
+func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, identity rgw.SyncBucketIdentity) {
 	t.Helper()
 	attempt, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

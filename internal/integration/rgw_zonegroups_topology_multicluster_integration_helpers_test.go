@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -42,14 +42,14 @@ func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool
 		}
 		identities[status.FSID] = true
 	}
-	rgw := os.Getenv("CEPH_TEST_RGW_IMAGE")
-	if rgw == "" {
-		rgw = control
+	rgwGateway := os.Getenv("CEPH_TEST_RGW_IMAGE")
+	if rgwGateway == "" {
+		rgwGateway = control
 	}
-	return control, rgw, clusters
+	return control, rgwGateway, clusters
 }
 
-func rgwTopologyCleanup(t *testing.T, fixture *multicluster.RGWMultisite) {
+func rgwTopologyCleanup(t *testing.T, fixture *rgw.Multisite) {
 	t.Helper()
 	if fixture == nil {
 		return
@@ -76,7 +76,7 @@ func rgwTopologyCleanup(t *testing.T, fixture *multicluster.RGWMultisite) {
 	})
 }
 
-func rgwTopologyS3(t *testing.T, ctx context.Context, zone multicluster.RGWZone) s3HTTPClient {
+func rgwTopologyS3(t *testing.T, ctx context.Context, zone rgw.Zone) s3HTTPClient {
 	t.Helper()
 	endpoint, err := zone.Gateway.S3Endpoint(ctx)
 	if err != nil {
@@ -85,7 +85,7 @@ func rgwTopologyS3(t *testing.T, ctx context.Context, zone multicluster.RGWZone)
 	return s3HTTPClient{endpoint: endpoint, accessKey: zone.Gateway.AccessKey, secretKey: zone.Gateway.SecretKey, region: zone.Gateway.Region, http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multicluster.RGWMultisite) {
+func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *rgw.Multisite) {
 	t.Helper()
 	expected := fixture.Zonegroups()
 	for _, local := range fixture.Zones() {
@@ -146,10 +146,10 @@ func testRGWInitialZonegroupsTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	control, rgw, clusters := rgwTopologyClusters(t, ctx, 2, host)
-	fixture, err := multicluster.RunRGWTopology(ctx, rgw, multicluster.RGWTopologyConfig{ControlImage: control, MasterZonegroup: "us", Zonegroups: []multicluster.RGWZonegroupConfig{
-		{Name: "eu", MasterZone: "c", Zones: []multicluster.RGWZoneConfig{{Name: "c", Cluster: clusters[1]}}},
-		{Name: "us", MasterZone: "a", Zones: []multicluster.RGWZoneConfig{{Name: "a", Cluster: clusters[0]}}},
+	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, host)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{ControlImage: control, MasterZonegroup: "us", Zonegroups: []rgw.ZonegroupConfig{
+		{Name: "eu", MasterZone: "c", Zones: []rgw.ZoneConfig{{Name: "c", Cluster: clusters[1]}}},
+		{Name: "us", MasterZone: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}}},
 	}})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
@@ -172,13 +172,13 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	control, rgw, clusters := rgwTopologyClusters(t, ctx, 3, host)
-	fixture, err := multicluster.RunRGWTopology(ctx, rgw, multicluster.RGWTopologyConfig{ControlImage: control, Zonegroup: "us", MetadataMaster: "a", Zones: []multicluster.RGWZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
+	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 3, host)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{ControlImage: control, Zonegroup: "us", MetadataMaster: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := fixture.AddZonegroup(ctx, rgw, multicluster.RGWZonegroupConfig{Name: "eu", MasterZone: "c", Zones: []multicluster.RGWZoneConfig{{Name: "c", Cluster: clusters[2]}}})
+	group, err := fixture.AddZonegroup(ctx, rgwGateway, rgw.ZonegroupConfig{Name: "eu", MasterZone: "c", Zones: []rgw.ZoneConfig{{Name: "c", Cluster: clusters[2]}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,13 +254,13 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if err := fixture.RemoveZone(ctx, "b"); err != nil {
 		t.Fatalf("completed zone detach not idempotent: %v", err)
 	}
-	if len(fixture.Zones()) != 2 || len(clusters[1].Gateways()) != 0 {
+	if len(fixture.Zones()) != 2 || len(rgw.Gateways(clusters[1])) != 0 {
 		t.Fatal("leaving zone/gateway remained attached")
 	}
 	if _, err := fixture.ZoneAdmin(ctx, "b", "period", "get"); err == nil {
 		t.Fatal("detached CLI still accessible")
 	}
-	if _, err := fixture.AddZone(ctx, rgw, multicluster.RGWZoneConfig{Name: "b", Cluster: clusters[1]}); err == nil {
+	if _, err := fixture.AddZone(ctx, rgwGateway, rgw.ZoneConfig{Name: "b", Cluster: clusters[1]}); err == nil {
 		t.Fatal("detached storage adopted as fresh")
 	}
 	rgwAssertZonegroupPeriod(t, ctx, fixture)

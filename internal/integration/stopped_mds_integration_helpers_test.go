@@ -17,6 +17,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -69,11 +70,11 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	pool := func(name string) ceph.PoolConfig {
 		return ceph.PoolConfig{Name: name, PGNum: 8, Replicas: 2, MinSize: 1}
 	}
-	target, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "replacement-target", StandbyMDS: 1, MetadataPool: pool("replacement-meta"), DataPool: pool("replacement-data"), AdditionalDataPools: []ceph.PoolConfig{pool("replacement-extra")}})
+	target, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "replacement-target", StandbyMDS: 1, MetadataPool: pool("replacement-meta"), DataPool: pool("replacement-data"), AdditionalDataPools: []ceph.PoolConfig{pool("replacement-extra")}})
 	if err != nil || target == nil {
 		t.Fatal("ordinary target setup failed", err)
 	}
-	sibling, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "replacement-sibling", MetadataPool: pool("replacement-sibling-meta"), DataPool: pool("replacement-sibling-data")})
+	sibling, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "replacement-sibling", MetadataPool: pool("replacement-sibling-meta"), DataPool: pool("replacement-sibling-data")})
 	if err != nil || sibling == nil {
 		t.Fatal("ordinary sibling setup failed", err)
 	}
@@ -100,7 +101,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal("public observations differ from independent original FSMap")
 	}
 	identities := map[string]int64{}
-	for _, fs := range []*ceph.CephFSContainer{target, sibling} {
+	for _, fs := range []*cephfs.Filesystem{target, sibling} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
 			p, err := cluster.PoolStatus(ctx, name)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
@@ -286,7 +287,7 @@ func stoppedMDSGrace(t *testing.T, parent context.Context, o *noInitialOSDOracle
 	t.Logf("STOPPED_MDS_GRACE mon_cid=%s engine=%s seconds=3600", cid, o.engine)
 }
 
-func stoppedMDSExited(t *testing.T, parent context.Context, o *noInitialOSDOracle, mds *ceph.MDSContainer, original coldMDSTask) {
+func stoppedMDSExited(t *testing.T, parent context.Context, o *noInitialOSDOracle, mds *cephfs.MDS, original coldMDSTask) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
@@ -459,7 +460,7 @@ func stoppedMDSMap(t *testing.T, parent context.Context, cluster *ceph.Container
 
 // Reuse the existing bounded libcephfs reader with one independent path per
 // nonce. Later writes cannot overwrite the earlier takeover/sibling controls.
-func stoppedMDSBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid string, fs *ceph.CephFSContainer, nonce, phase, pool string) {
+func stoppedMDSBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid string, fs *cephfs.Filesystem, nonce, phase, pool string) {
 	t.Helper()
 	id, err := uuid.Parse(nonce)
 	if err != nil || id == uuid.Nil || id.String() != nonce {

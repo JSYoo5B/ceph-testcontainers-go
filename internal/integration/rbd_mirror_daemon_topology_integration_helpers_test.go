@@ -13,7 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -29,7 +29,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
 	imageName := source.ControlImage()
-	link, err := multicluster.RunRBDMirror(ctx, imageName, multicluster.RBDMirrorConfig{
+	link, err := rbd.RunMirror(ctx, imageName, rbd.MirrorConfig{
 		Source: source, Destination: destination, Pool: pool, DaemonCount: 2,
 	})
 	if link != nil {
@@ -91,13 +91,13 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	if err != nil || state.Running {
 		t.Fatalf("native leader container did not stop: state=%+v error=%v", state, err)
 	}
-	var survivor *multicluster.RBDMirrorDaemon
+	var survivor *rbd.MirrorDaemon
 	for _, daemon := range daemons {
 		if daemon != leader {
 			survivor = daemon
 		}
 	}
-	if elected := rbdDaemonWaitElection(t, ctx, pool, []*multicluster.RBDMirrorDaemon{survivor}); elected != survivor {
+	if elected := rbdDaemonWaitElection(t, ctx, pool, []*rbd.MirrorDaemon{survivor}); elected != survivor {
 		t.Fatal("surviving daemon did not become native pool leader")
 	}
 	after := bytes.Clone(before)
@@ -171,7 +171,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	if err != nil {
 		t.Fatal(err)
 	}
-	rbdDaemonWaitElection(t, ctx, pool, []*multicluster.RBDMirrorDaemon{resumed})
+	rbdDaemonWaitElection(t, ctx, pool, []*rbd.MirrorDaemon{resumed})
 	rbdFanoutWaitBytes(t, ctx, destinationClient, destinationFSID, pool, name, final)
 	rbdFanoutRead(t, ctx, destinationClient, destinationFSID, pool, newName, newBytes)
 	rbdDaemonImageIdentity(t, ctx, sourceClient, destinationClient, image, globalID)
@@ -189,16 +189,16 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	t.Log("RBD daemon topology: native 2-member/one-leader pool election, leader stop/restart, leader removal/replacement, new image delivery, zero-daemon pause/resume, unchanged peers/global image identity, exact 8 MiB replicas and runtime-only cleanup verified")
 }
 
-func rbdDaemonWaitElection(t *testing.T, parent context.Context, pool string, daemons []*multicluster.RBDMirrorDaemon) *multicluster.RBDMirrorDaemon {
+func rbdDaemonWaitElection(t *testing.T, parent context.Context, pool string, daemons []*rbd.MirrorDaemon) *rbd.MirrorDaemon {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
 	var last string
 	for {
 		valid := true
-		var leader *multicluster.RBDMirrorDaemon
-		var leaderStatus multicluster.RBDMirrorPoolReplayerStatus
-		statuses := make([]multicluster.RBDMirrorPoolReplayerStatus, 0, len(daemons))
+		var leader *rbd.MirrorDaemon
+		var leaderStatus rbd.MirrorPoolReplayerStatus
+		statuses := make([]rbd.MirrorPoolReplayerStatus, 0, len(daemons))
 		instanceIDs := make([]string, 0, len(daemons))
 		for _, daemon := range daemons {
 			attempt, stop := context.WithTimeout(ctx, 15*time.Second)
@@ -248,7 +248,7 @@ func rbdDaemonWaitElection(t *testing.T, parent context.Context, pool string, da
 	}
 }
 
-func rbdDaemonPoolIdentity(t *testing.T, ctx context.Context, link *multicluster.RBDMirror, pool string) string {
+func rbdDaemonPoolIdentity(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) string {
 	t.Helper()
 	data, err := link.DestinationRBD(ctx, "mirror", "pool", "info", pool, "--format", "json")
 	if err != nil {

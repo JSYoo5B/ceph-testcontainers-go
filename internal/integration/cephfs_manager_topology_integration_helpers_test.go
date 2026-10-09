@@ -8,7 +8,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -58,11 +58,11 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err != nil || !status.Available || status.ActiveName != "b" || len(status.Standbys) != 1 {
 		t.Fatalf("source surviving manager topology: %+v error=%v", status, err)
 	}
-	sourceFS, err := source.StartCephFS(ctx)
+	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationFS, err := destination.StartCephFS(ctx)
+	destinationFS, err := cephfs.Start(ctx, destination, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
 	image := source.ControlImage()
-	mirror, err := multicluster.RunCephFSMirror(ctx, image, multicluster.CephFSMirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, image, cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},

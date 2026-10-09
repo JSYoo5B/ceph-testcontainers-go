@@ -10,6 +10,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -26,11 +28,11 @@ func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomiz
 	}
 	control := imageFromEnv("CEPH_TEST_IMAGE", ceph.DefaultImage)
 	osd := imageFromEnv("CEPH_TEST_OSD_IMAGE", control)
-	rgw := imageFromEnv("CEPH_TEST_RGW_IMAGE", control)
+	rgwGateway := imageFromEnv("CEPH_TEST_RGW_IMAGE", control)
 	mds := imageFromEnv("CEPH_TEST_MDS_IMAGE", control)
-	t.Logf("images: control/client=%s OSD=%s RGW=%s MDS=%s", control, osd, rgw, mds)
+	t.Logf("images: control/client=%s OSD=%s RGW=%s MDS=%s", control, osd, rgwGateway, mds)
 	return control, []testcontainers.ContainerCustomizer{
-		ceph.WithOSDImage(osd), ceph.WithRGWImage(rgw), ceph.WithMDSImage(mds),
+		ceph.WithOSDImage(osd), rgw.WithImage(rgwGateway), cephfs.WithMDSImage(mds),
 	}
 }
 
@@ -46,7 +48,16 @@ func newServiceCluster(t *testing.T, customizers ...testcontainers.ContainerCust
 // This variant keeps the caller's initial topology, including zero OSDs.
 func newServiceClusterWithOptions(t *testing.T, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
-	cluster, err := ceph.Run(t.Context(), image, opts...)
+	return newServiceClusterRun(t, ceph.Run, image, opts...)
+}
+
+// clusterRun is ceph.Run or a service package's Run.
+type clusterRun func(context.Context, string, ...testcontainers.ContainerCustomizer) (*ceph.Container, error)
+
+// newServiceClusterRun starts a cluster with run and attaches a client.
+func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
+	t.Helper()
+	cluster, err := run(t.Context(), image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

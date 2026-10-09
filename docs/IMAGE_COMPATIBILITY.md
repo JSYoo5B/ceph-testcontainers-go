@@ -10,15 +10,15 @@
 |---|---|---|
 | `control` | `ceph.Run(ctx, image, ...)` | 별도 MON/MGR, 필요 시 CLI container, Python client/probe와 관리 CLI; librbd 암호화·libcryptsetup·`cryptsetup`, `rados --striper`·libradosstriper |
 | `osd` | `ceph.WithOSDImage(image)` | OSD마다 sparse BlueStore 파일과 daemon; `hello`·`lock`을 포함한 object class와 runtime dependencies; ID·키는 control에서 준비 |
-| `rgw` | `ceph.WithRGWImage(image)` 또는 `multicluster.RunRGWMultisite/RunRGWTopology`의 image | gateway, `radosgw-admin`, listener 소유권 확인용 `readlink`; HTTP/TLS readiness는 control에서 실행 |
-| `mds` | `ceph.WithMDSImage(image)` | active/standby/replay MDS; filesystem 구성과 Python I/O는 control에서 실행 |
+| `rgw` | `rgw.WithImage(image)` 또는 `rgw.RunMultisite/RunRGWTopology`의 image | gateway, `radosgw-admin`, listener 소유권 확인용 `readlink`; HTTP/TLS readiness는 control에서 실행 |
+| `mds` | `cephfs.WithMDSImage(image)` | active/standby/replay MDS; filesystem 구성과 Python I/O는 control에서 실행 |
 | `all` | `Run`과 역할 override에 같은 image 사용 | 네 역할의 합집합; 하나의 컨테이너에 모든 daemon을 실행한다는 의미는 아님 |
 
 override를 생략하면 `Run`에 전달한 이미지로 해당 역할을 실행합니다. 따라서 `control` 전용 이미지를 사용할 때는 최소한 OSD 이미지를 지정하고, RGW/CephFS를 시작할 때는 각각 RGW/MDS 이미지도 지정합니다. 조합하는 이미지는 같은 Ceph release와 지원 platform이어야 합니다.
 
-Mirror 도구와 daemon은 항상 `control` 계약에 포함됩니다. 이전 `base`/`multicluster` 단계 구분은 사용하지 않습니다. `RunRBDMirror`와 `RunCephFSMirror`에는 `control` 또는 `all` 이미지를 전달합니다. 통합 테스트는 source 클러스터의 `ControlImage()`를 전달하며 mirror 전용 이미지 환경 변수를 두지 않습니다. RBD는 전달한 이미지로 양쪽 setup client와 destination의 mirror daemon을 별도 컨테이너로 실행합니다. CephFS는 각 클러스터의 `Ceph` CLI로 설정하고 전달한 이미지로 source의 mirror daemon을 별도 컨테이너로 실행합니다.
+Mirror 도구와 daemon은 항상 `control` 계약에 포함됩니다. 이전 `base`/`multicluster` 단계 구분은 사용하지 않습니다. `rbd.RunMirror`와 `cephfs.RunMirror`에는 `control` 또는 `all` 이미지를 전달합니다. 통합 테스트는 source 클러스터의 `ControlImage()`를 전달하며 mirror 전용 이미지 환경 변수를 두지 않습니다. RBD는 전달한 이미지로 양쪽 setup client와 destination의 mirror daemon을 별도 컨테이너로 실행합니다. CephFS는 각 클러스터의 `Ceph` CLI로 설정하고 전달한 이미지로 source의 mirror daemon을 별도 컨테이너로 실행합니다.
 
-RGW multisite/topology의 image 인자는 gateway 역할만 선택합니다. 설정 client는 기본적으로 **각 zone의 클러스터가 가진 `ControlImage()`**를 사용합니다. `RGWMultisiteConfig.ControlImage`나 `RGWTopologyConfig.ControlImage`를 지정하면 모든 설정 client가 그 공용 control/all 이미지를 사용합니다. 이후 `AddZone`/`AddZonegroup`에도 같은 규칙을 적용합니다. RGW 이미지에 Python이나 `ceph` CLI를 요구하지 않습니다.
+RGW multisite/topology의 image 인자는 gateway 역할만 선택합니다. 설정 client는 기본적으로 **각 zone의 클러스터가 가진 `ControlImage()`**를 사용합니다. `rgw.MultisiteConfig.ControlImage`나 `rgw.TopologyConfig.ControlImage`를 지정하면 모든 설정 client가 그 공용 control/all 이미지를 사용합니다. 이후 `AddZone`/`AddZonegroup`에도 같은 규칙을 적용합니다. RGW 이미지에 Python이나 `ceph` CLI를 요구하지 않습니다.
 
 공통 writable 경로는 `/var/run/ceph`를 포함한 이미지 계약을 따릅니다. CephFS mirror의 admin socket도 이 경로에 생성·조회합니다. 이미지에서 `/run/ceph`를 별도로 제공할 필요는 없습니다. Native 명령의 시간 제한은 control의 Python subprocess로 적용하며 외부 `timeout` executable을 요구하지 않습니다.
 

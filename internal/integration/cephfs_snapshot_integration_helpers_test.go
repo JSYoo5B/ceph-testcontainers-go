@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -17,22 +18,22 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const filesystem, extraPool = "snapshots", "snapshots-additional"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithCephFS(ceph.CephFSConfig{Name: filesystem,
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: filesystem,
 		AdditionalDataPools: []ceph.PoolConfig{{Name: extraPool}},
 	})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, options...)
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: "restores"})
+	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "restores"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
+	source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "source", SizeBytes: 8 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	}
 	noWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	delay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "30")
-	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "restored", GroupName: group.Name})
+	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "restored", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 		t.Fatalf("native clone did not stay pending during delay: %+v error=%v", status, err)
 	}
 	snapshotInfo, err = fs.SubvolumeSnapshotInfo(ctx, source.Name, source.GroupName, snapshot.Name)
-	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, ceph.CephFSSnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
+	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, cephfs.SnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
 		latest, statusErr := fs.SubvolumeCloneStatus(ctx, clone)
 		t.Logf("latest clone status after missing source protection: %+v error=%v", latest, statusErr)
 		t.Fatalf("source snapshot did not track pending clone: %+v error=%v", snapshotInfo, err)
@@ -105,7 +106,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 		t.Fatal("delayed clone was adopted or wait ignored caller deadline")
 	}
 	waitCancel()
-	if duplicate, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: clone.Name, GroupName: clone.GroupName}); err == nil || duplicate != nil {
+	if duplicate, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: clone.Name, GroupName: clone.GroupName}); err == nil || duplicate != nil {
 		t.Fatal("duplicate target accepted")
 	}
 	if err := delay.Restore(ctx); err != nil {
@@ -127,7 +128,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 
 	// A pool override selects a different filesystem data pool and native Ceph
 	// intentionally clears the inherited pool namespace for the new copy.
-	other, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "other-pool", DataPool: extraPool})
+	other, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "other-pool", DataPool: extraPool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +154,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	}
 	cephFSSnapshotIO(t, ctx, client, filesystem, source.Path, restored.Path, "verify-source", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
 	cephFSSnapshotIO(t, ctx, client, filesystem, otherVolume.Path, source.Path, "verify-clone", extraPool, "", 8<<20)
-	for _, volume := range []*ceph.CephFSSubvolume{restored, otherVolume, source} {
+	for _, volume := range []*cephfs.Subvolume{restored, otherVolume, source} {
 		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
 			t.Fatal(err)
 		}

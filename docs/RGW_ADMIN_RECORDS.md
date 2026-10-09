@@ -1,6 +1,6 @@
 # Usage log와 bucket rate-limit fixture
 
-Usage logging은 기본적으로 꺼져 있으므로 consumer가 usage CRUD를 구현해도 server 준비가 필요합니다. Bucket rate-limit은 quota와 다른 server 조건입니다. 기존 `Run` → `TemporaryConfig` → `StartRGWWithConfig` → `CreateUser` → `UserInfo`/`Admin`을 조합하며, protocol CRUD wrapper나 go-ceph 의존성을 추가하지 않습니다. 실행 가능한 recipe는 [TestRGWAdminRecordsAndRateLimit](../internal/integration/rgw_admin_records_integration_test.go)이며 bridge/host를 각각 실행합니다.
+Usage logging은 기본적으로 꺼져 있으므로 consumer가 usage CRUD를 구현해도 server 준비가 필요합니다. Bucket rate-limit은 quota와 다른 server 조건입니다. 기존 `Run` → `TemporaryConfig` → `rgw.Start` → `CreateUser` → `UserInfo`/`Admin`을 조합하며, protocol CRUD wrapper나 go-ceph 의존성을 추가하지 않습니다. 실행 가능한 recipe는 [TestRGWAdminRecordsAndRateLimit](../internal/integration/rgw_admin_records_integration_test.go)이며 bridge/host를 각각 실행합니다.
 
 Ceph 20.2.4 slim control/OSD/RGW image로 실제 Docker 검증을 통과했습니다. Bridge 51.70초·host 51.41초, 전체 103.11초 동안 실제 producer usage bytes/counters, read/write capability 거부, scoped UID trim과 다른 principal 보존, bucket별 `503 SlowDown`, 원래 policy 복원과 bytes 회복 및 owned cleanup을 확인했습니다. [Native 실행 기록](../artifacts/rgw-sync-admin-protocol-rbd-final.log), [G11 완료 기준](CLIENT_FIXTURE_COVERAGE.md). 이 결과는 아래 single-gateway 범위의 증거입니다.
 
@@ -25,7 +25,7 @@ for _, setting := range settings {
     }
     if err != nil { t.Fatal(err) }
 }
-gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{SkipUserCreation: true})
+gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 if err != nil { t.Fatal(err) }
 ```
 
@@ -36,7 +36,7 @@ if err != nil { t.Fatal(err) }
 Consumer의 HTTP AdminOps는 S3 SigV4 credential을 사용합니다. Public fixture는 key identity를 캡처한 fresh ordinary user를 만들며, global `admin`이나 multisite `system` flag를 켜지 않습니다.
 
 ```go
-operator, err := gateway.CreateUser(ctx, ceph.RGWUserConfig{
+operator, err := gateway.CreateUser(ctx, rgw.UserConfig{
     ID: "fresh-usage-operator", AdminCaps: "usage=read;ratelimit=read",
 })
 ```

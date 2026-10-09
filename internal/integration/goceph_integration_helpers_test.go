@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -88,7 +89,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage string) {
 		cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
 		cephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")
 		cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rbd")
-		filesystem, err := cluster.StartCephFS(ctx)
+		filesystem, err := cephfs.Start(ctx, cluster, cephfs.Config{})
 		if err != nil {
 			t.Fatal(err)
 		}

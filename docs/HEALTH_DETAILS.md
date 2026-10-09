@@ -6,8 +6,8 @@
 MGR·OSD·pool이 아직 없는 MON-only 단계에서도 조회할 수 있다.
 MON에 연결 가능한 상태와 확인된 원래 bootstrap 설정은 필요하다.
 
-구현은 [health_details.go](../ceph/health_details.go), result와 경계 검사는
-[health_details_test.go](../ceph/health_details_test.go)에 있다. 공식 role 이미지의
+구현은 [health_details.go](../internal/cluster/health_details.go), result와 경계 검사는
+[health_details_test.go](../internal/cluster/health_details_test.go)에 있다. 공식 role 이미지의
 Linux ARM64 focused native 실행은 통과했다. 새 source 전체 CI와 다른
 image/platform의 확인은 별도 범위이며, 과거 raw CLI 결과를 새 API의 성공으로 합산하지 않는다.
 

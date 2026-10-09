@@ -9,7 +9,7 @@ partial startups remain owned for whole-cluster cleanup.
 
 The method does not stop a worker, fail a native GID, delete credentials, or
 change desired active/standby capacity. Docker CID ownership and a native
-name/GID observation are separate authorities. `MDSStatus` reports native
+name/GID observation are separate authorities. `cephfs.MDSStatus` reports native
 name-based ownership; this operation does not establish CID-to-GID process
 attribution. A caller may wait for native expiry or explicitly fail an observed
 native GID from the control container before invoking it.

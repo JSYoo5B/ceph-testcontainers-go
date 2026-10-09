@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 // Bucket metadata still replicates globally, but this policy enables object
@@ -21,14 +21,14 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 14*time.Minute)
 	defer cancel()
 	link, sourceS3, destinationS3 := newRGWScenario(t, ctx, "tc-selective-policy")
-	permission, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{}, multicluster.RGWSyncGroupConfig{ID: "selective", Status: multicluster.RGWSyncAllowed})
+	permission, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "selective", Status: rgw.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, permission, multicluster.RGWSyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, permission, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, permission, multicluster.RGWSyncPipeConfig{ID: "bucket-allowance", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, permission, rgw.SyncPipeConfig{ID: "bucket-allowance", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	// Publish only this owned policy and reload both gateways before writes,
@@ -49,11 +49,11 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	const selected, localOnly = "/tc-policy-selected", "/tc-policy-local-only"
 	sourceS3.request(t, ctx, http.MethodPut, selected, nil, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, localOnly, nil, http.StatusOK)
-	bucket, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(selected, "/")}, multicluster.RGWSyncGroupConfig{ID: "selected-prefix", Status: multicluster.RGWSyncEnabled})
+	bucket, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(selected, "/")}, rgw.SyncGroupConfig{ID: "selected-prefix", Status: rgw.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, bucket, multicluster.RGWSyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+	if err := link.CreateSyncPipe(ctx, bucket, rgw.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, bucket); err != nil {

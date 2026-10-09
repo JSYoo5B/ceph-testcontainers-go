@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -40,38 +41,38 @@ func TestRBDNamespaces(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := cluster.InitRBDPool(ctx, pool); err != nil {
+				if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 					t.Fatal(err)
 				}
 			}
-			blue, err := cluster.CreateRBDNamespace(ctx, pool, "blue")
+			blue, err := rbd.CreateNamespace(ctx, cluster, pool, "blue")
 			if err != nil {
 				t.Fatal(err)
 			}
-			red, err := cluster.CreateRBDNamespace(ctx, pool, "red")
+			red, err := rbd.CreateNamespace(ctx, cluster, pool, "red")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if blue.Name() != "blue" || blue.PoolName() != pool {
 				t.Fatal("namespace descriptor lost its native names")
 			}
-			if _, err := cluster.CreateRBDNamespace(ctx, pool, "blue"); err == nil {
+			if _, err := rbd.CreateNamespace(ctx, cluster, pool, "blue"); err == nil {
 				t.Fatal("duplicate namespace creation was accepted")
 			}
 			execCommand(t, ctx, admin, "rbd", "namespace", "create", "--pool", pool, "--namespace", "foreign")
-			if _, err := cluster.CreateRBDNamespace(ctx, pool, "foreign"); err == nil {
+			if _, err := rbd.CreateNamespace(ctx, cluster, pool, "foreign"); err == nil {
 				t.Fatal("existing foreign namespace creation was accepted")
 			}
 			assertNamespaces := func(expected ...string) {
 				t.Helper()
-				names, err := cluster.ListRBDNamespaces(ctx, pool)
+				names, err := rbd.ListNamespaces(ctx, cluster, pool)
 				if err != nil || !slices.Equal(names, expected) {
 					t.Fatalf("native namespaces=%v expected=%v error=%v", names, expected, err)
 				}
 			}
 			assertNamespaces("blue", "foreign", "red")
 			execCommand(t, ctx, admin, "python3", "-c", rbdNamespaceAdminProbe, pool, "seed")
-			if err := cluster.RemoveRBDNamespace(ctx, blue); err == nil {
+			if err := rbd.RemoveNamespace(ctx, cluster, blue); err == nil {
 				t.Fatal("nonempty namespace removal was accepted")
 			}
 			assertNamespaces("blue", "foreign", "red")
@@ -158,7 +159,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			// A namespace remains nonempty when its image is moved to trash.
 			// Fixture removal must retain that recoverable data too.
 			execCommand(t, ctx, admin, "rbd", "trash", "move", "--pool", pool, "--namespace", "blue", "shared")
-			if err := cluster.RemoveRBDNamespace(ctx, blue); err == nil {
+			if err := rbd.RemoveNamespace(ctx, cluster, blue); err == nil {
 				t.Fatal("namespace containing an image in trash was removed")
 			}
 			var trash []struct {
@@ -170,11 +171,11 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			}
 			execCommand(t, ctx, admin, "rbd", "trash", "restore", "--pool", pool, "--namespace", "blue", trash[0].ID)
 			execCommand(t, ctx, admin, "python3", "-c", rbdNamespaceAdminProbe, pool, "verify-and-remove")
-			for _, ns := range []*ceph.RBDNamespace{blue, red} {
-				if err := cluster.RemoveRBDNamespace(ctx, ns); err != nil {
+			for _, ns := range []*rbd.Namespace{blue, red} {
+				if err := rbd.RemoveNamespace(ctx, cluster, ns); err != nil {
 					t.Fatal(err)
 				}
-				if err := cluster.RemoveRBDNamespace(ctx, ns); err != nil {
+				if err := rbd.RemoveNamespace(ctx, cluster, ns); err != nil {
 					t.Fatalf("namespace removal retry failed: %v", err)
 				}
 			}

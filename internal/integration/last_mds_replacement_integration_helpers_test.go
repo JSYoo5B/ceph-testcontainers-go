@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -65,11 +66,11 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 		return ceph.PoolConfig{Name: name, PGNum: 8, Replicas: 2, MinSize: 1}
 	}
 	var customizers atomic.Int32
-	target, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "last-target", MetadataPool: pool("last-meta"), DataPool: pool("last-data"), AdditionalDataPools: []ceph.PoolConfig{pool("last-extra")}}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	target, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "last-target", MetadataPool: pool("last-meta"), DataPool: pool("last-data"), AdditionalDataPools: []ceph.PoolConfig{pool("last-extra")}}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if err != nil || target == nil {
 		t.Fatal("ordinary sole-MDS target setup failed", err)
 	}
-	sibling, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "last-sibling", MetadataPool: pool("last-sibling-meta"), DataPool: pool("last-sibling-data")})
+	sibling, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "last-sibling", MetadataPool: pool("last-sibling-meta"), DataPool: pool("last-sibling-data")})
 	if err != nil || sibling == nil {
 		t.Fatal("ordinary sibling setup failed", err)
 	}
@@ -85,7 +86,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	before := lastMDSMap(t, ctx, cluster, "initial", target.FilesystemName, old.ID, sibling.FilesystemName, siblingMembers[0].ID, false)
 	originalGID := before.target.active.gid
 	identities := map[string]int64{}
-	for _, fs := range []*ceph.CephFSContainer{target, sibling} {
+	for _, fs := range []*cephfs.Filesystem{target, sibling} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
 			p, err := cluster.PoolStatus(ctx, name)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
@@ -360,7 +361,7 @@ func lastMDSMap(t *testing.T, parent context.Context, cluster *ceph.Container, p
 
 // Only one exact positively exited original CID is admitted; every other new
 // session resource must be normally running. Existing all-live readers stay intact.
-func lastMDSRetainedResources(t *testing.T, parent context.Context, o *noInitialOSDOracle, cluster *ceph.Container, client testcontainers.Container, phase string, old *ceph.MDSContainer, task coldMDSTask) {
+func lastMDSRetainedResources(t *testing.T, parent context.Context, o *noInitialOSDOracle, cluster *ceph.Container, client testcontainers.Container, phase string, old *cephfs.MDS, task coldMDSTask) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -382,7 +383,7 @@ func lastMDSRetainedResources(t *testing.T, parent context.Context, o *noInitial
 	for _, osd := range cluster.OSDs() {
 		add(osd.Container, "osd")
 	}
-	for _, fs := range cluster.Filesystems() {
+	for _, fs := range cephfs.Filesystems(cluster) {
 		for _, mds := range fs.MDSs() {
 			add(mds.Container, "mds")
 		}

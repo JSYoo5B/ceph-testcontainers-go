@@ -29,6 +29,25 @@ def retained_declaration_layout(source):
     return source.replace(before + "\n" + after, before + after, 1)
 
 
+PACKAGE_SPLIT = FIXTURE.with_name("package-split.json")
+
+
+def package_split(source):
+    """Rewrite a retained producer to the current public package names.
+    The retained producers were recorded before the ceph/multicluster API moved
+    to ceph, cephfs, rgw and rbd. Apply only the recorded qualified identifier
+    and former Container method rewrites, then gofmt the whole file so that
+    column alignment matches; every other byte remains significant.
+    """
+    split = json.loads(PACKAGE_SPLIT.read_text())
+    for old, new in sorted(split["identifiers"].items(), key=lambda item: -len(item[0])):
+        source = re.sub(r"(?<![\w.])" + re.escape(old) + r"\b", new, source)
+    for pattern, replacement in split["calls"]:
+        source = re.sub(pattern, replacement, source)
+    formatted = subprocess.run(["gofmt"], input=source, capture_output=True, text=True, check=True)
+    return formatted.stdout
+
+
 def producer_parent(source, parent):
     # These retained producer parents contain only their nested t.Run loops;
     # gofmt keeps the sole function-closing brace at column zero.
@@ -105,7 +124,7 @@ class QuiescenceCoverageTests(unittest.TestCase):
         self.assertEqual(passes[2], checker.PARENT + "/bridge/peer")
 
     def test_split_producer_parent_and_shared_assertions_preserve_original_declarations(self):
-        retained = SOURCE_FIXTURE.read_text()
+        retained = package_split(SOURCE_FIXTURE.read_text())
         root = Path(__file__).resolve().parents[2] / "internal/integration"
         current_parent = (root / "cephfs_process_quiescence_integration_test.go").read_text()
         current_helpers = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
@@ -114,6 +133,22 @@ class QuiescenceCoverageTests(unittest.TestCase):
         helper = "testCephFSOriginalProcessQuiescence"
         self.assertEqual(retained_declaration_layout(producer_helpers(retained, helper)),
                          retained_declaration_layout(producer_helpers(current_helpers, helper)))
+
+    def test_package_split_rewrites_only_recorded_api_names(self):
+        source = ("package p\n\nfunc f() {\n\tfs, err := source.StartCephFS(ctx)\n"
+                  "\tvar s multicluster.CephFSMirrorSnapshot\n}\n")
+        rewritten = package_split(source)
+        self.assertIn("cephfs.Start(ctx, source, cephfs.Config{})", rewritten)
+        self.assertIn("var s cephfs.MirrorSnapshot", rewritten)
+        # Unrelated bytes, including an unchanged statement, stay significant.
+        retained = package_split(SOURCE_FIXTURE.read_text())
+        root = Path(__file__).resolve().parents[2] / "internal/integration"
+        current = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
+        helper = "testCephFSOriginalProcessQuiescence"
+        mutated = current.replace("cephfs.Start(ctx, source, cephfs.Config{})", "cephfs.Start(ctx, destination, cephfs.Config{})", 1)
+        self.assertNotEqual(mutated, current)
+        self.assertNotEqual(retained_declaration_layout(producer_helpers(retained, helper)),
+                            retained_declaration_layout(producer_helpers(mutated, helper)))
 
     def test_declaration_binding_retains_newlines_literals_operators_and_assertions(self):
         source = 'func fixture() { value++; require(value == 2, "a b"); raw := `a\n b` }'

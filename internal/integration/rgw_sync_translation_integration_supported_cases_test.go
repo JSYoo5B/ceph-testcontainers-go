@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 )
 
 func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
@@ -32,12 +31,12 @@ func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
 			a.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
 		}
 		b.request(t, ctx, http.MethodPut, output, body, http.StatusOK)
-		selected, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multicluster.RGWSyncGroupConfig{ID: "tags-owner-class", Status: multicluster.RGWSyncEnabled})
+		selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "tags-owner-class", Status: rgw.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "tag-ia")
-		pipe := multicluster.RGWSyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multicluster.RGWSyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*ceph.RGWPlacement{"destination": secondaryPlacement}}
+		pipe := rgw.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []rgw.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
 		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 			t.Fatal(err)
 		}
@@ -91,11 +90,11 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 	t.Run("tenant_system_user_isolation", func(t *testing.T) {
 		// Reuse this realm to exercise canonical tenant UIDs and bucket selectors.
 		// Identical local UID/bucket names must not broaden the selected namespace.
-		var tenantUsers [2]*ceph.RGWUser
+		var tenantUsers [2]*rgw.User
 		var tenantSources, tenantDestinations [2]s3HTTPClient
 		var err error
 		for i, tenant := range []string{"tenant_sync_alpha", "tenant_sync_beta"} {
-			tenantUsers[i], err = link.Source.CreateUser(ctx, ceph.RGWUserConfig{ID: "tc-sync-tenant-user", Tenant: tenant})
+			tenantUsers[i], err = link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-sync-tenant-user", Tenant: tenant})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -108,12 +107,12 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 				tenantSources[i].request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 			}
 		}
-		tenantGroup, err := link.CreateSyncGroup(ctx, multicluster.RGWSyncPolicyScope{Bucket: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, multicluster.RGWSyncGroupConfig{ID: "tenant-selected", Status: multicluster.RGWSyncEnabled})
+		tenantGroup, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, rgw.SyncGroupConfig{ID: "tenant-selected", Status: rgw.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, tenantGroup, "tenant-system", "tenant-user")
-		tenantPipe := multicluster.RGWSyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multicluster.RGWSyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &multicluster.RGWSyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
+		tenantPipe := rgw.SyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &rgw.SyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
 		if err := link.CreateSyncPipe(ctx, tenantGroup, tenantPipe); err != nil {
 			t.Fatal(err)
 		}

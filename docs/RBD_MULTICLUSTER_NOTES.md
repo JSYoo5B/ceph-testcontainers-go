@@ -4,7 +4,7 @@
 
 ## 전체 및 증분 backup
 
-`TestMultiClusterRBDBackup`은 모든 byte가 0이 아닌 8 MiB image를 만들고 `baseline` snapshot을 저장합니다. `rbd export --export-format 2`로 image와 snapshot·image metadata를 함께 보관한 뒤, 1 MiB object 하나를 바꾸고 `next` snapshot까지의 `rbd export-diff --from-snap baseline`을 만듭니다. `multicluster.ExportRBDBackup`·`ExportRBDIncremental`로 archive를 보관하고, source 정지 후 `RestoreRBDBackup`·`RestoreRBDIncremental`로 destination에 전달하고 복원합니다. 임시 archive는 helper가 정리하며, 보관처와 클라이언트는 호출자가 소유합니다.
+`TestMultiClusterRBDBackup`은 모든 byte가 0이 아닌 8 MiB image를 만들고 `baseline` snapshot을 저장합니다. `rbd export --export-format 2`로 image와 snapshot·image metadata를 함께 보관한 뒤, 1 MiB object 하나를 바꾸고 `next` snapshot까지의 `rbd export-diff --from-snap baseline`을 만듭니다. `rbd.ExportBackup`·`rbd.ExportIncremental`로 archive를 보관하고, source 정지 후 `rbd.RestoreBackup`·`rbd.RestoreIncremental`로 destination에 전달하고 복원합니다. 임시 archive는 helper가 정리하며, 보관처와 클라이언트는 호출자가 소유합니다.
 
 source MON/OSD를 멈춘 상태에서 destination에 전체 archive를 import하고, baseline을 바탕으로 증분 archive를 적용합니다. image head와 두 snapshot의 전체 8 MiB를 원본 fixture와 비교하고 metadata도 확인합니다. baseline이 없는 다른 image에는 증분 복구가 실패해야 합니다. 복구한 image를 다시 수정해도 과거 snapshot의 내용은 그대로 남아야 합니다.
 
@@ -28,11 +28,11 @@ source를 demote한 뒤 destination을 강제 옵션 없이 promote합니다. mi
 - `TestMultiClusterRBDSplitBrainResync`: 일회성 image를 일부러 양쪽 primary로 만들고 서로 다른 데이터와 snapshot을 생성합니다. Ceph의 `up+error / split-brain`을 확인한 뒤 A를 기준으로 B를 demote·resync합니다. B의 상충된 변경과 snapshot은 폐기되고, 이후 새 checkpoint가 다시 복제돼야 합니다.
 - `TestMultiClusterRBDPeerLifecycle`: destination peer를 제거하고 daemon을 실행해도 새 checkpoint가 도착하지 않는지 제한된 시간 동안 읽습니다. 새 UUID로 peer를 재등록하고 명시적으로 resync한 뒤 후속 checkpoint를 검증합니다.
 
-Ceph 20.2.4의 bootstrap import는 기존 peer를 재사용할 때 direction과 client 이름을 모두 채우지는 않습니다. `RunRBDMirror`/`Rebootstrap`은 token의 source FSID와 client ID 및 실제 pool mirror UUID로 해당 peer를 확인하고, 인증 client를 갱신한 뒤 기존 tx-only peer를 rx-tx로 확장합니다. Native bootstrap이 monitor 주소와 key를 설정하며 secret을 로그에 출력하지 않습니다. 이 구성은 자동 failover나 상충된 데이터의 merge를 제공하지 않습니다. 실제 결과는 [PoC 보고서](MULTICLUSTER_POC.md)를 확인합니다.
+Ceph 20.2.4의 bootstrap import는 기존 peer를 재사용할 때 direction과 client 이름을 모두 채우지는 않습니다. `rbd.RunMirror`/`Rebootstrap`은 token의 source FSID와 client ID 및 실제 pool mirror UUID로 해당 peer를 확인하고, 인증 client를 갱신한 뒤 기존 tx-only peer를 rx-tx로 확장합니다. Native bootstrap이 monitor 주소와 key를 설정하며 secret을 로그에 출력하지 않습니다. 이 구성은 자동 failover나 상충된 데이터의 merge를 제공하지 않습니다. 실제 결과는 [PoC 보고서](MULTICLUSTER_POC.md)를 확인합니다.
 
 ## 실행
 
-고정 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 `control`과 `all`은 `rbd-mirror`를 포함해야 합니다. Native mirror test는 `multicluster.RunRBDMirror`로 bootstrap/auth/client/daemon을 구성하며 source 클러스터의 `ControlImage()`를 사용합니다. 모든 역할의 Ceph 버전·architecture를 맞춥니다. 복제 연결의 수명은 클러스터와 분리합니다. [API 계약](MULTICLUSTER_API.md)을 확인합니다.
+고정 [이미지 요구사항](../../ceph-testcontainers-images/docs/IMAGE_REQUIREMENTS.md)에 따라 `control`과 `all`은 `rbd-mirror`를 포함해야 합니다. Native mirror test는 `rbd.RunMirror`로 bootstrap/auth/client/daemon을 구성하며 source 클러스터의 `ControlImage()`를 사용합니다. 모든 역할의 Ceph 버전·architecture를 맞춥니다. 복제 연결의 수명은 클러스터와 분리합니다. [API 계약](MULTICLUSTER_API.md)을 확인합니다.
 
 ```sh
 CGO_ENABLED=0 \

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -55,7 +56,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			gateway, err := cluster.StartRGWWithConfig(ctx, ceph.RGWConfig{SkipUserCreation: true})
+			gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,9 +64,9 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var users []*ceph.RGWUser
+			var users []*rgw.User
 			var clients []s3HTTPClient
-			for _, config := range []ceph.RGWUserConfig{
+			for _, config := range []rgw.UserConfig{
 				{ID: "tc-records-a"}, {ID: "tc-records-b"},
 				{ID: "tc-records-operator", AdminCaps: "usage=read;ratelimit=read"},
 				{ID: "tc-records-no-caps"},

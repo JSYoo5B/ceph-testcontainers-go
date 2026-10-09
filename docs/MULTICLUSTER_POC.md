@@ -21,11 +21,11 @@ quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb
 
 Source outage 단계에서는 source MON/OSD와 해당 케이스의 RGW/MDS를 정지합니다. MGR과 네트워크는 cleanup까지 남아 있지만 source data daemon은 데이터를 제공할 수 없습니다. Destination의 새 CLI/libcephfs session으로 전체 payload를 다시 읽어 검증합니다. 종료 시 mirror·client와 추가 네트워크 연결을 먼저 정리하고 각 클러스터를 제거합니다.
 
-`ManagerContainer()`는 초기 MGR의 호환 accessor이며 현재 후보와 active 상태는 `Managers()`·`ManagerStatus()`로 조회합니다. 컨테이너의 수명은 클러스터가 관리합니다. 현재 `multicluster.RunCephFSMirror`는 Docker SDK로 owned source MGR 후보들의 remote network를 연결하고 cleanup 시 자신이 추가한 연결만 해제합니다. 새 후보 추가 뒤에는 `AttachManagers()`로 재조정합니다. MGR 교체와 결합한 최신 검증은 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다.
+`ManagerContainer()`는 초기 MGR의 호환 accessor이며 현재 후보와 active 상태는 `Managers()`·`ManagerStatus()`로 조회합니다. 컨테이너의 수명은 클러스터가 관리합니다. 현재 `cephfs.RunMirror`는 Docker SDK로 owned source MGR 후보들의 remote network를 연결하고 cleanup 시 자신이 추가한 연결만 해제합니다. 새 후보 추가 뒤에는 `AttachManagers()`로 재조정합니다. MGR 교체와 결합한 최신 검증은 [CLUSTER_SCENARIOS.md](CLUSTER_SCENARIOS.md)를 따릅니다.
 
 ## 구성 API
 
-단일 클러스터는 `ceph.Run`, 클러스터 사이의 구성은 별도 `multicluster.RunRGWMultisite`·`RunRBDMirror`·`RunCephFSMirror`로 분리했습니다. Bootstrap/peer/auth/daemon 조립은 연결 API가, RBD full/incremental archive 전달은 백업·복원 helper가 담당합니다. 보관처와 데이터 검증, 전환·복구 순서는 호출자가 소유합니다. 연결의 cleanup은 클러스터보다 먼저 수행합니다. Ceph 내부 설정은 일회성 클러스터에 유지하며 데이터 삭제나 설정 롤백은 하지 않습니다. [책임·수명과 사용 예](MULTICLUSTER_API.md)를 확인합니다.
+단일 클러스터는 `ceph.Run`, 클러스터 사이의 구성은 별도 `rgw.RunMultisite`·`rbd.RunMirror`·`cephfs.RunMirror`로 분리했습니다. Bootstrap/peer/auth/daemon 조립은 연결 API가, RBD full/incremental archive 전달은 백업·복원 helper가 담당합니다. 보관처와 데이터 검증, 전환·복구 순서는 호출자가 소유합니다. 연결의 cleanup은 클러스터보다 먼저 수행합니다. Ceph 내부 설정은 일회성 클러스터에 유지하며 데이터 삭제나 설정 롤백은 하지 않습니다. [책임·수명과 사용 예](MULTICLUSTER_API.md)를 확인합니다.
 
 ## 최초 PoC 결과
 
@@ -70,10 +70,10 @@ Application archive는 JSON/base64의 작은 fixture format입니다. 일반 bac
 
 | 케이스 | 결과 | 관측 시간 |
 | --- | --- | ---: |
-| `RunRGWMultisite` | 양방향 객체 복제·삭제, outage/restart, source 중단 후 읽기 PASS | 349.35초 |
+| `rgw.RunMultisite` | 양방향 객체 복제·삭제, outage/restart, source 중단 후 읽기 PASS | 349.35초 |
 | RBD 전체/증분 backup | source 중단 후 archive 복원·읽기·쓰기 PASS | 62.41초 |
-| `RunRBDMirror` | 최초·변경 snapshot 복제, demote/promote, source 중단 후 읽기·쓰기 PASS | 92.55초 |
-| `RunCephFSMirror` + archive | mirror restart·삭제 전파, OSD 교체, source 중단 후 읽기 PASS | 137.16초 |
+| `rbd.RunMirror` | 최초·변경 snapshot 복제, demote/promote, source 중단 후 읽기·쓰기 PASS | 92.55초 |
+| `cephfs.RunMirror` + archive | mirror restart·삭제 전파, OSD 교체, source 중단 후 읽기 PASS | 137.16초 |
 
 CephFS native user xattr 차이는 앞의 두 경로에서 다시 관측됐고 별도 archive restore는 xattr까지 일치했습니다. 시간이 기존 실행과 다르므로 성능 개선/저하나 RPO 보장으로 해석하지 않습니다. `CGO_ENABLED=0` unit test, 전체 tag compile, vet, 다섯 image smoke와 layer 공유 검증도 통과했습니다. 생성한 컨테이너와 네트워크가 남지 않은 것을 확인했습니다. Cleanup의 재시도·이미 삭제된 리소스·실제 오류가 섞인 joined error 경로는 별도 단위 테스트로 확인했습니다.
 

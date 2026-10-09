@@ -25,7 +25,7 @@ Native 변경 뒤 resource reconciliation을 위한 짧은 잠금은 소유권 �
 | --- | --- |
 | `ConnectionConfigContext(ctx)` | 독립된 ceph.conf·admin keyring byte 복사본. 종료·불완전한 bootstrap을 거부하고 owner 및 config cache 잠금 대기를 제한 |
 | `ManagersContext(ctx)` | daemon 이름순 독립 slice. Descriptor와 container는 fixture 소유이며 종료 후 남은 descriptor 조회도 허용 |
-| `GatewaysContext(ctx)` | gateway 이름순 독립 slice. Partial startup descriptor와 fixture 소유권 유지 |
+| `rgw.GatewaysContext(ctx, cluster)` | gateway 이름순 독립 slice. Partial startup descriptor와 fixture 소유권 유지 |
 | `ControlContainerContext(ctx)` | 기존 안정적인 control CLI handle 또는 기본 MON. Control handle 잠금만 사용하며 반환 이후 process 수명을 보장하지 않음 |
 
 `Ceph(ctx)`는 context를 받는 control snapshot을 사용합니다. Cluster owner mutex를 다시 얻지 않으므로 이미 owner를 보유한 MON/MGR/OSD 작업에서도 사용할 수 있습니다. Native query 동안 snapshot의 read lock을 유지하지 않습니다. Snapshot과 process 종료 사이의 기존 lifetime race는 native 오류로 보고합니다.
@@ -34,7 +34,7 @@ Multicluster constructor와 RGW zone/zonegroup 사전 검증은 source/destinati
 
 새 getter의 unit test는 실제 owner/config/control writer 잠금을 caller deadline 이후까지 유지합니다. 이미 owner를 보유한 `Ceph(ctx)`가 control snapshot만 얻어 native query에 도달하는 경로도 검사합니다. Configuration byte copy와 정렬된 descriptor slice, 기존 closed-cluster inspection 계약을 유지합니다.
 
-`TestMultiClusterTopologySnapshotsHonorBusyOwners`는 독립된 실제 source/destination cluster를 각각 busy 상태로 만들고 `RunRBDMirror`, `RunCephFSMirror`, `RunRGWMultisite`, `RunRGWTopology` 8개 호출을 검증합니다. 50ms deadline과 400ms watchdog 안에 context cause를 보존하며 후속 Exec/file copy/cleanup 0회, nil partial fixture를 확인합니다. 잠금을 해제한 뒤 같은 cluster의 bootstrap/keyring·MGR/RGW descriptor·native OSD ID와 RADOS 원문이 그대로인지 확인합니다. 잠금 획득은 실제 `AddOSD` 진입을 이용하며 mutation 직전의 caller-owned container wrapper에서 중단합니다.
+`TestMultiClusterTopologySnapshotsHonorBusyOwners`는 독립된 실제 source/destination cluster를 각각 busy 상태로 만들고 `rbd.RunMirror`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` 8개 호출을 검증합니다. 50ms deadline과 400ms watchdog 안에 context cause를 보존하며 후속 Exec/file copy/cleanup 0회, nil partial fixture를 확인합니다. 잠금을 해제한 뒤 같은 cluster의 bootstrap/keyring·MGR/RGW descriptor·native OSD ID와 RADOS 원문이 그대로인지 확인합니다. 잠금 획득은 실제 `AddOSD` 진입을 이용하며 mutation 직전의 caller-owned container wrapper에서 중단합니다.
 
 추가 변경의 unit·race·vet와 전체 tag compile은 PASS이며 실제 tee 기록은 `artifacts/context-snapshots-20261007/check.log`입니다. 같은 원본 Quay 20.2.4 Linux ARM64에서 아래 focused runtime을 실행했습니다.
 
@@ -78,7 +78,7 @@ Unit·race·vet·전체 tag compile 및 위 native 결과는 `artifacts/peer-dra
 
 Filesystem setup과 MDS scale, subvolume/group·snapshot/clone·data-pool·pin의 기존 operation gate는 setup → owner → control 순서로 caller context를 적용합니다. Inner owner/control에 진입하지 못하면 이미 얻은 setup 잠금을 반환하고 native 조회·변경 전에 원래 context cause로 반환합니다. Configured startup timeout이 admission 뒤 시작되는 기존 timing 계약을 유지하며, caller의 더 짧은 deadline은 admission부터 적용됩니다.
 
-`MDSStatus`, scale의 loop/poll과 retirement preflight는 context 없는 `MDSs()` 대신 private context snapshot을 사용합니다. Snapshot 실패를 daemon 0개로 처리하지 않습니다. Native query 동안 owner 잠금을 유지하지 않으며 descriptor membership과 native FSMap을 하나의 atomic view로 보장하지 않습니다. 기존 `MDSs()`의 context 없는 inspection과 descriptor 생성 순서·identity·closed-fixture 조회 계약을 유지합니다.
+`cephfs.MDSStatus`, scale의 loop/poll과 retirement preflight는 context 없는 `MDSs()` 대신 private context snapshot을 사용합니다. Snapshot 실패를 daemon 0개로 처리하지 않습니다. Native query 동안 owner 잠금을 유지하지 않으며 descriptor membership과 native FSMap을 하나의 atomic view로 보장하지 않습니다. 기존 `MDSs()`의 context 없는 inspection과 descriptor 생성 순서·identity·closed-fixture 조회 계약을 유지합니다.
 
 Inherited `CreatePool` 진입과 pin/clone/data-pool의 직접 control snapshot에도 context를 적용합니다. Clone wait/cancel이 immutable startup timeout을 읽기 위해 owner를 얻던 잠금은 제거했습니다. Scale의 daemon inspect 오류는 `%w`로 원래 cause를 유지하고, desired count publication 전에 closed/원래 filesystem ownership을 다시 확인합니다. Restored pin의 fast-path도 setup 진입에 context를 적용하므로 already-canceled 호출은 cause를 반환하고 새 context에서의 idempotence는 유지합니다.
 

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 )
 
 // TestMultiClusterRBDBackup restores CLI-generated full and incremental archives
@@ -37,7 +37,7 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	execCommand(t, ctx, sourceClient, "rbd", "snap", "create", original+"@baseline")
 	execCommand(t, ctx, sourceClient, "rbd", "image-meta", "set", original, "backup-fixture", "format-2")
 	var fullArchive bytes.Buffer
-	if err := multicluster.ExportRBDBackup(ctx, sourceClient, original, &fullArchive); err != nil {
+	if err := rbd.ExportBackup(ctx, sourceClient, original, &fullArchive); err != nil {
 		t.Fatal(err)
 	}
 	full := fullArchive.Bytes()
@@ -52,7 +52,7 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	verifyRBDBytes(t, ctx, sourceClient, original+"@baseline", before)
 	execCommand(t, ctx, sourceClient, "rbd", "snap", "create", original+"@next")
 	var deltaArchive bytes.Buffer
-	if err := multicluster.ExportRBDIncremental(ctx, sourceClient, original+"@next", "baseline", &deltaArchive); err != nil {
+	if err := rbd.ExportIncremental(ctx, sourceClient, original+"@next", "baseline", &deltaArchive); err != nil {
 		t.Fatal(err)
 	}
 	delta := deltaArchive.Bytes()
@@ -63,11 +63,11 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 
 	// Incremental restore must reject an unrelated image without its baseline.
 	execCommand(t, ctx, destinationClient, "rbd", "create", pool+"/missing-baseline", "--size", "8M", "--image-feature", "layering")
-	if err := multicluster.RestoreRBDIncremental(ctx, destinationClient, pool+"/missing-baseline", bytes.NewReader(delta)); err == nil || !strings.Contains(err.Error(), "baseline") {
+	if err := rbd.RestoreIncremental(ctx, destinationClient, pool+"/missing-baseline", bytes.NewReader(delta)); err == nil || !strings.Contains(err.Error(), "baseline") {
 		t.Fatalf("missing baseline should reject incremental restore: %v", err)
 	}
 	execCommand(t, ctx, destinationClient, "rbd", "rm", pool+"/missing-baseline", "--no-progress")
-	if err := multicluster.RestoreRBDBackup(ctx, destinationClient, restored, bytes.NewReader(full)); err != nil {
+	if err := rbd.RestoreBackup(ctx, destinationClient, restored, bytes.NewReader(full)); err != nil {
 		t.Fatal(err)
 	}
 	verifyRBDInfo(t, ctx, destinationClient, restored, imageSize)
@@ -76,7 +76,7 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 	if got := strings.TrimSpace(string(rbdOutput(t, ctx, destinationClient, "image-meta", "get", restored, "backup-fixture"))); got != "format-2" {
 		t.Fatalf("full backup lost image metadata: %q", got)
 	}
-	if err := multicluster.RestoreRBDIncremental(ctx, destinationClient, restored, bytes.NewReader(delta)); err != nil {
+	if err := rbd.RestoreIncremental(ctx, destinationClient, restored, bytes.NewReader(delta)); err != nil {
 		t.Fatal(err)
 	}
 	verifyRBDBytes(t, ctx, destinationClient, restored, after)

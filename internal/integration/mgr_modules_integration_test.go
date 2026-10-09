@@ -10,6 +10,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -70,9 +72,9 @@ func TestMGRModules(t *testing.T) {
 			}
 			// Tentacle rbd_support and volumes are always-on. Their real command
 			// readiness is independent of membership and is exercised below.
-			rbd := lookup("rbd_support")
-			if !rbd.AlwaysOn || !rbd.Enabled || !rbd.Available || !rbd.CanRun {
-				t.Fatalf("native rbd_support prerequisites missing: %+v", rbd)
+			rbdModule := lookup("rbd_support")
+			if !rbdModule.AlwaysOn || !rbdModule.Enabled || !rbdModule.Available || !rbdModule.CanRun {
+				t.Fatalf("native rbd_support prerequisites missing: %+v", rbdModule)
 			}
 			rbdLease := apply("rbd_support", true)
 			if _, err := cluster.TemporaryMGRModule(ctx, "rbd_support", false); err == nil {
@@ -88,7 +90,7 @@ func TestMGRModules(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rbd"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.InitRBDPool(ctx, pool); err != nil {
+			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
 			if err := cluster.WaitForClean(ctx); err != nil {
@@ -114,7 +116,7 @@ func TestMGRModules(t *testing.T) {
 			if _, err := cluster.TemporaryMGRModule(ctx, "mirroring", true); err == nil {
 				t.Fatal("overlap accepted")
 			}
-			fs, err := cluster.StartCephFSWithConfig(ctx, ceph.CephFSConfig{Name: "tc-mgr-module-fs"})
+			fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "tc-mgr-module-fs"})
 			if err != nil {
 				t.Fatal(err)
 			}

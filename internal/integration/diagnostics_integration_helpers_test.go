@@ -15,6 +15,8 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -24,8 +26,8 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	defer cancel()
 	opts := []testcontainers.ContainerCustomizer{
 		ceph.WithPools(ceph.PoolConfig{Name: "tc-diagnostics", Application: "rados"}),
-		ceph.WithCephFS(ceph.CephFSConfig{Name: "tc-diagnostics-fs"}),
-		ceph.WithRGW(ceph.RGWConfig{Name: "diagnostics"}),
+		cephfs.WithFilesystems(cephfs.Config{Name: "tc-diagnostics-fs"}),
+		rgw.WithGateways(rgw.Config{Name: "diagnostics"}),
 	}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
@@ -70,7 +72,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	})
 
 	t.Run("stopped-daemon", func(t *testing.T) {
-		gateway := cluster.Gateways()[0]
+		gateway := rgw.Gateways(cluster)[0]
 		stopTimeout := 5 * time.Second
 		if err := gateway.Stop(ctx, &stopTimeout); err != nil {
 			t.Fatal(err)
@@ -245,7 +247,7 @@ func diagnosticsCaptureState(t *testing.T, ctx context.Context, cluster *ceph.Co
 		for _, identity := range identities {
 			state.Native["osd."+strconv.Itoa(identity.ID)] = fmt.Sprintf("%v", identity)
 		}
-		fs := cluster.Filesystems()[0]
+		fs := cephfs.Filesystems(cluster)[0]
 		mds, err := fs.MDSStatus(ctx)
 		if err != nil {
 			t.Fatal(err)

@@ -13,18 +13,19 @@ import (
 
 	"github.com/containerd/errdefs"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	config := ceph.CephFSConfig{Name: "scale"}
+	config := cephfs.Config{Name: "scale"}
 	if replay {
 		config.StandbyMDS, config.StandbyReplay = 1, true
 	}
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithCephFS(
-		config, ceph.CephFSConfig{Name: "other"},
+	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), cephfs.WithFilesystems(
+		config, cephfs.Config{Name: "other"},
 	))
 	fs, other := cephFSOwnedFilesystem(t, cluster, "scale"), cephFSOwnedFilesystem(t, cluster, "other")
 	initial, otherBefore := cephFSTopologyStatus(t, ctx, fs), cephFSTopologyStatus(t, ctx, other)
@@ -55,7 +56,7 @@ func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 		cephFSMDSScaleCounts(t, ctx, fs, counts[0], counts[1])
 		after := fs.MDSs()
 		for _, previous := range before {
-			if !slices.ContainsFunc(after, func(current *ceph.MDSContainer) bool { return current.GetContainerID() == previous.GetContainerID() }) {
+			if !slices.ContainsFunc(after, func(current *cephfs.MDS) bool { return current.GetContainerID() == previous.GetContainerID() }) {
 				if _, err := previous.State(ctx); !errdefs.IsNotFound(err) {
 					t.Fatalf("retired mds.%s container still exists or inspection is uncertain: %v", previous.ID, err)
 				}
@@ -79,7 +80,7 @@ func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 	}
 }
 
-func cephFSMDSScaleCounts(t *testing.T, ctx context.Context, fs *ceph.CephFSContainer, active, standby int) {
+func cephFSMDSScaleCounts(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, active, standby int) {
 	t.Helper()
 	status := cephFSTopologyStatus(t, ctx, fs)
 	if status.MaxMDS != active || len(status.Active) != active || len(status.Standby)+len(status.StandbyReplay) != standby || len(fs.MDSs()) != active+standby {

@@ -14,14 +14,14 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/multicluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *multicluster.RBDMirror {
+func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbd.Mirror {
 	t.Helper()
 	image := source.ControlImage()
-	link, err := multicluster.RunRBDMirror(ctx, image, multicluster.RBDMirrorConfig{
+	link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite,
 	})
@@ -63,7 +63,7 @@ func rbdScenarioCommand(t *testing.T, ctx context.Context, command func(context.
 	return out
 }
 
-func rbdScenarioStop(t *testing.T, ctx context.Context, link *multicluster.RBDMirror) {
+func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbd.Mirror) {
 	t.Helper()
 	grace := 3 * time.Second
 	if err := link.Stop(ctx, &grace); err != nil {
@@ -106,7 +106,7 @@ func rbdScenarioWaitBytes(t *testing.T, parent context.Context, client testconta
 	}
 }
 
-func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *multicluster.RBDMirror, image string) {
+func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbd.Mirror, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
@@ -192,7 +192,7 @@ func rbdScenarioRequireSnapshotAbsent(t *testing.T, ctx context.Context, client 
 	}
 }
 
-func rbdScenarioPeer(t *testing.T, ctx context.Context, link *multicluster.RBDMirror, pool string) string {
+func rbdScenarioPeer(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) string {
 	t.Helper()
 	var info struct{ Peers []struct{ UUID string } }
 	if err := json.Unmarshal(rbdScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {
@@ -204,7 +204,7 @@ func rbdScenarioPeer(t *testing.T, ctx context.Context, link *multicluster.RBDMi
 	return info.Peers[0].UUID
 }
 
-func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *multicluster.RBDMirror, pool string) {
+func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) {
 	t.Helper()
 	var info struct{ Peers []json.RawMessage }
 	if err := json.Unmarshal(rbdScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {

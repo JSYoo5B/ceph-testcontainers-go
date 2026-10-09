@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -18,20 +19,20 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const filesystem, groupName = "retained-recipe", "tenants"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithCephFS(ceph.CephFSConfig{Name: filesystem})}
+	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, options...)
-	fs := cluster.Filesystems()[0]
+	fs := cephfs.Filesystems(cluster)[0]
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	group, err := fs.CreateSubvolumeGroup(ctx, ceph.CephFSSubvolumeGroupConfig{Name: groupName})
+	group, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: groupName})
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := fs.CreateSubvolume(ctx, ceph.CephFSSubvolumeConfig{Name: "source", GroupName: groupName, SizeBytes: 8 << 20, NamespaceIsolated: true})
+	source, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "source", GroupName: groupName, SizeBytes: 8 << 20, NamespaceIsolated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 	if err := fs.ResizeSubvolume(ctx, source, 16<<20); err == nil {
 		t.Fatal("typed old handle resized a retained incarnation")
 	}
-	if clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, ceph.CephFSCloneConfig{Name: "unsafe-adoption", GroupName: groupName}); err == nil || clone != nil {
+	if clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "unsafe-adoption", GroupName: groupName}); err == nil || clone != nil {
 		t.Fatal("typed old snapshot handle adopted raw retained state")
 	}
 	retainedSnapshotPath := strings.TrimSpace(string(command("fs", "subvolume", "snapshot", "getpath", filesystem, source.Name, snapshot.Name, "--group_name", groupName)))

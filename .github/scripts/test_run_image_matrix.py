@@ -86,9 +86,9 @@ class MatrixTests(unittest.TestCase):
         self.write("go.mod", "module " + MODULE + "\n\ngo 1.25.0\n")
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
-        self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.OFFICIAL_IMAGE + '"\n')
+        self.write("internal/cluster/ceph.go", 'package cluster\nconst DefaultImage = "' + runner.OFFICIAL_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
-        self.write("ceph/internal/scripts/control.sh", "#!/bin/sh\n")
+        self.write("internal/cluster/internal/scripts/control.sh", "#!/bin/sh\n")
         self.runtime = Runtime()
         self.output = self.root / "artifacts" / "result"
 
@@ -113,7 +113,7 @@ class MatrixTests(unittest.TestCase):
     def test_default_matches_official_image_and_all_pins_four_components(self):
         self.assertEqual(runner.ROLE_ENV, {"control": "CEPH_TEST_IMAGE", "osd": "CEPH_TEST_OSD_IMAGE",
                                           "rgw": "CEPH_TEST_RGW_IMAGE", "mds": "CEPH_TEST_MDS_IMAGE"})
-        original = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
+        original = (SCRIPT.parents[2] / "internal/cluster/ceph.go").read_text()
         self.assertIn('const DefaultImage = "' + runner.OFFICIAL_IMAGE + '"', original)
         self.assertEqual(self.invoke(env={name: "unrelated:mutable" for name in runner.ROLE_ENV.values()}), 0)
         report = self.summary()
@@ -446,16 +446,16 @@ class MatrixTests(unittest.TestCase):
     def test_source_manifest_binds_go_shell_and_target_and_changes_with_input(self):
         manifest = runner.source_manifest(self.root)
         paths = {entry["path"] for entry in manifest["files"]}
-        self.assertTrue({"Makefile", "go.mod", "go.sum", "ceph/ceph.go", "ceph/internal/scripts/control.sh"}.issubset(paths))
-        self.write("ceph/internal/scripts/control.sh", "#!/bin/sh\nprintf changed\n")
+        self.assertTrue({"Makefile", "go.mod", "go.sum", "internal/cluster/ceph.go", "internal/cluster/internal/scripts/control.sh"}.issubset(paths))
+        self.write("internal/cluster/internal/scripts/control.sh", "#!/bin/sh\nprintf changed\n")
         self.assertNotEqual(manifest["sha256"], runner.source_manifest(self.root)["sha256"])
         self.assertEqual(self.invoke(env={"GITHUB_SHA": "a" * 40}), 0)
         self.assertEqual(self.summary()["source"]["declared_github_revision"], "a" * 40)
 
     def test_symlink_source_input_is_rejected_without_running_tools(self):
-        path = self.root / "ceph" / "ceph.go"
+        path = self.root / "internal" / "cluster" / "ceph.go"
         path.unlink()
-        path.symlink_to(self.write("external.go", "package ceph\n"))
+        path.symlink_to(self.write("external.go", "package cluster\n"))
         self.assertEqual(self.invoke(), 1)
         self.assertFalse(self.runtime.capture_commands)
 

@@ -87,7 +87,7 @@ CLI의 여러 읽기는 원자적이지 않으며 외부 pool/config 변경을 �
 
 ## 검증 경로
 
-[단위 테스트](../ceph/pool_pgs_test.go)는 identity·JSON·숫자 범위·context·
+[단위 테스트](../internal/cluster/pool_pgs_test.go)는 identity·JSON·숫자 범위·context·
 error redaction과 실제 native 경계 값의 허용을 검증한다.
 [통합 테스트](../internal/integration/pool_pgs_integration_test.go)는 production
 decoder를 호출하지 않는 raw CLI oracle로 모든 공개 field를 비교한다.
