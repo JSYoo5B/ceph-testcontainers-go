@@ -76,6 +76,9 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 private receiver의 exported-name method, dependency가 승격하는 container method,
 타입·상수·구조체 field는 이 287개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
+[internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
+`go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
+anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않는다.
 
 실행 검증은 [fixture 범위와 native 기록](CLUSTER_SCENARIOS.md),
 [기능 coverage](CLIENT_FIXTURE_COVERAGE.md),
