@@ -63,7 +63,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 			t.Fatalf("daemon %s does not have its own native auth entity: %v", daemon.DaemonName, err)
 		}
 	}
-	initialPeer := rbdDaemonPoolIdentity(t, ctx, link, pool)
+	initialPeer := rbdDaemonPoolIdentity(t, ctx, destinationClient, pool)
 	leader := rbdDaemonWaitElection(t, ctx, pool, daemons)
 	before := rbdMultiClusterPayload(size, 43)
 	execCommand(t, ctx, sourceClient, "rbd", "create", image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
@@ -132,7 +132,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	rbdDaemonWaitElection(t, ctx, pool, link.Daemons())
 	rbdFanoutRead(t, ctx, destinationClient, destinationFSID, pool, name, after)
 	rbdDaemonImageIdentity(t, ctx, sourceClient, destinationClient, image, globalID)
-	if got := rbdDaemonPoolIdentity(t, ctx, link, pool); got != initialPeer {
+	if got := rbdDaemonPoolIdentity(t, ctx, destinationClient, pool); got != initialPeer {
 		t.Fatalf("process replacement changed native pool/peer identity: before=%s after=%s", initialPeer, got)
 	}
 
@@ -175,7 +175,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	rbdFanoutWaitBytes(t, ctx, destinationClient, destinationFSID, pool, name, final)
 	rbdFanoutRead(t, ctx, destinationClient, destinationFSID, pool, newName, newBytes)
 	rbdDaemonImageIdentity(t, ctx, sourceClient, destinationClient, image, globalID)
-	if got := rbdDaemonPoolIdentity(t, ctx, link, pool); got != initialPeer {
+	if got := rbdDaemonPoolIdentity(t, ctx, destinationClient, pool); got != initialPeer {
 		t.Fatalf("zero-daemon pause/resume changed peer configuration: before=%s after=%s", initialPeer, got)
 	}
 	if err := link.Terminate(ctx); err != nil {
@@ -248,9 +248,9 @@ func rbdDaemonWaitElection(t *testing.T, parent context.Context, pool string, da
 	}
 }
 
-func rbdDaemonPoolIdentity(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) string {
+func rbdDaemonPoolIdentity(t *testing.T, ctx context.Context, destinationClient testcontainers.Container, pool string) string {
 	t.Helper()
-	data, err := link.DestinationRBD(ctx, "mirror", "pool", "info", pool, "--format", "json")
+	data, err := rbdMirrorPoolInfo(ctx, destinationClient, pool, "")
 	if err != nil {
 		t.Fatal(err)
 	}

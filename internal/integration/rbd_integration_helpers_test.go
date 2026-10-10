@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,4 +211,97 @@ func verifyRBDPoolUsage(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		case <-ticker.C:
 		}
 	}
+}
+
+// rbdMirrorPoolInfo returns `rbd mirror pool info --format json` for pool or
+// pool/namespace. Ceph 19's rbd prints neither mirror_uuid nor
+// remote_namespace, so on that release this adds them the way the fixture
+// reads them: the rbd_mirroring object's mirror_uuid omap value and the
+// same-named namespace. Other releases are returned unchanged, so a field
+// missing there still fails the caller.
+func rbdMirrorPoolInfo(ctx context.Context, client testcontainers.Container, pool, namespace string) ([]byte, error) {
+	spec := pool
+	if namespace != "" {
+		spec += "/" + namespace
+	}
+	data, err := rbdClientExec(ctx, client, "rbd", "mirror", "pool", "info", spec, "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	legacy, err := rbdClientCeph19(ctx, client)
+	if err != nil || !legacy {
+		return data, err
+	}
+	var info map[string]any
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("decode RBD mirror pool info: %w", err)
+	}
+	if mode, _ := info["mode"].(string); mode == "disabled" {
+		return data, nil
+	}
+	if _, ok := info["remote_namespace"]; !ok {
+		info["remote_namespace"] = namespace
+	}
+	if _, ok := info["mirror_uuid"]; !ok {
+		args := []string{"rados", "--pool", pool}
+		if namespace != "" {
+			args = append(args, "--namespace", namespace)
+		}
+		value, err := rbdClientExec(ctx, client, append(args, "getomapval", "rbd_mirroring", "mirror_uuid", "/dev/stdout")...)
+		if err != nil {
+			return nil, err
+		}
+		info["mirror_uuid"] = string(value)
+	}
+	return json.Marshal(info)
+}
+
+var rbdClientReleases sync.Map
+
+// rbdClientCeph19 reports whether client runs Ceph 19, reading rbd --version
+// once per container.
+func rbdClientCeph19(ctx context.Context, client testcontainers.Container) (bool, error) {
+	if legacy, ok := rbdClientReleases.Load(client.GetContainerID()); ok {
+		return legacy.(bool), nil
+	}
+	data, err := rbdClientExec(ctx, client, "rbd", "--version")
+	if err != nil {
+		return false, err
+	}
+	legacy := strings.HasPrefix(string(data), "ceph version 19.")
+	rbdClientReleases.Store(client.GetContainerID(), legacy)
+	return legacy, nil
+}
+
+func rbdClientExec(ctx context.Context, client testcontainers.Container, args ...string) ([]byte, error) {
+	code, reader, err := client.Exec(ctx, args, tcexec.Multiplexed())
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("%s exited %d: %s", strings.Join(args, " "), code, data)
+	}
+	return data, nil
+}
+
+// rbdNamespaceMappingUnsupported reports a release whose rbd CLI cannot map
+// differently named namespaces (Ceph 19 has no --remote-namespace).
+func rbdNamespaceMappingUnsupported(cluster *ceph.Container) bool {
+	return strings.HasPrefix(cluster.CephVersion(), "19.")
+}
+
+// requireRBDNamespaceMappingRefused proves that the fixture refused the
+// mapping before any change. That refusal is the whole Ceph 19 contract of a
+// mapping case, so callers return afterwards instead of skipping.
+func requireRBDNamespaceMappingRefused(t *testing.T, err error, mapping [2]string) {
+	t.Helper()
+	want := fmt.Sprintf("mirroring RBD namespace %q to %q needs Ceph 20 or later", mapping[0], mapping[1])
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Ceph 19 namespace mapping %q -> %q error = %v, want refusal %q", mapping[0], mapping[1], err, want)
+	}
+	t.Logf("Ceph 19 refused namespace mapping %q -> %q before any change", mapping[0], mapping[1])
 }

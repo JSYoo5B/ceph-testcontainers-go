@@ -118,6 +118,9 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	scope, mode := rbd.MirrorScopeImage, "snapshot"
 	if journal {
 		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, rbd.MirrorScopePool, "journal"
+		if rbdNamespaceMappingUnsupported(source) {
+			mapping[1] = mapping[0] // Ceph 19 pairs only same-named namespaces.
+		}
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
 		if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
@@ -127,7 +130,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 			t.Fatal(err)
 		}
 		if journal {
-			for _, ns := range mapping {
+			for _, ns := range slices.Compact(slices.Clone(mapping[:])) {
 				if _, err := rbd.CreateNamespace(ctx, cluster, pool, ns); err != nil {
 					t.Fatal(err)
 				}

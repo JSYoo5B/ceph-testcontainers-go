@@ -117,9 +117,9 @@ func rbdFanoutWaitPeers(t *testing.T, parent context.Context, a, b, c testcontai
 		valid := true
 		last = ""
 		for i, client := range []testcontainers.Container{a, b, c} {
-			code, output, err := rbdMultiClusterExec(ctx, client, "rbd", "mirror", "pool", "info", pool, "--format", "json")
-			if err != nil || code != 0 || json.Unmarshal(output, &info[i]) != nil || info[i].Mode != "image" || info[i].MirrorUUID == "" {
-				last = fmt.Sprintf("pool %d: exit=%d error=%v output=%s", i, code, err, output)
+			output, err := rbdMirrorPoolInfo(ctx, client, pool, "")
+			if err != nil || json.Unmarshal(output, &info[i]) != nil || info[i].Mode != "image" || info[i].MirrorUUID == "" {
+				last = fmt.Sprintf("pool %d: error=%v output=%s", i, err, output)
 				valid = false
 				break
 			}

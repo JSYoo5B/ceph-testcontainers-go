@@ -41,7 +41,11 @@ func rbdReceiverNativeIdentity(t *testing.T, ctx context.Context, client testcon
 			RemoteMirrorUUID *string `json:"mirror_uuid"`
 		} `json:"peers"`
 	}
-	if err := json.Unmarshal(rbdOutput(t, ctx, client, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil || info.MirrorUUID == nil || *info.MirrorUUID == "" || len(info.Peers) != 1 {
+	data, err := rbdMirrorPoolInfo(ctx, client, pool, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &info); err != nil || info.MirrorUUID == nil || *info.MirrorUUID == "" || len(info.Peers) != 1 {
 		t.Fatalf("independent receiving pool/peer identity missing: %+v %v", info, err)
 	}
 	p := info.Peers[0]
@@ -73,7 +77,11 @@ func rbdReceiverNativePolicy(t *testing.T, ctx context.Context, client testconta
 		Remote     *string `json:"remote_namespace"`
 		Site       *string `json:"site_name"`
 	}
-	if err := json.Unmarshal(rbdOutput(t, ctx, client, "mirror", "pool", "info", rbdReceiverNativeScope(pool, namespace), "--format", "json"), &native); err != nil || native.Mode == nil || !slices.Contains([]string{"init-only", "image", "pool"}, *native.Mode) || native.MirrorUUID == nil || *native.MirrorUUID == "" || native.Remote == nil || namespace == "" && (native.Site == nil || *native.Site == "") {
+	data, err := rbdMirrorPoolInfo(ctx, client, pool, namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &native); err != nil || native.Mode == nil || !slices.Contains([]string{"init-only", "image", "pool"}, *native.Mode) || native.MirrorUUID == nil || *native.MirrorUUID == "" || native.Remote == nil || namespace == "" && (native.Site == nil || *native.Site == "") {
 		t.Fatalf("independent native original policy identity missing/invalid: namespace=%q error=%v", namespace, err)
 	}
 	site := ""
@@ -270,6 +278,10 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 						t.Error(err)
 					}
 				})
+			}
+			if mapping[0] != mapping[1] && rbdNamespaceMappingUnsupported(source) {
+				requireRBDNamespaceMappingRefused(t, err, mapping)
+				return
 			}
 			if err != nil {
 				t.Fatal(err)

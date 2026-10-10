@@ -45,6 +45,9 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | `TestMultiClusterRBDMirrorScopeAndNamespaces`의 이름이 다른 mapping 4개, `TestMultiClusterRBDNamespaceBinding` | fixture가 변경 전에 "Ceph 20 이상 필요" 오류로 거부하는지 확인하고 끝냅니다. 같은 이름 namespace(`pool-same-named`)는 두 release 모두에서 실제 복제까지 검증합니다. |
 | `TestRGWProtocolBackends/sts` | 없는 role을 조회할 때 Squid의 `radosgw-admin`은 종료 코드 2와 함께 ENOENT 기록 한 줄을 남깁니다. 그 한 줄만 부재로 인정합니다. |
 | `TestRBDClientFeatures/group-snapshot` | Squid binding에는 `Group.id()`와 `get_snap_info()`가 없어서, group ID는 `rbd_group_directory`에서, member snapshot은 각 이미지의 group namespace에서 읽습니다. Tentacle에서는 이 값이 native API와 같은지 함께 확인합니다. |
+| `TestMultiClusterRBDReceiverReadiness`의 이름이 다른 mapping 4개, `TestMultiClusterRBDNamespaceImageObservation` | 위 namespace mapping 테스트와 같이 fixture가 변경 전에 거부하는지 확인하고 끝냅니다. |
+| `TestMultiClusterNoInitialMirrorDaemons/*/rbd-journal-partial-first` | Squid에서는 `ns-a`를 같은 이름의 `ns-a`로 mirror해서 journal pool scope 검증을 그대로 수행합니다. |
+| RBD mirror topology를 직접 읽는 테스트 | 테스트도 `rbd mirror pool info`에서 빠진 `mirror_uuid`와 `remote_namespace`를 fixture와 같은 방법으로 채워서 비교합니다. Tentacle 출력은 그대로 검사합니다. |
 
 ## 이미지 호환 확인
 

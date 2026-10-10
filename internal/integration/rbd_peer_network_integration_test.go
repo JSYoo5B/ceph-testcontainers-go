@@ -39,7 +39,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	instance := status.PoolReplayers[0].InstanceID
-	peer := rbdDaemonPoolIdentity(t, ctx, mirror, pool)
+	peer := rbdDaemonPoolIdentity(t, ctx, b, pool)
 	fsid := func(c *ceph.Container) string {
 		status, err := c.Status(ctx)
 		if err != nil {
@@ -105,7 +105,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	if err != nil || len(status.PoolReplayers) != 1 || status.PoolReplayers[0].InstanceID != instance {
 		t.Fatalf("peer restoration restarted/replaced the native receiver: status=%+v error=%v", status, err)
 	}
-	if got := rbdDaemonPoolIdentity(t, ctx, mirror, pool); got != peer {
+	if got := rbdDaemonPoolIdentity(t, ctx, b, pool); got != peer {
 		t.Fatal("peer endpoint restoration changed pool/link identity")
 	}
 	t.Log("separate public/cluster bridges on both clusters: receiver source endpoint interrupted while native process and destination election stayed alive; retained replica read, checkpoint backlog resumed on original IP without daemon restart")
