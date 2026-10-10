@@ -329,6 +329,8 @@ python3 internal/integration/goceph/run.py \
 | `ManagerContainer()` | 초기 MGR의 호환 handle. active 조회와 전체 후보에는 `ManagerStatus`·`Managers` 사용 |
 | `Terminate(ctx)` | 소유 데몬과 네트워크 정리 |
 
+옵션끼리 거부되는 조합, 실제 cluster로 검증한 조합, 동작하지 않는 조합은 [bootstrap 옵션 조합](docs/BOOTSTRAP_OPTIONS.md)에 정리했습니다.
+
 일반 `testcontainers.With*` 옵션은 MON 컨테이너에 적용합니다. `WithOSDCount` 등의 모듈 옵션은 클러스터 설정에 적용합니다. 일반 옵션으로 MON의 이미지, 네트워크, 시작 명령, 내부 경로를 교체하면 부트스트랩 계약이 깨질 수 있습니다. 추가 MGR/OSD에 대한 임의 옵션 전파는 현재 구현하지 않았습니다.
 
 `Run`의 성공은 클러스터 제어와 OSD 등록 준비를 의미합니다. 일반 애플리케이션용 풀은 호출자가 생성하며, RGW와 CephFS는 시작할 때 필요한 풀을 생성합니다. 작은 테스트를 위해 기본 PG는 8개, autoscaler는 off, PGP는 PG에 맞춰 자동 설정합니다. 풀을 만든 뒤, 혹은 토폴로지 변경 이후에는 `WaitForClean`으로 데이터 배치 완료를 기다릴 수 있습니다. 하나의 OSD만 사용할 경우 복제 수를 1로 설정해야 해당 풀의 `active+clean`을 기대할 수 있습니다.
