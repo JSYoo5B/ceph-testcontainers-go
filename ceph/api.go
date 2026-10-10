@@ -216,6 +216,13 @@ func InterruptNetwork(ctx context.Context, ctr testcontainers.Container, name st
 	return cluster.InterruptNetwork(ctx, ctr, name)
 }
 
+// ObjectWatcher is one client watching a RADOS object. Address is the
+// client's IP:port/nonce, the same form BlocklistEntries reports. A client
+// that stops answering keeps its watch until the OSD's
+// osd_client_watch_timeout expires, 30 seconds by default; until then a
+// notify to the object waits for that client and times out.
+type ObjectWatcher = cluster.ObjectWatcher
+
 // WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
 // retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
 // encrypted v2 connections without CRC-mode or v1 fallback, including later

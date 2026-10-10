@@ -66,15 +66,15 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | 분류 | ceph | cephfs | rgw | rbd | 합계 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Fixture Operation | 54 | 49 | 36 | 14 | 153 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 48 | 33 | 20 | 17 | 118 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 49 | 33 | 20 | 17 | 119 |
 | 연결·raw CLI·customizer 접점 | 8 | 1 | 5 | 2 | 16 |
 | 조건부 archive helper | 0 | 0 | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 4 | 0 | 12 | 0 | 16 |
-| 전체 | 114 | 83 | 73 | 37 | **307** |
+| 전체 | 115 | 83 | 73 | 37 | **308** |
 
 집계는 공개 패키지 네 개(`ceph`, `cephfs`, `rgw`, `rbd`)의 공개 함수와 공개 타입의 공개 method다. 서비스 패키지의 타입은 `internal/cluster`·`internal/multicluster` 구현 타입의 alias이므로 method와 줄 anchor는 구현 선언을 가리킨다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 307개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 308개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -148,7 +148,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L18) |
 | [rgw/run.go](../rgw/run.go) | [rgw.Run](../rgw/run.go#L18) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (73개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (74개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -168,6 +168,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/health_details.go](../internal/cluster/health_details.go) | [ceph.Container.HealthDetails](../internal/cluster/health_details.go#L55) |
 | [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.Container.MGRModules](../internal/cluster/mgr_modules.go#L29) · [ceph.Container.WaitMGRModuleReady](../internal/cluster/mgr_modules.go#L187) |
 | [internal/cluster/mgr_services.go](../internal/cluster/mgr_services.go) | [ceph.Container.ManagerServices](../internal/cluster/mgr_services.go#L17) |
+| [internal/cluster/object_watchers.go](../internal/cluster/object_watchers.go) | [ceph.Container.ObjectWatchers](../internal/cluster/object_watchers.go#L26) |
 | [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.Container.OSDStates](../internal/cluster/osd_policy.go#L29) · [ceph.Container.OSDFlags](../internal/cluster/osd_policy.go#L99) · [ceph.Container.WaitForPGClean](../internal/cluster/osd_policy.go#L307) |
 | [internal/cluster/pool_pgs.go](../internal/cluster/pool_pgs.go) | [ceph.Container.PoolPGs](../internal/cluster/pool_pgs.go#L62) |
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.Pools](../internal/cluster/pool_policy.go#L44) · [ceph.Container.PoolStatus](../internal/cluster/pool_policy.go#L54) |
@@ -266,7 +267,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 46개, `cephfs` 49개, `rgw` 38개, `rbd` 17개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 47개, `cephfs` 49개, `rgw` 38개, `rbd` 17개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
@@ -288,6 +289,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [internal/cluster/messenger.go](../internal/cluster/messenger.go) | [ceph.MessengerMode](../internal/cluster/messenger.go#L8) |
 | [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.MGRModuleState](../internal/cluster/mgr_modules.go#L19) · [ceph.MGRModuleOverride](../internal/cluster/mgr_modules.go#L42) |
 | [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.NetworkPlane](../internal/cluster/network.go#L17) · [ceph.NetworkInterruption](../internal/cluster/network.go#L81) |
+| [internal/cluster/object_watchers.go](../internal/cluster/object_watchers.go) | [ceph.ObjectWatcher](../internal/cluster/object_watchers.go#L17) |
 | [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option](../internal/cluster/options.go#L99) |
 | [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.OSDState](../internal/cluster/osd_policy.go#L20) · [ceph.OSDFlagOverride](../internal/cluster/osd_policy.go#L116) |
 | [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.ContainerPause](../internal/cluster/pause.go#L24) |

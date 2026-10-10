@@ -67,6 +67,24 @@ cluster에서는 `TemporaryConfig`로 이 값을 1로 낮춰야 한다. 그렇�
 `mon_osd_report_timeout`(기본 900초)까지 down으로 표시되지 않는다. Resume한 OSD는
 자신이 down으로 표시된 것을 알고 다시 up으로 합류한다.
 
+## 멈춘 client
+
+`WithClient`로 연결한 client 컨테이너를 멈추면 서버가 응답 없는 client를 정리하는
+경로를 재현할 수 있다. 세 경우 모두 기준이 되는 시간은 OSD의 `osd_client_watch_timeout`
+(기본 30초)이나 CephFS의 `session_timeout`이다.
+
+| 대상 | 관측 API | Ceph 20.2.4·19.2.5에서 확인한 동작 | 계약 |
+| --- | --- | --- | --- |
+| RADOS object watch/notify | `Container.ObjectWatchers` | 멈춘 동안 다른 client의 notify가 자기 timeout 뒤 errno 110으로 실패한다. 28~30초 뒤 watch가 사라지면 notify가 즉시 성공한다. blocklist 항목은 생기지 않는다. | 이 문서 |
+| RBD exclusive lock | `rbd.ImageClients` | watch가 만료되면 다른 client가 lock을 깨고 이전 owner를 blocklist한다. `TemporaryBlocklist`로 막으면 1초 안에 넘어간다. | [lock owner](RBD_LOCK_OWNER.md) |
+| CephFS session | `cephfs.Filesystem.Sessions` | 경쟁이 없으면 `session_autoclose`에, 다른 client가 capability를 원하면 `session_timeout` 직후에 evict·blocklist한다. | [client session](CEPHFS_CLIENT_SESSIONS.md) |
+
+`ObjectWatchers`는 `rados listwatchers`를 읽는다. 이 명령은 `--format json`을 무시하고
+`watcher=IP:port/nonce client.<ID> cookie=<N>` 형식의 텍스트만 출력하므로 그 줄을
+파싱한다. `Address`는 `BlocklistEntries`와 같은 표기다. namespace가 빈 문자열이면 기본
+namespace다. 이름이 dash로 시작하거나 제어 문자를 포함하면 rados option이나 출력 줄로
+잘못 읽힐 수 있어서 명령 전에 거부한다.
+
 ## 실행 검증
 
 `TestPausedOSDFaults`는 bridge와 host network 각각 다음을 확인한다.
@@ -82,6 +100,11 @@ cluster에서는 `TemporaryConfig`로 이 값을 1로 낮춰야 한다. 그렇�
 준비 단계에서 `TemporaryConfig`로 `mon_osd_min_down_reporters=1`,
 `osd_op_complaint_time=2`를 설정한다. CI에서는 `Ceph recovery`의
 `container_pause` batch로 실행한다.
+
+`TestPausedObjectWatcher`는 bridge와 host network 각각에서 살아 있는 watcher에 대한
+notify 성공, 멈춘 watcher에 대한 notify의 errno 110, watch 만료(15초 이전이면 실패),
+만료 뒤 notify 즉시 성공, blocklist 항목 없음을 확인한다. CI에서는 short 범주의
+`rados_fixtures_watchers` batch로 Tentacle과 Squid에서 실행한다.
 
 ```sh
 CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=40m -run '^TestPausedOSDFaults$' ./internal/integration
