@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -273,19 +274,21 @@ func rbdClientCeph19(ctx context.Context, client testcontainers.Container) (bool
 	return legacy, nil
 }
 
+// rbdClientExec returns stdout alone: rados getomapval reports its output
+// file on stderr, which must not join the value.
 func rbdClientExec(ctx context.Context, client testcontainers.Container, args ...string) ([]byte, error) {
-	code, reader, err := client.Exec(ctx, args, tcexec.Multiplexed())
+	code, reader, err := client.Exec(ctx, args)
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(reader)
-	if err != nil {
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
 		return nil, err
 	}
 	if code != 0 {
-		return nil, fmt.Errorf("%s exited %d: %s", strings.Join(args, " "), code, data)
+		return nil, fmt.Errorf("%s exited %d: %s%s", strings.Join(args, " "), code, stdout.Bytes(), stderr.Bytes())
 	}
-	return data, nil
+	return stdout.Bytes(), nil
 }
 
 // rbdNamespaceMappingUnsupported reports a release whose rbd CLI cannot map
