@@ -50,6 +50,28 @@ for _, setting := range []ceph.ConfigSetting{
 | `ms_inject_delay_probability` | 메시지마다 지연을 넣을 확률입니다. `1`이면 모든 메시지에 넣습니다. |
 | `ms_inject_delay_max` | 최대 지연 초입니다. 실제 지연은 0부터 이 값 사이에서 고르게 고릅니다. |
 
+## MDS
+
+Active MDS에 `ms_blackhole_client`를 걸면 MDS는 MON에 beacon을 계속 보내므로
+active로 남고 failover도 일어나지 않습니다. 새 client는 session을 열지 못해
+`client_mount_timeout`이 지난 뒤 errno 110으로 mount에 실패합니다. MDS 컨테이너를
+`PauseContainer`로 멈추면 beacon이 끊겨 MON이 standby로 교체하므로, "MDS는 살아
+있지만 client에 답하지 않는" 상황은 이 옵션으로 만듭니다.
+
+```go
+status, err := fs.MDSStatus(ctx)
+if err != nil {
+    return err
+}
+hold, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+    Section: "mds." + status.Active[0].Name,
+    Name:    "ms_blackhole_client",
+    Value:   "true",
+})
+```
+
+## Section 고르기
+
 `Section`은 `osd`처럼 종류 전체나 `osd.1`처럼 daemon 하나를 고릅니다. 한 OSD만
 차단하면 그 OSD가 acting primary인 object의 op만 멈추므로, `ceph osd map <pool>
 <object>`의 `acting_primary`로 어떤 object가 영향을 받을지 미리 알 수 있습니다.
@@ -84,6 +106,10 @@ pool로 확인합니다.
    쓰고 읽을 수 있습니다.
 2. 모든 OSD에 client 메시지 지연(최대 2초)을 넣으면 write와 read가 모두 성공하고
    가장 느린 op가 0.3초를 넘습니다. 되돌린 뒤에는 모든 op가 1초 안에 끝납니다.
+3. 같은 cluster에 CephFS를 만들고 active MDS에 `ms_blackhole_client`를 켜면, 새
+   libcephfs mount가 5초 `client_mount_timeout` 뒤 errno 110으로 실패하고 active
+   MDS의 이름과 GID는 그대로입니다. 되돌린 뒤에는 mount하고 앞서 쓴 파일을 그대로
+   읽습니다.
 
 로컬 macOS Docker Desktop(Linux ARM64)에서 Tentacle 20.2.4 공식 이미지와
 Squid 19.2.5 공식 이미지로 두 network 모두 통과했습니다. CI에서는 recovery

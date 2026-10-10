@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -21,6 +22,8 @@ import (
 // networks too. ms_blackhole_client on one OSD drops the client messages it
 // receives while it stays up for its peers, so only objects whose primary is
 // that OSD time out. ms_inject_delay_* delays the client messages OSDs receive.
+// ms_blackhole_client on the active MDS stops new mounts without a failover,
+// unlike a paused MDS, whose missing beacons make the MONs replace it.
 func TestMessengerFaultInjection(t *testing.T) {
 	for _, host := range []bool{false, true} {
 		name := "bridge"
@@ -128,6 +131,49 @@ func TestMessengerFaultInjection(t *testing.T) {
 					t.Fatalf("delay remained after restore: %v", fast)
 				}
 			})
+
+			t.Run("mds-client-blackhole", func(t *testing.T) {
+				fs, err := cephfs.Start(ctx, cluster, cephfs.Config{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := fs.WaitReady(ctx); err != nil {
+					t.Fatal(err)
+				}
+				mount := func(t *testing.T, phase string) messengerFaultMount {
+					t.Helper()
+					out := execOutput(t, ctx, client, "python3", "-c", messengerFaultMountProbe, fs.FilesystemName, phase)
+					var result messengerFaultMount
+					if err := json.Unmarshal([]byte(lastJSONLine(out)), &result); err != nil {
+						t.Fatalf("CephFS mount probe output: %s %v", out, err)
+					}
+					t.Logf("MESSENGER_FAULT_MOUNT %s", lastJSONLine(out))
+					return result
+				}
+				active := func(t *testing.T) cephfs.MDSStatus {
+					t.Helper()
+					status, err := fs.MDSStatus(ctx)
+					if err != nil || len(status.Active) != 1 {
+						t.Fatalf("one active MDS expected: %+v %v", status, err)
+					}
+					return status.Active[0]
+				}
+				if result := mount(t, "seed"); !result.Mounted || !result.Verified {
+					t.Fatalf("seed mount: %+v", result)
+				}
+				before := active(t)
+				hold := messengerFaultConfig(t, ctx, cluster, ceph.ConfigSetting{Section: "mds." + before.Name, Name: "ms_blackhole_client", Value: "true"})
+				if result := mount(t, "blocked"); result.Mounted || result.Errno != 110 {
+					t.Fatalf("mount reached an MDS that drops client messages: %+v", result)
+				}
+				if after := active(t); after.Name != before.Name || after.GID != before.GID {
+					t.Fatalf("active MDS changed while dropping client messages: before=%+v after=%+v", before, after)
+				}
+				hold()
+				if result := mount(t, "verify"); !result.Mounted || !result.Verified {
+					t.Fatalf("mount after restore: %+v", result)
+				}
+			})
 		})
 	}
 }
@@ -137,6 +183,14 @@ type messengerFaultResult struct {
 	Errno    int     `json:"errno"`
 	Seconds  float64 `json:"seconds"`
 	Verified bool    `json:"verified"`
+}
+
+type messengerFaultMount struct {
+	Phase    string `json:"phase"`
+	Mounted  bool   `json:"mounted"`
+	Verified bool   `json:"verified"`
+	Errno    int    `json:"errno"`
+	Killed   bool   `json:"killed"`
 }
 
 // messengerFaultConfig applies settings and returns a function that restores
@@ -188,4 +242,40 @@ try:
 finally:
     client.shutdown()
 print(json.dumps(results))
+`
+
+// The mount runs in a child so a mount stuck past client_mount_timeout is
+// killed and reported instead of hanging the probe. Only the child's JSON is
+// printed; libcephfs logs stay in its captured stderr.
+const messengerFaultMountProbe = `import json,subprocess,sys
+filesystem,phase=sys.argv[1:]
+child=r'''import cephfs,hashlib,json,os,sys
+name,phase=sys.argv[1:]
+payload=hashlib.sha256(b'messenger-fault').digest()*512
+result={'phase':phase,'mounted':False,'verified':False}
+fs=cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf',auth_id='admin')
+fs.conf_set('client_mount_timeout','5')
+try:
+    fs.mount(filesystem_name=name.encode()); result['mounted']=True
+    if phase=='seed':
+        fd=fs.open('/messenger-fault',os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600)
+        try: fs.write(fd,payload,0); fs.fsync(fd,False)
+        finally: fs.close(fd)
+    fd=fs.open('/messenger-fault',os.O_RDONLY,0)
+    try: result['verified']=fs.read(fd,0,len(payload)+1)==payload
+    finally: fs.close(fd)
+except Exception as error:
+    number=getattr(error,'errno',None)
+    if number is None and error.args and isinstance(error.args[0],int): number=error.args[0]
+    result['errno']=abs(number) if isinstance(number,int) else -1
+finally:
+    fs.shutdown()
+print(json.dumps(result),flush=True)
+'''
+try:
+    done=subprocess.run([sys.executable,'-c',child,filesystem,phase],capture_output=True,text=True,timeout=40)
+    lines=[line for line in done.stdout.splitlines() if line.startswith('{')]
+    print(lines[-1] if lines else json.dumps({'phase':phase,'errno':-1,'stderr':done.stderr[-500:]}))
+except subprocess.TimeoutExpired:
+    print(json.dumps({'phase':phase,'killed':True}))
 `
