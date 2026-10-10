@@ -25,6 +25,29 @@ const (
 // The cluster disposes of namespaces with all its data when it terminates.
 type Namespace = cluster.RBDNamespace
 
+// ImageWatcher is one client watching an image header. Address is the
+// client's IP:port/nonce, the same form BlocklistEntries reports. A client
+// that stops answering keeps its watch until the OSD's
+// osd_client_watch_timeout expires, 30 seconds by default.
+type ImageWatcher = cluster.RBDImageWatcher
+
+// ImageLock is one lock on an image header. Managed marks the lock librbd
+// takes for the exclusive-lock feature; its ID carries the owner's watch
+// cookie. Other locks are advisory locks added through rbd lock add.
+type ImageLock = cluster.RBDImageLock
+
+// ImageClientStatus reports an image's watchers and locks. The two lists
+// come from separate native reads, so a lock handoff between them can show a
+// new owner without its watch or the reverse; poll for a stable answer.
+type ImageClientStatus = cluster.RBDImageClientStatus
+
+// ImageClients reads which clients watch an image and which hold its
+// locks, including clients outside this fixture. Namespace is empty for the
+// default namespace. It reads native state only and grants no ownership.
+func ImageClients(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error) {
+	return cluster.RBDImageClients(ctx, c, pool, namespace, image)
+}
+
 // InitPool initializes an existing replicated pool for RBD metadata. Pools
 // registered to other applications are rejected; no force option is used. An
 // existing RBD initialization is safe to repeat. EC pools may supply image data

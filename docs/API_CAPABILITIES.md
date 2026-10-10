@@ -66,15 +66,15 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 | 분류 | ceph | cephfs | rgw | rbd | 합계 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Fixture Operation | 54 | 49 | 36 | 14 | 153 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 48 | 33 | 20 | 15 | 116 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 48 | 33 | 20 | 17 | 118 |
 | 연결·raw CLI·customizer 접점 | 8 | 1 | 5 | 2 | 16 |
 | 조건부 archive helper | 0 | 0 | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 4 | 0 | 12 | 0 | 16 |
-| 전체 | 114 | 83 | 73 | 35 | **305** |
+| 전체 | 114 | 83 | 73 | 37 | **307** |
 
 집계는 공개 패키지 네 개(`ceph`, `cephfs`, `rgw`, `rbd`)의 공개 함수와 공개 타입의 공개 method다. 서비스 패키지의 타입은 `internal/cluster`·`internal/multicluster` 구현 타입의 alias이므로 method와 줄 anchor는 구현 선언을 가리킨다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 305개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 307개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -148,7 +148,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L18) |
 | [rgw/run.go](../rgw/run.go) | [rgw.Run](../rgw/run.go#L18) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (72개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (73개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -173,6 +173,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.Pools](../internal/cluster/pool_policy.go#L44) · [ceph.Container.PoolStatus](../internal/cluster/pool_policy.go#L54) |
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.WaitForPoolPGCount](../internal/cluster/pool_relocation.go#L73) |
 | [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.Container.PoolUsage](../internal/cluster/pool_usage.go#L44) |
+| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageClients](../internal/cluster/rbd_image_clients.go#L56) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.UserInfo](../internal/cluster/rgw_admin.go#L457) |
 | [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Gateway.PlacementStatus](../internal/cluster/rgw_placement.go#L250) |
 | [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Gateway.AccountInfo](../internal/cluster/rgw_tenants_accounts.go#L299) |
@@ -197,7 +198,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/multicluster/rgw_sync_policy_ready.go](../internal/multicluster/rgw_sync_policy_ready.go) | [rgw.Multisite.WaitBucketSyncPolicyReady](../internal/multicluster/rgw_sync_policy_ready.go#L38) |
 | [internal/multicluster/rgw_sync_status.go](../internal/multicluster/rgw_sync_status.go) | [rgw.Multisite.SyncStatus](../internal/multicluster/rgw_sync_status.go#L48) · [rgw.Multisite.WaitSyncReady](../internal/multicluster/rgw_sync_status.go#L66) |
 
-### Check: 보존된 정보·소유 목록·접속 정보 (44개)
+### Check: 보존된 정보·소유 목록·접속 정보 (45개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -211,6 +212,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.Container.ClusterNetworkName](../internal/cluster/network.go#L26) · [ceph.Container.HasSeparateClusterNetwork](../internal/cluster/network.go#L34) |
 | [internal/cluster/placement.go](../internal/cluster/placement.go) | [ceph.OSDContainer.Placement](../internal/cluster/placement.go#L24) |
 | [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace.Name](../internal/cluster/rbd.go#L31) · [rbd.Namespace.PoolName](../internal/cluster/rbd.go#L34) |
+| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageClientStatus.ExclusiveOwner](../internal/cluster/rbd_image_clients.go#L41) |
 | [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway.DaemonEndpoint](../internal/cluster/rgw.go#L358) · [rgw.Gateway.S3Endpoint](../internal/cluster/rgw.go#L394) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.User.ID](../internal/cluster/rgw_admin.go#L67) · [rgw.User.Credentials](../internal/cluster/rgw_admin.go#L76) |
 | [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Account.ID](../internal/cluster/rgw_tenants_accounts.go#L68) |
@@ -264,7 +266,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 46개, `cephfs` 49개, `rgw` 38개, `rbd` 14개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 46개, `cephfs` 49개, `rgw` 38개, `rbd` 17개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
@@ -296,6 +298,7 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.PoolPlacement](../internal/cluster/pool_relocation.go#L17) |
 | [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.PoolUsageSnapshot](../internal/cluster/pool_usage.go#L23) |
 | [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace](../internal/cluster/rbd.go#L15) |
+| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageWatcher](../internal/cluster/rbd_image_clients.go#L15) · [rbd.ImageLock](../internal/cluster/rbd_image_clients.go#L24) · [rbd.ImageClientStatus](../internal/cluster/rbd_image_clients.go#L34) |
 | [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway](../internal/cluster/rgw.go#L24) · [rgw.Config](../internal/cluster/rgw.go#L43) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.UserConfig](../internal/cluster/rgw_admin.go#L25) · [rgw.User](../internal/cluster/rgw_admin.go#L37) · [rgw.Quota](../internal/cluster/rgw_admin.go#L90) · [rgw.AdminCapability](../internal/cluster/rgw_admin.go#L96)<br>[rgw.UserInfo](../internal/cluster/rgw_admin.go#L105) |
 | [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.StorageClassConfig](../internal/cluster/rgw_placement.go#L25) · [rgw.PlacementConfig](../internal/cluster/rgw_placement.go#L34) · [rgw.Placement](../internal/cluster/rgw_placement.go#L51) · [rgw.PlacementState](../internal/cluster/rgw_placement.go#L67) |
