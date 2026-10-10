@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -86,4 +87,68 @@ func TestErasureCodedPools(t *testing.T) {
 		execCommand(t, ctx, client, "python3", "-c", erasurePoolClientScript, metadata.Name, data.Name, phase)
 	}
 	t.Log("native EC RADOS partial overwrites and RBD with replicated metadata/EC data: bytes and snapshot retained in a fresh session, then removed")
+	checkPoolRemoval(t, ctx, cluster, data, metadata)
+}
+
+// checkPoolRemoval removes both pools with their fixture CRUSH rules and EC
+// profile, then proves the names are reusable and deletion stays disabled.
+func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container, pools ...*ceph.Pool) {
+	t.Helper()
+	if err := cluster.RemovePool(ctx, ".mgr"); err == nil {
+		t.Fatal("RemovePool accepted a pool that Ceph created")
+	}
+	for _, pool := range pools {
+		if err := cluster.RemovePool(ctx, pool.Name); err != nil {
+			t.Fatalf("remove pool %s: %v", pool.Name, err)
+		}
+		if err := cluster.RemovePool(ctx, pool.Name); err == nil {
+			t.Fatalf("second removal of %s succeeded", pool.Name)
+		}
+	}
+	states, err := cluster.Pools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string][]string{}
+	for _, args := range [][]string{{"osd", "crush", "rule", "ls"}, {"osd", "erasure-code-profile", "ls"}} {
+		data, err := cluster.Ceph(ctx, append(args, "--format", "json")...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list []string
+		if err := json.Unmarshal(data, &list); err != nil {
+			t.Fatal(err)
+		}
+		names[args[1]] = list
+	}
+	for _, pool := range pools {
+		for _, state := range states {
+			if state.Name == pool.Name {
+				t.Fatalf("pool %s still exists", pool.Name)
+			}
+		}
+		if slices.Contains(names["crush"], pool.CRUSHRule) || (pool.ErasureCodeProfile != "" && slices.Contains(names["erasure-code-profile"], pool.ErasureCodeProfile)) {
+			t.Fatalf("pool %s left rule/profile behind: %v", pool.Name, names)
+		}
+	}
+	entries, err := cluster.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name == "mon_allow_pool_delete" {
+			t.Fatalf("pool deletion permission was left enabled: %+v", entry)
+		}
+	}
+	if _, err := cluster.Ceph(ctx, "osd", "pool", "rm", ".mgr", ".mgr", "--yes-i-really-really-mean-it"); err == nil {
+		t.Fatal("native pool deletion stayed enabled after RemovePool")
+	}
+	recreated, err := cluster.CreatePool(ctx, pools[0].PoolConfig)
+	if err != nil {
+		t.Fatalf("recreate removed pool %s: %v", pools[0].Name, err)
+	}
+	if err := cluster.RemovePool(ctx, recreated.Name); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("RemovePool removed %d pools with their CRUSH rules and EC profile, refused .mgr and repeats, restored mon_allow_pool_delete and allowed name reuse", len(pools))
 }

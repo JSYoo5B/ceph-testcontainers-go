@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | cephfs | rgw | rbd | 합계 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Fixture Operation | 53 | 46 | 36 | 14 | 149 |
+| Fixture Operation | 54 | 46 | 36 | 14 | 150 |
 | Check: native 질의/Wait 또는 보존 정보 조회 | 47 | 31 | 20 | 15 | 113 |
 | 연결·raw CLI·customizer 접점 | 8 | 1 | 5 | 2 | 16 |
 | 조건부 archive helper | 0 | 0 | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 4 | 0 | 12 | 0 | 16 |
-| 전체 | 112 | 78 | 73 | 35 | **298** |
+| 전체 | 113 | 78 | 73 | 35 | **299** |
 
 집계는 공개 패키지 네 개(`ceph`, `cephfs`, `rgw`, `rbd`)의 공개 함수와 공개 타입의 공개 method다. 서비스 패키지의 타입은 `internal/cluster`·`internal/multicluster` 구현 타입의 alias이므로 method와 줄 anchor는 구현 선언을 가리킨다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 298개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 299개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -90,7 +90,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (149개)
+### Fixture Operation (150개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -121,6 +121,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.Container.PauseContainer](../internal/cluster/pause.go#L43) · [ceph.ContainerPause.Resume](../internal/cluster/pause.go#L109) |
 | [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.Container.CreatePool](../internal/cluster/pool.go#L62) |
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.SetPoolQuota](../internal/cluster/pool_policy.go#L70) · [ceph.Container.SetPoolReplication](../internal/cluster/pool_policy.go#L110) |
+| [internal/cluster/pool_removal.go](../internal/cluster/pool_removal.go) | [ceph.Container.RemovePool](../internal/cluster/pool_removal.go#L27) |
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.SetPoolPGCount](../internal/cluster/pool_relocation.go#L31) · [ceph.Container.SetPoolPlacement](../internal/cluster/pool_relocation.go#L179) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.CreateUser](../internal/cluster/rgw_admin.go#L258) · [rgw.Gateway.SetUserQuota](../internal/cluster/rgw_admin.go#L469) · [rgw.Gateway.SetBucketQuota](../internal/cluster/rgw_admin.go#L475) · [rgw.Gateway.SuspendUser](../internal/cluster/rgw_admin.go#L526)<br>[rgw.Gateway.RemoveUser](../internal/cluster/rgw_admin.go#L555) |
 | [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Gateway.CreatePlacement](../internal/cluster/rgw_placement.go#L139) · [rgw.Gateway.ApplyPlacement](../internal/cluster/rgw_placement.go#L279) · [rgw.Gateway.ReloadPlacement](../internal/cluster/rgw_placement.go#L377) |
