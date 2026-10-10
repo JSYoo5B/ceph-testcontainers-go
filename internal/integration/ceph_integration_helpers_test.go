@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -73,4 +74,41 @@ func osdContainers(cluster *ceph.Container) []testcontainers.Container {
 		result = append(result, osd.Container)
 	}
 	return result
+}
+
+// poolApplicationHealthLags reports that a POOL_APP_NOT_ENABLED check names
+// only pools whose OSDMap already records an application. The MGR computes
+// the check from its PG digest, which can trail the OSDMap right after a pool
+// is created; a named pool that really lacks an application fails the test.
+func poolApplicationHealthLags(t *testing.T, ctx context.Context, cluster *ceph.Container, check json.RawMessage) bool {
+	t.Helper()
+	var detail struct {
+		Detail []struct {
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal(check, &detail); err != nil {
+		t.Fatal("decode POOL_APP_NOT_ENABLED detail", err)
+	}
+	named := 0
+	for _, item := range detail.Detail {
+		pool, found := strings.CutPrefix(item.Message, "application not enabled on pool '")
+		if !found {
+			continue
+		}
+		pool = strings.TrimSuffix(pool, "'")
+		data, err := cluster.Ceph(ctx, "osd", "pool", "application", "get", pool, "--format", "json")
+		var applications map[string]json.RawMessage
+		if err != nil || json.Unmarshal(data, &applications) != nil {
+			t.Fatalf("read pool %q applications: %v", pool, err)
+		}
+		if len(applications) == 0 {
+			t.Fatalf("pool %q has no application in the OSDMap", pool)
+		}
+		named++
+	}
+	if named == 0 {
+		t.Fatalf("POOL_APP_NOT_ENABLED names no pool: %s", check)
+	}
+	return true
 }

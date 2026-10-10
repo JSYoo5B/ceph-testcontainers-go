@@ -477,8 +477,9 @@ func stoppedMDSBytes(t *testing.T, ctx context.Context, client testcontainers.Co
 		SHA256     string `json:"sha256"`
 	}
 	expected := []byte(strings.Repeat(nonce, (128<<10)/len(nonce)+1))[:128<<10]
-	if json.Unmarshal(data, &result) != nil || result.FSID != fsid || result.Filesystem != fs.FilesystemName || result.Phase != phase || result.Pool != pool || result.Bytes != len(expected) || result.SHA256 != fmt.Sprintf("%x", sha256.Sum256(expected)) {
-		t.Fatal("fresh scoped libcephfs identity/layout/nonce bytes differ")
+	// libcephfs may log warnings to stderr ahead of the JSON result.
+	if json.Unmarshal([]byte(lastLine(string(data))), &result) != nil || result.FSID != fsid || result.Filesystem != fs.FilesystemName || result.Phase != phase || result.Pool != pool || result.Bytes != len(expected) || result.SHA256 != fmt.Sprintf("%x", sha256.Sum256(expected)) {
+		t.Fatalf("fresh scoped libcephfs identity/layout/nonce bytes differ: %s", data)
 	}
 	t.Logf("STOPPED_MDS_BYTES filesystem=%s phase=%s fsid=%s pool=%s bytes=%d sha256=%s client_cid=%s", fs.FilesystemName, phase, fsid, pool, result.Bytes, result.SHA256, client.GetContainerID())
 }

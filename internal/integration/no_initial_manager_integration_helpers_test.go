@@ -408,7 +408,10 @@ func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Con
 	if err := json.Unmarshal(data, &health); err != nil || health.Checks == nil || health.Status != "HEALTH_OK" && health.Status != "HEALTH_WARN" && health.Status != "HEALTH_ERR" {
 		t.Fatalf("native health schema/severity unavailable: %v", err)
 	}
-	for code := range health.Checks {
+	for code, check := range health.Checks {
+		if code == "POOL_APP_NOT_ENABLED" && poolApplicationHealthLags(t, ctx, cluster, check) {
+			continue
+		}
 		if code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
 			t.Fatalf("unexpected health check %s; inspect actual detail for fixed image requirement failure", code)
 		}

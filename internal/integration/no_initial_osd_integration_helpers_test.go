@@ -461,7 +461,10 @@ func noInitialOSDHealth(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		t.Fatal(err)
 	}
 	t.Logf("NO_INITIAL_OSD_HEALTH phase=%s detail=%s", phase, compact)
-	for code := range detail.Checks {
+	for code, check := range detail.Checks {
+		if code == "POOL_APP_NOT_ENABLED" && poolApplicationHealthLags(t, ctx, cluster, check) {
+			continue
+		}
 		if strings.HasPrefix(code, "MGR_MODULE") {
 			t.Fatalf("image requirement or MGR module/dependency failure: %s; stop dependent acceptance and report native health detail", code)
 		}
