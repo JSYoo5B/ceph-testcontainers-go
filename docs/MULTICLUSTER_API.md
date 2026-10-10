@@ -199,7 +199,7 @@ CephFS `RebalanceDirectories`는 `AddDaemon` 뒤 기존 directory가 자동 재�
 | CephFS `InterruptPeerLink(ctx, daemonName)` | source daemon의 destination public network | source filesystem/MGR registration, directory/peer 정책 |
 | RGW `InterruptZoneLink(ctx, zoneName)` | gateway의 multisite HTTP network | local Ceph/S3 endpoint, realm/period membership |
 
-각 API는 owned 구성원만 선택하고 `*ceph.NetworkInterruption`을 반환합니다. 중단은 해당 endpoint 전체에 적용하며 daemon을 종료·재시작하지 않습니다. 개별 zone 쌍의 packet filtering이나 지연·손실 주입은 제공하지 않습니다. host mode에는 분리할 Docker bridge endpoint가 없어 거부합니다.
+각 API는 owned 구성원만 선택하고 `*ceph.NetworkInterruption`을 반환합니다. 중단은 해당 endpoint 전체에 적용하며 daemon을 종료·재시작하지 않습니다. 개별 zone 쌍의 packet filtering이나 packet 손실 주입은 제공하지 않습니다. RADOS 메시지 지연은 [messenger 지연·차단 recipe](MESSENGER_FAULTS.md)의 옵션으로 넣을 수 있지만, 다중 cluster 복제 경로에 적용한 결과는 검증하지 않았습니다. host mode에는 분리할 Docker bridge endpoint가 없어 거부합니다.
 
 `cut.Restore(ctx)`는 원래 IP·alias·gateway priority로 재연결하며 재시도할 수 있습니다. 외부에서 다른 endpoint로 재연결했다면 덮어쓰지 않습니다. disconnect의 transport 오류는 실제 적용 여부를 확정하지 못하므로 **오류와 함께 반환된 non-nil handle도 복구 대상으로 유지**합니다. fixture가 복구를 cleanup에 등록하므로 fixture 종료 이전에 직접 복구할 수 있고, 복구 실패나 이미 제거된 daemon의 정리도 재시도합니다. endpoint 복구와 실제 backlog catch-up 완료는 별도로 관측합니다.
 

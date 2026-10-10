@@ -75,7 +75,7 @@ if err := cut.Restore(ctx); err != nil {
 }
 ```
 
-단절은 선택한 container의 해당 bridge endpoint 전체를 끊는 방식입니다. 개별 source/destination 주소 쌍의 packet filtering, 지연·손실 주입, host namespace의 firewall 조작은 제공 범위에 포함하지 않습니다. 복구 시 광고된 원래 IP·alias와 gateway priority를 유지하고 native daemon은 재시작하지 않습니다. fixture는 자신이 만든 interruption의 복구를 cleanup에 등록하며 실패한 복구는 재시도할 수 있습니다. caller-owned client를 복구하지 못한 network는 제거를 보류합니다.
+단절은 선택한 container의 해당 bridge endpoint 전체를 끊는 방식입니다. 개별 source/destination 주소 쌍의 packet filtering, packet 손실 주입, host namespace의 firewall 조작은 제공 범위에 포함하지 않습니다. 공식 이미지에 `tc`·`iptables`가 없기 때문입니다. 특정 daemon이 client 메시지를 버리거나 늦게 처리하는 상황은 Ceph messenger 옵션으로 만들 수 있으며 [messenger 지연·차단 recipe](MESSENGER_FAULTS.md)를 따릅니다. 복구 시 광고된 원래 IP·alias와 gateway priority를 유지하고 native daemon은 재시작하지 않습니다. fixture는 자신이 만든 interruption의 복구를 cleanup에 등록하며 실패한 복구는 재시도할 수 있습니다. caller-owned client를 복구하지 못한 network는 제거를 보류합니다.
 
 RBD peer 단절은 receiver의 source public network, CephFS는 daemon의 destination public network, RGW는 gateway의 multisite HTTP bridge를 선택합니다. local cluster endpoint와 peer 정책을 유지하며, 복구 뒤 native catch-up을 검증합니다. host mode에서는 공유 namespace endpoint를 Docker로 끊을 수 없어 해당 API를 거부합니다.
 
