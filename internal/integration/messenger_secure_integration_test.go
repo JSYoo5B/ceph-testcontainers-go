@@ -55,7 +55,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 				t.Fatal("native pool identity unavailable", err)
 			}
 			checkSecureMessengerTopology(t, ctx, cluster)
-			secureMessengerClient(t, ctx, client, "seed")
+			secureMessengerClient(t, ctx, cluster, client, "seed")
 			for _, monName := range []string{"b", "c"} {
 				if _, err := cluster.AddMonitor(ctx, monName); err != nil {
 					t.Fatal("secure MON growth", err)
@@ -74,12 +74,12 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkSecureMessengerTopology(t, ctx, cluster)
-			secureMessengerClient(t, ctx, client, "grown")
+			secureMessengerClient(t, ctx, cluster, client, "grown")
 			// Use identical bootstrap and credentials with a single incompatible
 			// mode. A watchdog timeout cannot satisfy the rejection assertion.
 			negative := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCRCProbe)
 			t.Logf("MSGR2_CRC_REFUSAL %s", negative)
-			secureMessengerClient(t, ctx, client, "after-crc-refusal")
+			secureMessengerClient(t, ctx, cluster, client, "after-crc-refusal")
 			final, err := cluster.PoolStatus(ctx, "tc-messenger")
 			if err != nil || final.ID != initial.ID || final.Size != initial.Size || final.PGNum != initial.PGNum {
 				t.Fatalf("secure topology changed pool identity/policy: %+v %v", final, err)
@@ -123,7 +123,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName)
+			data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, messengerDumpArg(cluster))
 			t.Logf("MSGR2_CEPHFS %s", data)
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
@@ -141,7 +141,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mds := range fs.MDSs() {
-				data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "")
+				data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(cluster))
 				t.Logf("MSGR2_NATIVE %s", data)
 			}
 			inspection, err := gateway.Inspect(ctx)
@@ -154,7 +154,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			}
 			// ServiceMap GID plus hostname/frontend binds server-side OSD
 			// connections to this owned gateway, not an unrelated CLI client.
-			data = topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend)
+			data = topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(cluster))
 			t.Logf("MSGR2_RGW %s", data)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)

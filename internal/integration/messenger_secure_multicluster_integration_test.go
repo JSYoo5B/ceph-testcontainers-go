@@ -87,7 +87,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			}
 			checkMixedMessengerPeers(t, ctx, source, policy.Peers[0].ClientName, daemons[0], nil)
 			checkMixedMessengerPeers(t, ctx, destination, daemons[0].ClientName, daemons[0], nil)
-			mixedMessengerCatalog(t, ctx, daemons[0], "/tmp/rbd-mirror.asok")
+			mixedMessengerCatalog(t, ctx, source, daemons[0], "/tmp/rbd-mirror.asok")
 			patch := rbdMultiClusterPayload(16<<10, 83)
 			copy(payload[256<<10:], patch)
 			rbdMultiClusterWriteRange(t, ctx, sourceClient, image, uint64(len(payload)), 256<<10, patch)
@@ -169,7 +169,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				checkMixedMessengerPeers(t, ctx, destination, mirror.DestinationClientEntity, daemons[0], filesystems[1])
 				t.Logf("MSGR_MIX_CEPHFS checkpoint=%d/%s source_snapshot_id=%d", index+1, checkpointName, checkpoint.ID)
 			}
-			mixedMessengerCatalog(t, ctx, daemons[0], "/var/run/ceph/cephfs-mirror.asok")
+			mixedMessengerCatalog(t, ctx, source, daemons[0], "/var/run/ceph/cephfs-mirror.asok")
 			t.Logf("MSGR_MIX_CEPHFS direction=%s bytes=8192 checkpoints=2 elapsed=%s", mixedMessengerDirection(secureSource), time.Since(started))
 		})
 	}
@@ -273,13 +273,19 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 		mode = "secure"
 	}
 	for _, daemon := range daemons {
-		data := mixedMessengerExec(t, ctx, cluster.ControlContainer(), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses))
+		data := mixedMessengerExec(t, ctx, cluster.ControlContainer(), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(cluster))
 		t.Logf("MSGR_MIX_NATIVE %s", data)
 	}
 }
 
-func mixedMessengerCatalog(t *testing.T, ctx context.Context, daemon testcontainers.Container, socket string) {
+func mixedMessengerCatalog(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, socket string) {
 	t.Helper()
+	if messengerDumpArg(cluster) != "1" {
+		// Ceph 19 has no messenger dump; prove the owned socket answers.
+		data := mixedMessengerExec(t, ctx, daemon, "ceph", "--admin-daemon", socket, "version")
+		t.Logf("MSGR_MIX_MIRROR socket=%s native_version=%s", socket, bytes.TrimSpace(data))
+		return
+	}
 	data := mixedMessengerExec(t, ctx, daemon, "ceph", "--admin-daemon", socket, "messenger", "dump")
 	var catalog struct {
 		Messengers []string `json:"messengers"`
@@ -298,7 +304,7 @@ func mixedMessengerCatalog(t *testing.T, ctx context.Context, daemon testcontain
 // A reused READY connection may dump a cleared auth mode while retaining its
 // session handlers. Accept that diagnostic only with both native AES handlers.
 const mixedMessengerPeerProbe = `import json,subprocess,sys,time
-expected_fsid,mode,daemon,entity,encoded_addresses=sys.argv[1:]
+expected_fsid,mode,daemon,entity,encoded_addresses,dump=sys.argv[1:]
 expected_addresses=set(json.loads(encoded_addresses))
 def native(*args):
     result=subprocess.run(['ceph','--connect-timeout','5',*args],capture_output=True,text=True,timeout=8)
@@ -316,6 +322,18 @@ while True:
     authenticated_gids={session['global_id'] for session in sessions
                         if session['entity_name']==entity and session['open'] and session['authenticated']
                         and session['global_id']>0 and native_addresses(session['addrs']).intersection(expected_addresses)}
+    if dump!='1':
+        # Ceph 19 has no messenger dump. A secure-side server that accepts
+        # only secure sessions proves the owned mirror's sessions encrypted.
+        key='ms_mon_service_mode' if daemon.startswith('mon.') else 'ms_service_mode'
+        service=native('tell',daemon,'config','get',key,'--format','json')[key]
+        assert mode!='secure' or service=='secure',('secure-side service mode differs',daemon,service)
+        if authenticated_gids:
+            ready=[{'global_id':gid,'service_mode':service} for gid in sorted(authenticated_gids)]
+            break
+        assert time.monotonic()<deadline,('no live owned mirror client session',daemon,entity)
+        time.sleep(1)
+        continue
     catalog=native('tell',daemon,'messenger','dump','--format','json'); catalog=catalog.get('status',catalog)
     assert catalog['messengers'],daemon
     ready=[]

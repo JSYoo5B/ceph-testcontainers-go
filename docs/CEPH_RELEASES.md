@@ -48,6 +48,7 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | `TestMultiClusterRBDReceiverReadiness`의 이름이 다른 mapping 4개, `TestMultiClusterRBDNamespaceImageObservation` | 위 namespace mapping 테스트와 같이 fixture가 변경 전에 거부하는지 확인하고 끝냅니다. |
 | `TestMultiClusterNoInitialMirrorDaemons/*/rbd-journal-partial-first` | Squid에서는 `ns-a`를 같은 이름의 `ns-a`로 mirror해서 journal pool scope 검증을 그대로 수행합니다. |
 | RBD mirror topology를 직접 읽는 테스트 | 테스트도 `rbd mirror pool info`에서 빠진 `mirror_uuid`와 `remote_namespace`를 fixture와 같은 방법으로 채워서 비교합니다. Tentacle 출력은 그대로 검사합니다. |
+| `TestMessengerV2Secure*`, `Test*MessengerSecureDefaultMix` | Squid에는 연결별 암호화 상태를 보여 주는 `messenger dump` admin 명령이 없습니다. 그래서 각 daemon의 `ms_*_service_mode`가 `secure`인지 확인합니다. secure만 받는 daemon과 성립한 연결은 암호화된 연결이기 때문입니다. 테스트가 직접 띄우는 librados·libcephfs client는 `debug_ms=1` 로그의 READY 연결 줄에서 `secure` mode와 crypto handler를 확인합니다. CRC 전용 client 거부 검증은 두 release에서 같습니다. |
 
 ## 이미지 호환 확인
 

@@ -112,3 +112,14 @@ func poolApplicationHealthLags(t *testing.T, ctx context.Context, cluster *ceph.
 	}
 	return true
 }
+
+// messengerDumpArg tells native messenger probes whether the cluster's
+// daemons answer messenger dump ("1"), which Ceph 20 added. On Ceph 19 the
+// probes prove encryption from secure-only service modes and from client
+// debug_ms READY log lines instead.
+func messengerDumpArg(cluster *ceph.Container) string {
+	if strings.HasPrefix(cluster.CephVersion(), "19.") {
+		return "0"
+	}
+	return "1"
+}

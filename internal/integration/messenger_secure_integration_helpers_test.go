@@ -58,19 +58,19 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	}
 	// tell forwards admin-socket commands; the OSD role needs no ceph CLI.
 	for _, daemon := range daemons {
-		data := topologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "")
+		data := topologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", messengerDumpArg(cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 	// Standby MGRs have an admin socket but do not serve forwarded tell commands.
 	for _, mgr := range cluster.Managers() {
-		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok")
+		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 }
 
-func secureMessengerClient(t *testing.T, ctx context.Context, client testcontainers.Container, phase string) {
+func secureMessengerClient(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, phase string) {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase)
+	data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, messengerDumpArg(cluster))
 	t.Logf("MSGR2_CLIENT %s", data)
 }
 
@@ -93,10 +93,26 @@ def ready_connections(record):
         peer=connection['peer']
         result.append({'peer_type':peer['type'],'peer_id':peer['id'],'global_id':peer['global_id'],'mode':v2['con_mode'],'rx':v2['crypto']['rx'],'tx':v2['crypto']['tx'],'encrypted_transport':True})
     return result
+
+# Ceph 19 has no messenger dump. Its debug_ms 1 log names each msgr2
+# connection's mode and session crypto handlers when the session is READY.
+def ready_log_connections(path):
+    import re
+    pattern=re.compile(r'conn\(\S+ \S+ (\w+) :\S+ s=READY .*? crypto rx=(\S+) tx=(\S+) comp rx=\S+ tx=\S+\)\.ready entity=(\w+)\.(\S+)')
+    result=[]
+    with open(path) as log:
+        for line in log:
+            match=pattern.search(line)
+            if not match: continue
+            mode,rx,tx,peer_type,peer_id=match.groups()
+            assert mode=='secure',('legacy ready connection mode',line)
+            assert rx not in ('0','0x0','(nil)') and tx not in ('0','0x0','(nil)'),('legacy ready connection without crypto handlers',line)
+            result.append({'peer_type':peer_type,'peer_id':peer_id,'mode':mode,'encrypted_transport':True})
+    return result
 `
 
 const secureMessengerDaemonProbe = `import subprocess,json,sys
-daemon,expected_fsid,socket=sys.argv[1:]
+daemon,expected_fsid,socket,dump=sys.argv[1:]
 def native(*args):
     result=subprocess.run(['ceph','--connect-timeout','5',*args],capture_output=True,text=True,timeout=12)
     assert result.returncode==0,('native command failed',args,result.returncode,result.stderr[-500:])
@@ -109,22 +125,30 @@ for key in ('ms_cluster_mode','ms_service_mode','ms_client_mode','ms_mon_cluster
     assert config[key]=='secure',(daemon,key,config[key])
 assert config['ms_bind_msgr1']=='false' and config['ms_bind_msgr2']=='true'
 ` + secureMessengerDumpPython + `
-catalog=probe('messenger','dump'); catalog=catalog.get('status',catalog)
-assert catalog['messengers'],daemon
-ready=[]
-for name in catalog['messengers']:
-    ready.extend(ready_connections(probe('messenger','dump',name)))
-assert ready,('no native ready secure peer',daemon)
+# Without messenger dump the secure-only service modes above are the
+# evidence: this daemon accepts no other connection mode.
+ready=None
+if dump=='1':
+    catalog=probe('messenger','dump'); catalog=catalog.get('status',catalog)
+    assert catalog['messengers'],daemon
+    ready=[]
+    for name in catalog['messengers']:
+        ready.extend(ready_connections(probe('messenger','dump',name)))
+    assert ready,('no native ready secure peer',daemon)
 assert native('fsid','--format','json')['fsid']==expected_fsid
 print(json.dumps({'daemon':daemon,'fsid':expected_fsid,'effective_modes':'secure-only','ready_remote':ready}))
 `
 
 const secureMessengerClientProbe = `import rados,sys,json,subprocess,tempfile,hashlib
-phase=sys.argv[1]; payload=bytes(range(256))*256
+phase,dump=sys.argv[1:]; payload=bytes(range(256))*256
 ` + secureMessengerDumpPython + `
 with tempfile.TemporaryDirectory() as directory:
-    socket=directory+'/client.asok'
-    client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','admin_socket':socket,'client_mount_timeout':'8','rados_mon_op_timeout':'8','rados_osd_op_timeout':'10'})
+    socket=directory+'/client.asok'; log=directory+'/client.log'
+    conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','admin_socket':socket,'client_mount_timeout':'8','rados_mon_op_timeout':'8','rados_osd_op_timeout':'10'}
+    # The fixture's ceph.conf logs to stderr only.
+    if dump!='1': conf.update({'log_file':log,'log_to_file':'true','log_to_stderr':'false','debug_ms':'1'})
+    client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf=conf)
+    ready=[]
     try:
         client.connect()
         for key in ('ms_client_mode','ms_mon_client_mode'): assert client.conf_get(key)=='secure'
@@ -136,13 +160,15 @@ with tempfile.TemporaryDirectory() as directory:
                 result=subprocess.run(['ceph','--admin-daemon',socket,'messenger','dump',*args],capture_output=True,text=True,timeout=8)
                 assert result.returncode==0,('client dump failed',result.returncode,result.stderr[-500:])
                 return json.loads(result.stdout)
-            catalog=local(); catalog=catalog.get('status',catalog)
-            ready=[]
-            for name in catalog['messengers']: ready.extend(ready_connections(local(name)))
-            types={peer['peer_type'] for peer in ready}
-            assert 'mon' in types and 'osd' in types,ready
-            print(json.dumps({'phase':phase,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'ready_remote':ready}))
+            if dump=='1':
+                catalog=local(); catalog=catalog.get('status',catalog)
+                for name in catalog['messengers']: ready.extend(ready_connections(local(name)))
     finally: client.shutdown()
+    # shutdown flushes the client log.
+    if dump!='1': ready=ready_log_connections(log)
+    types={peer['peer_type'] for peer in ready}
+    assert 'mon' in types and 'osd' in types,ready
+    print(json.dumps({'phase':phase,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'ready_remote':ready}))
 `
 
 const secureMessengerCRCProbe = `import subprocess,json,re
@@ -153,13 +179,18 @@ print(json.dumps({'crc_only_refused':True,'native_exit':result.returncode,'serve
 `
 
 const secureMessengerCephFSProbe = `import cephfs,os,sys,json,subprocess,tempfile
+filesystem,dump=sys.argv[1:]
 ` + secureMessengerDumpPython + `
 with tempfile.TemporaryDirectory() as directory:
-    socket=directory+'/cephfs.asok'
+    socket=directory+'/cephfs.asok'; log=directory+'/cephfs.log'
     fs=cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf',auth_id='admin')
     fs.conf_set('admin_socket',socket); fs.conf_set('client_mount_timeout','10'); fs.conf_set('rados_osd_op_timeout','10')
+    if dump!='1':
+        # The fixture's ceph.conf logs to stderr only.
+        for key,value in (('log_file',log),('log_to_file','true'),('log_to_stderr','false'),('debug_ms','1')): fs.conf_set(key,value)
+    ready=[]
     try:
-        fs.mount(filesystem_name=sys.argv[1].encode())
+        fs.mount(filesystem_name=filesystem.encode())
         payload=b'secure-cephfs-native-data\0'*4096
         fd=fs.open('/secure-fixture',os.O_CREAT|os.O_RDWR|os.O_TRUNC,0o600)
         try:
@@ -170,16 +201,19 @@ with tempfile.TemporaryDirectory() as directory:
             result=subprocess.run(['ceph','--admin-daemon',socket,'messenger','dump',*args],capture_output=True,text=True,timeout=8)
             assert result.returncode==0,('CephFS client dump failed',result.returncode)
             return json.loads(result.stdout)
-        catalog=local(); catalog=catalog.get('status',catalog); ready=[]
-        for name in catalog['messengers']: ready.extend(ready_connections(local(name)))
-        assert {'mon','mds','osd'}.issubset({peer['peer_type'] for peer in ready}),ready
+        if dump=='1':
+            catalog=local(); catalog=catalog.get('status',catalog)
+            for name in catalog['messengers']: ready.extend(ready_connections(local(name)))
         fs.unlink('/secure-fixture')
-        print(json.dumps({'filesystem':sys.argv[1],'bytes':len(payload),'ready_remote':ready}))
     finally: fs.shutdown()
+    # shutdown flushes the client log.
+    if dump!='1': ready=ready_log_connections(log)
+    assert {'mon','mds','osd'}.issubset({peer['peer_type'] for peer in ready}),ready
+    print(json.dumps({'filesystem':filesystem,'bytes':len(payload),'ready_remote':ready}))
 `
 
 const secureMessengerRGWProbe = `import subprocess,sys,json,time,urllib.parse
-hostname,frontend=sys.argv[1:]; endpoint=urllib.parse.urlsplit(frontend)
+hostname,frontend,dump=sys.argv[1:]; endpoint=urllib.parse.urlsplit(frontend)
 ` + secureMessengerDumpPython + `
 def native(*args):
     result=subprocess.run(['ceph','--connect-timeout','5',*args],capture_output=True,text=True,timeout=8)
@@ -202,6 +236,13 @@ while True:
     time.sleep(.5)
 gid=matches[0]['gid']; peers=[]
 osds=native('osd','dump','--format','json')['osds']
+if dump!='1':
+    # Without messenger dump, secure-only OSD service modes prove that the
+    # gateway's working OSD sessions are encrypted.
+    modes={str(osd['osd']):native('tell','osd.'+str(osd['osd']),'config','get','ms_service_mode','--format','json')['ms_service_mode'] for osd in osds}
+    assert set(modes.values())=={'secure'},modes
+    print(json.dumps({'rgw_gid':gid,'hostname':hostname,'osd_service_modes':modes,'payload_verified':True}))
+    sys.exit(0)
 for osd in osds:
     target='osd.'+str(osd['osd']); catalog=native('tell',target,'messenger','dump','--format','json'); catalog=catalog.get('status',catalog)
     for name in catalog['messengers']:
