@@ -45,6 +45,7 @@ type Container struct {
 	blocklistOverrides    map[string]*BlocklistOverride
 	moduleOverrides       map[string]*MGRModuleOverride
 	controlPlane          testcontainers.Container
+	cephVersion           string
 	settings              options
 	network               *testcontainers.DockerNetwork
 	clusterNetwork        *testcontainers.DockerNetwork
@@ -148,6 +149,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return c, fmt.Errorf("run ceph monitor: %w", err)
 	}
 	if c.config, err = readFile(ctx, mon, "/etc/ceph/ceph.conf"); err != nil {
+		return c, err
+	}
+	if err := c.recordCephVersion(ctx); err != nil {
 		return c, err
 	}
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {

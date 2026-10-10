@@ -135,7 +135,7 @@ func (m *RBDMirror) readRBDNamespaceBindingPolicies(ctx context.Context, scope *
 		if err := readRBDNamespaceBindingCatalog(ctx, site.client, scope.selection[0], site.namespace); err != nil {
 			return nil, err
 		}
-		selected, _, err := readRBDReceiverPolicy(ctx, site.client, scope.selection[0], site.namespace)
+		selected, _, err := readRBDReceiverPolicy(ctx, site.client, scope.selection[0], site.namespace, m.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}

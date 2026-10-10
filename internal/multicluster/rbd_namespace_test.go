@@ -58,6 +58,28 @@ func TestRBDMirrorScopeAndNamespaceDefaults(t *testing.T) {
 	}
 }
 
+// Ceph 19 has neither init-only nor remote namespace mapping. The default
+// namespace is prepared in image mode and the native reply omits the remote.
+func TestRBDMirrorNamespacePolicyOnCeph19(t *testing.T) {
+	steps, err := planRBDMirrorSite(nil, "ns-a", "ns-a", "source", RBDMirrorScopeImage, nativeRBDMirrorPolicy{Mode: "disabled"}, nativeRBDMirrorPolicy{Mode: "disabled"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || steps[0].mode != "image" || steps[0].namespace != "" || !steps[0].legacy || steps[1].mode != "image" || steps[1].namespace != "ns-a" || !steps[1].legacy {
+		t.Fatalf("Ceph 19 steps = %+v", steps)
+	}
+	if remote := legacyRBDRemoteNamespace("image", nil, "ns-a"); remote == nil || *remote != "ns-a" {
+		t.Fatalf("legacy remote namespace = %v", remote)
+	}
+	if remote := legacyRBDRemoteNamespace("disabled", nil, "ns-a"); remote != nil {
+		t.Fatal("disabled policy gained a remote namespace")
+	}
+	explicit := "ns-b"
+	if remote := legacyRBDRemoteNamespace("pool", &explicit, "ns-a"); remote != &explicit {
+		t.Fatal("native remote namespace was replaced")
+	}
+}
+
 func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *testing.T) {
 	disabled := nativeRBDMirrorPolicy{Mode: "disabled"}
 	remote := "ns-b"
@@ -66,7 +88,7 @@ func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *test
 		if mode != "disabled" {
 			base = nativeRBDMirrorPolicy{Mode: mode, MirrorUUID: "base-uuid", RemoteNamespace: stringPointer(""), SiteName: "source"}
 		}
-		steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", RBDMirrorScopePool, base, disabled)
+		steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", RBDMirrorScopePool, base, disabled, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,13 +105,13 @@ func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *test
 	}
 	base := nativeRBDMirrorPolicy{Mode: "init-only", MirrorUUID: "base-uuid", RemoteNamespace: stringPointer(""), SiteName: "source"}
 	selected := nativeRBDMirrorPolicy{Mode: "pool", MirrorUUID: "namespace-uuid", RemoteNamespace: &remote}
-	steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", RBDMirrorScopePool, base, selected)
+	steps, err := planRBDMirrorSite(nil, "ns-a", remote, "source", RBDMirrorScopePool, base, selected, false)
 	if err != nil || len(steps) != 0 {
 		t.Fatalf("matching policy must be unchanged: %+v %v", steps, err)
 	}
 	for _, tc := range []struct{ mode, remote, site string }{{"image", "ns-b", "source"}, {"pool", "other", "source"}, {"pool", "ns-b", "other-site"}} {
 		selected.Mode, selected.RemoteNamespace, base.SiteName = tc.mode, stringPointer(tc.remote), tc.site
-		if _, err := planRBDMirrorSite(nil, "ns-a", "ns-b", "source", RBDMirrorScopePool, base, selected); err == nil {
+		if _, err := planRBDMirrorSite(nil, "ns-a", "ns-b", "source", RBDMirrorScopePool, base, selected, false); err == nil {
 			t.Fatalf("existing scope/mapping/site was implicitly reconfigured: %+v", tc)
 		}
 	}
@@ -173,14 +195,26 @@ func TestRBDMirrorNamespaceReadRequiresNativeModeUUIDAndRemote(t *testing.T) {
 	for _, data := range []string{`{`, `{}`, `{"mode":"unexpected"}`, `{"mode":"pool","mirror_uuid":"uuid"}`, `{"mode":"image","remote_namespace":""}`} {
 		client := newRBDNamespacePolicyFixture()
 		client.infoOverride = data
-		if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a"); err == nil {
+		if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", false); err == nil {
 			t.Errorf("incomplete native policy accepted: %s", data)
 		}
 	}
 	client := newRBDNamespacePolicyFixture()
 	client.infoOverride = `{"mode":"init-only","mirror_uuid":"uuid","remote_namespace":""}`
-	if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a"); err == nil {
+	if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", false); err == nil {
 		t.Fatal("named init-only policy accepted")
+	}
+	// Ceph 19 omits remote_namespace because it pairs only same-named
+	// namespaces; only a legacy read fills it and the UUID is still required.
+	client = newRBDNamespacePolicyFixture()
+	client.infoOverride = `{"mode":"pool","mirror_uuid":"uuid"}`
+	policy, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", true)
+	if err != nil || policy.RemoteNamespace == nil || *policy.RemoteNamespace != "ns-a" {
+		t.Fatalf("Ceph 19 policy = %+v, %v", policy, err)
+	}
+	client.infoOverride = `{"mode":"pool"}`
+	if _, err := readRBDMirrorNamespacePolicy(t.Context(), client, "images", "ns-a", true); err == nil {
+		t.Fatal("Ceph 19 policy without UUID accepted")
 	}
 }
 
@@ -337,4 +371,21 @@ func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...
 	stream.Write(header[:])
 	stream.Write(data)
 	return 0, bytes.NewReader(stream.Bytes()), nil
+}
+
+func TestDecodeLegacyRBDMirrorUUID(t *testing.T) {
+	const value = "0f0e5c9a-2b4b-4d4e-9a55-7a1c0e9f1b2c"
+	if got, err := decodeLegacyRBDMirrorUUID([]byte(value)); err != nil || got != value {
+		t.Fatalf("decode = %q, %v", got, err)
+	}
+	for name, data := range map[string][]byte{
+		"empty":    {},
+		"prefixed": append([]byte{byte(len(value)), 0, 0, 0}, value...),
+		"newline":  []byte(value + "\n"),
+		"not uuid": []byte("abc"),
+	} {
+		if got, err := decodeLegacyRBDMirrorUUID(data); err == nil {
+			t.Fatalf("%s value decoded as %q", name, got)
+		}
+	}
 }

@@ -418,7 +418,7 @@ make integration
 
 ## 이미지 선택
 
-기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. 준비된 `all` 이미지 하나를 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 지정합니다. `control`은 MON/MGR, CLI·Python client, RBD/CephFS mirror daemon과 multisite 관리 도구를 모두 포함합니다. MON/MGR와 mirror는 같은 이미지를 사용하더라도 각각 별도 컨테이너로 실행하며, 요청한 daemon만 시작합니다.
+기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. 이전 안정 release인 Squid(Ceph 19.2) 이미지도 넘길 수 있습니다. `Run`이 기록한 `cluster.CephVersion()`으로 release마다 다른 명령을 고르며, Squid에서 달라지는 동작과 검증 범위는 [release 지원](docs/CEPH_RELEASES.md)을 따릅니다. 준비된 `all` 이미지 하나를 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 지정합니다. `control`은 MON/MGR, CLI·Python client, RBD/CephFS mirror daemon과 multisite 관리 도구를 모두 포함합니다. MON/MGR와 mirror는 같은 이미지를 사용하더라도 각각 별도 컨테이너로 실행하며, 요청한 daemon만 시작합니다.
 
 ```go
 cluster, err := ceph.Run(ctx, "ceph-testcontainers:official-20.2.4-control",

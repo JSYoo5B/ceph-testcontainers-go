@@ -233,7 +233,7 @@ func (m *RBDMirror) checkRBDReceiverClusterFSIDs(ctx context.Context) error {
 	return nil
 }
 
-func readRBDReceiverPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string) (nativeRBDMirrorPolicy, []rbdMirrorPeer, error) {
+func readRBDReceiverPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, []rbdMirrorPeer, error) {
 	var policy nativeRBDMirrorPolicy
 	data, err := rbdReceiverExec(ctx, client, "read RBD receiver namespace policy", "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
 	if err != nil {
@@ -251,6 +251,16 @@ func readRBDReceiverPolicy(ctx context.Context, client testcontainers.Container,
 	}
 	if json.Unmarshal(data, &fields) != nil || fields.Mode == nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, *fields.Mode) {
 		return policy, nil, rbdReceiverGuard("decode RBD receiver namespace policy")
+	}
+	if legacy {
+		fields.Remote = legacyRBDRemoteNamespace(*fields.Mode, fields.Remote, namespace)
+		if *fields.Mode != "disabled" && fields.UUID == nil {
+			value, err := readLegacyRBDMirrorUUID(ctx, client, pool, namespace)
+			if err != nil {
+				return policy, nil, err
+			}
+			fields.UUID = &value
+		}
 	}
 	policy.Mode, policy.RemoteNamespace = *fields.Mode, fields.Remote
 	if fields.UUID != nil {
@@ -346,13 +356,13 @@ func (m *RBDMirror) checkRBDReceiverPolicies(ctx context.Context) ([]rbdMirrorPe
 		if err := readRBDReceiverPool(ctx, site.client, m.config.Pool, site.id); err != nil {
 			return nil, err
 		}
-		base, peers, err := readRBDReceiverPolicy(ctx, site.client, m.config.Pool, "")
+		base, peers, err := readRBDReceiverPolicy(ctx, site.client, m.config.Pool, "", m.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, _, err = readRBDReceiverPolicy(ctx, site.client, m.config.Pool, site.namespace)
+			selected, _, err = readRBDReceiverPolicy(ctx, site.client, m.config.Pool, site.namespace, m.legacyClient(site.client))
 			if err != nil {
 				return nil, err
 			}

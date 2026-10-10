@@ -132,6 +132,36 @@ func TestCephFSSetsReplayAndAffinityOnlyAfterFilesystemCreation(t *testing.T) {
 	}
 }
 
+// Ceph 19 rejects inline fs-new setters, so the rank counts become ordinary
+// fs set commands that still run before any MDS starts.
+func TestCephFSSetsRankCountsSeparatelyOnCeph19(t *testing.T) {
+	ctr := &poolFixtureContainer{
+		output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`},
+		fail:   "fs set tenant refuse_standby_for_another_fs true",
+	}
+	cluster := poolFixtureCluster(ctr, 2)
+	cluster.cephVersion = "19.2.6"
+	if _, err := cluster.startCephFS(t.Context(), CephFSConfig{Name: "tenant", ActiveMDS: 2, StandbyMDS: 1}); err == nil {
+		t.Fatal("injected configuration failure was ignored")
+	}
+	var fsCommands [][]string
+	for _, call := range ctr.calls {
+		if call[0] == "fs" && call[1] != "dump" {
+			fsCommands = append(fsCommands, call)
+		}
+	}
+	want := [][]string{
+		{"fs", "new", "tenant", "tenant-metadata", "tenant-data"},
+		{"fs", "set", "tenant", "max_mds", "2"},
+		{"fs", "set", "tenant", "standby_count_wanted", "1"},
+		{"fs", "set", "tenant", "allow_standby_replay", "false"},
+		{"fs", "set", "tenant", "refuse_standby_for_another_fs", "true"},
+	}
+	if !slices.EqualFunc(fsCommands, want, func(a, b []string) bool { return slices.Equal(a, b) }) {
+		t.Fatalf("Ceph 19 filesystem commands: got=%v want=%v", fsCommands, want)
+	}
+}
+
 func TestCephFSMDSStatusSelectsOwnedStandbysAndExactRanks(t *testing.T) {
 	data := []byte(`{"standbys":[
 		{"name":"tenant-2","rank":-1,"gid":12,"state":"up:standby","join_fscid":7},

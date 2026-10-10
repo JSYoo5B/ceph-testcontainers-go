@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/internal/cluster"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -55,11 +56,11 @@ func (m *RBDMirror) PolicyStatus(ctx context.Context) (RBDMirrorPolicies, error)
 	if err := m.checkRBDMirrorPools(ctx); err != nil {
 		return status, err
 	}
-	source, err := readRBDMirrorNamespacePolicy(ctx, m.sourceClient, m.config.Pool, m.config.SourceNamespace)
+	source, err := readRBDMirrorNamespacePolicy(ctx, m.sourceClient, m.config.Pool, m.config.SourceNamespace, cephBefore(m.config.Source, 20))
 	if err != nil {
 		return status, err
 	}
-	destination, err := readRBDMirrorNamespacePolicy(ctx, m.destinationClient, m.config.Pool, m.config.DestinationNamespace)
+	destination, err := readRBDMirrorNamespacePolicy(ctx, m.destinationClient, m.config.Pool, m.config.DestinationNamespace, cephBefore(m.config.Destination, 20))
 	if err != nil {
 		return status, err
 	}
@@ -174,7 +175,7 @@ type nativeRBDMirrorPolicy struct {
 	SiteName        string  `json:"site_name"`
 }
 
-func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Container, pool, namespace string) (nativeRBDMirrorPolicy, error) {
+func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, error) {
 	var policy nativeRBDMirrorPolicy
 	data, err := exec(ctx, client, "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
 	if err != nil {
@@ -182,6 +183,14 @@ func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Con
 	}
 	if json.Unmarshal(data, &policy) != nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, policy.Mode) {
 		return policy, errors.New("decode RBD mirror namespace policy: invalid native mode")
+	}
+	if legacy {
+		policy.RemoteNamespace = legacyRBDRemoteNamespace(policy.Mode, policy.RemoteNamespace, namespace)
+		if policy.Mode != "disabled" && policy.MirrorUUID == "" {
+			if policy.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, client, pool, namespace); err != nil {
+				return policy, err
+			}
+		}
 	}
 	if policy.Mode != "disabled" && (policy.MirrorUUID == "" || policy.RemoteNamespace == nil) {
 		return policy, errors.New("decode RBD mirror namespace policy: missing UUID or remote namespace")
@@ -192,19 +201,73 @@ func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Con
 	return policy, nil
 }
 
+// legacyClient reports whether client is the setup client of a Ceph 19
+// cluster in this link.
+func (m *RBDMirror) legacyClient(client testcontainers.Container) bool {
+	switch {
+	case client == nil:
+		return false
+	case client == m.sourceClient:
+		return cephBefore(m.config.Source, 20)
+	case client == m.destinationClient:
+		return cephBefore(m.config.Destination, 20)
+	}
+	return false
+}
+
+// readLegacyRBDMirrorUUID reads the mirror UUID that Ceph 19's rbd CLI does
+// not print. cls_rbd keeps it as the raw text value of the rbd_mirroring
+// object's mirror_uuid omap key.
+func readLegacyRBDMirrorUUID(ctx context.Context, client testcontainers.Container, pool, namespace string) (string, error) {
+	args := []string{"rados", "--pool", pool}
+	if namespace != "" {
+		args = append(args, "--namespace", namespace)
+	}
+	data, err := exec(ctx, client, append(args, "getomapval", "rbd_mirroring", "mirror_uuid", "/dev/stdout")...)
+	if err != nil {
+		return "", fmt.Errorf("read Ceph 19 RBD mirror UUID: %w", err)
+	}
+	return decodeLegacyRBDMirrorUUID(data)
+}
+
+func decodeLegacyRBDMirrorUUID(data []byte) (string, error) {
+	value := string(data)
+	if parsed, err := uuid.Parse(value); err != nil || parsed.String() != value {
+		return "", errors.New("decode Ceph 19 RBD mirror UUID: not a canonical UUID")
+	}
+	return value, nil
+}
+
+// legacyRBDRemoteNamespace fills the remote namespace that Ceph 19 omits.
+// Before Ceph 20 a mirrored namespace always pairs with the same name.
+func legacyRBDRemoteNamespace(mode string, remote *string, namespace string) *string {
+	if remote != nil || mode == "disabled" {
+		return remote
+	}
+	return &namespace
+}
+
 type rbdMirrorPolicyStep struct {
 	client                        testcontainers.Container
 	namespace, remote, site, mode string
 	previous                      nativeRBDMirrorPolicy
+	// legacy marks a Ceph 19 client without --remote-namespace.
+	legacy bool
 }
 
-func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope RBDMirrorScope, base, selected nativeRBDMirrorPolicy) ([]rbdMirrorPolicyStep, error) {
+func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope RBDMirrorScope, base, selected nativeRBDMirrorPolicy, legacy bool) ([]rbdMirrorPolicyStep, error) {
 	if base.Mode != "disabled" && base.SiteName != site {
 		return nil, errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly")
 	}
 	steps := []rbdMirrorPolicyStep{}
 	if namespace != "" && base.Mode == "disabled" {
-		steps = append(steps, rbdMirrorPolicyStep{client: client, mode: "init-only", site: site, previous: base})
+		// Ceph 19 has no init-only mode. Image mode on the default namespace
+		// is the closest: it mirrors no image until one is enabled explicitly.
+		mode := "init-only"
+		if legacy {
+			mode = "image"
+		}
+		steps = append(steps, rbdMirrorPolicyStep{client: client, mode: mode, site: site, previous: base, legacy: legacy})
 	}
 	if selected.Mode == "image" || selected.Mode == "pool" {
 		if selected.Mode != string(scope) || selected.RemoteNamespace == nil || *selected.RemoteNamespace != remote {
@@ -212,7 +275,7 @@ func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site 
 		}
 		return steps, nil
 	}
-	steps = append(steps, rbdMirrorPolicyStep{client: client, namespace: namespace, remote: remote, site: site, mode: string(scope), previous: selected})
+	steps = append(steps, rbdMirrorPolicyStep{client: client, namespace: namespace, remote: remote, site: site, mode: string(scope), previous: selected, legacy: legacy})
 	return steps, nil
 }
 
@@ -228,11 +291,16 @@ func (m *RBDMirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 	// destination cannot broaden the source's existing scope.
 	for _, site := range []struct {
 		client                  testcontainers.Container
+		cluster                 *ceph.Container
 		namespace, remote, name string
 	}{
-		{m.sourceClient, m.config.SourceNamespace, m.config.DestinationNamespace, m.config.SourceSite},
-		{m.destinationClient, m.config.DestinationNamespace, m.config.SourceNamespace, m.config.DestinationSite},
+		{m.sourceClient, m.config.Source, m.config.SourceNamespace, m.config.DestinationNamespace, m.config.SourceSite},
+		{m.destinationClient, m.config.Destination, m.config.DestinationNamespace, m.config.SourceNamespace, m.config.DestinationSite},
 	} {
+		legacy := cephBefore(site.cluster, 20)
+		if legacy && site.namespace != site.remote {
+			return fmt.Errorf("mirroring RBD namespace %q to %q needs Ceph 20 or later; Ceph 19 pairs only namespaces with the same name", site.namespace, site.remote)
+		}
 		configuredSite, err := readConfiguredRBDMirrorSite(ctx, site.client)
 		if err != nil {
 			return err
@@ -241,18 +309,18 @@ func (m *RBDMirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 			return errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly")
 		}
 		configuredSites[site.name] = configuredSite
-		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "")
+		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "", legacy)
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, site.namespace)
+			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, site.namespace, legacy)
 			if err != nil {
 				return err
 			}
 		}
-		planned, err := planRBDMirrorSite(site.client, site.namespace, site.remote, site.name, m.config.Scope, base, selected)
+		planned, err := planRBDMirrorSite(site.client, site.namespace, site.remote, site.name, m.config.Scope, base, selected, legacy)
 		if err != nil {
 			return err
 		}
@@ -269,7 +337,7 @@ func (m *RBDMirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 		if configuredSite != configuredSites[step.site] {
 			return errors.New("cluster-wide RBD mirror site name changed during setup; refusing mutation")
 		}
-		current, err := readRBDMirrorNamespacePolicy(ctx, step.client, m.config.Pool, step.namespace)
+		current, err := readRBDMirrorNamespacePolicy(ctx, step.client, m.config.Pool, step.namespace, step.legacy)
 		if err != nil {
 			return err
 		}
@@ -277,7 +345,7 @@ func (m *RBDMirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 			return errors.New("RBD mirror namespace policy changed during setup; refusing mutation")
 		}
 		args := []string{"rbd", "mirror", "pool", "enable", "--site-name", step.site, rbdMirrorNamespaceSpec(m.config.Pool, step.namespace), step.mode}
-		if step.mode != "init-only" {
+		if step.mode != "init-only" && !step.legacy {
 			// Even an empty value is intentional: omission would default to the
 			// local namespace and break named -> default mappings.
 			args = append(args, "--remote-namespace", step.remote)
@@ -285,7 +353,7 @@ func (m *RBDMirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 		if _, err := exec(ctx, step.client, args...); err != nil {
 			return fmt.Errorf("enable RBD mirror %s policy (earlier steps may have persisted): %w", step.mode, err)
 		}
-		current, err = readRBDMirrorNamespacePolicy(ctx, step.client, m.config.Pool, step.namespace)
+		current, err = readRBDMirrorNamespacePolicy(ctx, step.client, m.config.Pool, step.namespace, step.legacy)
 		if err != nil {
 			return err
 		}
@@ -336,13 +404,13 @@ func (m *RBDMirror) readRBDMirrorPolicyIdentities(ctx context.Context) (*rbdMirr
 		{m.sourceClient, m.config.SourceNamespace, &identities.source},
 		{m.destinationClient, m.config.DestinationNamespace, &identities.destination},
 	} {
-		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "")
+		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "", m.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, site.namespace)
+			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, site.namespace, m.legacyClient(site.client))
 			if err != nil {
 				return nil, err
 			}

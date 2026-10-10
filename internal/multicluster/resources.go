@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -169,4 +170,12 @@ func exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]
 		return nil, fmt.Errorf("%s exited %d: %s%s", args[0], code, stdout.String(), stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// cephBefore reports whether cluster's recorded release is older than major.
+// An unknown version keeps the default image's command forms.
+func cephBefore(cluster *ceph.Container, major int) bool {
+	recorded, _, _ := strings.Cut(cluster.CephVersion(), ".")
+	value, err := strconv.Atoi(recorded)
+	return err == nil && value < major
 }

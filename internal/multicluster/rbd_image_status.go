@@ -437,13 +437,13 @@ func (m *RBDMirror) checkRBDMirrorObservedIdentities(ctx context.Context) error 
 		if err := readRBDMirrorObservedPool(ctx, site.client, m.config.Pool, site.poolID); err != nil {
 			return err
 		}
-		base, err := readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, "")
+		base, err := readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, "", m.legacyClient(site.client))
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, site.namespace)
+			selected, err = readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, site.namespace, m.legacyClient(site.client))
 			if err != nil {
 				return err
 			}
@@ -492,7 +492,7 @@ func readRBDMirrorObservedPool(ctx context.Context, client testcontainers.Contai
 	return nil
 }
 
-func readRBDMirrorObservedPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string) (nativeRBDMirrorPolicy, error) {
+func readRBDMirrorObservedPolicy(ctx context.Context, client testcontainers.Container, pool, namespace string, legacy bool) (nativeRBDMirrorPolicy, error) {
 	var policy nativeRBDMirrorPolicy
 	data, err := exec(ctx, client, "rbd", "mirror", "pool", "info", rbdMirrorNamespaceSpec(pool, namespace), "--format", "json")
 	if err != nil {
@@ -500,6 +500,14 @@ func readRBDMirrorObservedPolicy(ctx context.Context, client testcontainers.Cont
 	}
 	if json.Unmarshal(data, &policy) != nil || !slices.Contains([]string{"disabled", "init-only", "image", "pool"}, policy.Mode) {
 		return policy, rbdImageGuardError("decode RBD mirror namespace policy: invalid native mode")
+	}
+	if legacy {
+		policy.RemoteNamespace = legacyRBDRemoteNamespace(policy.Mode, policy.RemoteNamespace, namespace)
+		if policy.Mode != "disabled" && policy.MirrorUUID == "" {
+			if policy.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, client, pool, namespace); err != nil {
+				return policy, rbdImageQueryError("read RBD mirror namespace policy", err)
+			}
+		}
 	}
 	if policy.Mode != "disabled" && (policy.MirrorUUID == "" || policy.RemoteNamespace == nil) {
 		return policy, rbdImageGuardError("decode RBD mirror namespace policy: missing UUID or remote namespace")

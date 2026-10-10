@@ -113,13 +113,13 @@ func (m *RBDMirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error 
 		if err := readRBDMirrorObservedPool(ctx, control, m.config.Pool, site.poolID); err != nil {
 			return err
 		}
-		base, err := readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, "")
+		base, err := readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, "", cephBefore(site.cluster, 20))
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, site.namespace)
+			selected, err = readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, site.namespace, cephBefore(site.cluster, 20))
 			if err != nil {
 				return err
 			}

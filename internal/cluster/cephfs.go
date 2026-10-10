@@ -163,15 +163,23 @@ func (c *Container) startCephFS(ctx context.Context, config CephFSConfig, opts .
 	// Set rank counts at creation, avoiding a later max_mds change while the
 	// filesystem has no active daemon. Ceph 20.2.4's inline replay/affinity setters
 	// look up an FSMap entry before fs-new commits it, so apply those afterward.
-	if _, err := c.Ceph(ctx, "fs", "new", config.Name, fs.MetadataPool, fs.DataPool,
-		"set", "max_mds", strconv.Itoa(config.ActiveMDS),
-		"standby_count_wanted", strconv.Itoa(config.StandbyMDS)); err != nil {
-		return fs, fmt.Errorf("create cephfs: %w", err)
-	}
-	for _, setting := range [][2]string{
+	// Ceph 19 has no inline setters; it sets the counts right after fs new,
+	// still before any MDS starts.
+	settings := [][2]string{
 		{"allow_standby_replay", strconv.FormatBool(config.StandbyReplay)},
 		{"refuse_standby_for_another_fs", "true"},
-	} {
+	}
+	create := []string{"fs", "new", config.Name, fs.MetadataPool, fs.DataPool}
+	counts := [][2]string{{"max_mds", strconv.Itoa(config.ActiveMDS)}, {"standby_count_wanted", strconv.Itoa(config.StandbyMDS)}}
+	if c.cephBefore(20) {
+		settings = append(counts, settings...)
+	} else {
+		create = append(create, "set", counts[0][0], counts[0][1], counts[1][0], counts[1][1])
+	}
+	if _, err := c.Ceph(ctx, create...); err != nil {
+		return fs, fmt.Errorf("create cephfs: %w", err)
+	}
+	for _, setting := range settings {
 		if _, err := c.Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
 			return fs, fmt.Errorf("set cephfs %s: %w", setting[0], err)
 		}

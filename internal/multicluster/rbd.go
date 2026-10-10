@@ -458,7 +458,11 @@ func (m *RBDMirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	var sourcePool struct {
 		MirrorUUID string `json:"mirror_uuid"`
 	}
-	if err := json.Unmarshal(sourceInfo, &sourcePool); err != nil || sourcePool.MirrorUUID == "" {
+	err = json.Unmarshal(sourceInfo, &sourcePool)
+	if err == nil && sourcePool.MirrorUUID == "" && cephBefore(config.Source, 20) {
+		sourcePool.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, m.sourceClient, config.Pool, "")
+	}
+	if err != nil || sourcePool.MirrorUUID == "" {
 		return fmt.Errorf("read source RBD mirror identity: invalid pool info (decode error: %v)", err)
 	}
 	destinationInfo, err := m.DestinationRBD(ctx, "mirror", "pool", "info", config.Pool, "--format", "json")
