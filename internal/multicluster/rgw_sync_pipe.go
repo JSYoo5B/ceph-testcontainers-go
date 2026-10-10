@@ -84,6 +84,10 @@ func (f *RGWMultisite) syncPipeConfig(ctx context.Context, master *rgwZoneState,
 	}
 	destParams := map[string]any{}
 	params := map[string]any{"source": map[string]any{"filter": filter}, "dest": destParams, "priority": json.Number(strconv.FormatInt(int64(config.Priority), 10)), "mode": "system"}
+	// Ceph 19 stores system-mode pipes with an explicit empty user.
+	if master != nil && master.cluster != nil && cephBefore(master.cluster, 20) {
+		params["user"] = ""
+	}
 	if config.Priority != 0 {
 		args = append(args, "--priority", strconv.FormatInt(int64(config.Priority), 10))
 	}

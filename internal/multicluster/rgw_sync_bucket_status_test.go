@@ -318,3 +318,55 @@ func TestRGWBucketCheckpointRequiresCommittedPeriodIdentity(t *testing.T) {
 		}
 	}
 }
+
+// Captured from radosgw-admin 19.2.5 bucket sync status --format json.
+const rgwCeph19CaughtUpBucketStatus = `          realm d2484e25-beaa-431a-b502-87e20b5e2b6b (tc-owned-sync)
+      zonegroup 9a5a8270-5063-4939-b98f-bdfc695bb920 (us-east-1)
+           zone 0feb8c61-bf5a-4e99-b353-89f6b5ed66eb (destination)
+         bucket :tc-owned-selected[58f79b15-516c-44e9-a2e2-4d1d2e4ca541.4420.1])
+   current time 2026-10-10T16:42:26Z
+
+    source zone 58f79b15-516c-44e9-a2e2-4d1d2e4ca541 (source)
+  source bucket :tc-owned-selected[58f79b15-516c-44e9-a2e2-4d1d2e4ca541.4420.1])
+                incremental sync on 11 shards
+                bucket is caught up with source
+
+`
+
+func TestRGWBucketSyncCeph19TextMatchesJSONDecoder(t *testing.T) {
+	bucket := RGWSyncBucketIdentity{Name: "tc-owned-selected", ID: "58f79b15-516c-44e9-a2e2-4d1d2e4ca541.4420.1"}
+	want := RGWBucketSyncStatus{RealmID: "d2484e25-beaa-431a-b502-87e20b5e2b6b", ZonegroupID: "9a5a8270-5063-4939-b98f-bdfc695bb920", SourceZone: "source", SourceZoneID: "58f79b15-516c-44e9-a2e2-4d1d2e4ca541", ZoneID: "0feb8c61-bf5a-4e99-b353-89f6b5ed66eb", SourceBucket: bucket, DestinationBucket: bucket}
+	decode := func(text string) (RGWBucketSyncStatus, error) {
+		data, err := legacyBucketSyncStatusJSON([]byte(text), want)
+		if err != nil {
+			return RGWBucketSyncStatus{}, err
+		}
+		return decodeBucketSyncStatus(data, want)
+	}
+	status, err := decode(rgwCeph19CaughtUpBucketStatus)
+	if err != nil || !status.CaughtUp || status.State != "incremental" || status.Shards != 11 || status.BehindShards != 0 {
+		t.Fatalf("Ceph 19 caught-up text rejected: %+v %v", status, err)
+	}
+	behind := strings.Replace(rgwCeph19CaughtUpBucketStatus, "bucket is caught up with source", "bucket is behind on 2 shards\n                behind shards: [3,7]", 1)
+	if status, err := decode(behind); err != nil || status.CaughtUp || status.BehindShards != 2 {
+		t.Fatalf("Ceph 19 lag ignored: %+v %v", status, err)
+	}
+	for _, state := range []string{"init", "stopped", "full"} {
+		line := map[string]string{"init": "init: bucket sync has not started", "stopped": "stopped: bucket sync is disabled", "full": "full sync: 9 objects completed"}[state]
+		text := strings.Replace(rgwCeph19CaughtUpBucketStatus, "incremental sync on 11 shards\n                bucket is caught up with source", line, 1)
+		if status, err := decode(text); err != nil || status.CaughtUp || status.State != state {
+			t.Fatalf("Ceph 19 %s state accepted: %+v %v", state, status, err)
+		}
+	}
+	for _, change := range []struct{ before, after string }{
+		{"zone 0feb8c61", "zone 1feb8c61"},
+		{"bucket :tc-owned-selected[58f79b15-516c-44e9-a2e2-4d1d2e4ca541.4420.1])\n   current", "bucket :tc-owned-selected[new-instance])\n   current"},
+		{"source bucket :tc-owned-selected", "source bucket tenant:tc-owned-selected"},
+		{"bucket is caught up with source", "bucket is behind on 2 shards\n                behind shards: [3]"},
+		{"bucket is caught up with source", "unexpected native line"},
+	} {
+		if status, err := decode(strings.Replace(rgwCeph19CaughtUpBucketStatus, change.before, change.after, 1)); err == nil && status.CaughtUp {
+			t.Fatalf("Ceph 19 foreign or malformed text accepted after %q", change.after)
+		}
+	}
+}

@@ -35,6 +35,8 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | RBD mirror 기본 namespace 준비 | 이름 있는 namespace만 mirror할 때 기본 namespace를 `init-only`로 둡니다. | Squid에는 `init-only`가 없어서 기본 namespace를 `image` mode로 둡니다. 이미지를 명시적으로 켜지 않으면 아무것도 복제하지 않습니다. |
 | RBD namespace mapping | `SourceNamespace`와 `DestinationNamespace`를 다르게 줄 수 있습니다. | Squid의 `rbd`에는 `--remote-namespace`가 없어서 같은 이름의 namespace끼리만 mirror합니다. 다른 이름을 주면 변경 전에 오류를 반환합니다. |
 | RBD mirror UUID | `rbd mirror pool info`가 `mirror_uuid`와 `remote_namespace`를 출력합니다. | Squid는 둘 다 출력하지 않습니다. UUID는 pool의 `rbd_mirroring` object omap에서 읽고, remote namespace는 같은 이름으로 채웁니다. Tentacle 응답에서 이 값이 빠지면 지금처럼 오류로 처리합니다. |
+| RGW sync pipe 기록 | system mode pipe의 `params`에 `user`가 없습니다. | Squid는 `"user": ""`를 함께 기록합니다. pipe 생성 후 readback을 비교할 때 Squid에서만 이 빈 값을 기대합니다. |
+| RGW bucket sync 상태 | `bucket sync status --format json`이 JSON을 출력합니다. | Squid는 `--format json`을 무시하고 텍스트만 출력합니다. `WaitBucketSyncReady`와 `BucketSyncStatus`는 이 텍스트를 같은 구조로 바꿔 똑같이 판정하고, 모르는 줄이 있으면 오류로 처리합니다. |
 
 ## Squid에서 다르게 검증하는 테스트
 
