@@ -44,3 +44,9 @@ func sessionExec(ctx context.Context, ctr testcontainers.Container, args ...stri
 	out, err := io.ReadAll(r)
 	return code, string(out), err
 }
+
+// lastLine returns the final line a client script printed, after any log noise.
+func lastLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return lines[len(lines)-1]
+}

@@ -308,8 +308,3 @@ func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem,
 	}
 	return nil
 }
-
-func lastLine(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	return lines[len(lines)-1]
-}
