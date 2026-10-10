@@ -1,9 +1,14 @@
 # Ceph release 지원
 
-기본 이미지와 필수 CI는 Tentacle(`ceph.DefaultImage`, Ceph 20.2.4)입니다. 이전
-안정 release인 Squid(Ceph 19.2)도 `Run`에 이미지를 넘겨 사용할 수 있습니다.
-fixture는 `Run`에서 MON을 띄운 직후 control 이미지의 `ceph --version`을 읽어
+기본 이미지와 필수 CI는 Tentacle(`ceph.DefaultImage`, Ceph 20.2.4)입니다. fixture는
+`Run`에서 MON을 띄운 직후 control 이미지의 `ceph --version`을 읽어
 `cluster.CephVersion()`에 기록하고, release마다 다른 명령을 이 값으로 고릅니다.
+
+Squid(Ceph 19.2)는 아직 지원 release가 아닙니다. 이미지 요구사항 검사와 role
+이미지 추출·배포는 images 프로젝트가 먼저 맡아야 하는데, 그 프로젝트는 아직
+20.2.4만 다룹니다. 아래 분기와 검증은 원본 Quay Squid 이미지로 Go 모듈 쪽 차이를
+미리 확인한 결과입니다. images 프로젝트의 Squid 검사와 Go CI 실행을 거치기 전에는
+지원 범위로 보지 않습니다.
 
 ```go
 cluster, err := cephfs.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
@@ -28,9 +33,10 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | RBD namespace mapping | `SourceNamespace`와 `DestinationNamespace`를 다르게 줄 수 있습니다. | Squid의 `rbd`에는 `--remote-namespace`가 없어서 같은 이름의 namespace끼리만 mirror합니다. 다른 이름을 주면 변경 전에 오류를 반환합니다. |
 | RBD mirror UUID | `rbd mirror pool info`가 `mirror_uuid`와 `remote_namespace`를 출력합니다. | Squid는 둘 다 출력하지 않습니다. UUID는 pool의 `rbd_mirroring` object omap에서 읽고, remote namespace는 같은 이름으로 채웁니다. Tentacle 응답에서 이 값이 빠지면 지금처럼 오류로 처리합니다. |
 
-## 검증
+## 사전 검증
 
-`make image-compatibility`의 대표 테스트 9개를 Squid 이미지로 실행했습니다.
+`make image-compatibility`의 대표 테스트 9개를 원본 Quay Squid 이미지로 로컬에서
+실행했습니다.
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b \
