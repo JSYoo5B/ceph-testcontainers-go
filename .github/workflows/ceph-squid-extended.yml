@@ -1,0 +1,38 @@
+name: Ceph squid extended
+
+# The short category runs on Squid for every push in Ceph squid. The longer
+# categories run on Squid weekly and on demand to bound CI time per push.
+on:
+  schedule:
+    - cron: '41 4 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  topology:
+    name: Topology
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: topology
+      check_name: Ceph squid topology
+      release: '19.2.5'
+  multicluster:
+    name: Multicluster
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: multicluster
+      check_name: Ceph squid multicluster
+      release: '19.2.5'
+  recovery:
+    name: Recovery
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: recovery
+      check_name: Ceph squid recovery
+      release: '19.2.5'

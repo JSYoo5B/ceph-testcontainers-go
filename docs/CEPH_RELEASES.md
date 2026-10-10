@@ -9,7 +9,9 @@ Quay 이미지, 추출한 role 이미지, Debian·Ubuntu 패키지 이미지를 
 검사하고 GHCR에 `<variant>-19.2.5-<role>`로 배포합니다. 그다음 Go CI의 `Ceph squid`
 workflow가 push마다 short 범주 전체를 GHCR의 `official-19.2.5` role 이미지로 다시
 실행합니다. 이 workflow는 Tentacle용 `Ceph short`와 같은 batch를 쓰므로, short
-범주에 새 테스트를 넣으면 두 release에서 함께 검증됩니다.
+범주에 새 테스트를 넣으면 두 release에서 함께 검증됩니다. topology, multicluster,
+recovery 범주는 push마다 돌리면 CI 시간이 크게 늘어서 `Ceph squid extended`
+workflow가 매주 한 번과 수동 실행 때 같은 이미지로 실행합니다.
 
 ```go
 cluster, err := cephfs.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
