@@ -836,9 +836,22 @@ func rgwBackendRequireRoleAbsent(t *testing.T, parent context.Context, cluster *
 		t.Fatal("RGW backend native role get failed (output redacted)")
 	}
 	data, err := io.ReadAll(reader)
-	if err != nil || ctx.Err() != nil || code != 2 || len(bytes.TrimSpace(data)) != 0 {
+	if err != nil || ctx.Err() != nil || code != 2 || !rgwBackendRoleAbsentOutput(data, name) {
 		t.Fatalf("role recipe refuses adoption or uncertain native role absence: exit=%d (output redacted)", code)
 	}
+}
+
+// rgwBackendRoleAbsentOutput accepts Tentacle's silent ENOENT and the single
+// log line that Squid prints for the same absent role.
+func rgwBackendRoleAbsentOutput(data []byte, name string) bool {
+	output := bytes.TrimSpace(data)
+	if len(output) == 0 {
+		return true
+	}
+	if bytes.Count(output, []byte("\n")) != 0 {
+		return false
+	}
+	return bytes.HasSuffix(output, []byte(" ERROR: failed reading role name from Role pool: "+name+": (2) No such file or directory"))
 }
 
 func rgwBackendJSON(t *testing.T, value any) string {

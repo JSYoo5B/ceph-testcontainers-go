@@ -122,3 +122,19 @@ func TestRGWBackendStatusProbeReceivesBoundedContext(t *testing.T) {
 		return rgwBackendResponse{code: http.StatusOK}
 	}, http.StatusOK)
 }
+
+func TestRGWBackendRoleAbsenceAcceptsOnlyNativeENOENT(t *testing.T) {
+	const squid = "2026-10-10T03:30:40.864+0000 ffffa4aad020  0 ERROR: failed reading role name from Role pool: tc-role: (2) No such file or directory\n"
+	for output, want := range map[string]bool{
+		"":    true,
+		squid: true,
+		strings.Replace(squid, "tc-role", "other-role", 1):                                   false,
+		strings.Replace(squid, "(2) No such file or directory", "(13) Permission denied", 1): false,
+		squid + squid:            false,
+		`{"RoleName":"tc-role"}`: false,
+	} {
+		if got := rgwBackendRoleAbsentOutput([]byte(output), "tc-role"); got != want {
+			t.Fatalf("role absence for %q = %v, want %v", output, got, want)
+		}
+	}
+}
