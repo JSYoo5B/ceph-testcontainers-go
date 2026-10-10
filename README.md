@@ -418,7 +418,7 @@ make integration
 
 ## 이미지 선택
 
-기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. `Run`은 `cluster.CephVersion()`에 release를 기록하고 release마다 다른 명령을 고릅니다. Squid(Ceph 19.2)는 images 프로젝트의 검사 전이라 아직 지원 release가 아니며, 미리 확인한 차이는 [release 지원](docs/CEPH_RELEASES.md)에 정리했습니다. 준비된 `all` 이미지 하나를 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 지정합니다. `control`은 MON/MGR, CLI·Python client, RBD/CephFS mirror daemon과 multisite 관리 도구를 모두 포함합니다. MON/MGR와 mirror는 같은 이미지를 사용하더라도 각각 별도 컨테이너로 실행하며, 요청한 daemon만 시작합니다.
+기본 `DefaultImage`는 digest로 고정한 원본 Quay Ceph 이미지입니다. `Run`은 `cluster.CephVersion()`에 release를 기록하고 release마다 다른 명령을 고릅니다. Squid(Ceph 19.2.5)도 지원하며, images 프로젝트가 검사·배포한 `official-19.2.5` role 이미지로 `Ceph squid` CI가 short 범주를 실행합니다. 달라지는 동작은 [release 지원](docs/CEPH_RELEASES.md)을 따릅니다. 준비된 `all` 이미지 하나를 재사용하거나, 호환되는 `control`, `osd`, `rgw`, `mds` 이미지를 지정합니다. `control`은 MON/MGR, CLI·Python client, RBD/CephFS mirror daemon과 multisite 관리 도구를 모두 포함합니다. MON/MGR와 mirror는 같은 이미지를 사용하더라도 각각 별도 컨테이너로 실행하며, 요청한 daemon만 시작합니다.
 
 ```go
 cluster, err := ceph.Run(ctx, "ceph-testcontainers:official-20.2.4-control",

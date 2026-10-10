@@ -4,11 +4,12 @@
 `Run`에서 MON을 띄운 직후 control 이미지의 `ceph --version`을 읽어
 `cluster.CephVersion()`에 기록하고, release마다 다른 명령을 이 값으로 고릅니다.
 
-Squid(Ceph 19.2)는 아직 지원 release가 아닙니다. 이미지 요구사항 검사와 role
-이미지 추출·배포는 images 프로젝트가 먼저 맡아야 하는데, 그 프로젝트는 아직
-20.2.4만 다룹니다. 아래 분기와 검증은 원본 Quay Squid 이미지로 Go 모듈 쪽 차이를
-미리 확인한 결과입니다. images 프로젝트의 Squid 검사와 Go CI 실행을 거치기 전에는
-지원 범위로 보지 않습니다.
+Squid(Ceph 19.2.5)는 두 단계를 거쳐 지원합니다. 먼저 images 프로젝트가 원본
+Quay 이미지, 추출한 role 이미지, Debian·Ubuntu 패키지 이미지를 amd64·arm64에서
+검사하고 GHCR에 `<variant>-19.2.5-<role>`로 배포합니다. 그다음 Go CI의 `Ceph squid`
+workflow가 push마다 short 범주 전체를 GHCR의 `official-19.2.5` role 이미지로 다시
+실행합니다. 이 workflow는 Tentacle용 `Ceph short`와 같은 batch를 쓰므로, short
+범주에 새 테스트를 넣으면 두 release에서 함께 검증됩니다.
 
 ```go
 cluster, err := cephfs.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
@@ -33,10 +34,18 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | RBD namespace mapping | `SourceNamespace`와 `DestinationNamespace`를 다르게 줄 수 있습니다. | Squid의 `rbd`에는 `--remote-namespace`가 없어서 같은 이름의 namespace끼리만 mirror합니다. 다른 이름을 주면 변경 전에 오류를 반환합니다. |
 | RBD mirror UUID | `rbd mirror pool info`가 `mirror_uuid`와 `remote_namespace`를 출력합니다. | Squid는 둘 다 출력하지 않습니다. UUID는 pool의 `rbd_mirroring` object omap에서 읽고, remote namespace는 같은 이름으로 채웁니다. Tentacle 응답에서 이 값이 빠지면 지금처럼 오류로 처리합니다. |
 
-## 사전 검증
+## Squid에서 다르게 검증하는 테스트
 
-`make image-compatibility`의 대표 테스트 9개를 원본 Quay Squid 이미지로 로컬에서
-실행했습니다.
+| 테스트 | Squid에서의 차이 |
+| --- | --- |
+| `TestMultiClusterRBDMirrorScopeAndNamespaces`의 이름이 다른 mapping 4개, `TestMultiClusterRBDNamespaceBinding` | fixture가 변경 전에 "Ceph 20 이상 필요" 오류로 거부하는지 확인하고 끝냅니다. 같은 이름 namespace(`pool-same-named`)는 두 release 모두에서 실제 복제까지 검증합니다. |
+| `TestRGWProtocolBackends/sts` | 없는 role을 조회할 때 Squid의 `radosgw-admin`은 종료 코드 2와 함께 ENOENT 기록 한 줄을 남깁니다. 그 한 줄만 부재로 인정합니다. |
+| `TestRBDClientFeatures/group-snapshot` | Squid binding에는 `Group.id()`와 `get_snap_info()`가 없어서, group ID는 `rbd_group_directory`에서, member snapshot은 각 이미지의 group namespace에서 읽습니다. Tentacle에서는 이 값이 native API와 같은지 함께 확인합니다. |
+
+## 이미지 호환 확인
+
+`make image-compatibility`의 대표 테스트 9개는 원본 Quay Squid 이미지로도 실행할
+수 있습니다.
 
 ```sh
 CEPH_TEST_IMAGE=quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b \
@@ -48,8 +57,8 @@ make image-compatibility
 | Squid 19.2.5 | 9개 모두 통과했습니다. `TestClusterLifecycle`, `TestRBDLifecycle`, `TestCephFSFilesystem`, `TestRGWS3`, `TestManagerLifecycle`, `TestMultiClusterRBDBackup`, `TestMultiClusterRBDSnapshotMirror`, `TestMultiClusterCephFSSnapshotMirrorAndBackup`, `TestMultiClusterRGWMultisite`입니다. |
 | Squid 19.2.6 | RGW multisite를 제외한 영역은 19.2.5와 같은 수정으로 동작합니다. RGW multisite는 아래 Ceph 회귀 때문에 시작하지 못합니다. |
 
-검증은 macOS Docker Desktop(Linux ARM64 엔진)에서 수행했습니다. 필수 CI는 여전히
-Tentacle만 실행하므로 Squid 동작은 위 수동 실행으로만 확인된 상태입니다.
+위 결과는 macOS Docker Desktop(Linux ARM64 엔진)에서 수행한 수동 실행입니다. 필수
+검증은 `Ceph squid` workflow가 맡습니다.
 
 ## Squid 19.2.6의 RGW multisite 회귀
 

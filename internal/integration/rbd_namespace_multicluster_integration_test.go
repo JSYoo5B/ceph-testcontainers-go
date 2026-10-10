@@ -38,6 +38,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 				scope                                       rbd.MirrorScope
 			}{
 				{"pool-default", "", "", rbd.MirrorScopePool},
+				{"pool-same-named", "ns-a", "ns-a", rbd.MirrorScopePool},
 				{"pool-named", "ns-a", "ns-b", rbd.MirrorScopePool},
 				{"pool-named-to-default", "ns-a", "", rbd.MirrorScopePool},
 				{"pool-default-to-named", "", "ns-b", rbd.MirrorScopePool},
@@ -118,6 +119,10 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							}
 						})
 					}
+					if tc.sourceNamespace != tc.destinationNamespace && rbdNamespaceMappingUnsupported(source) {
+						requireRBDNamespaceMappingRefused(t, err, [2]string{tc.sourceNamespace, tc.destinationNamespace})
+						return
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -135,7 +140,14 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							var base struct {
 								Mode string `json:"mode"`
 							}
-							if err := json.Unmarshal(rbdOutput(t, ctx, site.client, "mirror", "pool", "info", pool, "--format", "json"), &base); err != nil || base.Mode != "init-only" {
+							// Ceph 19 has no init-only; the fixture prepares the
+							// default namespace in image mode, which mirrors nothing
+							// until an image is enabled explicitly.
+							want := "init-only"
+							if rbdNamespaceMappingUnsupported(source) {
+								want = "image"
+							}
+							if err := json.Unmarshal(rbdOutput(t, ctx, site.client, "mirror", "pool", "info", pool, "--format", "json"), &base); err != nil || base.Mode != want {
 								t.Fatalf("named mapping broadened default scope: mode=%s error=%v", base.Mode, err)
 							}
 						}

@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -122,6 +124,10 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 				t.Error(err)
 			}
 		})
+	}
+	if rbdNamespaceMappingUnsupported(source) {
+		requireRBDNamespaceMappingRefused(t, err, mappings[0])
+		return
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -322,4 +328,22 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 		t.Fatal("rejected default binding changed original base")
 	}
 	t.Logf("RBD_NAMESPACE_BINDING_COMPLETE customizers=%d owned_daemons=%d views=%d same_pool=%s", customizers.Load(), len(owner.Daemons()), len(views), pool)
+}
+
+// rbdNamespaceMappingUnsupported reports a release whose rbd CLI cannot map
+// differently named namespaces (Ceph 19 has no --remote-namespace).
+func rbdNamespaceMappingUnsupported(cluster *ceph.Container) bool {
+	return strings.HasPrefix(cluster.CephVersion(), "19.")
+}
+
+// requireRBDNamespaceMappingRefused proves that the fixture refused the
+// mapping before any change. That refusal is the whole Ceph 19 contract of a
+// mapping case, so callers return afterwards instead of skipping.
+func requireRBDNamespaceMappingRefused(t *testing.T, err error, mapping [2]string) {
+	t.Helper()
+	want := fmt.Sprintf("mirroring RBD namespace %q to %q needs Ceph 20 or later", mapping[0], mapping[1])
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Ceph 19 namespace mapping %q -> %q error = %v, want refusal %q", mapping[0], mapping[1], err, want)
+	}
+	t.Logf("Ceph 19 refused namespace mapping %q -> %q before any change", mapping[0], mapping[1])
 }
