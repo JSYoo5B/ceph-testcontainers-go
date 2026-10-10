@@ -50,6 +50,7 @@ var special = map[string][2]string{
 	"cluster.StartCephFS":        {"cephfs", "Start"},
 	"cluster.Filesystems":        {"cephfs", "Filesystems"},
 	"cluster.StartRGW":           {"rgw", "Start"},
+	"cluster.RemoveCephFS":       {"cephfs", "Remove"},
 	"cluster.RemoveRGW":          {"rgw", "Remove"},
 	"cluster.Gateways":           {"rgw", "Gateways"},
 	"cluster.GatewaysContext":    {"rgw", "GatewaysContext"},

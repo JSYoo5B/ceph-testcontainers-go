@@ -39,6 +39,58 @@ func testCephFSFilesystem(t *testing.T, opts ...testcontainers.ContainerCustomiz
 	t.Log("CephFS fresh session after OSD replacement: all retained bytes verified, new file write/read/rename/unlink")
 	execCommand(t, ctx, client, "python3", "-c", cephFSClientScript, fs.FilesystemName, "final")
 	t.Log("CephFS third session verified post-topology writes and deletion visibility")
+	checkCephFSRemoval(t, ctx, cluster, fs.FilesystemName)
+}
+
+// checkCephFSRemoval adds a second filesystem, removes it and proves that
+// its MDS daemons, keys and pools are gone while the first one stays active.
+func checkCephFSRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container, kept string) {
+	t.Helper()
+	removable, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "tc-removable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemons := removable.MDSs()
+	if err := cephfs.Remove(ctx, cluster, removable.FilesystemName); err != nil {
+		t.Fatal(err)
+	}
+	if err := cephfs.Remove(ctx, cluster, removable.FilesystemName); err == nil {
+		t.Fatal("second removal succeeded")
+	}
+	data, err := cluster.Ceph(ctx, "fs", "ls", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filesystems []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &filesystems); err != nil || len(filesystems) != 1 || filesystems[0].Name != kept {
+		t.Fatalf("filesystems after removal = %s (%v), want only %s", data, err, kept)
+	}
+	for _, owned := range cephfs.Filesystems(cluster) {
+		if owned.FilesystemName == removable.FilesystemName {
+			t.Fatal("removed filesystem is still owned")
+		}
+	}
+	pools, err := cluster.Pools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range pools {
+		if pool.Name == removable.MetadataPool || pool.Name == removable.DataPool {
+			t.Fatalf("pool %s of the removed filesystem remains", pool.Name)
+		}
+	}
+	for _, daemon := range daemons {
+		if daemon.IsRunning() {
+			t.Fatalf("mds.%s of the removed filesystem is still running", daemon.ID)
+		}
+		if _, err := cluster.Ceph(ctx, "auth", "get", "mds."+daemon.ID); err == nil {
+			t.Fatalf("key of mds.%s remains", daemon.ID)
+		}
+	}
+	assertCephFSActive(t, ctx, cluster, kept)
+	t.Logf("cephfs.Remove deleted %s with %d MDS daemons, their keys and both pools; %s stayed active", removable.FilesystemName, len(daemons), kept)
 }
 
 func assertCephFSActive(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) {

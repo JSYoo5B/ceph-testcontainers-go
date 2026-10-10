@@ -40,7 +40,7 @@ replication 변경은 현재 native CRUSH rule에서 충분한 owned osd/host/ra
 
 Pool quota의 0은 해당 제한 해제입니다. PG 통계 보고와 full flag 반영은 비동기이므로 엄격한 write별 byte accounting 경계로 사용하지 않습니다. Cephx caps 변경은 생략한 service 권한도 제거합니다. 이미 발급된 ticket에 이전 권한이 남을 수 있으므로 새 native connection으로 효과를 확인합니다.
 
-`RemovePool(ctx, name)`은 `CreatePool`이나 `WithPools`로 만든 pool을 지우고, 그 pool을 위해 만든 `tc-<name>-replicated`·`tc-<name>-ec` CRUSH rule과 EC profile도 함께 지웁니다. fixture가 만든 pool인지는 pool이 쓰는 CRUSH rule 이름으로 판단하므로 `.mgr`, RGW zone pool, 다른 rule로 옮긴 pool은 거부합니다. CephFS filesystem이 metadata나 data pool로 쓰는 pool도 거부하므로 filesystem을 먼저 정리합니다. pool 안의 RBD image·namespace·object는 모두 사라지므로 client와 mirroring을 먼저 멈춥니다.
+`RemovePool(ctx, name)`은 `CreatePool`이나 `WithPools`로 만든 pool을 지우고, 그 pool을 위해 만든 `tc-<name>-replicated`·`tc-<name>-ec` CRUSH rule과 EC profile도 함께 지웁니다. fixture가 만든 pool인지는 pool이 쓰는 CRUSH rule 이름으로 판단하므로 `.mgr`, RGW zone pool, 다른 rule로 옮긴 pool은 거부합니다. CephFS filesystem이 metadata나 data pool로 쓰는 pool도 거부하므로 filesystem을 먼저 정리합니다. `cephfs.Remove`는 filesystem을 지우면서 그 설정으로 만든 pool도 같은 규칙으로 함께 지웁니다. pool 안의 RBD image·namespace·object는 모두 사라지므로 client와 mirroring을 먼저 멈춥니다.
 
 Ceph는 기본적으로 pool 삭제를 막습니다. `RemovePool`은 중앙 설정의 `mon/mon_allow_pool_delete`를 삭제하는 동안만 `true`로 바꾸고, 삭제가 실패해도 원래 값이나 부재 상태로 되돌립니다. 같은 key에 `TemporaryConfig` handle이 살아 있으면 거부합니다. local 설정 파일(`WithConfigFile`)에서 이 값을 `false`로 고정하면 중앙 설정보다 우선하므로 삭제가 실패합니다. 오류 뒤에 다시 호출하면 남아 있는 rule과 profile만 이어서 지웁니다. 존재하지 않는 이름은 오류로 알립니다.
 

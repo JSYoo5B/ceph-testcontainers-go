@@ -121,7 +121,7 @@ func TestRemovePoolRefusesUnownedOrUsedPools(t *testing.T) {
 	}{
 		"ceph pool":    {pool: ".mgr", want: "not created by CreatePool"},
 		"foreign rule": {pool: "fs-meta", want: "not created by CreatePool"},
-		"missing":      {pool: "absent", want: `pool "absent" does not exist`},
+		"missing":      {pool: "absent", want: `pool "absent": pool does not exist`},
 		"invalid name": {pool: "bad name", want: "invalid native pool name"},
 		"cephfs": {
 			pool: "data", fs: `[{"name":"tc-cephfs","metadata_pool":"meta","data_pools":["data"]}]`,

@@ -13,6 +13,9 @@ import (
 
 var allowPoolDeleteSetting = ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete"}
 
+// errPoolMissing marks a name with neither a pool nor fixture leftovers.
+var errPoolMissing = errors.New("pool does not exist")
+
 // RemovePool deletes a pool created by CreatePool or WithPools, together with
 // the CRUSH rule and erasure-code profile created for it, so a long-lived
 // cluster can give each test its own pool without reaching PG limits. Pools
@@ -37,6 +40,12 @@ func (c *Container) RemovePool(ctx context.Context, name string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	return c.removePool(ctx, name, false)
+}
+
+// removePool is called with c.mu held. With skipForeign, a pool that the
+// fixture did not create is left alone instead of being reported.
+func (c *Container) removePool(ctx context.Context, name string, skipForeign bool) error {
 	rules, err := c.crushRuleNames(ctx)
 	if err != nil {
 		return err
@@ -53,12 +62,15 @@ func (c *Container) RemovePool(ctx context.Context, name string) error {
 	}
 	index := slices.IndexFunc(pools, func(pool PoolState) bool { return pool.Name == name })
 	if index < 0 && !slices.Contains(ruleNames, replicated) && !slices.Contains(ruleNames, erasure) && !slices.Contains(profiles, erasure) {
-		return fmt.Errorf("pool %q does not exist", name)
+		return fmt.Errorf("pool %q: %w", name, errPoolMissing)
 	}
 	if index >= 0 {
 		pool := pools[index]
 		rule := rules[pool.CRUSHRule]
 		if rule != replicated && rule != erasure {
+			if skipForeign {
+				return nil
+			}
 			return fmt.Errorf("pool %q was not created by CreatePool or WithPools (CRUSH rule %q); refusing removal", name, rule)
 		}
 		if err := c.refusePoolInUse(ctx, name); err != nil {

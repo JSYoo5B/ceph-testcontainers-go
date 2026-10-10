@@ -124,7 +124,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 노드·client 설정 상속, legacy 포트 미노출과 실제 연결 검증 범위는
 [Messenger secure 구성 계약](docs/MESSENGER_SECURE.md)을 따릅니다.
 
-`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `cephfs.WithFilesystems`와 `rgw.WithGateways`는 초기 역할 구성을, `cephfs.Start`, `rgw.Start`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다. 테스트마다 만든 pool은 `RemovePool`로 CRUSH rule·EC profile과 함께 지워서 오래 쓰는 클러스터에서도 PG 한도에 걸리지 않게 합니다. Ceph나 서비스가 만든 pool, CephFS가 쓰는 pool은 거부하며 `mon_allow_pool_delete`는 삭제하는 동안만 켭니다. 실행 중 PG split·merge와 CRUSH placement 이동은 `SetPoolPGCount`·`WaitForPoolPGCount`·`SetPoolPlacement`로 만들며 [PG 재배치 계약](docs/POOL_RELOCATION.md)을 따릅니다.
+`Run`에서 daemon 수, filesystem별 active/standby MDS, 이름별 gateway를 함께 선택합니다. `cephfs.WithFilesystems`와 `rgw.WithGateways`는 초기 역할 구성을, `cephfs.Start`, `rgw.Start`, `AddMonitor`, `AddManager`, `AddOSD`는 실행 중의 추가 구성을 담당합니다. pool 설정은 `WithPools`/`CreatePool`로 적용하고, 생성 후 정책은 `SetPoolReplication`/`SetPoolQuota`로 변경할 수 있습니다. 테스트마다 만든 pool은 `RemovePool`로 CRUSH rule·EC profile과 함께 지워서 오래 쓰는 클러스터에서도 PG 한도에 걸리지 않게 합니다. Ceph나 서비스가 만든 pool, CephFS가 쓰는 pool은 거부하며 `mon_allow_pool_delete`는 삭제하는 동안만 켭니다. CephFS pool은 `cephfs.Remove`로 filesystem과 함께 지웁니다. 실행 중 PG split·merge와 CRUSH placement 이동은 `SetPoolPGCount`·`WaitForPoolPGCount`·`SetPoolPlacement`로 만들며 [PG 재배치 계약](docs/POOL_RELOCATION.md)을 따릅니다.
 
 ```go
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
@@ -160,7 +160,7 @@ if err != nil {
 
 `cephfs.Config{NoInitialMDS: true}`는 원래 filesystem과 pool을 먼저 구성하고 MDS auth·container·customizer 없이 반환합니다. Active/standby count는 생략하고 replay는 false로 두며, 같은 descriptor의 첫 `ScaleMDS(ctx, 1, 0)`으로 기동합니다. Cold 상태의 embedded `Container`는 nil이고 `WaitReady`는 client 준비를 성공으로 표시하지 않습니다. [최초 MDS 없는 filesystem 계약](docs/NO_INITIAL_MDS.md)을 따릅니다.
 
-`RemoveMonitor`는 quorum을, `RemoveManager`는 다른 실행 중 candidate의 승격 가능성을 확인한 뒤 해당 노드를 제거합니다. `cephfs.Filesystem.ScaleMDS(ctx, active, standby)`는 같은 filesystem에서 rank handoff 후 남는 standby를 제거하며 pool과 파일을 유지합니다. `rgw.Remove`는 gateway만 제거하므로 같은 zone의 다른 gateway나 교체 노드가 기존 데이터를 계속 제공합니다. multisite의 gateway 주소를 바꿀 때는 period endpoint도 함께 변경해야 합니다.
+`RemoveMonitor`는 quorum을, `RemoveManager`는 다른 실행 중 candidate의 승격 가능성을 확인한 뒤 해당 노드를 제거합니다. `cephfs.Filesystem.ScaleMDS(ctx, active, standby)`는 같은 filesystem에서 rank handoff 후 남는 standby를 제거하며 pool과 파일을 유지합니다. `rgw.Remove`는 gateway만 제거하므로 같은 zone의 다른 gateway나 교체 노드가 기존 데이터를 계속 제공합니다. `cephfs.Remove`는 filesystem 하나를 FSMap에서 지우고 그 MDS·cephx key와 설정으로 만든 pool까지 정리합니다. `AddDataPool`로 나중에 붙인 pool은 분리만 하고 남기며, 오류 뒤 다시 호출하면 남은 단계만 이어서 처리합니다. multisite의 gateway 주소를 바꿀 때는 period endpoint도 함께 변경해야 합니다.
 
 ## 애플리케이션 연결
 
