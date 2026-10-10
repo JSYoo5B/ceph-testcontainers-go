@@ -36,6 +36,13 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	if multisite != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
+				// A replication timeout shows only the S3 view; record why sync stalled.
+				for _, zone := range multisite.Zones() {
+					inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
+					status, statusErr := multisite.SyncStatus(inspect, zone.Name)
+					stop()
+					t.Logf("multisite sync diagnostic zone=%s status=%+v error=%v", zone.Name, status, statusErr)
+				}
 				for _, gateway := range []*rgw.Gateway{multisite.Source, multisite.Destination} {
 					if gateway == nil {
 						continue
