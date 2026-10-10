@@ -29,6 +29,51 @@ if [ -n "${CEPH_PUBLIC_ADDRESS:-}" ]; then
     public_config="public addr = ${mon_ip}
 cluster addr = ${mon_ip}"
 fi
+# WithConfigFile renders one header per section and one normalized key per
+# line. Insert those entries into the matching generated section and drop the
+# generated value for the same key, because Ceph keeps the first duplicate.
+merge_user_config() {
+    awk '
+    function key_of(line) {
+        sub(/=.*/, "", line)
+        gsub(/[-_ \t]+/, " ", line)
+        sub(/^ /, "", line)
+        sub(/ $/, "", line)
+        gsub(/ /, "_", line)
+        return line
+    }
+    FNR == NR {
+        if ($0 ~ /^\[/) {
+            section = $0
+            order[++sections] = section
+            next
+        }
+        user[section, key_of($0)] = 1
+        entries[section] = entries[section] $0 "\n"
+        next
+    }
+    /^\[/ {
+        section = $0
+        print
+        if (section in entries) {
+            printf "%s", entries[section]
+            merged[section] = 1
+        }
+        next
+    }
+    index($0, "=") && (section, key_of($0)) in user { next }
+    { print }
+    END {
+        for (i = 1; i <= sections; i++) {
+            if (!(order[i] in merged)) {
+                print order[i]
+                printf "%s", entries[order[i]]
+            }
+        }
+    }
+    ' "$1" "$2"
+}
+
 if [ ! -d /var/lib/ceph/mon/ceph-a/store.db ]; then
     cat > /etc/ceph/ceph.conf <<EOF
 [global]
@@ -68,6 +113,10 @@ osd crush chooseleaf type = 0
 osd max object name len = 256
 osd max object namespace len = 64
 EOF
+    if [ -s /tc/ceph-user.conf ]; then
+        merge_user_config /tc/ceph-user.conf /etc/ceph/ceph.conf > /etc/ceph/ceph.conf.merged
+        mv /etc/ceph/ceph.conf.merged /etc/ceph/ceph.conf
+    fi
     ceph-authtool --create-keyring /etc/ceph/mon.keyring --gen-key -n mon. --cap mon 'allow *'
     ceph-authtool --create-keyring /etc/ceph/ceph.client.admin.keyring --gen-key -n client.admin \
         --cap mon 'allow *' --cap osd 'allow *' --cap mgr 'allow *' --cap mds 'allow *'

@@ -108,6 +108,16 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 
 서비스 `Run`은 그 서비스에 필요한 storage가 없는 bootstrap 옵션(`ceph.WithNoInitialOSDs` 등)을 거부합니다. 이런 단계별 구성은 `ceph.Run`으로 시작한 뒤 서비스를 나중에 추가합니다.
 
+### Ceph 설정 파일
+
+Daemon 튜닝 값은 `ceph.WithConfigFile(path)`로 `ceph.conf` 형식 파일에 모아 둘 수 있습니다. testcontainers-go module의 `WithConfigFile`과 같은 방식이며, 클러스터 구성은 계속 Go option으로 고릅니다. 파일 값은 fixture 기본값의 같은 key를 대신하고 모든 daemon과 client 설정에 들어갑니다. Fixture가 관리하는 주소·인증·저장소 key는 거부하며, 파일에 넣은 key는 `TemporaryConfig`로 바꿀 수 없습니다. [설정 파일 계약](docs/CEPH_CONFIG_FILE.md)을 따릅니다.
+
+```go
+cluster, err := rbd.Run(ctx, ceph.DefaultImage,
+    ceph.WithConfigFile(filepath.Join("testdata", "ceph.conf")),
+)
+```
+
 ### 초기 클러스터 구성
 
 `WithMessengerMode(ceph.MessengerV2Secure)`로 v2 secure 전용 bootstrap을 선택할 수 있습니다.

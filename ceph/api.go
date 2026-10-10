@@ -88,6 +88,22 @@ type ConfigEntry = cluster.ConfigEntry
 // returned with an error must also be restored or the cluster terminated.
 type ConfigOverride = cluster.ConfigOverride
 
+// WithConfigFile merges a native ceph.conf file from the test host into the
+// bootstrap configuration of every daemon and WithClient container, like the
+// WithConfigFile options of testcontainers-go modules. Entries replace the
+// fixture's defaults for the same section and key, and later files override
+// earlier files key by key. Ceph gives local files precedence over the MON
+// configuration database, so TemporaryConfig cannot change a key set here.
+// Keys that the fixture owns or passes on a daemon command line are rejected:
+// identity, addresses, networks, Cephx, Messenger modes, logging, data paths,
+// pool size defaults and BlueStore file layout. Use the dedicated options for
+// those. RGW runs as client.admin, so RGW settings belong in [client] or
+// [client.admin]. Includes, continuations and keys outside a section are
+// rejected.
+func WithConfigFile(path string) Option {
+	return cluster.WithConfigFile(path)
+}
+
 // DiagnosticsConfig bounds a read-only collection. Zero fields select a one
 // minute total timeout, ten seconds per operation, 64 KiB per artifact, the last
 // 1000 log lines, four workers and at most 128 containers. Additional containers

@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,11 +20,19 @@ import (
 func testConfigurationOverrides(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithInitialOSDs(ceph.OSDConfig{DeviceClass: "ssd"}, ceph.OSDConfig{DeviceClass: "ssd"})}
+	configFile := filepath.Join(t.TempDir(), "ceph.conf")
+	if err := os.WriteFile(configFile, []byte(nativeConfigFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := []testcontainers.ContainerCustomizer{
+		ceph.WithInitialOSDs(ceph.OSDConfig{DeviceClass: "ssd"}, ceph.OSDConfig{DeviceClass: "ssd"}),
+		ceph.WithConfigFile(configFile),
+	}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
 	cluster, client := newServiceCluster(t, opts...)
+	checkNativeConfigFile(t, ctx, cluster)
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-config", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
@@ -155,4 +165,48 @@ finally: c.shutdown()
 		t.Fatal("owned temporary masked entry left behind")
 	}
 	t.Log("native config: absent/explicit/inherited/masked entries preserved, canonical number readback, runtime scope precedence, copied handle and outside-edit guard; native RADOS I/O passed")
+}
+
+// nativeConfigFile replaces the fixture's own [osd] memory target and adds
+// MON and client settings that must reach bootstrap, later daemons and
+// connection configs. Ceph ignores osd_memory_target below 896 MiB, so the
+// override must differ from both that floor and the 4 GiB native default.
+const nativeConfigFile = `# testdata-style ceph.conf
+[osd]
+osd memory target = 1073741824
+[mon]
+mon_max_pg_per_osd = 320
+[client.admin]
+rados_osd_op_timeout = 25
+`
+
+func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Container) {
+	t.Helper()
+	show := func(who, option string) string {
+		t.Helper()
+		data, err := cluster.Ceph(ctx, "config", "show", who, option)
+		if err != nil {
+			t.Fatalf("config show %s %s: %v", who, option, err)
+		}
+		return strings.TrimSpace(string(data))
+	}
+	for _, osd := range cluster.OSDs() {
+		if got := show(fmt.Sprintf("osd.%d", osd.ID), "osd_memory_target"); got != "1073741824" {
+			t.Fatalf("osd.%d osd_memory_target = %q, want the config file value", osd.ID, got)
+		}
+	}
+	if got := show("mon.a", "mon_max_pg_per_osd"); got != "320" {
+		t.Fatalf("mon.a mon_max_pg_per_osd = %q, want the config file value", got)
+	}
+	config, _, err := cluster.ConnectionConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "[client.admin]\nrados_osd_op_timeout = 25\n") {
+		t.Fatalf("connection config omitted client settings:\n%s", config)
+	}
+	if strings.Count(string(config), "osd memory target") != 0 || strings.Count(string(config), "osd_memory_target") != 1 {
+		t.Fatalf("connection config kept the replaced fixture value:\n%s", config)
+	}
+	t.Log("WithConfigFile reached MON bootstrap, OSDs and connection config")
 }

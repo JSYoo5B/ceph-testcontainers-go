@@ -284,6 +284,9 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if c.settings.messengerMode == MessengerV2Secure {
 			moduleOpts = append(moduleOpts, testcontainers.WithEnv(map[string]string{messengerV2SecureEnvironment: "true"}))
 		}
+		if len(c.settings.userConfig) > 0 {
+			moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))
+		}
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}

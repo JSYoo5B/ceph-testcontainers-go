@@ -337,6 +337,16 @@ func messengerAssertAddVector(t *testing.T, calls []string, id, vector string) {
 // This exercises shell expansion and actual config output without Docker.
 func messengerRunScript(t *testing.T, name string, env map[string]string, inherited []byte) (string, []string) {
 	t.Helper()
+	var files map[string][]byte
+	if inherited != nil {
+		files = map[string][]byte{"/etc/ceph/ceph.conf": inherited}
+	}
+	return runEmbeddedScript(t, name, env, files)
+}
+
+// runEmbeddedScript also places files at container paths before execution.
+func runEmbeddedScript(t *testing.T, name string, env map[string]string, files map[string][]byte) (string, []string) {
+	t.Helper()
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	if err := os.Mkdir(bin, 0o700); err != nil {
@@ -356,15 +366,15 @@ func messengerRunScript(t *testing.T, name string, env map[string]string, inheri
 		t.Fatal(err)
 	}
 	script := string(data)
-	for _, path := range []string{"/etc/ceph", "/var/lib/ceph", "/var/run/ceph", "/tmp/monmap", "/tc/monmap"} {
+	for _, path := range []string{"/etc/ceph", "/var/lib/ceph", "/var/run/ceph", "/tmp/monmap", "/tc/monmap", userConfigPath} {
 		script = strings.ReplaceAll(script, path, root+path)
 	}
 	configPath := root + "/etc/ceph/ceph.conf"
-	if inherited != nil {
-		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+	for path, data := range files {
+		if err := os.MkdirAll(filepath.Dir(root+path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(configPath, inherited, 0o600); err != nil {
+		if err := os.WriteFile(root+path, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

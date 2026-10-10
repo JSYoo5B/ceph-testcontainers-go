@@ -39,6 +39,7 @@ type options struct {
 	publicAddress          string
 	hostAddressSet         bool
 	messengerMode          MessengerMode
+	userConfig             []userConfigSection
 }
 
 // WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
