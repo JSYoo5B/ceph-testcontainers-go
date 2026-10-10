@@ -104,20 +104,26 @@ func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *rbd.Mirr
 		if err != nil || code != 0 {
 			t.Fatalf("fresh native socket query: exit=%d error=%v", code, err)
 		}
+		type namespaceReplayer struct {
+			Local  *string           `json:"local_namespace"`
+			Remote *string           `json:"remote_namespace"`
+			Images []json.RawMessage `json:"image_replayers"`
+		}
 		var native struct {
 			Pools []struct {
-				Pool       string   `json:"pool"`
-				Peer       string   `json:"peer"`
-				State      string   `json:"state"`
-				Instance   string   `json:"instance_id"`
-				LeaderID   string   `json:"leader_instance_id"`
-				Leader     bool     `json:"leader"`
-				Members    []string `json:"instances"`
-				Namespaces []struct {
-					Local  *string           `json:"local_namespace"`
-					Remote *string           `json:"remote_namespace"`
+				Pool         string              `json:"pool"`
+				Peer         string              `json:"peer"`
+				State        string              `json:"state"`
+				Instance     string              `json:"instance_id"`
+				LeaderID     string              `json:"leader_instance_id"`
+				Leader       bool                `json:"leader"`
+				Members      []string            `json:"instances"`
+				Namespaces   []namespaceReplayer `json:"namespace_replayers"`
+				LegacyImages []json.RawMessage   `json:"image_replayers"`
+				LegacyNames  []struct {
+					Name   *string           `json:"name"`
 					Images []json.RawMessage `json:"image_replayers"`
-				} `json:"namespace_replayers"`
+				} `json:"namespaces"`
 			} `json:"pool_replayers"`
 		}
 		if err := json.Unmarshal(data, &native); err != nil {
@@ -129,6 +135,15 @@ func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *rbd.Mirr
 				continue
 			}
 			selected++
+			// Ceph 19 reports the default namespace's image replayers on the
+			// pool row and each named namespace as {name, image_replayers}.
+			if row.Namespaces == nil && row.LegacyImages != nil && row.LegacyNames != nil {
+				defaultNamespace := ""
+				row.Namespaces = []namespaceReplayer{{&defaultNamespace, &defaultNamespace, row.LegacyImages}}
+				for _, ns := range row.LegacyNames {
+					row.Namespaces = append(row.Namespaces, namespaceReplayer{ns.Name, ns.Name, ns.Images})
+				}
+			}
 			foundNamespace := false
 			for _, ns := range row.Namespaces {
 				if ns.Local == nil || ns.Remote == nil || ns.Images == nil {

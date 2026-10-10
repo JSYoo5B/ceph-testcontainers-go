@@ -282,7 +282,7 @@ func (m *RBDMirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope
 		result.problem = "receiver-status-query-failed"
 		return result, err
 	}
-	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiverPeer)
+	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiverPeer, cephBefore(m.config.Destination, 20))
 	if err != nil {
 		result.problem = "receiver-status-invalid"
 		return result, err
@@ -327,7 +327,7 @@ type rbdReceiverDiscovery struct {
 	namespaces                      []rbdReceiverNamespace
 }
 
-func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerIdentity) (rbdReceiverDiscovery, bool, error) {
+func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerIdentity, legacy bool) (rbdReceiverDiscovery, bool, error) {
 	var selected rbdReceiverDiscovery
 	if err := rbdReceiverJSON(data); err != nil {
 		return selected, false, err
@@ -347,6 +347,8 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 		Leader         *bool           `json:"leader"`
 		Instances      json.RawMessage `json:"instances"`
 		Namespaces     json.RawMessage `json:"namespace_replayers"`
+		LegacyImages   json.RawMessage `json:"image_replayers"`
+		LegacyNames    json.RawMessage `json:"namespaces"`
 	}
 	if len(native.Pools) == 0 || json.Unmarshal(native.Pools, &rows) != nil || rows == nil {
 		return selected, false, rbdReceiverGuard("decode RBD receiver pool discovery array")
@@ -356,6 +358,13 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 	for _, row := range rows {
 		if row.Peer == nil || *row.Peer == "" || row.State == nil || !slices.Contains([]string{"running", "error", "stopped", "stopped (manual)"}, *row.State) {
 			return selected, false, rbdReceiverGuard("decode RBD receiver discovery identity/state")
+		}
+		if legacy {
+			converted, err := legacyRBDNamespaceReplayers(row.LegacyImages, row.LegacyNames)
+			if err != nil {
+				return selected, false, err
+			}
+			row.Namespaces = converted
 		}
 		var namespaces []struct {
 			Local  *string         `json:"local_namespace"`
@@ -415,6 +424,37 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 		selected, found = entry, true
 	}
 	return selected, found, nil
+}
+
+// legacyRBDNamespaceReplayers rebuilds the namespace_replayers array of later
+// releases from Ceph 19's rbd-mirror status. That release reports the default
+// namespace's image_replayers on the pool row and each named namespace as
+// {name, image_replayers}; it mirrors only same-named namespaces.
+func legacyRBDNamespaceReplayers(images, names json.RawMessage) (json.RawMessage, error) {
+	type replayer struct {
+		Local  string          `json:"local_namespace"`
+		Remote string          `json:"remote_namespace"`
+		Images json.RawMessage `json:"image_replayers"`
+	}
+	var named []struct {
+		Name   *string         `json:"name"`
+		Images json.RawMessage `json:"image_replayers"`
+	}
+	if len(images) == 0 || len(names) == 0 || json.Unmarshal(names, &named) != nil || named == nil {
+		return nil, rbdReceiverGuard("decode Ceph 19 RBD receiver namespace discovery")
+	}
+	replayers := []replayer{{Images: images}}
+	for _, namespace := range named {
+		if namespace.Name == nil || *namespace.Name == "" || len(namespace.Images) == 0 {
+			return nil, rbdReceiverGuard("decode Ceph 19 RBD receiver namespace identity")
+		}
+		replayers = append(replayers, replayer{*namespace.Name, *namespace.Name, namespace.Images})
+	}
+	data, err := json.Marshal(replayers)
+	if err != nil {
+		return nil, rbdReceiverGuard("encode Ceph 19 RBD receiver namespace discovery")
+	}
+	return data, nil
 }
 
 func deriveRBDReceiverElection(result *RBDMirrorReceiverStatus, observations map[string]rbdReceiverNativeObservation) {

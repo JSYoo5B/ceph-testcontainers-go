@@ -949,3 +949,60 @@ func TestRBDReceiverPoolScopeEnrollmentNeedsNoImage(t *testing.T) {
 		}
 	}
 }
+
+// Shape captured from a Ceph 19.2.5 rbd-mirror admin socket with ns-a mirrored
+// to the same-named namespace.
+const rbdCeph19ReceiverStatus = `{
+    "pool_replayers": [
+        {
+            "peer": "uuid: 57df75d3-a2d5-4320-9122-3f8598fd02b3 cluster: source client: client.rbd-mirror-peer",
+            "pool": "tc-rbd-receiver-0",
+            "instance_id": "4331",
+            "state": "running",
+            "leader_instance_id": "4331",
+            "leader": true,
+            "instances": [
+                "4331"
+            ],
+            "local_cluster_admin_socket": "/var/run/ceph/client.rbd-mirror.tc-3b2f178a-5c90-4ea8-a776-f9a0c6fbd4cd.1.ceph.187650791168400.asok",
+            "remote_cluster_admin_socket": "/var/run/ceph/client.rbd-mirror-peer.1.source.187650791471504.asok",
+            "sync_throttler": {"max_parallel_requests": 5, "running_requests": 0, "waiting_requests": 0},
+            "deletion_throttler": {"max_parallel_requests": 1, "running_requests": 0, "waiting_requests": 0},
+            "image_replayers": [],
+            "image_deleter": {"image_deleter_status": {"delete_images_queue": [], "failed_deletes_queue": []}},
+            "namespaces": [
+                {
+                    "name": "ns-a",
+                    "image_replayers": [],
+                    "image_deleter": {"image_deleter_status": {"delete_images_queue": [], "failed_deletes_queue": []}}
+                }
+            ]
+        }
+    ]
+}`
+
+func TestRBDReceiverDiscoveryReadsCeph19Namespaces(t *testing.T) {
+	peer := &rbdReceiverPeerIdentity{uuid: "57df75d3-a2d5-4320-9122-3f8598fd02b3", site: "source", client: "client.rbd-mirror-peer"}
+	selected, found, err := decodeRBDReceiverDiscovery([]byte(rbdCeph19ReceiverStatus), "tc-rbd-receiver-0", peer, true)
+	if err != nil || !found || selected.state != "running" || selected.instance != "4331" || !selected.leader || !slices.Equal(selected.members, []string{"4331"}) {
+		t.Fatalf("Ceph 19 discovery rejected: %+v %v %v", selected, found, err)
+	}
+	if want := []rbdReceiverNamespace{{"", ""}, {"ns-a", "ns-a"}}; !slices.Equal(selected.namespaces, want) {
+		t.Fatalf("Ceph 19 namespaces = %v, want %v", selected.namespaces, want)
+	}
+	// The later-release decoder must not accept the Ceph 19 shape.
+	if _, _, err := decodeRBDReceiverDiscovery([]byte(rbdCeph19ReceiverStatus), "tc-rbd-receiver-0", peer, false); err == nil {
+		t.Fatal("Ceph 19 status accepted without namespace_replayers")
+	}
+	for _, change := range []struct{ before, after string }{
+		{`"name": "ns-a",`, ``},
+		{`"name": "ns-a"`, `"name": ""`},
+		{`"image_replayers": [],
+            "image_deleter"`, `"image_deleter"`},
+		{`"namespaces": [`, `"other": [`},
+	} {
+		if _, _, err := decodeRBDReceiverDiscovery([]byte(strings.Replace(rbdCeph19ReceiverStatus, change.before, change.after, 1)), "tc-rbd-receiver-0", peer, true); err == nil {
+			t.Fatalf("malformed Ceph 19 discovery accepted after replacing %q", change.before)
+		}
+	}
+}
