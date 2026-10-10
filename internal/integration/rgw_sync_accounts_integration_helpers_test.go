@@ -96,7 +96,18 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 		t.Fatal(err)
 	}
 	pipe := rgw.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
-	if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
+	err = link.CreateSyncPipe(ctx, selected, pipe)
+	if strings.HasPrefix(source.CephVersion(), "19.") {
+		// Ceph 19 drops this pipe from the destination's resolved sources and
+		// replicates nothing, so the fixture refuses it before any change.
+		const want = "RGW user-mode sync with an account principal needs Ceph 20 or later"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("Ceph 19 account user-mode pipe error = %v, want refusal %q", err, want)
+		}
+		t.Log("Ceph 19 refused the account user-mode pipe before any change")
+		return
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	waitRGWTranslationPolicyReady(t, ctx, link, selected)

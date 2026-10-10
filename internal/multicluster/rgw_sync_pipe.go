@@ -116,6 +116,9 @@ func (f *RGWMultisite) syncPipeConfig(ctx context.Context, master *rgwZoneState,
 		if err := checkSyncUserModePrincipal(g.scope, config, info, sourceInfo, destinationInfo); err != nil {
 			return nil, nil, err
 		}
+		if info.AccountID != "" && f.anyZoneBefore(20) {
+			return nil, nil, errors.New("RGW user-mode sync with an account principal needs Ceph 20 or later; Ceph 19 resolves no source for such a pipe")
+		}
 		if destinationInfo == nil {
 			return nil, nil, errors.New("RGW user mode requires a concrete destination bucket")
 		}
@@ -287,4 +290,12 @@ func (f *RGWMultisite) syncDestinationClass(ctx context.Context, g *RGWSyncGroup
 		}
 	}
 	return nil
+}
+
+// anyZoneBefore reports whether an owned zone's cluster runs a release older
+// than major. Any such zone may resolve the pipe, so one is enough to refuse.
+func (f *RGWMultisite) anyZoneBefore(major int) bool {
+	return slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
+		return zone.cluster != nil && cephBefore(zone.cluster, major)
+	})
 }

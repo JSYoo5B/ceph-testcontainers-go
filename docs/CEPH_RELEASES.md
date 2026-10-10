@@ -37,6 +37,7 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | RBD mirror UUID | `rbd mirror pool info`가 `mirror_uuid`와 `remote_namespace`를 출력합니다. | Squid는 둘 다 출력하지 않습니다. UUID는 pool의 `rbd_mirroring` object omap에서 읽고, remote namespace는 같은 이름으로 채웁니다. Tentacle 응답에서 이 값이 빠지면 지금처럼 오류로 처리합니다. |
 | RBD receiver 상태 | rbd-mirror admin socket의 `rbd mirror status`가 namespace마다 `namespace_replayers`에 local·remote namespace를 함께 보고합니다. | Squid는 기본 namespace의 `image_replayers`를 pool 항목에 두고, 이름 있는 namespace는 `namespaces`에 이름만 보고합니다. `ReceiverStatus`와 `WaitReceiverReady`는 이를 같은 이름끼리 짝지은 목록으로 바꿔 판정합니다. |
 | RGW sync pipe 기록 | system mode pipe의 `params`에 `user`가 없습니다. | Squid는 `"user": ""`를 함께 기록합니다. pipe 생성 후 readback을 비교할 때 Squid에서만 이 빈 값을 기대합니다. |
+| RGW account user mode | account root를 user mode pipe의 principal로 쓰면 같은 account가 소유한 bucket 사이에서 복제됩니다. | Squid는 이 pipe를 `sync info`의 `resolved-hints-1`까지만 찾고 최종 source에서 빼서 아무것도 복제하지 않습니다. 일반 사용자의 user mode는 복제됩니다. 그래서 zone 중 하나라도 Ceph 19이면 `CreateSyncPipe`가 변경 전에 "Ceph 20 이상 필요" 오류를 반환합니다. |
 | RGW bucket sync 상태 | `bucket sync status --format json`이 JSON을 출력합니다. | Squid는 `--format json`을 무시하고 텍스트만 출력합니다. `WaitBucketSyncReady`와 `BucketSyncStatus`는 이 텍스트를 같은 구조로 바꿔 똑같이 판정하고, 모르는 줄이 있으면 오류로 처리합니다. |
 
 ## Squid에서 다르게 검증하는 테스트
@@ -49,6 +50,7 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | `TestMultiClusterRBDReceiverReadiness`의 이름이 다른 mapping 4개, `TestMultiClusterRBDNamespaceImageObservation` | 위 namespace mapping 테스트와 같이 fixture가 변경 전에 거부하는지 확인하고 끝냅니다. |
 | `TestMultiClusterNoInitialMirrorDaemons/*/rbd-journal-partial-first` | Squid에서는 `ns-a`를 같은 이름의 `ns-a`로 mirror해서 journal pool scope 검증을 그대로 수행합니다. |
 | RBD mirror topology를 직접 읽는 테스트 | 테스트도 `rbd mirror pool info`에서 빠진 `mirror_uuid`와 `remote_namespace`를 fixture와 같은 방법으로 채워서 비교합니다. Tentacle 출력은 그대로 검사합니다. |
+| `TestMultiClusterRGWAccountRootSync`, host 변형 | account root user mode pipe를 fixture가 변경 전에 거부하는지 확인하고 끝냅니다. |
 | `TestMessengerV2Secure*`, `Test*MessengerSecureDefaultMix` | Squid에는 연결별 암호화 상태를 보여 주는 `messenger dump` admin 명령이 없습니다. 그래서 각 daemon의 `ms_*_service_mode`가 `secure`인지 확인합니다. secure만 받는 daemon과 성립한 연결은 암호화된 연결이기 때문입니다. 테스트가 직접 띄우는 librados·libcephfs client는 `debug_ms=1` 로그의 READY 연결 줄에서 `secure` mode와 crypto handler를 확인합니다. CRC 전용 client 거부 검증은 두 release에서 같습니다. |
 
 ## 이미지 호환 확인
