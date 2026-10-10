@@ -50,3 +50,16 @@ func lastLine(out string) string {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	return lines[len(lines)-1]
 }
+
+// lastJSONLine returns the last line that holds a JSON object. Native client
+// libraries log to stderr, which the combined output interleaves before and
+// after the result, for example while shutting down.
+func lastJSONLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		if line := strings.TrimSpace(lines[index]); strings.HasPrefix(line, "{") {
+			return line
+		}
+	}
+	return ""
+}
