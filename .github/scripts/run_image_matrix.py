@@ -23,8 +23,14 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# Releases that ceph-testcontainers-images checks and publishes, with their
+# unmodified official images. RELEASE is the default and matches DefaultImage.
+RELEASES = {
+    "20.2.4": "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9",
+    "19.2.5": "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b",
+}
 RELEASE = "20.2.4"
-OFFICIAL_IMAGE = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
+OFFICIAL_IMAGE = RELEASES[RELEASE]
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
 ROLE_ENV = {
     "control": "CEPH_TEST_IMAGE",
@@ -54,7 +60,7 @@ def parse_arguments(argv=None):
     parser.add_argument("--layout", choices=("all", "roles"), default="all")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
                         help="Must match the Docker engine; omitted means its native platform")
-    parser.add_argument("--release", choices=(RELEASE,), default=RELEASE)
+    parser.add_argument("--release", choices=tuple(RELEASES), default=RELEASE)
     parser.add_argument("--output-dir", type=Path,
                         help="New directory only; default artifacts/image-matrix-<cell>-<UTC>-<id>")
     parser.add_argument("--prepare-only", action="store_true",
@@ -68,10 +74,10 @@ def parse_arguments(argv=None):
 
 
 def image_references(variant, layout, release):
-    if release != RELEASE or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
+    if release not in RELEASES or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
         raise ValueError("unsupported image matrix cell")
     if layout == "all":
-        reference = OFFICIAL_IMAGE if variant == "official" else REGISTRY + ":" + variant + "-" + release + "-all"
+        reference = RELEASES[release] if variant == "official" else REGISTRY + ":" + variant + "-" + release + "-all"
         return {"all": reference}
     return {role: REGISTRY + ":" + variant + "-" + release + "-" + role
             for role in ("control", "osd", "rgw", "mds")}

@@ -14,6 +14,7 @@ import tempfile
 import unittest
 
 import report_test_failures as failure_reporter
+import run_image_matrix as runner
 import tag_scenarios as engine
 
 
@@ -80,6 +81,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         "ceph-multicluster.yml": ("Ceph multicluster", "multicluster"),
         "ceph-recovery.yml": ("Ceph recovery", "recovery"),
     }
+    # Earlier releases rerun a category with role images that
+    # ceph-testcontainers-images checked and published for that release.
+    RELEASE_ENTRY_POINTS = {
+        "ceph-squid.yml": ("Ceph squid", "short", "19.2.5"),
+    }
 
     @classmethod
     def setUpClass(cls):
@@ -94,10 +100,13 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         cls.optional = engine.discover_optional(cls.catalog)
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
-        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", *self.ENTRY_POINTS}
+        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", *self.ENTRY_POINTS,
+                    *self.RELEASE_ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         self.assertNotIn("test.yml", self.workflows)
-        for filename, (name, category) in self.ENTRY_POINTS.items():
+        entries = {filename: (name, category, None) for filename, (name, category) in self.ENTRY_POINTS.items()}
+        entries.update(self.RELEASE_ENTRY_POINTS)
+        for filename, (name, category, release) in entries.items():
             with self.subTest(workflow=filename):
                 workflow = self.workflows[filename]
                 self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
@@ -114,6 +123,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertEqual(scalar(callers[0].split("    with:", 1)[0], "name"), "Scenarios")
                 self.assertEqual(scalar(callers[0], "category"), category)
                 self.assertEqual(scalar(callers[0], "check_name"), name)
+                if release is None:
+                    self.assertNotRegex(callers[0], r"(?m)^      release:")
+                else:
+                    self.assertEqual(scalar(callers[0], "release").strip("'"), release)
+                    self.assertIn(release, runner.RELEASES)
                 self.assertNotIn("steps:", callers[0])
                 self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
         reusable = self.workflows["tagged-runtime.yml"]

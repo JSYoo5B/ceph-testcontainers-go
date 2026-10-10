@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -464,6 +465,16 @@ class MatrixTests(unittest.TestCase):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                 runner.parse_arguments(arguments)
             self.assertEqual(error.exception.code, 2)
+
+    def test_each_release_selects_its_own_published_images(self):
+        self.assertEqual(runner.OFFICIAL_IMAGE, runner.RELEASES[runner.RELEASE])
+        for release, official in runner.RELEASES.items():
+            with self.subTest(release=release):
+                self.assertRegex(official, r"^quay\.io/ceph/ceph:v" + re.escape(release) + r"@sha256:[0-9a-f]{64}$")
+                self.assertEqual(runner.image_references("official", "all", release), {"all": official})
+                self.assertEqual(runner.image_references("ubuntu", "roles", release)["osd"],
+                                 runner.REGISTRY + ":ubuntu-" + release + "-osd")
+                self.assertEqual(runner.parse_arguments(("--release", release)).release, release)
 
 
 if __name__ == "__main__":

@@ -4,14 +4,19 @@ inputs:
   artifact_name:
     description: Unique image identity artifact name for this scenario job
     required: true
+  release:
+    description: Ceph release published by ceph-testcontainers-images
+    default: '20.2.4'
 runs:
   using: composite
   steps:
     - name: Resolve native role image identities
       shell: bash
+      env:
+        SCENARIO_RELEASE: ${{ inputs.release }}
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
-          --variant official --layout roles --prepare-only \
+          --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
           --platform linux/amd64 --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images
         printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' >> "$GITHUB_ENV"

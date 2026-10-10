@@ -17,6 +17,7 @@ from unittest import mock
 
 import check_scenario_quiescence as quiescence_checker
 import check_scenario_recovery as recovery_checker
+import run_image_matrix as runner
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -434,6 +435,9 @@ class ScenarioImageTests(unittest.TestCase):
         action_steps = steps(self.action, indent=4)
         self.assertEqual(len(action_steps), 2)
         self.assertEqual(scalar(action_steps[0], "shell"), "bash")
+        # The release input reaches the script only through the environment.
+        self.assertEqual(scalar(action_steps[0], "SCENARIO_RELEASE"), "${{ inputs.release }}")
+        self.assertEqual(scalar(self.action, "default"), "'" + runner.RELEASE + "'")
         script = action_steps[0].split("      run: |\n", 1)[1]
         script = "\n".join(line[8:] for line in script.splitlines()) + "\n"
         logical_lines = script.replace("\\\n", "").splitlines()
@@ -442,7 +446,7 @@ class ScenarioImageTests(unittest.TestCase):
         commands = [shlex.split(line) for line in logical_lines if line.strip()]
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
-             "--variant", "official", "--layout", "roles", "--prepare-only",
+             "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
             ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", ">>", "$GITHUB_ENV"],
@@ -482,6 +486,7 @@ class ScenarioImageTests(unittest.TestCase):
                 "GITHUB_ACTION_PATH": str(ROOT / ".github/actions/scenario-images"),
                 "GITHUB_ENV": str(environment_file), "SCENARIO_TEST_CALLS": str(calls),
                 "SCENARIO_TEST_EXIT": str(code), "SCENARIO_TEST_IMAGES": json.dumps(IMAGES),
+                "SCENARIO_RELEASE": "19.2.5",
             })
             result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail",
                                      "-c", script], cwd=root, env=env,
@@ -489,7 +494,7 @@ class ScenarioImageTests(unittest.TestCase):
             arguments = json.loads(calls.read_text())
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
-                "--variant", "official", "--layout", "roles", "--prepare-only",
+                "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
             ])
