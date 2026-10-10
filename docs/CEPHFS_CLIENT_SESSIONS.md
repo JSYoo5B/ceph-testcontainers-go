@@ -89,7 +89,7 @@ evict 뒤 health는 `HEALTH_OK`였다.
 ## 실행 검증
 
 `TestCephFSPausedClientEviction`은 bridge와 host network 각각에서 위 단계를 모두
-확인한다. 기본값 60·300초 읽기, 30초 미만 거부, 적용 값 readback, 복원 뒤 기본값
-readback도 함께 확인한다. macOS Docker Desktop(Linux ARM64 엔진)에서 원본 Quay 20.2.4와
+확인한다. 기본값 60·300초 읽기, 30초 미만 거부, 적용 값 readback, 중복 handle 거부,
+외부에서 바꾼 값에 대한 `Restore` 거부, 복원 뒤 기본값 readback도 함께 확인한다. macOS Docker Desktop(Linux ARM64 엔진)에서 원본 Quay 20.2.4와
 19.2.5 이미지로 실행해 두 release 모두 통과했고, release에 따른 차이는 없었다. CI에서는 short 범주의 `cephfs_fixtures_sessions` batch로
 Tentacle과 Squid 모두에서 실행한다.

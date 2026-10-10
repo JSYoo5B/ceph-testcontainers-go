@@ -124,6 +124,19 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if current, err := fs.SessionTimeouts(ctx); err != nil || current != short {
 				t.Fatalf("shortened session timeouts = %+v, %v", current, err)
 			}
+			if again, err := fs.TemporarySessionTimeouts(ctx, defaults); again != nil || err == nil {
+				t.Fatal("overlapping session timeouts override was admitted")
+			}
+			// An outside edit is refused instead of overwritten, and Restore
+			// proceeds once the owned value is back.
+			mustCeph(t, ctx, cluster, "fs", "set", fs.FilesystemName, "session_autoclose", "90")
+			if err := change.Restore(ctx); err == nil || !strings.Contains(err.Error(), "outside this override") {
+				t.Fatalf("restore over an outside edit: %v", err)
+			}
+			if current, err := fs.SessionTimeouts(ctx); err != nil || current.Autoclose != 90*time.Second {
+				t.Fatalf("refused restore changed the outside edit: %+v, %v", current, err)
+			}
+			mustCeph(t, ctx, cluster, "fs", "set", fs.FilesystemName, "session_autoclose", "30")
 
 			execOutput(t, ctx, client, "sh", "-c", `printf '%s' "$1" > /tmp/holder.py && nohup python3 /tmp/holder.py "$2" > /tmp/holder.log 2>&1 &`, "sh", cephFSSessionHolder, fs.FilesystemName)
 			holderID := waitClientFile(t, ctx, client, "/tmp/holder.id")

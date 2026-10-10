@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -57,39 +56,6 @@ func sessionFilesystem(t *testing.T) (*CephFSContainer, *sessionFixture) {
 	return fs, ctr
 }
 
-func TestCephFSSessionTimeoutsApplyAndRestore(t *testing.T) {
-	fs, ctr := sessionFilesystem(t)
-	current, err := fs.SessionTimeouts(t.Context())
-	if err != nil || current != (CephFSSessionTimeouts{Timeout: time.Minute, Autoclose: 5 * time.Minute}) {
-		t.Fatalf("SessionTimeouts = %+v, %v", current, err)
-	}
-	change, err := fs.TemporarySessionTimeouts(t.Context(), CephFSSessionTimeouts{Timeout: 30 * time.Second, Autoclose: 45 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again, err := fs.TemporarySessionTimeouts(t.Context(), CephFSSessionTimeouts{Timeout: 40 * time.Second, Autoclose: 40 * time.Second}); again != nil || err == nil {
-		t.Fatal("overlapping session timeouts override was admitted")
-	}
-	copy := *change
-	if err := copy.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal("repeated restore:", err)
-	}
-	want := []string{
-		"fs set app session_timeout 30", "fs set app session_autoclose 45",
-		"fs set app session_timeout 60", "fs set app session_autoclose 300",
-	}
-	if got := ctr.mutations(); !slices.Equal(got, want) {
-		t.Fatalf("mutations = %q, want %q", got, want)
-	}
-	fs.cluster.closed = true
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal("restored handle failed after termination:", err)
-	}
-}
-
 func TestCephFSSessionTimeoutsRefuseInvalidValuesBeforeCommands(t *testing.T) {
 	for _, requested := range []CephFSSessionTimeouts{
 		{},
@@ -105,26 +71,20 @@ func TestCephFSSessionTimeoutsRefuseInvalidValuesBeforeCommands(t *testing.T) {
 	}
 }
 
-func TestCephFSSessionTimeoutsRefuseOutsideEditAndForeignFilesystem(t *testing.T) {
+// Real Ceph cannot fail only the second of the two native commands or swap
+// the filesystem ID under one name between calls, so these use the fake.
+func TestCephFSSessionTimeoutsRefuseRecreatedFilesystem(t *testing.T) {
 	fs, ctr := sessionFilesystem(t)
 	change, err := fs.TemporarySessionTimeouts(t.Context(), CephFSSessionTimeouts{Timeout: 30 * time.Second, Autoclose: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctr.autoclose = 90
-	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "outside this override") {
-		t.Fatalf("Restore error = %v", err)
-	}
-	if got := ctr.mutations(); len(got) != 2 {
-		t.Fatalf("outside edit was overwritten: %q", got)
-	}
-	ctr.autoclose, ctr.fsID = 30, 8
+	ctr.fsID = 8
 	if err := change.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "filesystem ID") {
 		t.Fatalf("Restore on recreated filesystem error = %v", err)
 	}
-	delete(fs.cluster.filesystems, "app")
-	if _, err := fs.TemporarySessionTimeouts(t.Context(), CephFSSessionTimeouts{Timeout: time.Minute, Autoclose: time.Minute}); err == nil {
-		t.Fatal("removed filesystem accepted a session timeouts override")
+	if got := ctr.mutations(); len(got) != 2 {
+		t.Fatalf("recreated filesystem was changed: %q", got)
 	}
 }
 
