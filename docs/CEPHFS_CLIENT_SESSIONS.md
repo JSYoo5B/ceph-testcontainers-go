@@ -14,7 +14,7 @@
 fs := cephfs.Filesystems(cluster)[0]
 change, err := fs.TemporarySessionTimeouts(ctx, cephfs.SessionTimeouts{
     Timeout:   30 * time.Second,
-    Autoclose: 30 * time.Second,
+    Autoclose: time.Minute,
 })
 // 응답이 유실돼도 값이 바뀌었을 수 있으므로 오류와 함께 받은 handle도 복원한다.
 if change != nil {
@@ -36,10 +36,20 @@ if err != nil {
 
 ## Session 제한 값
 
-Ceph는 client가 capability를 갱신하지 않은 채 `session_timeout`이 지나면 session을
-stale로 표시하고, `session_autoclose`가 지나면 evict한다. 기본값
-`mds_session_blocklist_on_timeout=true`에서는 evict와 함께 client 주소를 OSDMap
-blocklist에 넣는다. 기본값은 각각 60초와 300초다.
+`session_timeout`과 `session_autoclose`는 응답 없는 client를 MDS가 정리하는 시점을
+정한다. 기본값은 각각 60초와 300초다. 실제 eviction 시점은 다른 client가 그 client의
+capability를 원하는지에 따라 달라진다.
+
+- 아무도 capability를 원하지 않으면 session은 `open`으로 남아 있다가
+  `session_autoclose`가 지나면 evict된다. Ceph 기본값 `mds_defer_session_stale=true`
+  때문에 이 경우에는 stale로 표시되지도 않는다.
+- 다른 client가 capability를 요청하면 MDS는 `session_timeout`이 지나자마자 session을
+  stale로 표시하고 곧바로 evict한다. `session_autoclose`를 기다리지 않는다.
+
+기본값 `mds_session_blocklist_on_timeout=true`에서는 두 경우 모두 evict와 함께 client
+주소를 OSDMap blocklist에 넣는다. 응답 없는 client를 알리는 `MDS_CLIENT_LATE_RELEASE`
+같은 health 경고는 두 경우 모두 관측되지 않았다. MDS가 경고를 낼 시점보다 먼저 evict하기
+때문이다.
 
 두 값은 central config가 아니라 filesystem의 MDSMap 값이어서 `TemporaryConfig`로는
 바꿀 수 없다. 그래서 `fs set <name> session_timeout`과 `session_autoclose`를 쓰는 별도
@@ -72,24 +82,26 @@ Ceph가 `mds_blocklist_interval`(기본 1시간) 뒤에 스스로 지운다. 같
 
 ## Ceph에서 확인한 동작
 
-두 값을 30초로 줄이고 libcephfs client가 파일에 `durable`을 쓰고 fsync한 뒤
-`-volatile`을 cache에만 남긴 상태에서 client 컨테이너를 멈췄다.
+`session_timeout`을 30초, `session_autoclose`를 60초로 줄였다. libcephfs client가 자기
+파일에 `durable`을 쓰고 fsync한 뒤 `-volatile`을 cache에만 남긴 상태에서 client
+컨테이너를 멈췄다.
 
-| 단계 | 관측 |
-| --- | --- |
-| 멈추기 전 | session state `open`, capability 2개, `EntityID=admin`, `Root=/` |
-| 멈춘 뒤 | 다른 client의 `stat`과 읽기가 멈춘 client의 capability 회수를 기다림 |
-| 33~35초 뒤 | session이 목록에서 사라지고 같은 `Address`가 blocklist에 추가됨. `stale` 상태는 timeout과 autoclose가 같아서 따로 관측되지 않음 |
-| 다른 client | 37~38초 기다린 뒤 `durable`만 읽음. 멈춘 client의 cache에 있던 데이터는 사라짐 |
-| Resume 뒤 기존 session | 쓰기가 errno 108(ESHUTDOWN)로 실패하고 client log에 blocklist 기록이 남음 |
-| Resume 뒤 새 mount | 새 instance ID로 mount되고 `durable`을 읽음 |
+| 단계 | idle (다른 client 없음) | contended (다른 client가 같은 파일을 읽음) |
+| --- | --- | --- |
+| 멈추기 전 | session `open`, capability 2개, `EntityID=admin`, `Root=/` | 같음 |
+| 멈춘 동안 | 계속 `open` | `open`, evict 직전에 잠깐 `stale`이 보이기도 함 |
+| evict | 61~62초 뒤. 같은 `Address`가 blocklist에 추가됨 | 31~33초 뒤. 같은 `Address`가 blocklist에 추가됨 |
+| 다른 client | 해당 없음 | 35초 정도 기다린 뒤 `durable`만 읽음. 멈춘 client의 cache에 있던 데이터는 사라짐 |
+| Resume 뒤 기존 session | 쓰기가 errno 108(ESHUTDOWN)로 실패 | 같음 |
+| Resume 뒤 새 mount | 새 instance ID로 mount되고 `durable`을 읽음 | 같음 |
 
 evict 뒤 health는 `HEALTH_OK`였다.
 
 ## 실행 검증
 
-`TestCephFSPausedClientEviction`은 bridge와 host network 각각에서 위 단계를 모두
-확인한다. 기본값 60·300초 읽기, 30초 미만 거부, 적용 값 readback, 중복 handle 거부,
+`TestCephFSPausedClientEviction`은 bridge와 host network 각각에서 idle과 contended
+단계를 모두 확인한다. idle은 45초 이전에 evict되면, contended는 15초 이전이나 50초
+이후에 evict되면 실패한다. 기본값 60·300초 읽기, 30초 미만 거부, 적용 값 readback, 중복 handle 거부,
 외부에서 바꾼 값에 대한 `Restore` 거부, 복원 뒤 기본값 readback도 함께 확인한다. macOS Docker Desktop(Linux ARM64 엔진)에서 원본 Quay 20.2.4와
 19.2.5 이미지로 실행해 두 release 모두 통과했고, release에 따른 차이는 없었다. CI에서는 short 범주의 `cephfs_fixtures_sessions` batch로
 Tentacle과 Squid 모두에서 실행한다.

@@ -14,11 +14,12 @@ import (
 const minCephFSSessionTimeout = 30 * time.Second
 
 // CephFSSessionTimeouts are the filesystem's MDSMap client session limits.
-// A session that has not renewed its capabilities for Timeout becomes stale;
-// one silent for Autoclose is evicted, and with Ceph's default
-// mds_session_blocklist_on_timeout its address is blocklisted. These are
-// filesystem settings, not central configuration, so TemporaryConfig cannot
-// change them. Native values are whole seconds.
+// A silent client whose capabilities nobody wants stays open until Autoclose.
+// Once another client asks for its capabilities, the MDS evicts it as soon as
+// Timeout passes. With Ceph's default mds_session_blocklist_on_timeout the
+// evicted address is blocklisted. These are filesystem settings, not central
+// configuration, so TemporaryConfig cannot change them. Native values are
+// whole seconds.
 type CephFSSessionTimeouts struct {
 	Timeout, Autoclose time.Duration
 }
@@ -91,8 +92,8 @@ func (fs *CephFSContainer) SessionTimeouts(ctx context.Context) (CephFSSessionTi
 	return fs.readSessionTimeouts(ctx, fsID)
 }
 
-// TemporarySessionTimeouts sets both limits so a test can observe stale and
-// evicted clients in seconds instead of Ceph's default 60 and 300 seconds.
+// TemporarySessionTimeouts sets both limits so a test can observe evicted
+// clients in seconds instead of Ceph's default 60 and 300 seconds.
 // Each value must be a whole number of seconds and at least 30 seconds, the
 // native minimum. Only one handle per filesystem may be active. The native CLI
 // changes one value per command, so apply and restore are not atomic.
