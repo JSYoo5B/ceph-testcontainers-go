@@ -84,6 +84,45 @@ def read(io, name, expected, image_id=None, offset=0):
             assert image.id() == image_id, "same-named image was replaced"
         assert image.read(offset, len(expected)) == expected, "native image bytes changed"
 
+def directory_group_id(io, name):
+    # cls_rbd keeps each group's id in rbd_group_directory under name_<group>
+    # as an encoded string: a little-endian 32-bit length and the text.
+    key = "name_" + name
+    with rados.ReadOpCtx() as op:
+        values, _ = io.get_omap_vals_by_keys(op, (key,))
+        io.operate_read_op(op, "rbd_group_directory")
+        value = dict(values)[key]
+    assert int.from_bytes(value[:4], "little") == len(value) - 4, "malformed group directory entry"
+    return value[4:].decode()
+
+def group_id(io, group, name):
+    # Squid's binding has no Group.id(). Where it exists, the directory entry
+    # must agree, so the fallback stays proven on the default release.
+    native = directory_group_id(io, name)
+    if hasattr(group, "id"):
+        assert group.id() == native, "group directory id differs from Group.id()"
+    return native
+
+def group_snap_info(io, group, group_name, snap_name, images):
+    # Squid's binding has no get_snap_info: read the state from list_snaps
+    # and member snapshots from each image's group snapshot namespace. Where
+    # get_snap_info exists, both views must name the same image snapshots.
+    state = next(entry["state"] for entry in group.list_snaps() if entry["name"] == snap_name)
+    members = []
+    for image_name in images:
+        with rbd.Image(io, image_name) as image:
+            for entry in image.list_snaps():
+                owner = entry.get("group") or {}
+                if entry["namespace"] == rbd.RBD_SNAP_NAMESPACE_TYPE_GROUP and owner.get("name") == group_name:
+                    members.append({"image_name": image_name, "pool_id": io.get_pool_id(), "snap_id": entry["id"]})
+    if not hasattr(group, "get_snap_info"):
+        return {"state": state, "image_snaps": members, "id": None}
+    info = group.get_snap_info(snap_name)
+    native = sorted((entry["image_name"], entry["snap_id"]) for entry in info["image_snaps"])
+    assert native == sorted((entry["image_name"], entry["snap_id"]) for entry in members), "image group snapshots differ from get_snap_info"
+    assert info["state"] == state, "group snapshot state differs from list_snaps"
+    return info
+
 def absent(io, name):
     try:
         with rbd.Image(io, name):
@@ -197,12 +236,12 @@ elif phase == "group-snapshot":
         ids = {name: create(io, name, value) for name, value in [("group-a", payload), ("group-b", payload[::-1])]}
         api.group_create(io, "checkpoint")
         group = rbd.Group(io, "checkpoint")
-        group_id = group.id()
+        checkpoint_id = group_id(io, group, "checkpoint")
         for name in ids:
             group.add_image(io, name)
         # All writers have flushed and closed before the group checkpoint.
         group.create_snap("baseline")
-        snap = group.get_snap_info("baseline")
+        snap = group_snap_info(io, group, "checkpoint", "baseline", ids)
         assert snap["state"] == rbd.RBD_GROUP_SNAP_STATE_COMPLETE
         assert {entry["image_name"] for entry in snap["image_snaps"]} == set(ids)
         assert all(entry["pool_id"] == expected_pool_id and entry["snap_id"] > 0 for entry in snap["image_snaps"])
@@ -214,7 +253,7 @@ elif phase == "group-snapshot":
         snapshot_id = snap["id"]
     with session() as (_, io):
         group = rbd.Group(io, "checkpoint")
-        assert group.id() == group_id
+        assert group_id(io, group, "checkpoint") == checkpoint_id
         read(io, "group-a", payload, ids["group-a"])
         read(io, "group-b", payload[::-1], ids["group-b"])
         group.remove_snap("baseline")
@@ -222,7 +261,7 @@ elif phase == "group-snapshot":
             group.remove_image(io, name)
             api.remove(io, name)
         api.group_remove(io, "checkpoint")
-    proof.update(group_id=group_id, snapshot_id=snapshot_id, images=ids, bytes_per_image=len(payload))
+    proof.update(group_id=checkpoint_id, snapshot_id=snapshot_id, images=ids, bytes_per_image=len(payload))
 
 elif phase == "exclusive-lock":
     with session() as (_, io):
