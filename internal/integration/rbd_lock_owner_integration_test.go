@@ -110,7 +110,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			ready := func(ctr testcontainers.Container, workdir string) rbdLockHolder {
 				t.Helper()
 				var holder rbdLockHolder
-				if err := json.Unmarshal([]byte(waitClientFile(t, ctx, ctr, workdir+"/ready")), &holder); err != nil {
+				if err := json.Unmarshal([]byte(waitClientFile(t, ctx, ctr, workdir+"/ready", workdir+"/log")), &holder); err != nil {
 					t.Fatal(err)
 				}
 				return holder
@@ -121,7 +121,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				var result struct {
 					Errno int `json:"errno"`
 				}
-				if err := json.Unmarshal([]byte(waitClientFile(t, ctx, ctr, workdir+"/result")), &result); err != nil {
+				if err := json.Unmarshal([]byte(waitClientFile(t, ctx, ctr, workdir+"/result", workdir+"/log")), &result); err != nil {
 					t.Fatal(err)
 				}
 				return result.Errno

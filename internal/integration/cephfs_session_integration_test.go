@@ -7,7 +7,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,8 +15,6 @@ import (
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
-	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // The holder opens a session, makes "durable" stable with fsync, leaves
@@ -139,7 +136,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			mustCeph(t, ctx, cluster, "fs", "set", fs.FilesystemName, "session_autoclose", "30")
 
 			execOutput(t, ctx, client, "sh", "-c", `printf '%s' "$1" > /tmp/holder.py && nohup python3 /tmp/holder.py "$2" > /tmp/holder.log 2>&1 &`, "sh", cephFSSessionHolder, fs.FilesystemName)
-			holderID := waitClientFile(t, ctx, client, "/tmp/holder.id")
+			holderID := waitClientFile(t, ctx, client, "/tmp/holder.id", "/tmp/holder.log")
 			holder := findCephFSSession(t, ctx, fs, holderID)
 			if holder == nil {
 				t.Fatalf("holder client.%s has no session", holderID)
@@ -224,7 +221,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 				FreshID      uint64 `json:"fresh_id"`
 				FreshContent string `json:"fresh_content"`
 			}
-			if err := json.Unmarshal([]byte(waitClientFile(t, ctx, client, "/tmp/holder.result")), &outcome); err != nil {
+			if err := json.Unmarshal([]byte(waitClientFile(t, ctx, client, "/tmp/holder.result", "/tmp/holder.log")), &outcome); err != nil {
 				t.Fatal(err)
 			}
 			t.Logf("CEPHFS_SESSION resumed holder %+v", outcome)
@@ -260,34 +257,7 @@ func findCephFSSession(t *testing.T, ctx context.Context, fs *cephfs.Filesystem,
 	return nil
 }
 
-func waitClientFile(t *testing.T, ctx context.Context, client testcontainers.Container, path string) string {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Minute)
-	for {
-		code, out, err := sessionExec(ctx, client, "cat", path)
-		if err == nil && code == 0 {
-			return strings.TrimSpace(out)
-		}
-		if time.Now().After(deadline) {
-			_, log, _ := sessionExec(ctx, client, "cat", "/tmp/holder.log")
-			t.Fatalf("%s did not appear; holder log: %s", path, log)
-		}
-		time.Sleep(time.Second)
-	}
-}
-
 func lastLine(out string) string {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	return lines[len(lines)-1]
-}
-
-func sessionExec(ctx context.Context, ctr testcontainers.Container, args ...string) (int, string, error) {
-	execCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-	defer cancel()
-	code, r, err := ctr.Exec(execCtx, args, tcexec.Multiplexed())
-	if err != nil {
-		return code, "", err
-	}
-	out, err := io.ReadAll(r)
-	return code, string(out), err
 }
