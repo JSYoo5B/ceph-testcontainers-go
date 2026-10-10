@@ -63,6 +63,7 @@ type CephFSContainer struct {
 	nativeIdentity      *cephFSNativeIdentity
 	coldMDS             *cephFSColdMDS
 	pinOverrides        map[string]*CephFSPinOverride
+	sessionTimeouts     *cephFSSessionTimeoutsState
 }
 
 // MDSStatus records a metadata daemon's current native FSMap identity. GID

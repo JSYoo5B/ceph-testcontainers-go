@@ -18,7 +18,7 @@ Docker Go client는 기본 Go 의존성으로 사용한다. 이미지 안의 nat
 | 클러스터·MON·MGR·OSD | 초기 구성, 노드 증감·교체, cold bootstrap, daemon·client 컨테이너 일시정지, replica 읽기 오류 주입·deep scrub·repair, owned cleanup | quorum, native health code·원인·mute, manager/module 준비·service URL, OSD 상태·flag, PG clean, scrub 불일치 object |
 | Pool·placement·Cephx | pool·replica·quota·CRUSH 조건, 실행 중 PG 수·placement 변경, 제한된 client caps, 임시 설정 복원 | native pool ID·정책·quota·사용량·PG target 도달, caps, blocklist·설정 조회 |
 | CephFS MDS | FS/pool 구성, active·standby/replay 조절, cold 첫 기동, stopped/last MDS 교체 | FSMap·논리적 rank/GID·owned 상태, 요청한 MDS capacity 준비 |
-| CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한 | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients |
+| CephFS client 조건 | 추가 data pool·layout, subvolume/group·snapshot·clone, pin·quiesce·권한, client session timeout | native 목록·info·clone 상태·pin/quiesce 상태·authorized clients·client session |
 | RGW client 조건 | gateway, user/account/caps·quota, placement/storage class, native TLS 설정 | endpoint와 native identity·placement·quota/caps 설정·user/account 저장량 |
 | RBD mirror | pool/namespace/peer 구성, daemon 증감·재기동·link 장애·재bootstrap | policy, daemon socket, receiver discovery/election, image replay attribution |
 | CephFS mirror | peer/path 구성, typed intent와 제거, 명시적 interrupted-removal 승인 | directory 배정, exact snapshot 관측, cycle/replayer 해제, original process 종료 관측 |
@@ -65,16 +65,16 @@ baseline snapshot, 복원 bytes 검증은 별도 책임이다.
 
 | 분류 | ceph | cephfs | rgw | rbd | 합계 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Fixture Operation | 54 | 47 | 36 | 14 | 151 |
-| Check: native 질의/Wait 또는 보존 정보 조회 | 48 | 31 | 20 | 15 | 114 |
+| Fixture Operation | 54 | 49 | 36 | 14 | 153 |
+| Check: native 질의/Wait 또는 보존 정보 조회 | 48 | 33 | 20 | 15 | 116 |
 | 연결·raw CLI·customizer 접점 | 8 | 1 | 5 | 2 | 16 |
 | 조건부 archive helper | 0 | 0 | 0 | 4 | 4 |
 | 로컬 문자열 표현 | 4 | 0 | 12 | 0 | 16 |
-| 전체 | 114 | 79 | 73 | 35 | **301** |
+| 전체 | 114 | 83 | 73 | 35 | **305** |
 
 집계는 공개 패키지 네 개(`ceph`, `cephfs`, `rgw`, `rbd`)의 공개 함수와 공개 타입의 공개 method다. 서비스 패키지의 타입은 `internal/cluster`·`internal/multicluster` 구현 타입의 alias이므로 method와 줄 anchor는 구현 선언을 가리킨다. Test/Example,
 private receiver의 exported-name method, dependency가 승격하는 container method,
-타입·상수·구조체 field는 이 301개에 포함하지 않는다. 아래 목록에서 각 callable을
+타입·상수·구조체 field는 이 305개에 포함하지 않는다. 아래 목록에서 각 callable을
 한 번씩 나열하고 source에 연결한다. Config/result 타입과 option 계약은 따로 읽는다.
 [internal/apiinventory](../internal/apiinventory/inventory_test.go)의 단위 테스트가
 `go/ast`로 읽은 공개 callable·타입과 이 문서의 목록, 분류별 개수, 요약표, 줄
@@ -90,7 +90,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 ## 전체 callable 목록
 
 <!-- callables:begin -->
-### Fixture Operation (151개)
+### Fixture Operation (153개)
 
 | source | 공개 callable |
 | --- | --- |
@@ -98,13 +98,14 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.Container.CreateClient](../internal/cluster/auth.go#L101) · [ceph.Container.DeleteClient](../internal/cluster/auth.go#L219) |
 | [internal/cluster/auth_policy.go](../internal/cluster/auth_policy.go) | [ceph.Container.UpdateClientCaps](../internal/cluster/auth_policy.go#L25) |
 | [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Run](../internal/cluster/ceph.go#L90) · [ceph.Container.AddOSD](../internal/cluster/ceph.go#L425) · [ceph.Container.AddOSDWithConfig](../internal/cluster/ceph.go#L432) · [ceph.Container.RemoveOSD](../internal/cluster/ceph.go#L549)<br>[ceph.Container.Terminate](../internal/cluster/ceph.go#L775) |
-| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.ScaleMDS](../internal/cluster/cephfs.go#L249) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.ScaleMDS](../internal/cluster/cephfs.go#L250) |
 | [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.Filesystem.AuthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L67) · [cephfs.Filesystem.DeauthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L396) · [cephfs.Filesystem.EvictSubvolumeClients](../internal/cluster/cephfs_authorization.go#L462) |
 | [internal/cluster/cephfs_clone_lifecycle.go](../internal/cluster/cephfs_clone_lifecycle.go) | [cephfs.Filesystem.CancelSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L116) · [cephfs.Filesystem.RemovePartialSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L187) |
 | [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.Filesystem.AddDataPool](../internal/cluster/cephfs_data_pools.go#L229) · [cephfs.Filesystem.RemoveUnusedDataPool](../internal/cluster/cephfs_data_pools.go#L362) |
 | [internal/cluster/cephfs_mds_replacement.go](../internal/cluster/cephfs_mds_replacement.go) | [cephfs.Filesystem.AddMDSReplacement](../internal/cluster/cephfs_mds_replacement.go#L40) |
 | [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.Filesystem.TemporarySubvolumePin](../internal/cluster/cephfs_pin.go#L96) · [cephfs.Filesystem.TemporarySubvolumeGroupPin](../internal/cluster/cephfs_pin.go#L104) · [cephfs.PinOverride.Restore](../internal/cluster/cephfs_pin.go#L182) |
 | [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Filesystem.QuiesceSubvolumes](../internal/cluster/cephfs_quiesce.go#L64) · [cephfs.Quiesce.Release](../internal/cluster/cephfs_quiesce.go#L159) |
+| [internal/cluster/cephfs_session.go](../internal/cluster/cephfs_session.go) | [cephfs.Filesystem.TemporarySessionTimeouts](../internal/cluster/cephfs_session.go#L99) · [cephfs.SessionTimeoutsOverride.Restore](../internal/cluster/cephfs_session.go#L124) |
 | [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.Filesystem.CreateSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L131) · [cephfs.Filesystem.RemoveSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L270) · [cephfs.Filesystem.CloneSubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L320) |
 | [internal/cluster/cephfs_stopped_mds.go](../internal/cluster/cephfs_stopped_mds.go) | [cephfs.Filesystem.RemoveStoppedMDS](../internal/cluster/cephfs_stopped_mds.go#L81) |
 | [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.Filesystem.CreateSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L282) · [cephfs.Filesystem.CreateSubvolume](../internal/cluster/cephfs_subvolume.go#L323) · [cephfs.Filesystem.ResizeSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L525) · [cephfs.Filesystem.ResizeSubvolume](../internal/cluster/cephfs_subvolume.go#L557)<br>[cephfs.Filesystem.RemoveSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L591) · [cephfs.Filesystem.RemoveSubvolume](../internal/cluster/cephfs_subvolume.go#L639) |
@@ -147,16 +148,17 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L18) |
 | [rgw/run.go](../rgw/run.go) | [rgw.Run](../rgw/run.go#L18) |
 
-### Check: 현재 상태 질의·policy/process 관측·Wait (70개)
+### Check: 현재 상태 질의·policy/process 관측·Wait (72개)
 
 | source | 공개 callable |
 | --- | --- |
 | [internal/cluster/auth_policy.go](../internal/cluster/auth_policy.go) | [ceph.Container.ClientCapabilities](../internal/cluster/auth_policy.go#L12) |
-| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSStatus](../internal/cluster/cephfs.go#L631) · [cephfs.Filesystem.WaitReady](../internal/cluster/cephfs.go#L651) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSStatus](../internal/cluster/cephfs.go#L632) · [cephfs.Filesystem.WaitReady](../internal/cluster/cephfs.go#L652) |
 | [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.Filesystem.SubvolumeAuthorizedClients](../internal/cluster/cephfs_authorization.go#L196) |
 | [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.Filesystem.DataPools](../internal/cluster/cephfs_data_pools.go#L184) |
 | [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.Filesystem.SubvolumePinPolicy](../internal/cluster/cephfs_pin.go#L78) · [cephfs.Filesystem.SubvolumeGroupPinPolicy](../internal/cluster/cephfs_pin.go#L86) |
 | [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Quiesce.Status](../internal/cluster/cephfs_quiesce.go#L139) |
+| [internal/cluster/cephfs_session.go](../internal/cluster/cephfs_session.go) | [cephfs.Filesystem.SessionTimeouts](../internal/cluster/cephfs_session.go#L85) · [cephfs.Filesystem.Sessions](../internal/cluster/cephfs_session.go#L179) |
 | [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.Filesystem.SubvolumeSnapshots](../internal/cluster/cephfs_snapshot.go#L109) · [cephfs.Filesystem.SubvolumeSnapshotInfo](../internal/cluster/cephfs_snapshot.go#L173) · [cephfs.Filesystem.SubvolumeCloneStatus](../internal/cluster/cephfs_snapshot.go#L462) · [cephfs.Filesystem.WaitForSubvolumeClone](../internal/cluster/cephfs_snapshot.go#L481) |
 | [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.Filesystem.SubvolumeGroups](../internal/cluster/cephfs_subvolume.go#L367) · [cephfs.Filesystem.Subvolumes](../internal/cluster/cephfs_subvolume.go#L378) · [cephfs.Filesystem.SubvolumeGroupInfo](../internal/cluster/cephfs_subvolume.go#L391) · [cephfs.Filesystem.SubvolumeInfo](../internal/cluster/cephfs_subvolume.go#L406) |
 | [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.Container.Configuration](../internal/cluster/config.go#L59) |
@@ -201,7 +203,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | --- | --- |
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientConfig.Name](../internal/cluster/auth.go#L45) · [ceph.ClientConfig.User](../internal/cluster/auth.go#L49) · [ceph.ClientConfig.KeyringPath](../internal/cluster/auth.go#L52) · [ceph.ClientConfig.ConnectionConfig](../internal/cluster/auth.go#L64) |
 | [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.ControlImage](../internal/cluster/ceph.go#L246) · [ceph.Container.NetworkName](../internal/cluster/ceph.go#L332) · [ceph.Container.UsesHostNetwork](../internal/cluster/ceph.go#L343) · [ceph.Container.PublicAddress](../internal/cluster/ceph.go#L346)<br>[ceph.Container.ConnectionConfig](../internal/cluster/ceph.go#L355) · [ceph.Container.ManagerContainer](../internal/cluster/ceph.go#L382) · [ceph.Container.OSDs](../internal/cluster/ceph.go#L713) · [ceph.Container.ServiceContainers](../internal/cluster/ceph.go#L726) |
-| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSs](../internal/cluster/cephfs.go#L213) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSs](../internal/cluster/cephfs.go#L214) |
 | [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Quiesce.ID](../internal/cluster/cephfs_quiesce.go#L51) |
 | [internal/cluster/client_monitor_config.go](../internal/cluster/client_monitor_config.go) | [ceph.Container.MonitorBootstrapAddresses](../internal/cluster/client_monitor_config.go#L20) |
 | [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.BlocklistOverride.Address](../internal/cluster/fencing.go#L42) |
@@ -262,17 +264,18 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 이 문서에 다시 나열하지 않는다. 전체 schema는 아래 source에서 확인한다.
 
 <!-- schemas:begin -->
-공개 타입은 `ceph` 46개, `cephfs` 46개, `rgw` 38개, `rbd` 14개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
+공개 타입은 `ceph` 46개, `cephfs` 49개, `rgw` 38개, `rbd` 14개다. 서비스 패키지의 타입은 구현 타입의 alias이므로 아래 source에서 config/result 전체 field와 각 주석 계약을 읽는다.
 
 | source | 타입·schema |
 | --- | --- |
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientCaps](../internal/cluster/auth.go#L24) · [ceph.ClientConfig](../internal/cluster/auth.go#L34) |
 | [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container](../internal/cluster/ceph.go#L36) · [ceph.OSDContainer](../internal/cluster/ceph.go#L76) |
-| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Config](../internal/cluster/cephfs.go#L24) · [cephfs.MDS](../internal/cluster/cephfs.go#L41) · [cephfs.Filesystem](../internal/cluster/cephfs.go#L52) · [cephfs.MDSStatus](../internal/cluster/cephfs.go#L71)<br>[cephfs.FilesystemStatus](../internal/cluster/cephfs.go#L81) |
+| [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Config](../internal/cluster/cephfs.go#L24) · [cephfs.MDS](../internal/cluster/cephfs.go#L41) · [cephfs.Filesystem](../internal/cluster/cephfs.go#L52) · [cephfs.MDSStatus](../internal/cluster/cephfs.go#L72)<br>[cephfs.FilesystemStatus](../internal/cluster/cephfs.go#L82) |
 | [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.SubvolumeAuthorizationConfig](../internal/cluster/cephfs_authorization.go#L16) · [cephfs.SubvolumeAuthorization](../internal/cluster/cephfs_authorization.go#L26) · [cephfs.SubvolumeAuthorizedClient](../internal/cluster/cephfs_authorization.go#L41) |
 | [internal/cluster/cephfs_data_pools.go](../internal/cluster/cephfs_data_pools.go) | [cephfs.DataPoolState](../internal/cluster/cephfs_data_pools.go#L16) · [cephfs.DataPool](../internal/cluster/cephfs_data_pools.go#L25) |
 | [internal/cluster/cephfs_pin.go](../internal/cluster/cephfs_pin.go) | [cephfs.PinType](../internal/cluster/cephfs_pin.go#L16) · [cephfs.PinSetting](../internal/cluster/cephfs_pin.go#L29) · [cephfs.PinPolicy](../internal/cluster/cephfs_pin.go#L40) · [cephfs.PinOverride](../internal/cluster/cephfs_pin.go#L56) |
 | [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.QuiesceConfig](../internal/cluster/cephfs_quiesce.go#L18) · [cephfs.QuiesceState](../internal/cluster/cephfs_quiesce.go#L24) · [cephfs.Quiesce](../internal/cluster/cephfs_quiesce.go#L37) |
+| [internal/cluster/cephfs_session.go](../internal/cluster/cephfs_session.go) | [cephfs.SessionTimeouts](../internal/cluster/cephfs_session.go#L22) · [cephfs.Session](../internal/cluster/cephfs_session.go#L32) · [cephfs.SessionTimeoutsOverride](../internal/cluster/cephfs_session.go#L47) |
 | [internal/cluster/cephfs_snapshot.go](../internal/cluster/cephfs_snapshot.go) | [cephfs.SubvolumeSnapshot](../internal/cluster/cephfs_snapshot.go#L18) · [cephfs.SnapshotPendingClone](../internal/cluster/cephfs_snapshot.go#L25) · [cephfs.SubvolumeSnapshotInfo](../internal/cluster/cephfs_snapshot.go#L32) · [cephfs.CloneConfig](../internal/cluster/cephfs_snapshot.go#L43)<br>[cephfs.SubvolumeClone](../internal/cluster/cephfs_snapshot.go#L51) · [cephfs.SubvolumeCloneStatus](../internal/cluster/cephfs_snapshot.go#L59) |
 | [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.SubvolumeGroupConfig](../internal/cluster/cephfs_subvolume.go#L19) · [cephfs.SubvolumeConfig](../internal/cluster/cephfs_subvolume.go#L30) · [cephfs.SubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L42) · [cephfs.Subvolume](../internal/cluster/cephfs_subvolume.go#L53)<br>[cephfs.SubvolumeGroupInfo](../internal/cluster/cephfs_subvolume.go#L65) · [cephfs.SubvolumeInfo](../internal/cluster/cephfs_subvolume.go#L78) |
 | [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.ConfigSetting](../internal/cluster/config.go#L19) · [ceph.ConfigEntry](../internal/cluster/config.go#L25) · [ceph.ConfigOverride](../internal/cluster/config.go#L38) |

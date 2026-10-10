@@ -117,6 +117,27 @@ type QuiesceState = cluster.CephFSQuiesceState
 // expire before terminating the cluster. Never externally edit this set ID.
 type Quiesce = cluster.CephFSQuiesce
 
+// SessionTimeouts are the filesystem's MDSMap client session limits.
+// A session that has not renewed its capabilities for Timeout becomes stale;
+// one silent for Autoclose is evicted, and with Ceph's default
+// mds_session_blocklist_on_timeout its address is blocklisted. These are
+// filesystem settings, not central configuration, so TemporaryConfig cannot
+// change them. Native values are whole seconds.
+type SessionTimeouts = cluster.CephFSSessionTimeouts
+
+// Session is one client session reported by an active MDS rank. A client
+// with sessions on several ranks appears once per rank. Address is the
+// session's IP:port/nonce, the same form BlocklistEntries reports, so an
+// evicted session can be matched to its blocklist entry. EntityID, Hostname,
+// Root and PID come from the metadata the client sent when it opened the
+// session.
+type Session = cluster.CephFSSession
+
+// SessionTimeoutsOverride owns one temporary change to both session
+// limits of a filesystem. Copies share restoration state. Retain a non-nil
+// result even on error: a lost reply can leave either value changed.
+type SessionTimeoutsOverride = cluster.CephFSSessionTimeoutsOverride
+
 // SubvolumeSnapshot is an owned snapshot of a confirmed subvolume. Its
 // public fields describe creation; mutations use the captured private identity.
 // Snapshot creation does not quiesce concurrent application writers.
