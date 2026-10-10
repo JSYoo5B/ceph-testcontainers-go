@@ -167,12 +167,13 @@ finally: c.shutdown()
 	t.Log("native config: absent/explicit/inherited/masked entries preserved, canonical number readback, runtime scope precedence, copied handle and outside-edit guard; native RADOS I/O passed")
 }
 
-// nativeConfigFile replaces the fixture's own [osd] memory target and adds
-// MON and client settings that must reach bootstrap, later daemons and
-// connection configs. Ceph ignores osd_memory_target below 896 MiB, so the
-// override must differ from both that floor and the 4 GiB native default.
+// nativeConfigFile replaces the fixture's own [osd] BlueStore cache size and
+// adds OSD, MON and client settings that must reach bootstrap, later daemons
+// and connection configs. Ceph ignores osd_memory_target below 896 MiB, so the
+// value must differ from both that floor and the 4 GiB native default.
 const nativeConfigFile = `# testdata-style ceph.conf
 [osd]
+bluestore cache size = 134217728
 osd memory target = 1073741824
 [mon]
 mon_max_pg_per_osd = 320
@@ -191,8 +192,10 @@ func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Cont
 		return strings.TrimSpace(string(data))
 	}
 	for _, osd := range cluster.OSDs() {
-		if got := show(fmt.Sprintf("osd.%d", osd.ID), "osd_memory_target"); got != "1073741824" {
-			t.Fatalf("osd.%d osd_memory_target = %q, want the config file value", osd.ID, got)
+		for option, want := range map[string]string{"bluestore_cache_size": "134217728", "osd_memory_target": "1073741824"} {
+			if got := show(fmt.Sprintf("osd.%d", osd.ID), option); got != want {
+				t.Fatalf("osd.%d %s = %q, want the config file value %s", osd.ID, option, got, want)
+			}
 		}
 	}
 	if got := show("mon.a", "mon_max_pg_per_osd"); got != "320" {
@@ -205,7 +208,7 @@ func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if !strings.Contains(string(config), "[client.admin]\nrados_osd_op_timeout = 25\n") {
 		t.Fatalf("connection config omitted client settings:\n%s", config)
 	}
-	if strings.Count(string(config), "osd memory target") != 0 || strings.Count(string(config), "osd_memory_target") != 1 {
+	if strings.Count(string(config), "bluestore cache size") != 0 || strings.Count(string(config), "bluestore_cache_size") != 1 {
 		t.Fatalf("connection config kept the replaced fixture value:\n%s", config)
 	}
 	t.Log("WithConfigFile reached MON bootstrap, OSDs and connection config")

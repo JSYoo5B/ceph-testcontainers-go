@@ -135,7 +135,7 @@ func TestWithConfigFileBoundsMergedSize(t *testing.T) {
 // result must stay acceptable to the fixture's later MON host and FSID readers.
 func TestMonitorBootstrapMergesUserConfig(t *testing.T) {
 	var o options
-	if err := WithConfigFile(writeUserConfig(t, "[osd]\nosd_memory_target = 1073741824\n[global]\nmgr_stats_period = 5\n[client.admin]\nrgw_enable_usage_log = true\n"))(&o); err != nil {
+	if err := WithConfigFile(writeUserConfig(t, "[osd]\nbluestore cache size = 134217728\n[global]\nmgr_stats_period = 5\n[client.admin]\nrgw_enable_usage_log = true\n"))(&o); err != nil {
 		t.Fatal(err)
 	}
 	config, _ := runEmbeddedScript(t, "mon", map[string]string{
@@ -158,7 +158,7 @@ func TestMonitorBootstrapMergesUserConfig(t *testing.T) {
 		}
 	}
 	for section, want := range map[string]string{
-		"[osd]":          "osd_memory_target=1073741824",
+		"[osd]":          "bluestore_cache_size=134217728",
 		"[global]":       "mgr_stats_period=5",
 		"[client.admin]": "rgw_enable_usage_log=true",
 	} {
@@ -173,7 +173,7 @@ func TestMonitorBootstrapMergesUserConfig(t *testing.T) {
 			t.Fatalf("%s %s entries = %v, want only %s:\n%s", section, key, values, want, config)
 		}
 	}
-	if !strings.Contains(config, "osd pool default pg num = 8\n") || !strings.Contains(config, "bluestore cache size = 67108864\n") {
+	if !strings.Contains(config, "osd pool default pg num = 8\n") || !strings.Contains(config, "bluestore cache autotune = false\n") {
 		t.Fatalf("generated settings without user overrides were lost:\n%s", config)
 	}
 	if fsid, err := monitorConfigClusterIdentity([]byte(config)); err != nil || fsid != "6f1b2c50-8b39-4c39-a0b1-6d4f55e1a3c2" {

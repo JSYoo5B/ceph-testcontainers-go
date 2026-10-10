@@ -16,6 +16,7 @@ cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
 ```ini
 # testdata/ceph.conf
 [osd]
+bluestore cache size = 134217728
 osd memory target = 1073741824
 [mon]
 mon_max_pg_per_osd = 320
@@ -80,7 +81,12 @@ RGW는 `client.admin` identity로 실행된다. RGW 설정은 `[client]`나
 지정 helper가 그대로 처리할 수 있어야 한다.
 
 `TestConfigurationOverrides`의 bridge와 host 실행은 이 파일로 클러스터를 띄운다.
-`ceph config show`로 모든 OSD의 `osd_memory_target`이 fixture 기본값 대신 파일
-값인지, `mon.a`의 `mon_max_pg_per_osd`가 bootstrap 때부터 파일 값인지 확인한다.
-`ConnectionConfig`에 `[client.admin]` 설정이 들어 있고 fixture의 원래
-`osd memory target` 줄이 남지 않았는지도 함께 본다.
+`ceph config show`로 모든 OSD의 `bluestore_cache_size`가 fixture 기본값 대신 파일
+값인지, fixture에 없던 `osd_memory_target`도 적용됐는지 확인한다. `mon.a`의
+`mon_max_pg_per_osd`가 bootstrap 때부터 파일 값인지도 본다. `ConnectionConfig`에
+`[client.admin]` 설정이 들어 있고 fixture의 원래 `bluestore cache size` 줄이 남지
+않았는지도 함께 확인한다.
+
+`osd_memory_target`은 Ceph가 896 MiB보다 작은 값을 무시한다. 무시된 값은 오류
+없이 Ceph 기본값 4 GiB로 남으므로, 파일에 넣은 값은 `ceph config show`로 실제
+적용 여부를 확인한다.

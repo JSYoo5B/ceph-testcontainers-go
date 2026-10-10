@@ -108,7 +108,6 @@ bluestore block size = ${CEPH_OSD_BLOCK_SIZE}
 bluestore block preallocate file = false
 bluestore cache autotune = false
 bluestore cache size = 67108864
-osd memory target = 536870912
 osd crush chooseleaf type = 0
 osd max object name len = 256
 osd max object namespace len = 64
