@@ -216,6 +216,7 @@ var reservedConfigKeys = map[string]string{
 	"rgw_zonegroup":               "is set on the RGW command line by the fixture",
 	"rgw_zone":                    "is set on the RGW command line by the fixture",
 	"rgw_sync_obj_etag_verify":    "is set on the RGW command line by the fixture",
+	"rgw_sync_lease_period":       "is set on the RGW command line by the fixture",
 }
 
 var reservedMessengerMode = regexp.MustCompile(`^ms_(mon_)?(cluster|service|client)_mode$`)

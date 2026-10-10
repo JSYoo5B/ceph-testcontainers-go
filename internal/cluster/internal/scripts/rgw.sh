@@ -19,8 +19,12 @@ fi
 # Docker would otherwise kill it after its own stop timeout.
 set -- radosgw -f -n client.admin --keyring /etc/ceph/ceph.client.admin.keyring \
     --rgw-frontends "$frontend" --rgw-thread-pool-size 4 --rgw-exit-timeout-secs 1
+# Multisite setup restarts gateways after the final period commit. A killed
+# process keeps its sync shard leases until they expire, so the native 120
+# second lease would stall replication for two minutes after each restart.
 if [ -n "${CEPH_RGW_REALM:-}" ]; then
     set -- "$@" --rgw-realm "$CEPH_RGW_REALM" --rgw-sync-obj-etag-verify true \
+        --rgw-sync-lease-period 30 \
         --osd-pool-default-pg-num 1 --osd-pool-default-pgp-num 0
 fi
 if [ -n "${CEPH_RGW_ZONEGROUP:-}" ]; then

@@ -62,7 +62,7 @@ RGW는 `client.admin` identity로 실행된다. RGW 설정은 `[client]`나
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon log는 컨테이너 출력으로 고정 |
 | `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data` | fixture 경로 고정 |
 | `mds_join_fs`, `mds_cache_memory_limit` | MDS 명령행에서 지정 |
-| `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify` | RGW 명령행에서 지정 |
+| `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify`, `rgw_sync_lease_period` | RGW 명령행에서 지정 |
 
 명령행으로 넘기는 값은 파일보다 우선하므로, 받아들이면 조용히 무시된다. 그래서
 이런 key도 오류로 처리한다.
