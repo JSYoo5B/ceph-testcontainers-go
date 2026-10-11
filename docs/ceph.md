@@ -804,8 +804,9 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 
 Removes the whole cluster: it restores network interruptions and resumes paused
 containers first, releases host port reservations, stops services (RGW, MDS)
-before OSDs, removes all owned daemons, helper containers and the OSD memory
-volume, and finally removes the owned networks. It works on a partially
+before OSDs, removes all owned daemons, helper containers, the OSD memory
+volume and the shared run volume of the admin sockets, and finally removes the
+owned networks. It works on a partially
 initialized cluster returned by `Run` with an error, and a failed cleanup can be
 retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
@@ -2173,6 +2174,61 @@ func (c *Container) PublicAddress() string
 
 Returns the IPv4 address advertised in host mode (`127.0.0.1` unless
 [WithHostAddress](#withhostaddress) selected another); empty in bridge mode.
+
+### Container Methods: Admin sockets
+
+#### AdminSocket
+
+```golang
+func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
+```
+
+Runs one command on the admin socket of a MON, MGR or OSD that the cluster
+owns and returns its output. `daemon` is the Ceph daemon name, such as `mon.a`,
+`mgr.b` or `osd.0`; `args` are the command words. `help` lists a daemon's
+commands.
+
+The admin socket bypasses the Messenger and Cephx: the command reaches the
+daemon through a local Unix socket. Use it to check what a daemon has applied
+independently of the client under test, for example:
+
+| Command | Shows |
+| --- | --- |
+| `version` | the daemon's build version, release name and release type |
+| `status` (OSD) | `newest_map` and `oldest_map`: the OSDMap epochs the OSD holds, as JSON strings |
+| `mon_status` (MON) | the MON's own name, rank, state and monmap, including `auth_epoch` on Tentacle |
+| `config get <option>` | the value the running daemon uses, after local files and the central database |
+| `perf dump` | the daemon's performance counters |
+
+```golang
+// Wait until osd.0 has applied the OSDMap epoch the cluster reports.
+out, err := cluster.AdminSocket(ctx, "osd.0", "status")
+var status struct {
+	NewestMap string `json:"newest_map"`
+}
+err = json.Unmarshal(out, &status)
+```
+
+Every MON, MGR, OSD and control container shares one run directory, a Docker
+volume mounted at `/var/run/ceph`, and the command runs in the control
+container. It therefore works with OSD role images that have no `ceph` CLI. The
+volume belongs to the cluster and `Terminate` removes it.
+
+- The daemon must be running. A stopped or removed daemon returns an error. A
+  daemon that has just started can answer before it registers all of its
+  commands (`no valid command found`); poll with a deadline.
+- A paused daemon (see [PauseContainer](#pausecontainer)) accepts the
+  connection but does not answer, so the call waits until the context ends.
+- A nonzero exit returns the command's output together with an error.
+- The call is bounded by the context and by
+  [WithStartupTimeout](#withstartuptimeout), and runs no command for a daemon
+  the cluster does not own. When the context ends first, the call stops its
+  command in the control container before it returns, including a command that
+  Docker has accepted but not yet started, so canceled calls leave no process
+  behind and other calls keep running. An effect that the daemon has already
+  applied stays.
+- MDS and RGW daemons are not included; reach them with `ceph tell` (see
+  [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
 
 ### Container Methods: Diagnostics
 

@@ -10,17 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func monitorQuorumRunPython(t *testing.T, python string, stdoutLimit, stderrLimit int, seconds string, child string, args ...string) monitorQuorumTestEnvelope {
 	t.Helper()
-	return monitorQuorumRunPythonScript(t, python, monitorQuorumCommandScript, stdoutLimit, stderrLimit, seconds, child, args...)
+	return monitorQuorumRunPythonScript(t, python, supervised.Script, stdoutLimit, stderrLimit, seconds, child, args...)
 }
 
 func monitorQuorumRunPythonScript(t *testing.T, python, script string, stdoutLimit, stderrLimit int, seconds string, child string, args ...string) monitorQuorumTestEnvelope {
@@ -29,7 +31,9 @@ func monitorQuorumRunPythonScript(t *testing.T, python, script string, stdoutLim
 	defer cancel()
 	argv := []string{"-c", script, strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), seconds, python, "-c", child}
 	argv = append(argv, args...)
-	output, err := exec.CommandContext(ctx, python, argv...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, python, argv...)
+	cmd.Env = append(os.Environ(), supervised.MarkerVariable+"="+filepath.Join(t.TempDir(), "markers", "invocation"))
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("actual quorum supervisor failed: %v; %s", err, output)
 	}
@@ -117,15 +121,19 @@ sys.stdout.write(sys.argv[3]); sys.stdout.flush()
 os.close(1); os.close(2)
 while time.monotonic()<deadline: time.sleep(0.01)
 `
-	control := &diagnosticsTestContainer{exec: func(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	markers := t.TempDir()
+	control := &diagnosticsTestContainer{exec: func(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 		if !monitorQuorumTestCommand(args) {
 			t.Fatal("native read did not use the fixed quorum supervisor")
 		}
 		// Execute the exact production supervisor, replacing only its fixed Ceph
-		// child with this local native-process fixture. No Docker is involved.
+		// child with this local native-process fixture and moving its marker
+		// below a test directory. No Docker is involved.
 		argv := append([]string{}, args[1:6]...)
 		argv = append(argv, python, "-c", child, pidPath, heartbeatPath, monitorConfigQuorum)
-		output, err := exec.CommandContext(ctx, python, argv...).Output()
+		cmd := exec.CommandContext(ctx, python, argv...)
+		cmd.Env = append(os.Environ(), supervisorTestEnvironment(opts, markers)...)
+		output, err := cmd.Output()
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Logf("actual quorum supervisor stderr: %s", exitErr.Stderr)
 		}
@@ -185,7 +193,7 @@ subprocess.Popen([sys.executable,'-c',descendant,sys.argv[1]],stdout=subprocess.
 while not os.path.exists(sys.argv[1]) or os.path.getsize(sys.argv[1])==0: time.sleep(0.01)
 sys.stdout.write(sys.argv[2]); sys.stdout.flush()
 `
-	result := monitorQuorumRunPythonScript(t, python, observe+monitorQuorumCommandScript, 4096, 1024, "2", child, heartbeatPath, monitorConfigQuorum)
+	result := monitorQuorumRunPythonScript(t, python, observe+supervised.Script, 4096, 1024, "2", child, heartbeatPath, monitorConfigQuorum)
 	stdout, err := base64.StdEncoding.DecodeString(result.Stdout)
 	if err != nil || string(stdout) != monitorConfigQuorum || result.ExitCode != 0 || result.TimedOut || result.StdoutTruncated || result.StderrTruncated {
 		t.Fatalf("safe cleanup changed the completed native observation: %+v, %v", result, err)
@@ -199,4 +207,21 @@ sys.stdout.write(sys.argv[2]); sys.stdout.flush()
 	if err != nil || len(after) != len(before) {
 		t.Fatalf("normal-completion group cleanup retained a descendant: before=%d after=%d err=%v", len(before), len(after), err)
 	}
+}
+
+// supervisorTestEnvironment returns the environment that supervised.Command
+// passes to Exec, with the invocation marker moved from the container's
+// marker directory into dir.
+func supervisorTestEnvironment(opts []tcexec.ProcessOption, dir string) []string {
+	processOptions := tcexec.NewProcessOptions(nil)
+	for _, opt := range opts {
+		opt.Apply(processOptions)
+	}
+	env := slices.Clone(processOptions.ExecConfig.Env)
+	for i, value := range env {
+		if marker, ok := strings.CutPrefix(value, supervised.MarkerVariable+"="+supervised.MarkerDir+"/"); ok {
+			env[i] = supervised.MarkerVariable + "=" + filepath.Join(dir, marker)
+		}
+	}
+	return env
 }
