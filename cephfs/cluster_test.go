@@ -14,7 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// The shared CLI fakes under the names these tests used in internal/cluster.
+// The shared CLI fakes under the names that the ceph package tests use.
 type (
 	poolFixtureContainer = clustertest.CLI
 	cephStateFake        = clustertest.StateFake

@@ -3,7 +3,7 @@ package multicluster
 import (
 	"context"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/internal/cluster"
+	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 )
 

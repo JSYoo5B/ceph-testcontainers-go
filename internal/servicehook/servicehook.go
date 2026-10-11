@@ -1,7 +1,7 @@
 // Package servicehook gives the rbd, cephfs and rgw packages the parts of a
 // ceph.Container that are not public API, such as its mutex and Run-time
-// provisioning. The cluster implementation registers them in
-// internal/hookreg.
+// provisioning. Package ceph registers them in internal/hookreg when it is
+// initialized.
 package servicehook
 
 import (
@@ -79,7 +79,7 @@ type hooks interface {
 func get() hooks {
 	h, ok := hookreg.Value.(hooks)
 	if !ok {
-		panic("servicehook: the cluster implementation did not register its hooks")
+		panic("servicehook: package ceph did not register its hooks")
 	}
 	return h
 }

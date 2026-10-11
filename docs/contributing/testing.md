@@ -10,7 +10,7 @@ tests is described in [Continuous integration](ci.md).
 | Layer | Location | Needs Docker | How it is selected |
 | --- | --- | --- | --- |
 | Unit tests | Next to the code they test, without build tags | No | `go test ./...` |
-| Package examples | `example_test.go` in `ceph`, `rbd`, `cephfs`, `rgw` | No (Docker examples are only compiled) | `go test ./...` |
+| Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw` | No (Docker examples are only compiled) | `go test ./...` |
 | Ceph integration tests | `internal/integration` | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge`, `*_integration_test.go` | Docker only, no Ceph | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
@@ -676,8 +676,7 @@ Keep the conventions of the upstream testcontainers-go modules:
   return the `ContainerCustomizer` interface. Options report invalid input as
   an error, and `Run` returns that error; they never panic.
 - Runnable examples are `Example...` functions in the external `<pkg>_test`
-  package. Upstream modules keep them in `examples_test.go`; the packages here
-  currently use `example_test.go`.
+  package, in `examples_test.go` as in the upstream modules.
 - Production code imports no client SDK: no go-ceph, no cgo, no host librados,
   no AWS SDK. SDKs and their native libraries are allowed only in tests,
   examples and separate consumer modules, such as the go-ceph probe, which has
@@ -718,24 +717,17 @@ These decisions explain the shape of the code and should guide new features.
   disabled autoscaling and small replica counts make tiny clusters reach
   `active+clean` quickly. They are not recommendations for production.
 
-## Package layout, generated files and inventories
+## Package layout and the export inventory
 
-The rbd, cephfs and rgw packages hold their own implementations. They reach
-the parts of a cluster that are not public API, such as its mutex, owned
-service containers and Run-time provisioning, through `internal/servicehook`,
-and keep their per-cluster state in an extension registry on the cluster.
-Helpers that both sides share live in `internal/clusterutil`, and the CLI
-fakes that their unit tests share live in `internal/clustertest`.
-
-The ceph package is still a generated facade over `internal/cluster`. An
-ongoing restructure moves that implementation into ceph and will retire the
-generator. Until it lands, regenerate `ceph/api.go` after changing an exported
-declaration in `internal/cluster`; the generator's unit test fails while the
-file is stale:
-
-```sh
-go run ./internal/facadegen
-```
+Each public package holds its own implementation. The rbd, cephfs and rgw
+packages reach the parts of a cluster that are not public API, such as its
+mutex, owned service containers and Run-time provisioning, through
+`internal/servicehook`, and keep their per-cluster state in an extension
+registry on the cluster. Helpers that both sides share live in
+`internal/clusterutil`, and the CLI fakes that their unit tests share live in
+`internal/clustertest`. Cross-cluster fixtures (RBD mirroring, CephFS
+mirroring, RGW multisite) share resource tracking from
+`internal/multicluster`.
 
 `internal/apiinventory` checks that each package page in `docs` names every
 exported identifier and method of its package. Mention a new export on the

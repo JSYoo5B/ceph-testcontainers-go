@@ -1,8 +1,6 @@
 // Package apiinventory checks that each public package's page in docs names
 // every identifier the package exports: functions, types, constants,
-// variables and the methods of its types. A public type is either declared in
-// its package or aliases an internal/cluster type; an alias contributes the
-// exported methods of the type it aliases.
+// variables and the methods of its types.
 package apiinventory_test
 
 import (
@@ -26,8 +24,6 @@ var packages = map[string]string{
 	"cephfs": "docs/cephfs.md",
 	"rgw":    "docs/rgw.md",
 }
-
-var implementations = map[string]string{"cluster": "internal/cluster"}
 
 func parseDir(t *testing.T, dir string, visit func(file *ast.File)) {
 	t.Helper()
@@ -82,10 +78,6 @@ func methods(t *testing.T, dir string) map[string][]string {
 // exported returns the names a package exports, with methods as Type.Method.
 func exported(t *testing.T, pkg string) []string {
 	t.Helper()
-	impl := map[string]map[string][]string{}
-	for alias, dir := range implementations {
-		impl[alias] = methods(t, dir)
-	}
 	local := methods(t, pkg)
 	var names []string
 	parseDir(t, pkg, func(file *ast.File) {
@@ -103,13 +95,7 @@ func exported(t *testing.T, pkg string) []string {
 							continue
 						}
 						names = append(names, spec.Name.Name)
-						typeMethods := local[spec.Name.Name]
-						if selector, ok := spec.Type.(*ast.SelectorExpr); ok && spec.Assign.IsValid() {
-							if alias, ok := selector.X.(*ast.Ident); ok && impl[alias.Name] != nil {
-								typeMethods = impl[alias.Name][selector.Sel.Name]
-							}
-						}
-						for _, method := range typeMethods {
+						for _, method := range local[spec.Name.Name] {
 							names = append(names, spec.Name.Name+"."+method)
 						}
 					case *ast.ValueSpec:

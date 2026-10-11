@@ -7,7 +7,7 @@
 // health observations operate on the returned Container.
 //
 // Client services live in their own packages, which add their options to the
-// same Run and re-export their service types:
+// same Run and declare their own service types:
 //
 //   - github.com/jsyoo5b/ceph-testcontainers-go/rbd: RBD pools, namespaces,
 //     mirroring and backup.
