@@ -1,6 +1,4 @@
-// Package mctest holds fakes and assertions shared by the cross-cluster unit
-// tests of the rbd, cephfs and rgw packages and internal/multicluster.
-package mctest
+package clustertest
 
 import (
 	"context"

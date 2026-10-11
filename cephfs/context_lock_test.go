@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
-	probe := &mctest.ContextLockRuntime{}
+	probe := &clustertest.ContextLockRuntime{}
 	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
 	m := &Mirror{Container: daemon, daemons: []*MirrorDaemon{daemon}, source: nil}
 	operations := map[string]func(context.Context) error{
@@ -27,7 +27,7 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
-			mctest.AssertContextLockQueued(t, &m.mu, operation)
+			clustertest.AssertContextLockQueued(t, &m.mu, operation)
 			if probe.Execs.Load() != 0 || probe.Stops.Load() != 0 || probe.Terminations.Load() != 0 || m.closed || daemon.removed {
 				t.Fatal("queued caller changed native runtime, membership or fixture lifecycle")
 			}
@@ -45,11 +45,11 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 }
 
 func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
-	probe := &mctest.ContextLockRuntime{}
+	probe := &clustertest.ContextLockRuntime{}
 	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
 	m := &Mirror{daemons: []*MirrorDaemon{daemon}}
 	operation := func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") }
-	mctest.AssertContextLockQueued(t, &daemon.mu, operation)
+	clustertest.AssertContextLockQueued(t, &daemon.mu, operation)
 	if probe.Terminations.Load() != 0 || daemon.removed || len(m.daemons) != 1 {
 		t.Fatal("nested deadline lost cleanup ownership")
 	}

@@ -724,9 +724,9 @@ packages reach the parts of a cluster that are not public API, such as its
 mutex, owned service containers and Run-time provisioning, through
 `internal/servicehook`, and keep their per-cluster state in an extension
 registry on the cluster. Helpers that both sides share live in
-`internal/clusterutil`, and the CLI fakes that their unit tests share live in
-`internal/clustertest`. Cross-cluster fixtures (RBD mirroring, CephFS
-mirroring, RGW multisite) share resource tracking from
+`internal/clusterutil`, and the CLI fakes and lock assertions that their unit
+tests share live in `internal/clustertest`. Cross-cluster fixtures (RBD
+mirroring, CephFS mirroring, RGW multisite) share resource tracking from
 `internal/multicluster`.
 
 `internal/apiinventory` checks that each package page in `docs` names every

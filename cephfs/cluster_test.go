@@ -9,7 +9,6 @@ import (
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
 	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -30,7 +29,7 @@ func poolFixtureCluster(ctr testcontainers.Container, count int) *ceph.Container
 
 func assertContextLockQueued(t *testing.T, mutex *sync.Mutex, operation func(context.Context) error) {
 	t.Helper()
-	mctest.AssertContextLockQueued(t, mutex, operation)
+	clustertest.AssertContextLockQueued(t, mutex, operation)
 }
 
 // assertSnapshotReadLockQueued holds mutex as a writer and checks that

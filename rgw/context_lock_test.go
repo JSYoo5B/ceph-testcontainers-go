@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
-	probe := &mctest.ContextLockRuntime{}
+	probe := &clustertest.ContextLockRuntime{}
 	f := &Multisite{sourceClient: probe, destinationClient: probe}
 	group := &SyncGroup{owner: f, state: &rgwSyncGroupState{id: "queued"}}
 	operations := map[string]func(context.Context) error{
@@ -35,7 +35,7 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
-			mctest.AssertContextLockQueued(t, &f.topologyMu, operation)
+			clustertest.AssertContextLockQueued(t, &f.topologyMu, operation)
 			if probe.Execs.Load() != 0 || probe.Stops.Load() != 0 || probe.Terminations.Load() != 0 || f.closed {
 				t.Fatal("queued caller changed native runtime, membership or fixture lifecycle")
 			}

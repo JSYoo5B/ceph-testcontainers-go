@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -96,9 +96,9 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
-			control := &mctest.ContextLockRuntime{}
+			control := &clustertest.ContextLockRuntime{}
 			cluster := testCluster(control, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
-			mctest.AssertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
+			clustertest.AssertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
 			if control.Execs.Load() != 0 || servicehook.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
 				t.Fatal("queued caller created containers, port leases or gateway inventory")
 			}

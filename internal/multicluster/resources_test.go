@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/containerd/errdefs"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestCleanupRetriesOnlyFailedResources(t *testing.T) {
@@ -86,9 +86,9 @@ func TestIgnoreMissingPreservesJoinedFailures(t *testing.T) {
 }
 
 func TestMissingContainerCleanupCompletesButMixedFailureRetries(t *testing.T) {
-	gone := &mctest.CleanupContainer{Err: fmt.Errorf("remove: %w", errdefs.ErrNotFound)}
+	gone := &clustertest.CleanupContainer{Err: fmt.Errorf("remove: %w", errdefs.ErrNotFound)}
 	realFailure := errors.New("termination hook failed")
-	mixed := &mctest.CleanupContainer{Err: errors.Join(errdefs.ErrNotFound, realFailure)}
+	mixed := &clustertest.CleanupContainer{Err: errors.Join(errdefs.ErrNotFound, realFailure)}
 	var owned Resources
 	owned.AddContainer(gone)
 	owned.AddContainer(mixed)

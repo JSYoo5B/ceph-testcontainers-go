@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -58,8 +58,8 @@ func TestMirrorInitialDaemonRejectionPrecedesRuntimeAndCustomization(t *testing.
 			count, zero := admission.count, admission.zero
 			t.Run(fmt.Sprintf("%s/count-%d/zero-%t", protocol, count, zero), func(t *testing.T) {
 				var controlCalls, customizerCalls, factoryCalls atomic.Int32
-				source := &ceph.Container{Container: &mctest.AdmissionContainer{Calls: &controlCalls}}
-				destination := &ceph.Container{Container: &mctest.AdmissionContainer{Calls: &controlCalls}}
+				source := &ceph.Container{Container: &clustertest.AdmissionContainer{Calls: &controlCalls}}
+				destination := &ceph.Container{Container: &clustertest.AdmissionContainer{Calls: &controlCalls}}
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error {
 					customizerCalls.Add(1)
 					t.Error("rejected topology applied daemon customizer")
@@ -97,8 +97,8 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 				}
 				defer cancel()
 				var native, customized, factory atomic.Int32
-				source := &ceph.Container{Container: &mctest.AdmissionContainer{Calls: &native}}
-				destination := &ceph.Container{Container: &mctest.AdmissionContainer{Calls: &native}}
+				source := &ceph.Container{Container: &clustertest.AdmissionContainer{Calls: &native}}
+				destination := &ceph.Container{Container: &clustertest.AdmissionContainer{Calls: &native}}
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customized.Add(1); return nil })
 				var err error
 				var nonnil bool

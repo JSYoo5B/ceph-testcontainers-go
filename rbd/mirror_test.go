@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -62,9 +62,9 @@ func TestRBDMirrorDaemonConfigurationRejectsInvalidTopologyBeforeAllocation(t *t
 }
 
 func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.T) {
-	initialContainer := &mctest.CleanupContainer{}
+	initialContainer := &clustertest.CleanupContainer{}
 	initial := &MirrorDaemon{Container: initialContainer, DaemonName: "a"}
-	failedContainer := &mctest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
+	failedContainer := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
 	standby := &MirrorDaemon{Container: failedContainer, DaemonName: "b"}
 	link := &Mirror{Container: initial, daemons: []*MirrorDaemon{standby, initial}, initialDaemonName: "a"}
 	link.owned.AddContainer(initial)
@@ -99,7 +99,7 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 }
 
 func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
-	ctr := &mctest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
+	ctr := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
 	daemon := &MirrorDaemon{Container: ctr, DaemonName: "a"}
 	link := &Mirror{Container: daemon, initialDaemonName: "a", daemons: []*MirrorDaemon{daemon}}
 	link.owned.AddContainer(daemon)

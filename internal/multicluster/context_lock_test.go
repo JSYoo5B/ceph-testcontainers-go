@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestResourcesCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
-	probe := &mctest.ContextLockRuntime{}
+	probe := &clustertest.ContextLockRuntime{}
 	var owned Resources
 	owned.AddContainer(probe)
 	operation := func(ctx context.Context) error { return owned.Terminate(ctx) }
-	mctest.AssertContextLockQueued(t, &owned.mu, operation)
+	clustertest.AssertContextLockQueued(t, &owned.mu, operation)
 	if probe.Terminations.Load() != 0 || owned.actions[0].done {
 		t.Fatal("nested deadline lost cleanup ownership")
 	}

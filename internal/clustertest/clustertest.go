@@ -1,7 +1,8 @@
-// Package clustertest holds unit-test fakes of the Ceph CLI that the cluster
-// implementation and the service packages share. Fakes stand in for a control
-// container: CLI answers each command from a table, and StateFake keeps a
-// small model of the cluster that commands read and change.
+// Package clustertest holds unit-test fakes and assertions that package ceph,
+// the service packages and internal/multicluster share. CLI answers each Ceph
+// command from a table, StateFake keeps a small model of the cluster that
+// commands read and change, and the lock helpers check that operations wait
+// for a held lock without native effects.
 package clustertest
 
 import (
