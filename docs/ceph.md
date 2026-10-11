@@ -2674,6 +2674,11 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
 - `Complete` means that every observation succeeded without truncation, not that
   Ceph is healthy.
 - Observations are not taken at one atomic moment.
+- A `ceph` artifact holds the query's stdout followed by its stderr. A query
+  that fails or times out keeps the output it produced.
+- When `ctx` ends, every running query is stopped inside the control container
+  before `CollectDiagnostics` returns, so a canceled collection leaves no Ceph
+  CLI behind.
 - Known admin and RGW secrets, `RedactValues` and named secret patterns are
   masked, but redaction is best effort; review arbitrary application logs before
   sharing a report.

@@ -45,6 +45,9 @@ change the API.
 
 ### Fixed
 
+- Canceling `ceph.Container.CollectDiagnostics` now stops its Ceph queries in
+  the control container before returning. A query previously ran on for up to
+  three quarters of `OperationTimeout`.
 - Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
   now stops its `ceph quorum_status` process in the control container before
   returning. The process previously ran on for up to five seconds.

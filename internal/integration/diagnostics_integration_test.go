@@ -25,6 +25,12 @@ func TestClusterDiagnostics(t *testing.T) {
 	}
 }
 
+// TestCanceledClusterDiagnostics checks that a canceled collection leaves no
+// Ceph query running in the control container.
+func TestCanceledClusterDiagnostics(t *testing.T) {
+	testCanceledDiagnostics(t)
+}
+
 func TestPartialClusterDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
