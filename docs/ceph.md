@@ -392,7 +392,7 @@ all options have been applied. `Run` does not wait for the pools to become clean
 | `CRUSHRoot` | the cluster's default root | Root of the placement hierarchy. |
 | `DeviceClass` | none | Restricts placement to OSDs configured with this class. |
 | `ErasureCode` | nil (replicated) | `*ceph.ErasureCodeConfig`. |
-| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation, so PG placement does not mix in the pool ID, as for pools that predate the flag. |
+| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. |
 
 `ceph.ErasureCodeConfig` selects `K` data and `M` parity shards (`K >= 2`,
 `M >= 1`, `K+M <= 128`) with the portable Jerasure `reed_sol_van` plugin. An

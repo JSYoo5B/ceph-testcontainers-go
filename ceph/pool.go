@@ -31,10 +31,11 @@ type PoolConfig struct {
 	CRUSHRoot   string
 	DeviceClass string
 	ErasureCode *ErasureCodeConfig
-	// NoHashPSPool clears the pool's hashpspool flag. Ceph then places PGs
-	// without mixing in the pool ID, as for pools that predate the flag, so
-	// pools with the same PG count map their PGs alike. It is set right after
-	// the pool is created, before any data is written.
+	// NoHashPSPool clears the pool's hashpspool flag. Ceph then computes each
+	// PG's placement seed with the legacy additive formula, the PG number plus
+	// the pool ID, instead of hashing the PG number with the pool ID, as for
+	// pools that predate the flag. It is set right after the pool is created,
+	// before any data is written.
 	NoHashPSPool bool
 }
 
