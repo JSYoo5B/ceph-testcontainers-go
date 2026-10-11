@@ -326,7 +326,7 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 		if err != nil {
 			return fmt.Errorf("select surviving monitors before removing %s: %w", name, err)
 		}
-		if _, err := c.Ceph(ctx, "-m", hosts, "mon", "remove", name); err != nil {
+		if err := c.removeMonitorMember(ctx, hosts, name); err != nil {
 			return fmt.Errorf("remove monitor %s from native membership: %w", name, err)
 		}
 	}
@@ -894,4 +894,44 @@ func (c *Container) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
 		err = json.Unmarshal(data, &status)
 	}
 	return status, err
+}
+
+// monitorRemovalObserveInterval spaces membership reads while a removal runs.
+const monitorRemovalObserveInterval = 500 * time.Millisecond
+
+// removeMonitorMember sends one removal of name to the monitors in hosts. When
+// the removed monitor leads the quorum, it can commit its own removal and drop
+// the reply forwarded to the CLI, which then waits for its deadline. While the
+// command runs, fresh membership reads that no longer list name count as the
+// commit and end the wait. The command is never resent.
+func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string) error {
+	command, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Ceph(command, "-m", hosts, "mon", "remove", name)
+		done <- err
+	}()
+	ticker := time.NewTicker(monitorRemovalObserveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ticker.C:
+			status, err := c.QuorumStatus(command)
+			if err != nil || len(status.MonMap.Mons) == 0 {
+				continue
+			}
+			member := false
+			for _, current := range status.MonMap.Mons {
+				member = member || current.Name == name
+			}
+			if !member {
+				cancel()
+				<-done
+				return nil
+			}
+		}
+	}
 }

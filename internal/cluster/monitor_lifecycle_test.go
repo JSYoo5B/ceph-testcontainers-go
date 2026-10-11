@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -262,6 +263,24 @@ func TestMonitorRemovalUncertainMutationIsNotResent(t *testing.T) {
 	}
 }
 
+func TestMonitorRemovalObservesCommitWhenReplyIsLost(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}, removalReplyLost: true}
+	cluster := monitorLifecycleFixture(control)
+	cluster.settings.startupTimeout = time.Minute
+	daemon := &monitorLifecycleDaemon{}
+	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b"}
+	started := time.Now()
+	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("removal waited %s for a reply that never comes", elapsed)
+	}
+	if control.removals != 1 || daemon.terminations != 1 || control.copies != 1 || cluster.monitors["b"] != nil {
+		t.Fatal("observed commit resent the removal or lost cleanup")
+	}
+}
+
 func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 	control := &monitorLifecycleControl{members: []string{}, quorum: []string{}}
 	cluster := monitorLifecycleFixture(control)
@@ -303,6 +322,7 @@ func (daemon *monitorLifecycleDaemon) Start(context.Context) error {
 
 type monitorLifecycleControl struct {
 	testcontainers.Container
+	mu                     sync.Mutex
 	members, quorum, calls []string
 	removals, copies       int
 	afterRemoval           []monitorLifecycleRead
@@ -311,6 +331,9 @@ type monitorLifecycleControl struct {
 	quorumReads            int
 	quorumHook             func(context.Context, int) error
 	removalErr             error
+	// removalReplyLost commits a removal but never answers it, like a leader
+	// that removed itself before replying.
+	removalReplyLost bool
 }
 
 type monitorLifecycleRead struct {
@@ -318,7 +341,19 @@ type monitorLifecycleRead struct {
 	members, quorum []string
 }
 
-func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (control *monitorLifecycleControl) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	control.mu.Lock()
+	code, reader, err := control.exec(ctx, args)
+	lost := err == nil && control.removalReplyLost && strings.Contains(strings.Join(args, " "), " mon remove ")
+	control.mu.Unlock()
+	if lost {
+		<-ctx.Done()
+		return 0, nil, ctx.Err()
+	}
+	return code, reader, err
+}
+
+func (control *monitorLifecycleControl) exec(ctx context.Context, args []string) (int, io.Reader, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, nil, err
 	}
