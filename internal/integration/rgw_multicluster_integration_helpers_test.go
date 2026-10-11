@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -38,29 +39,7 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	if multisite != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
-				// A replication timeout shows only the S3 view; record why sync stalled.
-				for _, zone := range multisite.Zones() {
-					inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
-					status, statusErr := multisite.SyncStatus(inspect, zone.Name)
-					stop()
-					t.Logf("multisite sync diagnostic zone=%s status=%+v error=%v", zone.Name, status, statusErr)
-					// Data sync can report caught up while one bucket's shards are
-					// stuck behind an error; record both native views.
-					for _, args := range [][]string{{"sync", "error", "list"}, {"bucket", "sync", "status", "--bucket", strings.TrimPrefix(multisiteDiagnosticBucket, "/")}} {
-						inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
-						out, err := multisite.ZoneAdmin(inspect, zone.Name, args...)
-						stop()
-						t.Logf("multisite native diagnostic zone=%s %v: %s error=%v", zone.Name, args, compactDiagnostic(out), err)
-					}
-				}
-				for _, gateway := range []*rgw.Gateway{multisite.Source, multisite.Destination} {
-					if gateway == nil {
-						continue
-					}
-					logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					multiClusterLogContainer(t, logCtx, gateway.Container)
-					cancel()
-				}
+				logMultisiteReplicationState(t, multisite)
 			}
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
@@ -92,7 +71,7 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
 	const bucket = multisiteDiagnosticBucket
-	sourceS3.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
+	createMultisiteBucket(t, ctx, multisite, sourceS3, bucket, nil)
 	payload := bytes.Repeat([]byte("native RGW cross-cluster replication\n"), 1024)
 	keys := []string{"keep", "nested/payload", "remove"}
 	for _, key := range keys {
@@ -202,6 +181,105 @@ func waitMultisiteObject(t *testing.T, ctx context.Context, client s3HTTPClient,
 }
 
 const multisiteDiagnosticBucket = "/tc-multicluster-bucket"
+
+// createMultisiteBucket creates bucket through client and waits until every
+// zone has synced the bucket's metadata. RGW can lose the objects written to a
+// new bucket before that, as seen with Tentacle 20.2.4: the data sync of
+// another zone then stores the bucket's metadata itself, and a second data
+// sync shard may sync the bucket while its index does not exist yet; RGW takes
+// the failed index updates for deleted objects and reports the zone caught up.
+func createMultisiteBucket(t *testing.T, ctx context.Context, multisite *rgw.Multisite, client s3HTTPClient, bucket string, body []byte) {
+	t.Helper()
+	client.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
+	for _, zone := range multisite.Zones() {
+		if _, err := multisite.WaitSyncReady(ctx, zone.Name); err != nil {
+			t.Fatalf("wait for the metadata of %s in zone %s: %v", bucket, zone.Name, err)
+		}
+	}
+}
+
+// logMultisiteReplicationState records, after a failed replication wait, what
+// each zone holds and how far its sync went. RGW passes a bucket log entry
+// without a sync error when fetching the object returns ENOENT or EPERM, and a
+// data log entry when the local bucket does not exist yet, so a zone can
+// report caught up while an object is missing. The bucket and data logs, the
+// sync markers, the zone endpoints and the gateways' sync warnings show which
+// of these happened.
+func logMultisiteReplicationState(t *testing.T, multisite *rgw.Multisite) {
+	t.Helper()
+	bucket := strings.TrimPrefix(multisiteDiagnosticBucket, "/")
+	zones := multisite.Zones()
+	for _, zone := range zones {
+		inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
+		status, statusErr := multisite.SyncStatus(inspect, zone.Name)
+		stop()
+		t.Logf("multisite sync diagnostic zone=%s status=%+v error=%v", zone.Name, status, statusErr)
+		commands := [][]string{
+			{"sync", "error", "list"},
+			{"bucket", "sync", "status", "--bucket", bucket},
+			{"bucket", "stats", "--bucket", bucket},
+			{"bucket", "list", "--bucket", bucket},
+			{"bilog", "list", "--bucket", bucket, "--max-entries", "20"},
+			{"datalog", "status"},
+			{"zonegroup", "get"},
+		}
+		for _, source := range zones {
+			if source.Name != zone.Name {
+				commands = append(commands,
+					[]string{"bucket", "sync", "markers", "--bucket", bucket, "--source-zone", source.Name},
+					[]string{"data", "sync", "status", "--source-zone", source.Name})
+			}
+		}
+		for _, args := range commands {
+			inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
+			out, err := multisite.ZoneAdmin(inspect, zone.Name, args...)
+			stop()
+			text := string(out)
+			if args[0] == "sync" {
+				text = compactDiagnostic(out)
+			}
+			t.Logf("multisite native diagnostic zone=%s %v: %s error=%v", zone.Name, args, text, err)
+		}
+	}
+	for _, gateway := range []*rgw.Gateway{multisite.Source, multisite.Destination} {
+		if gateway == nil {
+			continue
+		}
+		logCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		logRGWSyncProblems(t, logCtx, gateway.Container)
+		multiClusterLogContainer(t, logCtx, gateway.Container)
+		cancel()
+	}
+}
+
+// rgwSyncProblem matches the RGW log lines of level 0 or -1 that report a
+// skipped or failed step, such as "bucket shard callback failed", which RGW
+// logs whether or not it records a sync error.
+var rgwSyncProblem = regexp.MustCompile(`^\S+ \S+ +(?:-1|0) .*(?i:skipping|error|warning|failed)`)
+
+// logRGWSyncProblems logs the first and last 100 sync problem lines of a
+// gateway's whole log, which the tail of the log no longer holds.
+func logRGWSyncProblems(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
+	t.Helper()
+	logs, err := ctr.Logs(ctx)
+	if err != nil {
+		t.Logf("container %s logs: %v", ctr.GetContainerID(), err)
+		return
+	}
+	data, _ := io.ReadAll(logs)
+	_ = logs.Close()
+	var problems []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if rgwSyncProblem.MatchString(line) {
+			problems = append(problems, line)
+		}
+	}
+	total := len(problems)
+	if total > 200 {
+		problems = append(problems[:100], problems[total-100:]...)
+	}
+	t.Logf("container %s: %d log lines report sync problems:\n%s", ctr.GetContainerID(), total, strings.Join(problems, "\n"))
+}
 
 // compactDiagnostic drops empty sync error shards so a failure log keeps the
 // entries that explain a stalled bucket.

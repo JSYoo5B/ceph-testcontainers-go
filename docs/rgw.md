@@ -957,7 +957,9 @@ clients use each cluster's control image unless `config.ControlImage` is set.
 
 It creates one ordinary S3 test user on the master. Both gateways expose its
 keys in `AccessKey` and `SecretKey`, and their `Region` is the zonegroup name.
-Setup is bounded by six minutes in addition to `ctx`.
+Setup is bounded by six minutes in addition to `ctx`. Before writing objects
+into a new bucket, wait for its metadata in both zones (see
+[`WaitSyncReady`](#waitsyncready)).
 
 ```golang
 source, err := ceph.Run(ctx, ceph.DefaultImage)
@@ -1248,6 +1250,24 @@ client.
 if _, err := ms.WaitSyncReady(ctx, "west", "east"); err != nil {
 	t.Fatal(err)
 }
+```
+
+Wait for metadata in every zone after you create a bucket and before you
+write objects into it. RGW can otherwise lose those objects in another zone,
+as seen with Tentacle 20.2.4: that zone's data sync stores the new bucket's
+metadata itself, a second data sync shard may sync the bucket while its index
+does not exist yet, and RGW takes the failed index updates for deleted
+objects. The zone then reports that it is caught up, and the objects are
+missing until they change again.
+
+```golang
+// Create the bucket through the S3 client, then:
+for _, zone := range ms.Zones() {
+	if _, err := ms.WaitSyncReady(ctx, zone.Name); err != nil {
+		t.Fatal(err)
+	}
+}
+// Write objects into the bucket.
 ```
 
 ### Multisite Methods: Sync policy

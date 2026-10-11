@@ -112,7 +112,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 		t.Logf("zone=%s native ID=%s peer=%s application=%s", zone.Name, zone.ID, zone.PeerEndpoint, endpoint)
 	}
 	const bucket = "/tc-three-zone-topology"
-	clients[0].request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
+	createMultisiteBucket(t, ctx, fixture, clients[0], bucket, nil)
 	seed := bytes.Repeat([]byte("three independent RGW storage clusters\n"), 128)
 	clients[0].request(t, ctx, http.MethodPut, bucket+"/retained", seed, http.StatusOK)
 	for _, client := range clients[1:] {

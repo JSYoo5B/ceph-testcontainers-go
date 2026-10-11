@@ -192,7 +192,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 		clients[zone.Name] = rgwTopologyS3(t, ctx, zone)
 	}
 	const bucket = "/tc-zonegroup-us"
-	clients["a"].request(t, ctx, http.MethodPut, bucket, []byte(`<CreateBucketConfiguration><LocationConstraint>us</LocationConstraint></CreateBucketConfiguration>`), http.StatusOK)
+	createMultisiteBucket(t, ctx, fixture, clients["a"], bucket, []byte(`<CreateBucketConfiguration><LocationConstraint>us</LocationConstraint></CreateBucketConfiguration>`))
 	seed := bytes.Repeat([]byte("owned region storage survives zone detachment\n"), 40)
 	clients["a"].request(t, ctx, http.MethodPut, bucket+"/retained", seed, http.StatusOK)
 	waitMultisiteObject(t, ctx, clients["b"], bucket+"/retained", http.StatusOK, seed)
