@@ -132,7 +132,7 @@ func TestMonitorQuorumAttemptStaysInsideCallerBudget(t *testing.T) {
 	for _, timeout := range []time.Duration{40 * time.Millisecond, 10 * time.Second} {
 		ctx, cancel := context.WithTimeout(t.Context(), timeout)
 		control := &diagnosticsTestContainer{exec: func(attempt context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-			if !monitorQuorumTestCommand(args) || len(opts) != 1 {
+			if !monitorQuorumTestCommand(args) || len(opts) != 2 {
 				t.Fatalf("quorum read lost its fixed supervised command: %v", args)
 			}
 			callerDeadline, _ := ctx.Deadline()

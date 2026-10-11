@@ -2214,13 +2214,17 @@ volume mounted at `/var/run/ceph`, and the command runs in the control
 container. It therefore works with OSD role images that have no `ceph` CLI. The
 volume belongs to the cluster and `Terminate` removes it.
 
-- The daemon must be running. A stopped, paused or removed daemon returns an
-  error. A daemon that has just started can answer before it registers all of
-  its commands (`no valid command found`); poll with a deadline.
+- The daemon must be running. A stopped or removed daemon returns an error. A
+  daemon that has just started can answer before it registers all of its
+  commands (`no valid command found`); poll with a deadline.
+- A paused daemon (see [PauseContainer](#pausecontainer)) accepts the
+  connection but does not answer, so the call waits until the context ends.
 - A nonzero exit returns the command's output together with an error.
 - The call is bounded by the context and by
   [WithStartupTimeout](#withstartuptimeout), and runs no command for a daemon
-  the cluster does not own.
+  the cluster does not own. When the context ends first, the call kills its
+  command in the control container before it returns, so canceled calls leave
+  no process behind. An effect that the daemon has already applied stays.
 - MDS and RGW daemons are not included; reach them with `ceph tell` (see
   [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
 

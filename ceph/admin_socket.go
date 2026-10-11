@@ -132,9 +132,12 @@ func (c *Container) runMount() []testcontainers.ContainerCustomizer {
 // monitor and reports what the daemon itself has applied, for example the
 // newest OSDMap epoch in an OSD's "status". It runs in the control container,
 // which shares the daemons' run directory, so it also works with OSD images
-// that have no Ceph CLI. The daemon must be running; a stopped, paused or
-// removed daemon returns an error. A nonzero exit returns the output with an
-// error. The cluster's startup timeout also bounds the call.
+// that have no Ceph CLI. The daemon must be running; a stopped or removed
+// daemon returns an error. A paused daemon accepts the connection but does not
+// answer, so the call waits for ctx or the cluster's startup timeout, which
+// also bounds every call. When the call ends early, its CLI process in the
+// control container is killed before AdminSocket returns. A nonzero exit
+// returns the output with an error.
 func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
 	kind, id, err := parseAdminSocketDaemon(daemon)
 	if err != nil {

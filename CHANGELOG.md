@@ -13,6 +13,12 @@ change the API.
   share a run directory, a Docker volume at `/var/run/ceph`, so it also works
   with OSD images that have no `ceph` CLI.
 
+### Fixed
+
+- Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
+  now kills its `ceph quorum_status` process in the control container before
+  returning. The process previously ran on for up to five seconds.
+
 ## v0.1.0 (2026-10-11)
 
 The first release. It provides four Testcontainers for Go modules that start
