@@ -36,10 +36,16 @@ type MirrorConfig struct {
 	// starting a mirror daemon. DaemonCount must be zero. AddDaemon starts
 	// processes explicitly later; DaemonCount=0 otherwise still defaults to one.
 	NoInitialDaemons bool
-	// OriginalProcessClientFactory opts in to retained original-run observations.
-	// Each fresh raw client transfers to this fixture. Nil disables the capability.
-	// The factory must honor ctx; a nonnil client returned with error is closed.
-	// Optional binding failure preserves Run success and is reported by the daemon.
+	// OriginalProcessClientFactory enables a process observer for each
+	// daemon, which an interrupted peer or directory removal needs to prove
+	// that the original daemon process stopped. It returns a new raw Docker
+	// client from github.com/moby/moby/client for the engine that runs the
+	// daemons, such as the Client field of testcontainers.NewDockerClientWithOpts;
+	// the fixture owns and closes it. The factory must honor ctx; a non-nil
+	// client returned with an error is closed. A failed binding does not fail
+	// RunMirror; MirrorDaemon.ProcessObserverBindingStatus reports it. Nil disables
+	// the observer, and an interrupted removal then stays blocked until the
+	// fixture is terminated.
 	OriginalProcessClientFactory func(context.Context) (*mobycl.Client, error)
 }
 
@@ -82,33 +88,42 @@ func (daemon *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainer
 // either Ceph cluster or the filesystems' data.
 type Mirror struct {
 	testcontainers.Container
-	SourceFilesystem, DestinationFilesystem     string
+	// SourceFilesystem and DestinationFilesystem name the mirrored
+	// filesystems on the source and destination clusters.
+	SourceFilesystem, DestinationFilesystem string
+	// SourceClientEntity and DestinationClientEntity are the Cephx entities
+	// that the fixture created on each side for the daemons and the peer.
 	SourceClientEntity, DestinationClientEntity string
-	Directories                                 []string
-	owned                                       multicluster.Resources
-	mu                                          sync.Mutex
-	source, destination                         *ceph.Container
-	destinationSite, peerID                     string
-	filesystemID                                int
-	metadataPool                                string
-	metadataPoolID, destinationMetadataPoolID   int64
-	destinationFilesystemID                     int
-	pendingPeerImport                           *cephFSPeerIdentity
-	peerRemoval                                 *MirrorPeerRemoval
-	directoryRemoval                            *MirrorDirectoryRemoval
-	directoryAddition                           *MirrorDirectoryAddition
-	directoryGenerations                        map[string]uint64
-	peerGeneration                              uint64
-	managerNetworking                           *cephFSManagerNetworking
-	closed                                      bool
-	daemons                                     []*MirrorDaemon
-	daemonImage, sourceID                       string
-	daemonKeyring                               []byte
-	daemonOptions                               []testcontainers.ContainerCustomizer
-	initialDaemonAssigned                       bool
-	originalProcessClientFactory                func(context.Context) (*mobycl.Client, error)
-	ownedDirectories                            map[string]bool
-	pendingDirectoryRelease                     map[string]bool
+	// Directories lists the paths registered through this fixture:
+	// MirrorConfig.Directories, then later additions, without removed paths.
+	// The directory methods update it, so read it while none of them runs.
+	// Paths registered directly with the Ceph CLI are not included.
+	Directories []string
+
+	owned                                     multicluster.Resources
+	mu                                        sync.Mutex
+	source, destination                       *ceph.Container
+	destinationSite, peerID                   string
+	filesystemID                              int
+	metadataPool                              string
+	metadataPoolID, destinationMetadataPoolID int64
+	destinationFilesystemID                   int
+	pendingPeerImport                         *cephFSPeerIdentity
+	peerRemoval                               *MirrorPeerRemoval
+	directoryRemoval                          *MirrorDirectoryRemoval
+	directoryAddition                         *MirrorDirectoryAddition
+	directoryGenerations                      map[string]uint64
+	peerGeneration                            uint64
+	managerNetworking                         *cephFSManagerNetworking
+	closed                                    bool
+	daemons                                   []*MirrorDaemon
+	daemonImage, sourceID                     string
+	daemonKeyring                             []byte
+	daemonOptions                             []testcontainers.ContainerCustomizer
+	initialDaemonAssigned                     bool
+	originalProcessClientFactory              func(context.Context) (*mobycl.Client, error)
+	ownedDirectories                          map[string]bool
+	pendingDirectoryRelease                   map[string]bool
 }
 
 // peer_list in Tentacle's mgr mirroring/fs/snapshot_mirror.py reports

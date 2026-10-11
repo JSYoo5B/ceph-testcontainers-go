@@ -76,7 +76,8 @@ func WithGateways(configs ...Config) ceph.Option {
 // WithImage selects the image for every gateway of the cluster, those
 // started by Run with WithGateways as well as those started later with Start.
 // If omitted, gateways use the image passed to Run. Use matching Ceph
-// versions.
+// versions. Multisite gateways are not affected: RunMultisite and RunTopology
+// take their gateway image as an argument.
 func WithImage(image string) ceph.Option { return servicehook.WithServiceImage("rgw", image) }
 
 // defaultGateway selects one default gateway when no gateway option was given.

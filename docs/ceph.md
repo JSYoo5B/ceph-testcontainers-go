@@ -886,11 +886,14 @@ Returns the Ceph release of the control image, such as `"20.2.4"`, read once fro
 parsed. Role images selected with `WithOSDImage`, `rgw.WithImage` or
 `cephfs.WithMDSImage` may run another release; the value describes only the
 control image. The fixture uses it to choose commands that differ between
-releases, and tests can use it to skip release-specific checks:
+releases, and tests can use it to choose release-specific assertions:
 
 ```golang
 if strings.HasPrefix(cluster.CephVersion(), "19.") {
-	t.Skip("messenger dump is not available on Squid")
+	// Squid has no messenger dump: assert the fault through client errors.
+	assertClientTimesOut(t, ctx, client)
+} else {
+	assertMessengerDropsFrames(t, ctx, cluster)
 }
 ```
 

@@ -18,9 +18,11 @@ import (
 )
 
 // MultisiteConfig describes a two-zone realm in fresh test clusters. The
-// source is the metadata master; both zones accept object writes. ControlImage
-// optionally selects a control/all CLI image for every zone. When omitted,
-// each setup client uses its own cluster's control image.
+// source is the metadata master; both zones accept object writes.
+// ControlImage optionally selects the image of the setup client containers
+// that run radosgw-admin for every zone; like a control image it needs the
+// Ceph CLI and Python. When omitted, each zone's setup client uses its own
+// cluster's control image.
 type MultisiteConfig struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string

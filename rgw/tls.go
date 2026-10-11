@@ -27,11 +27,18 @@ type TLSConfig struct {
 	CertificatePEM, PrivateKeyPEM []byte
 }
 
-func (TLSConfig) String() string     { return "RGW TLS certificate and private key" }
+// String describes the configuration without the certificate or key.
+func (TLSConfig) String() string { return "RGW TLS certificate and private key" }
+
+// GoString formats the configuration like String, so %#v does not print the
+// key.
 func (c TLSConfig) GoString() string { return c.String() }
 
-// Formatting a gateway must not recurse into its S3 credentials or TLS key.
-func (g Gateway) String() string   { return "RGW gateway " + g.config.Name }
+// String names the gateway without its S3 credentials or TLS key.
+func (g Gateway) String() string { return "RGW gateway " + g.config.Name }
+
+// GoString formats the gateway like String, so %#v does not print its
+// credentials.
 func (g Gateway) GoString() string { return g.String() }
 
 func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {

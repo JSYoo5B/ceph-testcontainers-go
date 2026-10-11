@@ -83,7 +83,10 @@ func (u *User) Credentials() (accessKey, secretKey string, err error) {
 	return u.accessKey, u.secretKey, nil
 }
 
-func (u User) String() string   { return "RGW user " + u.id }
+// String names the user without its keys.
+func (u User) String() string { return "RGW user " + u.id }
+
+// GoString formats the user like String, so %#v does not print its keys.
 func (u User) GoString() string { return u.String() }
 
 // Quota uses bytes, matching modern radosgw-admin output. For each limit,

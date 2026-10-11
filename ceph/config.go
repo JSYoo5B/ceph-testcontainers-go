@@ -48,9 +48,12 @@ type configOverrideState struct {
 	restored bool
 }
 
+// String names the override's section and option without its values.
 func (change ConfigOverride) String() string {
 	return "Ceph config override " + configWho(change.setting) + " " + change.setting.Name
 }
+
+// GoString formats the override like String.
 func (change ConfigOverride) GoString() string { return change.String() }
 
 // Configuration lists exact central database entries, including masked entries.

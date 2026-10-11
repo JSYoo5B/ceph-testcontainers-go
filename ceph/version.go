@@ -11,10 +11,11 @@ import (
 var cephVersionPattern = regexp.MustCompile(`^ceph version (\d+)\.(\d+)\.(\d+)\S* `)
 
 // CephVersion reports the release of the image that runs the first MON and
-// the fixture's Ceph CLI, such as "20.2.4". Run records it once after the MON
-// starts; daemons started from other role images may run another release.
+// the fixture's Ceph CLI, such as "20.2.4". Run records it once from
+// "ceph --version" after the MON starts and fails if the output cannot be
+// parsed. Daemons started from other role images may run another release.
 // The fixture uses it to choose commands that differ between releases, and
-// tests can use it to skip checks for features a release does not have.
+// tests can use it to choose assertions for features that a release lacks.
 func (c *Container) CephVersion() string {
 	if c == nil {
 		return ""

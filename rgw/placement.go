@@ -61,7 +61,10 @@ type Placement struct {
 	confirmed                                              bool
 }
 
-func (p Placement) String() string   { return "RGW placement " + p.Name }
+// String names the placement target.
+func (p Placement) String() string { return "RGW placement " + p.Name }
+
+// GoString formats the placement target like String.
 func (p Placement) GoString() string { return p.String() }
 
 // PlacementState is a native policy snapshot. DefaultPlacement is the

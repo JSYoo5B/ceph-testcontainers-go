@@ -43,8 +43,12 @@ func (c *Container) Status(ctx context.Context) (Status, error) {
 	return s, nil
 }
 
-// WaitForClean waits for every PG to be active+clean and every owned OSD up/in.
-// At least one pool/PG must exist. HEALTH_WARN alone does not prevent readiness.
+// WaitForClean waits until a manager is available, the native OSD count
+// equals the owned OSD count with every OSD up and in, at least one PG exists
+// and every PG is exactly active+clean. HEALTH_WARN alone does not block it.
+// PG states with extra flags, such as active+clean+scrubbing, do not count. It
+// never succeeds while an owned OSD is intentionally stopped or out; use
+// WaitForPGClean then. The cluster's startup timeout also bounds the wait.
 func (c *Container) WaitForClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

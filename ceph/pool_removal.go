@@ -24,9 +24,12 @@ var errPoolMissing = errors.New("pool does not exist")
 // pool is destroyed, including RBD images and namespaces; stop clients and
 // mirroring that use it first. mon_allow_pool_delete is enabled in the
 // central database only while the pool is removed and then restored; a local
-// config file that sets it to false blocks removal. A retry after an error
-// finishes removing whichever owned resources remain. External edits to the
-// pool must not race this call.
+// config file that sets it to false blocks removal. Ownership is recognized by
+// the pool's tc-<name>-replicated or tc-<name>-ec CRUSH rule, so a pool that
+// SetPoolPlacement moved to another rule is refused until it moves back;
+// placement rules are not removed. A retry after an error finishes removing
+// whichever owned resources remain. External edits to the pool must not race
+// this call.
 func (c *Container) RemovePool(ctx context.Context, name string) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err

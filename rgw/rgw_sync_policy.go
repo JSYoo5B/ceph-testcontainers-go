@@ -105,7 +105,11 @@ func (g *SyncGroup) ID() string {
 	}
 	return g.state.id
 }
-func (g SyncGroup) String() string   { return "RGW sync group " + g.ID() }
+
+// String names the sync group.
+func (g SyncGroup) String() string { return "RGW sync group " + g.ID() }
+
+// GoString formats the sync group like String.
 func (g SyncGroup) GoString() string { return g.String() }
 
 func validRGWSyncID(id string) bool {
@@ -296,6 +300,11 @@ func (f *Multisite) SetSyncPipePrefix(ctx context.Context, g *SyncGroup, id, pre
 	})
 }
 
+// RemoveSyncPipe removes one pipe from an owned group. The pipe must exist in
+// the group's native policy, and the removal must leave the rest of the group
+// unchanged. Objects that were already replicated stay. Like the other policy
+// changes, it confirms the master's stored policy, not its asynchronous
+// import into peers.
 func (f *Multisite) RemoveSyncPipe(ctx context.Context, g *SyncGroup, id string) error {
 	if !validRGWSyncID(id) {
 		return errors.New("invalid RGW sync pipe ID")
