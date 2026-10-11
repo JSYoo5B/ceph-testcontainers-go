@@ -2174,6 +2174,46 @@ func (c *Container) PublicAddress() string
 Returns the IPv4 address advertised in host mode (`127.0.0.1` unless
 [WithHostAddress](#withhostaddress) selected another); empty in bridge mode.
 
+#### DaemonAddresses
+
+```golang
+func (c *Container) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+```
+
+Reads the names and advertised addresses of the cluster's MONs, MGRs and OSDs
+from the native maps. These are the addresses a client learns from the cluster,
+so a test of a client implementation can compare what it decoded or connected
+to with what Ceph advertises.
+
+| Field | Source and meaning |
+| --- | --- |
+| `MonMapEpoch`, `Monitors` | monmap epoch; every member in rank order with its name and public address vector |
+| `MgrMapEpoch`, `ActiveManager`, `ManagerAvailable`, `StandbyManagers` | MGRMap epoch; the active MGR's name and address vector (nil without an active MGR), whether it is available, and the standby names |
+| `OSDMapEpoch`, `OSDs` | OSDMap epoch; every OSD in ID order with `Up`, `In` and its `Public`, `Cluster`, `HeartbeatFront` and `HeartbeatBack` address vectors |
+
+Each address is a `ceph.EntityAddress` with `Type` (`v2`, `v1` or `any`),
+`Addr` as Ceph prints it (`172.20.0.3:6800`, `[fd00::3]:6800`) and `Nonce`, the
+instance nonce that MONs leave at 0. `ceph.DaemonAddress` pairs a MON or MGR
+name with its vector, and `ceph.OSDAddress` holds one OSD's entry.
+
+```golang
+addresses, err := cluster.DaemonAddresses(ctx)
+for _, mon := range addresses.Monitors {
+	fmt.Println(mon.Name, mon.Addrs) // a [{v2 172.20.0.2:3300 0} {v1 172.20.0.2:6789 0}]
+}
+```
+
+- In bridge mode the addresses are the daemon containers' addresses on the
+  fixture network; in host mode they are [PublicAddress](#publicaddress) with
+  the allocated ports.
+- Standby MGRs advertise no address in the MGRMap. A MGR that has just become
+  active advertises its address vector only once it is available, so wait for
+  `ManagerAvailable` after a failover.
+- An OSD that is down keeps the addresses of its last boot; one that never
+  booted has empty vectors.
+- The three maps are read one after another, not as one snapshot; compare the
+  epochs when the order matters.
+
 ### Container Methods: Diagnostics
 
 #### CollectDiagnostics
