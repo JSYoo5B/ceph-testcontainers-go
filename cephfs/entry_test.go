@@ -149,3 +149,16 @@ func TestFilesystemRegistryReportsOwnedState(t *testing.T) {
 		t.Fatal("the registry was not retained")
 	}
 }
+
+func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
+	var missing *Container
+	if missing.Filesystems() != nil {
+		t.Fatal("nil container reported filesystems")
+	}
+	cluster := &Container{Container: servicehook.TestCluster(nil, servicehook.TestConfig{})}
+	beta, alpha := &Filesystem{FilesystemName: "beta"}, &Filesystem{FilesystemName: "alpha"}
+	filesystems(cluster.Container).byName["beta"], filesystems(cluster.Container).byName["alpha"] = beta, alpha
+	if got := cluster.Filesystems(); len(got) != 2 || got[0] != alpha || got[1] != beta {
+		t.Fatalf("Filesystems = %v", got)
+	}
+}

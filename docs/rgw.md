@@ -65,7 +65,7 @@ func TestUploadAndDownload(t *testing.T) {
 	}
 
 	// Run started one gateway named "default" with a generated S3 user.
-	gateway := rgw.Gateways(cluster.Container)[0]
+	gateway := cluster.Gateways()[0]
 	endpoint, err := gateway.S3Endpoint(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +248,20 @@ the gateway's entrypoint, command, network or listener settings.
 
 ### Container Methods
 
-The `Container` returned by `Run` embeds `*ceph.Container`. Its cluster methods
+The `Container` returned by `Run` has two shortcuts for its gateways:
+
+```golang
+func (c *Container) Gateways() []*Gateway
+func (c *Container) S3Endpoint(ctx context.Context) (string, error)
+```
+
+`Gateways` returns the cluster's gateways sorted by name, like
+`rgw.Gateways(c.Container)`. `S3Endpoint` returns the S3 endpoint of the
+cluster's only gateway, such as the `default` gateway of a `Run` without
+`WithGateways`; with several gateways, or none, it fails, and you choose a
+gateway from `Gateways` instead.
+
+The `Container` also embeds `*ceph.Container`. Its cluster methods
 (`TemporaryConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
 `PublicAddress`, `UsesHostNetwork`, `CephVersion` and so on) are documented in
 [ceph.md](ceph.md).
@@ -1714,7 +1727,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-gateways := rgw.Gateways(cluster.Container) // sorted: a, b
+gateways := cluster.Gateways() // sorted: a, b
 a, b := gateways[0], gateways[1]
 // Write through a with a's test user, read through b with the same keys.
 

@@ -82,7 +82,7 @@ func TestCephFS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := cephfs.Filesystems(cluster.Container)[0] // the default filesystem tc-cephfs
+	fs := cluster.Filesystems()[0] // the default filesystem tc-cephfs
 
 	// The client joins the cluster network and receives ceph.conf and the
 	// admin keyring. Register it after the cluster so it is removed first.
@@ -131,7 +131,8 @@ The returned `*cephfs.Container` embeds `*ceph.Container`, so every method
 documented in [Ceph](ceph.md) is available on it. Package functions that take a
 `*ceph.Container` (`Start`, `Filesystems`, `Remove`, and the `Source` and
 `Destination` fields of `MirrorConfig`) take the embedded value, for example
-`cephfs.Filesystems(cluster.Container)`.
+`cephfs.Start(ctx, cluster.Container, config)`. The container's `Filesystems`
+method is a shortcut for `cephfs.Filesystems(cluster.Container)`.
 
 `Run` accepts every `ceph.Run` option and the options of the other service
 packages, such as `rbd.WithPools` and `rgw.WithGateways`, so one cluster can
@@ -290,8 +291,18 @@ are documented in [Ceph](ceph.md).
 
 ### Container Methods
 
-The returned container embeds `*ceph.Container`; its methods are documented in
-[Ceph](ceph.md). The ones CephFS tests use most are:
+#### Filesystems
+
+```golang
+func (c *Container) Filesystems() []*Filesystem
+```
+
+Returns the cluster's filesystems sorted by name, like
+`cephfs.Filesystems(c.Container)`. A cluster from `Run` without
+`WithFilesystems` has one, `tc-cephfs`.
+
+The returned container also embeds `*ceph.Container`; its methods are
+documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 
 | Method | Use in CephFS tests |
 | --- | --- |
@@ -1935,7 +1946,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-fs := cephfs.Filesystems(cluster.Container)[0] // sorted by name: app-fs
+fs := cluster.Filesystems()[0] // sorted by name: app-fs
 volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "data"})
 if err != nil {
 	t.Fatal(err)
@@ -2141,7 +2152,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-fs := cephfs.Filesystems(cluster.Container)[0]
+fs := cluster.Filesystems()[0]
 
 before, err := fs.MDSStatus(ctx)
 if err != nil {
@@ -2200,7 +2211,7 @@ filesystem is unavailable: Ceph reports `FS_WITH_FAILED_MDS` and `FS_DEGRADED`
 for the failed rank:
 
 ```golang
-fs := cephfs.Filesystems(cluster.Container)[0] // 1 active, 0 standby
+fs := cluster.Filesystems()[0] // 1 active, 0 standby
 status, err := fs.MDSStatus(ctx)
 if err != nil {
 	t.Fatal(err)
@@ -2459,8 +2470,8 @@ func TestCephFSMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceFS := cephfs.Filesystems(sourceCluster.Container)[0]
-	destinationFS := cephfs.Filesystems(destinationCluster.Container)[0]
+	sourceFS := sourceCluster.Filesystems()[0]
+	destinationFS := destinationCluster.Filesystems()[0]
 	sourceClient := startClient(t, sourceCluster)
 	destinationClient := startClient(t, destinationCluster)
 

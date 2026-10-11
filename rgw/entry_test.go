@@ -127,3 +127,29 @@ func TestGatewaySnapshotsCopyOwnedDescriptors(t *testing.T) {
 		t.Fatalf("descriptors without containers became config targets: %v", registry.ConfigTargets())
 	}
 }
+
+func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
+	var missing *Container
+	if missing.Gateways() != nil {
+		t.Fatal("nil container reported gateways")
+	}
+	if _, err := missing.S3Endpoint(t.Context()); err == nil {
+		t.Fatal("nil container returned an endpoint")
+	}
+	cluster := &Container{Container: testCluster(nil, servicehook.TestConfig{}, nil)}
+	if _, err := cluster.S3Endpoint(t.Context()); err == nil || !strings.Contains(err.Error(), "0 RGW gateways") {
+		t.Fatalf("a cluster without gateways returned an endpoint: %v", err)
+	}
+	only := &Gateway{GatewayName: "default", publicAddress: "192.0.2.10", port: 8000}
+	gateways(cluster.Container).byName["default"] = only
+	if got := cluster.Gateways(); len(got) != 1 || got[0] != only {
+		t.Fatalf("Gateways = %v", got)
+	}
+	if endpoint, err := cluster.S3Endpoint(t.Context()); err != nil || endpoint != "http://192.0.2.10:8000" {
+		t.Fatalf("S3Endpoint = %q, %v", endpoint, err)
+	}
+	gateways(cluster.Container).byName["other"] = &Gateway{GatewayName: "other"}
+	if _, err := cluster.S3Endpoint(t.Context()); err == nil || !strings.Contains(err.Error(), "2 RGW gateways") {
+		t.Fatalf("several gateways did not require a choice: %v", err)
+	}
+}

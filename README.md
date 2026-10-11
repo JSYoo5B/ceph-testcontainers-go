@@ -97,8 +97,8 @@ files, err := cephfs.Run(ctx, ceph.DefaultImage)
 
 // One S3 gateway with a generated test user.
 objects, err := rgw.Run(ctx, ceph.DefaultImage)
-gateway := rgw.Gateways(objects.Container)[0]
-endpoint, err := gateway.S3Endpoint(ctx)
+endpoint, err := objects.S3Endpoint(ctx)
+gateway := objects.Gateways()[0] // AccessKey, SecretKey and Region
 ```
 
 To serve several services from one cluster, pass their options to `ceph.Run`:
