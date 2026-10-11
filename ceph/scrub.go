@@ -62,8 +62,12 @@ func validateObjectName(name string) error {
 // The injection stays in OSD memory until the replica is rewritten, such as by
 // RepairPG, or the OSD restarts. Client reads served by a healthy primary are
 // unaffected. Use DeepScrubPG to report the damage and PGInconsistencies,
-// HealthDetails (OSD_SCRUB_ERRORS, PG_DAMAGED) or PoolPGs to observe it.
+// HealthDetails (OSD_SCRUB_ERRORS, PG_DAMAGED) or PoolPGs to observe it. It
+// needs BlueStore OSDs and refuses a cluster that uses OSDMemStore.
 func (c *Container) InjectObjectDataError(ctx context.Context, pool, object string, osdID int) error {
+	if c.settings.objectStore() != OSDBlueStore {
+		return errors.New("InjectObjectDataError needs BlueStore OSDs")
+	}
 	if err := validateExistingPoolName(pool); err != nil {
 		return err
 	}

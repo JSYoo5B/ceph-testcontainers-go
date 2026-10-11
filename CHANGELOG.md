@@ -8,12 +8,31 @@ change the API.
 
 ### Added
 
+- `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
+  in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
+  keeps its data.
+- `ceph.PoolConfig.NoHashPSPool` clears a new pool's `hashpspool` flag.
+- The module page shows how to install a legacy CRUSH map with the native tools
+  and keep it across OSD restarts.
+- `ceph.Container.DaemonAddresses` reads the names and advertised address
+  vectors of every MON, the active and standby MGRs and every OSD from the
+  native maps, with each map's epoch.
+- `ceph.Container.AdminSocket` runs a command on the admin socket of an owned
+  MON, MGR or OSD, without the Messenger or Cephx. The daemons of a cluster
+  share a run directory, a Docker volume at `/var/run/ceph`, so it also works
+  with OSD images that have no `ceph` CLI.
 - `ceph.WithAuth` selects the Cephx key type (`aes` or `aes256k`), the MonMap
   service, allowed and preferred ciphers, and the MON and service ticket
   lifetimes, with fractions of a second, of a new cluster. Squid accepts only
   `aes` and fails before any daemon starts otherwise.
 - `ceph.Container.CreateClient` takes `ceph.ClientOption` values;
   `ceph.WithClientKeyType` selects the key type of one identity.
+
+### Fixed
+
+- Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
+  now stops its `ceph quorum_status` process in the control container before
+  returning. The process previously ran on for up to five seconds.
 
 ## v0.1.0 (2026-10-11)
 

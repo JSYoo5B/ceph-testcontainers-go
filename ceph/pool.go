@@ -31,6 +31,12 @@ type PoolConfig struct {
 	CRUSHRoot   string
 	DeviceClass string
 	ErasureCode *ErasureCodeConfig
+	// NoHashPSPool clears the pool's hashpspool flag. Ceph then computes each
+	// PG's placement seed with the legacy additive formula, the PG number plus
+	// the pool ID, instead of hashing the PG number with the pool ID, as for
+	// pools that predate the flag. It is set right after the pool is created,
+	// before any data is written.
+	NoHashPSPool bool
 }
 
 // ErasureCodeConfig selects data (K) and parity (M) shards on separate failure
@@ -150,6 +156,9 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		commands = append(commands, size)
 	}
 	commands = append(commands, []string{"osd", "pool", "set", pool.Name, "min_size", strconv.Itoa(config.MinSize)})
+	if config.NoHashPSPool {
+		commands = append(commands, []string{"osd", "pool", "set", pool.Name, "hashpspool", "false", "--yes-i-really-mean-it"})
+	}
 	if config.Application != "" {
 		commands = append(commands, []string{"osd", "pool", "application", "enable", pool.Name, config.Application})
 	}

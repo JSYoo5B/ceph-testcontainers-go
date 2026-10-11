@@ -62,6 +62,7 @@ type Container struct {
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
+	run                   *runVolume
 	config                []byte
 	keyring               []byte
 	portLeases            []*hostPortLease
@@ -105,6 +106,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.hostNetwork && settings.separateClusterNetwork {
 		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
 	}
+	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
+		return nil, errors.New("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
@@ -140,6 +144,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
 			return c, err
 		}
+	}
+	// Publish before creation: an interrupted create may have committed, and the
+	// generated volume name stays owned for removal by Terminate.
+	c.run = newRunVolume()
+	if err := c.run.create(ctx); err != nil {
+		return c, err
 	}
 	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
@@ -260,13 +270,15 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithCmd(),
 			testcontainers.WithEnv(map[string]string{
 				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
-				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
+				"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
+				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
 			}),
 			testcontainers.WithEnv(c.settings.auth.environment()),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
+		moduleOpts = append(moduleOpts, c.runMount()...)
 		if lease == nil {
 			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network))
 		} else {
@@ -509,6 +521,10 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		}
 		osdOptions = append(osdOptions, c.osdMemory.mount("/var/lib/ceph/osd"))
 	}
+	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
+		return osd, err
+	}
+	osdOptions = append(osdOptions, c.runMount()...)
 	if c.clusterNetwork != nil {
 		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
 	}
@@ -869,6 +885,11 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
+	if c.run != nil {
+		if err := c.run.remove(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if c.clusterNetwork != nil && !c.clusterNetworkRemoved && !blockedNetworks[c.clusterNetwork.Name] {
 		if err := c.clusterNetwork.Remove(ctx); !onlyMissingHostResource(err) {
 			errs = append(errs, err)

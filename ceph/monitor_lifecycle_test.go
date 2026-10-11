@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -203,7 +204,7 @@ func TestMonitorRemovalRetriesBlockedPreflightReadWithinOriginalBudget(t *testin
 			return nil
 		}
 		deadline, ok := attempt.Deadline()
-		if !ok || deadline.After(started.Add(monitorQuorumProcessTimeout+monitorQuorumExecCushion+100*time.Millisecond)) {
+		if !ok || deadline.After(started.Add(monitorQuorumProcessTimeout+supervised.ExecCushion+100*time.Millisecond)) {
 			t.Fatal("preflight used the entire operation budget for one native read")
 		}
 		<-attempt.Done()

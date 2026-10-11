@@ -68,9 +68,10 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, c.WithClient(),
+	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(),
 		WithIdleEntrypoint(),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
+		c.runMount()...)...)
 	if ctr != nil {
 		c.controlMu.Lock()
 		c.controlPlane = ctr
@@ -224,6 +225,10 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			portEnv["CEPH_PUBLIC_ADDRESS"] = c.PublicAddress()
 			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
 		}
+		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
+			return mon, err
+		}
+		opts = append(opts, c.runMount()...)
 		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, opts...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -744,11 +749,15 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 		c.managers = make(map[string]*ManagerContainer)
 	}
 	c.managers[name] = mgr
-	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, c.WithClient(),
+	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
+		return mgr, err
+	}
+	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout)))
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))},
+		c.runMount()...)...)
 	if name == "a" {
 		c.manager = mgr.Container
 	}

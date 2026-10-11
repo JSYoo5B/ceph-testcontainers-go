@@ -392,6 +392,7 @@ all options have been applied. `Run` does not wait for the pools to become clean
 | `CRUSHRoot` | the cluster's default root | Root of the placement hierarchy. |
 | `DeviceClass` | none | Restricts placement to OSDs configured with this class. |
 | `ErasureCode` | nil (replicated) | `*ceph.ErasureCodeConfig`. |
+| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. |
 
 `ceph.ErasureCodeConfig` selects `K` data and `M` parity shards (`K >= 2`,
 `M >= 1`, `K+M <= 128`) with the portable Jerasure `reed_sol_van` plugin. An
@@ -435,8 +436,9 @@ root for the default replica count; this check is skipped with
 ceph.WithOSDBlockSize(256 << 20)
 ```
 
-Sets the logical size in bytes of each OSD's sparse BlueStore file. The default
-is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
+Sets the logical size in bytes of each OSD's sparse BlueStore file, or the
+capacity of each MemStore OSD (see [WithOSDObjectStore](#withosdobjectstore)).
+The default is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
 not real disks; the space is allocated as data is written.
 
 Caveat: with Ceph's default mClock scheduler, a fresh OSD runs a startup capacity
@@ -480,6 +482,30 @@ the logical sizes.
   refuse it. No host path, privileged container or extra image is needed.
 
 The default (without this option) remains a container-local sparse file per OSD.
+
+#### WithOSDObjectStore
+
+```golang
+ceph.WithOSDObjectStore(ceph.OSDMemStore)
+```
+
+Selects the object store of every OSD, including OSDs added later. The
+argument is a `ceph.OSDObjectStore`:
+
+| Value | Store |
+| --- | --- |
+| `ceph.OSDBlueStore` | Default. A sparse BlueStore file per OSD. |
+| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [WithOSDBlockSize](#withosdblocksize) sets its capacity (`memstore_device_bytes`). |
+
+- MemStore saves its contents to the OSD's data directory when the store is
+  unmounted, so the fixture disables Ceph's fast OSD shutdown for MemStore
+  OSDs. A stopped OSD keeps its data across `Stop` and `Start`; an OSD that is
+  killed, or whose container is removed, loses it.
+- MemStore cannot be combined with
+  [WithOSDInMemoryStorage](#withosdinmemorystorage), which keeps BlueStore files
+  in memory, and [InjectObjectDataError](#injectobjectdataerror) needs
+  BlueStore.
+- `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
 #### WithOSDImage
 
@@ -858,8 +884,9 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 
 Removes the whole cluster: it restores network interruptions and resumes paused
 containers first, releases host port reservations, stops services (RGW, MDS)
-before OSDs, removes all owned daemons, helper containers and the OSD memory
-volume, and finally removes the owned networks. It works on a partially
+before OSDs, removes all owned daemons, helper containers, the OSD memory
+volume and the shared run volume of the admin sockets, and finally removes the
+owned networks. It works on a partially
 initialized cluster returned by `Run` with an error, and a failed cleanup can be
 retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
@@ -2053,7 +2080,8 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 ```
 
 Makes one replica of an existing object on an owned OSD return a read error to
-scrub and recovery, through Ceph's `injectdataerr` debug command. The OSD must be
+scrub and recovery, through Ceph's `injectdataerr` debug command. It needs
+BlueStore OSDs and refuses a cluster that uses `ceph.OSDMemStore`. The OSD must be
 in the object's current acting set, and the pool must be replicated (EC pools are
 refused). The method enables `bluestore_debug_inject_read_err` on that daemon only,
 at runtime, until it restarts; the setting affects only objects with an injected
@@ -2241,6 +2269,101 @@ func (c *Container) PublicAddress() string
 
 Returns the IPv4 address advertised in host mode (`127.0.0.1` unless
 [WithHostAddress](#withhostaddress) selected another); empty in bridge mode.
+
+#### DaemonAddresses
+
+```golang
+func (c *Container) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+```
+
+Reads the names and advertised addresses of the cluster's MONs, MGRs and OSDs
+from the native maps. These are the addresses a client learns from the cluster,
+so a test of a client implementation can compare what it decoded or connected
+to with what Ceph advertises.
+
+| Field | Source and meaning |
+| --- | --- |
+| `MonMapEpoch`, `Monitors` | monmap epoch; every member in rank order with its name and public address vector |
+| `MgrMapEpoch`, `ActiveManager`, `ManagerAvailable`, `StandbyManagers` | MGRMap epoch; the active MGR's name and address vector (nil without an active MGR), whether it is available, and the standby names |
+| `OSDMapEpoch`, `OSDs` | OSDMap epoch; every OSD in ID order with `Up`, `In` and its `Public`, `Cluster`, `HeartbeatFront` and `HeartbeatBack` address vectors |
+
+Each address is a `ceph.EntityAddress` with `Type` (`v2`, `v1` or `any`),
+`Addr` as Ceph prints it (`172.20.0.3:6800`, `[fd00::3]:6800`) and `Nonce`, the
+instance nonce that MONs leave at 0. `ceph.DaemonAddress` pairs a MON or MGR
+name with its vector, and `ceph.OSDAddress` holds one OSD's entry.
+
+```golang
+addresses, err := cluster.DaemonAddresses(ctx)
+for _, mon := range addresses.Monitors {
+	fmt.Println(mon.Name, mon.Addrs) // a [{v2 172.20.0.2:3300 0} {v1 172.20.0.2:6789 0}]
+}
+```
+
+- In bridge mode the addresses are the daemon containers' addresses on the
+  fixture network; in host mode they are [PublicAddress](#publicaddress) with
+  the allocated ports.
+- Standby MGRs advertise no address in the MGRMap. A MGR that has just become
+  active advertises its address vector only once it is available, so wait for
+  `ManagerAvailable` after a failover.
+- An OSD that is down keeps the addresses of its last boot; one that never
+  booted has empty vectors.
+- The three maps are read one after another, not as one snapshot; compare the
+  epochs when the order matters.
+
+### Container Methods: Admin sockets
+
+#### AdminSocket
+
+```golang
+func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
+```
+
+Runs one command on the admin socket of a MON, MGR or OSD that the cluster
+owns and returns its output. `daemon` is the Ceph daemon name, such as `mon.a`,
+`mgr.b` or `osd.0`; `args` are the command words. `help` lists a daemon's
+commands.
+
+The admin socket bypasses the Messenger and Cephx: the command reaches the
+daemon through a local Unix socket. Use it to check what a daemon has applied
+independently of the client under test, for example:
+
+| Command | Shows |
+| --- | --- |
+| `version` | the daemon's build version, release name and release type |
+| `status` (OSD) | `newest_map` and `oldest_map`: the OSDMap epochs the OSD holds, as JSON strings |
+| `mon_status` (MON) | the MON's own name, rank, state and monmap, including `auth_epoch` on Tentacle |
+| `config get <option>` | the value the running daemon uses, after local files and the central database |
+| `perf dump` | the daemon's performance counters |
+
+```golang
+// Wait until osd.0 has applied the OSDMap epoch the cluster reports.
+out, err := cluster.AdminSocket(ctx, "osd.0", "status")
+var status struct {
+	NewestMap string `json:"newest_map"`
+}
+err = json.Unmarshal(out, &status)
+```
+
+Every MON, MGR, OSD and control container shares one run directory, a Docker
+volume mounted at `/var/run/ceph`, and the command runs in the control
+container. It therefore works with OSD role images that have no `ceph` CLI. The
+volume belongs to the cluster and `Terminate` removes it.
+
+- The daemon must be running. A stopped or removed daemon returns an error. A
+  daemon that has just started can answer before it registers all of its
+  commands (`no valid command found`); poll with a deadline.
+- A paused daemon (see [PauseContainer](#pausecontainer)) accepts the
+  connection but does not answer, so the call waits until the context ends.
+- A nonzero exit returns the command's output together with an error.
+- The call is bounded by the context and by
+  [WithStartupTimeout](#withstartuptimeout), and runs no command for a daemon
+  the cluster does not own. When the context ends first, the call stops its
+  command in the control container before it returns, including a command that
+  Docker has accepted but not yet started, so canceled calls leave no process
+  behind and other calls keep running. An effect that the daemon has already
+  applied stays.
+- MDS and RGW daemons are not included; reach them with `ceph tell` (see
+  [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
 
 ### Container Methods: Diagnostics
 
@@ -2671,6 +2794,83 @@ if err := cluster.WaitForClean(ctx); err != nil {
 
 Add `ceph.WithNoInitialOSDs()` for a MON-only phase; you can add the first
 manager before or after the first OSD.
+
+### Reproduce a minimal legacy placement setup
+
+A client that implements only the oldest CRUSH and placement features can be
+tested against one MemStore OSD, a legacy CRUSH map and a pool with one PG, one
+replica and no `hashpspool` flag. The fixture has no option for a hand-written
+CRUSH map; install it with the native tools, as below. `crushtool` is in the
+official image and the published control images.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithOSDCount(1),
+	ceph.WithPoolDefaults(1, 1),
+	ceph.WithOSDObjectStore(ceph.OSDMemStore),
+	ceph.WithOSDBlockSize(256<<20),
+)
+testcontainers.CleanupContainer(t, cluster)
+if err != nil {
+	t.Fatal(err)
+}
+
+// Keep OSDs from moving themselves into host buckets or setting a device
+// class when they start, so the installed map stays as written.
+for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
+	if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+		t.Fatal(err)
+	}
+}
+const legacyMap = `tunable choose_local_tries 2
+tunable choose_local_fallback_tries 5
+tunable choose_total_tries 19
+tunable chooseleaf_descend_once 0
+tunable chooseleaf_vary_r 0
+tunable chooseleaf_stable 0
+tunable straw_calc_version 0
+device 0 osd.0
+type 0 osd
+type 10 root
+root default {
+    id -1
+    alg straw
+    hash 0
+    item osd.0 weight 1.00000
+}
+rule replicated_rule {
+    id 0
+    type replicated
+    step take default
+    step choose firstn 0 type osd
+    step emit
+}
+`
+control := cluster.ControlContainer()
+if err := control.CopyToContainer(ctx, []byte(legacyMap), "/tmp/crush.txt", 0o644); err != nil {
+	t.Fatal(err)
+}
+if code, _, err := control.Exec(ctx, []string{"crushtool", "-c", "/tmp/crush.txt", "-o", "/tmp/crush.bin"}); err != nil || code != 0 {
+	t.Fatalf("crushtool exited %d: %v", code, err)
+}
+if _, err := cluster.Ceph(ctx, "osd", "setcrushmap", "-i", "/tmp/crush.bin"); err != nil {
+	t.Fatal(err)
+}
+
+pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
+	Name: "legacy", PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true, Application: "rados",
+})
+```
+
+- `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
+  default `osd` failure domain also chooses OSDs directly. To use the map's
+  `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",
+  "create", ...)` instead; such a pool is not one that `RemovePool` removes.
+- The legacy tunables lower the features a client needs to read the CRUSH map.
+  Switching to modern tunables later (`ceph osd crush tunables optimal`) raises
+  them again, which tests a client's refusal of unsupported features.
+- Ceph reports `POOL_NO_REDUNDANCY` for a pool with one replica; `WaitForClean`
+  still passes.
 
 ### Run small OSDs
 
