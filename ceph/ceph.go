@@ -109,6 +109,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.hostNetwork && settings.separateClusterNetwork {
 		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
 	}
+	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
+		return nil, errors.New("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
+	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
 		return nil, errors.New("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
 	}
@@ -175,6 +178,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
 		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
+	}
+	if err := c.applyMessengerPolicy(ctx); err != nil {
+		return c, fmt.Errorf("apply messenger policy: %w", err)
 	}
 	for i := 1; i < settings.monitors; i++ {
 		if _, err := c.AddMonitor(ctx, daemonName(i)); err != nil {
@@ -400,11 +406,16 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // WithClient connects another container to Ceph and copies its admin credentials.
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
-func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
+// The options customize the container's ceph.conf.
+func (c *Container) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c.configMu.RLock()
 		config, keyring := bytes.Clone(c.config), bytes.Clone(c.keyring)
 		c.configMu.RUnlock()
+		config, err := clientContainerConfig(config, opts)
+		if err != nil {
+			return err
+		}
 		if c.settings.hostNetwork {
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
 				return err
