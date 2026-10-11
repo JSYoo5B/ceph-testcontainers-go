@@ -1843,10 +1843,17 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
   `ceph tell <daemon> rotate-key` changes only the running process.
 - MONs share the `mon.` key and are refused, as are stopped, paused and
   unknown daemons; nothing changes in these cases.
-- A failure before step 3 restores the keyring files and clears the pending
-  key. A failure in step 3 or 4 leaves the daemon holding the pending key,
-  which the MONs accept; inspect `ceph auth get <daemon>` and retry the commit
-  or terminate the cluster.
+- Until step 4, the MONs accept both keys, so the running daemon and a
+  restarted one can always authenticate. Failures keep that property:
+
+  | Failure | State afterwards | Recovery |
+  | --- | --- | --- |
+  | Before step 3, including cancellation | The keyring files get the old key again. The pending key is cleared only after every file reads back with the old key, using a separate 30-second context. | None needed. If a file could not be restored, the error says so and the pending key stays. |
+  | Step 3 | Unknown whether the daemon received the new key. The keyring files hold it; both keys stay valid. | Call `RotateDaemonKey` again: it reuses the pending key. Or restart the daemon, which then reads the new key, and run `ceph auth commit-pending <daemon>`. |
+  | Step 4 | The daemon holds the new key; both keys stay valid. | Call `RotateDaemonKey` again or run `ceph auth commit-pending <daemon>`. |
+
+  A call that finds a pending key from an earlier one resumes with it and
+  never clears it, because the daemon may already hold it.
 - How to observe keys and rotating service secrets from the daemon side is in
   [Running native commands](guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
 

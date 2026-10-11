@@ -36,6 +36,12 @@ func testDaemonKeyRotation(t *testing.T) {
 		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second}), ceph.WithConfigFile(tick))
 	osd, mgr := cluster.OSDs()[0], cluster.ManagerContainer()
 
+	// A pending key left by an interrupted rotation is the one a later call
+	// finishes with: get-or-create-pending returns it instead of a new key.
+	if _, err := cluster.Ceph(ctx, "auth", "get-or-create-pending", "osd.0"); err != nil {
+		t.Fatal(err)
+	}
+	leftover := pendingKey(t, ctx, cluster, "osd.0")
 	for _, daemon := range []struct {
 		name     string
 		ctr      testcontainers.Container
@@ -51,6 +57,9 @@ func testDaemonKeyRotation(t *testing.T) {
 		after := authKey(t, ctx, cluster, daemon.name)
 		if after == before {
 			t.Fatalf("%s kept its key", daemon.name)
+		}
+		if daemon.name == "osd.0" && after != leftover {
+			t.Fatal("the rotation did not resume with the pending key of the interrupted one")
 		}
 		if pending := pendingKey(t, ctx, cluster, daemon.name); pending != "" {
 			t.Fatalf("%s still has a pending key", daemon.name)
@@ -106,15 +115,24 @@ func testDaemonKeyRotation(t *testing.T) {
 	if _, err := cluster.Ceph(ctx, "tell", "osd.0", "version"); err != nil {
 		t.Fatal(err)
 	}
-	later := waitRotatingSecretIDs(t, ctx, osd, slices.Max(first)+2)
 	used := decryptedSecretIDs(t, ctx, osd)
-	if len(used) == 0 || !slices.Contains(append(first, later...), used[len(used)-1]) {
-		t.Fatalf("no client ticket was decrypted with a held secret: used %v, held %v then %v", used, first, later)
+	if len(used) == 0 || !slices.Contains(first, used[len(used)-1]) {
+		t.Fatalf("no client ticket was decrypted with a held secret: used %v, held %v", used, first)
+	}
+	earlier := used[len(used)-1]
+	later := waitRotatingSecretIDs(t, ctx, osd, slices.Max(first)+2)
+	// A new client gets a ticket for the current secret.
+	if _, err := cluster.Ceph(ctx, "tell", "osd.0", "version"); err != nil {
+		t.Fatal(err)
+	}
+	used = decryptedSecretIDs(t, ctx, osd)
+	if renewed := used[len(used)-1]; renewed <= earlier || !slices.Contains(later, renewed) {
+		t.Fatalf("a later client ticket used secret %d after %d; held %v", renewed, earlier, later)
 	}
 	if _, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "1/5"); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("osd.0 held rotating secrets %v, then %v; a client ticket was decrypted with secret %d", first, later, used[len(used)-1])
+	t.Logf("osd.0 held rotating secrets %v, then %v; client tickets were decrypted with secret %d, then %d", first, later, earlier, used[len(used)-1])
 }
 
 func authKey(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) string {
