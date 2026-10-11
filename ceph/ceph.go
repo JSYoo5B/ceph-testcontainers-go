@@ -112,6 +112,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
 		return nil, errors.New("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
 	}
+	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
+		return nil, fmt.Errorf("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
+	}
+	if settings.addressFamily != AddressIPv4 && settings.separateClusterNetwork {
+		return nil, fmt.Errorf("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
+	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
 		return nil, errors.New("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
 	}
@@ -133,7 +139,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return nil, err
 		}
 	} else {
-		nw, err = dockerbridge.New(ctx)
+		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer)}
@@ -285,6 +291,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
 				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
+				addressFamilyEnvironment: c.settings.addressFamily.String(),
 			}),
 			testcontainers.WithEnv(c.settings.auth.environment()),
 			testcontainers.WithFiles(scriptFile("mon")),

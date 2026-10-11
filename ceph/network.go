@@ -193,9 +193,11 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 	return link.complete, nil
 }
 
-// Restore reattaches the original endpoint, preserving the IP advertised by
-// Ceph. Removed containers need no restoration. An externally reattached
-// endpoint with a different address is refused rather than overwritten.
+// Restore reattaches the original endpoint, preserving the IPv4 and, on a
+// dual-stack bridge, the IPv6 address advertised by Ceph. Removed containers
+// need no restoration. An externally reattached endpoint with a different
+// address is refused rather than overwritten, and the handle stays
+// retryable.
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
 	if err := lockTopologyMutex(ctx, &link.mu); err != nil {
 		return err
@@ -216,6 +218,9 @@ func (link *NetworkInterruption) Restore(ctx context.Context) error {
 		if current != nil {
 			if current.IPAddress != link.endpoint.IPAMConfig.IPv4Address || current.GwPriority != link.endpoint.GwPriority {
 				return errors.New("interrupted endpoint was externally reattached with a different address or gateway priority")
+			}
+			if original := link.endpoint.IPAMConfig.IPv6Address; original.IsValid() && current.GlobalIPv6Address != original {
+				return fmt.Errorf("interrupted endpoint was externally reattached without its original IPv6 address %s", original)
 			}
 			for _, alias := range link.endpoint.Aliases {
 				if !slices.Contains(current.Aliases, alias) {
