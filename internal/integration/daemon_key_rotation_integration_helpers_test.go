@@ -151,8 +151,8 @@ func testDaemonKeyRotation(t *testing.T) {
 	if handed == "" || authKey(t, ctx, cluster, "osd.0") != current {
 		t.Fatal("an uncertain handoff did not keep both keys")
 	}
-	if code, _, err := cluster.ControlContainer().Exec(ctx, []string{"pgrep", "-f", "rotate-key"}); err != nil || code != 1 {
-		t.Fatalf("a rotate-key CLI is still running in the control container: exit %d, %v", code, err)
+	if running := rotateKeyProcesses(t, ctx, cluster.ControlContainer()); running != "" {
+		t.Fatalf("a rotate-key CLI is still running in the control container:\n%s", running)
 	}
 	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {
 		t.Fatal(err)
@@ -197,6 +197,34 @@ func signalContainer(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 	if _, err := docker.ContainerKill(ctx, ctr.GetContainerID(), mobycl.ContainerKillOptions{Signal: signal}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// rotateKeyProcessScript prints every other process whose arguments include
+// rotate-key, which matches both the supervisor and its ceph child. It reads
+// /proc with the Python that the control image already provides, and fails
+// when it could read no process at all.
+const rotateKeyProcessScript = `import os,sys
+seen=0
+for pid in os.listdir("/proc"):
+ if not pid.isdigit() or int(pid)==os.getpid(): continue
+ try:
+  with open("/proc/"+pid+"/cmdline","rb") as f: argv=f.read().split(b"\0")
+ except OSError: continue
+ seen+=1
+ if b"rotate-key" in argv: print(pid,b" ".join(argv).decode(errors="replace"))
+sys.exit(0 if seen else 2)
+`
+
+// rotateKeyProcesses returns the rotate-key processes running in ctr, one
+// per line.
+func rotateKeyProcesses(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
+	t.Helper()
+	code, reader, err := ctr.Exec(ctx, []string{"python3", "-c", rotateKeyProcessScript}, tcexec.Multiplexed())
+	if err != nil || code != 0 {
+		t.Fatalf("list the control container's processes: exit %d, %v", code, err)
+	}
+	data, _ := io.ReadAll(reader)
+	return strings.TrimSpace(string(data))
 }
 
 func authKey(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) string {
