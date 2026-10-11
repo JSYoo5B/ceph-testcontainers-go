@@ -38,6 +38,10 @@ change the API.
 - `ceph.WithAddressFamily` runs every Messenger listener on IPv6: on the
   container's IPv6 address of a dual-stack bridge (`ceph.AddressIPv6`), or on
   its IPv4 address as an IPv4-mapped IPv6 address (`ceph.AddressIPv4MappedIPv6`).
+- `ceph.Container.RotateDaemonKey` replaces the Cephx key of a running MGR or
+  OSD without a restart and keeps its keyring files in step, so later restarts
+  authenticate with the new key. The native commands guide shows how to
+  observe a daemon's rotating service secrets in its debug log.
 
 ### Fixed
 

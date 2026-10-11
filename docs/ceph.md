@@ -1817,6 +1817,39 @@ the native key was replaced externally. A repeated call after success is a no-op
 Established sessions may keep their tickets; test revocation with a new
 connection. Credentials already copied elsewhere are not erased.
 
+#### RotateDaemonKey
+
+```golang
+func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) error
+```
+
+Replaces the Cephx key of a running MGR or OSD that the cluster owns, without a
+restart, the way cephadm rotates daemon keys. `daemon` is `mgr.<name>` or
+`osd.<id>`.
+
+1. `ceph auth get-or-create-pending` creates the new key on the MONs.
+2. The daemon's keyring files in its container get the new key, so a later
+   restart authenticates with it.
+3. `ceph tell <daemon> rotate-key` hands the key to the running daemon.
+4. `ceph auth commit-pending` makes it the entity's only key.
+
+```golang
+err := cluster.RotateDaemonKey(ctx, "osd.0")
+key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
+```
+
+- The daemon keeps running and answering throughout.
+- Without step 2, a restarted daemon would read its old key and fail to start;
+  `ceph tell <daemon> rotate-key` changes only the running process.
+- MONs share the `mon.` key and are refused, as are stopped, paused and
+  unknown daemons; nothing changes in these cases.
+- A failure before step 3 restores the keyring files and clears the pending
+  key. A failure in step 3 or 4 leaves the daemon holding the pending key,
+  which the MONs accept; inspect `ceph auth get <daemon>` and retry the commit
+  or terminate the cluster.
+- How to observe keys and rotating service secrets from the daemon side is in
+  [Running native commands](guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
+
 #### ConnectionConfig
 
 ```golang

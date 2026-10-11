@@ -308,6 +308,45 @@ out, err = exec(ctx, fsDaemon, "ceph", "--admin-daemon",
 Prefer the typed observers when they cover your case: `rbd.MirrorDaemon.Status`,
 `rbd.Mirror.ReceiverStatus`, `ImageStatus`, `cephfs.Mirror.DirectoryStatus`.
 
+### Observing Cephx keys from the daemon side
+
+No admin socket command prints a daemon's own key or the rotating service
+secrets that it holds. Observe them in two ways instead.
+
+**The daemon's key.** After
+[`Container.RotateDaemonKey`](../ceph.md#rotatedaemonkey), `auth get-key` on
+the MONs returns the new key, and a restart of the daemon proves that it
+authenticates with the key in its keyring files.
+
+**Service secrets.** The MONs rotate the secret of each service (MON, MGR, OSD,
+MDS) every `auth_service_ticket_ttl`, and daemons fetch them as they change.
+Raise the daemon's `debug_auth` through its admin socket. The daemon then logs
+two things to its container output:
+- the secrets it holds, at every MON client tick;
+- the secret that decrypted each client ticket it accepts.
+
+```golang
+_, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "10/10")
+// ... let a client connect to osd.0 ...
+logs, err := cluster.OSDs()[0].Logs(ctx)
+```
+
+| Event | Tentacle 20.2.4 | Squid 19.2.5 |
+| --- | --- | --- |
+| Secrets held, one line per secret | `RKR(...).dump_rotating  id 3 <secret> expires <time>` | `auth:  id 3 <secret> expires <time>` after `auth: dump_rotating:` |
+| A client ticket accepted | `cephx: cephx_verify_authorizer: decoded service osd secret_id=3`, then `global_id=<client>` | `cephx: verify_authorizer decrypted service osd secret_id=3` |
+
+- With short tickets, for example `AuthConfig.ServiceTicketTTL` of 10 seconds
+  and a `mon_tick_interval` of 1 second through
+  [WithConfigFile](../ceph.md#withconfigfile), the highest held secret ID grows
+  by one per lifetime. The daemon holds three secrets: the previous, the
+  current and the next one.
+- The log contains the secrets themselves. Keep it to disposable test
+  clusters, and set `debug_auth` back to `1/5` when you are done.
+- On Tentacle, `ceph auth dump-keys --format json` on the MONs lists the same
+  secret IDs and expirations under `rotating_secrets`. Squid has no such
+  command.
+
 ## RBD mirror setup clients
 
 `rbd.RunMirror` starts one setup client per side. `SourceRBD` and
