@@ -13,7 +13,8 @@ go-ceph, librados or cgo dependency and build with `CGO_ENABLED=0`. The Ceph
 daemons need no privileged mode, host disks, LVM or systemd: each OSD stores
 its data in a sparse BlueStore file inside its container.
 
-This project is experimental and has no release tags yet.
+Releases follow semantic versioning. Before v1.0.0, a minor release may change
+the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
 
 ## Modules
 
@@ -47,7 +48,7 @@ the differences listed in [the releases guide](docs/guides/releases-and-images.m
 ## Installation
 
 ```
-go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
+go get github.com/JSYoo5B/ceph-testcontainers-go/ceph@latest
 ```
 
 Add `rbd`, `cephfs` or `rgw` the same way when you need them.
