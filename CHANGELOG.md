@@ -41,6 +41,9 @@ change the API.
 
 ### Fixed
 
+- `rbd.Mirror.WaitReplayReady` no longer fails while rbd-mirror creates the
+  destination image: the moment in which the new image reports mirroring
+  disabled, before rbd-mirror enables it, was taken for a changed identity.
 - Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
   now stops its `ceph quorum_status` process in the control container before
   returning. The process previously ran on for up to five seconds.
