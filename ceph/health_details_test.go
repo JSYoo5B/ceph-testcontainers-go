@@ -153,7 +153,7 @@ func TestHealthDetailsRejectsUnavailableBootstrapBeforeQuery(t *testing.T) {
 			}
 		})
 	}
-	assertHealthDetailsFailure(t, nil, t.Context())
+	_ = assertHealthDetailsFailure(t, nil, t.Context())
 }
 
 func TestHealthDetailsRejectsFSIDDriftBeforeAndAfterHealth(t *testing.T) {

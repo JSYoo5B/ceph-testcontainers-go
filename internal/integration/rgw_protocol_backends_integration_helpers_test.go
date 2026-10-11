@@ -563,7 +563,7 @@ func rgwBackendKMS(t *testing.T, ctx context.Context, _ []*rgw.Gateway, endpoint
 		t.Fatal(err)
 	}
 	audit, err := io.ReadAll(reader)
-	reader.Close()
+	_ = reader.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,7 +626,7 @@ func rgwBackendDo(t *testing.T, client *http.Client, request *http.Request) rgwB
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -815,7 +815,7 @@ func rgwBackendCleanupDelete(ctx context.Context, client s3HTTPClient, path stri
 	if err != nil {
 		return errors.New("STS cleanup owned S3 DELETE transport failed (output redacted)")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if _, err := io.Copy(io.Discard, response.Body); err != nil || ctx.Err() != nil {
 		return errors.New("STS cleanup owned S3 DELETE response failed (output redacted)")
 	}

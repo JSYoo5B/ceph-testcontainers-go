@@ -234,19 +234,20 @@ func TestNoInitialMDSPartialConstructionNeverConfirmsCold(t *testing.T) {
 			c, n := newColdMDSFixture()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			if point == "cancel-final-auth" {
+			switch point {
+			case "cancel-final-auth":
 				n.hook = func(cmd string) {
 					if cmd == "auth ls --format json" {
 						cancel()
 					}
 				}
-			} else if point == "drift-final-auth" {
+			case "drift-final-auth":
 				n.hook = func(cmd string) {
 					if cmd == "auth ls --format json" {
 						n.target()["max_mds"] = 2
 					}
 				}
-			} else {
+			default:
 				n.fail = point
 			}
 			fs, err := startFilesystem(ctx, c, Config{Name: "cold-target", NoInitialMDS: true})

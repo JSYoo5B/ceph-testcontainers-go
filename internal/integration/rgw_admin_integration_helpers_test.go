@@ -315,7 +315,7 @@ func rgwFixtureWaitStatus(t *testing.T, ctx context.Context, client s3HTTPClient
 		response, err := client.http.Do(req)
 		if err == nil {
 			body, readErr := io.ReadAll(response.Body)
-			response.Body.Close()
+			_ = response.Body.Close()
 			if readErr != nil {
 				t.Fatal(readErr)
 			}

@@ -154,7 +154,7 @@ func hostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 					continue
 				}
 				data, _ := io.ReadAll(logs)
-				logs.Close()
+				_ = logs.Close()
 				if len(data) > 8000 {
 					data = data[len(data)-8000:]
 				}
@@ -272,7 +272,7 @@ func hostNetworkAssertRunnerTCP(t *testing.T, ctx context.Context, groups []host
 			if err != nil {
 				t.Fatalf("test runner cannot reach cluster %d %s advertised endpoint %s: %v", group.cluster, group.daemon, address, err)
 			}
-			connection.Close()
+			_ = connection.Close()
 		}
 		t.Logf("test runner TCP reached cluster %d %s advertised endpoints: %v", group.cluster, group.daemon, group.addresses)
 	}

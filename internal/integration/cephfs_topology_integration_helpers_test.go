@@ -58,7 +58,7 @@ func cephFSKillMDS(t *testing.T, parent context.Context, daemon *cephfs.MDS) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close()
+	defer func() { _ = docker.Close() }()
 	if _, err := docker.ContainerKill(ctx, daemon.GetContainerID(), mobycl.ContainerKillOptions{Signal: "KILL"}); err != nil {
 		t.Fatal(err)
 	}

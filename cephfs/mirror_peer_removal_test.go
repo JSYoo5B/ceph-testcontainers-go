@@ -23,7 +23,7 @@ const peerRemovalSourceFSID = "7875b9c0-2eac-44d7-8358-888700000001"
 const peerRemovalDestinationFSID = "7875b9c0-2eac-44d7-8358-888700000002"
 const peerRemovalNewPeer = "7875b9c0-2eac-44d7-8358-888700000003"
 
-var peerRemovalTransport = errors.New("native transport unavailable")
+var errPeerRemovalTransport = errors.New("native transport unavailable")
 
 // This fake exercises the production orchestration/parser with native shapes.
 // Only original private cluster attestation uses a private callback; the public
@@ -291,10 +291,10 @@ func TestCephFSPeerRemovalProductionRetainsLostReplyAndReconcilesNativeViews(t *
 	for _, applied := range []bool{false, true} {
 		t.Run(fmt.Sprint(applied), func(t *testing.T) {
 			m, s, _, a, b := newPeerRemovalFixture()
-			s.removeError = peerRemovalTransport
+			s.removeError = errPeerRemovalTransport
 			s.applyRemoval = applied
 			r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
-			if r == nil || !errors.Is(err, peerRemovalTransport) || m.peerRemoval != r {
+			if r == nil || !errors.Is(err, errPeerRemovalTransport) || m.peerRemoval != r {
 				t.Fatalf("lost response erased intent: %v %v", r, err)
 			}
 			s.removeError = nil
@@ -440,7 +440,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLast(t *testing.T) {
 	r, _, _, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
-	a.queryError = peerRemovalTransport
+	a.queryError = errPeerRemovalTransport
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	// Complete the actual native-error observation before triggering cancellation.
@@ -451,7 +451,7 @@ func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLas
 		cancel()
 		return observed, observationErr
 	})
-	if status.Drained || status.PeerID != cephFSObserverDraftPeer || status.Daemons["a"].Problem == "" || !errors.Is(err, context.Canceled) || !errors.Is(err, peerRemovalTransport) {
+	if status.Drained || status.PeerID != cephFSObserverDraftPeer || status.Daemons["a"].Problem == "" || !errors.Is(err, context.Canceled) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("cancellation lost report/native cause: %+v %v", status, err)
 	}
 	a.queryError = nil
@@ -464,15 +464,15 @@ func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLas
 	cancelCtx, stop := context.WithCancel(t.Context())
 	status, err = waitCephFSPeerDrain(cancelCtx, time.Millisecond, func(context.Context) (MirrorPeerRemovalStatus, error) {
 		stop()
-		return MirrorPeerRemovalStatus{PeerID: "last", Drained: true}, peerRemovalTransport
+		return MirrorPeerRemovalStatus{PeerID: "last", Drained: true}, errPeerRemovalTransport
 	})
-	if status.Drained || status.PeerID != "last" || !errors.Is(err, context.Canceled) || !errors.Is(err, peerRemovalTransport) {
+	if status.Drained || status.PeerID != "last" || !errors.Is(err, context.Canceled) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("cancel after ready lost report/cause: %+v %v", status, err)
 	}
 	status, err = waitCephFSPeerDrain(t.Context(), time.Millisecond, func(context.Context) (MirrorPeerRemovalStatus, error) {
-		return MirrorPeerRemovalStatus{Drained: true}, errors.Join(peerRemovalTransport, cephFSObserveGuard("permanent"))
+		return MirrorPeerRemovalStatus{Drained: true}, errors.Join(errPeerRemovalTransport, cephFSObserveGuard("permanent"))
 	})
-	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, peerRemovalTransport) {
+	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("joined guard hidden by transport failure: %+v %v", status, err)
 	}
 }
@@ -555,7 +555,9 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 	expected := r.peer
 	m.pendingPeerImport = &expected
 	var peers map[string]json.RawMessage
-	json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers)
+	if err := json.Unmarshal([]byte(strings.Replace(peerRemovalManagerPeers(), cephFSObserverDraftPeer, peerRemovalNewPeer, 1)), &peers); err != nil {
+		t.Fatal(err)
+	}
 	id, err := m.reconcilePendingPeer(peers)
 	if err != nil || id != peerRemovalNewPeer || m.peerGeneration == r.generation {
 		t.Fatalf("new ownership did not supersede old receipt: %s %v", id, err)
@@ -612,7 +614,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 			common := func(context.Context) (string, error) {
 				count++
 				if fault == "common-query" || (fault == "post-common" && count == 2) {
-					return "", peerRemovalTransport
+					return "", errPeerRemovalTransport
 				}
 				if fault == "context" {
 					return "", context.Canceled
@@ -625,7 +627,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 				q = func(context.Context) (string, error) { return "", nil }
 			}
 			if fault == "quorum-query" {
-				q = func(context.Context) (string, error) { return "", peerRemovalTransport }
+				q = func(context.Context) (string, error) { return "", errPeerRemovalTransport }
 			}
 			if fault == "native-mismatch" {
 				n = func(context.Context) (string, error) { return peerRemovalDestinationFSID, nil }
@@ -646,11 +648,11 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
 	r.readClusters = func(ctx context.Context) ([2]string, error) {
-		_, err := readCephFSRemovalClusterIdentity(ctx, func(context.Context) (string, error) { return "", peerRemovalTransport }, quorum, native)
+		_, err := readCephFSRemovalClusterIdentity(ctx, func(context.Context) (string, error) { return "", errPeerRemovalTransport }, quorum, native)
 		return [2]string{}, err
 	}
 	status, err := r.WaitDrained(t.Context())
-	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, peerRemovalTransport) || m.peerRemoval != r || s.removals != 1 {
+	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.peerRemoval != r || s.removals != 1 {
 		t.Fatalf("common failure discarded accepted intent: %+v %v", status, err)
 	}
 	r.readClusters = peerRemovalClusterReader
@@ -683,10 +685,10 @@ func TestCephFSPeerRemovalProductionAcknowledgedRequestDoesNotRepeatOnStaleViews
 func TestCephFSPeerRemovalProductionJoinedDaemonGuardOverridesEarlierQuery(t *testing.T) {
 	r, _, _, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
-	a.queryError = peerRemovalTransport
+	a.queryError = errPeerRemovalTransport
 	b.catalogOverride = "null"
 	st, err := r.WaitDrained(t.Context())
-	if st.Drained || !errors.Is(err, peerRemovalTransport) || !errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" || st.Daemons["b"].Problem == "" {
+	if st.Drained || !errors.Is(err, errPeerRemovalTransport) || !errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" || st.Daemons["b"].Problem == "" {
 		t.Fatalf("later guard hidden behind earlier member query: %+v %v", st, err)
 	}
 }

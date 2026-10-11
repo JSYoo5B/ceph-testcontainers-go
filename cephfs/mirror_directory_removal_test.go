@@ -232,14 +232,14 @@ func TestCephFSDirectoryRemovalProductionRetainsLostReplyAndNoAbsentResend(t *te
 	for _, applied := range []bool{true, false} {
 		t.Run(map[bool]string{true: "applied", false: "not-applied"}[applied], func(t *testing.T) {
 			m, s, _, a, _ := newDirectoryRemovalFixture()
-			s.removeError, s.applyRemoval = peerRemovalTransport, applied
+			s.removeError, s.applyRemoval = errPeerRemovalTransport, applied
 			s.hook = func(_ *directoryRemovalControlFake, args []string) {
 				if len(args) == 6 && args[3] == "remove" && m.directoryRemoval == nil {
 					t.Fatal("native mutation preceded intent storage")
 				}
 			}
 			r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
-			if r == nil || !errors.Is(err, peerRemovalTransport) || m.directoryRemoval != r || !m.ownedDirectories["/owned"] || s.removals != 1 {
+			if r == nil || !errors.Is(err, errPeerRemovalTransport) || m.directoryRemoval != r || !m.ownedDirectories["/owned"] || s.removals != 1 {
 				t.Fatalf("lost response discarded intent: %v %v", r, err)
 			}
 			s.removeError, s.applyRemoval = nil, true
@@ -267,9 +267,9 @@ func TestCephFSDirectoryRemovalProductionPolicyRetryTransitions(t *testing.T) {
 	for _, state := range []string{"unmapping", "mapping", "shuffling", "resolving", "stalled", "null"} {
 		t.Run(state, func(t *testing.T) {
 			m, s, _, _, _ := newDirectoryRemovalFixture()
-			s.removeError, s.applyRemoval = peerRemovalTransport, false
+			s.removeError, s.applyRemoval = errPeerRemovalTransport, false
 			r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
-			if r == nil || !errors.Is(err, peerRemovalTransport) {
+			if r == nil || !errors.Is(err, errPeerRemovalTransport) {
 				t.Fatal("missing retained native uncertainty")
 			}
 			s.removeError = nil
@@ -319,9 +319,9 @@ func TestCephFSDirectoryRemovalProductionOverlapLegacyAndGenerations(t *testing.
 		t.Fatalf("release failed: %+v %v", st, err)
 	}
 	before := m.directoryGenerations["/owned"]
-	s.addError = peerRemovalTransport
+	s.addError = errPeerRemovalTransport
 	s.applyAdd = false
-	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, peerRemovalTransport) || m.directoryGenerations["/owned"] != before {
+	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || m.directoryGenerations["/owned"] != before {
 		t.Fatal("failed native add advanced ownership generation")
 	}
 	if m.ownedDirectories["/owned"] || !r.superseded {
@@ -365,8 +365,8 @@ func TestCephFSDirectoryRemovalProductionAppliedReaddReplyLossCannotReuseOldProo
 	if st, err := r.WaitReleased(t.Context()); err != nil || !st.Released {
 		t.Fatalf("initial release: %+v %v", st, err)
 	}
-	s.addError, s.applyAdd = peerRemovalTransport, true
-	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, peerRemovalTransport) {
+	s.addError, s.applyAdd = errPeerRemovalTransport, true
+	if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatal("real-shaped re-add lost reply did not fail")
 	}
 	if !slices.Contains(s.directories, "/owned") || m.ownedDirectories["/owned"] || m.directoryGenerations["/owned"] != r.generation || !r.superseded {
@@ -391,8 +391,8 @@ func TestCephFSDirectoryRemovalProductionOwnedRegistrationGenerations(t *testing
 		t.Fatalf("acknowledged rebalance add did not advance current ownership: %v", err)
 	}
 	before = m.directoryGenerations["/new"]
-	s.addError, s.applyAdd = peerRemovalTransport, false
-	if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, peerRemovalTransport) || m.directoryGenerations["/new"] != before {
+	s.addError, s.applyAdd = errPeerRemovalTransport, false
+	if err := m.RebalanceDirectories(t.Context()); !errors.Is(err, errPeerRemovalTransport) || m.directoryGenerations["/new"] != before {
 		t.Fatalf("uncertain rebalance add adopted a registration: %v", err)
 	}
 }
@@ -446,10 +446,10 @@ func TestCephFSDirectoryRemovalProductionCommonGuardRetainsFreshRetry(t *testing
 	r, m, s, _, a, _ := beginDirectoryRemovalFixture(t)
 	a.stats = `{}`
 	r.original.readClusters = func(context.Context) ([2]string, error) {
-		return [2]string{}, errors.Join(cephFSObserveGuard("original-template quorum unavailable"), peerRemovalTransport)
+		return [2]string{}, errors.Join(cephFSObserveGuard("original-template quorum unavailable"), errPeerRemovalTransport)
 	}
 	st, err := r.WaitReleased(t.Context())
-	if st.Released || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, peerRemovalTransport) || m.directoryRemoval != r || s.removals != 1 {
+	if st.Released || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.directoryRemoval != r || s.removals != 1 {
 		t.Fatalf("common original attestation failure erased intent: %+v %v", st, err)
 	}
 	r.original.readClusters = peerRemovalClusterReader
@@ -524,9 +524,9 @@ func TestCephFSDirectoryRemovalProductionSchemaIdentityAndCohortFailClosed(t *te
 func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCancel(t *testing.T) {
 	r, m, s, _, a, b := beginDirectoryRemovalFixture(t)
 	a.stats, b.stats = `{}`, `{}`
-	a.statsError = peerRemovalTransport
+	a.statsError = errPeerRemovalTransport
 	st, err := r.Status(t.Context())
-	if st.Released || !st.PolicyRemoved || !errors.Is(err, peerRemovalTransport) || errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" {
+	if st.Released || !st.PolicyRemoved || !errors.Is(err, errPeerRemovalTransport) || errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" {
 		t.Fatalf("query failure treated as release: %+v %v", st, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -563,7 +563,7 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 	m.mu.Unlock()
 	result := <-done
 	st, err = result.status, result.err
-	if st.Released || st.Directory != "/owned" || st.Daemons["a"].Problem == "" || !errors.Is(err, context.Canceled) || !errors.Is(err, peerRemovalTransport) {
+	if st.Released || st.Directory != "/owned" || st.Daemons["a"].Problem == "" || !errors.Is(err, context.Canceled) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("deadline/cause/report lost: %+v %v", st, err)
 	}
 	a.statsError = nil
@@ -756,10 +756,10 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 
 func TestCephFSDirectoryRemovalProductionJoinedGuardAndCleanupDoNotBecomeCompletion(t *testing.T) {
 	r, m, _, _, a, b := beginDirectoryRemovalFixture(t)
-	a.statsError = peerRemovalTransport
+	a.statsError = errPeerRemovalTransport
 	b.catalogPeer = false
 	st, err := r.WaitReleased(t.Context())
-	if st.Released || !errors.Is(err, peerRemovalTransport) || !errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" || st.Daemons["b"].Problem == "" {
+	if st.Released || !errors.Is(err, errPeerRemovalTransport) || !errors.Is(err, errCephFSObservationGuard) || st.Daemons["a"].Problem == "" || st.Daemons["b"].Problem == "" {
 		t.Fatalf("later guard hidden: %+v %v", st, err)
 	}
 	m.closed = true

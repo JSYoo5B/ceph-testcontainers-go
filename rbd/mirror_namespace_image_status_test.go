@@ -161,11 +161,12 @@ func TestRBDNamespaceImageStatusModeAndNativeSchemaGuards(t *testing.T) {
 			case "source-missing-mode", "source-null-mode", "source-unknown-mode":
 				h.sourceInfo[src] = namespaceImagePatch(t, h.sourceInfo[src], func(v map[string]any) {
 					mirror := v["mirroring"].(map[string]any)
-					if fault == "source-missing-mode" {
+					switch fault {
+					case "source-missing-mode":
 						delete(mirror, "mode")
-					} else if fault == "source-null-mode" {
+					case "source-null-mode":
 						mirror["mode"] = nil
-					} else {
+					default:
 						mirror["mode"] = "unknown"
 					}
 				})

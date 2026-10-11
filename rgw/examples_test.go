@@ -2,6 +2,7 @@ package rgw_test
 
 import (
 	"context"
+	"log"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
@@ -13,9 +14,11 @@ func ExampleRun() {
 	cluster, err := rgw.Run(ctx, ceph.DefaultImage,
 		rgw.WithGateways(rgw.Config{Name: "s3", SkipUserCreation: true}),
 	)
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}

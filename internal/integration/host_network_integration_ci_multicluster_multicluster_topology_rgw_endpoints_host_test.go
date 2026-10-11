@@ -108,7 +108,7 @@ time.sleep(1200)
 			continue
 		}
 		_, _ = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
+		_ = response.Body.Close()
 		if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusForbidden {
 			t.Fatalf("test runner reached unexpected HTTP service at %s: status %d", gateway.endpoint, response.StatusCode)
 		}

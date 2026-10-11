@@ -40,7 +40,7 @@ func TestClusterLifecycle(t *testing.T) {
 						continue
 					}
 					data, _ := io.ReadAll(logs)
-					logs.Close()
+					_ = logs.Close()
 					if len(data) > 16000 {
 						data = data[len(data)-16000:]
 					}

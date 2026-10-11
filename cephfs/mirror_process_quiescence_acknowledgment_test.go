@@ -18,7 +18,7 @@ func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*MirrorPeerRe
 	m, s, d, a, b := newPeerRemovalFixture()
 	raws := enableProcessDraftBindings(m, a, b)
 	if lostReply {
-		s.removeError = peerRemovalTransport
+		s.removeError = errPeerRemovalTransport
 	}
 	r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
 	if r == nil || (err == nil) == lostReply {
@@ -33,7 +33,7 @@ func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*MirrorD
 	m, s, d, a, b := newDirectoryRemovalFixture()
 	raws := enableProcessDraftBindings(m, a.peerRemovalDaemonFake, b.peerRemovalDaemonFake)
 	if lostReply {
-		s.removeError = peerRemovalTransport
+		s.removeError = errPeerRemovalTransport
 	}
 	r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
 	if r == nil || (err == nil) == lostReply {
@@ -157,9 +157,10 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 				if fault == "exited-cid" || fault == "later-cid" || fault == "mixed-cid" {
 					raw[0].inspectErr = nil
 					raw[0].state = draftExited(processDraftStart)
-					if fault == "later-cid" {
+					switch fault {
+					case "later-cid":
 						raw[0].state = draftRunning(processDraftLater)
-					} else if fault == "mixed-cid" {
+					case "mixed-cid":
 						raw[0].state = draftRunning(processDraftStart)
 					}
 				}
@@ -273,7 +274,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentReplayReattestsNativeIdentity(t *t
 				s.fsPeers = strings.ReplaceAll(peerRemovalRemotePeers(), r.peerID, peerRemovalNewPeer)
 				s.managerPeers = strings.ReplaceAll(peerRemovalManagerPeers(), r.peerID, peerRemovalNewPeer)
 			case "query":
-				s.queryError = peerRemovalTransport
+				s.queryError = errPeerRemovalTransport
 			case "private-generation":
 				m.peerGeneration++
 			}
@@ -298,8 +299,8 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReaddSupersedesBeforeAtte
 				t.Fatal(err)
 			}
 			before := m.directoryGenerations["/owned"]
-			s.applyAdd, s.addError = applied, peerRemovalTransport
-			if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, peerRemovalTransport) || !r.superseded || m.ownedDirectories["/owned"] || m.directoryGenerations["/owned"] != before {
+			s.applyAdd, s.addError = applied, errPeerRemovalTransport
+			if err := m.AddDirectory(t.Context(), "/owned"); !errors.Is(err, errPeerRemovalTransport) || !r.superseded || m.ownedDirectories["/owned"] || m.directoryGenerations["/owned"] != before {
 				t.Fatal("uncertain add reused old acknowledgment or adopted ownership")
 			}
 			if st, err := r.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || !errors.Is(err, errCephFSObservationGuard) || !r.processQuiescenceAcknowledged {
@@ -321,11 +322,12 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryReplayAndSuccessfulReadd(
 	}
 	for _, fault := range []string{"path", "peer", "pool"} {
 		oldPool := s.pool
-		if fault == "path" {
+		switch fault {
+		case "path":
 			s.directories = []string{"/owned"}
-		} else if fault == "peer" {
+		case "peer":
 			s.fsPeers, s.managerPeers = "{}", "{}"
-		} else {
+		default:
 			s.pool++
 		}
 		if same, err := m.BeginDirectoryRemoval(t.Context(), "/owned"); err == nil || same != r {
@@ -362,11 +364,12 @@ func TestCephFSProcessQuiescenceAcknowledgmentDirectoryFinalAuthorityFailureKeep
 				if slices.Contains(args, "ls") {
 					reads++
 					if reads == 2 {
-						if fault == "cancel" {
+						switch fault {
+						case "cancel":
 							cancel()
-						} else if fault == "path-reappears" {
+						case "path-reappears":
 							f.directories = []string{"/owned"}
-						} else {
+						default:
 							f.fsPeers, f.managerPeers = "{}", "{}"
 						}
 					}

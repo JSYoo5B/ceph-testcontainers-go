@@ -81,7 +81,7 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				if kind == "peer" {
 					r, m, _, _, a, _ := beginPeerRemovalFixture(t)
 					mirror = m
-					a.queryError = peerRemovalTransport
+					a.queryError = errPeerRemovalTransport
 					a.execHook = func(*peerRemovalDaemonFake, []string) { signal.Do(func() { close(first) }) }
 					wait = func(ctx context.Context) multiClusterWaitRemovalResult {
 						s, err := r.WaitDrained(ctx)
@@ -90,7 +90,7 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				} else {
 					r, m, _, _, a, _ := beginDirectoryRemovalFixture(t)
 					mirror = m
-					a.statsError = peerRemovalTransport
+					a.statsError = errPeerRemovalTransport
 					a.statsHook = func(*directoryRemovalDaemonFake) { signal.Do(func() { close(first) }) }
 					wait = func(ctx context.Context) multiClusterWaitRemovalResult {
 						s, err := r.WaitReleased(ctx)
@@ -148,7 +148,7 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				}
 				unlock()
 				join()
-				if result.terminal || !result.policyRemoved || result.state != "unavailable" || result.problem == "" || !errors.Is(result.err, want) || !errors.Is(result.err, peerRemovalTransport) {
+				if result.terminal || !result.policyRemoved || result.state != "unavailable" || result.problem == "" || !errors.Is(result.err, want) || !errors.Is(result.err, errPeerRemovalTransport) {
 					t.Fatalf("unadmitted cancellation erased native report/cause: %+v", result)
 				}
 			})
@@ -171,7 +171,7 @@ func TestMultiClusterWaitAdmittedReportReplacesOlderPartial(t *testing.T) {
 					if calls == 1 {
 						current.PolicyRemoved = true
 						current.Daemons["a"] = MirrorPeerRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
-						return current, true, cephFSObserveQuery("native query", peerRemovalTransport)
+						return current, true, cephFSObserveQuery("native query", errPeerRemovalTransport)
 					}
 					cancel()
 					// Admitted newer observations can have initial-looking fields,
@@ -187,7 +187,7 @@ func TestMultiClusterWaitAdmittedReportReplacesOlderPartial(t *testing.T) {
 					if calls == 1 {
 						current.PolicyRemoved = true
 						current.Daemons["a"] = MirrorDirectoryRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
-						return current, true, cephFSObserveQuery("native query", peerRemovalTransport)
+						return current, true, cephFSObserveQuery("native query", errPeerRemovalTransport)
 					}
 					cancel()
 					return current, true, context.Canceled
@@ -195,7 +195,7 @@ func TestMultiClusterWaitAdmittedReportReplacesOlderPartial(t *testing.T) {
 				err = cause
 				result = multiClusterWaitRemovalResult{status.Daemons["a"].Problem, status.Daemons["a"].State, status.PolicyRemoved, status.Released, cause}
 			}
-			if calls != 2 || result.problem != "" || result.state != "unobserved" || result.policyRemoved || result.terminal || !errors.Is(err, context.Canceled) || !errors.Is(err, peerRemovalTransport) {
+			if calls != 2 || result.problem != "" || result.state != "unobserved" || result.policyRemoved || result.terminal || !errors.Is(err, context.Canceled) || !errors.Is(err, errPeerRemovalTransport) {
 				t.Fatalf("new admitted report was replaced by stale proof: %+v calls=%d", result, calls)
 			}
 		})

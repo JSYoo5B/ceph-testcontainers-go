@@ -220,7 +220,7 @@ func rgwScenarioRequest(ctx context.Context, client s3HTTPClient, method, path s
 	if err != nil {
 		return 0, nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	return response.StatusCode, body, err
 }

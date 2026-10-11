@@ -5,7 +5,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -188,7 +187,7 @@ func fencingWait(t *testing.T, parent context.Context, client testcontainers.Con
 			diagnostics, stop := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 			defer stop()
 			log := fencingExec(t, diagnostics, client, []string{"cat", "/tmp/tc-fencing.log"})
-			t.Fatal(fmt.Sprintf("native fencing phase %s not observed: %+v %v %s", phase, status, ctx.Err(), strings.TrimSpace(string(log))))
+			t.Fatalf("native fencing phase %s not observed: %+v %v %s", phase, status, ctx.Err(), strings.TrimSpace(string(log)))
 		case <-time.After(150 * time.Millisecond):
 		}
 	}

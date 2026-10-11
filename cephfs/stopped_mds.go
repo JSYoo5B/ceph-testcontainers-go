@@ -109,8 +109,7 @@ func (fs *Filesystem) RemoveStoppedMDS(parent context.Context, daemon *MDS) erro
 	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
 		return err
 	}
-	missing, err := inspectStoppedMDS(ctx, i, false)
-	if err != nil {
+	if _, err := inspectStoppedMDS(ctx, i, false); err != nil {
 		return err
 	}
 	scope, err := fs.readStoppedMDSScope(ctx, i)
@@ -131,7 +130,7 @@ func (fs *Filesystem) RemoveStoppedMDS(parent context.Context, daemon *MDS) erro
 	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
 		return err
 	}
-	missing, err = inspectStoppedMDS(ctx, i, false)
+	missing, err := inspectStoppedMDS(ctx, i, false)
 	if err != nil {
 		return err
 	}

@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
 	"io"
 	"slices"
 	"time"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
 )
 
 // MirrorDirectoryRemoval retains an explicit path removal and its original
@@ -485,13 +486,6 @@ func (r *MirrorDirectoryRemoval) WaitReleased(ctx context.Context) (MirrorDirect
 		admitted := false
 		status, err := r.statusWithAdmission(attempt, &admitted)
 		return status, admitted, err
-	})
-}
-
-func waitCephFSDirectoryReleased(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorDirectoryRemovalStatus, error)) (MirrorDirectoryRemovalStatus, error) {
-	return waitCephFSDirectoryReleasedWithAdmission(ctx, interval, func(attempt context.Context) (MirrorDirectoryRemovalStatus, bool, error) {
-		status, err := observe(attempt)
-		return status, true, err
 	})
 }
 

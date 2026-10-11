@@ -61,7 +61,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 						t.Fatal(err)
 					}
 					data, readErr := io.ReadAll(reader)
-					reader.Close()
+					_ = reader.Close()
 					if readErr != nil || !bytes.Equal(data, bytes.Repeat([]byte{byte(i + 1)}, 32<<10)) {
 						t.Fatalf("retained object-%d changed: bytes=%d error=%v", i, len(data), readErr)
 					}

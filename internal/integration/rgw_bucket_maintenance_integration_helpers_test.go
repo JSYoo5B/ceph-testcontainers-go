@@ -35,7 +35,7 @@ func rgwMaintenanceRequest(t *testing.T, ctx context.Context, client s3HTTPClien
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var data bytes.Buffer
 	if _, err := data.ReadFrom(response.Body); err != nil {
 		t.Fatal(err)

@@ -69,7 +69,7 @@ func TestCephFSDirectoryAdditionRetriesOnlyUncertainAbsentRequest(t *testing.T) 
 			m, s, _ := newDirectoryAdditionFixture(t)
 			s.applyAdd = false
 			if !acknowledged {
-				s.addError = peerRemovalTransport
+				s.addError = errPeerRemovalTransport
 			}
 			r, err := beginDirectoryAdditionFixture(t, m, "/added")
 			if r == nil || err == nil || r.registered || s.adds != 1 || r.requestAcknowledged != acknowledged {
@@ -164,8 +164,8 @@ func TestCephFSDirectoryAdditionPreflightRejectsForeignOwnedAndMalformedPolicy(t
 
 func TestCephFSDirectoryAdditionDoesNotAdoptLegacyLostReply(t *testing.T) {
 	m, s, _ := newDirectoryAdditionFixture(t)
-	s.addError = peerRemovalTransport
-	if err := m.AddDirectory(t.Context(), "/added"); !errors.Is(err, peerRemovalTransport) || !slices.Contains(s.directories, "/added") || m.ownedDirectories["/added"] {
+	s.addError = errPeerRemovalTransport
+	if err := m.AddDirectory(t.Context(), "/added"); !errors.Is(err, errPeerRemovalTransport) || !slices.Contains(s.directories, "/added") || m.ownedDirectories["/added"] {
 		t.Fatal("legacy setup did not retain its previous contract")
 	}
 	r, err := beginDirectoryAdditionFixture(t, m, "/added")
@@ -178,7 +178,7 @@ func TestCephFSDirectoryAdditionPendingOverlapIncludesRemovalRetryShortcuts(t *t
 	for _, operation := range []string{"legacy-add-same", "legacy-add-other", "typed-add-other", "daemon-add", "rebalance", "bootstrap", "peer-begin-retry", "peer-remove-retry", "directory-begin-retry", "directory-remove-retry"} {
 		t.Run(operation, func(t *testing.T) {
 			m, s, _ := newDirectoryAdditionFixture(t)
-			s.addError = peerRemovalTransport
+			s.addError = errPeerRemovalTransport
 			r, err := beginDirectoryAdditionFixture(t, m, "/added")
 			if r == nil || err == nil {
 				t.Fatal("missing pending intent")
@@ -221,7 +221,7 @@ func TestCephFSDirectoryAdditionOriginalOwnerAndGenerationGuards(t *testing.T) {
 	for _, fault := range []string{"closed", "source-handle", "source-name", "source-client", "dest-name", "source-id", "dest-id", "source-pool-name", "source-pool", "dest-pool", "dest-client", "dest-site", "peer", "peer-generation", "pending-peer", "path-generation", "path-owned", "pending-release", "cluster", "native-fs", "native-peer"} {
 		t.Run(fault, func(t *testing.T) {
 			m, s, d := newDirectoryAdditionFixture(t)
-			s.addError = peerRemovalTransport
+			s.addError = errPeerRemovalTransport
 			r, _ := beginDirectoryAdditionFixture(t, m, "/added")
 			if r == nil {
 				t.Fatal("missing intent")
@@ -290,7 +290,7 @@ func TestCephFSDirectoryAdditionFinalNativePathDriftNeverPublishes(t *testing.T)
 			m, s, _ := newDirectoryAdditionFixture(t)
 			var r *MirrorDirectoryAddition
 			if phase != "preflight" {
-				s.addError = peerRemovalTransport
+				s.addError = errPeerRemovalTransport
 				r, _ = beginDirectoryAdditionFixture(t, m, "/added")
 			}
 			reads := 0
@@ -298,11 +298,12 @@ func TestCephFSDirectoryAdditionFinalNativePathDriftNeverPublishes(t *testing.T)
 				if slices.Equal(args, []string{"ceph", "--connect-timeout", "5", "fs", "snapshot", "mirror", "peer_list", "source"}) {
 					reads++
 					if reads == 3 {
-						if phase == "preflight" {
+						switch phase {
+						case "preflight":
 							s.directories = append(s.directories, "/added")
-						} else if phase == "publish" {
+						case "publish":
 							s.directories = []string{"/owned"}
-						} else {
+						default:
 							s.directories = append(s.directories, "/added/foreign")
 						}
 					}
@@ -340,14 +341,14 @@ func TestCephFSDirectoryAdditionSupersedesOldRemovalBeforeUncertainAdd(t *testin
 	m.Directories, s.directories = nil, nil
 	old := &MirrorDirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
 	m.directoryRemoval = old
-	s.addError = peerRemovalTransport
+	s.addError = errPeerRemovalTransport
 	s.hook = func(_ *directoryRemovalControlFake, args []string) {
 		if len(args) == 6 && args[3] == "add" && !old.superseded {
 			t.Fatal("old removal remained usable at uncertain add dispatch")
 		}
 	}
 	r, err := beginDirectoryAdditionFixture(t, m, "/owned")
-	if r == nil || !errors.Is(err, peerRemovalTransport) || !old.superseded || m.directoryGenerations["/owned"] != 1 || m.ownedDirectories["/owned"] || r.baseGeneration != 1 {
+	if r == nil || !errors.Is(err, errPeerRemovalTransport) || !old.superseded || m.directoryGenerations["/owned"] != 1 || m.ownedDirectories["/owned"] || r.baseGeneration != 1 {
 		t.Fatal("uncertain re-add adopted generation or kept old removal")
 	}
 	if same, err := beginDirectoryAdditionFixture(t, m, "/owned"); same != r || err != nil || m.directoryGenerations["/owned"] != 2 || !m.ownedDirectories["/owned"] || old.completed {
@@ -366,10 +367,10 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 			beforeGeneration := m.directoryGenerations["/added"]
 			switch operation {
 			case "legacy-remove-error":
-				s.removeError = peerRemovalTransport
+				s.removeError = errPeerRemovalTransport
 				err = m.RemoveDirectory(t.Context(), "/added")
 			case "legacy-add-error":
-				s.addError = peerRemovalTransport
+				s.addError = errPeerRemovalTransport
 				err = m.AddDirectory(t.Context(), "/added")
 			case "rebalance-remove-error", "rebalance-add-error":
 				// Restore existing fake running topology, without real construction.
@@ -377,10 +378,10 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 				m.daemons = []*MirrorDaemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}
 				m.ownedDirectories = map[string]bool{"/added": true}
 				if operation == "rebalance-remove-error" {
-					s.removeError = peerRemovalTransport
+					s.removeError = errPeerRemovalTransport
 				} else {
 					s.directories = []string{"/owned"}
-					s.addError = peerRemovalTransport
+					s.addError = errPeerRemovalTransport
 				}
 				err = m.RebalanceDirectories(t.Context())
 			case "typed-remove":
@@ -397,7 +398,7 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 			case "other-typed-add":
 				_, err = beginDirectoryAdditionFixture(t, m, "/other")
 			}
-			if !r.superseded || (strings.HasSuffix(operation, "error") && !errors.Is(err, peerRemovalTransport)) || (operation == "typed-remove" && err != nil) || (operation == "other-typed-add" && err != nil) {
+			if !r.superseded || (strings.HasSuffix(operation, "error") && !errors.Is(err, errPeerRemovalTransport)) || (operation == "typed-remove" && err != nil) || (operation == "other-typed-add" && err != nil) {
 				t.Fatalf("later %s retained old addition: %v", operation, err)
 			}
 			if operation != "typed-remove" && m.directoryGenerations["/added"] != beforeGeneration {
@@ -423,7 +424,7 @@ func TestCephFSDirectoryAdditionNilCanceledQueryAndFinalOwnerDrift(t *testing.T)
 	for _, fault := range []string{"canceled", "query", "final-context", "final-owner"} {
 		t.Run(fault, func(t *testing.T) {
 			m, s, _ := newDirectoryAdditionFixture(t)
-			s.addError = peerRemovalTransport
+			s.addError = errPeerRemovalTransport
 			r, _ := beginDirectoryAdditionFixture(t, m, "/added")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -478,9 +479,9 @@ func TestCephFSDirectoryAdditionFreshQueryFailureKeepsPublishedOwnership(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.peerRemovalControlFake.queryError = peerRemovalTransport
+	s.peerRemovalControlFake.queryError = errPeerRemovalTransport
 	st, err := r.Status(t.Context())
-	if !errors.Is(err, peerRemovalTransport) || st.Registered || st.PolicyPresent || !r.registered || !m.ownedDirectories["/added"] || m.directoryGenerations["/added"] != 1 || m.guardDirectoryAdditionOverlap() != nil || s.adds != 1 {
+	if !errors.Is(err, errPeerRemovalTransport) || st.Registered || st.PolicyPresent || !r.registered || !m.ownedDirectories["/added"] || m.directoryGenerations["/added"] != 1 || m.guardDirectoryAdditionOverlap() != nil || s.adds != 1 {
 		t.Fatal("fresh observation reused report or revoked historical publication")
 	}
 }
@@ -507,7 +508,7 @@ func TestCephFSDirectoryAdditionReadOnlyStatusHasBoundedDeadline(t *testing.T) {
 
 func TestCephFSDirectoryAdditionFinalProofRetainsFixtureGate(t *testing.T) {
 	m, s, _ := newDirectoryAdditionFixture(t)
-	s.addError = peerRemovalTransport
+	s.addError = errPeerRemovalTransport
 	r, _ := beginDirectoryAdditionFixture(t, m, "/added")
 	entered, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
@@ -632,7 +633,7 @@ func TestCephFSDirectoryAdditionPeerRemovalSupersedesBeforeUnappliedAttempt(t *t
 			originalPeer, originalGeneration := m.peerID, m.peerGeneration
 			originalMON, originalMGR := s.fsPeers, s.managerPeers
 			s.peerRemovalControlFake.applyRemoval = false
-			s.peerRemovalControlFake.removeError = peerRemovalTransport
+			s.peerRemovalControlFake.removeError = errPeerRemovalTransport
 			s.peerRemovalControlFake.hook = func(_ *peerRemovalControlFake, args []string) {
 				if len(args) >= 9 && slices.Equal(args[len(args)-6:], []string{"fs", "snapshot", "mirror", "peer_remove", "source", originalPeer}) && !addition.superseded {
 					t.Fatal("peer CLI dispatched before addition supersession")
@@ -647,7 +648,7 @@ func TestCephFSDirectoryAdditionPeerRemovalSupersedesBeforeUnappliedAttempt(t *t
 					t.Fatal("typed failed request lost original intent")
 				}
 			}
-			if !errors.Is(err, peerRemovalTransport) || !addition.superseded || m.peerID != originalPeer || m.peerGeneration != originalGeneration || s.fsPeers != originalMON || s.managerPeers != originalMGR || s.peerRemovalControlFake.removals != 1 || m.directoryGenerations["/added"] != 1 {
+			if !errors.Is(err, errPeerRemovalTransport) || !addition.superseded || m.peerID != originalPeer || m.peerGeneration != originalGeneration || s.fsPeers != originalMON || s.managerPeers != originalMGR || s.peerRemovalControlFake.removals != 1 || m.directoryGenerations["/added"] != 1 {
 				t.Fatalf("unapplied %s peer removal retained addition authority or changed scope: %v", operation, err)
 			}
 			before := len(s.calls)

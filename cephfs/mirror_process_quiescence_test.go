@@ -273,7 +273,7 @@ func TestCephFSOriginalProcessUsesUncachedRawClientAndRetainsEndpoint(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	// TC wrapper is deliberately present. Binding receives its exported raw Client.
 	wrapper := &testcontainers.DockerClient{Client: raw}
 	b, err := bindCephFSOriginalProcess(t.Context(), h, wrapper.Client)

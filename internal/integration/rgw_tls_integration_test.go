@@ -91,7 +91,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			response.Body.Close()
+			_ = response.Body.Close()
 			if response.TLS == nil || len(response.TLS.VerifiedChains) == 0 || response.TLS.Version < tls.VersionTLS12 {
 				t.Fatal("consumer did not verify actual native TLS certificate")
 			}
@@ -99,7 +99,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			defer untrustedTransport.CloseIdleConnections()
 			untrusted := &http.Client{Transport: untrustedTransport, Timeout: 10 * time.Second}
 			if response, err := untrusted.Do(request.Clone(ctx)); err == nil {
-				response.Body.Close()
+				_ = response.Body.Close()
 				t.Fatal("consumer accepted certificate without fixture CA")
 			} else {
 				var unknown x509.UnknownAuthorityError

@@ -137,7 +137,7 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 		return cleanupFailedHostPortLease(lease, fmt.Errorf("read host port reservations: %w", err))
 	}
 	output, err := io.ReadAll(logs)
-	logs.Close()
+	_ = logs.Close()
 	if err == nil {
 		lease.Ports, err = parseHostPortLease(output, count)
 	}
@@ -161,7 +161,7 @@ func allocatorFailure(ctr testcontainers.Container, address string, cause error)
 		return err
 	}
 	output, _ := io.ReadAll(logs)
-	logs.Close()
+	_ = logs.Close()
 	if strings.Contains(string(output), "Cannot assign requested address") {
 		return fmt.Errorf("%w: address %s is not assigned on the Docker host: %w", ErrHostNetworkUnavailable, address, err)
 	}
@@ -249,7 +249,7 @@ func checkHostNetworkEngine(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
 	}
-	defer docker.Close()
+	defer func() { _ = docker.Close() }()
 	info, err := docker.Info(ctx, mobycl.InfoOptions{})
 	if err != nil {
 		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
@@ -283,7 +283,7 @@ func probeBanner(ctx context.Context, endpoint, banner string, window time.Durat
 		conn, err := dialer.DialContext(ctx, "tcp", endpoint)
 		if err == nil {
 			last = readBanner(conn, banner)
-			conn.Close()
+			_ = conn.Close()
 			if last == nil || errors.Is(last, errForeignResponder) {
 				return last
 			}
@@ -321,7 +321,7 @@ func hostNetworkHint(ctx context.Context, address string) string {
 			operatingSystem = info.Info.OperatingSystem
 		}
 		daemonHost = docker.DaemonHost()
-		docker.Close()
+		_ = docker.Close()
 	}
 	return describeHostNetworkFailure(operatingSystem, daemonHost, address)
 }
@@ -355,7 +355,7 @@ func isPortConflict(ctx context.Context, ctr testcontainers.Container) bool {
 	if err != nil {
 		return false
 	}
-	defer logs.Close()
+	defer func() { _ = logs.Close() }()
 	output, err := io.ReadAll(logs)
 	if err != nil {
 		return false

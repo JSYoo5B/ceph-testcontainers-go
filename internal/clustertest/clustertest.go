@@ -235,7 +235,7 @@ func (f *StateFake) render() {
 	}
 	filesystems := []filesystem{}
 	for _, fs := range f.Filesystems {
-		filesystems = append(filesystems, filesystem{fs.Name, fs.Metadata, fs.Data})
+		filesystems = append(filesystems, filesystem(fs))
 	}
 	config := []map[string]any{}
 	if f.AllowDelete != nil {

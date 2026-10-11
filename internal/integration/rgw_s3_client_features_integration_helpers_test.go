@@ -217,7 +217,7 @@ func s3FeatureRequest(t *testing.T, ctx context.Context, client s3HTTPClient, me
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatal(err)

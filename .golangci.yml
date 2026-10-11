@@ -1,0 +1,27 @@
+version: "2"
+
+run:
+  # Integration and optional consumer tests compile only with these tags.
+  build-tags:
+    - all
+    - goceph
+    - native_regression
+
+linters:
+  default: standard
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # Defaults of golangci-lint: package comments and naming conventions
+        # that do not fit generated or test code.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # Explicit conditions and selectors of embedded containers are kept on
+        # purpose where they read closer to the native state they check.
+        - -QF1001
+        - -QF1008

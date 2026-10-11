@@ -2,6 +2,7 @@ package ceph_test
 
 import (
 	"context"
+	"log"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
@@ -13,9 +14,11 @@ import (
 func ExampleRun() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}
@@ -38,9 +41,11 @@ func ExampleRun_services() {
 		cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
 		rgw.WithGateways(rgw.Config{Name: "s3"}),
 	)
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}
@@ -51,9 +56,11 @@ func ExampleRun_services() {
 func ExampleContainer_TemporaryConfig() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}

@@ -41,7 +41,7 @@ func osdMemoryFailureLogs(t *testing.T, parent context.Context, ctr testcontaine
 		t.Logf("OSD_MEMORY_FAILURE_LOG cid=%s unavailable=%v", ctr.GetContainerID(), err)
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	tail := &osdMemoryLogTail{}
 	_, err = io.Copy(tail, reader)
 	t.Logf("OSD_MEMORY_FAILURE_LOG cid=%s tail_bytes=%d error=%v\n%s", ctr.GetContainerID(), len(tail.data), err, tail.data)

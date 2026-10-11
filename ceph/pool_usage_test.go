@@ -134,7 +134,7 @@ func TestPoolUsageRejectsUnreportedOrAmbiguousStatistics(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cluster, ctr := newPoolUsageFixture()
 			ctr.Output["df detail --format json"] = data
-			assertPoolUsageFailure(t, cluster, t.Context(), "")
+			_ = assertPoolUsageFailure(t, cluster, t.Context(), "")
 			if len(ctr.Calls) != 3 {
 				t.Fatalf("invalid statistics continued observation: %v", ctr.Calls)
 			}
@@ -156,7 +156,7 @@ func TestPoolUsageRejectsIdentityDriftAndMalformedPoolLists(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cluster, ctr := newPoolUsageFixture()
 			ctr.Output["osd pool ls detail --format json"] = data
-			assertPoolUsageFailure(t, cluster, t.Context(), "")
+			_ = assertPoolUsageFailure(t, cluster, t.Context(), "")
 			if len(ctr.Calls) != 2 {
 				t.Fatalf("ambiguous pool reached statistics command: %v", ctr.Calls)
 			}
@@ -177,7 +177,7 @@ func TestPoolUsageRejectsIdentityDriftAndMalformedPoolLists(t *testing.T) {
 				}
 				return nil
 			}
-			assertPoolUsageFailure(t, cluster, t.Context(), "")
+			_ = assertPoolUsageFailure(t, cluster, t.Context(), "")
 		})
 	}
 }
@@ -283,7 +283,7 @@ func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 			case "ambiguous uuid":
 				cluster.config = append(cluster.config, []byte("fsid = "+poolUsageFixtureFSID+"\n")...)
 			}
-			assertPoolUsageFailure(t, cluster, t.Context(), "")
+			_ = assertPoolUsageFailure(t, cluster, t.Context(), "")
 			if len(ctr.Calls) != 0 {
 				t.Fatal("unavailable fixture queried native state")
 			}

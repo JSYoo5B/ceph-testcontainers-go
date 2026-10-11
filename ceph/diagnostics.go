@@ -523,7 +523,7 @@ func diagnosticLogs(ctx context.Context, docker diagnosticsDocker, id string, co
 	if err != nil {
 		return "", false, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = reader.Close() })
 	defer stop()
 	tail := &diagnosticTail{limit: config.MaxOutputBytes}

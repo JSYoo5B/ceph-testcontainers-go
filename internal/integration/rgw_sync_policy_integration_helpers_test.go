@@ -275,7 +275,7 @@ func waitOwnedSyncObject(t *testing.T, ctx context.Context, client s3HTTPClient,
 			response, err := client.http.Do(request)
 			if err == nil {
 				body, readErr := io.ReadAll(response.Body)
-				response.Body.Close()
+				_ = response.Body.Close()
 				code := rgwBackendErrorCode(body)
 				matches := (status == http.StatusNotFound && code == "NoSuchKey") || (status != http.StatusNotFound && bytes.Equal(body, payload))
 				if wait.Err() == nil && readErr == nil && response.StatusCode == status && matches {

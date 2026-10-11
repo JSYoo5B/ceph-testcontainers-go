@@ -565,9 +565,6 @@ func (f *Multisite) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, gro
 	return data, err
 }
 
-func syncNativeExec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
-	return syncNativeExecMode(ctx, ctr, false, args...)
-}
 func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, status bool, args ...string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

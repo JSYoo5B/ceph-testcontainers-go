@@ -180,7 +180,7 @@ func cephFSAssertManagerPeerNetworks(t *testing.T, ctx context.Context, source *
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close()
+	defer func() { _ = docker.Close() }()
 	for _, manager := range source.Managers() {
 		inspection, err := docker.ContainerInspect(ctx, manager.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {

@@ -61,7 +61,12 @@ make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
 make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
 make tag-compile  # compile every tagged test file without running it
 make check        # all four of the above; never starts Docker
+make lint         # golangci-lint v2.14.0 with .golangci.yml
 ```
+
+`make lint` needs golangci-lint installed. Its configuration enables every
+build tag, so it also checks the integration and go-ceph files, and the Code
+checks workflow runs the same version.
 
 `make test`, `make race` and `make vet` see only untagged files.
 `make tag-compile` builds the test packages with `-tags=all` and with

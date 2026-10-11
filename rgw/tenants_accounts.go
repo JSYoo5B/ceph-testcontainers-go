@@ -115,7 +115,7 @@ func normalizeRGWAccountConfig(config AccountConfig) (AccountConfig, error) {
 		}
 	}
 	if strings.ContainsAny(config.Name, "$:") {
-		return config, errors.New("RGW account name must not contain $ or :")
+		return config, errors.New("RGW account name must not contain $ or a colon")
 	}
 	if config.MaxBuckets != nil {
 		if *config.MaxBuckets < -1 {

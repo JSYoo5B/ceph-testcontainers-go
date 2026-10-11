@@ -104,7 +104,7 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 						continue
 					}
 					data, _ := io.ReadAll(logs)
-					logs.Close()
+					_ = logs.Close()
 					if len(data) > 16000 {
 						data = data[len(data)-16000:]
 					}

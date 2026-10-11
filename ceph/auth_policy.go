@@ -48,7 +48,7 @@ func (c *Container) ownedClientCapabilities(ctx context.Context, client *ClientC
 		return ClientCaps{}, errors.New("ceph cluster is terminated")
 	}
 	if client == nil || client.owner != c || !client.created || !client.ready || client.revoked {
-		return ClientCaps{}, errors.New("Cephx client must be an active identity created by this cluster")
+		return ClientCaps{}, errors.New("cephx client must be an active identity created by this cluster")
 	}
 	data, err := c.clientAuthCommand(ctx, "inspect capabilities of "+client.name, "auth", "get", client.name, "--format", "json")
 	if err != nil {
@@ -64,7 +64,7 @@ func (c *Container) ownedClientCapabilities(ctx context.Context, client *ClientC
 	}
 	entry := entries[0]
 	if entry.Key != clientKey(client.keyring, client.name) {
-		return ClientCaps{}, fmt.Errorf("Cephx identity %s has a different key; refusing capability access", client.name)
+		return ClientCaps{}, fmt.Errorf("cephx identity %s has a different key; refusing capability access", client.name)
 	}
 	return ClientCaps{Mon: entry.Caps["mon"], OSD: entry.Caps["osd"], MGR: entry.Caps["mgr"], MDS: entry.Caps["mds"]}, nil
 }

@@ -174,13 +174,13 @@ func TestHostPortAllocatorHoldsAllSocketsUntilProcessEnds(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {
-			cmd.Process.Kill()
-			cmd.Wait()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 		}
 	})
 	scanner := bufio.NewScanner(stdout)
 	if !scanner.Scan() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		if strings.Contains(diagnostics.String(), "PermissionError") && strings.Contains(diagnostics.String(), "Operation not permitted") {
 			t.Skip("environment does not allow binding temporary localhost sockets")
 		}
@@ -194,7 +194,7 @@ func TestHostPortAllocatorHoldsAllSocketsUntilProcessEnds(t *testing.T) {
 		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 		listener, err := net.Listen("tcp", address)
 		if err == nil {
-			listener.Close()
+			_ = listener.Close()
 			t.Fatalf("allocator returned a port it did not hold: %s", address)
 		}
 		if !errors.Is(err, syscall.EADDRINUSE) {
@@ -212,7 +212,7 @@ func TestHostPortAllocatorHoldsAllSocketsUntilProcessEnds(t *testing.T) {
 		if err != nil {
 			t.Fatalf("allocator process exit did not release port %d: %v", port, err)
 		}
-		listener.Close()
+		_ = listener.Close()
 	}
 }
 
@@ -247,7 +247,7 @@ func bannerListener(t *testing.T, serve func(net.Conn)) string {
 	if err != nil {
 		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
 	}
-	t.Cleanup(func() { listener.Close() })
+	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -255,21 +255,21 @@ func bannerListener(t *testing.T, serve func(net.Conn)) string {
 				return
 			}
 			serve(conn)
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 	return listener.Addr().String()
 }
 
 func TestProbeBannerAcceptsMonitorBanner(t *testing.T) {
-	endpoint := bannerListener(t, func(conn net.Conn) { io.WriteString(conn, monitorBanner+"\x10\x00") })
+	endpoint := bannerListener(t, func(conn net.Conn) { _, _ = io.WriteString(conn, monitorBanner+"\x10\x00") })
 	if err := probeBanner(t.Context(), endpoint, monitorBanner, time.Second); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestProbeBannerRejectsForeignResponderWithoutWaiting(t *testing.T) {
-	endpoint := bannerListener(t, func(conn net.Conn) { io.WriteString(conn, "SSH-2.0-OpenSSH\r\n") })
+	endpoint := bannerListener(t, func(conn net.Conn) { _, _ = io.WriteString(conn, "SSH-2.0-OpenSSH\r\n") })
 	started := time.Now()
 	err := probeBanner(t.Context(), endpoint, monitorBanner, 5*time.Second)
 	if !errors.Is(err, errForeignResponder) {
@@ -286,17 +286,17 @@ func TestProbeBannerRetriesUntilEndpointAppears(t *testing.T) {
 		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
 	}
 	endpoint := reserved.Addr().String()
-	reserved.Close()
+	_ = reserved.Close()
 	go func() {
 		time.Sleep(3 * hostProbeRetry)
 		listener, err := net.Listen("tcp", endpoint)
 		if err != nil {
 			return
 		}
-		t.Cleanup(func() { listener.Close() })
+		t.Cleanup(func() { _ = listener.Close() })
 		if conn, err := listener.Accept(); err == nil {
-			io.WriteString(conn, monitorBanner)
-			conn.Close()
+			_, _ = io.WriteString(conn, monitorBanner)
+			_ = conn.Close()
 		}
 	}()
 	if err := probeBanner(t.Context(), endpoint, monitorBanner, 5*time.Second); err != nil {
@@ -311,7 +311,7 @@ func TestProbeBannerFailsWithinWindow(t *testing.T) {
 		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
 	}
 	closed := refused.Addr().String()
-	refused.Close()
+	_ = refused.Close()
 	for name, endpoint := range map[string]string{"refused": closed, "accept then close": silentClose} {
 		t.Run(name, func(t *testing.T) {
 			started := time.Now()
@@ -332,7 +332,7 @@ func TestVerifyHostMonitorWrapsSentinel(t *testing.T) {
 		t.Skipf("environment does not allow temporary localhost listeners: %v", err)
 	}
 	port := refused.Addr().(*net.TCPAddr).Port
-	refused.Close()
+	_ = refused.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
 	if err := verifyHostMonitor(ctx, "127.0.0.1", port); !errors.Is(err, ErrHostNetworkUnavailable) {

@@ -178,7 +178,7 @@ func diagnosticsCaptureState(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer docker.Close()
+	defer func() { _ = docker.Close() }()
 	all, err := docker.ContainerList(ctx, mobycl.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal(err)

@@ -126,7 +126,7 @@ func multiClusterLogContainer(t *testing.T, ctx context.Context, ctr testcontain
 		return
 	}
 	data, _ := io.ReadAll(logs)
-	logs.Close()
+	_ = logs.Close()
 	if len(data) > 8000 {
 		data = data[len(data)-8000:]
 	}
@@ -155,7 +155,7 @@ func multiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatal(err)

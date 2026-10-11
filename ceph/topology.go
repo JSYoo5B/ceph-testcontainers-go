@@ -679,9 +679,10 @@ func monitorConfigComment(line string) (int, error) {
 			}
 			continue
 		}
-		if char == '\'' || char == '"' {
+		switch char {
+		case '\'', '"':
 			quoted = char
-		} else if char == '#' || char == ';' {
+		case '#', ';':
 			return index, nil
 		}
 	}

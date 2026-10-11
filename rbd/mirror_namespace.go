@@ -205,12 +205,12 @@ func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Con
 // legacyClient reports whether client is the setup client of a Ceph 19
 // cluster in this link.
 func (m *Mirror) legacyClient(client testcontainers.Container) bool {
-	switch {
-	case client == nil:
+	switch client {
+	case nil:
 		return false
-	case client == m.sourceClient:
+	case m.sourceClient:
 		return multicluster.CephBefore(m.config.Source, 20)
-	case client == m.destinationClient:
+	case m.destinationClient:
 		return multicluster.CephBefore(m.config.Destination, 20)
 	}
 	return false

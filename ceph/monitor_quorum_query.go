@@ -147,7 +147,7 @@ func monitorQuorumCommand(ctx context.Context, control testcontainers.Container,
 		return nil, errors.New("monitor quorum supervisor returned no output")
 	}
 	if closer, ok := reader.(io.Closer); ok {
-		defer closer.Close()
+		defer func() { _ = closer.Close() }()
 	}
 	// Both streams are bounded inside the container before Testcontainers buffers.
 	envelopeLimit := (monitorQuorumStdoutLimit+monitorQuorumStderrLimit)*2 + 4096

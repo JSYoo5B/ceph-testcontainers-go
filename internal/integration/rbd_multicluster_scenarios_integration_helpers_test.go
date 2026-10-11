@@ -84,7 +84,7 @@ func rbdScenarioWaitBytes(t *testing.T, parent context.Context, client testconta
 			reader, readErr := client.CopyFileFromContainer(attempt, "/tmp/rbd-scenario-result")
 			if readErr == nil {
 				actual, readErr := io.ReadAll(reader)
-				reader.Close()
+				_ = reader.Close()
 				if readErr == nil && bytes.Equal(actual, expected) {
 					t.Logf("RBD %s complete bytes verified: sha256=%x", image, sha256.Sum256(expected))
 					stop()

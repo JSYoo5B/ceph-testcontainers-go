@@ -253,7 +253,7 @@ func quiesceWait(t *testing.T, parent context.Context, client testcontainers.Con
 			diagnostic, stop := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 			defer stop()
 			log := fencingExec(t, diagnostic, client, []string{"cat", "/tmp/tc-quiesce.log"})
-			t.Fatal(fmt.Sprintf("quiesce native phase %s missing: %+v %v %s", phase, state, ctx.Err(), log))
+			t.Fatalf("quiesce native phase %s missing: %+v %v %s", phase, state, ctx.Err(), log)
 		case <-time.After(150 * time.Millisecond):
 		}
 	}

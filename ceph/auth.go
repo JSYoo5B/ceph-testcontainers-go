@@ -64,7 +64,7 @@ func (client ClientConfig) GoString() string { return client.String() }
 // sessions immediately. Test revoked credentials with a fresh connection.
 func (client *ClientConfig) ConnectionConfig() ([]byte, []byte, error) {
 	if client == nil || !client.ready || len(client.config) == 0 || len(client.keyring) == 0 {
-		return nil, nil, errors.New("Cephx client credentials are unavailable")
+		return nil, nil, errors.New("cephx client credentials are unavailable")
 	}
 	return bytes.Clone(client.config), bytes.Clone(client.keyring), nil
 }
@@ -138,7 +138,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	for _, existing := range listing.AuthDump {
 		if existing.Entity == entity {
-			return nil, fmt.Errorf("Cephx identity %q already exists", entity)
+			return nil, fmt.Errorf("cephx identity %q already exists", entity)
 		}
 	}
 	client := &ClientConfig{owner: c, name: entity}
@@ -173,7 +173,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 		return client, err
 	}
 	if clientKey(keyring, entity) != clientKey(client.keyring, entity) {
-		return client, fmt.Errorf("Cephx keyring for %s does not contain the created key", entity)
+		return client, fmt.Errorf("cephx keyring for %s does not contain the created key", entity)
 	}
 	client.keyring = bytes.Clone(keyring)
 	client.ready = true
@@ -197,7 +197,7 @@ func (c *Container) WithClientIdentity(client *ClientConfig) testcontainers.Cust
 			return errors.New("ceph cluster is terminated")
 		}
 		if client == nil || client.owner != c || !client.ready || client.revoked || len(client.keyring) == 0 {
-			return errors.New("Cephx client must be an active identity created by this cluster")
+			return errors.New("cephx client must be an active identity created by this cluster")
 		}
 		if c.settings.hostNetwork {
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
@@ -226,7 +226,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 		return errors.New("ceph cluster is terminated")
 	}
 	if client == nil || client.owner != c || !client.created {
-		return errors.New("Cephx client was not created successfully by this cluster")
+		return errors.New("cephx client was not created successfully by this cluster")
 	}
 	if client.revoked {
 		return nil
@@ -238,7 +238,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 		return err
 	}
 	if len(client.keyring) != 0 && clientKey(keyring, client.name) != clientKey(client.keyring, client.name) {
-		return fmt.Errorf("Cephx identity %s has a different key; refusing revocation", client.name)
+		return fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name)
 	}
 	if _, err := c.clientAuthCommand(ctx, "revoke "+client.name, "auth", "del", client.name); err != nil {
 		return err

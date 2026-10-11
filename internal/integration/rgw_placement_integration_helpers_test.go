@@ -147,7 +147,7 @@ func rgwPlacementWaitCreateBucket(t *testing.T, parent context.Context, client s
 		response, err := client.http.Do(req)
 		if err == nil {
 			body, err = io.ReadAll(response.Body)
-			response.Body.Close()
+			_ = response.Body.Close()
 			status = response.StatusCode
 			if err != nil {
 				t.Fatal(err)
@@ -355,7 +355,7 @@ func rgwPlacementRequest(t *testing.T, ctx context.Context, client s3HTTPClient,
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil || response.StatusCode != status {
 		t.Fatalf("S3 storageclass %s returned %d: %s %v", storageClass, response.StatusCode, data, err)

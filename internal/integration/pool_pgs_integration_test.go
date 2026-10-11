@@ -116,7 +116,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	actual, err := io.ReadAll(r)
-	r.Close()
+	_ = r.Close()
 	if err != nil || !bytes.Equal(actual, payload) {
 		t.Fatal("replicated PG fixture retained bytes changed", err)
 	}

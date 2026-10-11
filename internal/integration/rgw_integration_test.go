@@ -104,7 +104,7 @@ func TestRGWS3(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		response.Body.Close()
+		_ = response.Body.Close()
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("unsigned private %s S3 read returned %d, want 403", fixture.name, response.StatusCode)
 		}

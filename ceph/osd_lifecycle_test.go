@@ -102,15 +102,16 @@ func TestOSDRemovalRechecksIdentityBetweenAllRemovalPhases(t *testing.T) {
 				state.UUID = osdLifecycleForeignUUID
 				control.native[3] = state
 			}
-			if phase == "stop" {
+			switch phase {
+			case "stop":
 				daemon.afterStop = replace
-			} else if phase == "down read" {
+			case "down read":
 				control.afterDump = func() {
 					if daemon.stops != 0 {
 						replace()
 					}
 				}
-			} else {
+			default:
 				control.afterAction = func(action string) {
 					if strings.Contains(action, phase) {
 						replace()

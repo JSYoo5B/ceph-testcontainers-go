@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/google/uuid"
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
@@ -337,36 +338,6 @@ func rgwEndpointArgs(args []string, endpoint string) []string {
 		args = append(args, "--endpoints", endpoint)
 	}
 	return args
-}
-
-func (f *Multisite) waitCommittedEndpoints(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	var last error
-	for {
-		last = nil
-		for _, item := range []struct {
-			client testcontainers.Container
-			zone   string
-		}{{f.sourceClient, f.config.SourceZone}, {f.destinationClient, f.config.DestinationZone}} {
-			data, err := f.admin(ctx, item.client, item.zone, "period", "get", "--format", "json")
-			if err == nil {
-				err = f.validatePeriodEndpoints(data)
-			}
-			if err != nil {
-				last = fmt.Errorf("verify committed RGW period in zone %s: %w", item.zone, err)
-				break
-			}
-		}
-		if last == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("RGW period endpoints did not converge: %w", last)
-		case <-time.After(500 * time.Millisecond):
-		}
-	}
 }
 
 func (f *Multisite) validatePeriodEndpoints(data []byte) error {

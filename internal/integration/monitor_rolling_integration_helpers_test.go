@@ -27,7 +27,7 @@ func monitorRollingFile(t *testing.T, ctx context.Context, ctr testcontainers.Co
 	if err != nil {
 		t.Fatalf("read owned container file %s: %v", path, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(io.LimitReader(reader, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
 		t.Fatalf("read bounded owned container file %s: error=%v bytes=%d", path, err, len(data))

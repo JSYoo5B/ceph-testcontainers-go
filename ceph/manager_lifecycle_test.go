@@ -97,12 +97,13 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 	for _, failure := range []string{"terminate", "mgr fail 101", "auth del mgr.a", "unavailable"} {
 		t.Run(failure, func(t *testing.T) {
 			cluster, control, target, _ := managerLifecycleFixture()
-			if failure == "terminate" {
+			switch failure {
+			case "terminate":
 				target.terminateErr = errors.New("Docker teardown failed")
-			} else if failure == "unavailable" {
+			case "unavailable":
 				cluster.settings.startupTimeout = 20 * time.Millisecond
 				control.onFail = func() { control.status = `{"active_name":"b","active_gid":202,"available":false,"standbys":[]}` }
-			} else {
+			default:
 				control.fail = failure
 			}
 			err := cluster.RemoveManager(t.Context(), "a")

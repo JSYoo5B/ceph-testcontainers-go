@@ -81,7 +81,7 @@ func TestHostNetworkMonitorPortConflictRetry(t *testing.T) {
 					captureErr = err
 					return nil
 				}
-				defer logs.Close()
+				defer func() { _ = logs.Close() }()
 				failedLogs, captureErr = io.ReadAll(logs)
 				return nil
 			}},

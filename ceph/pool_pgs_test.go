@@ -215,7 +215,7 @@ func TestPoolPGsRejectsUnavailableBootstrapAndInvalidInputBeforeQuery(t *testing
 			}
 		})
 	}
-	assertPoolPGFailure(t, nil, t.Context())
+	_ = assertPoolPGFailure(t, nil, t.Context())
 	for _, name := range []string{"", "bad name", "--format", strings.Repeat("a", 129)} {
 		cluster, ctr := newPoolPGFixture()
 		result, err := cluster.PoolPGs(t.Context(), name)
@@ -254,7 +254,7 @@ func TestPoolPGsRejectsOriginalFSIDAndPoolIdentityDrift(t *testing.T) {
 	}
 	cluster, ctr := newPoolPGFixture()
 	ctr.outputs[3] = poolPGFixtureMap(strings.Replace(poolPGFixturePool, `"pool":7`, `"pool":9`, 1), 21)
-	assertPoolPGFailure(t, cluster, t.Context())
+	_ = assertPoolPGFailure(t, cluster, t.Context())
 	if len(ctr.calls) != 4 {
 		t.Fatal("replacement reached final identity query")
 	}

@@ -198,7 +198,7 @@ func waitRGWSyncBucketPolicy(t *testing.T, ctx context.Context, client s3HTTPCli
 		response, err := client.http.Do(request)
 		if err == nil {
 			body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-			response.Body.Close()
+			_ = response.Body.Close()
 			lastStatus = response.StatusCode
 			if err := wait.Err(); err != nil {
 				t.Fatalf("wait replicated bucket policy: %v; status=%d", err, lastStatus)
@@ -367,7 +367,7 @@ func rgwCrossTenantS3Diagnostic(t *testing.T, ctx context.Context, principal str
 		t.Logf("cross-tenant S3 diagnostic principal=%s status=0 code=unconfirmed status_error=%s", principal, rgwSyncDiagnosticError(err))
 		return
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err := attempt.Err(); err != nil {
 		readErr = err

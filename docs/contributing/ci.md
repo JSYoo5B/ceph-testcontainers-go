@@ -63,7 +63,7 @@ Practical consequences:
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`) and the go-ceph harness test |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`) and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
 
 The last job uploads the `code-tag-coverage` artifact with `tag-plan.json` and

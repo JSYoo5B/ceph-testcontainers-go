@@ -41,7 +41,7 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", name="client.admin", conf={"cli
         io.write_full("fresh", payload[::-1])
         assert io.read("fresh", len(payload)) == payload[::-1]
 print("fresh native librados authenticated I/O passed")`, phase)
-	t.Log(fmt.Sprintf("native RADOS topology %s passed", phase))
+	t.Logf("native RADOS topology %s passed", phase)
 }
 
 // Every native process and CLI probe has a container-side watchdog as well as

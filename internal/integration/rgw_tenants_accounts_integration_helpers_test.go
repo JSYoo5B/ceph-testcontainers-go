@@ -240,7 +240,7 @@ func rgwTenantRequest(t *testing.T, ctx context.Context, client s3HTTPClient, me
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(response.Body)
 	if err != nil || response.StatusCode != wantStatus {
 		t.Fatalf("S3 explicit tenant path returned HTTP %d expected %d error=%v", response.StatusCode, wantStatus, err)

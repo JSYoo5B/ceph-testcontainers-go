@@ -928,7 +928,7 @@ func readFile(ctx context.Context, ctr testcontainers.Container, path string) ([
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return io.ReadAll(r)
 }
 

@@ -55,7 +55,9 @@ func (n *stoppedMDSControl) Exec(ctx context.Context, args []string, _ ...tcexec
 		output = "key = never-log-stopped-mds-auth\n"
 	case strings.HasPrefix(call, "fs set target standby_count_wanted "):
 		var value int
-		fmt.Sscanf(strings.TrimPrefix(call, "fs set target standby_count_wanted "), "%d", &value)
+		if _, err := fmt.Sscanf(strings.TrimPrefix(call, "fs set target standby_count_wanted "), "%d", &value); err != nil {
+			return 0, nil, fmt.Errorf("parse standby_count_wanted: %w", err)
+		}
 		n.target()["standby_count_wanted"] = value
 	default:
 		return 0, nil, fmt.Errorf("unexpected stopped-MDS fixture command: %s", call)

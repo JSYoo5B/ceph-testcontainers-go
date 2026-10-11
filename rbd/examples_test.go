@@ -2,6 +2,7 @@ package rbd_test
 
 import (
 	"context"
+	"log"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
@@ -14,9 +15,11 @@ func ExampleRun() {
 	cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 		rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	)
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}
@@ -28,9 +31,11 @@ func ExampleInitPool() {
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 		ceph.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"}),
 	)
-	if cluster != nil {
-		defer testcontainers.TerminateContainer(cluster)
-	}
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
 	if err != nil {
 		panic(err)
 	}

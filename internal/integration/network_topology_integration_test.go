@@ -7,7 +7,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -233,5 +232,5 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	}
 	topologyWait(t, ctx, func() bool { q, err := cluster.QuorumStatus(ctx); return err == nil && len(q.QuorumNames) == 5 })
 	topologyRados(t, ctx, client, "five-monitor-network-recovery")
-	t.Log(fmt.Sprintf("five MONs: network-isolated two running members, 3/5 quorum retained, restored original endpoint IPs and 5/5 membership"))
+	t.Log("five MONs: network-isolated two running members, 3/5 quorum retained, restored original endpoint IPs and 5/5 membership")
 }

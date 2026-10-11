@@ -1,4 +1,4 @@
-.PHONY: test test-all integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet image-compatibility image-matrix
+.PHONY: test test-all integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet lint image-compatibility image-matrix
 .PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
 .PHONY: scenario-topology scenario-multicluster-topology scenario-cephfs-removal scenario-topology-extensions scenario-rbd-receivers
 .PHONY: scenario-diagnostics
@@ -307,6 +307,10 @@ multicluster:
 
 vet:
 	CGO_ENABLED=0 go vet -mod=readonly ./...
+
+# golangci-lint v2.14.0 with .golangci.yml, as in the Code checks workflow.
+lint:
+	golangci-lint run --timeout=15m ./...
 
 # Zero-initial mirror construction uses its own sequential bridge/host budget.
 .PHONY: scenario-mirror-initial-daemons

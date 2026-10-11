@@ -173,7 +173,7 @@ func rbdMultiClusterWaitMirror(t *testing.T, parent context.Context, client test
 			reader, readErr := client.CopyFileFromContainer(attempt, "/tmp/rbd-mirror-result")
 			if readErr == nil {
 				actual, readErr := io.ReadAll(reader)
-				reader.Close()
+				_ = reader.Close()
 				if readErr == nil && bytes.Equal(actual, expected) {
 					status := rbdOutput(t, attempt, client, "mirror", "image", "status", image, "--format", "json")
 					t.Logf("destination mirror reached expected sha256=%x; status=%s", sha256.Sum256(expected), status)

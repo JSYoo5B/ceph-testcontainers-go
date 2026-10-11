@@ -120,7 +120,7 @@ func (f *rbdConnectionRefreshFixture) refresh(ctx context.Context, cluster *ceph
 		return err
 	}
 	before, err := io.ReadAll(reader)
-	reader.Close()
+	_ = reader.Close()
 	if err != nil {
 		return err
 	}

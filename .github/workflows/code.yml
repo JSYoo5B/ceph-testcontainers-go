@@ -60,6 +60,11 @@ jobs:
           cache-dependency-path: go.sum
       - name: Vet Go packages
         run: make vet
+      - name: Lint Go packages with every build tag
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          args: --timeout=15m
       - name: Compile all and explicit optional tags without Docker
         run: make tag-compile
       - name: Check CI selection, image, cleanup and completion tooling without Docker

@@ -129,7 +129,7 @@ func verifyRBDBytes(t *testing.T, ctx context.Context, client testcontainers.Con
 		t.Fatal(err)
 	}
 	actual, err := io.ReadAll(r)
-	r.Close()
+	_ = r.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
