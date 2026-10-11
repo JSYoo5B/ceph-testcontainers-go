@@ -421,7 +421,7 @@ func (c *Container) protectMGRModule(ctx context.Context, name string) error {
 	if name != "volumes" && name != "mirroring" {
 		return nil
 	}
-	if name == "volumes" && (len(c.settings.filesystems) != 0 || len(c.filesystems) != 0) {
+	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || len(c.filesystems) != 0) {
 		return errors.New("MGR volumes module is required by configured or owned CephFS filesystems")
 	}
 	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")

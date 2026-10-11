@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 )
 
 // PoolConfig describes a pool in the disposable, file-backed cluster.
@@ -197,7 +198,7 @@ func (c *Container) poolPlacementDomains(config PoolConfig) int {
 	return len(domains)
 }
 
-var poolResourceName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+var poolResourceName = naming.PoolResource
 
 func normalizePoolConfig(config PoolConfig) (PoolConfig, error) {
 	if len(config.Name) > 128 || !poolResourceName.MatchString(config.Name) {

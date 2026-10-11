@@ -3,8 +3,6 @@ package cluster
 import (
 	"context"
 	"errors"
-	"fmt"
-	"slices"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -100,117 +98,13 @@ func GatewaysContext(ctx context.Context, c *Container) ([]*RGWContainer, error)
 	return c.gatewaysContext(ctx)
 }
 
-// InitRBDPool initializes an existing replicated pool for RBD metadata. Pools
-// registered to other applications are rejected; no force option is used. An
-// existing RBD initialization is safe to repeat. EC pools may supply image data
-// but cannot hold RBD metadata. Create the pool first, then wait for clean PGs
-// before client I/O. Partial initialization never deletes pool data.
-func InitRBDPool(ctx context.Context, c *Container, pool string) error {
-	if c == nil {
-		return errNilCluster
-	}
-	return c.initRBDPool(ctx, pool)
-}
-
-// CreateRBDNamespace creates a fresh image namespace in an initialized,
-// replicated RBD pool. Existing names are rejected without changing their data.
-// A non-nil descriptor returned with an error identifies an attempted creation,
-// but cannot authorize removal unless creation was confirmed. Inspect native
-// state or dispose of the cluster after an uncertain creation failure.
-func CreateRBDNamespace(ctx context.Context, c *Container, pool, name string) (*RBDNamespace, error) {
-	if c == nil {
-		return nil, errNilCluster
-	}
-	return c.createRBDNamespace(ctx, pool, name)
-}
-
-// ListRBDNamespaces returns the pool's native namespace names in sorted order,
-// including names created outside this fixture. The unnamed default namespace
-// is omitted by Ceph. Listing does not grant ownership for removal.
-func ListRBDNamespaces(ctx context.Context, c *Container, pool string) ([]string, error) {
-	if c == nil {
-		return nil, errNilCluster
-	}
-	return c.namespaceList(ctx, pool)
-}
-
-// RemoveRBDNamespace removes a confirmed namespace owned by this cluster. Ceph
-// refuses nonempty namespaces, including images in trash. No image purge or
-// force option is used. Successful removal is idempotent; failed CLI removal
-// can be retried with the same descriptor and a new context. Replacing its
-// underlying pool is rejected. Do not delete and recreate the same named
-// namespace through another client while its descriptor is in use: native RBD
-// namespaces have no separate generation identity to distinguish replacements.
-func RemoveRBDNamespace(ctx context.Context, c *Container, ns *RBDNamespace) error {
-	if c == nil {
-		return errNilCluster
-	}
-	return c.removeRBDNamespace(ctx, ns)
-}
-
-// WithRBDPools creates replicated pools for RBD images during Run and
-// initializes their RBD metadata. Application defaults to rbd and must not be
-// another application; erasure-coded data pools are created with WithPools and
-// referenced as an image's data pool. Repeated options replace the list.
-func WithRBDPools(configs ...PoolConfig) Option {
-	return func(o *options) error {
-		pools := make([]PoolConfig, len(configs))
-		for i, config := range configs {
-			if config.Application != "" && config.Application != "rbd" {
-				return fmt.Errorf("RBD pool %q cannot use application %q", config.Name, config.Application)
-			}
-			if config.ErasureCode != nil {
-				return fmt.Errorf("RBD pool %q must be replicated; create EC data pools with WithPools", config.Name)
-			}
-			config = clonePoolConfig(config)
-			config.Application = "rbd"
-			pools[i] = config
-		}
-		o.rbdPools = pools
-		return nil
-	}
-}
-
 // DefaultCephFS selects the default filesystem when no filesystem option was
 // given. The cephfs package appends it to the options of its Run.
 func DefaultCephFS() Option {
-	return func(o *options) error {
-		if len(o.filesystems) == 0 {
-			o.filesystems = []CephFSConfig{{}}
-		}
-		return nil
-	}
+	return withServiceBootstrap(cephFSBootstrapKind, true, func() (serviceBootstrap, error) { return newCephFSBootstrap([]CephFSConfig{{}}), nil })
 }
 
 // DefaultRGW selects one default gateway when no gateway option was given.
 func DefaultRGW() Option {
-	return func(o *options) error {
-		if len(o.gateways) == 0 {
-			o.gateways = []RGWConfig{{}}
-		}
-		return nil
-	}
-}
-
-// DefaultRBDPool selects one initialized RBD pool named rbd when no RBD pool
-// option was given.
-func DefaultRBDPool() Option {
-	return func(o *options) error {
-		if len(o.rbdPools) == 0 {
-			o.rbdPools = []PoolConfig{{Name: "rbd", Application: "rbd"}}
-		}
-		return nil
-	}
-}
-
-// RBD pools join the ordinary initial pool list before validation, so every
-// placement and bootstrap rule applies to them; their names are kept for the
-// rbd pool init that follows pool creation.
-func mergeRBDPools(settings *options) {
-	for _, config := range settings.rbdPools {
-		settings.pools = append(settings.pools, config)
-		settings.rbdPoolNames = append(settings.rbdPoolNames, config.Name)
-	}
-	settings.rbdPools = nil
-	settings.rbdPoolNames = slices.Clip(settings.rbdPoolNames)
+	return withServiceBootstrap(rgwBootstrapKind, true, func() (serviceBootstrap, error) { return newRGWBootstrap([]RGWConfig{{}}), nil })
 }

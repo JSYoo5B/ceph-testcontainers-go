@@ -187,18 +187,8 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return c, err
 		}
 	}
-	for _, name := range settings.rbdPoolNames {
-		if err := c.initRBDPool(ctx, name); err != nil {
-			return c, fmt.Errorf("initialize RBD pool %q: %w", name, err)
-		}
-	}
-	for _, fs := range settings.filesystems {
-		if _, err := c.startCephFS(ctx, fs); err != nil {
-			return c, err
-		}
-	}
-	for _, gateway := range settings.gateways {
-		if _, err := c.startRGW(ctx, gateway); err != nil {
+	for _, service := range settings.services {
+		if err := service.Start(ctx, c); err != nil {
 			return c, err
 		}
 	}

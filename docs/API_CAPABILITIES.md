@@ -97,7 +97,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [cephfs/run.go](../cephfs/run.go) | [cephfs.Run](../cephfs/run.go#L18) |
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.Container.CreateClient](../internal/cluster/auth.go#L101) · [ceph.Container.DeleteClient](../internal/cluster/auth.go#L219) |
 | [internal/cluster/auth_policy.go](../internal/cluster/auth_policy.go) | [ceph.Container.UpdateClientCaps](../internal/cluster/auth_policy.go#L25) |
-| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Run](../internal/cluster/ceph.go#L90) · [ceph.Container.AddOSD](../internal/cluster/ceph.go#L425) · [ceph.Container.AddOSDWithConfig](../internal/cluster/ceph.go#L432) · [ceph.Container.RemoveOSD](../internal/cluster/ceph.go#L549)<br>[ceph.Container.Terminate](../internal/cluster/ceph.go#L775) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Run](../internal/cluster/ceph.go#L90) · [ceph.Container.AddOSD](../internal/cluster/ceph.go#L415) · [ceph.Container.AddOSDWithConfig](../internal/cluster/ceph.go#L422) · [ceph.Container.RemoveOSD](../internal/cluster/ceph.go#L539)<br>[ceph.Container.Terminate](../internal/cluster/ceph.go#L765) |
 | [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.ScaleMDS](../internal/cluster/cephfs.go#L250) |
 | [internal/cluster/cephfs_authorization.go](../internal/cluster/cephfs_authorization.go) | [cephfs.Filesystem.AuthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L67) · [cephfs.Filesystem.DeauthorizeSubvolume](../internal/cluster/cephfs_authorization.go#L396) · [cephfs.Filesystem.EvictSubvolumeClients](../internal/cluster/cephfs_authorization.go#L462) |
 | [internal/cluster/cephfs_clone_lifecycle.go](../internal/cluster/cephfs_clone_lifecycle.go) | [cephfs.Filesystem.CancelSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L116) · [cephfs.Filesystem.RemovePartialSubvolumeClone](../internal/cluster/cephfs_clone_lifecycle.go#L187) |
@@ -110,17 +110,17 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/cephfs_stopped_mds.go](../internal/cluster/cephfs_stopped_mds.go) | [cephfs.Filesystem.RemoveStoppedMDS](../internal/cluster/cephfs_stopped_mds.go#L81) |
 | [internal/cluster/cephfs_subvolume.go](../internal/cluster/cephfs_subvolume.go) | [cephfs.Filesystem.CreateSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L282) · [cephfs.Filesystem.CreateSubvolume](../internal/cluster/cephfs_subvolume.go#L323) · [cephfs.Filesystem.ResizeSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L525) · [cephfs.Filesystem.ResizeSubvolume](../internal/cluster/cephfs_subvolume.go#L557)<br>[cephfs.Filesystem.RemoveSubvolumeGroup](../internal/cluster/cephfs_subvolume.go#L591) · [cephfs.Filesystem.RemoveSubvolume](../internal/cluster/cephfs_subvolume.go#L639) |
 | [internal/cluster/client_monitor_config.go](../internal/cluster/client_monitor_config.go) | [ceph.Container.RefreshClientMonitorConfig](../internal/cluster/client_monitor_config.go#L44) |
-| [internal/cluster/composition.go](../internal/cluster/composition.go) | [ceph.WithPools](../internal/cluster/composition.go#L12) · [cephfs.WithFilesystems](../internal/cluster/composition.go#L26) · [rgw.WithGateways](../internal/cluster/composition.go#L43) |
+| [internal/cluster/composition.go](../internal/cluster/composition.go) | [ceph.WithPools](../internal/cluster/composition.go#L12) · [cephfs.WithFilesystems](../internal/cluster/composition.go#L26) · [rgw.WithGateways](../internal/cluster/composition.go#L36) |
 | [internal/cluster/config.go](../internal/cluster/config.go) | [ceph.Container.TemporaryConfig](../internal/cluster/config.go#L76) · [ceph.ConfigOverride.Restore](../internal/cluster/config.go#L141) |
 | [internal/cluster/config_file.go](../internal/cluster/config_file.go) | [ceph.WithConfigFile](../internal/cluster/config_file.go#L48) |
 | [internal/cluster/fencing.go](../internal/cluster/fencing.go) | [ceph.Container.TemporaryBlocklist](../internal/cluster/fencing.go#L64) · [ceph.BlocklistOverride.Restore](../internal/cluster/fencing.go#L115) |
 | [internal/cluster/full_ratios.go](../internal/cluster/full_ratios.go) | [ceph.Container.TemporaryFullRatios](../internal/cluster/full_ratios.go#L78) · [ceph.FullRatiosOverride.Restore](../internal/cluster/full_ratios.go#L122) |
 | [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.Container.TemporaryMGRModule](../internal/cluster/mgr_modules.go#L60) · [ceph.MGRModuleOverride.Restore](../internal/cluster/mgr_modules.go#L121) |
 | [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.Container.InterruptNetwork](../internal/cluster/network.go#L96) · [ceph.InterruptNetwork](../internal/cluster/network.go#L142) · [ceph.NetworkInterruption.Restore](../internal/cluster/network.go#L199) |
-| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.WithMessengerMode](../internal/cluster/options.go#L49) · [ceph.WithMonitorCount](../internal/cluster/options.go#L61) · [ceph.WithManagerCount](../internal/cluster/options.go#L72) · [ceph.WithNoInitialManagers](../internal/cluster/options.go#L89)<br>[ceph.WithHostNetwork](../internal/cluster/options.go#L109) · [ceph.WithSeparateClusterNetwork](../internal/cluster/options.go#L119) · [ceph.WithNoInitialOSDs](../internal/cluster/options.go#L184) · [ceph.WithOSDCount](../internal/cluster/options.go#L192)<br>[ceph.WithInitialOSDs](../internal/cluster/options.go#L206) · [ceph.WithDefaultCRUSHRoot](../internal/cluster/options.go#L236) · [ceph.WithPoolDefaults](../internal/cluster/options.go#L249) · [ceph.WithOSDBlockSize](../internal/cluster/options.go#L264)<br>[ceph.WithOSDInMemoryStorage](../internal/cluster/options.go#L284) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.WithMessengerMode](../internal/cluster/options.go#L46) · [ceph.WithMonitorCount](../internal/cluster/options.go#L58) · [ceph.WithManagerCount](../internal/cluster/options.go#L69) · [ceph.WithNoInitialManagers](../internal/cluster/options.go#L86)<br>[ceph.WithHostNetwork](../internal/cluster/options.go#L106) · [ceph.WithSeparateClusterNetwork](../internal/cluster/options.go#L116) · [ceph.WithNoInitialOSDs](../internal/cluster/options.go#L181) · [ceph.WithOSDCount](../internal/cluster/options.go#L189)<br>[ceph.WithInitialOSDs](../internal/cluster/options.go#L203) · [ceph.WithDefaultCRUSHRoot](../internal/cluster/options.go#L233) · [ceph.WithPoolDefaults](../internal/cluster/options.go#L246) · [ceph.WithOSDBlockSize](../internal/cluster/options.go#L261)<br>[ceph.WithOSDInMemoryStorage](../internal/cluster/options.go#L281) |
 | [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.Container.SetOSDIn](../internal/cluster/osd_policy.go#L57) · [ceph.Container.TemporaryOSDFlag](../internal/cluster/osd_policy.go#L132) · [ceph.OSDFlagOverride.Restore](../internal/cluster/osd_policy.go#L175) |
 | [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.Container.PauseContainer](../internal/cluster/pause.go#L43) · [ceph.ContainerPause.Resume](../internal/cluster/pause.go#L109) |
-| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.Container.CreatePool](../internal/cluster/pool.go#L62) |
+| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.Container.CreatePool](../internal/cluster/pool.go#L63) |
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.SetPoolQuota](../internal/cluster/pool_policy.go#L70) · [ceph.Container.SetPoolReplication](../internal/cluster/pool_policy.go#L110) |
 | [internal/cluster/pool_removal.go](../internal/cluster/pool_removal.go) | [ceph.Container.RemovePool](../internal/cluster/pool_removal.go#L30) |
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.SetPoolPGCount](../internal/cluster/pool_relocation.go#L31) · [ceph.Container.SetPoolPlacement](../internal/cluster/pool_relocation.go#L179) |
@@ -129,7 +129,7 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Gateway.CreateAccount](../internal/cluster/rgw_tenants_accounts.go#L134) · [rgw.Gateway.CreateAccountRootUser](../internal/cluster/rgw_tenants_accounts.go#L318) · [rgw.Gateway.SetAccountQuota](../internal/cluster/rgw_tenants_accounts.go#L328) · [rgw.Gateway.SetAccountBucketQuota](../internal/cluster/rgw_tenants_accounts.go#L334)<br>[rgw.Gateway.RemoveAccount](../internal/cluster/rgw_tenants_accounts.go#L387) |
 | [internal/cluster/rgw_user_placement.go](../internal/cluster/rgw_user_placement.go) | [rgw.Gateway.SetUserPlacement](../internal/cluster/rgw_user_placement.go#L67) |
 | [internal/cluster/scrub.go](../internal/cluster/scrub.go) | [ceph.Container.InjectObjectDataError](../internal/cluster/scrub.go#L66) · [ceph.Container.DeepScrubPG](../internal/cluster/scrub.go#L124) · [ceph.Container.RepairPG](../internal/cluster/scrub.go#L133) |
-| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Start](../internal/cluster/services.go#L29) · [cephfs.Remove](../internal/cluster/services.go#L66) · [rgw.Start](../internal/cluster/services.go#L51) · [rgw.Remove](../internal/cluster/services.go#L77) · [rbd.InitPool](../internal/cluster/services.go#L108)<br>[rbd.CreateNamespace](../internal/cluster/services.go#L120) · [rbd.RemoveNamespace](../internal/cluster/services.go#L144) · [rbd.WithPools](../internal/cluster/services.go#L155) |
+| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Start](../internal/cluster/services.go#L27) · [cephfs.Remove](../internal/cluster/services.go#L64) · [rgw.Start](../internal/cluster/services.go#L49) · [rgw.Remove](../internal/cluster/services.go#L75) |
 | [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.AddMonitor](../internal/cluster/topology.go#L146) · [ceph.Container.RemoveMonitor](../internal/cluster/topology.go#L263) · [ceph.Container.RefreshMonitorConfig](../internal/cluster/topology.go#L369) · [ceph.Container.AddManager](../internal/cluster/topology.go#L705)<br>[ceph.Container.RemoveManager](../internal/cluster/topology.go#L786) |
 | [cephfs/cephfs.go](../cephfs/cephfs.go) | [cephfs.MirrorDaemon.Terminate](../cephfs/cephfs.go#L61) · [cephfs.RunMirror](../cephfs/cephfs.go#L134) · [cephfs.Mirror.AddDaemon](../cephfs/cephfs.go#L495) · [cephfs.Mirror.RemoveDaemon](../cephfs/cephfs.go#L568)<br>[cephfs.Mirror.Terminate](../cephfs/cephfs.go#L607) · [cephfs.Mirror.AttachManagers](../cephfs/cephfs.go#L630) · [cephfs.Mirror.AddDirectory](../cephfs/cephfs.go#L830) · [cephfs.Mirror.RemoveDirectory](../cephfs/cephfs.go#L866)<br>[cephfs.Mirror.RebalanceDirectories](../cephfs/cephfs.go#L917) · [cephfs.Mirror.RemovePeer](../cephfs/cephfs.go#L1082) · [cephfs.Mirror.RebootstrapPeer](../cephfs/cephfs.go#L1124) |
 | [cephfs/cephfs_connection_refresh.go](../cephfs/cephfs_connection_refresh.go) | [cephfs.Mirror.RefreshMonitorConfig](../cephfs/cephfs_connection_refresh.go#L25) · [cephfs.Mirror.RefreshPeerMonitorConfig](../cephfs/cephfs_connection_refresh.go#L88) |
@@ -147,8 +147,10 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rgw/rgw_sync_policy.go](../rgw/rgw_sync_policy.go) | [rgw.Multisite.CreateSyncGroup](../rgw/rgw_sync_policy.go#L126) · [rgw.Multisite.CreateSyncFlow](../rgw/rgw_sync_policy.go#L184) · [rgw.Multisite.RemoveSyncFlow](../rgw/rgw_sync_policy.go#L205) · [rgw.Multisite.CreateSyncPipe](../rgw/rgw_sync_policy.go#L230)<br>[rgw.Multisite.SetSyncPipePrefix](../rgw/rgw_sync_policy.go#L266) · [rgw.Multisite.RemoveSyncPipe](../rgw/rgw_sync_policy.go#L299) · [rgw.Multisite.SetSyncGroupStatus](../rgw/rgw_sync_policy.go#L318) · [rgw.Multisite.RemoveSyncGroup](../rgw/rgw_sync_policy.go#L337) |
 | [rgw/rgw_topology.go](../rgw/rgw_topology.go) | [rgw.RunTopology](../rgw/rgw_topology.go#L81) · [rgw.Multisite.AddZone](../rgw/rgw_topology.go#L305) |
 | [rgw/rgw_zonegroups.go](../rgw/rgw_zonegroups.go) | [rgw.Multisite.AddZonegroup](../rgw/rgw_zonegroups.go#L48) · [rgw.Multisite.RemoveZone](../rgw/rgw_zonegroups.go#L118) |
-| [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L18) |
+| [rbd/run.go](../rbd/run.go) | [rbd.Run](../rbd/run.go#L17) |
 | [rgw/run.go](../rgw/run.go) | [rgw.Run](../rgw/run.go#L18) |
+| [rbd/pool.go](../rbd/pool.go) | [rbd.InitPool](../rbd/pool.go#L257) · [rbd.CreateNamespace](../rbd/pool.go#L269) · [rbd.RemoveNamespace](../rbd/pool.go#L293) |
+| [rbd/bootstrap.go](../rbd/bootstrap.go) | [rbd.WithPools](../rbd/bootstrap.go#L56) |
 
 ### Check: 현재 상태 질의·policy/process 관측·Wait (74개)
 
@@ -176,13 +178,11 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.Container.Pools](../internal/cluster/pool_policy.go#L44) · [ceph.Container.PoolStatus](../internal/cluster/pool_policy.go#L54) |
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.Container.WaitForPoolPGCount](../internal/cluster/pool_relocation.go#L73) |
 | [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.Container.PoolUsage](../internal/cluster/pool_usage.go#L44) |
-| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageClients](../internal/cluster/rbd_image_clients.go#L56) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.UserInfo](../internal/cluster/rgw_admin.go#L457) |
 | [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.Gateway.PlacementStatus](../internal/cluster/rgw_placement.go#L250) |
 | [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Gateway.AccountInfo](../internal/cluster/rgw_tenants_accounts.go#L299) |
 | [internal/cluster/rgw_usage.go](../internal/cluster/rgw_usage.go) | [rgw.Gateway.UserUsage](../internal/cluster/rgw_usage.go#L35) |
 | [internal/cluster/scrub.go](../internal/cluster/scrub.go) | [ceph.Container.PGInconsistencies](../internal/cluster/scrub.go#L224) |
-| [internal/cluster/services.go](../internal/cluster/services.go) | [rbd.ListNamespaces](../internal/cluster/services.go#L130) |
 | [internal/cluster/status.go](../internal/cluster/status.go) | [ceph.Container.Status](../internal/cluster/status.go#L34) · [ceph.Container.WaitForClean](../internal/cluster/status.go#L48) |
 | [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.QuorumStatus](../internal/cluster/topology.go#L125) · [ceph.Container.WaitForQuorum](../internal/cluster/topology.go#L135) · [ceph.Container.ManagerStatus](../internal/cluster/topology.go#L888) |
 | [cephfs/cephfs.go](../cephfs/cephfs.go) | [cephfs.Mirror.PeerIDs](../cephfs/cephfs.go#L1034) |
@@ -200,13 +200,15 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rgw/rgw_sync_bucket_status.go](../rgw/rgw_sync_bucket_status.go) | [rgw.Multisite.BucketSyncStatus](../rgw/rgw_sync_bucket_status.go#L47) · [rgw.Multisite.WaitBucketSyncReady](../rgw/rgw_sync_bucket_status.go#L68) |
 | [rgw/rgw_sync_policy_ready.go](../rgw/rgw_sync_policy_ready.go) | [rgw.Multisite.WaitBucketSyncPolicyReady](../rgw/rgw_sync_policy_ready.go#L39) |
 | [rgw/rgw_sync_status.go](../rgw/rgw_sync_status.go) | [rgw.Multisite.SyncStatus](../rgw/rgw_sync_status.go#L49) · [rgw.Multisite.WaitSyncReady](../rgw/rgw_sync_status.go#L67) |
+| [rbd/image_clients.go](../rbd/image_clients.go) | [rbd.ImageClients](../rbd/image_clients.go#L59) |
+| [rbd/pool.go](../rbd/pool.go) | [rbd.ListNamespaces](../rbd/pool.go#L279) |
 
 ### Check: 보존된 정보·소유 목록·접속 정보 (45개)
 
 | source | 공개 callable |
 | --- | --- |
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.ClientConfig.Name](../internal/cluster/auth.go#L45) · [ceph.ClientConfig.User](../internal/cluster/auth.go#L49) · [ceph.ClientConfig.KeyringPath](../internal/cluster/auth.go#L52) · [ceph.ClientConfig.ConnectionConfig](../internal/cluster/auth.go#L64) |
-| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.ControlImage](../internal/cluster/ceph.go#L246) · [ceph.Container.NetworkName](../internal/cluster/ceph.go#L332) · [ceph.Container.UsesHostNetwork](../internal/cluster/ceph.go#L343) · [ceph.Container.PublicAddress](../internal/cluster/ceph.go#L346)<br>[ceph.Container.ConnectionConfig](../internal/cluster/ceph.go#L355) · [ceph.Container.ManagerContainer](../internal/cluster/ceph.go#L382) · [ceph.Container.OSDs](../internal/cluster/ceph.go#L713) · [ceph.Container.ServiceContainers](../internal/cluster/ceph.go#L726) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.ControlImage](../internal/cluster/ceph.go#L236) · [ceph.Container.NetworkName](../internal/cluster/ceph.go#L322) · [ceph.Container.UsesHostNetwork](../internal/cluster/ceph.go#L333) · [ceph.Container.PublicAddress](../internal/cluster/ceph.go#L336)<br>[ceph.Container.ConnectionConfig](../internal/cluster/ceph.go#L345) · [ceph.Container.ManagerContainer](../internal/cluster/ceph.go#L372) · [ceph.Container.OSDs](../internal/cluster/ceph.go#L703) · [ceph.Container.ServiceContainers](../internal/cluster/ceph.go#L716) |
 | [internal/cluster/cephfs.go](../internal/cluster/cephfs.go) | [cephfs.Filesystem.MDSs](../internal/cluster/cephfs.go#L214) |
 | [internal/cluster/cephfs_quiesce.go](../internal/cluster/cephfs_quiesce.go) | [cephfs.Quiesce.ID](../internal/cluster/cephfs_quiesce.go#L51) |
 | [internal/cluster/client_monitor_config.go](../internal/cluster/client_monitor_config.go) | [ceph.Container.MonitorBootstrapAddresses](../internal/cluster/client_monitor_config.go#L20) |
@@ -214,13 +216,11 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [internal/cluster/messenger.go](../internal/cluster/messenger.go) | [ceph.Container.MessengerMode](../internal/cluster/messenger.go#L22) |
 | [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.Container.ClusterNetworkName](../internal/cluster/network.go#L26) · [ceph.Container.HasSeparateClusterNetwork](../internal/cluster/network.go#L34) |
 | [internal/cluster/placement.go](../internal/cluster/placement.go) | [ceph.OSDContainer.Placement](../internal/cluster/placement.go#L24) |
-| [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace.Name](../internal/cluster/rbd.go#L31) · [rbd.Namespace.PoolName](../internal/cluster/rbd.go#L34) |
-| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageClientStatus.ExclusiveOwner](../internal/cluster/rbd_image_clients.go#L41) |
 | [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway.DaemonEndpoint](../internal/cluster/rgw.go#L358) · [rgw.Gateway.S3Endpoint](../internal/cluster/rgw.go#L394) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.User.ID](../internal/cluster/rgw_admin.go#L67) · [rgw.User.Credentials](../internal/cluster/rgw_admin.go#L76) |
 | [internal/cluster/rgw_tenants_accounts.go](../internal/cluster/rgw_tenants_accounts.go) | [rgw.Account.ID](../internal/cluster/rgw_tenants_accounts.go#L68) |
 | [internal/cluster/rgw_tls.go](../internal/cluster/rgw_tls.go) | [rgw.Gateway.S3SecureEndpoint](../internal/cluster/rgw_tls.go#L57) |
-| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Filesystems](../internal/cluster/services.go#L39) · [rgw.Gateways](../internal/cluster/services.go#L87) · [rgw.GatewaysContext](../internal/cluster/services.go#L96) |
+| [internal/cluster/services.go](../internal/cluster/services.go) | [cephfs.Filesystems](../internal/cluster/services.go#L37) · [rgw.Gateways](../internal/cluster/services.go#L85) · [rgw.GatewaysContext](../internal/cluster/services.go#L94) |
 | [internal/cluster/topology.go](../internal/cluster/topology.go) | [ceph.Container.ControlContainer](../internal/cluster/topology.go#L59) · [ceph.Container.Monitors](../internal/cluster/topology.go#L82) · [ceph.Container.Managers](../internal/cluster/topology.go#L97) |
 | [internal/cluster/topology_snapshot_context.go](../internal/cluster/topology_snapshot_context.go) | [ceph.Container.ConnectionConfigContext](../internal/cluster/topology_snapshot_context.go#L15) · [ceph.Container.ManagersContext](../internal/cluster/topology_snapshot_context.go#L38) · [ceph.Container.ControlContainerContext](../internal/cluster/topology_snapshot_context.go#L75) |
 | [internal/cluster/version.go](../internal/cluster/version.go) | [ceph.Container.CephVersion](../internal/cluster/version.go#L18) |
@@ -230,15 +230,17 @@ anchor를 비교한다. `make test`에 포함되며 Docker를 실행하지 않�
 | [rgw/rgw_sync_policy.go](../rgw/rgw_sync_policy.go) | [rgw.SyncGroup.ID](../rgw/rgw_sync_policy.go#L102) |
 | [rgw/rgw_topology.go](../rgw/rgw_topology.go) | [rgw.Multisite.Zones](../rgw/rgw_topology.go#L242) |
 | [rgw/rgw_zonegroups.go](../rgw/rgw_zonegroups.go) | [rgw.Multisite.Zonegroups](../rgw/rgw_zonegroups.go#L19) |
+| [rbd/pool.go](../rbd/pool.go) | [rbd.Namespace.Name](../rbd/pool.go#L35) · [rbd.Namespace.PoolName](../rbd/pool.go#L38) |
+| [rbd/image_clients.go](../rbd/image_clients.go) | [rbd.ImageClientStatus.ExclusiveOwner](../rbd/image_clients.go#L44) |
 
 ### 연결·raw CLI·customizer 접점 (16개)
 
 | source | 공개 callable |
 | --- | --- |
 | [internal/cluster/auth.go](../internal/cluster/auth.go) | [ceph.Container.WithClientIdentity](../internal/cluster/auth.go#L191) |
-| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.WithClient](../internal/cluster/ceph.go#L391) · [ceph.Container.Ceph](../internal/cluster/ceph.go#L414) |
+| [internal/cluster/ceph.go](../internal/cluster/ceph.go) | [ceph.Container.WithClient](../internal/cluster/ceph.go#L381) · [ceph.Container.Ceph](../internal/cluster/ceph.go#L404) |
 | [internal/cluster/idle.go](../internal/cluster/idle.go) | [ceph.WithIdleEntrypoint](../internal/cluster/idle.go#L15) |
-| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option.Customize](../internal/cluster/options.go#L102) · [ceph.WithHostAddress](../internal/cluster/options.go#L130) · [ceph.WithOSDImage](../internal/cluster/options.go#L144) · [rgw.WithImage](../internal/cluster/options.go#L156)<br>[cephfs.WithMDSImage](../internal/cluster/options.go#L168) · [ceph.WithStartupTimeout](../internal/cluster/options.go#L296) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option.Customize](../internal/cluster/options.go#L99) · [ceph.WithHostAddress](../internal/cluster/options.go#L127) · [ceph.WithOSDImage](../internal/cluster/options.go#L141) · [rgw.WithImage](../internal/cluster/options.go#L153)<br>[cephfs.WithMDSImage](../internal/cluster/options.go#L165) · [ceph.WithStartupTimeout](../internal/cluster/options.go#L293) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.Gateway.Admin](../internal/cluster/rgw_admin.go#L122) |
 | [rbd/rbd.go](../rbd/rbd.go) | [rbd.Mirror.SourceRBD](../rbd/rbd.go#L576) · [rbd.Mirror.DestinationRBD](../rbd/rbd.go#L585) |
 | [rgw/rgw.go](../rgw/rgw.go) | [rgw.Multisite.SourceAdmin](../rgw/rgw.go#L466) · [rgw.Multisite.DestinationAdmin](../rgw/rgw.go#L472) |
@@ -292,17 +294,15 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [internal/cluster/mgr_modules.go](../internal/cluster/mgr_modules.go) | [ceph.MGRModuleState](../internal/cluster/mgr_modules.go#L19) · [ceph.MGRModuleOverride](../internal/cluster/mgr_modules.go#L42) |
 | [internal/cluster/network.go](../internal/cluster/network.go) | [ceph.NetworkPlane](../internal/cluster/network.go#L17) · [ceph.NetworkInterruption](../internal/cluster/network.go#L81) |
 | [internal/cluster/object_watchers.go](../internal/cluster/object_watchers.go) | [ceph.ObjectWatcher](../internal/cluster/object_watchers.go#L17) |
-| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option](../internal/cluster/options.go#L99) |
+| [internal/cluster/options.go](../internal/cluster/options.go) | [ceph.Option](../internal/cluster/options.go#L96) |
 | [internal/cluster/osd_policy.go](../internal/cluster/osd_policy.go) | [ceph.OSDState](../internal/cluster/osd_policy.go#L20) · [ceph.OSDFlagOverride](../internal/cluster/osd_policy.go#L116) |
 | [internal/cluster/pause.go](../internal/cluster/pause.go) | [ceph.ContainerPause](../internal/cluster/pause.go#L24) |
 | [internal/cluster/placement.go](../internal/cluster/placement.go) | [ceph.OSDConfig](../internal/cluster/placement.go#L16) |
-| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.PoolConfig](../internal/cluster/pool.go#L18) · [ceph.ErasureCodeConfig](../internal/cluster/pool.go#L39) · [ceph.Pool](../internal/cluster/pool.go#L48) |
+| [internal/cluster/pool.go](../internal/cluster/pool.go) | [ceph.PoolConfig](../internal/cluster/pool.go#L19) · [ceph.ErasureCodeConfig](../internal/cluster/pool.go#L40) · [ceph.Pool](../internal/cluster/pool.go#L49) |
 | [internal/cluster/pool_pgs.go](../internal/cluster/pool_pgs.go) | [ceph.PoolPGSnapshot](../internal/cluster/pool_pgs.go#L17) · [ceph.PGState](../internal/cluster/pool_pgs.go#L31) · [ceph.PGStats](../internal/cluster/pool_pgs.go#L45) |
 | [internal/cluster/pool_policy.go](../internal/cluster/pool_policy.go) | [ceph.PoolQuota](../internal/cluster/pool_policy.go#L16) · [ceph.PoolState](../internal/cluster/pool_policy.go#L26) |
 | [internal/cluster/pool_relocation.go](../internal/cluster/pool_relocation.go) | [ceph.PoolPlacement](../internal/cluster/pool_relocation.go#L17) |
 | [internal/cluster/pool_usage.go](../internal/cluster/pool_usage.go) | [ceph.PoolUsageSnapshot](../internal/cluster/pool_usage.go#L23) |
-| [internal/cluster/rbd.go](../internal/cluster/rbd.go) | [rbd.Namespace](../internal/cluster/rbd.go#L15) |
-| [internal/cluster/rbd_image_clients.go](../internal/cluster/rbd_image_clients.go) | [rbd.ImageWatcher](../internal/cluster/rbd_image_clients.go#L15) · [rbd.ImageLock](../internal/cluster/rbd_image_clients.go#L24) · [rbd.ImageClientStatus](../internal/cluster/rbd_image_clients.go#L34) |
 | [internal/cluster/rgw.go](../internal/cluster/rgw.go) | [rgw.Gateway](../internal/cluster/rgw.go#L24) · [rgw.Config](../internal/cluster/rgw.go#L43) |
 | [internal/cluster/rgw_admin.go](../internal/cluster/rgw_admin.go) | [rgw.UserConfig](../internal/cluster/rgw_admin.go#L25) · [rgw.User](../internal/cluster/rgw_admin.go#L37) · [rgw.Quota](../internal/cluster/rgw_admin.go#L90) · [rgw.AdminCapability](../internal/cluster/rgw_admin.go#L96)<br>[rgw.UserInfo](../internal/cluster/rgw_admin.go#L105) |
 | [internal/cluster/rgw_placement.go](../internal/cluster/rgw_placement.go) | [rgw.StorageClassConfig](../internal/cluster/rgw_placement.go#L25) · [rgw.PlacementConfig](../internal/cluster/rgw_placement.go#L34) · [rgw.Placement](../internal/cluster/rgw_placement.go#L51) · [rgw.PlacementState](../internal/cluster/rgw_placement.go#L67) |
@@ -332,4 +332,6 @@ Option 함수는 callable 목록에 포함한다. Config/result 구조체의 fie
 | [rgw/rgw_sync_policy_ready.go](../rgw/rgw_sync_policy_ready.go) | [rgw.BucketSyncPolicyStatus](../rgw/rgw_sync_policy_ready.go#L18) |
 | [rgw/rgw_sync_status.go](../rgw/rgw_sync_status.go) | [rgw.MetadataSyncStatus](../rgw/rgw_sync_status.go#L18) · [rgw.DataSyncStatus](../rgw/rgw_sync_status.go#L29) · [rgw.SyncStatus](../rgw/rgw_sync_status.go#L36) |
 | [rgw/rgw_topology.go](../rgw/rgw_topology.go) | [rgw.ZoneConfig](../rgw/rgw_topology.go#L20) · [rgw.ZonegroupConfig](../rgw/rgw_topology.go#L28) · [rgw.TopologyConfig](../rgw/rgw_topology.go#L40) · [rgw.Zone](../rgw/rgw_topology.go#L51)<br>[rgw.Zonegroup](../rgw/rgw_topology.go#L59) |
+| [rbd/pool.go](../rbd/pool.go) | [rbd.Namespace](../rbd/pool.go#L19) |
+| [rbd/image_clients.go](../rbd/image_clients.go) | [rbd.ImageWatcher](../rbd/image_clients.go#L18) · [rbd.ImageLock](../rbd/image_clients.go#L27) · [rbd.ImageClientStatus](../rbd/image_clients.go#L37) |
 <!-- schemas:end -->

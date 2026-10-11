@@ -62,7 +62,7 @@ func TestCompositionResolvesDefaultsAfterOptionCapture(t *testing.T) {
 			if len(settings.pools) != 0 {
 				config = settings.pools[0]
 			} else {
-				config = settings.filesystems[0].MetadataPool
+				config = testFilesystems(settings)[0].MetadataPool
 			}
 			if config.Replicas != 3 || config.MinSize != 3 {
 				t.Fatalf("explicit min_size did not resolve against final replica default: %+v", config)
@@ -92,7 +92,7 @@ func TestCompositionDefaultCRUSHRootResolvesOmissionsAndHonorsExplicitRoots(t *t
 		if settings.initialOSDs[0].Root != "storage" || settings.initialOSDs[1].Root != "storage" || settings.initialOSDs[2].Root != "other" || layout[0].Root != "" {
 			t.Fatal("default root resolution changed explicit roots or caller data")
 		}
-		if settings.pools[0].CRUSHRoot != "storage" || settings.filesystems[0].MetadataPool.CRUSHRoot != "storage" || settings.filesystems[0].DataPool.CRUSHRoot != "storage" {
+		if settings.pools[0].CRUSHRoot != "storage" || testFilesystems(settings)[0].MetadataPool.CRUSHRoot != "storage" || testFilesystems(settings)[0].DataPool.CRUSHRoot != "storage" {
 			t.Fatal("initial pool/filesystem defaults lost the selected CRUSH root")
 		}
 		if got := resolvePoolDefaults(settings, PoolConfig{CRUSHRoot: "default"}); got.CRUSHRoot != "default" {
@@ -118,7 +118,7 @@ func TestCompositionResolvesFinalDefaultsAndCopiesCallerConfigs(t *testing.T) {
 	if err := prepareInitialComposition(&settings); err != nil {
 		t.Fatal(err)
 	}
-	resolved := settings.filesystems[0]
+	resolved := testFilesystems(settings)[0]
 	if resolved.MetadataPool.Replicas != 3 || resolved.MetadataPool.MinSize != 2 || resolved.DataPool.Replicas != 3 || settings.pools[0].Replicas != 3 {
 		t.Fatal("initial pools did not use final cluster defaults")
 	}
@@ -129,7 +129,7 @@ func TestCompositionResolvesFinalDefaultsAndCopiesCallerConfigs(t *testing.T) {
 	if err := WithCephFS()(&settings); err != nil {
 		t.Fatal(err)
 	}
-	if err := prepareInitialComposition(&settings); err != nil || settings.filesystems[0].MetadataPool.Replicas != 1 {
+	if err := prepareInitialComposition(&settings); err != nil || testFilesystems(settings)[0].MetadataPool.Replicas != 1 {
 		t.Fatalf("one-OSD filesystem did not resolve to a usable single-copy pool: %v", err)
 	}
 }

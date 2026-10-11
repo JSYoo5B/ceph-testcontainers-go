@@ -38,32 +38,27 @@ var sources = []source{
 // Names that the generic prefix rule would not produce, and service entry
 // points whose public package differs from their source file.
 var special = map[string][2]string{
-	"cluster.CephFSContainer":    {"cephfs", "Filesystem"},
-	"cluster.MDSContainer":       {"cephfs", "MDS"},
-	"cluster.CephFSMDSStatus":    {"cephfs", "FilesystemStatus"},
-	"cluster.MDSStatus":          {"cephfs", "MDSStatus"},
-	"cluster.RGWContainer":       {"rgw", "Gateway"},
-	"cluster.WithCephFS":         {"cephfs", "WithFilesystems"},
-	"cluster.WithMDSImage":       {"cephfs", "WithMDSImage"},
-	"cluster.WithRGW":            {"rgw", "WithGateways"},
-	"cluster.WithRGWImage":       {"rgw", "WithImage"},
-	"cluster.StartCephFS":        {"cephfs", "Start"},
-	"cluster.Filesystems":        {"cephfs", "Filesystems"},
-	"cluster.StartRGW":           {"rgw", "Start"},
-	"cluster.RemoveCephFS":       {"cephfs", "Remove"},
-	"cluster.RemoveRGW":          {"rgw", "Remove"},
-	"cluster.Gateways":           {"rgw", "Gateways"},
-	"cluster.GatewaysContext":    {"rgw", "GatewaysContext"},
-	"cluster.InitRBDPool":        {"rbd", "InitPool"},
-	"cluster.CreateRBDNamespace": {"rbd", "CreateNamespace"},
-	"cluster.ListRBDNamespaces":  {"rbd", "ListNamespaces"},
-	"cluster.RemoveRBDNamespace": {"rbd", "RemoveNamespace"},
-	"cluster.WithRBDPools":       {"rbd", "WithPools"},
+	"cluster.CephFSContainer": {"cephfs", "Filesystem"},
+	"cluster.MDSContainer":    {"cephfs", "MDS"},
+	"cluster.CephFSMDSStatus": {"cephfs", "FilesystemStatus"},
+	"cluster.MDSStatus":       {"cephfs", "MDSStatus"},
+	"cluster.RGWContainer":    {"rgw", "Gateway"},
+	"cluster.WithCephFS":      {"cephfs", "WithFilesystems"},
+	"cluster.WithMDSImage":    {"cephfs", "WithMDSImage"},
+	"cluster.WithRGW":         {"rgw", "WithGateways"},
+	"cluster.WithRGWImage":    {"rgw", "WithImage"},
+	"cluster.StartCephFS":     {"cephfs", "Start"},
+	"cluster.Filesystems":     {"cephfs", "Filesystems"},
+	"cluster.StartRGW":        {"rgw", "Start"},
+	"cluster.RemoveCephFS":    {"cephfs", "Remove"},
+	"cluster.RemoveRGW":       {"rgw", "Remove"},
+	"cluster.Gateways":        {"rgw", "Gateways"},
+	"cluster.GatewaysContext": {"rgw", "GatewaysContext"},
 }
 
 // Internal helpers used by the hand-written Run functions.
 var skipped = map[string]bool{
-	"cluster.DefaultCephFS": true, "cluster.DefaultRGW": true, "cluster.DefaultRBDPool": true,
+	"cluster.DefaultCephFS": true, "cluster.DefaultRGW": true,
 }
 
 // Former Container methods that implementation comments may still mention.

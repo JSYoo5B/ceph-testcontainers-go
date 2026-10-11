@@ -27,14 +27,7 @@ func WithCephFS(configs ...CephFSConfig) Option {
 	if len(configs) == 0 {
 		configs = []CephFSConfig{{}}
 	}
-	return func(o *options) error {
-		filesystems := make([]CephFSConfig, len(configs))
-		for i, config := range configs {
-			filesystems[i] = cloneCephFSConfig(config)
-		}
-		o.filesystems = filesystems
-		return nil
-	}
+	return withServiceBootstrap(cephFSBootstrapKind, false, func() (serviceBootstrap, error) { return newCephFSBootstrap(configs), nil })
 }
 
 // WithRGW starts named gateways during Run. No arguments starts one default
@@ -44,10 +37,7 @@ func WithRGW(configs ...RGWConfig) Option {
 	if len(configs) == 0 {
 		configs = []RGWConfig{{}}
 	}
-	return func(o *options) error {
-		o.gateways = slices.Clone(configs)
-		return nil
-	}
+	return withServiceBootstrap(rgwBootstrapKind, false, func() (serviceBootstrap, error) { return newRGWBootstrap(configs), nil })
 }
 
 // gatewayList returns named gateway descriptors sorted by gateway name, including
@@ -111,11 +101,15 @@ func resolvePoolDefaults(settings options, config PoolConfig) PoolConfig {
 }
 
 func resolveFilesystemDefaults(settings options, config CephFSConfig) CephFSConfig {
+	return resolveFilesystemPools(func(pool PoolConfig) PoolConfig { return resolvePoolDefaults(settings, pool) }, config)
+}
+
+func resolveFilesystemPools(resolve func(PoolConfig) PoolConfig, config CephFSConfig) CephFSConfig {
 	config = cloneCephFSConfig(config)
-	config.MetadataPool = resolvePoolDefaults(settings, config.MetadataPool)
-	config.DataPool = resolvePoolDefaults(settings, config.DataPool)
+	config.MetadataPool = resolve(config.MetadataPool)
+	config.DataPool = resolve(config.DataPool)
 	for i := range config.AdditionalDataPools {
-		config.AdditionalDataPools[i] = resolvePoolDefaults(settings, config.AdditionalDataPools[i])
+		config.AdditionalDataPools[i] = resolve(config.AdditionalDataPools[i])
 	}
 	return config
 }
@@ -124,12 +118,18 @@ func resolveFilesystemDefaults(settings options, config CephFSConfig) CephFSConf
 // a network or daemon. Runtime IDs are unknown here; ordinal IDs suffice to
 // model the distinct OSD/host/rack domains of the initial layout.
 func prepareInitialComposition(settings *options) error {
-	mergeRBDPools(settings)
+	needsManagers := false
+	for _, service := range settings.services {
+		for _, pool := range service.InitialPools() {
+			settings.pools = append(settings.pools, clonePoolConfig(pool))
+		}
+		needsManagers = needsManagers || service.NeedsManagers()
+	}
 	if settings.noInitialOSDs {
 		if settings.initialOSDsExplicit || len(settings.initialOSDs) != 0 {
 			return fmt.Errorf("WithNoInitialOSDs cannot be combined with explicit initial OSD count or layout")
 		}
-		if len(settings.pools) != 0 || len(settings.filesystems) != 0 || len(settings.gateways) != 0 {
+		if len(settings.pools) != 0 || len(settings.services) != 0 {
 			return fmt.Errorf("WithNoInitialOSDs requires no initial user pools, CephFS filesystems or RGW gateways; add OSDs before provisioning them")
 		}
 		// Run resolves positive prospective pool defaults before this suppresses
@@ -140,22 +140,10 @@ func prepareInitialComposition(settings *options) error {
 		if settings.managerCountExplicit {
 			return fmt.Errorf("WithNoInitialManagers cannot be combined with an explicit initial manager count")
 		}
-		if len(settings.filesystems) != 0 || len(settings.gateways) != 0 {
+		if needsManagers {
 			return fmt.Errorf("WithNoInitialManagers requires no initial CephFS filesystems or RGW gateways; add a manager before provisioning them")
 		}
 		settings.managers = 0
-	}
-	gatewayNames := make(map[string]bool)
-	for i, config := range settings.gateways {
-		config, err := normalizeRGWConfig(config)
-		if err != nil {
-			return err
-		}
-		if gatewayNames[config.Name] {
-			return fmt.Errorf("initial RGW gateway %q is duplicated", config.Name)
-		}
-		gatewayNames[config.Name] = true
-		settings.gateways[i] = config
 	}
 	settings.defaultCRUSHRoot = clusterCRUSHRoot(*settings)
 	planned := &Container{osds: make(map[int]*OSDContainer)}
@@ -219,27 +207,10 @@ func prepareInitialComposition(settings *options) error {
 		}
 		settings.pools[i] = config
 	}
-	fsNames := make(map[string]bool)
-	for i, config := range settings.filesystems {
-		config, err := normalizeCephFSConfig(resolveFilesystemDefaults(*settings, config))
-		if err != nil {
+	for _, service := range settings.services {
+		if err := service.Prepare(func(pool PoolConfig) PoolConfig { return resolvePoolDefaults(*settings, pool) }, validatePool); err != nil {
 			return err
 		}
-		if fsNames[config.Name] {
-			return fmt.Errorf("initial filesystem %q is duplicated", config.Name)
-		}
-		fsNames[config.Name] = true
-		for _, pool := range cephFSConfiguredPools(config) {
-			if err := validatePool(pool); err != nil {
-				return err
-			}
-		}
-		if config.NoInitialMDS {
-			// Preserve the omitted startup-count request for the runtime constructor;
-			// validation above used the ordinary prospective max_mds of one.
-			config.ActiveMDS = 0
-		}
-		settings.filesystems[i] = config
 	}
 	return nil
 }

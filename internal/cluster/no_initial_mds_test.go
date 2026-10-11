@@ -202,7 +202,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	if err := prepareInitialComposition(&settings); err != nil {
 		t.Fatal(err)
 	}
-	retained := settings.filesystems[0]
+	retained := testFilesystems(settings)[0]
 	if retained.ActiveMDS != 0 || !retained.NoInitialMDS || retained.AdditionalDataPools[0].Name != "extra" {
 		t.Fatalf("initial normalized cold request cannot be readmitted: %+v", retained)
 	}

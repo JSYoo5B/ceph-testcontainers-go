@@ -19,10 +19,7 @@ type options struct {
 	poolDefaultsSet        bool
 	defaultCRUSHRoot       string
 	pools                  []PoolConfig
-	rbdPools               []PoolConfig
-	rbdPoolNames           []string
-	filesystems            []CephFSConfig
-	gateways               []RGWConfig
+	services               []serviceBootstrap
 	monitors               int
 	managers               int
 	managerCountExplicit   bool
