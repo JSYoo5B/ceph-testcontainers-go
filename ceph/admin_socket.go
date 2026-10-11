@@ -16,6 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 const (
@@ -171,19 +172,19 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
 	socket := adminSocketDir + "/ceph-" + daemon + ".asok"
-	result, err := supervisedCommand(ctx, control, "admin socket", c.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
+	result, err := supervised.Command(ctx, control, "admin socket", c.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
 		append([]string{"ceph", "--admin-daemon", socket}, args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("admin socket of %s: %w", daemon, err)
 	}
-	if result.exitCode != 0 {
-		message := strings.TrimSpace(string(result.stderr))
+	if result.ExitCode != 0 {
+		message := strings.TrimSpace(string(result.Stderr))
 		if len(message) > adminSocketErrorLimit {
 			message = message[:adminSocketErrorLimit]
 		}
-		return result.stdout, fmt.Errorf("admin socket of %s exited %d: %s", daemon, result.exitCode, message)
+		return result.Stdout, fmt.Errorf("admin socket of %s exited %d: %s", daemon, result.ExitCode, message)
 	}
-	return result.stdout, nil
+	return result.Stdout, nil
 }
 
 func parseAdminSocketDaemon(daemon string) (kind, id string, err error) {

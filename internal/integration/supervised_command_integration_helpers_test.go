@@ -1,34 +1,31 @@
-//go:build all || (integration && (!ci || (ci_environment && (!ci_batch || ci_batch_supervised_command))))
+//go:build all || integration
 
-//ci: timeout=10m job-timeout=20
-
-package ceph
+package integration_test
 
 import (
 	"context"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// TestSupervisedCommandCancellationInCephImage runs the production supervisor
-// and canceler on Linux in the Ceph image, without a cluster, and covers the
-// orderings that a live cluster cannot produce on demand.
-func TestSupervisedCommandCancellationInCephImage(t *testing.T) {
+// testSupervisedCommandCancellation runs the supervisor and canceler that
+// AdminSocket and the quorum reads use, on Linux in the control image and
+// without a cluster, and covers the orderings that a live cluster cannot
+// produce on demand.
+func testSupervisedCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	image := os.Getenv("CEPH_TEST_IMAGE")
-	if image == "" {
-		image = DefaultImage
-	}
-	ctr, err := testcontainers.Run(ctx, image, WithIdleEntrypoint())
+	image, _ := integrationImages(t)
+	ctr, err := testcontainers.Run(ctx, image, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -38,14 +35,14 @@ func TestSupervisedCommandCancellationInCephImage(t *testing.T) {
 		// Docker may start an exec that it accepted after the caller gave up,
 		// and after the canceler ran. Replay that order: cancel first, then
 		// start the exact supervisor command for the same invocation.
-		marker := supervisedMarkerDir + "/" + uuid.NewString()
-		if err := cancelSupervised(ctx, ctr, "late", marker); err != nil {
+		marker := supervised.MarkerDir + "/" + uuid.NewString()
+		if err := supervised.Cancel(ctx, ctr, "late", marker); err != nil {
 			t.Fatal(err)
 		}
-		command := []string{"python3", "-c", monitorQuorumCommandScript, "4096", "4096", "30",
+		command := []string{"python3", "-c", supervised.Script, "4096", "4096", "30",
 			"sh", "-c", "touch /tmp/late-started; exec sleep 30"}
 		started := time.Now()
-		code, output := supervisedTestExec(t, ctx, ctr, command, supervisedMarkerVariable+"="+marker)
+		code, output := supervisedTestExec(t, ctx, ctr, command, supervised.MarkerVariable+"="+marker)
 		if code != 0 || output != "" || time.Since(started) > 10*time.Second {
 			t.Fatalf("late supervisor exited %d after %s: %q", code, time.Since(started), output)
 		}
@@ -66,12 +63,12 @@ func TestSupervisedCommandCancellationInCephImage(t *testing.T) {
 
 	// Every invocation above, including the one canceled before it started,
 	// removed its markers.
-	if code, output := supervisedTestExec(t, ctx, ctr, []string{"ls", "-A", supervisedMarkerDir}); code != 0 || strings.TrimSpace(output) != "" {
+	if code, output := supervisedTestExec(t, ctx, ctr, []string{"ls", "-A", supervised.MarkerDir}); code != 0 || strings.TrimSpace(output) != "" {
 		t.Fatalf("markers remain: exit %d, %q", code, output)
 	}
 }
 
-// supervisedTestCommand is one supervisedCommand call whose command records
+// supervisedTestCommand is one supervised.Command call whose command records
 // its PID and waits until it is canceled.
 type supervisedTestCommand struct {
 	name   string
@@ -87,7 +84,7 @@ func startSupervisedTestCommand(t *testing.T, ctx context.Context, ctr testconta
 	command := &supervisedTestCommand{name: name, cancel: cancel, done: make(chan error, 1)}
 	pidPath := "/tmp/" + name + ".pid"
 	go func() {
-		_, err := supervisedCommand(callCtx, ctr, name, time.Minute, 4096, 4096, "sh", "-c", "echo $$ > "+pidPath+".tmp && mv "+pidPath+".tmp "+pidPath+" && exec sleep 60")
+		_, err := supervised.Command(callCtx, ctr, name, time.Minute, 4096, 4096, "sh", "-c", "echo $$ > "+pidPath+".tmp && mv "+pidPath+".tmp "+pidPath+" && exec sleep 60")
 		command.done <- err
 	}()
 	deadline := time.Now().Add(time.Minute)
@@ -109,7 +106,7 @@ func startSupervisedTestCommand(t *testing.T, ctx context.Context, ctr testconta
 }
 
 // cancelAndCheck cancels the call and checks that its command was already
-// reaped when supervisedCommand returned.
+// reaped when supervised.Command returned.
 func (command *supervisedTestCommand) cancelAndCheck(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
 	t.Helper()
 	command.cancel()
