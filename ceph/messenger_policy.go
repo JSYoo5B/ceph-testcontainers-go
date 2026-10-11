@@ -18,8 +18,8 @@ const (
 	MessengerSecure MessengerConnectionMode = "secure"
 )
 
-// messengerModeList returns the native value of a mode list in order of
-// preference, or "" for nil, which keeps Ceph's default.
+// messengerModeList returns the native value of a mode list, keeping its
+// order, or "" for nil, which keeps Ceph's default.
 func messengerModeList(field string, modes []MessengerConnectionMode) (string, error) {
 	if modes == nil {
 		return "", nil
@@ -41,9 +41,11 @@ func messengerModeList(field string, modes []MessengerConnectionMode) (string, e
 }
 
 // MessengerPolicy selects, for each daemon type, the Messenger v2 connection
-// modes that it accepts from clients, in order of preference. A nil field
-// keeps Ceph's default, which accepts both modes. Connections between daemons
-// keep their defaults, so every policy leaves the cluster itself working.
+// modes that it accepts from clients. The order of a list does not matter:
+// the connection uses the first mode in the client's order of preference that
+// the daemon accepts. A nil field keeps Ceph's default, which accepts both
+// modes. Connections between daemons keep their defaults, so every policy
+// leaves the cluster itself working.
 type MessengerPolicy struct {
 	// Monitors sets ms_mon_service_mode for the MONs.
 	Monitors []MessengerConnectionMode

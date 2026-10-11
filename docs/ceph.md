@@ -690,9 +690,12 @@ ceph.WithMessengerPolicy(ceph.MessengerPolicy{
 ```
 
 Selects, for each daemon type, the Messenger v2 connection modes that it accepts
-from clients, in order of preference. A `ceph.MessengerConnectionMode` is
-`ceph.MessengerSecure` (`secure`, AES-GCM) or `ceph.MessengerCRC` (`crc`). A nil
-field keeps Ceph's default, which accepts both.
+from clients. A `ceph.MessengerConnectionMode` is `ceph.MessengerSecure`
+(`secure`, AES-GCM) or `ceph.MessengerCRC` (`crc`). A nil field keeps Ceph's
+default, which accepts both. The order of a daemon's list does not matter: the
+connection uses the first mode in the client's order of preference that the
+daemon accepts, so a daemon cannot force `secure` on a client that prefers
+`crc` while it accepts both.
 
 | Field | Native option |
 | --- | --- |
