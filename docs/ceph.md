@@ -2222,9 +2222,11 @@ volume belongs to the cluster and `Terminate` removes it.
 - A nonzero exit returns the command's output together with an error.
 - The call is bounded by the context and by
   [WithStartupTimeout](#withstartuptimeout), and runs no command for a daemon
-  the cluster does not own. When the context ends first, the call kills its
-  command in the control container before it returns, so canceled calls leave
-  no process behind. An effect that the daemon has already applied stays.
+  the cluster does not own. When the context ends first, the call stops its
+  command in the control container before it returns, including a command that
+  Docker has accepted but not yet started, so canceled calls leave no process
+  behind and other calls keep running. An effect that the daemon has already
+  applied stays.
 - MDS and RGW daemons are not included; reach them with `ceph tell` (see
   [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
 

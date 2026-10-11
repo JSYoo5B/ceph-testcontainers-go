@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,7 +58,9 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 
 	// A frozen OSD accepts the connection but never replies. Canceling the
 	// call must also end its CLI process group in the control container, so
-	// repeated canceled calls do not accumulate.
+	// repeated canceled calls do not accumulate, and must leave other calls
+	// running. A cancel at any point of startup, including before the CLI is
+	// visible, must not let a CLI start afterwards.
 	osd := cluster.OSDs()[0]
 	pause, err := cluster.PauseContainer(ctx, osd)
 	if err != nil {
@@ -67,7 +70,21 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 		t.Fatal(err)
 	}
 	for attempt := 1; attempt <= 3; attempt++ {
-		cancelAdminSocketCall(t, ctx, cluster, attempt)
+		call := startAdminSocketCall(t, ctx, cluster)
+		call.cancelAndCheck(t, ctx, cluster, "attempt "+strconv.Itoa(attempt))
+		waitNoAdminSocketProcess(t, ctx, cluster)
+	}
+	first := startAdminSocketCall(t, ctx, cluster)
+	second := startAdminSocketCall(t, ctx, cluster, first.cli)
+	first.cancelAndCheck(t, ctx, cluster, "first of two")
+	if !adminSocketProcessRunning(t, ctx, cluster, second.cli) {
+		t.Fatalf("canceling one call stopped the CLI %d of another", second.cli.PID)
+	}
+	second.cancelAndCheck(t, ctx, cluster, "second of two")
+	waitNoAdminSocketProcess(t, ctx, cluster)
+	for _, delay := range []time.Duration{0, time.Millisecond, 5 * time.Millisecond, 10 * time.Millisecond, 25 * time.Millisecond,
+		50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond} {
+		cancelAdminSocketCallAfter(t, ctx, cluster, delay)
 	}
 	if err := pause.Resume(ctx); err != nil {
 		t.Fatal(err)
@@ -140,56 +157,116 @@ func waitAdminSocketOSDEpoch(t *testing.T, ctx context.Context, cluster *ceph.Co
 // adminSocketOSDPath is the socket that osd.0's admin socket calls name.
 const adminSocketOSDPath = "/var/run/ceph/ceph-osd.0.asok"
 
-// cancelAdminSocketCall starts a call to the frozen osd.0, waits until its CLI
-// runs in the control container, cancels it, and checks that the CLI's process
-// group and every process naming the socket are gone.
-func cancelAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Container, attempt int) {
+// adminSocketCall is one AdminSocket call to the frozen osd.0, which runs
+// until it is canceled.
+type adminSocketCall struct {
+	cancel context.CancelFunc
+	done   chan error
+	cli    adminSocketProcess
+}
+
+// startAdminSocketCall starts a call and waits until its CLI, one that is not
+// among running, appears in the control container. The CLI leads its own
+// process group; its supervisor runs python3 -c.
+func startAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Container, running ...adminSocketProcess) *adminSocketCall {
 	t.Helper()
-	callCtx, cancelCall := context.WithCancel(ctx)
-	defer cancelCall()
+	callCtx, cancel := context.WithCancel(ctx)
+	t.Cleanup(cancel)
+	call := &adminSocketCall{cancel: cancel, done: make(chan error, 1)}
+	go func() {
+		_, err := cluster.AdminSocket(callCtx, "osd.0", "status")
+		call.done <- err
+	}()
+	waitCtx, cancelWait := context.WithTimeout(ctx, time.Minute)
+	defer cancelWait()
+	for {
+		for _, process := range adminSocketProcesses(t, ctx, cluster, 0).Matches {
+			known := slices.ContainsFunc(running, func(other adminSocketProcess) bool { return other.PID == process.PID })
+			if process.PID == process.PGID && (len(process.Argv) < 2 || process.Argv[1] != "-c") && !known {
+				call.cli = process
+				return call
+			}
+		}
+		select {
+		case err := <-call.done:
+			t.Fatalf("a call to a frozen OSD returned before cancellation: %v", err)
+		case <-waitCtx.Done():
+			t.Fatal("the admin socket CLI did not start")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// cancelAndCheck cancels the call and checks that it returns context.Canceled
+// with its CLI's process group already gone: the call returns only after the
+// CLI's supervisor has killed and reaped it.
+func (call *adminSocketCall) cancelAndCheck(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) {
+	t.Helper()
+	call.cancel()
+	checkAdminSocketCanceled(t, name, call.done)
+	if left := adminSocketProcesses(t, ctx, cluster, call.cli.PGID); len(left.Group) != 0 {
+		t.Fatalf("%s: canceled CLI group %d remains after the call returned: %+v", name, call.cli.PGID, left)
+	}
+	t.Logf("%s: canceled CLI pid %d and its process group were gone when the call returned", name, call.cli.PID)
+}
+
+func checkAdminSocketCanceled(t *testing.T, name string, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "cancel admin socket command") {
+			t.Fatalf("%s: canceled call returned %v", name, err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%s: canceled call did not return", name)
+	}
+}
+
+// cancelAdminSocketCallAfter cancels a call delay after it started, possibly
+// before its exec or CLI started, and then watches the control container for
+// two seconds: no CLI may run once the call has returned, including one from
+// an exec that Docker starts late.
+func cancelAdminSocketCallAfter(t *testing.T, ctx context.Context, cluster *ceph.Container, delay time.Duration) {
+	t.Helper()
+	name := "cancel after " + delay.String()
+	callCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		_, err := cluster.AdminSocket(callCtx, "osd.0", "status")
 		done <- err
 	}()
-	var cli adminSocketProcess
-	waitCtx, cancelWait := context.WithTimeout(ctx, time.Minute)
-	defer cancelWait()
-	for found := false; !found; {
+	time.Sleep(delay)
+	cancel()
+	checkAdminSocketCanceled(t, name, done)
+	for watch := time.Now().Add(2 * time.Second); time.Now().Before(watch); time.Sleep(100 * time.Millisecond) {
 		for _, process := range adminSocketProcesses(t, ctx, cluster, 0).Matches {
-			// The CLI leads its own group; its supervisor runs python3 -c.
-			if process.PID == process.PGID && (len(process.Argv) < 2 || process.Argv[1] != "-c") {
-				cli, found = process, true
+			if len(process.Argv) < 2 || process.Argv[1] != "-c" {
+				t.Fatalf("%s: a CLI runs after the call returned: %+v", name, process)
 			}
 		}
-		select {
-		case err := <-done:
-			t.Fatalf("attempt %d: call to a frozen OSD returned before cancellation: %v", attempt, err)
-		case <-waitCtx.Done():
-			t.Fatalf("attempt %d: the admin socket CLI did not start", attempt)
-		case <-time.After(100 * time.Millisecond):
-		}
 	}
-	cancelCall()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "clean up") {
-			t.Fatalf("attempt %d: canceled call returned %v", attempt, err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatalf("attempt %d: canceled call did not return", attempt)
-	}
-	// Cleanup completes before the call returns; allow only for the reaping
-	// of an already killed process.
+	waitNoAdminSocketProcess(t, ctx, cluster)
+}
+
+func adminSocketProcessRunning(t *testing.T, ctx context.Context, cluster *ceph.Container, process adminSocketProcess) bool {
+	t.Helper()
+	return slices.ContainsFunc(adminSocketProcesses(t, ctx, cluster, 0).Matches, func(other adminSocketProcess) bool { return other.PID == process.PID })
+}
+
+// waitNoAdminSocketProcess waits briefly for supervisors that have already
+// acknowledged a cancellation to exit, and fails if any process still names
+// the socket.
+func waitNoAdminSocketProcess(t *testing.T, ctx context.Context, cluster *ceph.Container) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		left := adminSocketProcesses(t, ctx, cluster, cli.PGID)
-		if len(left.Matches) == 0 && len(left.Group) == 0 {
-			t.Logf("attempt %d: canceled CLI pid %d and its process group are gone", attempt, cli.PID)
+		left := adminSocketProcesses(t, ctx, cluster, 0)
+		if len(left.Matches) == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("attempt %d: canceled CLI group %d remains: %+v", attempt, cli.PGID, left)
+			t.Fatalf("processes for the socket remain: %+v", left.Matches)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

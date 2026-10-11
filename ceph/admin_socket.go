@@ -135,9 +135,9 @@ func (c *Container) runMount() []testcontainers.ContainerCustomizer {
 // that have no Ceph CLI. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
-// also bounds every call. When the call ends early, its CLI process in the
-// control container is killed before AdminSocket returns. A nonzero exit
-// returns the output with an error.
+// also bounds every call. When the call ends early, AdminSocket stops its CLI
+// in the control container before it returns, including one that Docker has
+// not started yet. A nonzero exit returns the output with an error.
 func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
 	kind, id, err := parseAdminSocketDaemon(daemon)
 	if err != nil {

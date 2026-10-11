@@ -16,7 +16,7 @@ change the API.
 ### Fixed
 
 - Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
-  now kills its `ceph quorum_status` process in the control container before
+  now stops its `ceph quorum_status` process in the control container before
   returning. The process previously ran on for up to five seconds.
 
 ## v0.1.0 (2026-10-11)
