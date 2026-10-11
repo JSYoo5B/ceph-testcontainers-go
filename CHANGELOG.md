@@ -8,6 +8,9 @@ change the API.
 
 ### Added
 
+- `ceph.Container.DaemonAddresses` reads the names and advertised address
+  vectors of every MON, the active and standby MGRs and every OSD from the
+  native maps, with each map's epoch.
 - `ceph.Container.AdminSocket` runs a command on the admin socket of an owned
   MON, MGR or OSD, without the Messenger or Cephx. The daemons of a cluster
   share a run directory, a Docker volume at `/var/run/ceph`, so it also works
