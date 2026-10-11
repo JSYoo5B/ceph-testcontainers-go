@@ -93,23 +93,29 @@ func TestAuthConfigEnvironment(t *testing.T) {
 	}
 }
 
-func TestGenerateKeyArgsFollowsRelease(t *testing.T) {
+// Tentacle before 20.2.4 has no --key-type, like Squid: AES keys are its
+// default and only type. Generation follows the detected option, not the
+// release number.
+func TestGenerateKeyArgsFollowsKeyTypeOption(t *testing.T) {
 	for _, test := range []struct {
 		version string
+		option  bool
 		keyType CephxCipher
 		want    []string
 	}{
-		{"20.2.4", "", []string{"ceph-authtool", "--gen-print-key"}},
-		{"20.2.4", CipherAES, []string{"ceph-authtool", "--gen-print-key", "--key-type", "aes"}},
-		{"20.2.4", CipherAES256K, []string{"ceph-authtool", "--gen-print-key", "--key-type", "aes256k"}},
-		{"19.2.5", "", []string{"ceph-authtool", "--gen-print-key"}},
-		{"19.2.5", CipherAES, []string{"ceph-authtool", "--gen-print-key"}},
-		{"19.2.5", CipherAES256K, nil},
+		{"20.2.4", true, "", []string{"ceph-authtool", "--gen-print-key"}},
+		{"20.2.4", true, CipherAES, []string{"ceph-authtool", "--gen-print-key", "--key-type", "aes"}},
+		{"20.2.4", true, CipherAES256K, []string{"ceph-authtool", "--gen-print-key", "--key-type", "aes256k"}},
+		{"20.2.3", false, "", []string{"ceph-authtool", "--gen-print-key"}},
+		{"20.2.3", false, CipherAES, []string{"ceph-authtool", "--gen-print-key"}},
+		{"20.2.3", false, CipherAES256K, nil},
+		{"19.2.5", false, CipherAES, []string{"ceph-authtool", "--gen-print-key"}},
+		{"19.2.5", false, CipherAES256K, nil},
 	} {
-		c := &Container{cephVersion: test.version}
+		c := &Container{cephVersion: test.version, keyTypeOption: test.option}
 		got, err := c.generateKeyArgs(test.keyType)
 		if (test.want == nil) != (err != nil) || !slices.Equal(got, test.want) {
-			t.Errorf("%s %q: %v, %v", test.version, test.keyType, got, err)
+			t.Errorf("%s option=%t %q: %v, %v", test.version, test.option, test.keyType, got, err)
 		}
 	}
 }

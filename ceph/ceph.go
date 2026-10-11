@@ -36,16 +36,19 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu                    sync.Mutex
-	controlMu             sync.RWMutex
-	configMu              sync.RWMutex
-	configOverrides       map[string]*ConfigOverride
-	flagOverrides         map[string]*OSDFlagOverride
-	fullRatiosOverride    *FullRatiosOverride
-	blocklistOverrides    map[string]*BlocklistOverride
-	moduleOverrides       map[string]*MGRModuleOverride
-	controlPlane          testcontainers.Container
-	cephVersion           string
+	mu                 sync.Mutex
+	controlMu          sync.RWMutex
+	configMu           sync.RWMutex
+	configOverrides    map[string]*ConfigOverride
+	flagOverrides      map[string]*OSDFlagOverride
+	fullRatiosOverride *FullRatiosOverride
+	blocklistOverrides map[string]*BlocklistOverride
+	moduleOverrides    map[string]*MGRModuleOverride
+	controlPlane       testcontainers.Container
+	cephVersion        string
+	// keyTypeOption records whether the control image's ceph-authtool has
+	// --key-type; see generateKeyArgs.
+	keyTypeOption         bool
 	settings              options
 	network               *testcontainers.DockerNetwork
 	clusterNetwork        *testcontainers.DockerNetwork
@@ -162,6 +165,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return c, err
 	}
 	if err := c.recordCephVersion(ctx); err != nil {
+		return c, err
+	}
+	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
 		return c, err
 	}
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
@@ -466,15 +472,16 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Refuse an unsupported key type before allocating anything.
+	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.ensureOSDMemory(ctx); err != nil {
 		return nil, err
 	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
-	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
-	if err != nil {
-		return nil, err
-	}
 	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return nil, err

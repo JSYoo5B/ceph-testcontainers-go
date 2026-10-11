@@ -19,9 +19,10 @@ ms bind msgr1 = false
 ms bind msgr2 = true
 '
 fi
-# Cephx key type, MonMap ciphers and ticket lifetimes from WithAuth. Ceph 19
-# has no key types other than AES and no MonMap ciphers; accept only an
-# AES-only request there, and fail before creating anything otherwise.
+# Cephx key type, MonMap ciphers and ticket lifetimes from WithAuth. Squid and
+# Tentacle before 20.2.4 have no key types other than AES and no MonMap
+# ciphers; accept only an AES-only request there, and fail before creating
+# anything otherwise.
 fail() {
     echo "tc-ceph: $*" >&2
     exit 2
@@ -41,7 +42,7 @@ if [ -n "${CEPH_KEY_TYPE:-}" ]; then
         fi
     else
         for cipher in ${CEPH_KEY_TYPE} ${CEPH_AUTH_SERVICE_CIPHER} $(echo "${CEPH_AUTH_ALLOWED_CIPHERS}" | tr ',' ' ') ${CEPH_AUTH_PREFERRED_CIPHER}; do
-            [ "$cipher" = aes ] || fail "Cephx cipher $cipher needs Ceph 20 or later; this image supports only aes"
+            [ "$cipher" = aes ] || fail "Cephx cipher $cipher needs ceph-authtool --key-type and monmaptool cipher options, as in Ceph 20.2.4 and later; this image supports only aes"
         done
     fi
 fi

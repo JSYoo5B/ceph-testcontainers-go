@@ -34,7 +34,8 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
-[Known release-specific issues](#known-release-specific-issues). The
+[Known release-specific issues](#known-release-specific-issues). Tentacle
+releases before 20.2.4 have no `aes256k` Cephx keys; see the same section. The
 repository's continuous integration runs its test suites on both releases; see
 [CI](../contributing/ci.md).
 
@@ -105,6 +106,12 @@ These affect commands or client libraries you run yourself, not the typed API:
   rejects such requests. No setting disables the check. `rgw.RunMultisite` and
   `rgw.RunTopology` therefore cannot start on 19.2.6. Use 19.2.5 for
   multisite tests on Squid; everything else behaves on 19.2.6 as on 19.2.5.
+- **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
+  `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
+  releases generate only `aes` keys, as Squid does. `ceph.WithAuth` and
+  `CreateClient` detect the options in the control image: they accept `aes`
+  and refuse `aes256k` before any change. The repository tests this with
+  20.2.3.
 - **Tentacle 20.2.4, CephFS mirror daemons.** When another `cephfs-mirror`
   daemon joins, the MGR `mirroring` module fails to redistribute directories
   that are already assigned (`'DirectoryState' object is not subscriptable`).

@@ -117,17 +117,30 @@ func runningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	return value
 }
 
-// testAuthCiphers starts a cluster whose keys are all AES with fractional
-// ticket lifetimes, and on Ceph 20 a second one whose service cipher differs
-// from its key type.
-func testAuthCiphers(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+// keyTypeOption reports whether the cluster's control image has
+// ceph-authtool --key-type, which Squid and Tentacle before 20.2.4 lack.
+func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
+	t.Helper()
+	_, reader, err := cluster.ControlContainer().Exec(ctx, []string{"ceph-authtool", "--help"}, tcexec.Multiplexed())
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, _ := io.ReadAll(reader)
+	return strings.Contains(string(usage), "--key-type")
+}
+
+// testAuthCiphers starts a cluster of image whose keys are all AES with
+// fractional ticket lifetimes. With key type support it also checks AES256K
+// clients and a second cluster whose service cipher differs from its key
+// type; without it, that AES256K requests are refused before any change.
+func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}
-	cluster, _ := newServiceCluster(t, append(append(base, ceph.WithAuth(ceph.AuthConfig{
+	base := append(slices.Clone(imageOpts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
-	})), opts...)...)
-	tentacle := !strings.HasPrefix(cluster.CephVersion(), "19.")
+	}))...)
+	keyTypes := keyTypeOption(t, ctx, cluster)
 
 	// Every key the fixture created is AES, and the daemons run with the
 	// fractional lifetimes.
@@ -150,21 +163,27 @@ func testAuthCiphers(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	if err != nil || cephxKeyType(t, clientKeyring(t, aesClient), aesClient.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, aesClient) {
 		t.Fatalf("default AES client: %v", err)
 	}
+	explicit, err := cluster.CreateClient(ctx, "explicit-aes-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES))
+	if err != nil || cephxKeyType(t, clientKeyring(t, explicit), explicit.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, explicit) {
+		t.Fatalf("explicit AES client: %v", err)
+	}
 
-	if !tentacle {
-		// Ceph 19 has only AES keys: an AES256K client and cluster are refused
-		// before anything is created.
-		if _, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K)); err == nil || !strings.Contains(err.Error(), "Ceph 20") {
-			t.Fatalf("Squid created an AES256K client: %v", err)
+	if !keyTypes {
+		// Without key type support only AES keys exist: an AES256K client and
+		// cluster are refused before anything is created.
+		if _, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K)); err == nil || !strings.Contains(err.Error(), "--key-type") {
+			t.Fatalf("an image without --key-type created an AES256K client: %v", err)
 		}
-		image, imageOpts := integrationImages(t)
+		if _, err := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader"); err == nil {
+			t.Fatal("the refused AES256K client exists")
+		}
 		started := time.Now()
-		refused, err := ceph.Run(ctx, image, append(append(imageOpts, base...), ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K}))...)
+		refused, err := ceph.Run(ctx, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K}))...)
 		testcontainers.CleanupContainer(t, refused)
-		if err == nil || !strings.Contains(err.Error(), "needs Ceph 20") || time.Since(started) > 2*time.Minute {
-			t.Fatalf("Squid bootstrap with AES256K keys: %v after %s", err, time.Since(started))
+		if err == nil || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
+			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
 		}
-		t.Log("Squid: AES keys and fractional ticket lifetimes; AES256K clients and clusters refused before creation")
+		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", cluster.CephVersion())
 		return
 	}
 
@@ -192,9 +211,9 @@ func testAuthCiphers(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	}
 
 	// A service cipher other than the key type allows both types.
-	mixed, _ := newServiceCluster(t, append(append(base, ceph.WithAuth(ceph.AuthConfig{
+	mixed, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES,
-	})), opts...)...)
+	}))...)
 	service, allowed, preferred = readMonMapCiphers(t, ctx, mixed)
 	// The MonMap lists allowed ciphers in its own order.
 	slices.Sort(allowed)
@@ -210,5 +229,5 @@ func testAuthCiphers(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 			t.Fatalf("%s client on the mixed cluster: %v", cipher, err)
 		}
 	}
-	t.Log("Tentacle: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types")
+	t.Logf("Ceph %s with --key-type: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types", cluster.CephVersion())
 }

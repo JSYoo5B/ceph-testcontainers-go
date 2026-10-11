@@ -23,8 +23,9 @@ change the API.
   with OSD images that have no `ceph` CLI.
 - `ceph.WithAuth` selects the Cephx key type (`aes` or `aes256k`), the MonMap
   service, allowed and preferred ciphers, and the MON and service ticket
-  lifetimes, with fractions of a second, of a new cluster. Squid accepts only
-  `aes` and fails before any daemon starts otherwise.
+  lifetimes, with fractions of a second, of a new cluster. An image whose
+  `ceph-authtool` has no `--key-type`, such as Squid or Tentacle before 20.2.4,
+  accepts only `aes` and fails before any daemon starts otherwise.
 - `ceph.Container.CreateClient` takes `ceph.ClientOption` values;
   `ceph.WithClientKeyType` selects the key type of one identity.
 

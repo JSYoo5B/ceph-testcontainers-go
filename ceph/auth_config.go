@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // CephxCipher names a Cephx key type, which is also the cipher of the
@@ -18,10 +19,13 @@ import (
 type CephxCipher string
 
 const (
-	// CipherAES is AES-128-CBC, the only key type before Ceph 20.
+	// CipherAES is AES-128-CBC, the only key type of Squid and of Tentacle
+	// before 20.2.4.
 	CipherAES CephxCipher = "aes"
 	// CipherAES256K is AES-256 with Kerberos-style key derivation
-	// (AES256KRB5). It needs Ceph 20 or later, where it is the default.
+	// (AES256KRB5). It needs an image whose ceph-authtool has --key-type and
+	// whose monmaptool has the cipher options, as in Ceph 20.2.4 and later,
+	// where it is the default.
 	CipherAES256K CephxCipher = "aes256k"
 )
 
@@ -39,8 +43,9 @@ type AuthConfig struct {
 	// ServiceCipher encrypts service tickets. AllowedCiphers are the key
 	// types that the MONs accept for authentication, and PreferredCipher is
 	// the type the MONs use for keys they generate with auth get-or-create,
-	// such as MGR, MDS and RGW keys. These MonMap settings
-	// need Ceph 20 or later and a KeyType. ServiceCipher and PreferredCipher
+	// such as MGR, MDS and RGW keys. These MonMap settings need a KeyType and,
+	// for anything but CipherAES, the image support that CipherAES256K
+	// describes. ServiceCipher and PreferredCipher
 	// default to KeyType, and AllowedCiphers to the distinct types among
 	// KeyType, ServiceCipher and PreferredCipher. AllowedCiphers must contain
 	// all three.
@@ -60,9 +65,9 @@ type AuthConfig struct {
 // lifetimes of a new cluster. The settings are part of the bootstrap: the key
 // type and ciphers apply from the first MON, and the lifetimes are written to
 // every daemon's and WithClient container's ceph.conf, so TemporaryConfig
-// cannot change them later. On Ceph 19 only CipherAES is available, and Run
-// fails before any daemon starts when a configuration asks for anything
-// else.
+// cannot change them later. An image without key type support, such as Squid
+// or Tentacle before 20.2.4, accepts a configuration in which every cipher is
+// CipherAES, and Run fails before any daemon starts when one is not.
 func WithAuth(config AuthConfig) Option {
 	return func(o *options) error {
 		normalized, err := normalizeAuthConfig(config)
@@ -151,8 +156,9 @@ type clientOptions struct {
 
 // WithClientKeyType selects the key type of a new client identity instead of
 // the cluster's AuthConfig.KeyType or the release default. The MONs must
-// allow the type for the client to authenticate. CipherAES256K needs Ceph 20
-// or later.
+// allow the type for the client to authenticate. CipherAES256K needs an
+// image with key type support (see CipherAES256K); without it CreateClient
+// fails before any change.
 func WithClientKeyType(cipher CephxCipher) ClientOption {
 	return func(o *clientOptions) error {
 		if !validCephxCipher(cipher) {
@@ -164,19 +170,34 @@ func WithClientKeyType(cipher CephxCipher) ClientOption {
 }
 
 // generateKeyArgs returns the ceph-authtool command that prints a fresh key
-// of keyType, or of the release default when keyType is empty. Ceph 19 knows
-// only AES keys and has no --key-type option.
+// of keyType, or of the release default when keyType is empty. A
+// ceph-authtool without --key-type, as in Squid and Tentacle before 20.2.4,
+// generates only AES keys.
 func (c *Container) generateKeyArgs(keyType CephxCipher) ([]string, error) {
 	args := []string{"ceph-authtool", "--gen-print-key"}
 	switch {
 	case keyType == "":
 		return args, nil
-	case c.cephBefore(20) && keyType != CipherAES:
-		return nil, fmt.Errorf("cephx key type %s needs Ceph 20 or later", keyType)
-	case c.cephBefore(20):
+	case !c.keyTypeOption && keyType != CipherAES:
+		return nil, fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the control image (Ceph %s) lacks", keyType, c.CephVersion())
+	case !c.keyTypeOption:
 		return args, nil
 	}
 	return append(args, "--key-type", string(keyType)), nil
+}
+
+// detectKeyTypeOption reports whether ctr's ceph-authtool accepts --key-type.
+// Its usage text lists the option when it does.
+func detectKeyTypeOption(ctx context.Context, ctr testcontainers.Container) (bool, error) {
+	_, reader, err := ctr.Exec(ctx, []string{"ceph-authtool", "--help"}, tcexec.Multiplexed())
+	if err != nil {
+		return false, fmt.Errorf("inspect ceph-authtool options: %w", err)
+	}
+	usage, err := io.ReadAll(io.LimitReader(reader, 1<<20))
+	if err != nil {
+		return false, fmt.Errorf("inspect ceph-authtool options: %w", err)
+	}
+	return strings.Contains(string(usage), "--key-type"), nil
 }
 
 // bootstrapRefusal returns the reason a bootstrap script printed before it

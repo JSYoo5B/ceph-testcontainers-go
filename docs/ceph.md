@@ -632,8 +632,9 @@ ceph.WithAuth(ceph.AuthConfig{
 ```
 
 Selects the Cephx key type, the MonMap ciphers and the ticket lifetimes of a new
-cluster. Zero fields keep the defaults of the image's Ceph release: on Tentacle
-every key and cipher is `aes256k`, on Squid every key is `aes`.
+cluster. Zero fields keep the defaults of the image's Ceph release. On Tentacle
+20.2.4 and later every key and cipher is `aes256k`. Squid and Tentacle before
+20.2.4 generate only `aes` keys and have no MonMap ciphers.
 
 | Field | Sets |
 | --- | --- |
@@ -669,9 +670,13 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
 
   `ceph mon dump` reports the current values; it lists allowed ciphers in its own
   order.
-- Squid has only `aes` keys and no MonMap ciphers. Squid accepts a configuration
-  in which every cipher is `aes`, and fails `Run` with `needs Ceph 20` before
-  any daemon starts when one is `aes256k`.
+- `aes256k` and the MonMap ciphers need an image whose `ceph-authtool` has
+  `--key-type` and whose `monmaptool` has the cipher options. Squid and Tentacle
+  20.2.0 to 20.2.3 have neither. `Run` checks the options themselves, not the
+  release number. Such an image accepts a configuration in which every cipher
+  is `aes`, and `Run` fails before any daemon starts, with
+  `needs ceph-authtool --key-type and monmaptool cipher options`, when one is
+  `aes256k`.
 - `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
 
 #### WithHostNetwork
@@ -1650,8 +1655,9 @@ legacy, err := cluster.CreateClient(ctx, "legacy", ceph.ClientCaps{Mon: "allow r
 ```
 
 The identity is created whether or not the MONs allow its type; whether it can
-authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs
-Ceph 20 or later, and on Squid the call fails before any change.
+authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs a
+control image whose `ceph-authtool` has `--key-type` (see
+[WithAuth](#withauth)); without it the call fails before any change.
 
 #### ClientCapabilities
 
