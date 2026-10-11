@@ -36,16 +36,19 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu                    sync.Mutex
-	controlMu             sync.RWMutex
-	configMu              sync.RWMutex
-	configOverrides       map[string]*ConfigOverride
-	flagOverrides         map[string]*OSDFlagOverride
-	fullRatiosOverride    *FullRatiosOverride
-	blocklistOverrides    map[string]*BlocklistOverride
-	moduleOverrides       map[string]*MGRModuleOverride
-	controlPlane          testcontainers.Container
-	cephVersion           string
+	mu                 sync.Mutex
+	controlMu          sync.RWMutex
+	configMu           sync.RWMutex
+	configOverrides    map[string]*ConfigOverride
+	flagOverrides      map[string]*OSDFlagOverride
+	fullRatiosOverride *FullRatiosOverride
+	blocklistOverrides map[string]*BlocklistOverride
+	moduleOverrides    map[string]*MGRModuleOverride
+	controlPlane       testcontainers.Container
+	cephVersion        string
+	// keyTypeOption records whether the control image's ceph-authtool has
+	// --key-type; see generateKeyArgs.
+	keyTypeOption         bool
 	settings              options
 	network               *testcontainers.DockerNetwork
 	clusterNetwork        *testcontainers.DockerNetwork
@@ -164,6 +167,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.recordCephVersion(ctx); err != nil {
 		return c, err
 	}
+	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
+		return c, err
+	}
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
 		return c, err
 	}
@@ -274,6 +280,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
 			}),
+			testcontainers.WithEnv(c.settings.auth.environment()),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
@@ -312,6 +319,9 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		if err == nil {
 			return mon, nil
+		}
+		if reason := bootstrapRefusal(ctx, mon); reason != "" {
+			return mon, fmt.Errorf("%s: %w", reason, err)
 		}
 		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
 			return mon, err
@@ -462,12 +472,17 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Refuse an unsupported key type before allocating anything.
+	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.ensureOSDMemory(ctx); err != nil {
 		return nil, err
 	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
-	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
+	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return nil, err
 	}

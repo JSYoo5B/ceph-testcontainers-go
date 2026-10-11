@@ -564,7 +564,7 @@ rejected with the option to use instead:
 | --- | --- |
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
 | `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
-| `auth_*`, `keyring`, `key`, `keyfile` | fixture Cephx setup |
+| `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
 | `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
@@ -619,6 +619,65 @@ live connections. To verify encryption on Tentacle, query a daemon's
 `messenger dump` admin command (through `ceph tell`), which reports the mode and
 cipher of each READY connection. Squid has no `messenger dump`; check the
 daemons' `ms_*_mode` settings instead.
+
+#### WithAuth
+
+```golang
+ceph.WithAuth(ceph.AuthConfig{
+	KeyType:          ceph.CipherAES256K,
+	ServiceCipher:    ceph.CipherAES,
+	MonTicketTTL:     1500 * time.Millisecond,
+	ServiceTicketTTL: 30 * time.Second,
+})
+```
+
+Selects the Cephx key type, the MonMap ciphers and the ticket lifetimes of a new
+cluster. Zero fields keep the defaults of the image's Ceph release. On Tentacle
+20.2.4 and later every key and cipher is `aes256k`. Squid and Tentacle before
+20.2.4 generate only `aes` keys and have no MonMap ciphers.
+
+| Field | Sets |
+| --- | --- |
+| `KeyType` | the type of the keys the fixture generates itself: `mon.`, `client.admin` and OSD keys, and the default for [CreateClient](#createclient) |
+| `ServiceCipher` | the MonMap's `auth_service_cipher`, which encrypts service tickets; defaults to `KeyType` |
+| `AllowedCiphers` | the MonMap's `auth_allowed_ciphers`, the key types that the MONs accept for authentication; defaults to the distinct values of `KeyType`, `ServiceCipher` and `PreferredCipher`, and must contain all three |
+| `PreferredCipher` | the MonMap's `auth_preferred_cipher`, the type of keys that the MONs generate with `auth get-or-create`: MGR, MDS and RGW identities and mirror peers; defaults to `KeyType` |
+| `MonTicketTTL` | `auth_mon_ticket_ttl` |
+| `ServiceTicketTTL` | `auth_service_ticket_ttl` |
+
+The cipher type `ceph.CephxCipher` has two values: `ceph.CipherAES` (`aes`,
+AES-128) and `ceph.CipherAES256K` (`aes256k`, AES-256 with Kerberos-style key
+derivation). The decoded key itself
+records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
+`aes256k`.
+
+- The key type and ciphers apply from the first MON: they are passed to
+  `ceph-authtool` and `monmaptool` before the MON creates its store. A cipher
+  field needs `KeyType`.
+- A `PreferredCipher` of `aes` also sets `mon_auth_allow_insecure_key = true` in
+  `[mon]`, which Tentacle requires before its MONs generate AES keys.
+- Lifetimes keep fractions of a second and are written to the `[global]` section
+  of the bootstrap `ceph.conf`. Every daemon, `WithClient` container and
+  [ConnectionConfig](#connectionconfig) gets them, and
+  [TemporaryConfig](#temporaryconfig) cannot change them later. MONs rotate
+  service secrets on their tick, so lifetimes of a few seconds also need a
+  shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
+- The MonMap ciphers can change on a running Tentacle cluster with `ceph mon set`:
+
+  ```golang
+  _, err := cluster.Ceph(ctx, "mon", "set", "auth_allowed_ciphers", "aes,aes256k")
+  ```
+
+  `ceph mon dump` reports the current values; it lists allowed ciphers in its own
+  order.
+- `aes256k` and the MonMap ciphers need an image whose `ceph-authtool` has
+  `--key-type` and whose `monmaptool` has the cipher options. Squid and Tentacle
+  20.2.0 to 20.2.3 have neither. `Run` checks the options themselves, not the
+  release number. Such an image accepts a configuration in which every cipher
+  is `aes`, and `Run` fails before any daemon starts, with
+  `needs ceph-authtool --key-type and monmaptool cipher options`, when one is
+  `aes256k`.
+- `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
 
 #### WithHostNetwork
 
@@ -1556,7 +1615,7 @@ creations and revoked identities are rejected. You own the container.
 #### CreateClient
 
 ```golang
-func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
+func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
 ```
 
 Creates a fresh Cephx identity with exactly the given capabilities. `name` is an
@@ -1584,6 +1643,21 @@ Ceph validates the syntax. A non-nil result returned with an error identifies an
 attempted or partial creation; inspect auth state or terminate the cluster rather
 than retrying with broader caps. The returned `*ceph.ClientConfig` keeps the
 credentials private; see [ClientConfig](#clientconfig).
+
+The key has the cluster's [WithAuth](#withauth) `KeyType`, or the release
+default without one. The `ceph.ClientOption` `ceph.WithClientKeyType` selects
+another type for this identity, for example to check that the MONs reject a key type they do not
+allow:
+
+```golang
+legacy, err := cluster.CreateClient(ctx, "legacy", ceph.ClientCaps{Mon: "allow r"},
+	ceph.WithClientKeyType(ceph.CipherAES))
+```
+
+The identity is created whether or not the MONs allow its type; whether it can
+authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs a
+control image whose `ceph-authtool` has `--key-type` (see
+[WithAuth](#withauth)); without it the call fails before any change.
 
 #### ClientCapabilities
 

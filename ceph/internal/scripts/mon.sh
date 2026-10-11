@@ -19,6 +19,41 @@ ms bind msgr1 = false
 ms bind msgr2 = true
 '
 fi
+# Cephx key type, MonMap ciphers and ticket lifetimes from WithAuth. Squid and
+# Tentacle before 20.2.4 have no key types other than AES and no MonMap
+# ciphers; accept only an AES-only request there, and fail before creating
+# anything otherwise.
+fail() {
+    echo "tc-ceph: $*" >&2
+    exit 2
+}
+key_type_args=
+monmap_cipher_args=
+auth_config=
+mon_auth_config=
+if [ -n "${CEPH_KEY_TYPE:-}" ]; then
+    if ceph-authtool --help 2>&1 | grep -q -- '--key-type' && monmaptool --help 2>&1 | grep -q -- '--auth-service-cipher'; then
+        key_type_args="--key-type ${CEPH_KEY_TYPE}"
+        monmap_cipher_args="--auth-service-cipher ${CEPH_AUTH_SERVICE_CIPHER} --auth-allowed-ciphers ${CEPH_AUTH_ALLOWED_CIPHERS} --auth-preferred-cipher ${CEPH_AUTH_PREFERRED_CIPHER}"
+        if [ "${CEPH_AUTH_PREFERRED_CIPHER}" = aes ]; then
+            # The MONs generate keys of the preferred type for get-or-create.
+            mon_auth_config='mon auth allow insecure key = true
+'
+        fi
+    else
+        for cipher in ${CEPH_KEY_TYPE} ${CEPH_AUTH_SERVICE_CIPHER} $(echo "${CEPH_AUTH_ALLOWED_CIPHERS}" | tr ',' ' ') ${CEPH_AUTH_PREFERRED_CIPHER}; do
+            [ "$cipher" = aes ] || fail "Cephx cipher $cipher needs ceph-authtool --key-type and monmaptool cipher options, as in Ceph 20.2.4 and later; this image supports only aes"
+        done
+    fi
+fi
+if [ -n "${CEPH_AUTH_MON_TICKET_TTL:-}" ]; then
+    auth_config="${auth_config}auth mon ticket ttl = ${CEPH_AUTH_MON_TICKET_TTL}
+"
+fi
+if [ -n "${CEPH_AUTH_SERVICE_TICKET_TTL:-}" ]; then
+    auth_config="${auth_config}auth service ticket ttl = ${CEPH_AUTH_SERVICE_TICKET_TTL}
+"
+fi
 # MemStore saves its contents to the OSD data directory only when the store
 # is unmounted, which Ceph's fast shutdown skips.
 memstore_config=
@@ -93,7 +128,7 @@ auth cluster required = cephx
 auth service required = cephx
 auth client required = cephx
 auth allow insecure global id reclaim = false
-log to file = false
+${auth_config}log to file = false
 log to stderr = true
 err to stderr = true
 mon cluster log to file = false
@@ -108,7 +143,8 @@ ms bind ipv6 = false
 # Report daemon and PG statistics every second instead of five, so readiness
 # waits observe new PG states sooner in this small disposable cluster.
 mgr stats period = 1
-${messenger_config}[osd]
+${messenger_config}[mon]
+${mon_auth_config}[osd]
 osd objectstore = ${CEPH_OSD_OBJECTSTORE:-bluestore}
 memstore device bytes = ${CEPH_OSD_BLOCK_SIZE}
 ${memstore_config}bluestore block create = true
@@ -124,11 +160,14 @@ EOF
         merge_user_config /tc/ceph-user.conf /etc/ceph/ceph.conf > /etc/ceph/ceph.conf.merged
         mv /etc/ceph/ceph.conf.merged /etc/ceph/ceph.conf
     fi
-    ceph-authtool --create-keyring /etc/ceph/mon.keyring --gen-key -n mon. --cap mon 'allow *'
-    ceph-authtool --create-keyring /etc/ceph/ceph.client.admin.keyring --gen-key -n client.admin \
+    # shellcheck disable=SC2086
+    ceph-authtool --create-keyring /etc/ceph/mon.keyring --gen-key -n mon. $key_type_args --cap mon 'allow *'
+    # shellcheck disable=SC2086
+    ceph-authtool --create-keyring /etc/ceph/ceph.client.admin.keyring --gen-key -n client.admin $key_type_args \
         --cap mon 'allow *' --cap osd 'allow *' --cap mgr 'allow *' --cap mds 'allow *'
     ceph-authtool /etc/ceph/mon.keyring --import-keyring /etc/ceph/ceph.client.admin.keyring
-    monmaptool --create --fsid "$CEPH_FSID" --addv a "$mon_addrs" /tmp/monmap
+    # shellcheck disable=SC2086
+    monmaptool --create --fsid "$CEPH_FSID" --addv a "$mon_addrs" $monmap_cipher_args /tmp/monmap
     ceph-mon --mkfs -i a --monmap /tmp/monmap --keyring /etc/ceph/mon.keyring
 fi
 # Use the complete address vector from monmap. An IP-only public_bind_addr

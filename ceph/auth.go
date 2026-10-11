@@ -99,8 +99,20 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // never updated. A non-nil result with an error identifies an attempted or partial
 // creation; inspect auth state or terminate the cluster rather than retrying with
 // broader caps. DeleteClient can revoke a confirmed successful creation.
-func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps) (*ClientConfig, error) {
+// The key has the cluster's AuthConfig.KeyType, the release default without
+// one, or the type that WithClientKeyType selects.
+func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
 	entity, err := clientEntity(name)
+	if err != nil {
+		return nil, err
+	}
+	settings := clientOptions{keyType: c.settings.auth.KeyType}
+	for _, opt := range opts {
+		if err := opt(&settings); err != nil {
+			return nil, err
+		}
+	}
+	generate, err := c.generateKeyArgs(settings.keyType)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +159,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	if err != nil {
 		return client, err
 	}
-	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
+	secret, err := command(ctx, control, generate...)
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}

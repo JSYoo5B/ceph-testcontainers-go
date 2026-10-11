@@ -26,6 +26,7 @@ type options struct {
 	noInitialManagers      bool
 	blockSize              int64
 	osdMemorySize          int64
+	auth                   AuthConfig
 	osdObjectStore         OSDObjectStore
 	startupTimeout         time.Duration
 	osdImage               string
