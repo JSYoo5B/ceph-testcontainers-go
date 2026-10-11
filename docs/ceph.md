@@ -2361,10 +2361,12 @@ select the same endpoint. Host mode is refused because Docker cannot disconnect 
 host-network endpoint.
 
 The returned `*ceph.NetworkInterruption` has `ContainerID`, `NetworkName` and
-`OriginalAddress`. `Restore` reconnects the endpoint with its original IP and
-aliases, so the address Ceph advertises stays valid and the daemon is not
-restarted. An endpoint that someone else reattached with a different address is
-refused. It is a whole-endpoint interruption, not a packet filter between
+`OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
+its original IPv6 address on the dual-stack bridge of
+[WithAddressFamily](#withaddressfamily)`(AddressIPv6)`, and its aliases, so the
+address Ceph advertises stays valid and the daemon is not restarted. An
+endpoint that someone else reattached with a different or missing address is
+refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
 specific peers. The cluster keeps the handle and restores it during `Terminate`;
 restore caller-owned containers explicitly before removing them.
 

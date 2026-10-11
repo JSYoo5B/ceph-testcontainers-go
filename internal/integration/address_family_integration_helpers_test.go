@@ -97,6 +97,28 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 		checkMessengerSockets(t, ctx, ctr, family)
 	}
 
+	// An interrupted OSD endpoint comes back at its original IPv4 and, on the
+	// dual-stack bridge, IPv6 address, so its advertised address still
+	// reaches it.
+	osd := cluster.OSDs()[0]
+	endpointBefore := osdEndpoint(t, ctx, cluster, osd.Container)
+	link, err := cluster.InterruptNetwork(ctx, osd.Container, ceph.PublicNetworkPlane)
+	if err != nil {
+		if link != nil {
+			_ = link.Restore(ctx)
+		}
+		t.Fatal(err)
+	}
+	if err := link.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if endpointAfter := osdEndpoint(t, ctx, cluster, osd.Container); endpointAfter != endpointBefore {
+		t.Fatalf("%s: OSD endpoint %s became %s after restoration", family, endpointBefore, endpointAfter)
+	}
+	if family == ceph.AddressIPv6 && !strings.Contains(endpointBefore, ":") {
+		t.Fatalf("the dual-stack OSD endpoint %s has no IPv6 address", endpointBefore)
+	}
+
 	// A client container reads the generated configuration and does object
 	// I/O over the family's addresses.
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-family", Application: "rados"}); err != nil {
@@ -219,4 +241,23 @@ func monitorBannerReachable(t *testing.T, ctx context.Context, cluster *ceph.Con
 	banner := make([]byte, len("ceph v2\n"))
 	_, err = io.ReadFull(conn, banner)
 	return err == nil && string(banner) == "ceph v2\n"
+}
+
+// osdEndpoint returns the IPv4 and IPv6 address of ctr on the cluster's
+// public network.
+func osdEndpoint(t *testing.T, ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container) string {
+	t.Helper()
+	inspection, err := ctr.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+	if endpoint == nil {
+		t.Fatal("the OSD is not attached to the public network")
+	}
+	address := endpoint.IPAddress.String()
+	if endpoint.GlobalIPv6Address.IsValid() {
+		address += " " + endpoint.GlobalIPv6Address.String()
+	}
+	return address
 }
