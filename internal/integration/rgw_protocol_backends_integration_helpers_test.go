@@ -24,10 +24,11 @@ import (
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
-	testcontainervault "github.com/testcontainers/testcontainers-go/modules/vault"
 	"github.com/testcontainers/testcontainers-go/network"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func rgwProtocolBackends(t *testing.T, host bool) {
@@ -403,7 +404,7 @@ func rgwBackendSwift(t *testing.T, ctx context.Context, gateway *rgw.Gateway, en
 }
 
 type rgwBackendVault struct {
-	container      *testcontainervault.VaultContainer
+	container      testcontainers.Container
 	endpoint       string
 	nativeEndpoint string
 	rootToken      string
@@ -418,8 +419,16 @@ func rgwBackendStartVault(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		image = "hashicorp/vault:1.21.4"
 	}
 	vault := &rgwBackendVault{rootToken: rgwBackendRandom(t, 24)}
+	// The Vault dev server, configured as the Testcontainers Vault module does.
 	opts := []testcontainers.ContainerCustomizer{
-		testcontainervault.WithToken(vault.rootToken),
+		testcontainers.WithExposedPorts("8200/tcp"),
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) { hc.CapAdd = []string{"CAP_IPC_LOCK"} }),
+		testcontainers.WithWaitStrategy(wait.ForHTTP("/v1/sys/health").WithPort("8200")),
+		testcontainers.WithEnv(map[string]string{
+			"VAULT_ADDR":              "http://0.0.0.0:8200",
+			"VAULT_DEV_ROOT_TOKEN_ID": vault.rootToken,
+			"VAULT_TOKEN":             vault.rootToken,
+		}),
 		testcontainers.WithEntrypoint("vault"),
 		testcontainers.WithCmd("server", "-dev", "-dev-no-store-token", "-dev-listen-address=0.0.0.0:8200"),
 		// Dev-server startup logs contain the root token, including on a failed
@@ -434,14 +443,14 @@ func rgwBackendStartVault(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		opts = append(opts, network.WithNetworkName(nil, cluster.NetworkName()))
 	}
 	var err error
-	vault.container, err = testcontainervault.Run(ctx, image, opts...)
+	vault.container, err = testcontainers.Run(ctx, image, opts...)
 	if vault.container != nil {
 		testcontainers.CleanupContainer(t, vault.container)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	vault.endpoint, err = vault.container.HttpHostAddress(ctx)
+	vault.endpoint, err = vault.container.PortEndpoint(ctx, "8200/tcp", "http")
 	if err != nil {
 		t.Fatal(err)
 	}
