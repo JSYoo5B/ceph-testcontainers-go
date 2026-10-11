@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // PinType selects one native directory policy. Policies can coexist;

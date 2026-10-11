@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 // SyncBucketIdentity fixes a bucket namespace and native instance. Recreating

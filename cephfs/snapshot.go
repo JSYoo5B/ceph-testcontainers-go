@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // SubvolumeSnapshot is an owned snapshot of a confirmed subvolume. Its

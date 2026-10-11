@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 )
 
 func TestCephFSMultiActiveStandbyFailoverAndFilesystems(t *testing.T) {

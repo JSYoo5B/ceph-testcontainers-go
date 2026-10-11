@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, id int, matches func(ceph.OSDState) bool) ceph.OSDState {

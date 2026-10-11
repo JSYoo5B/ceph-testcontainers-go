@@ -11,7 +11,9 @@ PARENT = "TestMultiClusterRBDReceiverReadiness"
 NETWORKS = ("bridge", "host")
 SCOPES = ("scope-0", "scope-1", "scope-2", "scope-3", "scope-4")
 SELECTORS = {network: "^" + PARENT + "$/^" + network + "$" for network in NETWORKS}
-PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
+PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
+# Logs produced before the module path took the GitHub owner's casing.
+FORMER_PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
 
 
 def required_leaves(network):
@@ -43,7 +45,7 @@ def validate(log, network):
             failures.append("package failure")
         if line == "PASS":
             package_passes.append(index)
-        if re.fullmatch(r"ok\s+" + re.escape(PACKAGE) + r"\s+[0-9.]+s", line):
+        if re.fullmatch(r"ok\s+(?:" + re.escape(PACKAGE) + "|" + re.escape(FORMER_PACKAGE) + r")\s+[0-9.]+s", line):
             package_success.append(index)
     errors = []
     if tuple(runs) != expected_runs:

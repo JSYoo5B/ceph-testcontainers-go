@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func TestMessengerV2SecureOnly(t *testing.T) {

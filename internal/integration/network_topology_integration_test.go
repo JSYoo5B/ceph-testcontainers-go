@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )

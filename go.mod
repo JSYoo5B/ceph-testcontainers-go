@@ -1,4 +1,4 @@
-module github.com/jsyoo5b/ceph-testcontainers-go
+module github.com/JSYoo5B/ceph-testcontainers-go
 
 go 1.25.0
 

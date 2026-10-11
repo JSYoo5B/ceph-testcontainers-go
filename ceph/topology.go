@@ -16,8 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/google/uuid"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )

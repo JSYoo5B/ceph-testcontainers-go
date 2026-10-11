@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/containerd/errdefs"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )

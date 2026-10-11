@@ -13,10 +13,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"

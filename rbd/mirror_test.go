@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"

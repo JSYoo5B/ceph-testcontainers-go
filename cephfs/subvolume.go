@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // SubvolumeGroupConfig creates a named group inside an existing filesystem.

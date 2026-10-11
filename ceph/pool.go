@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 )
 
 // PoolConfig describes a pool in the disposable, file-backed cluster.

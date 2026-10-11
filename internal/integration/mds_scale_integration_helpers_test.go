@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/containerd/errdefs"
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 

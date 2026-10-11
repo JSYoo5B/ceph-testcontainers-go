@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/hookreg"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/testcontainers/testcontainers-go"
 )
 

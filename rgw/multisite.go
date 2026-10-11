@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/google/uuid"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 )

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func waitPlacementOSDDown(t *testing.T, parent context.Context, cluster *ceph.Container, id int) {

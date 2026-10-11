@@ -51,7 +51,7 @@ The module is experimental. There are no release tags yet.
 Please run the following command to add the Ceph module to your Go dependencies:
 
 ```
-go get github.com/jsyoo5b/ceph-testcontainers-go/ceph
+go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
 ```
 
 Until the first release tag exists, `go get` records a pseudo-version of the
@@ -69,7 +69,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
 // The service default joins the composition that Run validates before it

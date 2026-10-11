@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func rgwTestCertificate(t *testing.T) (*rgw.TLSConfig, *x509.CertPool) {

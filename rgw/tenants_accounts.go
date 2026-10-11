@@ -16,9 +16,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 )
 
 var rgwTenantName = regexp.MustCompile(`^[A-Za-z0-9_]{1,128}$`)

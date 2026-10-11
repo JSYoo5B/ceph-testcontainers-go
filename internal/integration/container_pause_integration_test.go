@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown

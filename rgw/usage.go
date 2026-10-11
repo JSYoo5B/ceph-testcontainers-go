@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // UserUsage is a native storage-accounting snapshot, not dated request or

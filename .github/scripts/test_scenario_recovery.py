@@ -38,7 +38,8 @@ def native_leaf_log(case):
             selected.append(line)
         elif marker and json.loads(line.split(marker, 1)[1])["case"] == leaf:
             selected.append(line)
-        elif line == "PASS" or re.fullmatch(r"ok\s+" + re.escape(original_checker.PACKAGE) + r"\s+[0-9.]+s", line):
+        # The fixture was recorded before the module path changed case.
+        elif line == "PASS" or re.fullmatch(r"ok\s+" + re.escape(original_checker.FORMER_PACKAGE) + r"\s+[0-9.]+s", line):
             selected.append(line)
     return "\n".join(selected) + "\n"
 
@@ -133,7 +134,7 @@ class RecoveryCoverageTests(unittest.TestCase):
         for log in (self.log.replace("--- PASS:", "--- SKIP:", 1),
                     self.log.replace("--- PASS:", "--- FAIL:", 1),
                     self.log.replace("\nPASS\n", "\n"), self.log.replace("\nPASS\n", "\nPASS\nPASS\n"),
-                    self.log.replace(original_checker.PACKAGE, "example.com/foreign/package"),
+                    self.log.replace(original_checker.FORMER_PACKAGE, "example.com/foreign/package"),
                     self.log + "ok\t" + original_checker.PACKAGE + "\t1.00s\n",
                     self.log + "FAIL\n", self.log + "panic: test timed out\n"):
             self.assert_rejected(log)

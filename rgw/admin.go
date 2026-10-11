@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 )
 
 // UserConfig describes a new S3 identity. Empty ID generates a unique ID;

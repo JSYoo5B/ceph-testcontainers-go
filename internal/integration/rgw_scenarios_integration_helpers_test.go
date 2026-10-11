@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup) {

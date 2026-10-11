@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"

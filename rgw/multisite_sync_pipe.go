@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 // SyncBucketSelector identifies a preexisting bucket. Its current native

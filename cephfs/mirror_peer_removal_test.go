@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"

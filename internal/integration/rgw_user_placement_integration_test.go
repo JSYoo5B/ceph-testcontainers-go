@@ -7,7 +7,7 @@ package integration_test
 import (
 	"testing"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func TestRGWUserPlacementPolicy(t *testing.T) {

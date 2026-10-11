@@ -34,7 +34,7 @@ RBD ([rbd.md](rbd.md)) and CephFS ([cephfs.md](cephfs.md)).
 Please run the following command to add the Ceph RGW module to your Go dependencies:
 
 ```
-go get github.com/jsyoo5b/ceph-testcontainers-go/rgw
+go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
 ```
 
 ## Usage example
@@ -50,8 +50,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -1601,8 +1601,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 

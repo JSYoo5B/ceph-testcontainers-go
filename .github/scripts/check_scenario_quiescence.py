@@ -16,7 +16,11 @@ CASES = {"process-quiescence-" + network + "-" + kind: (network, kind)
          for network in NETWORKS for kind in KINDS}
 SELECTORS = {case: "^" + PARENT + "$/^" + network + "$/^" + kind + "$"
              for case, (network, kind) in CASES.items()}
-PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
+PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
+# Logs produced before the module path took the GitHub owner's casing.
+FORMER_PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
+PACKAGES = (PACKAGE, FORMER_PACKAGE)
+PACKAGE_PATTERN = "(?:" + "|".join(map(re.escape, PACKAGES)) + ")"
 STAGES = ("exited", "later-run", "container-removed")
 DIRECTORY = "/daemon-a"
 ORIGINAL_SNAPSHOT = "before-original-process-removal"
@@ -165,7 +169,7 @@ def validate(log, case):
         errors.append("quiescence log contains a skipped test")
     package_success = (len(package_passes) == len(packages) == 1
                        and package_passes[0] < packages[0][0]
-                       and re.fullmatch(r"ok\s+" + re.escape(PACKAGE) + r"\s+[0-9.]+s", packages[0][1]) is not None)
+                       and re.fullmatch(r"ok\s+" + PACKAGE_PATTERN + r"\s+[0-9.]+s", packages[0][1]) is not None)
     if not package_success:
         errors.append("quiescence log lacks exactly one completed successful Go package")
     if tuple(runs) == expected_tests and tuple(passes) == expected_passes:

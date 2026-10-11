@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )

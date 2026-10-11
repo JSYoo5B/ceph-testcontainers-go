@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // UserPlacementConfig selects an owned placement as a user's default for

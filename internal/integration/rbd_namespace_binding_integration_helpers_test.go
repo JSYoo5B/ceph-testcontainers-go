@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/google/uuid"
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 

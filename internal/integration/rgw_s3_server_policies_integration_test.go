@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func rgwS3LifecycleAndObjectLock(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner s3HTTPClient, user *rgw.User) {

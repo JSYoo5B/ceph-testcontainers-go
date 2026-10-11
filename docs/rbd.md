@@ -31,7 +31,7 @@ changes) applies to it.
 Please run the following command to add the RBD module to your Go dependencies:
 
 ```
-go get github.com/jsyoo5b/ceph-testcontainers-go/rbd
+go get github.com/JSYoo5B/ceph-testcontainers-go/rbd
 ```
 
 ## Usage example
@@ -44,8 +44,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -1022,7 +1022,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )

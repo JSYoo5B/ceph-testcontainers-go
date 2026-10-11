@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func monitorBootstrapRBDPeerConfig(t *testing.T, ctx context.Context, destination *ceph.Container, pool, peer string) (string, string) {

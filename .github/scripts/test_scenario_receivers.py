@@ -26,7 +26,7 @@ class ReceiverCoverageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "go.mod").write_text(
-                "module github.com/jsyoo5b/ceph-testcontainers-go\n\ngo 1.25.0\n")
+                "module github.com/JSYoo5B/ceph-testcontainers-go\n\ngo 1.25.0\n")
             package = root / "internal/integration"
             package.mkdir(parents=True)
             (package / "receiver_test.go").write_text('''package integration_test

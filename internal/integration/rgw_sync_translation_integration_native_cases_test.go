@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {

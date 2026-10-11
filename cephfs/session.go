@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // minCephFSSessionTimeout is the MDSMonitor's lower bound for both values.

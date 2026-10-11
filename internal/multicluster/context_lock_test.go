@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestResourcesCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {

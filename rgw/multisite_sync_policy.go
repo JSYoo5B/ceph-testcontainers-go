@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"

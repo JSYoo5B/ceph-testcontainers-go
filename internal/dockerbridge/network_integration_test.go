@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/dockerbridge"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"

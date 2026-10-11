@@ -7,7 +7,7 @@ package integration_test
 import (
 	"testing"
 
-	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // Host-mode federation reuses the complete bridge-mode native mirror and

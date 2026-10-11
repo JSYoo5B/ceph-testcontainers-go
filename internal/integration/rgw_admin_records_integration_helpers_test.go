@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway, owner, operatorUser *rgw.User, client, operator, noCaps s3HTTPClient, payload []byte, addWriteCaps func()) {

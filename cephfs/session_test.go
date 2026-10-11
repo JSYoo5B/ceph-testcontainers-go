@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 

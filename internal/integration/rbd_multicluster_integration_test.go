@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
 // TestMultiClusterRBDBackup restores CLI-generated full and incremental archives

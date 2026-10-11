@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 )
 
 // cephFSRemovalCluster owns filesystem "app" whose configuration created

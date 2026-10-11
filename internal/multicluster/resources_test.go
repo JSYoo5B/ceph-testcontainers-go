@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/containerd/errdefs"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clustertest"
 )
 
 func TestCleanupRetriesOnlyFailedResources(t *testing.T) {

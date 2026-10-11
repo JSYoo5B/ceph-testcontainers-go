@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).with_name("run_image_matrix.py")
 SPEC = importlib.util.spec_from_file_location("image_matrix", SCRIPT)
 runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
-MODULE = "github.com/jsyoo5b/ceph-testcontainers-go"
+MODULE = "github.com/JSYoo5B/ceph-testcontainers-go"
 
 
 def passing_log():

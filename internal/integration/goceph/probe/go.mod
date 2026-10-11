@@ -1,4 +1,4 @@
-module github.com/jsyoo5b/ceph-testcontainers-go/internal/integration/goceph/probe
+module github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/goceph/probe
 
 go 1.25.0
 

@@ -31,7 +31,7 @@ injection, health) is documented in [Ceph](ceph.md).
 Please run the following command to add the CephFS module to your Go dependencies:
 
 ```
-go get github.com/jsyoo5b/ceph-testcontainers-go/cephfs
+go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
 ```
 
 The module needs Go 1.25 or later and a Docker engine that runs Linux
@@ -51,8 +51,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )

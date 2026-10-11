@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // Caller owns Unlock after success. No goroutine remains waiting after cancel.

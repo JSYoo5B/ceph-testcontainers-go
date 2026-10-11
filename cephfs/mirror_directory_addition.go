@@ -2,7 +2,7 @@ package cephfs
 
 import (
 	"context"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"strings"
 	"time"

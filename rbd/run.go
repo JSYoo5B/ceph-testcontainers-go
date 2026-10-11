@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 )
 

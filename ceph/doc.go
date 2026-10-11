@@ -9,11 +9,11 @@
 // Client services live in their own packages, which add their options to the
 // same Run and declare their own service types:
 //
-//   - github.com/jsyoo5b/ceph-testcontainers-go/rbd: RBD pools, namespaces,
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rbd: RBD pools, namespaces,
 //     mirroring and backup.
-//   - github.com/jsyoo5b/ceph-testcontainers-go/cephfs: filesystems, MDS
+//   - github.com/JSYoo5B/ceph-testcontainers-go/cephfs: filesystems, MDS
 //     topology, subvolumes and mirroring.
-//   - github.com/jsyoo5b/ceph-testcontainers-go/rgw: gateways, users,
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rgw: gateways, users,
 //     placement and multisite replication.
 //
 // Each service package has its own Run that starts a cluster with that

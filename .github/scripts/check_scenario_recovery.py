@@ -233,7 +233,7 @@ def validate(log, case, pass_order="preorder"):
         errors.append("recovery log contains a failed/skipped test or package failure")
     package_success = (len(package_passes) == len(packages) == 1
                        and package_passes[0] < packages[0][0]
-                       and re.fullmatch(r"ok\s+" + re.escape(original.PACKAGE) + r"\s+[0-9.]+s", packages[0][1]) is not None)
+                       and re.fullmatch(r"ok\s+" + original.PACKAGE_PATTERN + r"\s+[0-9.]+s", packages[0][1]) is not None)
     if not package_success:
         errors.append("recovery lacks exactly one completed successful Go package")
     if runs == tests and passes == expected_passes:
@@ -274,7 +274,7 @@ def validate_json(raw, case):
                              parse_constant=original.invalid_constant)
             require(isinstance(row, dict) and {"Time", "Action", "Package"} <= set(row)
                     and set(row) <= {"Time", "Action", "Package", "Test", "Elapsed", "Output", "OutputType"}
-                    and row["Package"] == original.PACKAGE
+                    and row["Package"] in original.PACKAGES
                     and isinstance(row["Time"], str) and original.valid_started_at(row["Time"]),
                     "JSON event identity/shape differs")
             action = row["Action"]

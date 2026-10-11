@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 // MirrorDirectoryRemoval retains an explicit path removal and its original

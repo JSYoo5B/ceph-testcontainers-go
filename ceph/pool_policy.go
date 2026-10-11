@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 )
 
 // PoolQuota limits logical bytes and object count. Zero removes that limit.

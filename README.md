@@ -19,10 +19,10 @@ This project is experimental and has no release tags yet.
 
 | Package | Import path | What it provides | Documentation |
 | --- | --- | --- | --- |
-| `ceph` | `github.com/jsyoo5b/ceph-testcontainers-go/ceph` | The cluster: MON, MGR and OSD topology, pools, Cephx identities, configuration, health, fault injection and diagnostics | [docs/ceph.md](docs/ceph.md) |
-| `rbd` | `github.com/jsyoo5b/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
-| `cephfs` | `github.com/jsyoo5b/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
-| `rgw` | `github.com/jsyoo5b/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes, multisite replication and sync policy | [docs/rgw.md](docs/rgw.md) |
+| `ceph` | `github.com/JSYoo5B/ceph-testcontainers-go/ceph` | The cluster: MON, MGR and OSD topology, pools, Cephx identities, configuration, health, fault injection and diagnostics | [docs/ceph.md](docs/ceph.md) |
+| `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
+| `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
+| `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes, multisite replication and sync policy | [docs/rgw.md](docs/rgw.md) |
 
 Every package follows the Testcontainers for Go module conventions: a `Run`
 function that takes a context, an image and options, and a `Container` that
@@ -47,7 +47,7 @@ the differences listed in [the releases guide](docs/guides/releases-and-images.m
 ## Installation
 
 ```
-go get github.com/jsyoo5b/ceph-testcontainers-go/ceph
+go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
 ```
 
 Add `rbd`, `cephfs` or `rgw` the same way when you need them.
@@ -60,7 +60,7 @@ package app_test
 import (
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 )
 

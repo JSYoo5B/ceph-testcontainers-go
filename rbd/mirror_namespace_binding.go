@@ -3,7 +3,7 @@ package rbd
 import (
 	"context"
 	"encoding/json"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"slices"
 	"time"
 

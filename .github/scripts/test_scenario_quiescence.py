@@ -90,7 +90,8 @@ def native_leaf_log(case):
             marker = checker.BYTES_MARKER if checker.BYTES_MARKER in line else checker.ABSENCE_MARKER
             if json.loads(line.split(marker, 1)[1])["case"] == leaf:
                 selected.append(line)
-        elif line == "PASS" or re.fullmatch(r"ok\s+" + re.escape(checker.PACKAGE) + r"\s+[0-9.]+s", line):
+        # The fixture was recorded before the module path changed case.
+        elif line == "PASS" or re.fullmatch(r"ok\s+" + re.escape(checker.FORMER_PACKAGE) + r"\s+[0-9.]+s", line):
             selected.append(line)
     return "\n".join(selected) + "\n"
 
@@ -218,7 +219,7 @@ class QuiescenceCoverageTests(unittest.TestCase):
         for log in (results[-1] + "\n" + original.replace(results[-1] + "\n", ""),
                     "PASS\n" + original.replace("\nPASS\n", "\n"),
                     original.replace("\nPASS\n", "\n"), original.replace("\nPASS\n", "\nPASS\nPASS\n"),
-                    original.replace(checker.PACKAGE, "example.com/foreign/package"),
+                    original.replace(checker.FORMER_PACKAGE, "example.com/foreign/package"),
                     original + "ok\texample.com/foreign/package\t1.00s\n",
                     original + "ok\t" + checker.PACKAGE + "\t1.00s\n",
                     re.sub(r"^ok\s+.*$", "", original, flags=re.M),

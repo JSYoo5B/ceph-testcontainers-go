@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestParseRBDImageClients(t *testing.T) {
