@@ -14,6 +14,18 @@ import (
 // Bootstrap options that leave the cluster without OSDs for the pool, such as
 // ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, error) {
-	return ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
+	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)
+	if c == nil {
+		return nil, err
+	}
+	return &Container{Container: c}, err
+}
+
+// Container is a cluster started by Run. It embeds *ceph.Container, so every
+// cluster method is available on it; pass its Container field to functions
+// that take a *ceph.Container, such as those of this and the other service
+// packages.
+type Container struct {
+	*ceph.Container
 }

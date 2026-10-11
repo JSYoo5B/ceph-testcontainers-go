@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
 	"github.com/jsyoo5b/ceph-testcontainers-go/cephfs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/jsyoo5b/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -53,6 +54,24 @@ func newServiceClusterWithOptions(t *testing.T, image string, opts ...testcontai
 
 // clusterRun is ceph.Run or a service package's Run.
 type clusterRun func(context.Context, string, ...testcontainers.ContainerCustomizer) (*ceph.Container, error)
+
+// serviceRun adapts a service package's Run, which returns its own Container
+// embedding *ceph.Container, to clusterRun.
+func serviceRun[C any](run func(context.Context, string, ...testcontainers.ContainerCustomizer) (*C, error), cluster func(*C) *ceph.Container) clusterRun {
+	return func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, error) {
+		c, err := run(ctx, img, opts...)
+		if c == nil {
+			return nil, err
+		}
+		return cluster(c), err
+	}
+}
+
+var (
+	rbdRun    = serviceRun(rbd.Run, func(c *rbd.Container) *ceph.Container { return c.Container })
+	cephfsRun = serviceRun(cephfs.Run, func(c *cephfs.Container) *ceph.Container { return c.Container })
+	rgwRun    = serviceRun(rgw.Run, func(c *rgw.Container) *ceph.Container { return c.Container })
+)
 
 // newServiceClusterRun starts a cluster with run and attaches a client.
 func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {

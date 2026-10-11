@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ceph "github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -66,7 +65,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			// rbd.Run adds an RBD pool, which Run admits without a manager.
 			name: "rbd-without-managers",
-			run:  rbd.Run,
+			run:  rbdRun,
 			opts: []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers()},
 			pool: "rbd",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {

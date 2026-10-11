@@ -19,7 +19,7 @@ func ExampleRun() {
 	if err != nil {
 		panic(err)
 	}
-	gateway := rgw.Gateways(cluster)[0]
+	gateway := rgw.Gateways(cluster.Container)[0]
 	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "app"})
 	if err != nil {
 		panic(err)

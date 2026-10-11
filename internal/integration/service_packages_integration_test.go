@@ -28,7 +28,7 @@ func TestServicePackages(t *testing.T) {
 	t.Run("rbd_run_default_pool", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, client := newServiceClusterRun(t, rbd.Run, image, append(roles, ceph.WithOSDCount(2))...)
+		cluster, client := newServiceClusterRun(t, rbdRun, image, append(roles, ceph.WithOSDCount(2))...)
 		servicePackageApplication(t, ctx, cluster, "rbd", "rbd")
 		if err := cluster.WaitForClean(ctx); err != nil {
 			t.Fatal(err)
@@ -38,7 +38,7 @@ func TestServicePackages(t *testing.T) {
 	t.Run("cephfs_run_default_filesystem", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, client := newServiceClusterRun(t, cephfs.Run, image, append(roles, ceph.WithOSDCount(2))...)
+		cluster, client := newServiceClusterRun(t, cephfsRun, image, append(roles, ceph.WithOSDCount(2))...)
 		filesystems := cephfs.Filesystems(cluster)
 		if len(filesystems) != 1 || filesystems[0].FilesystemName != "tc-cephfs" {
 			t.Fatalf("default filesystem was not created: %+v", filesystems)
@@ -51,7 +51,7 @@ func TestServicePackages(t *testing.T) {
 	t.Run("rgw_run_default_gateway", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, _ := newServiceClusterRun(t, rgw.Run, image, append(roles, ceph.WithOSDCount(1))...)
+		cluster, _ := newServiceClusterRun(t, rgwRun, image, append(roles, ceph.WithOSDCount(1))...)
 		gateways := rgw.Gateways(cluster)
 		if len(gateways) != 1 || gateways[0].AccessKey == "" {
 			t.Fatalf("default gateway or its user was not created: %+v", gateways)

@@ -94,7 +94,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterRun(t, cephfs.Run, image, opts...)
+			cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
 			filesystems := cephfs.Filesystems(cluster)
 			if len(filesystems) != 1 {
 				t.Fatalf("filesystems = %d, want 1", len(filesystems))
