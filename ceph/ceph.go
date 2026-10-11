@@ -62,6 +62,7 @@ type Container struct {
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
+	run                   *runVolume
 	config                []byte
 	keyring               []byte
 	portLeases            []*hostPortLease
@@ -143,6 +144,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
 			return c, err
 		}
+	}
+	// Publish before creation: an interrupted create may have committed, and the
+	// generated volume name stays owned for removal by Terminate.
+	c.run = newRunVolume()
+	if err := c.run.create(ctx); err != nil {
+		return c, err
 	}
 	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
@@ -270,6 +277,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
+		moduleOpts = append(moduleOpts, c.runMount()...)
 		if lease == nil {
 			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network))
 		} else {
@@ -505,6 +513,10 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		}
 		osdOptions = append(osdOptions, c.osdMemory.mount("/var/lib/ceph/osd"))
 	}
+	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
+		return osd, err
+	}
+	osdOptions = append(osdOptions, c.runMount()...)
 	if c.clusterNetwork != nil {
 		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
 	}
@@ -865,6 +877,11 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
+	if c.run != nil {
+		if err := c.run.remove(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if c.clusterNetwork != nil && !c.clusterNetworkRemoved && !blockedNetworks[c.clusterNetwork.Name] {
 		if err := c.clusterNetwork.Remove(ctx); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
