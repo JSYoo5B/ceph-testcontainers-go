@@ -183,6 +183,7 @@ of option order:
 | --- | --- |
 | `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
+| `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -565,7 +566,7 @@ rejected with the option to use instead:
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
 | `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
 | `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithHostNetwork` |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
 | `bluestore_block_size` | `WithOSDBlockSize` |
@@ -678,6 +679,73 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
   `needs ceph-authtool --key-type and monmaptool cipher options`, when one is
   `aes256k`.
 - `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
+
+#### WithMessengerPolicy
+
+```golang
+ceph.WithMessengerPolicy(ceph.MessengerPolicy{
+	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerSecure},
+	Managers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+```
+
+Selects, for each daemon type, the Messenger v2 connection modes that it accepts
+from clients, in order of preference. A `ceph.MessengerConnectionMode` is
+`ceph.MessengerSecure` (`secure`, AES-GCM) or `ceph.MessengerCRC` (`crc`). A nil
+field keeps Ceph's default, which accepts both.
+
+| Field | Native option |
+| --- | --- |
+| `Monitors` | `ms_mon_service_mode` in the `mon` section |
+| `Managers` | `ms_mon_service_mode` in the `mgr` section. Ceph treats MGRs like MONs here, so `ms_service_mode` has no effect on them |
+| `OSDs` | `ms_service_mode` in the `osd` section |
+
+- `Run` stores the policy in the central configuration right after MON `a`
+  starts, before any other daemon. Later daemons start with it, and it survives
+  daemon restarts.
+- Connections between daemons keep their defaults, so the cluster itself and the
+  fixture's own CLI keep working under every policy.
+- [TemporaryMessengerPolicy](#temporarymessengerpolicy) changes the policy on a
+  running cluster. The daemons apply it to new connections without a restart.
+- It cannot be combined with `MessengerV2Secure`, whose local configuration
+  fixes every mode.
+
+A rejected client sees one of two behaviours, depending on the daemon:
+
+| Daemon | A client that offers no accepted mode |
+| --- | --- |
+| MON | fails at once: `handle_auth_bad_method ... (95) Operation not supported` |
+| MGR, OSD | gets no error; the client keeps retrying the connection until its own timeout |
+
+Bound calls that a MGR or an OSD may reject, for example with the context of
+your client or with `timeout` around the CLI.
+
+The policy of a native client is set separately, in that client's own
+configuration, with `ceph.WithClientMessengerPolicy`. It is a
+`ceph.ClientContainerOption` of [WithClient](#withclient) and
+[WithClientIdentity](#withclientidentity), so a mode rejection test can give
+the native reference client and the client under test different policies:
+
+```golang
+crcOnly := ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{
+	MonitorsAndManagers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+native, err := testcontainers.Run(ctx, cluster.ControlImage(),
+	cluster.WithClient(crcOnly), ceph.WithIdleEntrypoint())
+```
+
+| Field | Native option | Used for connections to |
+| --- | --- | --- |
+| `MonitorsAndManagers` | `ms_mon_client_mode` | MONs and MGRs |
+| `OtherDaemons` | `ms_client_mode` | other daemons, such as OSDs |
+
+The option writes the fields into the `[client]` section of that container's
+`ceph.conf`. A local file takes precedence over the central configuration, and
+`[client]` over `[global]`, so the client policy also applies on a
+`MessengerV2Secure` cluster. The cluster's own control CLI and other containers
+are unaffected. A process that reads [ConnectionConfig](#connectionconfig)
+instead sets the same two options itself, for example with go-ceph
+`conn.SetConfigOption("ms_mon_client_mode", "crc")`.
 
 #### WithHostNetwork
 
@@ -1571,7 +1639,7 @@ for _, pg := range snapshot.PGs {
 #### WithClient
 
 ```golang
-func (c *Container) WithClient() testcontainers.CustomizeRequestOption
+func (c *Container) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 ```
 
 Returns a customizer for your own container that connects it to the cluster and
@@ -1587,6 +1655,9 @@ the cluster's public network; in host mode it joins the host network.
   clients.
 - Combine it with [WithIdleEntrypoint](#withidleentrypoint) for a container in
   which you run commands with `Exec`.
+- Options change the copied `ceph.conf`: `ceph.WithClientMessengerPolicy` sets
+  the client's Messenger connection modes (see
+  [WithMessengerPolicy](#withmessengerpolicy)).
 - You own the container. Terminate it before the cluster (register its cleanup
   after the cluster's).
 
@@ -1599,7 +1670,7 @@ MON's mapped port alone. Run the client in a `WithClient` container, or use
 #### WithClientIdentity
 
 ```golang
-func (c *Container) WithClientIdentity(client *ceph.ClientConfig) testcontainers.CustomizeRequestOption
+func (c *Container) WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 ```
 
 Like [WithClient](#withclient), but copies only the keyring of a restricted
@@ -1610,7 +1681,8 @@ section pointing to the keyring) and the keyring at
 select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
-creations and revoked identities are rejected. You own the container.
+creations and revoked identities are rejected. You own the container. The
+options are those of [WithClient](#withclient).
 
 #### CreateClient
 
@@ -1983,6 +2055,37 @@ func (c *Container) MessengerMode() ceph.MessengerMode
 Returns the bootstrap policy selected with [WithMessengerMode](#withmessengermode)
 (`ceph.MessengerDefault` for a nil container). It does not inspect effective
 settings or live connections.
+
+#### TemporaryMessengerPolicy
+
+```golang
+func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverride, error)
+```
+
+Changes the connection modes that the running daemons accept from clients (see
+[WithMessengerPolicy](#withmessengerpolicy) for the fields). Each non-nil field
+becomes a [TemporaryConfig](#temporaryconfig) override of its option; nil fields
+stay as they are.
+
+```golang
+override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{
+	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+if override != nil {
+	defer override.Restore(ctx)
+}
+```
+
+- The daemons apply the change to new connections without a restart.
+  Established connections keep their mode.
+- `MessengerPolicyOverride.Restore` returns every option to its previous value,
+  including the bootstrap policy. It is idempotent and can be retried.
+- A non-nil result returned with an error holds the overrides that were made;
+  restore it.
+- A single daemon, such as only `osd.0`, is changed with `TemporaryConfig` and
+  the option in the table, with the daemon name as `Section`. It takes
+  precedence over the daemon type's entry.
+- It is refused with `MessengerV2Secure`.
 
 ### Container Methods: Object watchers and client fencing
 

@@ -228,7 +228,7 @@ func reservedConfigKey(key string) string {
 	case strings.HasPrefix(key, "auth_"):
 		return "is managed by the fixture's Cephx setup"
 	case reservedMessengerMode.MatchString(key):
-		return "is managed by the fixture; use WithMessengerMode"
+		return "is managed by the fixture; use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"
 	case strings.HasPrefix(key, "ms_bind_"):
 		return "is managed by the fixture; use WithMessengerMode or WithHostNetwork"
 	}

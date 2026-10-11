@@ -28,6 +28,13 @@ change the API.
   accepts only `aes` and fails before any daemon starts otherwise.
 - `ceph.Container.CreateClient` takes `ceph.ClientOption` values;
   `ceph.WithClientKeyType` selects the key type of one identity.
+- `ceph.WithMessengerPolicy` selects the Messenger v2 connection modes (`secure`,
+  `crc`) that MONs, MGRs and OSDs accept from clients, and
+  `ceph.Container.TemporaryMessengerPolicy` changes them on a running cluster
+  without a restart. `ceph.WithClientMessengerPolicy` sets the modes of a
+  native client container separately, through the new
+  `ceph.ClientContainerOption` parameters of `WithClient` and
+  `WithClientIdentity`.
 
 ### Fixed
 

@@ -38,6 +38,7 @@ type options struct {
 	publicAddress          string
 	hostAddressSet         bool
 	messengerMode          MessengerMode
+	messengerPolicy        MessengerPolicy
 	userConfig             []userConfigSection
 }
 

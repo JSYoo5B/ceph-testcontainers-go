@@ -201,7 +201,8 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 // WithClientIdentity attaches a container with only the selected client keyring.
 // It rejects descriptors from another cluster, incomplete creation and revocation.
 // Caller owns the attached container and must terminate it before the cluster.
-func (c *Container) WithClientIdentity(client *ClientConfig) testcontainers.CustomizeRequestOption {
+// The options customize the container's ceph.conf.
+func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -218,8 +219,12 @@ func (c *Container) WithClientIdentity(client *ClientConfig) testcontainers.Cust
 		} else if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
 			return err
 		}
+		config, err := clientContainerConfig(clientConfigBytes(c.config, client), opts)
+		if err != nil {
+			return err
+		}
 		return testcontainers.WithFiles(
-			textFile("/etc/ceph/ceph.conf", clientConfigBytes(c.config, client), 0o644),
+			textFile("/etc/ceph/ceph.conf", config, 0o644),
 			textFile(client.KeyringPath(), bytes.Clone(client.keyring), 0o600),
 		)(req)
 	}
