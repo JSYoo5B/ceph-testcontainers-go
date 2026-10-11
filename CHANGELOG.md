@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## Unreleased
+
+### Added
+
+- `ceph.WithAuth` selects the Cephx key type (`aes` or `aes256k`), the MonMap
+  service, allowed and preferred ciphers, and the MON and service ticket
+  lifetimes, with fractions of a second, of a new cluster. Squid accepts only
+  `aes` and fails before any daemon starts otherwise.
+- `ceph.Container.CreateClient` takes `ceph.ClientOption` values;
+  `ceph.WithClientKeyType` selects the key type of one identity.
+
 ## v0.1.0 (2026-10-11)
 
 The first release. It provides four Testcontainers for Go modules that start

@@ -263,6 +263,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
 			}),
+			testcontainers.WithEnv(c.settings.auth.environment()),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
@@ -300,6 +301,9 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		if err == nil {
 			return mon, nil
+		}
+		if reason := bootstrapRefusal(ctx, mon); reason != "" {
+			return mon, fmt.Errorf("%s: %w", reason, err)
 		}
 		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
 			return mon, err
@@ -455,7 +459,11 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
-	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
+	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return nil, err
 	}
