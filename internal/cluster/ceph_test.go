@@ -22,7 +22,6 @@ var (
 	_ testcontainers.Container = (*OSDContainer)(nil)
 	_ testcontainers.Container = (*MonitorContainer)(nil)
 	_ testcontainers.Container = (*ManagerContainer)(nil)
-	_ testcontainers.Container = (*RGWContainer)(nil)
 	_ testcontainers.Container = (*CephFSContainer)(nil)
 )
 
@@ -43,7 +42,6 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"small OSD block size", WithOSDBlockSize((64 << 20) - 1)},
 		{"startup timeout", WithStartupTimeout(0)},
 		{"OSD image", WithOSDImage("")},
-		{"RGW image", WithRGWImage(" \t")},
 		{"MDS image", WithMDSImage("\n")},
 		{"host address requires host mode", WithHostAddress("127.0.0.1")},
 		{"host address empty", WithHostAddress("")},

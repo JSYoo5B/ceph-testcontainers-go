@@ -30,7 +30,6 @@ func TestNoInitialOSDsRejectsContradictionsBeforeRuntime(t *testing.T) {
 		{"empty layout", WithInitialOSDs()},
 		{"pool", WithPools(PoolConfig{Name: "data"})},
 		{"filesystem", WithCephFS()},
-		{"gateway", WithRGW()},
 		{"invalid pool default", WithPoolDefaults(0, 1)},
 	} {
 		for _, first := range []bool{false, true} {

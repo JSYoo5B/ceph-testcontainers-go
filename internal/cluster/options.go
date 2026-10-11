@@ -148,18 +148,6 @@ func WithOSDImage(image string) Option {
 	}
 }
 
-// WithRGWImage selects the image used by gateways started with StartRGW.
-// If omitted, RGW uses the image passed to Run. Use matching Ceph versions.
-func WithRGWImage(image string) Option {
-	return func(o *options) error {
-		if strings.TrimSpace(image) == "" {
-			return fmt.Errorf("RGW image must not be blank")
-		}
-		o.rgwImage = image
-		return nil
-	}
-}
-
 // WithMDSImage selects the metadata server image used by StartCephFS.
 // If omitted, MDS uses the image passed to Run. Use matching Ceph versions.
 func WithMDSImage(image string) Option {

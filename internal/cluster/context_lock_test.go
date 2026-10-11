@@ -18,11 +18,6 @@ func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 		"RemoveManager": func(ctx context.Context, c *Container) error { return c.RemoveManager(ctx, "queued") },
 		"AddOSD":        func(ctx context.Context, c *Container) error { _, err := c.AddOSD(ctx); return err },
 		"RemoveOSD":     func(ctx context.Context, c *Container) error { return c.RemoveOSD(ctx, 3) },
-		"RemoveRGW":     func(ctx context.Context, c *Container) error { return c.removeRGW(ctx, "queued") },
-		"StartRGWBridge": func(ctx context.Context, c *Container) error {
-			_, err := c.startRGW(ctx, RGWConfig{Name: "queued"})
-			return err
-		},
 		"InterruptNetwork": func(ctx context.Context, c *Container) error {
 			_, err := c.InterruptNetwork(ctx, c.Container, PublicNetworkPlane)
 			return err

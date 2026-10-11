@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
 	mobynetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
@@ -14,34 +15,33 @@ import (
 )
 
 func TestRGWConfigurationRejectsUnsafeNamesBeforeStarting(t *testing.T) {
-	for _, config := range []RGWConfig{
+	for _, config := range []Config{
 		{Name: "--gateway"}, {Name: "bad/name"}, {Name: "with space"},
 		{Realm: "--realm"}, {Zonegroup: "zone\nother"}, {Zone: " trailing "}, {Region: "region\x00"},
 	} {
-		cluster := &Container{}
-		if gateway, err := cluster.startRGW(t.Context(), config); err == nil || gateway != nil {
+		cluster := testCluster(nil, servicehook.TestConfig{}, nil)
+		if gateway, err := startGateway(t.Context(), cluster, config); err == nil || gateway != nil {
 			t.Fatalf("unsafe gateway configuration was accepted: %+v", config)
 		}
 	}
-	config, err := normalizeRGWConfig(RGWConfig{})
+	config, err := normalizeRGWConfig(Config{})
 	if err != nil || config.Name != "default" || config.Region != "us-east-1" || rgwServiceName(config) != "rgw" {
 		t.Fatalf("default gateway compatibility changed: %+v error=%v", config, err)
 	}
 }
 
 func TestGatewayRemovalRetainsFailedCleanup(t *testing.T) {
-	ctr := &hostNetworkFixtureContainer{failTerminationOnce: true}
-	gateway := &RGWContainer{Container: ctr, GatewayName: "a"}
-	cluster := &Container{settings: options{startupTimeout: time.Second},
-		services: map[string]testcontainers.Container{"rgw:a": ctr},
-		gateways: map[string]*RGWContainer{"a": gateway}}
-	if err := cluster.removeRGW(t.Context(), "unknown"); err == nil || ctr.terminations != 0 {
+	ctr := &terminationFixtureContainer{failTerminationOnce: true}
+	gateway := &Gateway{Container: ctr, GatewayName: "a"}
+	cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": ctr})
+	gateways(cluster).byName["a"] = gateway
+	if err := removeGateway(t.Context(), cluster, "unknown"); err == nil || ctr.terminations != 0 {
 		t.Fatal("unknown gateway attempted container removal")
 	}
-	if err := cluster.removeRGW(t.Context(), "a"); err == nil || len(cluster.gateways) != 1 || len(cluster.services) != 1 {
+	if err := removeGateway(t.Context(), cluster, "a"); err == nil || len(gateways(cluster).byName) != 1 || len(servicehook.Services(cluster)) != 1 {
 		t.Fatal("failed cleanup lost gateway ownership")
 	}
-	if err := cluster.removeRGW(t.Context(), "a"); err != nil || len(cluster.gateways) != 0 || len(cluster.services) != 0 || ctr.terminations != 2 {
+	if err := removeGateway(t.Context(), cluster, "a"); err != nil || len(gateways(cluster).byName) != 0 || len(servicehook.Services(cluster)) != 0 || ctr.terminations != 2 {
 		t.Fatalf("gateway cleanup did not recover: %v", err)
 	}
 }
@@ -52,10 +52,10 @@ func TestNamedRGWOptionsPreserveScopeAndHostListener(t *testing.T) {
 		if host {
 			port = 42791
 		}
-		cluster := &Container{settings: options{startupTimeout: time.Second, hostNetwork: host, publicAddress: "127.0.0.1"}}
-		config := RGWConfig{Name: "gateway-b", Realm: "fixture-realm", Zonegroup: "fixture-zonegroup", Zone: "fixture-zone"}
+		cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: host, PublicAddress: "127.0.0.1"}, nil)
+		config := Config{Name: "gateway-b", Realm: "fixture-realm", Zonegroup: "fixture-zonegroup", Zone: "fixture-zone"}
 		var request testcontainers.GenericContainerRequest
-		for _, option := range cluster.namedRGWDaemonOptions(port, 0, config) {
+		for _, option := range namedDaemonOptions(cluster, port, 0, config) {
 			if err := option.Customize(&request); err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +76,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 	// A peer sorting before the public network must not become the published
 	// S3 ingress gateway solely because its randomly generated name is lower.
 	const public, peer = "z-public-network", "a-peer-network"
-	cluster := &Container{network: &testcontainers.DockerNetwork{Name: public}, settings: options{startupTimeout: time.Second}}
+	cluster := testCluster(nil, servicehook.TestConfig{NetworkName: public, StartupTimeout: time.Second}, nil)
 	var clientRequest testcontainers.GenericContainerRequest
 	if err := cluster.WithClient().Customize(&clientRequest); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 		t.Fatal("ordinary Ceph client configuration acquired an RGW gateway policy")
 	}
 	request := clientRequest
-	for _, option := range cluster.namedRGWDaemonOptions(7480, 0, RGWConfig{Name: "gateway"}) {
+	for _, option := range namedDaemonOptions(cluster, 7480, 0, Config{Name: "gateway"}) {
 		if err := option.Customize(&request); err != nil {
 			t.Fatal(err)
 		}
@@ -123,9 +123,9 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 }
 
 func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
-	cluster := &Container{settings: options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"}}
+	cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: true, PublicAddress: "127.0.0.1"}, nil)
 	var request testcontainers.GenericContainerRequest
-	for _, option := range cluster.namedRGWDaemonOptions(42791, 0, RGWConfig{Name: "gateway"}) {
+	for _, option := range namedDaemonOptions(cluster, 42791, 0, Config{Name: "gateway"}) {
 		if err := option.Customize(&request); err != nil {
 			t.Fatal(err)
 		}
@@ -138,11 +138,11 @@ func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
 func TestNamedRGWConflictCleanupKeepsOtherGateways(t *testing.T) {
 	first := &rgwTestContainer{id: "gateway-a"}
 	second := &rgwTestContainer{id: "gateway-b"}
-	cluster := &Container{services: map[string]testcontainers.Container{"rgw:gateway-a": first, "rgw:gateway-b": second}}
-	if err := cluster.discardNamedRGWAttempt(t.Context(), "rgw:gateway-b", second); err != nil || cluster.services["rgw:gateway-a"] != first {
+	cluster := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw:gateway-a": first, "rgw:gateway-b": second})
+	if err := discardNamedAttempt(t.Context(), cluster, "rgw:gateway-b", second); err != nil || servicehook.Service(cluster, "rgw:gateway-a") != first {
 		t.Fatal("named retry cleanup removed another gateway")
 	}
-	if _, exists := cluster.services["rgw:gateway-b"]; exists {
+	if exists := servicehook.Service(cluster, "rgw:gateway-b") != nil; exists {
 		t.Fatal("named retry did not clear the failed service")
 	}
 }
@@ -153,19 +153,19 @@ func TestRGWDaemonEndpointUsesCephNetworkAndAllocatedHostPort(t *testing.T) {
 		"http-bridge":  {IPAddress: netip.MustParseAddr("172.23.0.8")},
 	}}}}
 	for _, test := range []struct {
-		gateway RGWContainer
+		gateway Gateway
 		want    string
 	}{
-		{RGWContainer{Container: ctr, port: 7480, networkName: "ceph-network"}, "http://172.22.0.8:7480"},
-		{RGWContainer{Container: ctr, port: 42791, publicAddress: "127.0.0.1", networkName: "host"}, "http://127.0.0.1:42791"},
-		{RGWContainer{Container: ctr, port: 42791, publicAddress: "192.0.2.34", networkName: "host"}, "http://192.0.2.34:42791"},
+		{Gateway{Container: ctr, port: 7480, networkName: "ceph-network"}, "http://172.22.0.8:7480"},
+		{Gateway{Container: ctr, port: 42791, publicAddress: "127.0.0.1", networkName: "host"}, "http://127.0.0.1:42791"},
+		{Gateway{Container: ctr, port: 42791, publicAddress: "192.0.2.34", networkName: "host"}, "http://192.0.2.34:42791"},
 	} {
 		endpoint, err := test.gateway.DaemonEndpoint(t.Context())
 		if err != nil || endpoint != test.want {
 			t.Fatalf("peer endpoint used wrong network/port: endpoint=%q error=%v", endpoint, err)
 		}
 	}
-	missing := &RGWContainer{Container: ctr, networkName: "missing-network"}
+	missing := &Gateway{Container: ctr, networkName: "missing-network"}
 	if _, err := missing.DaemonEndpoint(t.Context()); err == nil {
 		t.Fatal("missing Ceph network was replaced with an unrelated bridge endpoint")
 	}

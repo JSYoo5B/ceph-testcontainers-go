@@ -118,7 +118,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	cluster.manager = mgr
 	cluster.osds[3] = &OSDContainer{Container: osd, ID: 3}
 	cluster.services["rgw.default"], cluster.services["mds.a"] = rgw, mds
-	cluster.gateways["default"] = &RGWContainer{Container: rgw, GatewayName: "default"}
+	cluster.extensions = map[string]any{"rgw": testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}}}
 	cluster.filesystems["test-fs"] = &CephFSContainer{mdss: []*MDSContainer{{Container: mds, ID: "a"}}}
 	all := []*monitorConfigArchive{control, mon, second, mgr, osd, rgw, mds}
 	before := make(map[string]string)
@@ -345,7 +345,7 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 	a := newMonitorConfigArchive("a", "")
 	b := newMonitorConfigArchive("b", "")
 	cluster.services["rgw.z"], cluster.services["mds.a"] = a, b
-	cluster.gateways["z"] = &RGWContainer{Container: a}
+	cluster.extensions = map[string]any{"rgw": testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}}}
 	cluster.filesystems["test"] = &CephFSContainer{mdss: []*MDSContainer{{Container: b, ID: "a"}}}
 	targets := cluster.monitorConfigTargets(control, "")
 	var names, ids []string
@@ -380,7 +380,7 @@ func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 		config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring"),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
 		osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		gateways: make(map[string]*RGWContainer), filesystems: make(map[string]*CephFSContainer)}
+		filesystems: make(map[string]*CephFSContainer)}
 	return cluster, control
 }
 

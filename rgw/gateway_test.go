@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -56,7 +57,7 @@ func TestRGWEndpointUsesSelectedHostPortAndBridgeDefault(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctr := &rgwTestContainer{}
-			gateway := &RGWContainer{Container: ctr, port: test.port, publicAddress: test.publicAddress}
+			gateway := &Gateway{Container: ctr, port: test.port, publicAddress: test.publicAddress}
 			endpoint, err := gateway.S3Endpoint(t.Context())
 			if err != nil || endpoint != test.want || ctr.port != test.providerPort || (test.providerPort != "" && ctr.protocol != "http") {
 				t.Fatalf("endpoint ignored selected port or Docker host: endpoint=%q port=%q protocol=%q error=%v", endpoint, ctr.port, ctr.protocol, err)
@@ -68,20 +69,20 @@ func TestRGWEndpointUsesSelectedHostPortAndBridgeDefault(t *testing.T) {
 func TestDiscardRGWConflictRetainsFailedCleanupAndNewOwner(t *testing.T) {
 	cleanupFailure := errors.New("temporary Docker removal failure")
 	failed := &rgwTestContainer{id: "conflicted", terminateErr: cleanupFailure}
-	c := &Container{services: map[string]testcontainers.Container{"rgw": failed}}
-	if err := c.discardRGWAttempt(t.Context(), failed); !errors.Is(err, cleanupFailure) || c.services["rgw"] != failed {
+	c := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw": failed})
+	if err := discardAttempt(t.Context(), c, failed); !errors.Is(err, cleanupFailure) || servicehook.Service(c, "rgw") != failed {
 		t.Fatal("failed cleanup lost the partial RGW service")
 	}
 	failed.terminateErr = nil
-	if err := c.discardRGWAttempt(t.Context(), failed); err != nil {
+	if err := discardAttempt(t.Context(), c, failed); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := c.services["rgw"]; exists {
+	if exists := servicehook.Service(c, "rgw") != nil; exists {
 		t.Fatal("successfully removed conflict still blocks a new RGW attempt")
 	}
 	replacement := &rgwTestContainer{id: "replacement"}
-	c.services["rgw"] = replacement
-	if err := c.discardRGWAttempt(t.Context(), failed); err != nil || c.services["rgw"] != replacement {
+	servicehook.SetService(c, "rgw", replacement)
+	if err := discardAttempt(t.Context(), c, failed); err != nil || servicehook.Service(c, "rgw") != replacement {
 		t.Fatal("old-attempt cleanup removed a different RGW owner")
 	}
 }
@@ -99,9 +100,9 @@ func TestDiscardRGWConflictAcceptsOnlyMissingResources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctr := &rgwTestContainer{id: "conflicted", terminateErr: tc.err}
-			c := &Container{services: map[string]testcontainers.Container{"rgw": ctr}}
-			err := c.discardRGWAttempt(t.Context(), ctr)
-			_, retained := c.services["rgw"]
+			c := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw": ctr})
+			err := discardAttempt(t.Context(), c, ctr)
+			retained := servicehook.Service(c, "rgw") != nil
 			if (err == nil) != tc.safe || retained == tc.safe {
 				t.Fatalf("RGW removal lost ownership or rejected an absent resource: retained=%t error=%v", retained, err)
 			}
@@ -132,20 +133,20 @@ func (target *rgwReadinessTarget) Exec(context.Context, []string, ...tcexec.Proc
 
 func TestRGWHostReadinessRequiresOwnedListener(t *testing.T) {
 	controller := &rgwTestContainer{}
-	c := &Container{Container: controller, settings: options{startupTimeout: time.Second}}
+	c := testCluster(controller, servicehook.TestConfig{StartupTimeout: time.Second}, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	target := &rgwReadinessTarget{state: container.State{Running: true}, probeCode: 1, probe: cancel}
-	err := c.hostRGWReadiness(42791, "127.0.0.1:42791").WaitUntilReady(ctx, target)
+	err := hostReadiness(c, 42791, "127.0.0.1:42791").WaitUntilReady(ctx, target)
 	if !errors.Is(err, context.Canceled) || controller.execCalls != 0 {
 		t.Fatalf("an unrelated host listener could satisfy readiness: controller calls=%d error=%v", controller.execCalls, err)
 	}
 	target = &rgwReadinessTarget{state: container.State{Running: true}, probeCode: 0}
-	if err := c.hostRGWReadiness(42791, "127.0.0.1:42791").WaitUntilReady(t.Context(), target); err != nil || controller.execCalls != 1 {
+	if err := hostReadiness(c, 42791, "127.0.0.1:42791").WaitUntilReady(t.Context(), target); err != nil || controller.execCalls != 1 {
 		t.Fatalf("owned listener was not checked through the control container: calls=%d error=%v", controller.execCalls, err)
 	}
 	target = &rgwReadinessTarget{state: container.State{Status: "exited", ExitCode: 1}}
-	if err := c.hostRGWReadiness(42791, "127.0.0.1:42791").WaitUntilReady(t.Context(), target); err == nil || controller.execCalls != 1 {
+	if err := hostReadiness(c, 42791, "127.0.0.1:42791").WaitUntilReady(t.Context(), target); err == nil || controller.execCalls != 1 {
 		t.Fatal("stopped RGW did not fail readiness before the HTTP probe")
 	}
 }

@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"context"
@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 )
 
 var rgwTenantName = regexp.MustCompile(`^[A-Za-z0-9_]{1,128}$`)
@@ -40,22 +42,22 @@ func rgwFullUserID(tenant, namespace, id string) string {
 	return id
 }
 
-// RGWAccountConfig creates a new native account. Empty ID generates a unique
+// AccountConfig creates a new native account. Empty ID generates a unique
 // RGW-prefixed 17-digit ID; Name defaults to a unique fixture name. Tenant is
 // optional and isolates bucket names. Account IDs and email are globally unique.
 // MaxBuckets nil preserves the native default. No user migration is performed.
-type RGWAccountConfig struct {
+type AccountConfig struct {
 	ID, Name, Tenant, Email string
 	MaxBuckets              *int
 }
 
-// RGWAccount is a fresh account owned by this fixture. Its native metadata
+// Account is a fresh account owned by this fixture. Its native metadata
 // version tag distinguishes its lifetime from a deleted/recreated account.
 // Copies share lifecycle state. Removing a gateway does not remove the account.
-type RGWAccount struct {
-	owner  *Container
+type Account struct {
+	owner  *ceph.Container
 	scope  rgwPlacementScope
-	config RGWAccountConfig
+	config AccountConfig
 	id     string
 	state  *rgwAccountState
 }
@@ -65,32 +67,32 @@ type rgwAccountState struct {
 	versionTag         string
 }
 
-func (a *RGWAccount) ID() string {
+func (a *Account) ID() string {
 	if a == nil {
 		return ""
 	}
 	return a.id
 }
 
-func (a RGWAccount) String() string   { return "RGW account " + a.id }
-func (a RGWAccount) GoString() string { return a.String() }
+func (a Account) String() string   { return "RGW account " + a.id }
+func (a Account) GoString() string { return a.String() }
 
-// RGWAccountInfo contains account-wide limits and the individual bucket policy.
+// AccountInfo contains account-wide limits and the individual bucket policy.
 // AccountQuota applies across all account users, buckets and roles, rather than
 // to one user's storage. Quota readback does not flush native accounting caches.
-type RGWAccountInfo struct {
+type AccountInfo struct {
 	ID, Name, Tenant, Email                            string
 	MaxUsers, MaxRoles, MaxGroups, MaxBuckets, MaxKeys int
-	AccountQuota, BucketQuota                          RGWQuota
+	AccountQuota, BucketQuota                          Quota
 }
 
 type rgwNativeAccount struct {
-	info     RGWAccountInfo
+	info     AccountInfo
 	document map[string]any
 	tag      string
 }
 
-func normalizeRGWAccountConfig(config RGWAccountConfig) (RGWAccountConfig, error) {
+func normalizeRGWAccountConfig(config AccountConfig) (AccountConfig, error) {
 	if config.ID == "" {
 		number, err := rand.Int(rand.Reader, big.NewInt(100000000000000000))
 		if err != nil {
@@ -131,7 +133,7 @@ func normalizeRGWAccountConfig(config RGWAccountConfig) (RGWAccountConfig, error
 // creation response and native metadata version tag. Inspect uncertain results
 // through Admin or terminate the disposable cluster; do not migrate users into
 // them or blindly delete an identity whose creation was not confirmed.
-func (g *RGWContainer) CreateAccount(ctx context.Context, config RGWAccountConfig) (*RGWAccount, error) {
+func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Account, error) {
 	config, err := normalizeRGWAccountConfig(config)
 	if err != nil {
 		return nil, err
@@ -139,8 +141,8 @@ func (g *RGWContainer) CreateAccount(ctx context.Context, config RGWAccountConfi
 	if g == nil || g.owner == nil {
 		return nil, errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
@@ -153,7 +155,7 @@ func (g *RGWContainer) CreateAccount(ctx context.Context, config RGWAccountConfi
 	if err != nil {
 		return nil, err
 	}
-	a := &RGWAccount{owner: g.owner, scope: scope, config: config, id: config.ID, state: &rgwAccountState{}}
+	a := &Account{owner: g.owner, scope: scope, config: config, id: config.ID, state: &rgwAccountState{}}
 	exists, err := g.accountExists(ctx, a)
 	if err != nil {
 		return nil, err
@@ -190,7 +192,7 @@ func (g *RGWContainer) CreateAccount(ctx context.Context, config RGWAccountConfi
 	return a, nil
 }
 
-func rgwAccountCreationIdentity(native *rgwNativeAccount, config RGWAccountConfig) bool {
+func rgwAccountCreationIdentity(native *rgwNativeAccount, config AccountConfig) bool {
 	return native != nil && native.info.ID == config.ID && native.info.Name == config.Name && native.info.Tenant == config.Tenant && native.info.Email == config.Email && (config.MaxBuckets == nil || native.info.MaxBuckets == *config.MaxBuckets)
 }
 
@@ -230,10 +232,10 @@ func decodeRGWAccount(data []byte) (*rgwNativeAccount, error) {
 	if err != nil {
 		return nil, errors.New("decode RGW account policy")
 	}
-	return &rgwNativeAccount{document: document, info: RGWAccountInfo{ID: raw.ID, Name: raw.Name, Tenant: raw.Tenant, Email: raw.Email, MaxUsers: raw.MaxUsers, MaxRoles: raw.MaxRoles, MaxGroups: raw.MaxGroups, MaxBuckets: raw.MaxBuckets, MaxKeys: raw.MaxKeys, AccountQuota: quota, BucketQuota: bucket}}, nil
+	return &rgwNativeAccount{document: document, info: AccountInfo{ID: raw.ID, Name: raw.Name, Tenant: raw.Tenant, Email: raw.Email, MaxUsers: raw.MaxUsers, MaxRoles: raw.MaxRoles, MaxGroups: raw.MaxGroups, MaxBuckets: raw.MaxBuckets, MaxKeys: raw.MaxKeys, AccountQuota: quota, BucketQuota: bucket}}, nil
 }
 
-func (g *RGWContainer) readNativeAccount(ctx context.Context, a *RGWAccount) (*rgwNativeAccount, error) {
+func (g *Gateway) readNativeAccount(ctx context.Context, a *Account) (*rgwNativeAccount, error) {
 	data, err := g.placementCommand(ctx, a.scope, "metadata", "get", "account:"+a.id)
 	if err != nil {
 		return nil, err
@@ -256,7 +258,7 @@ func (g *RGWContainer) readNativeAccount(ctx context.Context, a *RGWAccount) (*r
 	return native, nil
 }
 
-func (g *RGWContainer) accountExists(ctx context.Context, a *RGWAccount) (bool, error) {
+func (g *Gateway) accountExists(ctx context.Context, a *Account) (bool, error) {
 	data, err := g.placementCommand(ctx, a.scope, "account", "list")
 	if err != nil {
 		return false, err
@@ -268,7 +270,7 @@ func (g *RGWContainer) accountExists(ctx context.Context, a *RGWAccount) (bool, 
 	return slices.Contains(ids, a.id), nil
 }
 
-func (g *RGWContainer) ownedAccount(ctx context.Context, a *RGWAccount) (*rgwNativeAccount, error) {
+func (g *Gateway) ownedAccount(ctx context.Context, a *Account) (*rgwNativeAccount, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -296,17 +298,17 @@ func (g *RGWContainer) ownedAccount(ctx context.Context, a *RGWAccount) (*rgwNat
 }
 
 // AccountInfo reads the owned account's authoritative native policy.
-func (g *RGWContainer) AccountInfo(ctx context.Context, a *RGWAccount) (RGWAccountInfo, error) {
+func (g *Gateway) AccountInfo(ctx context.Context, a *Account) (AccountInfo, error) {
 	if g == nil || g.owner == nil {
-		return RGWAccountInfo{}, errors.New("RGW gateway is not owned by a Ceph cluster")
+		return AccountInfo{}, errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
 	native, err := g.ownedAccount(ctx, a)
 	if err != nil {
-		return RGWAccountInfo{}, err
+		return AccountInfo{}, err
 	}
 	return native.info, nil
 }
@@ -315,7 +317,7 @@ func (g *RGWContainer) AccountInfo(ctx context.Context, a *RGWAccount) (RGWAccou
 // Empty Tenant inherits the account tenant; a different tenant is rejected.
 // Account root grants permissions within the account; global admin and multisite
 // system flags remain false. IAM operations remain on the consuming client.
-func (g *RGWContainer) CreateAccountRootUser(ctx context.Context, a *RGWAccount, config RGWUserConfig) (*RGWUser, error) {
+func (g *Gateway) CreateAccountRootUser(ctx context.Context, a *Account, config UserConfig) (*User, error) {
 	if a == nil {
 		return nil, errors.New("owned RGW account is required")
 	}
@@ -325,25 +327,25 @@ func (g *RGWContainer) CreateAccountRootUser(ctx context.Context, a *RGWAccount,
 // SetAccountQuota replaces aggregate account limits and their enabled state.
 // Native account quota size is rounded to KiB, so byte limits must be -1, zero
 // or a positive multiple of 1024. Readback does not promise cache enforcement.
-func (g *RGWContainer) SetAccountQuota(ctx context.Context, a *RGWAccount, quota RGWQuota) error {
+func (g *Gateway) SetAccountQuota(ctx context.Context, a *Account, quota Quota) error {
 	return g.setAccountQuota(ctx, a, "account", quota)
 }
 
 // SetAccountBucketQuota applies individual bucket limits to every bucket owned
 // by this account, independent of which account identity created the bucket.
-func (g *RGWContainer) SetAccountBucketQuota(ctx context.Context, a *RGWAccount, quota RGWQuota) error {
+func (g *Gateway) SetAccountBucketQuota(ctx context.Context, a *Account, quota Quota) error {
 	return g.setAccountQuota(ctx, a, "bucket", quota)
 }
 
-func (g *RGWContainer) setAccountQuota(ctx context.Context, a *RGWAccount, scope string, quota RGWQuota) error {
+func (g *Gateway) setAccountQuota(ctx context.Context, a *Account, scope string, quota Quota) error {
 	if quota.MaxObjects < -1 || quota.MaxSizeBytes < -1 || (quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0) {
 		return errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024")
 	}
 	if g == nil || g.owner == nil {
 		return errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
 	before, err := g.ownedAccount(ctx, a)
@@ -384,12 +386,12 @@ func (g *RGWContainer) setAccountQuota(ctx context.Context, a *RGWAccount, scope
 // Ceph refuses remaining users, buckets, roles, groups, OIDC providers or topics.
 // Remove these through their ordinary clients first. Success is idempotent across
 // copies. Native external account edits must not race these fixture helpers.
-func (g *RGWContainer) RemoveAccount(ctx context.Context, a *RGWAccount) error {
+func (g *Gateway) RemoveAccount(ctx context.Context, a *Account) error {
 	if g == nil || g.owner == nil {
 		return errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if a == nil || a.owner != g.owner || a.state == nil || !a.state.confirmed {
 		return errors.New("RGW account was not confirmed as created by this cluster")
 	}

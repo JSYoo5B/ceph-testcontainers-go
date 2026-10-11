@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -156,23 +157,23 @@ func (f *rgwPlacementTestContainer) Exec(_ context.Context, args []string, _ ...
 	return code, &stream, nil
 }
 
-func newRGWPlacementFixture() (*RGWContainer, *rgwPlacementTestContainer) {
+func newRGWPlacementFixture() (*Gateway, *rgwPlacementTestContainer) {
 	f := &rgwPlacementTestContainer{poolType: 1, poolID: 1}
 	f.group = map[string]any{"id": "group-id", "name": "active-group", "api_name": "active-api", "realm_id": "", "zones": []any{map[string]any{"id": "zone-id"}}, "default_placement": "default-placement", "placement_targets": []any{map[string]any{"name": "default-placement", "storage_classes": []any{"STANDARD"}, "tags": []any{}}}}
 	f.zone = map[string]any{"id": "zone-id", "name": "active-zone", "realm_id": "", "system_key": map[string]any{"key": "PRIVATE-KEY"}, "placement_pools": []any{}}
-	owner := &Container{Container: f, settings: options{startupTimeout: time.Minute}, services: map[string]testcontainers.Container{"rgw": f}}
-	return &RGWContainer{Container: f, owner: owner, port: 7480, config: RGWConfig{Name: "default"}}, f
+	owner := testCluster(f, servicehook.TestConfig{StartupTimeout: time.Minute}, map[string]testcontainers.Container{"rgw": f})
+	return &Gateway{Container: f, owner: owner, port: 7480, config: Config{Name: "default"}}, f
 }
 
-func rgwPlacementTestConfig() RGWPlacementConfig {
-	return RGWPlacementConfig{Name: "tiered", IndexPool: "index", DataExtraPool: "extra", StorageClasses: []RGWStorageClassConfig{{Name: "STANDARD_IA", DataPool: "ec-data"}, {Name: "STANDARD", DataPool: "data"}}}
+func rgwPlacementTestConfig() PlacementConfig {
+	return PlacementConfig{Name: "tiered", IndexPool: "index", DataExtraPool: "extra", StorageClasses: []StorageClassConfig{{Name: "STANDARD_IA", DataPool: "ec-data"}, {Name: "STANDARD", DataPool: "data"}}}
 }
 
 func TestRGWPlacementValidatesNamesClassesAndCopiesConfig(t *testing.T) {
-	for _, edit := range []func(*RGWPlacementConfig){
-		func(c *RGWPlacementConfig) { c.Name = "--foreign" }, func(c *RGWPlacementConfig) { c.Name = "default-placement" },
-		func(c *RGWPlacementConfig) { c.StorageClasses = nil }, func(c *RGWPlacementConfig) { c.StorageClasses[0].Name = "standard_ia" },
-		func(c *RGWPlacementConfig) { c.StorageClasses[0].Name = "STANDARD" }, func(c *RGWPlacementConfig) { c.IndexPool = "--option" },
+	for _, edit := range []func(*PlacementConfig){
+		func(c *PlacementConfig) { c.Name = "--foreign" }, func(c *PlacementConfig) { c.Name = "default-placement" },
+		func(c *PlacementConfig) { c.StorageClasses = nil }, func(c *PlacementConfig) { c.StorageClasses[0].Name = "standard_ia" },
+		func(c *PlacementConfig) { c.StorageClasses[0].Name = "STANDARD" }, func(c *PlacementConfig) { c.IndexPool = "--option" },
 	} {
 		g, f := newRGWPlacementFixture()
 		config := rgwPlacementTestConfig()
@@ -448,26 +449,26 @@ func TestRGWPlacementExistingStagingIsCheckedBeforeOverwrite(t *testing.T) {
 func TestRGWPlacementReloadRequiresPublishedTargetAndExactLocalResources(t *testing.T) {
 	for _, test := range []struct {
 		name     string
-		edit     func(*RGWPlacement, *rgwPlacementTestContainer)
+		edit     func(*Placement, *rgwPlacementTestContainer)
 		wantFail bool
 	}{
 		{name: "published secondary zone"},
-		{name: "unpublished target", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) {
+		{name: "unpublished target", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) {
 			group := f.currentPeriod["period_map"].(map[string]any)["zonegroups"].([]any)[0].(map[string]any)
 			group["placement_targets"] = []any{map[string]any{"name": "default-placement", "storage_classes": []any{"STANDARD"}}}
 		}},
-		{name: "missing zone", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) {
+		{name: "missing zone", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) {
 			f.currentPeriod["period_map"].(map[string]any)["zonegroups"].([]any)[0].(map[string]any)["zones"] = []any{}
 		}},
-		{name: "staging instead of committed", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) {
+		{name: "staging instead of committed", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) {
 			f.currentPeriod["id"] = "realm-id:staging"
 		}},
-		{name: "recreated pool", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) { f.poolID = 999 }},
-		{name: "changed local mapping", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) {
+		{name: "recreated pool", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) { f.poolID = 999 }},
+		{name: "changed local mapping", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) {
 			rgwZonePlacement(f.zone, p.config.Name)["index_pool"] = "foreign-index"
 		}},
-		{name: "changed startup scope", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) { f.foreignDefault = true }},
-		{name: "unconfirmed handle", wantFail: true, edit: func(p *RGWPlacement, f *rgwPlacementTestContainer) { p.confirmed = false }},
+		{name: "changed startup scope", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) { f.foreignDefault = true }},
+		{name: "unconfirmed handle", wantFail: true, edit: func(p *Placement, f *rgwPlacementTestContainer) { p.confirmed = false }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g, f := newRGWPlacementFixture()

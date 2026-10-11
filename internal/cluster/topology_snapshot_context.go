@@ -51,24 +51,6 @@ func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, e
 	return result, nil
 }
 
-// gatewaysContext returns sorted owned gateway descriptors, including partial
-// startup attempts, while bounding the wait for fixture topology by ctx.
-func (c *Container) gatewaysContext(ctx context.Context) ([]*RGWContainer, error) {
-	if c == nil {
-		return nil, errors.New("ceph cluster is unavailable")
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
-	}
-	defer c.mu.Unlock()
-	result := make([]*RGWContainer, 0, len(c.gateways))
-	for _, gateway := range c.gateways {
-		result = append(result, gateway)
-	}
-	slices.SortFunc(result, func(a, b *RGWContainer) int { return strings.Compare(a.GatewayName, b.GatewayName) })
-	return result, nil
-}
-
 // ControlContainerContext returns the stable CLI handle while bounding a
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.

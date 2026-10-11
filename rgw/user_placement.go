@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"context"
@@ -7,15 +7,17 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 )
 
-// RGWUserPlacementConfig selects an owned placement as a user's default for
+// UserPlacementConfig selects an owned placement as a user's default for
 // future buckets. StorageClass defaults to STANDARD. Tags nil preserves the
 // user's current placement tags; a nonempty list replaces them exactly. An
 // explicitly empty list is unsupported by radosgw-admin and is rejected.
 // Replace matching tags with nonmatching tags to revoke access to a restricted
 // target. Placement tags authorize new bucket placement, not object access.
-type RGWUserPlacementConfig struct {
+type UserPlacementConfig struct {
 	StorageClass string
 	Tags         []string
 }
@@ -64,7 +66,7 @@ func rgwPlacementNativeTags(value any) ([]string, error) {
 // Native metadata caches may delay new S3 requests. External user/placement
 // edits must not race this operation. A failed readback may follow a persisted
 // change; UserInfo reads native state, and the same request can be retried.
-func (g *RGWContainer) SetUserPlacement(ctx context.Context, user *RGWUser, p *RGWPlacement, config RGWUserPlacementConfig) error {
+func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement, config UserPlacementConfig) error {
 	if config.StorageClass == "" {
 		config.StorageClass = "STANDARD"
 	}
@@ -82,8 +84,8 @@ func (g *RGWContainer) SetUserPlacement(ctx context.Context, user *RGWUser, p *R
 	if g == nil || g.owner == nil {
 		return errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validatePlacementHandle(p); err != nil {
 		return err
 	}
@@ -111,7 +113,7 @@ func (g *RGWContainer) SetUserPlacement(ctx context.Context, user *RGWUser, p *R
 	if _, err := rgwPlacementState(p, group, zone); err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(p.config.StorageClasses, func(class RGWStorageClassConfig) bool { return class.Name == config.StorageClass }) {
+	if !slices.ContainsFunc(p.config.StorageClasses, func(class StorageClassConfig) bool { return class.Name == config.StorageClass }) {
 		return errors.New("RGW user storage class is absent from the owned placement")
 	}
 	before, err := g.placementOwnedUser(ctx, user, p.scope)
@@ -147,7 +149,7 @@ func (g *RGWContainer) SetUserPlacement(ctx context.Context, user *RGWUser, p *R
 	return nil
 }
 
-func (g *RGWContainer) placementOwnedUser(ctx context.Context, user *RGWUser, scope rgwPlacementScope) (*rgwNativeUser, error) {
+func (g *Gateway) placementOwnedUser(ctx context.Context, user *User, scope rgwPlacementScope) (*rgwNativeUser, error) {
 	data, err := g.placementCommand(ctx, scope, "user", "info", "--uid", user.id)
 	if err != nil {
 		return nil, err

@@ -16,8 +16,6 @@ func TestInvalidInitialCompositionDoesNotCreateResources(t *testing.T) {
 		{"EC exceeds initial OSDs", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}})}},
 		{"duplicate initial pools", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data"}, PoolConfig{Name: "data"})}},
 		{"duplicate initial filesystems", []testcontainers.ContainerCustomizer{WithCephFS(CephFSConfig{Name: "alpha"}, CephFSConfig{Name: "alpha"})}},
-		{"duplicate initial gateways", []testcontainers.ContainerCustomizer{WithRGW(RGWConfig{Name: "a"}, RGWConfig{Name: "a"})}},
-		{"invalid initial gateway", []testcontainers.ContainerCustomizer{WithRGW(RGWConfig{Name: "invalid/name"})}},
 		{"pool shared with filesystem", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "alpha-data"}), WithCephFS(CephFSConfig{Name: "alpha"})}},
 		{"too few CRUSH domains", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Host: "same"}, OSDConfig{Host: "same"}), WithPools(PoolConfig{Name: "data", FailureDomain: "host"})}},
 		{"late default invalidates pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", Replicas: 1}), WithPoolDefaults(3, 2)}},

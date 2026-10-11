@@ -59,7 +59,7 @@ type Container struct {
 	managers              map[string]*ManagerContainer
 	services              map[string]testcontainers.Container
 	filesystems           map[string]*CephFSContainer
-	gateways              map[string]*RGWContainer
+	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
 	config                []byte
@@ -84,8 +84,8 @@ type OSDContainer struct {
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
 // img must satisfy the control role: MON/MGR, CLI, Python clients and mirrors.
-// Other roles use img unless overridden by WithOSDImage, WithRGWImage or
-// WithMDSImage. Images contain runtime tools; this module supplies cluster setup.
+// Other roles use img unless overridden by WithOSDImage, WithMDSImage or
+// rgw.WithImage. Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
@@ -126,7 +126,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		nw, err = dockerbridge.New(ctx)
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer), gateways: make(map[string]*RGWContainer)}
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer)}
 	if err != nil {
 		if nw == nil {
 			return nil, fmt.Errorf("create ceph network: %w", err)

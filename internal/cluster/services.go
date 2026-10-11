@@ -41,18 +41,6 @@ func Filesystems(c *Container) []*CephFSContainer {
 	return c.filesystemList()
 }
 
-// StartRGW starts an independently owned, named gateway on an existing
-// cluster. A zero config starts the default gateway and creates its test user.
-// Customizers are applied last; preserve the required command, network and
-// listener settings. A non-nil result returned with an error remains owned by
-// the cluster for cleanup.
-func StartRGW(ctx context.Context, c *Container, config RGWConfig, opts ...testcontainers.ContainerCustomizer) (*RGWContainer, error) {
-	if c == nil {
-		return nil, errNilCluster
-	}
-	return c.startRGW(ctx, config, opts...)
-}
-
 // RemoveCephFS deletes an owned filesystem: it fails and removes it in the
 // FSMap, terminates its MDS daemons, deletes their Cephx keys and removes the
 // metadata, default data and AdditionalDataPools that its configuration
@@ -68,43 +56,8 @@ func RemoveCephFS(ctx context.Context, c *Container, name string) error {
 	return c.removeCephFS(ctx, name)
 }
 
-// RemoveRGW removes one owned gateway container. Zone configuration, S3 users,
-// buckets and data remain available through other gateways or a replacement.
-// Multisite period endpoints are not changed automatically. The last gateway
-// can be removed because RGW is optional. Failed cleanup remains tracked.
-func RemoveRGW(ctx context.Context, c *Container, name string) error {
-	if c == nil {
-		return errNilCluster
-	}
-	return c.removeRGW(ctx, name)
-}
-
-// Gateways returns the cluster's named gateway descriptors sorted by gateway
-// name, including partially initialized gateways. The cluster owns their
-// containers.
-func Gateways(c *Container) []*RGWContainer {
-	if c == nil {
-		return nil
-	}
-	return c.gatewayList()
-}
-
-// GatewaysContext returns sorted owned gateway descriptors, including partial
-// startup attempts, while bounding the wait for fixture topology by ctx.
-func GatewaysContext(ctx context.Context, c *Container) ([]*RGWContainer, error) {
-	if c == nil {
-		return nil, errNilCluster
-	}
-	return c.gatewaysContext(ctx)
-}
-
 // DefaultCephFS selects the default filesystem when no filesystem option was
 // given. The cephfs package appends it to the options of its Run.
 func DefaultCephFS() Option {
 	return withServiceBootstrap(cephFSBootstrapKind, true, func() (serviceBootstrap, error) { return newCephFSBootstrap([]CephFSConfig{{}}), nil })
-}
-
-// DefaultRGW selects one default gateway when no gateway option was given.
-func DefaultRGW() Option {
-	return withServiceBootstrap(rgwBootstrapKind, true, func() (serviceBootstrap, error) { return newRGWBootstrap([]RGWConfig{{}}), nil })
 }

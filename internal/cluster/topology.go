@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/netip"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -36,7 +37,7 @@ type ManagerContainer struct {
 	terminated bool
 }
 
-var daemonNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+var daemonNamePattern = naming.DaemonName
 
 func daemonName(index int) string {
 	if index < 26 {
@@ -541,9 +542,10 @@ func (c *Container) monitorConfigTargets(control testcontainers.Container, remov
 	for name, ctr := range c.services {
 		add(name, ctr)
 	}
-	for name, gateway := range c.gateways {
-		if gateway != nil {
-			add("rgw."+name, gateway.Container)
+	for _, state := range extensionsWith[serviceConfigTargets](c) {
+		targets := state.ConfigTargets()
+		for _, name := range slices.Sorted(maps.Keys(targets)) {
+			add(name, targets[name])
 		}
 	}
 	for _, fs := range c.filesystems {

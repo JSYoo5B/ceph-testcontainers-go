@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 )
 
 // PoolQuota limits logical bytes and object count. Zero removes that limit.
@@ -167,7 +168,7 @@ func (c *Container) SetPoolReplication(ctx context.Context, name string, replica
 	return nil
 }
 
-var existingPoolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,127}$`)
+var existingPoolNamePattern = naming.ExistingPool
 
 func validateExistingPoolName(name string) error {
 	if !existingPoolNamePattern.MatchString(name) {

@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
-	"github.com/jsyoo5b/ceph-testcontainers-go/internal/cluster"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -16,7 +15,7 @@ import (
 // ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), cluster.DefaultRGW())...)
+	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultGateway())...)
 	if c == nil {
 		return nil, err
 	}

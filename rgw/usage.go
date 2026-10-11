@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -10,15 +10,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 )
 
-// RGWUserUsage is a native storage-accounting snapshot, not dated request or
+// UserUsage is a native storage-accounting snapshot, not dated request or
 // bandwidth usage. Scope is "user" for an ordinary user and "account" for an
 // account identity. OwnerID identifies that effective aggregation owner; account
 // stats cover all of the account's users, roles and buckets, not only UserID.
 // Native accounting updates asynchronously; this snapshot does not force sync,
 // flush quota caches, prove quota enforcement or verify object content.
-type RGWUserUsage struct {
+type UserUsage struct {
 	UserID, Tenant, Scope, OwnerID string
 	// SizeBytes is native size; SizeActualBytes is native size_actual (rounded
 	// accounting bytes), not physical allocation or replica/billing bytes.
@@ -32,25 +34,25 @@ type RGWUserUsage struct {
 // and OwnerID equal to the originally owned account ID. It rechecks the user key,
 // type, account lifetime and scope before returning; no user, account, bucket or
 // statistics are created, changed, synchronized, reset or adopted.
-func (g *RGWContainer) UserUsage(ctx context.Context, user *RGWUser) (RGWUserUsage, error) {
+func (g *Gateway) UserUsage(ctx context.Context, user *User) (UserUsage, error) {
 	if g == nil || g.owner == nil {
-		return RGWUserUsage{}, errors.New("RGW gateway is not owned by a Ceph cluster")
+		return UserUsage{}, errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
-	if err := g.owner.lockTopology(ctx); err != nil {
-		return RGWUserUsage{}, err
+	if err := servicehook.LockTopology(ctx, g.owner); err != nil {
+		return UserUsage{}, err
 	}
-	defer g.owner.mu.Unlock()
+	defer servicehook.Unlock(g.owner)
 	if err := g.validateUsageGateway(); err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	before, err := g.ownedUser(ctx, user)
 	if err != nil {
-		return RGWUserUsage{}, rgwUserUsageReadError(ctx, err)
+		return UserUsage{}, rgwUserUsageReadError(ctx, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	// ownedUser already checked the current runtime scope. Use its captured
 	// native IDs for this read without repeating the same service-map query.
@@ -61,27 +63,27 @@ func (g *RGWContainer) UserUsage(ctx context.Context, user *RGWUser) (RGWUserUsa
 		data, err = g.adminCommand(ctx, "user", "stats", "--uid", user.id)
 	}
 	if err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	usage, err := decodeRGWUserUsage(data)
 	if err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	after, err := g.ownedUser(ctx, user)
 	if err != nil {
-		return RGWUserUsage{}, rgwUserUsageReadError(ctx, err)
+		return UserUsage{}, rgwUserUsageReadError(ctx, err)
 	}
 	if before.info.ID != after.info.ID || before.info.Tenant != after.info.Tenant || before.info.Type != after.info.Type || before.info.AccountID != after.info.AccountID {
-		return RGWUserUsage{}, errors.New("RGW user storage aggregation identity changed")
+		return UserUsage{}, errors.New("RGW user storage aggregation identity changed")
 	}
 	if err := g.validateUsageGateway(); err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return RGWUserUsage{}, err
+		return UserUsage{}, err
 	}
 	usage.UserID, usage.Tenant = after.info.ID, after.info.Tenant
 	usage.Scope, usage.OwnerID = "user", after.info.ID
@@ -108,9 +110,9 @@ func rgwUserUsageReadError(ctx context.Context, err error) error {
 
 // Only the originally registered container handle may run these typed reads.
 // A public embedded handle replacement with the same CID is not adopted.
-func (g *RGWContainer) validateUsageGateway() error {
-	service := g.owner.services[rgwServiceName(g.config)]
-	if diagnosticContainerHandle(g.Container) == nil || diagnosticContainerHandle(service) == nil {
+func (g *Gateway) validateUsageGateway() error {
+	service := servicehook.Service(g.owner, rgwServiceName(g.config))
+	if servicehook.DiagnosticHandle(g.Container) == nil || servicehook.DiagnosticHandle(service) == nil {
 		return errors.New("RGW gateway is no longer owned by this cluster")
 	}
 	if err := g.validateAdminGateway(); err != nil {
@@ -123,40 +125,40 @@ func (g *RGWContainer) validateUsageGateway() error {
 	return nil
 }
 
-func decodeRGWUserUsage(data []byte) (RGWUserUsage, error) {
+func decodeRGWUserUsage(data []byte) (UserUsage, error) {
 	bad := errors.New("decode RGW user storage usage")
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	value, err := rgwUsageJSONValue(decoder)
 	if err != nil {
-		return RGWUserUsage{}, bad
+		return UserUsage{}, bad
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return RGWUserUsage{}, bad
+		return UserUsage{}, bad
 	}
 	root, ok := value.(map[string]any)
 	if !ok {
-		return RGWUserUsage{}, bad
+		return UserUsage{}, bad
 	}
 	stats, ok := root["stats"].(map[string]any)
 	if !ok {
-		return RGWUserUsage{}, bad
+		return UserUsage{}, bad
 	}
-	var usage RGWUserUsage
+	var usage UserUsage
 	for name, dest := range map[string]*uint64{"size": &usage.SizeBytes, "size_actual": &usage.SizeActualBytes, "num_objects": &usage.NumObjects} {
 		number, ok := stats[name].(json.Number)
 		if !ok {
-			return RGWUserUsage{}, bad
+			return UserUsage{}, bad
 		}
 		*dest, err = strconv.ParseUint(string(number), 10, 64)
 		if err != nil {
-			return RGWUserUsage{}, bad
+			return UserUsage{}, bad
 		}
 	}
 	for name, dest := range map[string]*string{"last_stats_sync": &usage.LastStatsSync, "last_stats_update": &usage.LastStatsUpdate} {
 		text, ok := root[name].(string)
 		if !ok || !rgwUsageNativeTime(text) {
-			return RGWUserUsage{}, bad
+			return UserUsage{}, bad
 		}
 		*dest = text
 	}

@@ -138,13 +138,13 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 	service := &diagnosticsTestContainer{id: "partial-gateway"}
 	cluster := &Container{
 		Container: primary, manager: mgr, controlPlane: primary, closed: true, monitorTerminated: true,
-		monitors: map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
-		managers: map[string]*ManagerContainer{"a": {Container: mgr}},
-		osds:     map[int]*OSDContainer{0: {ID: 0}, 1: nil},
-		services: map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
-		gateways: map[string]*RGWContainer{"secrets": {AccessKey: "access-private", SecretKey: "s3-private"}},
-		network:  &testcontainers.DockerNetwork{ID: "public-id", Name: "public"},
-		keyring:  []byte("[client.admin]\n key = cephx-private\n"),
+		monitors:   map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
+		managers:   map[string]*ManagerContainer{"a": {Container: mgr}},
+		osds:       map[int]*OSDContainer{0: {ID: 0}, 1: nil},
+		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
+		extensions: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}},
+		network:    &testcontainers.DockerNetwork{ID: "public-id", Name: "public"},
+		keyring:    []byte("[client.admin]\n key = cephx-private\n"),
 	}
 	// The generic service owns the gateway before its public descriptor exists.
 	config := diagnosticsUnitConfig(t)

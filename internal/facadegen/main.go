@@ -1,8 +1,9 @@
-// Command facadegen writes the public ceph, cephfs, rgw and rbd packages'
-// api.go files. They re-export the implementation in internal/cluster under
+// Command facadegen writes the public ceph and cephfs packages' api.go
+// files. They re-export the implementation in internal/cluster under
 // service-scoped names: types become aliases, functions become documented
-// wrappers and constants keep their values. Cross-cluster fixtures are
-// declared directly in the rbd, cephfs and rgw packages.
+// wrappers and constants keep their values. The rbd and rgw packages, and
+// the cross-cluster fixtures of cephfs, are declared directly in their
+// packages.
 //
 // Run it from the repository root with "go run ./internal/facadegen".
 package main
@@ -25,7 +26,7 @@ import (
 const module = "github.com/jsyoo5b/ceph-testcontainers-go"
 
 // Facades lists the generated packages in output order.
-var Facades = []string{"ceph", "cephfs", "rgw", "rbd"}
+var Facades = []string{"ceph", "cephfs"}
 
 type source struct {
 	dir, pkg, alias string
@@ -42,29 +43,21 @@ var special = map[string][2]string{
 	"cluster.MDSContainer":    {"cephfs", "MDS"},
 	"cluster.CephFSMDSStatus": {"cephfs", "FilesystemStatus"},
 	"cluster.MDSStatus":       {"cephfs", "MDSStatus"},
-	"cluster.RGWContainer":    {"rgw", "Gateway"},
 	"cluster.WithCephFS":      {"cephfs", "WithFilesystems"},
 	"cluster.WithMDSImage":    {"cephfs", "WithMDSImage"},
-	"cluster.WithRGW":         {"rgw", "WithGateways"},
-	"cluster.WithRGWImage":    {"rgw", "WithImage"},
 	"cluster.StartCephFS":     {"cephfs", "Start"},
 	"cluster.Filesystems":     {"cephfs", "Filesystems"},
-	"cluster.StartRGW":        {"rgw", "Start"},
 	"cluster.RemoveCephFS":    {"cephfs", "Remove"},
-	"cluster.RemoveRGW":       {"rgw", "Remove"},
-	"cluster.Gateways":        {"rgw", "Gateways"},
-	"cluster.GatewaysContext": {"rgw", "GatewaysContext"},
 }
 
 // Internal helpers used by the hand-written Run functions.
 var skipped = map[string]bool{
-	"cluster.DefaultCephFS": true, "cluster.DefaultRGW": true,
+	"cluster.DefaultCephFS": true,
 }
 
 // Former Container methods that implementation comments may still mention.
 var formerNames = map[string][2]string{
 	"StartCephFSWithConfig": {"cephfs", "Start"},
-	"StartRGWWithConfig":    {"rgw", "Start"},
 }
 
 func target(src source, file, name string) (string, string) {
@@ -76,10 +69,6 @@ func target(src source, file, name string) (string, string) {
 	switch {
 	case strings.HasPrefix(file, "cephfs"), file == "no_initial_mds.go":
 		service = "cephfs"
-	case strings.HasPrefix(file, "rgw"):
-		service = "rgw"
-	case strings.HasPrefix(file, "rbd"):
-		service = "rbd"
 	}
 	if service == "" {
 		if src.pkg == "multicluster" {
@@ -88,7 +77,7 @@ func target(src source, file, name string) (string, string) {
 		return "ceph", name
 	}
 	stripped := name
-	for _, prefix := range []string{"CephFS", "RGW", "RBD"} {
+	for _, prefix := range []string{"CephFS"} {
 		stripped = strings.Replace(stripped, prefix, "", 1)
 	}
 	if stripped == "" || !ast.IsExported(stripped) {

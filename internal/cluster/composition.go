@@ -30,29 +30,6 @@ func WithCephFS(configs ...CephFSConfig) Option {
 	return withServiceBootstrap(cephFSBootstrapKind, false, func() (serviceBootstrap, error) { return newCephFSBootstrap(configs), nil })
 }
 
-// WithRGW starts named gateways during Run. No arguments starts one default
-// gateway. Repeated options replace the list. All gateways share this cluster's
-// backing zone; multisite scope is configured separately by multicluster APIs.
-func WithRGW(configs ...RGWConfig) Option {
-	if len(configs) == 0 {
-		configs = []RGWConfig{{}}
-	}
-	return withServiceBootstrap(rgwBootstrapKind, false, func() (serviceBootstrap, error) { return newRGWBootstrap(configs), nil })
-}
-
-// gatewayList returns named gateway descriptors sorted by gateway name, including
-// partially initialized gateways. The cluster owns their containers.
-func (c *Container) gatewayList() []*RGWContainer {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := make([]*RGWContainer, 0, len(c.gateways))
-	for _, gateway := range c.gateways {
-		result = append(result, gateway)
-	}
-	slices.SortFunc(result, func(a, b *RGWContainer) int { return strings.Compare(a.GatewayName, b.GatewayName) })
-	return result
-}
-
 // filesystemList returns owned filesystem descriptors sorted by filesystem name,
 // including a descriptor whose setup partially failed. The cluster owns MDSs.
 func (c *Container) filesystemList() []*CephFSContainer {

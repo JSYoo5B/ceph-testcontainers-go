@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -13,36 +13,38 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// RGWTLSConfig enables a native Beast HTTPS listener alongside HTTP. Supply
+// TLSConfig enables a native Beast HTTPS listener alongside HTTP. Supply
 // a PEM certificate chain and matching unencrypted private key. No proxy is
 // involved. Clients must explicitly trust its CA and use a matching hostname.
 // Files live only in the owned RGW container; descriptors never log key bytes.
-type RGWTLSConfig struct {
+type TLSConfig struct {
 	CertificatePEM, PrivateKeyPEM []byte
 }
 
-func (RGWTLSConfig) String() string     { return "RGW TLS certificate and private key" }
-func (c RGWTLSConfig) GoString() string { return c.String() }
+func (TLSConfig) String() string     { return "RGW TLS certificate and private key" }
+func (c TLSConfig) GoString() string { return c.String() }
 
 // Formatting a gateway must not recurse into its S3 credentials or TLS key.
-func (g RGWContainer) String() string   { return "RGW gateway " + g.config.Name }
-func (g RGWContainer) GoString() string { return g.String() }
+func (g Gateway) String() string   { return "RGW gateway " + g.config.Name }
+func (g Gateway) GoString() string { return g.String() }
 
-func normalizeRGWTLSConfig(config *RGWTLSConfig) (*RGWTLSConfig, error) {
+func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {
 	if config == nil {
 		return nil, nil
 	}
 	if _, err := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM); err != nil {
 		return nil, errors.New("RGW TLS requires a valid PEM certificate chain and matching unencrypted private key")
 	}
-	return &RGWTLSConfig{CertificatePEM: slices.Clone(config.CertificatePEM), PrivateKeyPEM: slices.Clone(config.PrivateKeyPEM)}, nil
+	return &TLSConfig{CertificatePEM: slices.Clone(config.CertificatePEM), PrivateKeyPEM: slices.Clone(config.PrivateKeyPEM)}, nil
 }
 
-func rgwTLSOptions(port int, config *RGWTLSConfig) []testcontainers.ContainerCustomizer {
+func rgwTLSOptions(port int, config *TLSConfig) []testcontainers.ContainerCustomizer {
 	pem := append(slices.Clone(config.CertificatePEM), '\n')
 	pem = append(pem, config.PrivateKeyPEM...)
 	return []testcontainers.ContainerCustomizer{
@@ -54,7 +56,7 @@ func rgwTLSOptions(port int, config *RGWTLSConfig) []testcontainers.ContainerCus
 // S3SecureEndpoint returns the native HTTPS listener's mapped or selected host
 // endpoint. It returns an error when TLS was not configured. This method does
 // not disable certificate verification or alter application TLS settings.
-func (g *RGWContainer) S3SecureEndpoint(ctx context.Context) (string, error) {
+func (g *Gateway) S3SecureEndpoint(ctx context.Context) (string, error) {
 	if g == nil || g.Container == nil || g.tlsPort == 0 {
 		return "", errors.New("RGW native TLS listener is not configured")
 	}
@@ -67,12 +69,12 @@ func (g *RGWContainer) S3SecureEndpoint(ctx context.Context) (string, error) {
 // The startup probe verifies private socket ownership and the exact configured
 // certificate fingerprint. This is certificate pinning for readiness only;
 // application tests verify the CA and DNS/IP SAN using their ordinary TLS client.
-func (c *Container) rgwTLSReadiness(port int, config *RGWTLSConfig) *wait.NopStrategy {
+func tlsReadiness(c *ceph.Container, port int, config *TLSConfig) *wait.NopStrategy {
 	pair, _ := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM)
 	digest := sha256.Sum256(pair.Certificate[0])
 	fingerprint := hex.EncodeToString(digest[:])
 	return wait.ForNop(func(ctx context.Context, target wait.StrategyTarget) error {
-		ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+		ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 		defer cancel()
 		ticker := time.NewTicker(150 * time.Millisecond)
 		defer ticker.Stop()
@@ -110,7 +112,7 @@ func (c *Container) rgwTLSReadiness(port int, config *RGWTLSConfig) *wait.NopStr
 				}
 			}
 			if code == 0 {
-				if _, err := command(ctx, c.cliContainer(), "python3", "-c", rgwTLSReady, address, strconv.Itoa(port), fingerprint); err == nil {
+				if _, err := servicehook.Command(ctx, servicehook.CLI(c), "python3", "-c", rgwTLSReady, address, strconv.Itoa(port), fingerprint); err == nil {
 					return nil
 				} else {
 					lastErr = err
@@ -124,7 +126,7 @@ func (c *Container) rgwTLSReadiness(port int, config *RGWTLSConfig) *wait.NopStr
 			case <-ticker.C:
 			}
 		}
-	}).WithStartupTimeout(c.settings.startupTimeout)
+	}).WithStartupTimeout(servicehook.StartupTimeout(c))
 }
 
 const rgwTLSReady = `import hashlib, socket, ssl, sys

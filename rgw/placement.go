@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -15,25 +15,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/ceph"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
-// RGWStorageClassConfig maps one native S3 storage class to an existing data
+// StorageClassConfig maps one native S3 storage class to an existing data
 // pool. STANDARD is required. Other class names, for example STANDARD_IA, must
 // also be accepted by the consumer's S3 SDK. Data pools may be replicated or EC;
 // RGW does not require EC overwrites because it writes complete objects.
-type RGWStorageClassConfig struct {
+type StorageClassConfig struct {
 	Name, DataPool string
 }
 
-// RGWPlacementConfig adds a fresh, non-default bucket placement target. IndexPool
+// PlacementConfig adds a fresh, non-default bucket placement target. IndexPool
 // and DataExtraPool must be existing replicated pools supporting omap. It never
 // changes the zonegroup default or any existing bucket's immutable placement.
 // InlineData nil preserves Ceph's true default; false separates object heads
 // and data. Native external placement/topology edits must not race these helpers.
-type RGWPlacementConfig struct {
+type PlacementConfig struct {
 	Name, IndexPool, DataExtraPool string
-	StorageClasses                 []RGWStorageClassConfig
+	StorageClasses                 []StorageClassConfig
 	InlineData                     *bool
 	// Tags restrict creation of new buckets using this target to users with
 	// at least one matching placement tag. An empty list permits every user.
@@ -41,31 +44,31 @@ type RGWPlacementConfig struct {
 	Tags []string
 }
 
-// RGWPlacement identifies a newly created native policy and its exact runtime
+// Placement identifies a newly created native policy and its exact runtime
 // scope. LocationConstraint can be passed to S3 CreateBucket. Creation stores
 // configuration; ApplyPlacement restarts a standalone gateway or publishes a
 // guarded realm period. Import that period into other clusters before explicitly
 // activating their gateways with ReloadPlacement. Failed creation may return a
 // partial handle for inspection; it is never rolled back by deleting pools,
 // policies, buckets or data.
-type RGWPlacement struct {
+type Placement struct {
 	Name, RealmID, ZonegroupID, ZoneID, LocationConstraint string
-	owner                                                  *Container
+	owner                                                  *ceph.Container
 	scope                                                  rgwPlacementScope
-	config                                                 RGWPlacementConfig
+	config                                                 PlacementConfig
 	poolIDs                                                map[string]int64
 	group, zone, previousPeriod                            map[string]any
 	confirmed                                              bool
 }
 
-func (p RGWPlacement) String() string   { return "RGW placement " + p.Name }
-func (p RGWPlacement) GoString() string { return p.String() }
+func (p Placement) String() string   { return "RGW placement " + p.Name }
+func (p Placement) GoString() string { return p.String() }
 
-// RGWPlacementState is a native policy snapshot. DefaultPlacement is the
+// PlacementState is a native policy snapshot. DefaultPlacement is the
 // zonegroup default, which these helpers never modify. Creation and activation
 // do not assign any user's default placement or storage class.
-type RGWPlacementState struct {
-	RGWPlacementConfig
+type PlacementState struct {
+	PlacementConfig
 	RealmID, ZonegroupID, ZoneID, LocationConstraint, DefaultPlacement string
 	// Confirmed reports successful creation/readback of this owned handle.
 	// It does not assert that a gateway reloaded the policy or a realm published it.
@@ -80,15 +83,15 @@ var rgwStorageClassName = regexp.MustCompile(`^[A-Z][A-Z0-9_-]{0,127}$`)
 
 var errRGWPlacementScopePending = errors.New("running RGW gateway has not registered its native scope")
 
-func normalizeRGWPlacementConfig(config RGWPlacementConfig) (RGWPlacementConfig, error) {
-	if !poolResourceName.MatchString(config.Name) || len(config.Name) > 128 {
+func normalizeRGWPlacementConfig(config PlacementConfig) (PlacementConfig, error) {
+	if !naming.PoolResource.MatchString(config.Name) || len(config.Name) > 128 {
 		return config, errors.New("invalid RGW placement name")
 	}
 	if config.Name == "default-placement" {
 		return config, errors.New("RGW placement creation requires a new non-default name")
 	}
 	for _, pool := range []string{config.IndexPool, config.DataExtraPool} {
-		if err := validateExistingPoolName(pool); err != nil {
+		if err := validateExistingPool(pool); err != nil {
 			return config, err
 		}
 	}
@@ -103,7 +106,7 @@ func normalizeRGWPlacementConfig(config RGWPlacementConfig) (RGWPlacementConfig,
 		if !rgwStorageClassName.MatchString(class.Name) || seen[class.Name] {
 			return config, errors.New("RGW storage classes must have distinct uppercase names")
 		}
-		if err := validateExistingPoolName(class.DataPool); err != nil {
+		if err := validateExistingPool(class.DataPool); err != nil {
 			return config, err
 		}
 		seen[class.Name] = true
@@ -111,7 +114,7 @@ func normalizeRGWPlacementConfig(config RGWPlacementConfig) (RGWPlacementConfig,
 	if !seen["STANDARD"] {
 		return config, errors.New("RGW placement requires a STANDARD data pool")
 	}
-	slices.SortFunc(config.StorageClasses, func(a, b RGWStorageClassConfig) int {
+	slices.SortFunc(config.StorageClasses, func(a, b StorageClassConfig) int {
 		if a.Name == b.Name {
 			return 0
 		}
@@ -136,7 +139,7 @@ func normalizeRGWPlacementConfig(config RGWPlacementConfig) (RGWPlacementConfig,
 // must already exist; native IDs are rechecked before each mutation. Changes are
 // sequential and partial failure leaves inspectable configuration. On a realm,
 // all participating zones need compatible local mappings before publication.
-func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementConfig) (*RGWPlacement, error) {
+func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (*Placement, error) {
 	config, err := normalizeRGWPlacementConfig(config)
 	if err != nil {
 		return nil, err
@@ -144,8 +147,8 @@ func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementC
 	if g == nil || g.owner == nil {
 		return nil, errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
@@ -166,11 +169,11 @@ func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementC
 	if defaultName == "" {
 		return nil, errors.New("RGW zonegroup has no default placement; refusing implicit default mutation")
 	}
-	states, err := g.owner.poolStates(ctx)
+	states, err := servicehook.PoolStates(ctx, g.owner)
 	if err != nil {
 		return nil, err
 	}
-	pools := make(map[string]PoolState)
+	pools := make(map[string]ceph.PoolState)
 	for _, state := range states {
 		pools[state.Name] = state
 	}
@@ -189,7 +192,7 @@ func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementC
 		}
 		poolIDs[class.DataPool] = state.ID
 	}
-	p := &RGWPlacement{Name: config.Name, RealmID: scope.realmID, ZonegroupID: scope.groupID, ZoneID: scope.zoneID,
+	p := &Placement{Name: config.Name, RealmID: scope.realmID, ZonegroupID: scope.groupID, ZoneID: scope.zoneID,
 		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, owner: g.owner, scope: scope, config: config, poolIDs: poolIDs}
 	if apiName, ok := group["api_name"].(string); !ok || apiName == "" {
 		return nil, errors.New("RGW zonegroup has no S3 API name")
@@ -247,23 +250,23 @@ func (g *RGWContainer) CreatePlacement(ctx context.Context, config RGWPlacementC
 // PlacementStatus reads the exact native scope of a created or partial policy.
 // Incomplete or changed mappings return an error; use Admin for detailed partial
 // inspection. It does not claim a running gateway reloaded this configuration.
-func (g *RGWContainer) PlacementStatus(ctx context.Context, p *RGWPlacement) (RGWPlacementState, error) {
+func (g *Gateway) PlacementStatus(ctx context.Context, p *Placement) (PlacementState, error) {
 	if g == nil || g.owner == nil {
-		return RGWPlacementState{}, errors.New("RGW gateway is not owned by a Ceph cluster")
+		return PlacementState{}, errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validatePlacementHandle(p); err != nil {
-		return RGWPlacementState{}, err
+		return PlacementState{}, err
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
 	if err := g.checkPlacementResources(ctx, p); err != nil {
-		return RGWPlacementState{}, err
+		return PlacementState{}, err
 	}
 	group, zone, err := g.placementNativeScope(ctx, p.scope)
 	if err != nil {
-		return RGWPlacementState{}, err
+		return PlacementState{}, err
 	}
 	return rgwPlacementState(p, group, zone)
 }
@@ -276,12 +279,12 @@ func (g *RGWContainer) PlacementStatus(ctx context.Context, p *RGWPlacement) (RG
 // Coordinate mappings in other zones before publishing a realm policy, import
 // the committed period into those clusters and call ReloadPlacement there. It never
 // changes defaults, deletes resources or silently rolls back a partial failure.
-func (g *RGWContainer) ApplyPlacement(ctx context.Context, p *RGWPlacement) error {
+func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
 		return errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validatePlacementHandle(p); err != nil {
 		return err
 	}
@@ -374,12 +377,12 @@ func (g *RGWContainer) ApplyPlacement(ctx context.Context, p *RGWPlacement) erro
 // the published period through the multicluster fixture before reloading another
 // cluster. This method never publishes, pulls or rewrites federation topology.
 // Resolve S3Endpoint again because Docker may assign a new mapped host port.
-func (g *RGWContainer) ReloadPlacement(ctx context.Context, p *RGWPlacement) error {
+func (g *Gateway) ReloadPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
 		return errors.New("RGW gateway is not owned by a Ceph cluster")
 	}
-	g.owner.mu.Lock()
-	defer g.owner.mu.Unlock()
+	servicehook.Lock(g.owner)
+	defer servicehook.Unlock(g.owner)
 	if err := g.validatePlacementHandle(p); err != nil {
 		return err
 	}
@@ -424,7 +427,7 @@ func (g *RGWContainer) ReloadPlacement(ctx context.Context, p *RGWPlacement) err
 	return nil
 }
 
-func rgwPlacementCommittedTarget(period map[string]any, p *RGWPlacement) error {
+func rgwPlacementCommittedTarget(period map[string]any, p *Placement) error {
 	id, ok := period["id"].(string)
 	if !ok || id == "" || strings.HasSuffix(id, ":staging") {
 		return errors.New("RGW placement requires a locally committed period")
@@ -454,7 +457,7 @@ func rgwPlacementCommittedTarget(period map[string]any, p *RGWPlacement) error {
 	return errors.New("RGW owned placement zonegroup is absent from the local committed period")
 }
 
-func (g *RGWContainer) placementRestartScope(ctx context.Context, scope rgwPlacementScope) error {
+func (g *Gateway) placementRestartScope(ctx context.Context, scope rgwPlacementScope) error {
 	for _, resource := range []struct {
 		kind, id string
 	}{{"zonegroup", scope.groupID}, {"zone", scope.zoneID}} {
@@ -473,7 +476,7 @@ func (g *RGWContainer) placementRestartScope(ctx context.Context, scope rgwPlace
 	return nil
 }
 
-func (g *RGWContainer) validatePlacementHandle(p *RGWPlacement) error {
+func (g *Gateway) validatePlacementHandle(p *Placement) error {
 	if err := g.validateAdminGateway(); err != nil {
 		return err
 	}
@@ -483,7 +486,7 @@ func (g *RGWContainer) validatePlacementHandle(p *RGWPlacement) error {
 	return nil
 }
 
-func (g *RGWContainer) checkPlacementResources(ctx context.Context, p *RGWPlacement) error {
+func (g *Gateway) checkPlacementResources(ctx context.Context, p *Placement) error {
 	scope, err := g.placementRuntimeScope(ctx)
 	if err != nil {
 		return err
@@ -491,20 +494,20 @@ func (g *RGWContainer) checkPlacementResources(ctx context.Context, p *RGWPlacem
 	if scope != p.scope {
 		return errors.New("RGW gateway's native placement scope changed")
 	}
-	states, err := g.owner.poolStates(ctx)
+	states, err := servicehook.PoolStates(ctx, g.owner)
 	if err != nil {
 		return err
 	}
 	for name, id := range p.poolIDs {
-		if !slices.ContainsFunc(states, func(state PoolState) bool { return state.Name == name && state.ID == id }) {
+		if !slices.ContainsFunc(states, func(state ceph.PoolState) bool { return state.Name == name && state.ID == id }) {
 			return fmt.Errorf("RGW placement pool %q disappeared or was replaced", name)
 		}
 	}
 	return nil
 }
 
-func (g *RGWContainer) placementRuntimeScope(ctx context.Context) (rgwPlacementScope, error) {
-	data, err := command(ctx, g.Container, "hostname")
+func (g *Gateway) placementRuntimeScope(ctx context.Context) (rgwPlacementScope, error) {
+	data, err := servicehook.Command(ctx, g.Container, "hostname")
 	if err != nil {
 		if ctx.Err() != nil {
 			return rgwPlacementScope{}, fmt.Errorf("inspect RGW container hostname: %w", ctx.Err())
@@ -592,8 +595,8 @@ func rgwPlacementCommandArgs(scope rgwPlacementScope, args ...string) []string {
 	return append(argv, args...)
 }
 
-func (g *RGWContainer) placementCommand(ctx context.Context, scope rgwPlacementScope, args ...string) ([]byte, error) {
-	data, err := command(ctx, g.Container, rgwPlacementCommandArgs(scope, args...)...)
+func (g *Gateway) placementCommand(ctx context.Context, scope rgwPlacementScope, args ...string) ([]byte, error) {
+	data, err := servicehook.Command(ctx, g.Container, rgwPlacementCommandArgs(scope, args...)...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("RGW placement command: %w", ctx.Err())
@@ -606,7 +609,7 @@ func (g *RGWContainer) placementCommand(ctx context.Context, scope rgwPlacementS
 // Read the exact staging object directly: --epoch avoids a separate latest-epoch
 // lookup. The native CLI returns errno 2 only for a missing object; other failures
 // must never be interpreted as an empty staging area or leak native credentials.
-func (g *RGWContainer) placementStagingPeriod(ctx context.Context, scope rgwPlacementScope) (map[string]any, error) {
+func (g *Gateway) placementStagingPeriod(ctx context.Context, scope rgwPlacementScope) (map[string]any, error) {
 	id := scope.realmID + ":staging"
 	code, reader, err := g.Container.Exec(ctx, rgwPlacementCommandArgs(scope, "period", "get", "--period", id, "--epoch", "1"))
 	if err != nil {
@@ -635,7 +638,7 @@ func (g *RGWContainer) placementStagingPeriod(ctx context.Context, scope rgwPlac
 	return period, nil
 }
 
-func (g *RGWContainer) placementNativeScope(ctx context.Context, scope rgwPlacementScope) (map[string]any, map[string]any, error) {
+func (g *Gateway) placementNativeScope(ctx context.Context, scope rgwPlacementScope) (map[string]any, map[string]any, error) {
 	data, err := g.placementCommand(ctx, scope, "zonegroup", "get")
 	if err != nil {
 		return nil, nil, err
@@ -719,49 +722,49 @@ func rgwZonePlacement(zone map[string]any, name string) map[string]any {
 	return nil
 }
 
-func rgwPlacementState(p *RGWPlacement, group, zone map[string]any) (RGWPlacementState, error) {
+func rgwPlacementState(p *Placement, group, zone map[string]any) (PlacementState, error) {
 	target, mapping := rgwPlacementTarget(group, p.config.Name), rgwZonePlacement(zone, p.config.Name)
 	if target == nil || mapping == nil {
-		return RGWPlacementState{}, errors.New("RGW placement has no complete zonegroup target and zone mapping")
+		return PlacementState{}, errors.New("RGW placement has no complete zonegroup target and zone mapping")
 	}
 	tags, err := rgwPlacementNativeTags(target["tags"])
 	if err != nil || !slices.Equal(tags, p.config.Tags) {
-		return RGWPlacementState{}, errors.New("RGW placement target tags differ from its creation policy")
+		return PlacementState{}, errors.New("RGW placement target tags differ from its creation policy")
 	}
 	classes, ok := mapping["storage_classes"].(map[string]any)
 	if !ok {
-		return RGWPlacementState{}, errors.New("RGW placement storage classes are missing")
+		return PlacementState{}, errors.New("RGW placement storage classes are missing")
 	}
 	listed, ok := target["storage_classes"].([]any)
 	if !ok || len(listed) != len(p.config.StorageClasses) || len(classes) != len(p.config.StorageClasses) {
-		return RGWPlacementState{}, errors.New("RGW placement storage class set differs from its creation policy")
+		return PlacementState{}, errors.New("RGW placement storage class set differs from its creation policy")
 	}
 	if mapping["index_pool"] != p.config.IndexPool || mapping["data_extra_pool"] != p.config.DataExtraPool {
-		return RGWPlacementState{}, errors.New("RGW placement metadata pools changed")
+		return PlacementState{}, errors.New("RGW placement metadata pools changed")
 	}
 	inline := true
 	if p.config.InlineData != nil {
 		inline = *p.config.InlineData
 	}
 	if mapping["inline_data"] != inline {
-		return RGWPlacementState{}, errors.New("RGW placement inline data policy changed")
+		return PlacementState{}, errors.New("RGW placement inline data policy changed")
 	}
 	for _, class := range p.config.StorageClasses {
 		info, ok := classes[class.Name].(map[string]any)
 		if !ok || info["data_pool"] != class.DataPool || !slices.Contains(listed, any(class.Name)) {
-			return RGWPlacementState{}, errors.New("RGW placement data pool or storage class changed")
+			return PlacementState{}, errors.New("RGW placement data pool or storage class changed")
 		}
 	}
 	config, _ := normalizeRGWPlacementConfig(p.config)
 	apiName, ok := group["api_name"].(string)
 	if !ok || apiName == "" {
-		return RGWPlacementState{}, errors.New("RGW zonegroup S3 API name is missing")
+		return PlacementState{}, errors.New("RGW zonegroup S3 API name is missing")
 	}
 	defaultName, ok := group["default_placement"].(string)
 	if !ok || defaultName == "" {
-		return RGWPlacementState{}, errors.New("RGW zonegroup default placement is missing")
+		return PlacementState{}, errors.New("RGW zonegroup default placement is missing")
 	}
-	return RGWPlacementState{RGWPlacementConfig: config, RealmID: p.scope.realmID, ZonegroupID: p.scope.groupID, ZoneID: p.scope.zoneID, LocationConstraint: apiName + ":" + p.config.Name, DefaultPlacement: defaultName, Confirmed: p.confirmed}, nil
+	return PlacementState{PlacementConfig: config, RealmID: p.scope.realmID, ZonegroupID: p.scope.groupID, ZoneID: p.scope.zoneID, LocationConstraint: apiName + ":" + p.config.Name, DefaultPlacement: defaultName, Confirmed: p.confirmed}, nil
 }
 
 // Period changes are compared structurally after inserting only the new target
@@ -827,6 +830,13 @@ func rgwPlacementPeriodChange(previous, next map[string]any, groupID string, tar
 	}
 	if !found || !reflect.DeepEqual(expectedPolicy, actualPolicy) {
 		return errors.New("RGW staging period contains unrelated topology or placement changes; refusing publication")
+	}
+	return nil
+}
+
+func validateExistingPool(name string) error {
+	if !naming.ExistingPool.MatchString(name) {
+		return errors.New("invalid native pool name")
 	}
 	return nil
 }

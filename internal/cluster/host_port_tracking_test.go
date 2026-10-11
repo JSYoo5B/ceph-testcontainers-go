@@ -217,17 +217,3 @@ func TestTrackedHostPortsPublishBeforeConcurrentTerminationSnapshot(t *testing.T
 		t.Fatal("termination missed a late-created allocator or lost lease identity")
 	}
 }
-
-func TestTrackedHostRGWStartRejectsBusyOwnerBeforeAllocator(t *testing.T) {
-	cluster := trackedHostPortFixture()
-	assertContextLockQueued(t, &cluster.mu, func(ctx context.Context) error {
-		gateway, err := cluster.startRGW(ctx, RGWConfig{SkipUserCreation: true})
-		if gateway != nil {
-			t.Error("busy host owner returned a gateway")
-		}
-		return err
-	})
-	if len(cluster.portLeases) != 0 || len(cluster.services) != 0 || len(cluster.gateways) != 0 {
-		t.Fatal("busy host startup created container or cleanup inventory")
-	}
-}

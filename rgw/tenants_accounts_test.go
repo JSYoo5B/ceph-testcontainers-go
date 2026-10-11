@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
-	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -119,9 +119,9 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 			local = right
 		}
 		var user map[string]any
-		_ = json.Unmarshal([]byte(rgwAdminFixture(local, "SECRET-"+id, false, RGWQuota{MaxSizeBytes: -1, MaxObjects: -1})), &user)
+		_ = json.Unmarshal([]byte(rgwAdminFixture(local, "SECRET-"+id, false, Quota{MaxSizeBytes: -1, MaxObjects: -1})), &user)
 		user["keys"] = []rgwNativeKey{{AccessKey: "ACCESS-" + id, SecretKey: "SECRET-" + id}}
-		// Native CLI RGWUserInfo::dump emits canonical user_id without separate
+		// Native CLI UserInfo::dump emits canonical user_id without separate
 		// tenant/full_user_id fields; Admin Ops uses a different serializer.
 		user["user_id"], user["type"], user["account_id"] = id, "rgw", ""
 		if slices.Contains(args, "--account-root") {
@@ -152,7 +152,7 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 		case slices.Contains(args, "user") && slices.Contains(args, "enable") && !slices.Contains(args, "quota"):
 			user["suspended"] = 0
 		case slices.Contains(args, "caps"):
-			user["caps"] = []RGWAdminCapability{{Type: "users", Permission: "read"}}
+			user["caps"] = []AdminCapability{{Type: "users", Permission: "read"}}
 		case slices.Contains(args, "quota"):
 			field := "user_quota"
 			if flag("--quota-scope") == "bucket" {
@@ -193,19 +193,19 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 	return code, &stream, nil
 }
 
-func newRGWAccountTestGateway() (*RGWContainer, *rgwAccountTestContainer) {
+func newRGWAccountTestGateway() (*Gateway, *rgwAccountTestContainer) {
 	g, base := newRGWPlacementFixture()
 	f := &rgwAccountTestContainer{rgwPlacementTestContainer: base, users: map[string]map[string]any{}, versionTag: "native-account-lifetime"}
 	g.Container = f
-	g.owner.services = map[string]testcontainers.Container{"rgw": f}
+	servicehook.SetService(g.owner, "rgw", f)
 	return g, f
 }
 
 func TestRGWTenantUsersPreserveCanonicalIDForEveryOperation(t *testing.T) {
 	g, f := newRGWAccountTestGateway()
-	users := make([]*RGWUser, 0, 3)
+	users := make([]*User, 0, 3)
 	for _, tenant := range []string{"", "team_a", "team_b"} {
-		user, err := g.CreateUser(t.Context(), RGWUserConfig{ID: "same", Tenant: tenant, AdminCaps: "users=read"})
+		user, err := g.CreateUser(t.Context(), UserConfig{ID: "same", Tenant: tenant, AdminCaps: "users=read"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,19 +214,19 @@ func TestRGWTenantUsersPreserveCanonicalIDForEveryOperation(t *testing.T) {
 		}
 		users = append(users, user)
 	}
-	if _, err := g.CreateUser(t.Context(), RGWUserConfig{ID: "same", Tenant: "team_a"}); err == nil {
+	if _, err := g.CreateUser(t.Context(), UserConfig{ID: "same", Tenant: "team_a"}); err == nil {
 		t.Fatal("existing tenanted user accepted")
 	}
 	f.calls = nil
 	for i, user := range users {
-		quota := RGWQuota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: int64(i + 1)}
+		quota := Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: int64(i + 1)}
 		if err := g.SetUserQuota(t.Context(), user, quota); err != nil {
 			t.Fatal(err)
 		}
 		if err := g.SetBucketQuota(t.Context(), user, quota); err != nil {
 			t.Fatal(err)
 		}
-		unlimited := RGWQuota{MaxSizeBytes: -1, MaxObjects: -1}
+		unlimited := Quota{MaxSizeBytes: -1, MaxObjects: -1}
 		if err := g.SetUserQuota(t.Context(), user, unlimited); err != nil {
 			t.Fatal(err)
 		}
@@ -273,7 +273,7 @@ func TestRGWTenantUsersPreserveCanonicalIDForEveryOperation(t *testing.T) {
 }
 
 func TestRGWTenantDecoderRejectsConflictingFullIdentity(t *testing.T) {
-	data := []byte(rgwAdminFixture("same", "PRIVATE-SECRET", false, RGWQuota{MaxSizeBytes: -1, MaxObjects: -1}))
+	data := []byte(rgwAdminFixture("same", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1}))
 	var user map[string]any
 	_ = json.Unmarshal(data, &user)
 	user["tenant"], user["full_user_id"] = "team_a", "team_b$same"
@@ -298,7 +298,7 @@ func TestRGWTenantDecoderNativeCLICanonicalAndSeparateComponents(t *testing.T) {
 		{"$space$same", "", "space", "same"},
 	} {
 		var user map[string]any
-		_ = json.Unmarshal([]byte(rgwAdminFixture(test.id, "PRIVATE-SECRET", false, RGWQuota{MaxSizeBytes: -1, MaxObjects: -1})), &user)
+		_ = json.Unmarshal([]byte(rgwAdminFixture(test.id, "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})), &user)
 		native, err := decodeRGWUser(mustRGWUserPlacementJSON(t, user))
 		if err != nil || native.info.ID != test.id || native.info.Tenant != test.tenant || native.info.Namespace != test.namespace || native.info.LocalID != test.local {
 			t.Fatal("native CLI canonical ID components were not decoded")
@@ -321,14 +321,14 @@ func TestRGWTenantDecoderNativeCLICanonicalAndSeparateComponents(t *testing.T) {
 
 func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 	g, f := newRGWAccountTestGateway()
-	a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "fixture account", Tenant: "account_team"})
+	a, err := g.CreateAccount(t.Context(), AccountConfig{ID: "RGW12345678901234567", Name: "fixture account", Tenant: "account_team"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: a.ID()}); err == nil {
+	if _, err := g.CreateAccount(t.Context(), AccountConfig{ID: a.ID()}); err == nil {
 		t.Fatal("existing account adopted")
 	}
-	root, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "fixture-root", DisplayName: "FixtureRoot"})
+	root, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "fixture-root", DisplayName: "FixtureRoot"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 	if err != nil || info.AccountID != a.ID() || info.Type != "root" || info.Tenant != "account_team" || info.Admin || info.System {
 		t.Fatal("root account identity wrong")
 	}
-	q := RGWQuota{Enabled: true, MaxSizeBytes: 2048, MaxObjects: 3}
+	q := Quota{Enabled: true, MaxSizeBytes: 2048, MaxObjects: 3}
 	if err := g.SetAccountQuota(t.Context(), a, q); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 	if err != nil || account.AccountQuota != q || account.BucketQuota != q {
 		t.Fatal("account quota not read back")
 	}
-	q = RGWQuota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
+	q = Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
 	if err := g.SetAccountQuota(t.Context(), a, q); err != nil {
 		t.Fatal(err)
 	}
@@ -393,20 +393,22 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 }
 
 func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
-	for _, edit := range []func(*RGWAccount, *rgwAccountTestContainer){
-		func(a *RGWAccount, _ *rgwAccountTestContainer) { a.owner = &Container{} },
-		func(a *RGWAccount, _ *rgwAccountTestContainer) { a.state.confirmed = false },
-		func(_ *RGWAccount, f *rgwAccountTestContainer) { f.versionTag = "replacement-lifetime" },
-		func(_ *RGWAccount, f *rgwAccountTestContainer) { f.account["tenant"] = "different" },
+	for _, edit := range []func(*Account, *rgwAccountTestContainer){
+		func(a *Account, _ *rgwAccountTestContainer) {
+			a.owner = testCluster(nil, servicehook.TestConfig{}, nil)
+		},
+		func(a *Account, _ *rgwAccountTestContainer) { a.state.confirmed = false },
+		func(_ *Account, f *rgwAccountTestContainer) { f.versionTag = "replacement-lifetime" },
+		func(_ *Account, f *rgwAccountTestContainer) { f.account["tenant"] = "different" },
 	} {
 		g, f := newRGWAccountTestGateway()
-		a, err := g.CreateAccount(t.Context(), RGWAccountConfig{Name: "account"})
+		a, err := g.CreateAccount(t.Context(), AccountConfig{Name: "account"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		edit(a, f)
 		f.calls = nil
-		if err := g.SetAccountQuota(t.Context(), a, RGWQuota{MaxSizeBytes: -1, MaxObjects: 1}); err == nil {
+		if err := g.SetAccountQuota(t.Context(), a, Quota{MaxSizeBytes: -1, MaxObjects: 1}); err == nil {
 			t.Fatal("foreign/replaced account mutated")
 		}
 		for _, args := range f.calls {
@@ -417,7 +419,7 @@ func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 	}
 	g, f := newRGWAccountTestGateway()
 	f.missingTag = true
-	a, err := g.CreateAccount(t.Context(), RGWAccountConfig{Name: "partial"})
+	a, err := g.CreateAccount(t.Context(), AccountConfig{Name: "partial"})
 	if err == nil || a == nil || a.state.confirmed {
 		t.Fatal("missing metadata lifetime adopted")
 	}
@@ -437,7 +439,7 @@ func TestRGWCreatedOrdinaryUserRejectsExternalAccountMigration(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g, f := newRGWAccountTestGateway()
-			user, err := g.CreateUser(t.Context(), RGWUserConfig{ID: "original", Tenant: "team"})
+			user, err := g.CreateUser(t.Context(), UserConfig{ID: "original", Tenant: "team"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -450,28 +452,28 @@ func TestRGWCreatedOrdinaryUserRejectsExternalAccountMigration(t *testing.T) {
 func TestRGWAccountRootRejectsChangedAssociationAndAccountLifetime(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		edit func(*RGWAccount, *RGWUser, *rgwAccountTestContainer)
+		edit func(*Account, *User, *rgwAccountTestContainer)
 	}{
-		{"different account", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) {
+		{"different account", func(_ *Account, user *User, f *rgwAccountTestContainer) {
 			f.users[user.ID()]["account_id"] = "RGW76543210987654321"
 		}},
-		{"association cleared", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) { f.users[user.ID()]["account_id"] = "" }},
-		{"root converted to IAM user", func(_ *RGWAccount, user *RGWUser, f *rgwAccountTestContainer) { f.users[user.ID()]["type"] = "rgw" }},
-		{"account recreated with same ID", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) {
+		{"association cleared", func(_ *Account, user *User, f *rgwAccountTestContainer) { f.users[user.ID()]["account_id"] = "" }},
+		{"root converted to IAM user", func(_ *Account, user *User, f *rgwAccountTestContainer) { f.users[user.ID()]["type"] = "rgw" }},
+		{"account recreated with same ID", func(_ *Account, _ *User, f *rgwAccountTestContainer) {
 			f.versionTag = "different-account-lifetime"
 		}},
-		{"account tag missing", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.missingTag = true }},
-		{"account absent", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.account = nil }},
-		{"account tenant changed", func(_ *RGWAccount, _ *RGWUser, f *rgwAccountTestContainer) { f.account["tenant"] = "other" }},
-		{"account removed through copied handle", func(a *RGWAccount, _ *RGWUser, _ *rgwAccountTestContainer) { copied := *a; copied.state.removed = true }},
+		{"account tag missing", func(_ *Account, _ *User, f *rgwAccountTestContainer) { f.missingTag = true }},
+		{"account absent", func(_ *Account, _ *User, f *rgwAccountTestContainer) { f.account = nil }},
+		{"account tenant changed", func(_ *Account, _ *User, f *rgwAccountTestContainer) { f.account["tenant"] = "other" }},
+		{"account removed through copied handle", func(a *Account, _ *User, _ *rgwAccountTestContainer) { copied := *a; copied.state.removed = true }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g, f := newRGWAccountTestGateway()
-			a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+			a, err := g.CreateAccount(t.Context(), AccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "original-root"})
+			user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "original-root"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -485,7 +487,7 @@ func TestRGWAccountRootRejectsChangedAssociationAndAccountLifetime(t *testing.T)
 	}
 }
 
-func assertRGWUserAssociationRefusesOperations(t *testing.T, g *RGWContainer, f *rgwAccountTestContainer, user *RGWUser) {
+func assertRGWUserAssociationRefusesOperations(t *testing.T, g *Gateway, f *rgwAccountTestContainer, user *User) {
 	t.Helper()
 	before := mustRGWUserPlacementJSON(t, f.users[user.ID()])
 	f.calls = nil
@@ -510,11 +512,11 @@ func assertRGWUserAssociationRefusesOperations(t *testing.T, g *RGWContainer, f 
 
 func TestRGWAccountRootCapturesImmutableDescriptorAndSharedLifecycle(t *testing.T) {
 	g, f := newRGWAccountTestGateway()
-	a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+	a, err := g.CreateAccount(t.Context(), AccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "root"})
+	user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,12 +546,12 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g, f := newRGWAccountTestGateway()
-			a, err := g.CreateAccount(t.Context(), RGWAccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
+			a, err := g.CreateAccount(t.Context(), AccountConfig{ID: "RGW12345678901234567", Name: "original", Tenant: "team"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			test.edit(f)
-			user, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "root"})
+			user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root"})
 			if err == nil || user == nil || user.state.identity != nil {
 				t.Fatal("unconfirmed root creation adopted a native identity")
 			}
@@ -572,39 +574,39 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 func TestRGWAccountValidationAndQuotaPreservation(t *testing.T) {
 	for _, tenant := range []string{"bad$tenant", "bad:tenant", "bad-tenant", "RGW12345678901234567"} {
 		g, f := newRGWAccountTestGateway()
-		if _, err := g.CreateUser(t.Context(), RGWUserConfig{ID: "same", Tenant: tenant}); err == nil || len(f.calls) != 0 {
+		if _, err := g.CreateUser(t.Context(), UserConfig{ID: "same", Tenant: tenant}); err == nil || len(f.calls) != 0 {
 			t.Fatal("invalid tenant reached native command")
 		}
 	}
 	g, f := newRGWAccountTestGateway()
-	a, err := g.CreateAccount(t.Context(), RGWAccountConfig{Name: "account", Tenant: "team"})
+	a, err := g.CreateAccount(t.Context(), AccountConfig{Name: "account", Tenant: "team"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.CreateAccountRootUser(t.Context(), a, RGWUserConfig{ID: "root", Tenant: "other"}); err == nil {
+	if _, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root", Tenant: "other"}); err == nil {
 		t.Fatal("cross-tenant account membership accepted")
 	}
 	f.calls = nil
-	if err := g.SetAccountQuota(t.Context(), a, RGWQuota{MaxSizeBytes: 1, MaxObjects: 1}); err == nil || len(f.calls) != 0 {
+	if err := g.SetAccountQuota(t.Context(), a, Quota{MaxSizeBytes: 1, MaxObjects: 1}); err == nil || len(f.calls) != 0 {
 		t.Fatal("native KiB rounding silently changed caller byte limit")
 	}
 	f.unrelatedQuota = true
-	if err := g.SetAccountQuota(t.Context(), a, RGWQuota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: 1}); err == nil {
+	if err := g.SetAccountQuota(t.Context(), a, Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: 1}); err == nil {
 		t.Fatal("unrelated account policy drift hidden")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	f.calls = nil
-	if _, err := g.CreateAccount(ctx, RGWAccountConfig{Name: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if _, err := g.CreateAccount(ctx, AccountConfig{Name: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account creation lost context")
 	}
 	if _, err := g.AccountInfo(ctx, a); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account info reached native command")
 	}
-	if err := g.SetAccountQuota(ctx, a, RGWQuota{MaxSizeBytes: -1, MaxObjects: -1}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if err := g.SetAccountQuota(ctx, a, Quota{MaxSizeBytes: -1, MaxObjects: -1}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account quota reached native command")
 	}
-	if _, err := g.CreateAccountRootUser(ctx, a, RGWUserConfig{ID: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if _, err := g.CreateAccountRootUser(ctx, a, UserConfig{ID: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account root creation reached native command")
 	}
 	if err := g.RemoveAccount(ctx, a); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {

@@ -2,7 +2,10 @@ package cluster
 
 import (
 	"context"
+	"maps"
 	"slices"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // serviceBootstrap is the provisioning a service package adds to Run: pools
@@ -58,4 +61,31 @@ func withServiceBootstrap(kind string, fallback bool, build func() (serviceBoots
 // requiresMGRModule reports a configured service that depends on module.
 func (o options) requiresMGRModule(module string) bool {
 	return slices.ContainsFunc(o.services, func(b serviceBootstrap) bool { return slices.Contains(b.MGRModules(), module) })
+}
+
+// The cluster reads these parts of a service package's per-cluster state,
+// stored with serviceHooks.SetExtension, when the state implements them.
+type (
+	// serviceSecrets lists credentials that diagnostics must redact.
+	serviceSecrets interface{ Secrets() []string }
+	// serviceConfigTargets lists service containers, by name, that read the
+	// cluster's ceph.conf and need it refreshed after monitor changes.
+	serviceConfigTargets interface {
+		ConfigTargets() map[string]testcontainers.Container
+	}
+	// serviceModules reports owned state that depends on a manager module.
+	serviceModules interface{ RequiresMGRModule(module string) bool }
+)
+
+// extensionsWith returns the per-cluster service states that implement T,
+// in kind order. The caller holds the cluster mutex.
+func extensionsWith[T any](c *Container) []T {
+	kinds := slices.Sorted(maps.Keys(c.extensions))
+	var result []T
+	for _, kind := range kinds {
+		if state, ok := c.extensions[kind].(T); ok {
+			result = append(result, state)
+		}
+	}
+	return result
 }

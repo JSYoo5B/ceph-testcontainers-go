@@ -1,4 +1,4 @@
-package cluster
+package rgw
 
 import (
 	"bytes"
@@ -18,10 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func testRGWTLSMaterial(t *testing.T) *RGWTLSConfig {
+func testRGWTLSMaterial(t *testing.T) *TLSConfig {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -36,17 +37,17 @@ func testRGWTLSMaterial(t *testing.T) *RGWTLSConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &RGWTLSConfig{CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})}
+	return &TLSConfig{CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), PrivateKeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})}
 }
 
 func TestRGWTLSValidationAndKeyIsolation(t *testing.T) {
 	first, second := testRGWTLSMaterial(t), testRGWTLSMaterial(t)
-	for _, invalid := range []*RGWTLSConfig{{}, {CertificatePEM: first.CertificatePEM}, {PrivateKeyPEM: first.PrivateKeyPEM}, {CertificatePEM: first.CertificatePEM, PrivateKeyPEM: second.PrivateKeyPEM}} {
-		if _, err := normalizeRGWConfig(RGWConfig{TLS: invalid}); err == nil {
+	for _, invalid := range []*TLSConfig{{}, {CertificatePEM: first.CertificatePEM}, {PrivateKeyPEM: first.PrivateKeyPEM}, {CertificatePEM: first.CertificatePEM, PrivateKeyPEM: second.PrivateKeyPEM}} {
+		if _, err := normalizeRGWConfig(Config{TLS: invalid}); err == nil {
 			t.Fatal("invalid keypair reached daemon creation")
 		}
 	}
-	config, err := normalizeRGWConfig(RGWConfig{TLS: first})
+	config, err := normalizeRGWConfig(Config{TLS: first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,12 +64,12 @@ func TestRGWTLSValidationAndKeyIsolation(t *testing.T) {
 		if strings.Contains(fmt.Sprintf(format, config), "PRIVATE KEY") || strings.Contains(fmt.Sprintf(format, config.TLS), "PRIVATE KEY") {
 			t.Fatal("descriptor formatting exposed private key")
 		}
-		gateway := &RGWContainer{SecretKey: "sensitive-test-s3-secret", config: config}
+		gateway := &Gateway{SecretKey: "sensitive-test-s3-secret", config: config}
 		if text := fmt.Sprintf(format, gateway); text != "RGW gateway default" {
 			t.Fatal("gateway formatting recursed into private descriptors")
 		}
 	}
-	if _, err := (&RGWContainer{}).S3SecureEndpoint(t.Context()); err == nil {
+	if _, err := (&Gateway{}).S3SecureEndpoint(t.Context()); err == nil {
 		t.Fatal("HTTP gateway advertised TLS")
 	}
 }
@@ -76,13 +77,13 @@ func TestRGWTLSValidationAndKeyIsolation(t *testing.T) {
 func TestRGWTLSOptionsKeepHTTPAndNativeListenerPorts(t *testing.T) {
 	for _, host := range []bool{false, true} {
 		material := testRGWTLSMaterial(t)
-		cluster := &Container{settings: options{hostNetwork: host, publicAddress: "127.0.0.1", startupTimeout: time.Second}}
+		cluster := testCluster(nil, servicehook.TestConfig{HostNetwork: host, PublicAddress: "127.0.0.1", StartupTimeout: time.Second}, nil)
 		port, secure := 7480, 7481
 		if host {
 			port, secure = 41301, 41302
 		}
 		var req testcontainers.GenericContainerRequest
-		for _, customizer := range cluster.namedRGWDaemonOptions(port, secure, RGWConfig{Name: "tls", TLS: material}) {
+		for _, customizer := range namedDaemonOptions(cluster, port, secure, Config{Name: "tls", TLS: material}) {
 			if err := customizer.Customize(&req); err != nil {
 				t.Fatal(err)
 			}

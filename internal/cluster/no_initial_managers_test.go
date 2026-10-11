@@ -27,7 +27,6 @@ func TestNoInitialManagersRejectsContradictionsBeforeRuntime(t *testing.T) {
 		{"zero count", "manager count must be at least 1", WithManagerCount(0)},
 		{"negative count", "manager count must be at least 1", WithManagerCount(-1)},
 		{"filesystem", "no initial CephFS", WithCephFS()},
-		{"gateway", "no initial CephFS", WithRGW()},
 	} {
 		for _, first := range []bool{false, true} {
 			opts := []testcontainers.ContainerCustomizer{test.opt, WithNoInitialManagers()}

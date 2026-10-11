@@ -14,7 +14,7 @@ import (
 )
 
 func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
-	for _, getter := range []string{"config", "managers", "gateways"} {
+	for _, getter := range []string{"config", "managers"} {
 		t.Run(getter, func(t *testing.T) {
 			cluster := &Container{}
 			assertContextLockQueued(t, &cluster.mu, func(ctx context.Context) error {
@@ -24,8 +24,6 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 					_, _, err = cluster.ConnectionConfigContext(ctx)
 				case "managers":
 					_, err = cluster.ManagersContext(ctx)
-				case "gateways":
-					_, err = cluster.gatewaysContext(ctx)
 				}
 				return err
 			})
@@ -82,8 +80,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 
 func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T) {
 	a, b := &ManagerContainer{DaemonName: "a"}, &ManagerContainer{DaemonName: "b"}
-	x, y := &RGWContainer{GatewayName: "x"}, &RGWContainer{GatewayName: "y"}
-	cluster := &Container{config: []byte("config"), keyring: []byte("keyring"), managers: map[string]*ManagerContainer{"b": b, "a": a}, gateways: map[string]*RGWContainer{"y": y, "x": x}}
+	cluster := &Container{config: []byte("config"), keyring: []byte("keyring"), managers: map[string]*ManagerContainer{"b": b, "a": a}}
 	config, keyring, err := cluster.ConnectionConfigContext(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -99,14 +96,6 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 	managers[0] = nil
 	if cluster.managers["a"] != a {
 		t.Fatal("manager snapshot modified ownership map")
-	}
-	gateways, err := cluster.gatewaysContext(t.Context())
-	if err != nil || len(gateways) != 2 || gateways[0] != x || gateways[1] != y {
-		t.Fatalf("gateway descriptors/order: %v %v", gateways, err)
-	}
-	gateways[0] = nil
-	if cluster.gateways["x"] != x {
-		t.Fatal("gateway snapshot modified ownership map")
 	}
 	cluster.closed = true
 	if _, _, err := cluster.ConnectionConfigContext(t.Context()); err == nil {
@@ -127,9 +116,6 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 	}
 	if _, err := cluster.ManagersContext(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("managers: %v", err)
-	}
-	if _, err := cluster.gatewaysContext(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("gateways: %v", err)
 	}
 	if _, _, err := cluster.ConnectionConfigContext(t.Context()); err != nil {
 		t.Fatal(err)

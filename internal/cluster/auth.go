@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 )
@@ -68,7 +68,7 @@ func (client *ClientConfig) ConnectionConfig() ([]byte, []byte, error) {
 	return bytes.Clone(client.config), bytes.Clone(client.keyring), nil
 }
 
-var clientIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+var clientIDPattern = naming.ClientID
 
 func clientEntity(name string) (string, error) {
 	id := strings.TrimPrefix(name, "client.")

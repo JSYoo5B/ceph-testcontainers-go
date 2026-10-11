@@ -239,10 +239,8 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 		}
 		add(role, name, ctr)
 	}
-	for _, gateway := range c.gateways {
-		if gateway != nil {
-			snapshot.secrets = append(snapshot.secrets, gateway.AccessKey, gateway.SecretKey)
-		}
+	for _, state := range extensionsWith[serviceSecrets](c) {
+		snapshot.secrets = append(snapshot.secrets, state.Secrets()...)
 	}
 	for _, nw := range []*testcontainers.DockerNetwork{c.network, c.clusterNetwork} {
 		if nw != nil {
