@@ -422,7 +422,7 @@ func (c *Container) protectMGRModule(ctx context.Context, name string) error {
 		return nil
 	}
 	ownedNeed := slices.ContainsFunc(extensionsWith[serviceModules](c), func(state serviceModules) bool { return state.RequiresMGRModule(name) })
-	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || len(c.filesystems) != 0 || ownedNeed) {
+	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || ownedNeed) {
 		return errors.New("MGR volumes module is required by configured or owned CephFS filesystems")
 	}
 	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")

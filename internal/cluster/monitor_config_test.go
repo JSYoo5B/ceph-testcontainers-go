@@ -118,8 +118,10 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	cluster.manager = mgr
 	cluster.osds[3] = &OSDContainer{Container: osd, ID: 3}
 	cluster.services["rgw.default"], cluster.services["mds.a"] = rgw, mds
-	cluster.extensions = map[string]any{"rgw": testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}}}
-	cluster.filesystems["test-fs"] = &CephFSContainer{mdss: []*MDSContainer{{Container: mds, ID: "a"}}}
+	cluster.extensions = map[string]any{
+		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}},
+		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": mds}},
+	}
 	all := []*monitorConfigArchive{control, mon, second, mgr, osd, rgw, mds}
 	before := make(map[string]string)
 	for _, daemon := range all {
@@ -345,8 +347,10 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 	a := newMonitorConfigArchive("a", "")
 	b := newMonitorConfigArchive("b", "")
 	cluster.services["rgw.z"], cluster.services["mds.a"] = a, b
-	cluster.extensions = map[string]any{"rgw": testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}}}
-	cluster.filesystems["test"] = &CephFSContainer{mdss: []*MDSContainer{{Container: b, ID: "a"}}}
+	cluster.extensions = map[string]any{
+		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
+		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
+	}
 	targets := cluster.monitorConfigTargets(control, "")
 	var names, ids []string
 	for _, target := range targets {
@@ -379,8 +383,7 @@ func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second},
 		config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring"),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
-		osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		filesystems: make(map[string]*CephFSContainer)}
+		osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
 	return cluster, control
 }
 

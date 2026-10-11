@@ -2,8 +2,6 @@ package cluster
 
 import (
 	"fmt"
-	"slices"
-	"strings"
 )
 
 // WithPools creates the selected pools after initial OSD startup. Repeated
@@ -20,43 +18,10 @@ func WithPools(configs ...PoolConfig) Option {
 	}
 }
 
-// WithCephFS creates named filesystems and their MDS topologies during Run.
-// No arguments selects the default filesystem. Repeated options replace the
-// list; StartCephFS can add further filesystems after Run returns.
-func WithCephFS(configs ...CephFSConfig) Option {
-	if len(configs) == 0 {
-		configs = []CephFSConfig{{}}
-	}
-	return withServiceBootstrap(cephFSBootstrapKind, false, func() (serviceBootstrap, error) { return newCephFSBootstrap(configs), nil })
-}
-
-// filesystemList returns owned filesystem descriptors sorted by filesystem name,
-// including a descriptor whose setup partially failed. The cluster owns MDSs.
-func (c *Container) filesystemList() []*CephFSContainer {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := make([]*CephFSContainer, 0, len(c.filesystems))
-	for _, fs := range c.filesystems {
-		result = append(result, fs)
-	}
-	slices.SortFunc(result, func(a, b *CephFSContainer) int { return strings.Compare(a.FilesystemName, b.FilesystemName) })
-	return result
-}
-
 func clonePoolConfig(config PoolConfig) PoolConfig {
 	if config.ErasureCode != nil {
 		ec := *config.ErasureCode
 		config.ErasureCode = &ec
-	}
-	return config
-}
-
-func cloneCephFSConfig(config CephFSConfig) CephFSConfig {
-	config.MetadataPool = clonePoolConfig(config.MetadataPool)
-	config.DataPool = clonePoolConfig(config.DataPool)
-	config.AdditionalDataPools = slices.Clone(config.AdditionalDataPools)
-	for i := range config.AdditionalDataPools {
-		config.AdditionalDataPools[i] = clonePoolConfig(config.AdditionalDataPools[i])
 	}
 	return config
 }
@@ -73,20 +38,6 @@ func resolvePoolDefaults(settings options, config PoolConfig) PoolConfig {
 		if config.MinSize == 0 && settings.poolMinSize > 0 {
 			config.MinSize = settings.poolMinSize
 		}
-	}
-	return config
-}
-
-func resolveFilesystemDefaults(settings options, config CephFSConfig) CephFSConfig {
-	return resolveFilesystemPools(func(pool PoolConfig) PoolConfig { return resolvePoolDefaults(settings, pool) }, config)
-}
-
-func resolveFilesystemPools(resolve func(PoolConfig) PoolConfig, config CephFSConfig) CephFSConfig {
-	config = cloneCephFSConfig(config)
-	config.MetadataPool = resolve(config.MetadataPool)
-	config.DataPool = resolve(config.DataPool)
-	for i := range config.AdditionalDataPools {
-		config.AdditionalDataPools[i] = resolve(config.AdditionalDataPools[i])
 	}
 	return config
 }

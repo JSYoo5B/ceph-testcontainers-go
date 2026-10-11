@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/jsyoo5b/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -36,7 +37,6 @@ var scripts embed.FS
 type Container struct {
 	testcontainers.Container
 	mu                    sync.Mutex
-	cephfsSetupMu         sync.Mutex
 	controlMu             sync.RWMutex
 	configMu              sync.RWMutex
 	configOverrides       map[string]*ConfigOverride
@@ -58,7 +58,7 @@ type Container struct {
 	monitors              map[string]*MonitorContainer
 	managers              map[string]*ManagerContainer
 	services              map[string]testcontainers.Container
-	filesystems           map[string]*CephFSContainer
+	extensionsMu          sync.Mutex
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
@@ -126,7 +126,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		nw, err = dockerbridge.New(ctx)
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), filesystems: make(map[string]*CephFSContainer)}
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer)}
 	if err != nil {
 		if nw == nil {
 			return nil, fmt.Errorf("create ceph network: %w", err)
@@ -908,29 +908,7 @@ func (c *Container) waitOSD(ctx context.Context, id int, up bool) error {
 const terminationStopTimeout = 2 * time.Second
 
 func (c *Container) poll(ctx context.Context, check func() (bool, error)) error {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	var last error
-	for {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(err, last)
-		}
-		ok, err := check()
-		if err != nil {
-			last = err
-		}
-		if err := ctx.Err(); err != nil {
-			return errors.Join(err, last)
-		}
-		if ok && err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-ticker.C:
-		}
-	}
+	return clusterutil.Poll(ctx, check)
 }
 
 func scriptFile(name string) testcontainers.ContainerFile {
@@ -942,7 +920,7 @@ func scriptFile(name string) testcontainers.ContainerFile {
 }
 
 func textFile(path string, data []byte, mode int64) testcontainers.ContainerFile {
-	return testcontainers.ContainerFile{Reader: bytes.NewReader(data), ContainerFilePath: path, FileMode: mode}
+	return clusterutil.TextFile(path, data, mode)
 }
 
 func readFile(ctx context.Context, ctr testcontainers.Container, path string) ([]byte, error) {

@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/jsyoo5b/ceph-testcontainers-go/internal/naming"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
@@ -259,33 +260,7 @@ func (c *Container) clientAuthCommand(ctx context.Context, operation string, arg
 // Native key generation, copies and auth errors can contain credentials. Keep
 // only canonical context causes while returning a fixed operation description.
 func clientOperationError(ctx context.Context, operation string, native error) error {
-	causes := []error{errors.New(operation)}
-	contextErr := ctx.Err()
-	if contextErr != nil {
-		causes = append(causes, contextErr)
-	}
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
-		if errors.Is(native, cause) && !errors.Is(contextErr, cause) {
-			causes = append(causes, cause)
-		}
-	}
-	return errors.Join(causes...)
+	return clusterutil.OperationError(ctx, operation, native)
 }
 
-func clientKey(keyring []byte, entity string) string {
-	active := false
-	for _, line := range strings.Split(string(keyring), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "[") {
-			active = line == "["+entity+"]"
-			continue
-		}
-		if active {
-			key, value, ok := strings.Cut(line, "=")
-			if ok && strings.TrimSpace(key) == "key" {
-				return strings.TrimSpace(value)
-			}
-		}
-	}
-	return ""
-}
+func clientKey(keyring []byte, entity string) string { return clusterutil.KeyringKey(keyring, entity) }

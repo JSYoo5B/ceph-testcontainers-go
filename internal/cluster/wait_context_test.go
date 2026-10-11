@@ -39,8 +39,6 @@ func (c *waitContextControl) Exec(ctx context.Context, args []string, opts ...tc
 
 type waitContextFixture struct {
 	cluster    *Container
-	fs         *CephFSContainer
-	clone      *CephFSSubvolumeClone
 	control    *waitContextControl
 	wait       func(context.Context) error
 	finalQuery string
@@ -51,7 +49,7 @@ func newWaitContextFixture(t *testing.T, name string) waitContextFixture {
 	f := waitContextFixture{}
 	switch name {
 	case "Clean", "Quorum", "PGClean":
-		base := &poolFixtureContainer{output: map[string]string{
+		base := &poolFixtureContainer{Output: map[string]string{
 			"status --format json":        `{"mgrmap":{"available":true},"osdmap":{"num_osds":1,"num_up_osds":1,"num_in_osds":1},"pgmap":{"num_pgs":8,"pgs_by_state":[{"state_name":"active+clean","count":8}]}}`,
 			"quorum_status --format json": `{"quorum_names":["a"],"monmap":{"mons":[{"name":"a"}]}}`,
 		}}
@@ -76,23 +74,6 @@ func newWaitContextFixture(t *testing.T, name string) waitContextFixture {
 		f.cluster.Container = f.control
 		f.wait = func(ctx context.Context) error { return f.cluster.WaitMGRModuleReady(ctx, "rbd_support") }
 		f.finalQuery = "rbd mirror snapshot schedule list --format json"
-	case "Ready":
-		f.fs, _, _, _ = cephFSContextAdmissionFixture()
-		f.cluster = f.fs.cluster
-		f.control = &waitContextControl{Container: f.cluster.Container}
-		f.cluster.Container = f.control
-		f.wait = f.fs.WaitReady
-		f.finalQuery = "fs dump --format json"
-	case "Clone":
-		var base *cloneLifecycleFixtureContainer
-		f.fs, base, f.clone = cloneLifecycleFixture(t)
-		base.output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("complete")
-		base.output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
-		f.cluster = f.fs.cluster
-		f.control = &waitContextControl{Container: base}
-		f.cluster.Container = f.control
-		f.wait = func(ctx context.Context) error { _, err := f.fs.WaitForSubvolumeClone(ctx, f.clone); return err }
-		f.finalQuery = "fs subvolume info fixture copy --group_name restores --format json"
 	default:
 		t.Fatalf("unknown wait fixture %q", name)
 	}
@@ -182,7 +163,7 @@ func TestWaitContextPollRetainsLatestCauseAndTransientSuccess(t *testing.T) {
 }
 
 func TestWaitContextAlreadyCanceledOrExpiredDoesNotQuery(t *testing.T) {
-	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module", "Ready", "Clone"} {
+	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module"} {
 		for _, expired := range []bool{false, true} {
 			label := name + "/canceled"
 			if expired {
@@ -210,7 +191,7 @@ func TestWaitContextAlreadyCanceledOrExpiredDoesNotQuery(t *testing.T) {
 }
 
 func TestWaitContextHeldOwnerAdmissionDoesNotQuery(t *testing.T) {
-	for _, name := range []string{"Clean", "PGClean", "Module", "Ready", "Clone"} {
+	for _, name := range []string{"Clean", "PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
 			waitContextHeldGate(t, f.cluster.mu.Lock, f.cluster.mu.Unlock, f.cluster.mu.TryLock, f.wait)
@@ -225,7 +206,7 @@ func TestWaitContextHeldOwnerAdmissionDoesNotQuery(t *testing.T) {
 }
 
 func TestWaitContextHeldControlAdmissionDoesNotQuery(t *testing.T) {
-	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module", "Ready", "Clone"} {
+	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
 			waitContextHeldGate(t, f.cluster.controlMu.Lock, f.cluster.controlMu.Unlock, f.cluster.controlMu.TryRLock, f.wait, f.cluster.controlMu.RUnlock)
@@ -281,7 +262,7 @@ func waitContextHeldGate(t *testing.T, lock, unlock func(), tryLock func() bool,
 }
 
 func TestWaitContextLateReadyCancellationNeverPublishesSuccess(t *testing.T) {
-	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module", "Ready", "Clone"} {
+	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -298,35 +279,10 @@ func TestWaitContextLateReadyCancellationNeverPublishesSuccess(t *testing.T) {
 				t.Fatalf("late valid reply published readiness: reached=%v err=%v", reached, err)
 			}
 			f.control.after = nil
-			if name == "Clone" && f.clone.identity.subvolume == nil {
-				t.Fatal("cancellation discarded positive native clone authority")
-			}
 			if err := f.wait(t.Context()); err != nil {
 				t.Fatalf("fresh readiness failed after canceled observation: %v", err)
 			}
 		})
-	}
-}
-
-func TestWaitContextCloneLateCancellationPreservesSharedHandle(t *testing.T) {
-	f := newWaitContextFixture(t, "Clone")
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	f.control.after = func(args []string) {
-		if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
-			cancel()
-		}
-	}
-	result, err := f.fs.WaitForSubvolumeClone(ctx, f.clone)
-	if result != nil || err == nil || !errors.Is(err, context.Canceled) || f.clone.identity.subvolume == nil {
-		t.Fatalf("late cancel result=%v err=%v capture=%v", result, err, f.clone.identity.subvolume)
-	}
-	retained := f.clone.identity.subvolume
-	copy := *f.clone
-	f.control.after = nil
-	recovered, err := f.fs.WaitForSubvolumeClone(t.Context(), &copy)
-	if err != nil || recovered == nil || recovered.identity != retained.identity || recovered == retained {
-		t.Fatalf("fresh copied request lost retained private identity: %v", err)
 	}
 }
 
@@ -344,7 +300,7 @@ func TestWaitContextCleanRetainsInitialOwnedCount(t *testing.T) {
 }
 
 func TestWaitContextCanceledProbeRetainsNativeCause(t *testing.T) {
-	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module", "Ready"} {
+	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -365,21 +321,17 @@ func TestWaitContextCanceledProbeRetainsNativeCause(t *testing.T) {
 }
 
 func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
-	for _, name := range []string{"PGClean", "Module", "Clone"} {
+	for _, name := range []string{"PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
 			query := f.finalQuery
 			gate := &f.cluster.mu
 			switch name {
 			case "PGClean":
-				f.control.Container.(*poolFixtureContainer).output[query] = `{"mgrmap":{"available":false},"pgmap":{"num_pgs":8}}`
+				f.control.Container.(*poolFixtureContainer).Output[query] = `{"mgrmap":{"available":false},"pgmap":{"num_pgs":8}}`
 			case "Module":
 				f.control.Container.(*mgrModuleFixture).rawDump = `{"available":true,"modules":[],"available_modules":null}`
 				query = "mgr dump --format json"
-			case "Clone":
-				f.control.Container.(*cloneLifecycleFixtureContainer).output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("pending")
-				query = "fs clone status fixture copy --group_name restores --format json"
-				gate = &f.cluster.cephfsSetupMu
 			}
 			entered := make(chan struct{})
 			var signal sync.Once
@@ -444,25 +396,5 @@ func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
 			held = false
 			join()
 		})
-	}
-}
-
-func TestWaitContextCompletedCloneReentryRetainsCaptureOnCancel(t *testing.T) {
-	f := newWaitContextFixture(t, "Clone")
-	first, err := f.fs.WaitForSubvolumeClone(t.Context(), f.clone)
-	if err != nil || first == nil {
-		t.Fatalf("initial complete clone: %v", err)
-	}
-	retained := f.clone.identity.subvolume
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	f.control.after = func(args []string) {
-		if strings.Join(args[3:], " ") == "fs clone status fixture copy --group_name restores --format json" {
-			cancel()
-		}
-	}
-	result, err := f.fs.WaitForSubvolumeClone(ctx, f.clone)
-	if result != nil || err == nil || !errors.Is(err, context.Canceled) || f.clone.identity.subvolume != retained || retained.identity != first.identity {
-		t.Fatalf("reentry canceled result=%v err=%v", result, err)
 	}
 }

@@ -223,11 +223,11 @@ func TestTemporaryMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *tes
 	}
 	// A non-always-on volumes variant still protects owned and native filesystems.
 	delete(ctr.always, "volumes")
-	c.filesystems = map[string]*CephFSContainer{"owned": {}}
+	c.extensions = map[string]any{"cephfs": testExtension{modules: []string{"volumes"}}}
 	if _, err := c.TemporaryMGRModule(t.Context(), "volumes", false); err == nil {
 		t.Fatal("owned filesystem's volumes module disabled")
 	}
-	c.filesystems = nil
+	c.extensions = nil
 	ctr.filesystems = 1
 	if _, err := c.TemporaryMGRModule(t.Context(), "volumes", false); err == nil {
 		t.Fatal("native filesystem's volumes module disabled")

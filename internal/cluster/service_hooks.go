@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -143,17 +144,93 @@ func (serviceHooks) WithServiceImage(role, image string) Option {
 	}
 }
 
-// Extension returns the per-cluster state a service package stored under
-// kind, or nil. The caller holds the cluster mutex.
-func (serviceHooks) Extension(c *Container, kind string) any { return c.extensions[kind] }
-
-// SetExtension stores per-cluster state for a service package. The caller
-// holds the cluster mutex.
-func (serviceHooks) SetExtension(c *Container, kind string, value any) {
+// Extension returns the per-cluster state a service package keeps under
+// kind, storing the result of create on first use. It takes its own lock, so
+// callers may or may not hold the cluster mutex.
+func (serviceHooks) Extension(c *Container, kind string, create func() any) any {
+	c.extensionsMu.Lock()
+	defer c.extensionsMu.Unlock()
+	if state, ok := c.extensions[kind]; ok {
+		return state
+	}
 	if c.extensions == nil {
 		c.extensions = make(map[string]any)
 	}
-	c.extensions[kind] = value
+	state := create()
+	c.extensions[kind] = state
+	return state
+}
+
+// ResolvePool applies the cluster's pool defaults: CRUSH root, replicas and
+// minimum size.
+func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
+	return resolvePoolDefaults(c.settings, config)
+}
+
+// NormalizePool validates a pool configuration and fills its defaults.
+func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
+	return normalizePoolConfig(config)
+}
+
+// PoolPlacementDomains counts the owned OSD placement domains that config
+// can use. The caller holds the cluster mutex.
+func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
+	return c.poolPlacementDomains(config)
+}
+
+// PoolPolicyReady reports whether the cluster's pool policy accepts changes.
+// The caller holds the cluster mutex.
+func (serviceHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady() }
+
+// RemovePool removes a fixture-created pool and its rule and profile. With
+// skipForeign, a pool the fixture did not create is left alone. The caller
+// holds the cluster mutex.
+func (serviceHooks) RemovePool(ctx context.Context, c *Container, name string, skipForeign bool) error {
+	return c.removePool(ctx, name, skipForeign)
+}
+
+// PoolMissing reports a RemovePool error for a name with nothing to remove.
+func (serviceHooks) PoolMissing(err error) bool { return errors.Is(err, errPoolMissing) }
+
+// CephBefore reports whether the recorded Ceph release is older than major.
+func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
+
+// AuthCommand runs a Cephx command with the admin identity and reports a
+// failure by operation without the native output.
+func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
+	return c.clientAuthCommand(ctx, operation, args...)
+}
+
+// ClusterIdentity returns the FSID of the bootstrap configuration and whether
+// the configuration and admin keyring were confirmed. The error is only ctx's.
+func (serviceHooks) ClusterIdentity(ctx context.Context, c *Container) (string, bool, error) {
+	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+		return "", false, err
+	}
+	fsid, err := monitorConfigClusterIdentity(c.config)
+	confirmed := len(c.keyring) != 0
+	c.configMu.RUnlock()
+	return fsid, err == nil && confirmed, nil
+}
+
+// ClientConfirmed reports a client identity that c created and confirmed.
+func (serviceHooks) ClientConfirmed(client *ClientConfig, c *Container) bool {
+	return client.owner == c && client.created && client.ready
+}
+
+// ClientKeyring returns the keyring retrieved when the client was created.
+func (serviceHooks) ClientKeyring(client *ClientConfig) []byte { return client.keyring }
+
+// ClientRevoked reports a client identity known to be deleted.
+func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.revoked }
+
+// SetClientRevoked records whether a service deleted the client identity.
+// The caller holds the cluster mutex.
+func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) { client.revoked = revoked }
+
+// MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
+func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
+	return monitorBootstrapAddresses(status)
 }
 
 // testClusterConfig selects the settings of a unit-test cluster value.
@@ -163,6 +240,10 @@ type testClusterConfig = struct {
 	HostNetwork    bool
 	PublicAddress  string
 	NetworkName    string
+	// OSDs adds owned OSD descriptors 0..OSDs-1 whose container is control
+	// and whose CRUSH location is OSDPlacement.
+	OSDs         int
+	OSDPlacement OSDConfig
 }
 
 // TestCluster builds a cluster value for the service packages' unit tests.
@@ -173,21 +254,51 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 	if config.NetworkName != "" {
 		c.network = &testcontainers.DockerNetwork{Name: config.NetworkName}
 	}
+	if config.OSDs > 0 {
+		c.osds = make(map[int]*OSDContainer)
+		for id := range config.OSDs {
+			c.osds[id] = &OSDContainer{ID: id, Container: control, placement: config.OSDPlacement}
+		}
+	}
 	return c
 }
 
-// TestSetClosed marks a unit-test cluster value terminated or open.
-func (serviceHooks) TestSetClosed(c *Container, closed bool) { c.closed = closed }
+// testState points at a cluster's internals for the service packages' unit
+// tests. PortLeases is a count taken when TestState is called.
+type testState = struct {
+	Mutex          *sync.Mutex
+	ControlMutex   *sync.RWMutex
+	ConfigMutex    *sync.RWMutex
+	Closed         *bool
+	Config         *[]byte
+	Keyring        *[]byte
+	CephVersion    *string
+	ControlPlane   *testcontainers.Container
+	OSDs           *map[int]*OSDContainer
+	InitialOSDs    *int
+	PoolReplicas   *int
+	PoolMinSize    *int
+	StartupTimeout *time.Duration
+	MDSImage       *string
+	RGWImage       *string
+	PortLeases     int
+}
 
-// TestControlMutex returns the gate that serializes native control commands,
-// for unit tests that hold it.
-func (serviceHooks) TestControlMutex(c *Container) *sync.RWMutex { return &c.controlMu }
+// TestState exposes a cluster's internals to unit tests.
+func (serviceHooks) TestState(c *Container) testState {
+	return testState{
+		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu, Closed: &c.closed,
+		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
+		OSDs: &c.osds, InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
+		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
+		MDSImage: &c.settings.mdsImage, RGWImage: &c.settings.rgwImage, PortLeases: len(c.portLeases),
+	}
+}
 
-// TestMutex returns the cluster mutex, for unit tests that hold it.
-func (serviceHooks) TestMutex(c *Container) *sync.Mutex { return &c.mu }
-
-// TestPortLeases counts the host port leases the cluster tracks.
-func (serviceHooks) TestPortLeases(c *Container) int { return len(c.portLeases) }
+// TestClientState returns a client identity's owner and lifecycle flags.
+func (serviceHooks) TestClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {
+	return client.owner, client.created, client.ready, client.revoked
+}
 
 // TestApply applies options to empty settings and returns the service
 // bootstraps they record, for the service packages' unit tests.
@@ -202,16 +313,17 @@ func (serviceHooks) TestApply(opts ...Option) ([]serviceBootstrap, error) {
 }
 
 // TestPrepare validates an initial composition of osds OSDs and pools with
-// opts applied, as Run does, and returns the resulting initial pool list.
-func (serviceHooks) TestPrepare(osds int, noInitialOSDs bool, pools []PoolConfig, opts ...Option) ([]PoolConfig, error) {
+// opts applied, as Run does, and returns the resulting initial pool list and
+// the prepared service bootstraps.
+func (serviceHooks) TestPrepare(osds int, noInitialOSDs bool, pools []PoolConfig, opts ...Option) ([]PoolConfig, []serviceBootstrap, error) {
 	settings := options{osds: osds, noInitialOSDs: noInitialOSDs, pools: pools}
 	for _, opt := range opts {
 		if err := opt(&settings); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if err := prepareInitialComposition(&settings); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return settings.pools, nil
+	return settings.pools, settings.services, nil
 }

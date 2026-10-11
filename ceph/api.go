@@ -58,7 +58,7 @@ type OSDContainer = cluster.OSDContainer
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
 // img must satisfy the control role: MON/MGR, CLI, Python clients and mirrors.
-// Other roles use img unless overridden by WithOSDImage, cephfs.WithMDSImage or
+// Other roles use img unless overridden by WithOSDImage, WithMDSImage or
 // rgw.WithImage. Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {

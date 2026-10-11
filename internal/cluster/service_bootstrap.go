@@ -80,6 +80,8 @@ type (
 // extensionsWith returns the per-cluster service states that implement T,
 // in kind order. The caller holds the cluster mutex.
 func extensionsWith[T any](c *Container) []T {
+	c.extensionsMu.Lock()
+	defer c.extensionsMu.Unlock()
 	kinds := slices.Sorted(maps.Keys(c.extensions))
 	var result []T
 	for _, kind := range kinds {

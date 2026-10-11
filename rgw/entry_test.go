@@ -98,8 +98,8 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			control := &mctest.ContextLockRuntime{}
 			cluster := testCluster(control, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
-			mctest.AssertContextLockQueued(t, servicehook.TestMutex(cluster), func(ctx context.Context) error { return operation(ctx, cluster) })
-			if control.Execs.Load() != 0 || servicehook.TestPortLeases(cluster) != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
+			mctest.AssertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
+			if control.Execs.Load() != 0 || servicehook.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
 				t.Fatal("queued caller created containers, port leases or gateway inventory")
 			}
 		})

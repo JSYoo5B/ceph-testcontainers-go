@@ -30,7 +30,7 @@ type poolUsageFixtureContainer struct {
 
 func (ctr *poolUsageFixtureContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if ctr.hook != nil {
-		if err := ctr.hook(ctx, strings.Join(args[3:], " "), len(ctr.calls)+1); err != nil {
+		if err := ctr.hook(ctx, strings.Join(args[3:], " "), len(ctr.Calls)+1); err != nil {
 			return 0, nil, err
 		}
 	}
@@ -38,7 +38,7 @@ func (ctr *poolUsageFixtureContainer) Exec(ctx context.Context, args []string, o
 }
 
 func newPoolUsageFixture() (*Container, *poolUsageFixtureContainer) {
-	ctr := &poolUsageFixtureContainer{poolFixtureContainer: &poolFixtureContainer{output: map[string]string{
+	ctr := &poolUsageFixtureContainer{poolFixtureContainer: &poolFixtureContainer{Output: map[string]string{
 		"fsid":                             poolUsageFixtureFSID + "\n",
 		"osd pool ls detail --format json": poolUsageFixturePolicies,
 		"df detail --format json":          poolUsageFixtureDF(poolUsageFixtureStats),
@@ -64,21 +64,21 @@ func TestPoolUsageReportsNativeUnitsAndReadOnlyScope(t *testing.T) {
 		t.Fatalf("logical/allocated bytes or fraction changed: %+v %v", usage, err)
 	}
 	var calls []string
-	for _, args := range ctr.calls {
+	for _, args := range ctr.Calls {
 		calls = append(calls, strings.Join(args, " "))
 	}
 	if !slices.Equal(calls, []string{"fsid", "osd pool ls detail --format json", "df detail --format json", "osd pool ls detail --format json", "fsid"}) {
 		t.Fatalf("missing scope check or unexpected mutation: %v", calls)
 	}
 	zero := `{"stored":0,"stored_data":0,"stored_omap":0,"bytes_used":0,"data_bytes_used":0,"omap_bytes_used":0,"objects":0,"max_avail":0,"percent_used":0}`
-	ctr.output["df detail --format json"] = poolUsageFixtureDF(zero)
+	ctr.Output["df detail --format json"] = poolUsageFixtureDF(zero)
 	usage, err = cluster.PoolUsage(t.Context(), "fixture")
 	if err != nil || usage.ID != 7 || usage.StoredBytes != 0 || usage.AllocatedBytes != 0 || usage.MaxAvailableBytes != 0 {
 		t.Fatalf("reported zero confused with missing fields: %+v %v", usage, err)
 	}
 	large := strings.Replace(poolUsageFixtureStats, `"stored":4099`, `"stored":9007199254740993`, 1)
 	large = strings.Replace(large, `"stored_data":4096`, `"stored_data":9007199254740990`, 1)
-	ctr.output["df detail --format json"] = poolUsageFixtureDF(large)
+	ctr.Output["df detail --format json"] = poolUsageFixtureDF(large)
 	usage, err = cluster.PoolUsage(t.Context(), "fixture")
 	if err != nil || usage.StoredBytes != 9007199254740993 {
 		t.Fatalf("integer rounded through float64: %+v %v", usage, err)
@@ -133,10 +133,10 @@ func TestPoolUsageRejectsUnreportedOrAmbiguousStatistics(t *testing.T) {
 	for name, data := range cases {
 		t.Run(name, func(t *testing.T) {
 			cluster, ctr := newPoolUsageFixture()
-			ctr.output["df detail --format json"] = data
+			ctr.Output["df detail --format json"] = data
 			assertPoolUsageFailure(t, cluster, t.Context(), "")
-			if len(ctr.calls) != 3 {
-				t.Fatalf("invalid statistics continued observation: %v", ctr.calls)
+			if len(ctr.Calls) != 3 {
+				t.Fatalf("invalid statistics continued observation: %v", ctr.Calls)
 			}
 		})
 	}
@@ -155,10 +155,10 @@ func TestPoolUsageRejectsIdentityDriftAndMalformedPoolLists(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cluster, ctr := newPoolUsageFixture()
-			ctr.output["osd pool ls detail --format json"] = data
+			ctr.Output["osd pool ls detail --format json"] = data
 			assertPoolUsageFailure(t, cluster, t.Context(), "")
-			if len(ctr.calls) != 2 {
-				t.Fatalf("ambiguous pool reached statistics command: %v", ctr.calls)
+			if len(ctr.Calls) != 2 {
+				t.Fatalf("ambiguous pool reached statistics command: %v", ctr.Calls)
 			}
 		})
 	}
@@ -167,13 +167,13 @@ func TestPoolUsageRejectsIdentityDriftAndMalformedPoolLists(t *testing.T) {
 			cluster, ctr := newPoolUsageFixture()
 			ctr.hook = func(_ context.Context, _ string, call int) error {
 				if call == 4 && point == "pool replaced" {
-					ctr.output["osd pool ls detail --format json"] = strings.Replace(poolUsageFixturePolicies, `"pool_id":7`, `"pool_id":9`, 1)
+					ctr.Output["osd pool ls detail --format json"] = strings.Replace(poolUsageFixturePolicies, `"pool_id":7`, `"pool_id":9`, 1)
 				}
 				if call == 4 && point == "pool removed" {
-					ctr.output["osd pool ls detail --format json"] = `[]`
+					ctr.Output["osd pool ls detail --format json"] = `[]`
 				}
 				if call == 1 && point == "fsid before" || call == 5 && point == "fsid after" {
-					ctr.output["fsid"] = "61098f7f-474e-4403-ad31-a976f7c4e731"
+					ctr.Output["fsid"] = "61098f7f-474e-4403-ad31-a976f7c4e731"
 				}
 				return nil
 			}
@@ -284,7 +284,7 @@ func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 				cluster.config = append(cluster.config, []byte("fsid = "+poolUsageFixtureFSID+"\n")...)
 			}
 			assertPoolUsageFailure(t, cluster, t.Context(), "")
-			if len(ctr.calls) != 0 {
+			if len(ctr.Calls) != 0 {
 				t.Fatal("unavailable fixture queried native state")
 			}
 		})
@@ -293,7 +293,7 @@ func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 		t.Fatal("nil fixture accepted")
 	}
 	cluster, ctr := newPoolUsageFixture()
-	if _, err := cluster.PoolUsage(t.Context(), "--option"); err == nil || len(ctr.calls) != 0 {
+	if _, err := cluster.PoolUsage(t.Context(), "--option"); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("invalid name queried native state")
 	}
 }
@@ -314,8 +314,8 @@ func TestPoolUsageCancellationAndQueryFailureDoNotPublishPartialSuccess(t *testi
 				return nil
 			}
 			err := assertPoolUsageFailure(t, cluster, ctx, "")
-			if !errors.Is(err, context.Canceled) || len(ctr.calls) != call {
-				t.Fatalf("caller cancellation hidden or observation continued: %v calls=%v", err, ctr.calls)
+			if !errors.Is(err, context.Canceled) || len(ctr.Calls) != call {
+				t.Fatalf("caller cancellation hidden or observation continued: %v calls=%v", err, ctr.Calls)
 			}
 		})
 	}
@@ -330,8 +330,8 @@ func TestPoolUsageCancellationAndQueryFailureDoNotPublishPartialSuccess(t *testi
 				return nil
 			}
 			err := assertPoolUsageFailure(t, cluster, t.Context(), "")
-			if !errors.Is(err, cause) || len(ctr.calls) != call-1 {
-				t.Fatalf("native error hidden or observation continued: %v calls=%v", err, ctr.calls)
+			if !errors.Is(err, cause) || len(ctr.Calls) != call-1 {
+				t.Fatalf("native error hidden or observation continued: %v calls=%v", err, ctr.Calls)
 			}
 		})
 	}
@@ -391,7 +391,7 @@ func TestPoolUsageBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("PoolUsage remained queued after deadline")
 			}
-			if len(ctr.calls) != 0 {
+			if len(ctr.Calls) != 0 {
 				t.Fatal("unadmitted check queried native state")
 			}
 			release()

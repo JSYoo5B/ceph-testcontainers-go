@@ -93,12 +93,9 @@ type gatewayRegistry struct {
 // gateways returns the cluster's gateway registry, creating it on first use.
 // The caller holds the cluster mutex.
 func gateways(c *ceph.Container) *gatewayRegistry {
-	if registry, ok := servicehook.Extension(c, rgwBootstrapKind).(*gatewayRegistry); ok {
-		return registry
-	}
-	registry := &gatewayRegistry{byName: make(map[string]*Gateway)}
-	servicehook.SetExtension(c, rgwBootstrapKind, registry)
-	return registry
+	return servicehook.Extension(c, rgwBootstrapKind, func() any {
+		return &gatewayRegistry{byName: make(map[string]*Gateway)}
+	}).(*gatewayRegistry)
 }
 
 func (r *gatewayRegistry) sorted() []*Gateway {

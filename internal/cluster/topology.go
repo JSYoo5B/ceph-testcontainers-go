@@ -548,16 +548,6 @@ func (c *Container) monitorConfigTargets(control testcontainers.Container, remov
 			add(name, targets[name])
 		}
 	}
-	for _, fs := range c.filesystems {
-		if fs == nil {
-			continue
-		}
-		for _, mds := range fs.mdss {
-			if mds != nil {
-				add("mds."+mds.ID, mds.Container)
-			}
-		}
-	}
 	slices.SortFunc(candidates, func(a, b monitorConfigTarget) int { return strings.Compare(a.name, b.name) })
 	seen := map[string]bool{control.GetContainerID(): true}
 	var targets []monitorConfigTarget

@@ -718,18 +718,25 @@ These decisions explain the shape of the code and should guide new features.
   disabled autoscaling and small replica counts make tiny clusters reach
   `active+clean` quickly. They are not recommendations for production.
 
-## Generated files and inventories
+## Package layout, generated files and inventories
 
-The public packages are currently generated facades over the implementation.
-An ongoing restructure moves the implementation into the public packages and
-will retire the two tools below. Until it lands:
+The rbd, cephfs and rgw packages hold their own implementations. They reach
+the parts of a cluster that are not public API, such as its mutex, owned
+service containers and Run-time provisioning, through `internal/servicehook`,
+and keep their per-cluster state in an extension registry on the cluster.
+Helpers that both sides share live in `internal/clusterutil`, and the CLI
+fakes that their unit tests share live in `internal/clustertest`.
+
+The ceph package is still a generated facade over `internal/cluster`. An
+ongoing restructure moves that implementation into ceph and will retire the
+generator. Until it lands, regenerate `ceph/api.go` after changing an exported
+declaration in `internal/cluster`; the generator's unit test fails while the
+file is stale:
 
 ```sh
-# Regenerate ceph/api.go, rbd/api.go, cephfs/api.go and rgw/api.go after
-# changing a public declaration; its unit test fails while they are stale.
 go run ./internal/facadegen
-
-# Rewrite stale line anchors in docs/API_CAPABILITIES.md after moving
-# declarations; missing or extra entries still need a manual edit.
-go test ./internal/apiinventory -update
 ```
+
+`internal/apiinventory` checks that each package page in `docs` names every
+exported identifier and method of its package. Mention a new export on the
+package's page, usually under its own heading, in the same change.

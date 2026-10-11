@@ -148,18 +148,6 @@ func WithOSDImage(image string) Option {
 	}
 }
 
-// WithMDSImage selects the metadata server image used by StartCephFS.
-// If omitted, MDS uses the image passed to Run. Use matching Ceph versions.
-func WithMDSImage(image string) Option {
-	return func(o *options) error {
-		if strings.TrimSpace(image) == "" {
-			return fmt.Errorf("MDS image must not be blank")
-		}
-		o.mdsImage = image
-		return nil
-	}
-}
-
 // WithNoInitialOSDs starts only the selected MON/MGR topology. It keeps the
 // ordinary prospective pool defaults (size 2, min_size 1) for later AddOSD calls;
 // WithPoolDefaults may override them. Initial pools, CephFS/RGW services and

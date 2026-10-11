@@ -19,7 +19,7 @@ func TestPoolsValidateAndJoinInitialPools(t *testing.T) {
 		}
 	}
 	// Repeated options replace the list, as for the other initial services.
-	pools, err := servicehook.TestPrepare(2, false, []ceph.PoolConfig{{Name: "data"}},
+	pools, _, err := servicehook.TestPrepare(2, false, []ceph.PoolConfig{{Name: "data"}},
 		WithPools(ceph.PoolConfig{Name: "first"}), WithPools(ceph.PoolConfig{Name: "volumes"}, ceph.PoolConfig{Name: "images", Application: "rbd"}))
 	if err != nil {
 		t.Fatal(err)
@@ -31,10 +31,10 @@ func TestPoolsValidateAndJoinInitialPools(t *testing.T) {
 	if !slices.Equal(names, []string{"data/", "volumes/rbd", "images/rbd"}) {
 		t.Fatalf("RBD pools did not join the initial pools: %v", names)
 	}
-	if _, err := servicehook.TestPrepare(2, false, []ceph.PoolConfig{{Name: "volumes"}}, WithPools(ceph.PoolConfig{Name: "volumes"})); err == nil || !strings.Contains(err.Error(), "duplicated") {
+	if _, _, err := servicehook.TestPrepare(2, false, []ceph.PoolConfig{{Name: "volumes"}}, WithPools(ceph.PoolConfig{Name: "volumes"})); err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("an RBD pool reused an initial pool name: %v", err)
 	}
-	if _, err := servicehook.TestPrepare(0, true, nil, WithPools(ceph.PoolConfig{Name: "volumes"})); err == nil {
+	if _, _, err := servicehook.TestPrepare(0, true, nil, WithPools(ceph.PoolConfig{Name: "volumes"})); err == nil {
 		t.Fatal("an RBD pool was accepted without initial OSDs")
 	}
 }

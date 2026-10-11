@@ -16,13 +16,13 @@ const scrubInconsistentFixture = `{"epoch":11,"inconsistents":[{"object":{"name"
 
 func scrubFixture() *poolFixtureContainer {
 	ctr := policyFixture("2", "1", "1")
-	ctr.output["osd map fixture victim --format json"] = `{"epoch":14,"pool":"fixture","pool_id":7,"objname":"victim","pgid":"7.0","up":[1,0],"up_primary":1,"acting":[1,0],"acting_primary":1}`
+	ctr.Output["osd map fixture victim --format json"] = `{"epoch":14,"pool":"fixture","pool_id":7,"objname":"victim","pgid":"7.0","up":[1,0],"up_primary":1,"acting":[1,0],"acting_primary":1}`
 	return ctr
 }
 
 func scrubCommands(ctr *poolFixtureContainer) []string {
 	var result []string
-	for _, args := range ctr.calls {
+	for _, args := range ctr.Calls {
 		if slices.Contains(args, "tell") || slices.Contains(args, "deep-scrub") || slices.Contains(args, "repair") {
 			result = append(result, strings.Join(args, " "))
 		}
@@ -38,22 +38,22 @@ func TestInjectObjectDataErrorValidatesTargetBeforeNativeCommands(t *testing.T) 
 		"unowned OSD": func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "victim", 9) },
 	} {
 		ctr := scrubFixture()
-		if err := call(poolFixtureCluster(ctr, 2)); err == nil || len(ctr.calls) != 0 {
-			t.Fatalf("%s: invalid target reached native CLI: %v %v", name, err, ctr.calls)
+		if err := call(poolFixtureCluster(ctr, 2)); err == nil || len(ctr.Calls) != 0 {
+			t.Fatalf("%s: invalid target reached native CLI: %v %v", name, err, ctr.Calls)
 		}
 	}
 	ctr := scrubFixture()
-	ctr.output["osd pool ls detail --format json"] = strings.Replace(ctr.output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
+	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
 	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
 		t.Fatal("EC pool accepted a replica data error")
 	}
 	ctr = scrubFixture()
-	ctr.output["osd map fixture victim --format json"] = strings.Replace(ctr.output["osd map fixture victim --format json"], `"acting":[1,0]`, `"acting":[1]`, 1)
+	ctr.Output["osd map fixture victim --format json"] = strings.Replace(ctr.Output["osd map fixture victim --format json"], `"acting":[1,0]`, `"acting":[1]`, 1)
 	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
 		t.Fatal("OSD outside the acting set received an injection")
 	}
 	ctr = scrubFixture()
-	ctr.output["osd map fixture victim --format json"] = strings.Replace(ctr.output["osd map fixture victim --format json"], `"pool_id":7`, `"pool_id":8`, 1)
+	ctr.Output["osd map fixture victim --format json"] = strings.Replace(ctr.Output["osd map fixture victim --format json"], `"pool_id":7`, `"pool_id":8`, 1)
 	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
 		t.Fatal("mapping of another pool was accepted")
 	}
@@ -87,7 +87,7 @@ func TestPGInconsistenciesDecodesNativeShards(t *testing.T) {
 		}
 	}
 	ctr := scrubFixture()
-	if _, err := poolFixtureCluster(ctr, 2).PGInconsistencies(t.Context(), "7.0; rm"); err == nil || len(ctr.calls) != 0 {
+	if _, err := poolFixtureCluster(ctr, 2).PGInconsistencies(t.Context(), "7.0; rm"); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("invalid PG ID reached native CLI")
 	}
 }
@@ -102,7 +102,7 @@ type scrubbingFixture struct {
 func (ctr *scrubbingFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if slices.Contains(args, "ls-by-pool") {
 		report := ctr.reports[min(ctr.reads, len(ctr.reports)-1)]
-		ctr.output["pg ls-by-pool fixture --format json"] = `{"pg_ready":true,"pg_stats":[` + report + `]}`
+		ctr.Output["pg ls-by-pool fixture --format json"] = `{"pg_ready":true,"pg_stats":[` + report + `]}`
 		ctr.reads++
 	}
 	return ctr.poolFixtureContainer.Exec(ctx, args, opts...)

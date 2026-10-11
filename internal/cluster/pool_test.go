@@ -1,18 +1,12 @@
 package cluster
 
 import (
-	"bytes"
-	"context"
-	"encoding/binary"
-	"io"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func TestInvalidPoolConfigDoesNotExecuteCeph(t *testing.T) {
@@ -36,8 +30,8 @@ func TestInvalidPoolConfigDoesNotExecuteCeph(t *testing.T) {
 	} {
 		ctr := &poolFixtureContainer{}
 		cluster := poolFixtureCluster(ctr, 3)
-		if pool, err := cluster.CreatePool(t.Context(), config); err == nil || pool != nil || len(ctr.calls) != 0 {
-			t.Errorf("invalid config executed Ceph: config=%+v pool=%+v err=%v calls=%v", config, pool, err, ctr.calls)
+		if pool, err := cluster.CreatePool(t.Context(), config); err == nil || pool != nil || len(ctr.Calls) != 0 {
+			t.Errorf("invalid config executed Ceph: config=%+v pool=%+v err=%v calls=%v", config, pool, err, ctr.Calls)
 		}
 	}
 }
@@ -49,14 +43,14 @@ func TestPoolPlacementRequiresOwnedOSDsBeforeCommands(t *testing.T) {
 	} {
 		ctr := &poolFixtureContainer{}
 		cluster := poolFixtureCluster(ctr, 2)
-		if pool, err := cluster.CreatePool(t.Context(), config); err == nil || pool != nil || len(ctr.calls) != 0 {
-			t.Fatalf("insufficient OSDs mutated Ceph: pool=%+v error=%v calls=%v", pool, err, ctr.calls)
+		if pool, err := cluster.CreatePool(t.Context(), config); err == nil || pool != nil || len(ctr.Calls) != 0 {
+			t.Fatalf("insufficient OSDs mutated Ceph: pool=%+v error=%v calls=%v", pool, err, ctr.Calls)
 		}
 	}
 	ctr := &poolFixtureContainer{}
 	cluster := poolFixtureCluster(ctr, 3)
 	cluster.osds[2].purged = true
-	if _, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "fixture", Replicas: 3}); err == nil || len(ctr.calls) != 0 {
+	if _, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "fixture", Replicas: 3}); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("a purged OSD counted toward pool placement")
 	}
 }
@@ -108,8 +102,8 @@ func TestPoolPlacementCountsDistinctEligibleDomains(t *testing.T) {
 			for id, placement := range test.placement {
 				cluster.osds[id].placement = placement
 			}
-			if pool, err := cluster.CreatePool(t.Context(), test.config); err == nil || pool != nil || len(ctr.calls) != 0 {
-				t.Fatalf("ineligible domains mutated Ceph: pool=%+v error=%v calls=%v", pool, err, ctr.calls)
+			if pool, err := cluster.CreatePool(t.Context(), test.config); err == nil || pool != nil || len(ctr.Calls) != 0 {
+				t.Fatalf("ineligible domains mutated Ceph: pool=%+v error=%v calls=%v", pool, err, ctr.Calls)
 			}
 		})
 	}
@@ -133,7 +127,7 @@ func TestPoolPlacementSelectsReplicatedAndECConstraints(t *testing.T) {
 			t.Fatalf("eligible pool rejected: pool=%+v error=%v", pool, err)
 		}
 		found := false
-		for _, call := range ctr.calls {
+		for _, call := range ctr.Calls {
 			if erasure && slices.Contains(call, "plugin=jerasure") {
 				found = slices.Contains(call, "crush-root=data") && slices.Contains(call, "crush-failure-domain=rack") && slices.Contains(call, "crush-device-class=fast")
 			}
@@ -142,7 +136,7 @@ func TestPoolPlacementSelectsReplicatedAndECConstraints(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("placement constraints did not reach CRUSH: %v", ctr.calls)
+			t.Fatalf("placement constraints did not reach CRUSH: %v", ctr.Calls)
 		}
 	}
 }
@@ -171,11 +165,11 @@ func TestExistingPoolResourcesCannotBeReconfigured(t *testing.T) {
 		{"osd crush rule ls --format json", `["tc-fixture-ec"]`},
 		{"osd erasure-code-profile ls --format json", `["tc-fixture-ec"]`},
 	} {
-		ctr := &poolFixtureContainer{output: map[string]string{test.command: test.names}}
+		ctr := &poolFixtureContainer{Output: map[string]string{test.command: test.names}}
 		if pool, err := poolFixtureCluster(ctr, 3).CreatePool(t.Context(), config); err == nil || pool != nil {
 			t.Fatalf("existing resource was accepted: %+v error=%v", pool, err)
 		}
-		for _, call := range ctr.calls {
+		for _, call := range ctr.Calls {
 			if !slices.Contains(call, "ls") {
 				t.Fatalf("resource preflight mutated Ceph: %v", call)
 			}
@@ -185,17 +179,17 @@ func TestExistingPoolResourcesCannotBeReconfigured(t *testing.T) {
 
 func TestPoolCreationFailurePreservesPartialResources(t *testing.T) {
 	failure := "osd pool set fixture allow_ec_overwrites true"
-	ctr := &poolFixtureContainer{fail: failure}
+	ctr := &poolFixtureContainer{Fail: failure}
 	config := PoolConfig{Name: "fixture", Application: "rbd", ErasureCode: &ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}}
 	pool, err := poolFixtureCluster(ctr, 3).CreatePool(t.Context(), config)
 	if err == nil || pool == nil || pool.Name != "fixture" || pool.ErasureCodeProfile != "tc-fixture-ec" || pool.CRUSHRule != "tc-fixture-ec" {
 		t.Fatalf("partial resources became unidentifiable: pool=%+v error=%v", pool, err)
 	}
-	if strings.Join(ctr.calls[len(ctr.calls)-1], " ") != failure {
+	if strings.Join(ctr.Calls[len(ctr.Calls)-1], " ") != failure {
 		t.Fatal("pool creation continued after the failed mutation")
 	}
 	foundProfile := false
-	for _, call := range ctr.calls {
+	for _, call := range ctr.Calls {
 		if slices.Contains(call, "delete") || slices.Contains(call, "rm") {
 			t.Fatal("uncertain pool creation failure deleted resources")
 		}
@@ -217,7 +211,7 @@ func TestSingleReplicaPoolExplicitlyAcknowledgesFixtureSetting(t *testing.T) {
 	if err != nil || pool == nil {
 		t.Fatal(err)
 	}
-	for _, call := range ctr.calls {
+	for _, call := range ctr.Calls {
 		if slices.Contains(call, "size") {
 			if !slices.Contains(call, "--yes-i-really-mean-it") {
 				t.Fatal("size=1 omitted Ceph's required acknowledgement")
@@ -234,39 +228,4 @@ func poolFixtureCluster(ctr testcontainers.Container, count int) *Container {
 		cluster.osds[id] = &OSDContainer{ID: id, Container: ctr}
 	}
 	return cluster
-}
-
-type poolFixtureContainer struct {
-	testcontainers.Container
-	calls  [][]string
-	output map[string]string
-	fail   string
-}
-
-func (ctr *poolFixtureContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-	commandArgs := args
-	args = slices.Clone(monitorQuorumTestModuleArgs(args))
-	ctr.calls = append(ctr.calls, args)
-	command := strings.Join(args, " ")
-	output := ""
-	if slices.Contains(args, "ls") {
-		output = "[]"
-	}
-	if value, ok := ctr.output[command]; ok {
-		output = value
-	}
-	var header [8]byte
-	header[0] = byte(stdcopy.Stdout)
-	code := 0
-	if command == ctr.fail {
-		header[0], code, output = byte(stdcopy.Stderr), 1, "injected command failure"
-	}
-	if monitorQuorumTestCommand(commandArgs) {
-		return monitorQuorumTestReader(commandArgs, code, []byte(output))
-	}
-	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
-	var stream bytes.Buffer
-	stream.Write(header[:])
-	stream.WriteString(output)
-	return code, &stream, nil
 }

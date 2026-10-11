@@ -16,13 +16,13 @@ const relocationRules = `[{"rule_id":3,"rule_name":"tc-fixture-replicated","step
 
 func relocationFixture() *poolFixtureContainer {
 	ctr := policyFixture("2", "1", "1")
-	ctr.output["osd crush rule dump --format json"] = relocationRules
+	ctr.Output["osd crush rule dump --format json"] = relocationRules
 	return ctr
 }
 
 func relocationMutations(ctr *poolFixtureContainer) []string {
 	var result []string
-	for _, args := range ctr.calls {
+	for _, args := range ctr.Calls {
 		if slices.Contains(args, "set") || slices.Contains(args, "create-replicated") {
 			result = append(result, strings.Join(args, " "))
 		}
@@ -37,15 +37,15 @@ func TestPoolPGCountValidatesBeforeNativeCommands(t *testing.T) {
 	}{{"--option", 16}, {"fixture", 0}, {"fixture", -8}, {"fixture", 65537}} {
 		ctr := relocationFixture()
 		cluster := poolFixtureCluster(ctr, 3)
-		if err := cluster.SetPoolPGCount(t.Context(), tc.name, tc.count); err == nil || len(ctr.calls) != 0 {
+		if err := cluster.SetPoolPGCount(t.Context(), tc.name, tc.count); err == nil || len(ctr.Calls) != 0 {
 			t.Fatalf("invalid PG count request reached native CLI: %+v", tc)
 		}
-		if err := cluster.WaitForPoolPGCount(t.Context(), tc.name, tc.count); err == nil || len(ctr.calls) != 0 {
+		if err := cluster.WaitForPoolPGCount(t.Context(), tc.name, tc.count); err == nil || len(ctr.Calls) != 0 {
 			t.Fatalf("invalid PG count wait reached native CLI: %+v", tc)
 		}
 	}
 	ctr := relocationFixture()
-	ctr.output["osd pool ls detail --format json"] = strings.Replace(ctr.output["osd pool ls detail --format json"], `"pg_num":8`, `"pg_num":8,"pg_autoscale_mode":"on"`, 1)
+	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"pg_num":8`, `"pg_num":8,"pg_autoscale_mode":"on"`, 1)
 	if err := poolFixtureCluster(ctr, 3).SetPoolPGCount(t.Context(), "fixture", 16); err == nil || len(relocationMutations(ctr)) != 0 {
 		t.Fatal("autoscaled pool accepted a fixed PG target")
 	}
@@ -60,7 +60,7 @@ func TestPoolPGCountSetsBothTargetsInOrderWithoutRollback(t *testing.T) {
 		t.Fatalf("unexpected PG target commands: %v", relocationMutations(ctr))
 	}
 	ctr = relocationFixture()
-	ctr.fail = "osd pool set fixture pg_num 4"
+	ctr.Fail = "osd pool set fixture pg_num 4"
 	if err := poolFixtureCluster(ctr, 3).SetPoolPGCount(t.Context(), "fixture", 4); err == nil || len(relocationMutations(ctr)) != 1 {
 		t.Fatalf("failed pg_num target continued: %v", relocationMutations(ctr))
 	}
@@ -82,14 +82,14 @@ type progressingPoolFixture struct {
 func (ctr *progressingPoolFixture) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if slices.Contains(args, "detail") {
 		index := min(ctr.reads, len(ctr.listings)-1)
-		ctr.output["osd pool ls detail --format json"] = ctr.listings[index]
+		ctr.Output["osd pool ls detail --format json"] = ctr.listings[index]
 		reports := make([]string, 0, 16)
 		if index < len(ctr.reported) {
 			for pg := range ctr.reported[index] {
 				reports = append(reports, strings.Replace(poolPGFixtureReport, `"7.a"`, fmt.Sprintf(`"7.%x"`, pg), 1))
 			}
 		}
-		ctr.output["pg ls-by-pool fixture --format json"] = poolPGFixtureReports(strings.Join(reports, ","), true)
+		ctr.Output["pg ls-by-pool fixture --format json"] = poolPGFixtureReports(strings.Join(reports, ","), true)
 		ctr.reads++
 	}
 	return ctr.poolFixtureContainer.Exec(ctx, args, opts...)
@@ -142,7 +142,7 @@ func TestWaitForPoolPGCountRequiresEveryNativeCounter(t *testing.T) {
 
 func TestPoolStatusReportsPGProgress(t *testing.T) {
 	ctr := relocationFixture()
-	ctr.output["osd pool ls detail --format json"] = pgProgressListing("7", "12", "16", "12", "10", "16")
+	ctr.Output["osd pool ls detail --format json"] = pgProgressListing("7", "12", "16", "12", "10", "16")
 	state, err := poolFixtureCluster(ctr, 3).PoolStatus(t.Context(), "fixture")
 	if err != nil || state.PGNum != 12 || state.PGNumTarget != 16 || state.PGNumPending != 12 || state.PGPlacementNum != 10 || state.PGPlacementNumTarget != 16 {
 		t.Fatalf("native PG progress was not retained: %+v %v", state, err)
@@ -167,9 +167,9 @@ func TestPoolPlacementCreatesHashedRuleAndSelectsIt(t *testing.T) {
 func TestPoolPlacementReusesMatchingFixtureRules(t *testing.T) {
 	ctr := relocationFixture()
 	rule := poolPlacementRuleName("fixture", PoolConfig{CRUSHRoot: "default", FailureDomain: "osd", DeviceClass: "ssd"})
-	ctr.output["osd crush rule dump --format json"] = strings.TrimSuffix(relocationRules, "]") +
+	ctr.Output["osd crush rule dump --format json"] = strings.TrimSuffix(relocationRules, "]") +
 		`,{"rule_id":4,"rule_name":"` + rule + `","steps":[{"op":"take","item_name":"default~ssd"},{"op":"choose_firstn","type":"osd","num":0},{"op":"emit"}]}]`
-	ctr.output["osd pool ls detail --format json"] = strings.Replace(ctr.output["osd pool ls detail --format json"], `"crush_rule":3`, `"crush_rule":4`, 1)
+	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"crush_rule":3`, `"crush_rule":4`, 1)
 	if err := poolFixtureCluster(ctr, 3).SetPoolPlacement(t.Context(), "fixture", PoolPlacement{}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,13 +186,13 @@ func TestPoolPlacementRefusesUnsafeRequestsBeforeMutation(t *testing.T) {
 	for name, prepare := range map[string]func(*poolFixtureContainer) PoolPlacement{
 		"invalid domain": func(*poolFixtureContainer) PoolPlacement { return PoolPlacement{FailureDomain: "datacenter"} },
 		"erasure pool": func(ctr *poolFixtureContainer) PoolPlacement {
-			ctr.output["osd pool ls detail --format json"] = strings.Replace(ctr.output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
+			ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
 			return PoolPlacement{DeviceClass: "ssd"}
 		},
 		"insufficient class domains": func(*poolFixtureContainer) PoolPlacement { return PoolPlacement{DeviceClass: "hdd"} },
 		"conflicting hashed rule": func(ctr *poolFixtureContainer) PoolPlacement {
 			rule := poolPlacementRuleName("fixture", PoolConfig{CRUSHRoot: "default", FailureDomain: "osd", DeviceClass: "ssd"})
-			ctr.output["osd crush rule dump --format json"] = strings.TrimSuffix(relocationRules, "]") +
+			ctr.Output["osd crush rule dump --format json"] = strings.TrimSuffix(relocationRules, "]") +
 				`,{"rule_id":4,"rule_name":"` + rule + `","steps":[{"op":"take","item_name":"default"},{"op":"chooseleaf_firstn","type":"host","num":0},{"op":"emit"}]}]`
 			return PoolPlacement{DeviceClass: "ssd"}
 		},
@@ -206,7 +206,7 @@ func TestPoolPlacementRefusesUnsafeRequestsBeforeMutation(t *testing.T) {
 		})
 	}
 	replaced := &replacedPoolFixture{poolFixtureContainer: relocationFixture()}
-	replaced.output["osd crush rule dump --format json"] = relocationRules
+	replaced.Output["osd crush rule dump --format json"] = relocationRules
 	if err := poolFixtureCluster(replaced, 3).SetPoolPlacement(t.Context(), "fixture", PoolPlacement{DeviceClass: "ssd"}); err == nil || slices.ContainsFunc(relocationMutations(replaced.poolFixtureContainer), func(c string) bool { return strings.Contains(c, "crush_rule") }) {
 		t.Fatal("replacement pool received the placement rule")
 	}
