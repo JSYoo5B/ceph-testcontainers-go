@@ -210,7 +210,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
-		monEnv := map[string]string{"CEPH_MON_ID": name}
+		monEnv := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
 		if c.settings.messengerMode == MessengerV2Secure {
 			monEnv[messengerV2SecureEnvironment] = "true"
 		}
@@ -487,7 +487,8 @@ func monitorBootstrapAddresses(status QuorumStatus) (string, error) {
 					return "", errors.New("native monmap contains an invalid address nonce")
 				}
 			}
-			address := addr.Type + ":" + endpoint
+			// Ceph prints IPv4-mapped addresses in a form it cannot parse.
+			address := addr.Type + ":" + net.JoinHostPort(cephAddress(ip), port)
 			if seen[address] {
 				return "", errors.New("native monmap contains a duplicate member address")
 			}

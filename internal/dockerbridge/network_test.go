@@ -76,7 +76,7 @@ func (f *bridgeFake) remove(ctx context.Context, n *testcontainers.DockerNetwork
 func (f *bridgeFake) Close() error { f.closes++; return f.closeErr }
 
 func (f *bridgeFake) run(ctx context.Context) (*testcontainers.DockerNetwork, error) {
-	return newNetwork(ctx, f, f.create, f.remove)
+	return newNetwork(ctx, f, IPv4Only, f.create, f.remove)
 }
 
 func TestBridgeRetainsDaemonSelectedAddressPool(t *testing.T) {
@@ -259,7 +259,7 @@ func TestBridgeCopiesObservedIPAMAndRejectsCanceledAdmission(t *testing.T) {
 	native := f.active[probe.ID]
 	native.IPAM.Config[0].AuxAddress = map[string]netip.Addr{"reserved": netip.MustParseAddr("10.23.1.9")}
 	f.active[probe.ID] = native
-	selected, err := inspectBridge(t.Context(), f, probe)
+	selected, err := inspectBridge(t.Context(), f, probe, IPv4Only)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,5 +272,40 @@ func TestBridgeCopiesObservedIPAMAndRejectsCanceledAdmission(t *testing.T) {
 	cancel()
 	if n, err := New(ctx); n != nil || !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled admission reached Docker")
+	}
+}
+
+func TestDualStackBridgeKeepsBothSubnets(t *testing.T) {
+	v4 := dockernetwork.IPAMConfig{Subnet: netip.MustParsePrefix("10.23.1.0/24"), Gateway: netip.MustParseAddr("10.23.1.1")}
+	v6 := dockernetwork.IPAMConfig{Subnet: netip.MustParsePrefix("fd62:93fe:2c9e::/64"), Gateway: netip.MustParseAddr("fd62:93fe:2c9e::1")}
+	inspect := func(enableIPv6 bool, family Family, configs ...dockernetwork.IPAMConfig) (*dockernetwork.IPAM, error) {
+		n := &testcontainers.DockerNetwork{ID: "owned", Name: "fixture", Driver: "bridge"}
+		f := &bridgeFake{active: map[string]dockernetwork.Inspect{"owned": {Network: dockernetwork.Network{ID: "owned", Name: "fixture", Driver: "bridge",
+			EnableIPv6: enableIPv6, IPAM: dockernetwork.IPAM{Driver: "default", Config: configs}}}}}
+		return inspectBridge(t.Context(), f, n, family)
+	}
+	// Docker may list the IPv6 subnet first; the result is IPv4 then IPv6.
+	ipam, err := inspect(true, DualStack, v6, v4)
+	if err != nil || len(ipam.Config) != 2 || ipam.Config[0].Subnet != v4.Subnet || ipam.Config[1].Subnet != v6.Subnet {
+		t.Fatalf("dual-stack IPAM %+v, %v", ipam, err)
+	}
+	for name, test := range map[string]struct {
+		enableIPv6 bool
+		family     Family
+		configs    []dockernetwork.IPAMConfig
+	}{
+		"IPv6 on an IPv4 bridge":      {true, IPv4Only, []dockernetwork.IPAMConfig{v4, v6}},
+		"IPv6 disabled on dual stack": {false, DualStack, []dockernetwork.IPAMConfig{v4, v6}},
+		"no IPv6 subnet":              {true, DualStack, []dockernetwork.IPAMConfig{v4}},
+		"no IPv4 subnet":              {true, DualStack, []dockernetwork.IPAMConfig{v6}},
+		"two IPv6 subnets":            {true, DualStack, []dockernetwork.IPAMConfig{v4, v6, {Subnet: netip.MustParsePrefix("fd00:1::/64"), Gateway: netip.MustParseAddr("fd00:1::1")}}},
+		"IPv4 gateway in IPv6 subnet": {true, DualStack, []dockernetwork.IPAMConfig{v4, {Subnet: v6.Subnet, Gateway: netip.MustParseAddr("10.23.1.1")}}},
+		"IPv4-mapped IPv6 subnet":     {true, DualStack, []dockernetwork.IPAMConfig{v4, {Subnet: netip.MustParsePrefix("::ffff:10.23.1.0/120"), Gateway: netip.MustParseAddr("::ffff:10.23.1.1")}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if ipam, err := inspect(test.enableIPv6, test.family, test.configs...); err == nil {
+				t.Fatalf("accepted %+v", ipam)
+			}
+		})
 	}
 }

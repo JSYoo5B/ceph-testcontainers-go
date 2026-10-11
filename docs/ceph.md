@@ -184,6 +184,8 @@ of option order:
 | `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
 | `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
+| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
+| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -808,6 +810,54 @@ MON, MGR, MDS, RGW and `WithClient` containers use only the public bridge.
 the two bridges, and [InterruptNetwork](#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
+
+#### WithAddressFamily
+
+```golang
+ceph.WithAddressFamily(ceph.AddressIPv6)
+```
+
+Selects the addresses that the Messenger of every MON, MGR, OSD and MDS binds
+and advertises. `cluster.AddressFamily()` returns the selected value.
+
+| Family | Bridge | Messenger listeners and advertised addresses |
+| --- | --- | --- |
+| `ceph.AddressIPv4` (default) | IPv4 | the container's IPv4 address, such as `172.19.0.2:3300` |
+| `ceph.AddressIPv6` | dual-stack: one IPv4 and one IPv6 subnet | the container's IPv6 address, such as `[fd62:93fe:2c9e::2]:3300`; no IPv4 listener |
+| `ceph.AddressIPv4MappedIPv6` | IPv4 | the container's IPv4 address as an IPv4-mapped IPv6 address on an IPv6 socket, such as `[::ffff:172.19.0.2]:3300` |
+
+The MONs get these addresses in the monmap and bind them. The generated
+`ceph.conf` sets `ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
+OSDs and MDSs bind the IPv6 wildcard address, `[::]`, and advertise the address
+from which the MONs see them. No daemon has an IPv4 Messenger socket; with
+`AddressIPv4MappedIPv6` the IPv6 sockets accept the IPv4 connections that the
+mapped addresses stand for. The address
+vectors from [DaemonAddresses](#daemonaddresses) and `ceph ... dump` show the
+selected family for every daemon, including the heartbeat addresses of OSDs.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6))
+addresses, err := cluster.DaemonAddresses(ctx)
+// addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
+```
+
+- Bridge mode only, without [WithSeparateClusterNetwork](#withseparateclusternetwork).
+- `AddressIPv6` needs a Docker Engine that allocates an IPv6 subnet for a new
+  IPv6 bridge without an explicit subnet, from its default pool of unique local
+  addresses. `Run` fails with the Engine's error otherwise.
+- With `AddressIPv6`, Docker forwards an IPv4 connection to a published MON
+  port to the container's IPv4 address, where no MON listens, so an IPv4
+  connection to `MappedPort` does not reach a MON. Run clients in containers on
+  the cluster network with [WithClient](#withclient). With
+  `AddressIPv4MappedIPv6`, the IPv6 sockets also accept the forwarded IPv4
+  connections.
+- Ceph prints an IPv4-mapped address in dotted form, `::ffff:172.19.0.2`, but
+  parses only hexadecimal groups, `::ffff:ac13:2`. The fixture writes
+  `mon_host` in the parseable form; convert an address the same way before you
+  pass it to a Ceph tool, for example with `-m`. Go's `net/netip` parses both.
+- HTTP endpoints, such as RGW's, are not Messenger listeners and keep their
+  addresses.
 
 #### WithStartupTimeout
 

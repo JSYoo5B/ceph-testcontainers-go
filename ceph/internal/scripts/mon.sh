@@ -2,13 +2,53 @@
 set -eu
 
 mkdir -p /etc/ceph /var/lib/ceph/mon/ceph-a /var/run/ceph
-mon_ip=${CEPH_PUBLIC_ADDRESS:-$(hostname -i | awk '{print $1}')}
+# messenger_address prints this container's address of the address family:
+# IPv4, global IPv6, or IPv4 as an IPv4-mapped IPv6 address in the
+# hexadecimal form that Ceph parses.
+messenger_address() {
+    for address in $(hostname -i); do
+        case "${CEPH_ADDRESS_FAMILY:-ipv4}:$address" in
+        ipv6:fe80:* | ipv6:FE80:*) ;;
+        ipv6:*:*)
+            echo "$address"
+            return
+            ;;
+        ipv4-mapped:*:* | ipv4:*:*) ;;
+        ipv4-mapped:*)
+            old_ifs=$IFS
+            IFS=.
+            # shellcheck disable=SC2086
+            set -- $address
+            IFS=$old_ifs
+            printf '::ffff:%x:%x\n' $(($1 * 256 + $2)) $(($3 * 256 + $4))
+            return
+            ;;
+        ipv4:*)
+            echo "$address"
+            return
+            ;;
+        esac
+    done
+    echo "tc-ceph: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
+    exit 2
+}
+mon_ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
+mon_host=$mon_ip
+bind_ipv4=true
+bind_ipv6=false
+case "${CEPH_ADDRESS_FAMILY:-ipv4}" in
+ipv6 | ipv4-mapped)
+    mon_host="[$mon_ip]"
+    bind_ipv4=false
+    bind_ipv6=true
+    ;;
+esac
 mon_v2=${CEPH_MON_PORT_V2:-3300}
 mon_v1=${CEPH_MON_PORT_V1:-6789}
-mon_addrs="[v2:${mon_ip}:${mon_v2},v1:${mon_ip}:${mon_v1}]"
+mon_addrs="[v2:${mon_host}:${mon_v2},v1:${mon_host}:${mon_v1}]"
 messenger_config=
 if [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
-    mon_addrs="[v2:${mon_ip}:${mon_v2}]"
+    mon_addrs="[v2:${mon_host}:${mon_v2}]"
     messenger_config='ms cluster mode = secure
 ms service mode = secure
 ms client mode = secure
@@ -139,7 +179,8 @@ osd pool default pg num = 8
 osd pool default pgp num = 0
 osd pool default pg autoscale mode = off
 mon allow pool size one = true
-ms bind ipv6 = false
+ms bind ipv4 = ${bind_ipv4}
+ms bind ipv6 = ${bind_ipv6}
 # Report daemon and PG statistics every second instead of five, so readiness
 # waits observe new PG states sooner in this small disposable cluster.
 mgr stats period = 1

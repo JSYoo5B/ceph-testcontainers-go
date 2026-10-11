@@ -35,6 +35,9 @@ change the API.
   native client container separately, through the new
   `ceph.ClientContainerOption` parameters of `WithClient` and
   `WithClientIdentity`.
+- `ceph.WithAddressFamily` runs every Messenger listener on IPv6: on the
+  container's IPv6 address of a dual-stack bridge (`ceph.AddressIPv6`), or on
+  its IPv4 address as an IPv4-mapped IPv6 address (`ceph.AddressIPv4MappedIPv6`).
 
 ### Fixed
 
