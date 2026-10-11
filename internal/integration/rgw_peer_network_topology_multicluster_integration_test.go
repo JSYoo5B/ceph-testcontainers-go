@@ -37,7 +37,7 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	}
 	a, b := rgwTopologyS3(t, ctx, zones[0]), rgwTopologyS3(t, ctx, zones[1])
 	const bucket = "/tc-rgw-peer-network"
-	a.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
+	createMultisiteBucket(t, ctx, fixture, a, bucket, nil)
 	seed := bytes.Repeat([]byte("same native zone and local storage across a peer network cut\n"), 64)
 	a.request(t, ctx, http.MethodPut, bucket+"/seed", seed, http.StatusOK)
 	waitMultisiteObject(t, ctx, b, bucket+"/seed", http.StatusOK, seed)
