@@ -5,12 +5,14 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +44,14 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 					status, statusErr := multisite.SyncStatus(inspect, zone.Name)
 					stop()
 					t.Logf("multisite sync diagnostic zone=%s status=%+v error=%v", zone.Name, status, statusErr)
+					// Data sync can report caught up while one bucket's shards are
+					// stuck behind an error; record both native views.
+					for _, args := range [][]string{{"sync", "error", "list"}, {"bucket", "sync", "status", "--bucket", strings.TrimPrefix(multisiteDiagnosticBucket, "/")}} {
+						inspect, stop := context.WithTimeout(context.Background(), 35*time.Second)
+						out, err := multisite.ZoneAdmin(inspect, zone.Name, args...)
+						stop()
+						t.Logf("multisite native diagnostic zone=%s %v: %s error=%v", zone.Name, args, compactDiagnostic(out), err)
+					}
 				}
 				for _, gateway := range []*rgw.Gateway{multisite.Source, multisite.Destination} {
 					if gateway == nil {
@@ -81,7 +91,7 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	sourceS3 := s3HTTPClient{endpoint: sourceEndpoint, accessKey: sourceRGW.AccessKey, secretKey: sourceRGW.SecretKey, region: sourceRGW.Region, http: &http.Client{Timeout: 20 * time.Second}}
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
-	const bucket = "/tc-multicluster-bucket"
+	const bucket = multisiteDiagnosticBucket
 	sourceS3.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 	payload := bytes.Repeat([]byte("native RGW cross-cluster replication\n"), 1024)
 	keys := []string{"keep", "nested/payload", "remove"}
@@ -189,4 +199,29 @@ func waitMultisiteObject(t *testing.T, ctx context.Context, client s3HTTPClient,
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+const multisiteDiagnosticBucket = "/tc-multicluster-bucket"
+
+// compactDiagnostic drops empty sync error shards so a failure log keeps the
+// entries that explain a stalled bucket.
+func compactDiagnostic(out []byte) string {
+	var shards []struct {
+		ShardID int               `json:"shard_id"`
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if json.Unmarshal(out, &shards) != nil {
+		return string(out)
+	}
+	shards = slices.DeleteFunc(shards, func(shard struct {
+		ShardID int               `json:"shard_id"`
+		Entries []json.RawMessage `json:"entries"`
+	}) bool {
+		return len(shard.Entries) == 0
+	})
+	compact, err := json.Marshal(shards)
+	if err != nil {
+		return string(out)
+	}
+	return string(compact)
 }
