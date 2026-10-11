@@ -105,6 +105,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.hostNetwork && settings.separateClusterNetwork {
 		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
 	}
+	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
+		return nil, errors.New("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
@@ -260,7 +263,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithCmd(),
 			testcontainers.WithEnv(map[string]string{
 				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
-				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
+				"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
+				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
 			}),
 			testcontainers.WithFiles(scriptFile("mon")),

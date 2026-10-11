@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## Unreleased
+
+### Added
+
+- `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
+  in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
+  keeps its data.
+- `ceph.PoolConfig.NoHashPSPool` clears a new pool's `hashpspool` flag.
+- The module page shows how to install a legacy CRUSH map with the native tools
+  and keep it across OSD restarts.
+
 ## v0.1.0 (2026-10-11)
 
 The first release. It provides four Testcontainers for Go modules that start
