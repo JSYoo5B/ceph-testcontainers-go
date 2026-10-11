@@ -102,6 +102,18 @@ finally:
 print(json.dumps({'schema_version':1,'stdout':base64.b64encode(output[0]).decode(),'stderr':base64.b64encode(output[1]).decode(),'exit_code':code,'timed_out':timed_out,'stdout_truncated':clipped[0],'stderr_truncated':clipped[1]}))
 `
 
+// NotStoppedError reports an invocation that Command could not confirm as
+// stopped after Exec ended early: its command may still run in the container.
+// A later Cancel with Marker that succeeds confirms that it no longer can.
+type NotStoppedError struct {
+	Marker string
+	Err    error
+}
+
+func (e *NotStoppedError) Error() string { return e.Err.Error() }
+
+func (e *NotStoppedError) Unwrap() error { return e.Err }
+
 // Result is the complete output of one supervised command.
 type Result struct {
 	Stdout, Stderr []byte
@@ -113,9 +125,9 @@ type Result struct {
 // processLimit, shortened to the caller's deadline. When Exec ends before the
 // supervisor does, which includes a manual cancellation, Cancel stops this
 // invocation inside the container before Command returns, whether its
-// supervisor is running or has not started yet. label names the command in
-// errors. A timed-out or truncated run is an error; a nonzero exit is returned
-// in the result.
+// supervisor is running or has not started yet; when Cancel fails, the error
+// holds a NotStoppedError. label names the command in errors. A timed-out or
+// truncated run is an error; a nonzero exit is returned in the result.
 func Command(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -141,7 +153,11 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 	if err != nil {
 		// Exec stops waiting when attempt ends, but Docker may already have
 		// accepted the exec and start or keep running the supervisor.
-		return Result{}, errors.Join(fmt.Errorf("exec %s supervisor: %w", label, err), Cancel(ctx, ctr, label, marker))
+		err = fmt.Errorf("exec %s supervisor: %w", label, err)
+		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
+			return Result{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr})
+		}
+		return Result{}, err
 	}
 	if err := attempt.Err(); err != nil {
 		return Result{}, err

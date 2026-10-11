@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -24,7 +25,8 @@ import (
 // that the MONs, the daemons' keyring files and restarts agree on the new
 // keys. With 10-second service tickets it then reads, from the OSD's own
 // debug log, the rotating service secrets that it holds and the secret that
-// decrypted a client's ticket.
+// decrypted a client's ticket. Last, a handoff to a stopped OSD process
+// leaves both keys valid, and the OSD gets no other key until it restarts.
 func testDaemonKeyRotation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -133,6 +135,68 @@ func testDaemonKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("osd.0 held rotating secrets %v, then %v; client tickets were decrypted with secret %d, then %d", first, later, earlier, used[len(used)-1])
+
+	// The OSD process stops, so rotate-key hangs until the call's deadline
+	// and may reach the OSD once it continues.
+	current := authKey(t, ctx, cluster, "osd.0")
+	signalContainer(t, ctx, osd, "STOP")
+	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
+	err := cluster.RotateDaemonKey(callCtx, "osd.0")
+	callCancel()
+	signalContainer(t, ctx, osd, "CONT")
+	if err == nil || !strings.Contains(err.Error(), "RotateDaemonKey again") {
+		t.Fatalf("a handoff to a stopped OSD returned %v", err)
+	}
+	handed := pendingKey(t, ctx, cluster, "osd.0")
+	if handed == "" || authKey(t, ctx, cluster, "osd.0") != current {
+		t.Fatal("an uncertain handoff did not keep both keys")
+	}
+	if code, _, err := cluster.ControlContainer().Exec(ctx, []string{"pgrep", "-f", "rotate-key"}); err != nil || code != 1 {
+		t.Fatalf("a rotate-key CLI is still running in the control container: exit %d, %v", code, err)
+	}
+	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {
+		t.Fatal(err)
+	}
+	if authKey(t, ctx, cluster, "osd.0") != handed || pendingKey(t, ctx, cluster, "osd.0") != "" {
+		t.Fatal("the retry did not finish with the handed key")
+	}
+	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err == nil || !strings.Contains(err.Error(), "until its container restarts") {
+		t.Fatalf("a new key while the earlier handoff may still arrive: %v", err)
+	}
+	if pendingKey(t, ctx, cluster, "osd.0") != "" {
+		t.Fatal("a refused rotation left a pending key")
+	}
+	if err := osd.Stop(ctx, &stop); err != nil {
+		t.Fatal(err)
+	}
+	if err := osd.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitRotatedDaemonsUp(t, ctx, cluster)
+	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {
+		t.Fatalf("rotation after the restart: %v", err)
+	}
+	if authKey(t, ctx, cluster, "osd.0") == handed {
+		t.Fatal("the rotation after the restart kept the handed key")
+	}
+	if _, err := cluster.Ceph(ctx, "tell", "osd.0", "version"); err != nil {
+		t.Fatalf("the OSD stopped answering: %v", err)
+	}
+	t.Log("an uncertain handoff kept both keys, the retry finished with the same key, and a new key waited for a restart")
+}
+
+// signalContainer sends signal to the main process of ctr from the host, which
+// can stop and continue it, unlike a signal sent from inside the container.
+func signalContainer(t *testing.T, ctx context.Context, ctr testcontainers.Container, signal string) {
+	t.Helper()
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = docker.Close() }()
+	if _, err := docker.ContainerKill(ctx, ctr.GetContainerID(), mobycl.ContainerKillOptions{Signal: signal}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func authKey(t *testing.T, ctx context.Context, cluster *ceph.Container, entity string) string {
