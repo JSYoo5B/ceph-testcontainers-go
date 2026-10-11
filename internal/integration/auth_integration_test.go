@@ -1,0 +1,124 @@
+//go:build all || (integration && auth && (!ci || (ci_short && (!ci_batch || ci_batch_cluster_fixtures))))
+
+//ci: timeout=40m job-timeout=50
+
+package integration_test
+
+import (
+	"bytes"
+	"context"
+	"testing"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+func TestClientIdentities(t *testing.T) {
+	parallelWhenEnabled(t)
+	for _, host := range []bool{false, true} {
+		name := "bridge"
+		if host {
+			name = "host"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+			defer cancel()
+			image, opts := integrationImages(t)
+			if host {
+				opts = append(opts, ceph.WithHostNetwork())
+			}
+			cluster, err := ceph.Run(ctx, image, opts...)
+			if cluster != nil {
+				testcontainers.CleanupContainer(t, cluster)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pool := range []string{"tc-auth", "tc-auth-other"} {
+				cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
+				cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rados")
+			}
+			if err := cluster.WaitForClean(ctx); err != nil {
+				t.Fatal(err)
+			}
+			writer, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue", MGR: "allow r"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{Mon: "allow r", OSD: "allow r pool=tc-auth namespace=blue"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow *", OSD: "allow *"}); err == nil {
+				t.Fatal("existing identity was accepted with broader caps")
+			}
+			newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
+				t.Helper()
+				client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
+					ceph.WithIdleEntrypoint(),
+					testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
+				if client != nil {
+					testcontainers.CleanupContainer(t, client)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				return client
+			}
+			writerClient, readerClient := newClient(writer), newClient(reader)
+			// The outer Python process imposes a wall-clock deadline even if a
+			// native call is blocked. Every probe creates a fresh authenticated session.
+			probe := func(client testcontainers.Container, identity *ceph.ClientConfig, phase, keyring string) {
+				t.Helper()
+				execCommand(t, ctx, client, "python3", "-c", `import subprocess, sys
+subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, check=True)`, authNativeProbe,
+					identity.Name(), phase, keyring)
+			}
+			probe(writerClient, writer, "write", writer.KeyringPath())
+			probe(readerClient, reader, "readonly", reader.KeyringPath())
+			// Use another real key under the writer's entity name so this tests
+			// authentication failure rather than malformed keyring parsing.
+			_, otherKeyring, err := reader.ConnectionConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrongKeyring := bytes.ReplaceAll(otherKeyring, []byte("["+reader.Name()+"]"), []byte("["+writer.Name()+"]"))
+			if err := writerClient.CopyToContainer(ctx, wrongKeyring, "/tmp/wrong.keyring", 0o600); err != nil {
+				t.Fatal("copy deliberately wrong keyring failed")
+			}
+			probe(writerClient, writer, "bad-auth", "/tmp/wrong.keyring")
+			// Positive I/O after negative probes proves that caps were neither
+			// broadened by the duplicate request nor damaged by authentication failure.
+			probe(writerClient, writer, "verify", writer.KeyringPath())
+			_, keyBefore, err := writer.ConnectionConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			readOnlyCaps := ceph.ClientCaps{Mon: "allow r", OSD: "allow r pool=tc-auth namespace=blue"}
+			if err := cluster.UpdateClientCaps(ctx, writer, readOnlyCaps); err != nil {
+				t.Fatal(err)
+			}
+			caps, err := cluster.ClientCapabilities(ctx, writer)
+			if err != nil || caps != readOnlyCaps {
+				t.Fatalf("writer caps did not narrow exactly: %+v %v", caps, err)
+			}
+			probe(writerClient, writer, "readonly", writer.KeyringPath())
+			if err := cluster.UpdateClientCaps(ctx, writer, ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue"}); err != nil {
+				t.Fatal(err)
+			}
+			probe(writerClient, writer, "verify", writer.KeyringPath())
+			_, keyAfter, err := writer.ConnectionConfig()
+			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+				t.Fatal("capability change replaced client credentials")
+			}
+			if err := cluster.DeleteClient(ctx, writer); err != nil {
+				t.Fatal(err)
+			}
+			probe(writerClient, writer, "bad-auth", writer.KeyringPath())
+			probe(readerClient, reader, "readonly", reader.KeyringPath())
+			t.Log("native librados: scoped read/write and cross-boundary denials; writer→reader→writer retained its key and dropped omitted mgr caps; wrong-key and revoked fresh connections failed")
+		})
+	}
+}

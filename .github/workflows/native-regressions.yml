@@ -1,0 +1,22 @@
+name: Native regressions
+
+on:
+  workflow_dispatch:
+    inputs:
+      rgw_image:
+        description: Existing RGW role image for strict upstream regressions (empty uses published role; no build)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  regressions:
+    name: Scenarios
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: optional
+      check_name: Native RGW regressions
+      optional_batch: native_rgw_translation
+      rgw_image: ${{ inputs.rgw_image }}
