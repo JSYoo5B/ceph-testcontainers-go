@@ -11,6 +11,16 @@ change the API.
 - `ceph.Container.DaemonAddresses` reads the names and advertised address
   vectors of every MON, the active and standby MGRs and every OSD from the
   native maps, with each map's epoch.
+- `ceph.Container.AdminSocket` runs a command on the admin socket of an owned
+  MON, MGR or OSD, without the Messenger or Cephx. The daemons of a cluster
+  share a run directory, a Docker volume at `/var/run/ceph`, so it also works
+  with OSD images that have no `ceph` CLI.
+
+### Fixed
+
+- Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
+  now stops its `ceph quorum_status` process in the control container before
+  returning. The process previously ran on for up to five seconds.
 
 ## v0.1.0 (2026-10-11)
 

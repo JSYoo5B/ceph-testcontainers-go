@@ -256,10 +256,19 @@ from the process, which normally requires `ceph.WithHostNetwork()`. See
 ## Daemon admin sockets
 
 Every daemon has an admin socket with commands for status, performance
-counters and debugging. There are two ways to reach it.
+counters and debugging.
 
-`ceph tell` from the control container works for MON, MGR, OSD and MDS daemons
-regardless of the daemon's image:
+For MON, MGR and OSD daemons, use
+[`Container.AdminSocket`](../ceph.md#adminsocket). It reaches the socket of
+any owned daemon, whatever its image, without the Messenger or Cephx:
+
+```golang
+status, err := cluster.AdminSocket(ctx, "osd.0", "status")
+```
+
+`ceph tell` from the control container also works for MON, MGR, OSD and MDS
+daemons regardless of the daemon's image, but it travels over the Messenger
+like any client request:
 
 ```golang
 help, err := cluster.Ceph(ctx, "tell", "osd.0", "help")
