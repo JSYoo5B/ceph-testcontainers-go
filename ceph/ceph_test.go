@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -41,6 +42,7 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"small OSD block size", WithOSDBlockSize((64 << 20) - 1)},
 		{"startup timeout", WithStartupTimeout(0)},
 		{"OSD image", WithOSDImage("")},
+		{"unknown OSD object store", WithOSDObjectStore("filestore")},
 		{"host address requires host mode", WithHostAddress("127.0.0.1")},
 		{"host address empty", WithHostAddress("")},
 		{"host address unspecified", WithHostAddress("0.0.0.0")},
@@ -132,4 +134,20 @@ func (c *commandContainer) Exec(context.Context, []string, ...tcexec.ProcessOpti
 		framed.WriteString(stream.text)
 	}
 	return c.exitCode, &framed, nil
+}
+
+func TestMemStoreRefusesBlueStoreOnlySettings(t *testing.T) {
+	cluster, err := Run(context.Background(), DefaultImage, WithOSDObjectStore(OSDMemStore), WithOSDInMemoryStorage(1<<30))
+	if err == nil || cluster != nil || !strings.Contains(err.Error(), "OSDMemStore") {
+		t.Fatalf("MemStore with in-memory BlueStore files allocated resources: %v %v", cluster, err)
+	}
+	control := &poolFixtureContainer{Output: map[string]string{}}
+	c := &Container{Container: control, settings: options{startupTimeout: time.Second, osdObjectStore: OSDMemStore},
+		osds: map[int]*OSDContainer{0: {ID: 0, Container: control}}}
+	if err := c.InjectObjectDataError(t.Context(), "pool", "object", 0); err == nil || len(control.Calls) != 0 {
+		t.Fatalf("BlueStore read-error injection ran on MemStore: %v %v", err, control.Calls)
+	}
+	if (options{}).objectStore() != OSDBlueStore {
+		t.Fatal("the default OSD object store is not BlueStore")
+	}
 }

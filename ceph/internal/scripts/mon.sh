@@ -19,6 +19,13 @@ ms bind msgr1 = false
 ms bind msgr2 = true
 '
 fi
+# MemStore saves its contents to the OSD data directory only when the store
+# is unmounted, which Ceph's fast shutdown skips.
+memstore_config=
+if [ "${CEPH_OSD_OBJECTSTORE:-bluestore}" = memstore ]; then
+    memstore_config='osd fast shutdown = false
+'
+fi
 public_config=
 network_config=
 if [ -n "${CEPH_PUBLIC_NETWORK:-}" ]; then
@@ -102,8 +109,9 @@ ms bind ipv6 = false
 # waits observe new PG states sooner in this small disposable cluster.
 mgr stats period = 1
 ${messenger_config}[osd]
-osd objectstore = bluestore
-bluestore block create = true
+osd objectstore = ${CEPH_OSD_OBJECTSTORE:-bluestore}
+memstore device bytes = ${CEPH_OSD_BLOCK_SIZE}
+${memstore_config}bluestore block create = true
 bluestore block size = ${CEPH_OSD_BLOCK_SIZE}
 bluestore block preallocate file = false
 bluestore cache autotune = false

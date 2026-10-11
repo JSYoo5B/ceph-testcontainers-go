@@ -8,6 +8,12 @@ change the API.
 
 ### Added
 
+- `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
+  in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
+  keeps its data.
+- `ceph.PoolConfig.NoHashPSPool` clears a new pool's `hashpspool` flag.
+- The module page shows how to install a legacy CRUSH map with the native tools
+  and keep it across OSD restarts.
 - `ceph.Container.DaemonAddresses` reads the names and advertised address
   vectors of every MON, the active and standby MGRs and every OSD from the
   native maps, with each map's epoch.
