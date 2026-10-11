@@ -16,9 +16,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/network"
 )
 
-// Cleanup runs in reverse construction order. Successful actions are retained
+// Resources records the containers and cleanup actions a cross-cluster
+// fixture owns. Cleanup runs in reverse construction order. Successful actions are retained
 // as completed so partial failures can be retried without double termination.
-type resources struct {
+type Resources struct {
 	mu      sync.Mutex
 	actions []cleanupAction
 }
@@ -29,29 +30,31 @@ type cleanupAction struct {
 	done    bool
 }
 
-func (r *resources) addContainer(ctr testcontainers.Container) {
+// AddContainer records ctr for termination.
+func (r *Resources) AddContainer(ctr testcontainers.Container) {
 	if ctr == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.actions = append(r.actions, cleanupAction{name: "terminate container", cleanup: func(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-		return ignoreMissing(ctr.Terminate(ctx, opts...))
+		return IgnoreMissing(ctr.Terminate(ctx, opts...))
 	}})
 }
 
-// Missing resources are already cleaned up. A joined error is harmless only
+// IgnoreMissing treats missing resources as already cleaned up. A joined error is harmless only
 // when every non-nil child is missing: errors.Is alone could hide a real failure
 // alongside a not-found error. Inspect wrappers for joins before classifying
 // the original error, retaining SDK error classifiers carried by wrappers.
-func ignoreMissing(err error) error {
-	if err == nil || entirelyMissing(err) {
+func IgnoreMissing(err error) error {
+	if err == nil || EntirelyMissing(err) {
 		return nil
 	}
 	return err
 }
 
-func entirelyMissing(err error) bool {
+// EntirelyMissing reports that every non-nil error in err is a not-found error.
+func EntirelyMissing(err error) bool {
 	if err == nil {
 		return true
 	}
@@ -63,7 +66,7 @@ func entirelyMissing(err error) bool {
 					continue
 				}
 				hasChild = true
-				if !entirelyMissing(child) {
+				if !EntirelyMissing(child) {
 					return false
 				}
 			}
@@ -78,14 +81,24 @@ func entirelyMissing(err error) bool {
 	return errdefs.IsNotFound(err)
 }
 
-func (r *resources) addCleanup(name string, cleanup func(context.Context) error) {
+// Len returns the number of recorded cleanup actions, completed or not.
+func (r *Resources) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.actions)
+}
+
+// AddCleanup records a named cleanup action.
+func (r *Resources) AddCleanup(name string, cleanup func(context.Context) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.actions = append(r.actions, cleanupAction{name: name, cleanup: func(ctx context.Context, _ ...testcontainers.TerminateOption) error { return cleanup(ctx) }})
 }
 
-func (r *resources) terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	if err := lockRGWSyncObservation(ctx, &r.mu); err != nil {
+// Terminate runs the recorded actions in reverse order. Completed actions are
+// kept so a partial failure can be retried.
+func (r *Resources) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	if err := LockObservation(ctx, &r.mu); err != nil {
 		return err
 	}
 	defer r.mu.Unlock()
@@ -104,7 +117,9 @@ func (r *resources) terminate(ctx context.Context, opts ...testcontainers.Termin
 	return errors.Join(errs...)
 }
 
-func validatePair(ctx context.Context, image string, source, destination *ceph.Container) error {
+// ValidatePair checks that two clusters are distinct, running and on the same
+// network mode before a cross-cluster fixture uses them.
+func ValidatePair(ctx context.Context, image string, source, destination *ceph.Container) error {
 	if strings.TrimSpace(image) == "" {
 		return errors.New("multicluster image must not be empty")
 	}
@@ -141,20 +156,24 @@ func validatePair(ctx context.Context, image string, source, destination *ceph.C
 	return nil
 }
 
-func runClient(ctx context.Context, image string, cluster *ceph.Container, peerNetwork string, owned *resources) (testcontainers.Container, error) {
+// RunClient starts an idle CLI client attached to cluster and, on bridge
+// networks, to peerNetwork. owned records it for cleanup.
+func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerNetwork string, owned *Resources) (testcontainers.Container, error) {
 	opts := []testcontainers.ContainerCustomizer{cluster.WithClient(), ceph.WithIdleEntrypoint()}
 	if peerNetwork != "" && !cluster.UsesHostNetwork() {
 		opts = append(opts, network.WithNetworkName(nil, peerNetwork))
 	}
 	ctr, err := testcontainers.Run(ctx, image, opts...)
-	owned.addContainer(ctr)
+	owned.AddContainer(ctr)
 	if err != nil {
 		return ctr, fmt.Errorf("run multicluster CLI client: %w", err)
 	}
 	return ctr, nil
 }
 
-func exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
+// Exec runs args in ctr and returns stdout; a non-zero exit is an error that
+// carries both output streams.
+func Exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if len(args) == 0 {
 		return nil, errors.New("empty multicluster command")
 	}
@@ -172,9 +191,9 @@ func exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]
 	return stdout.Bytes(), nil
 }
 
-// cephBefore reports whether cluster's recorded release is older than major.
+// CephBefore reports whether cluster's recorded release is older than major.
 // An unknown version keeps the default image's command forms.
-func cephBefore(cluster *ceph.Container, major int) bool {
+func CephBefore(cluster *ceph.Container, major int) bool {
 	recorded, _, _ := strings.Cut(cluster.CephVersion(), ".")
 	value, err := strconv.Atoi(recorded)
 	return err == nil && value < major

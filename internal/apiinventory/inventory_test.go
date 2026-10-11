@@ -1,7 +1,7 @@
 // Package apiinventory checks that docs/API_CAPABILITIES.md lists the exact
-// public surface of the ceph, cephfs, rgw and rbd packages. Public types are
-// aliases of implementation types, so methods and line anchors refer to the
-// implementation in internal/cluster and internal/multicluster.
+// public surface of the ceph, cephfs, rgw and rbd packages. A public type is
+// either declared in its package or aliases an internal/cluster type; methods
+// and line anchors refer to whichever source declares them.
 package apiinventory_test
 
 import (
@@ -26,7 +26,7 @@ const (
 // Public packages in summary-table column order.
 var packages = []string{"ceph", "cephfs", "rgw", "rbd"}
 
-var implementations = map[string]string{"cluster": "internal/cluster", "multicluster": "internal/multicluster"}
+var implementations = map[string]string{"cluster": "internal/cluster"}
 
 // Run "go test ./internal/apiinventory -update" after moving declarations to
 // rewrite stale line anchors. Missing or extra entries still need editing.
@@ -120,6 +120,7 @@ func declarations(t *testing.T) (callables, types map[string]declaration) {
 	}
 	callables, types = map[string]declaration{}, map[string]declaration{}
 	for _, pkg := range packages {
+		local := loadImplementation(t, pkg)
 		parseDir(t, pkg, func(path string, fset *token.FileSet, file *ast.File) {
 			for _, decl := range file.Decls {
 				switch decl := decl.(type) {
@@ -144,7 +145,14 @@ func declarations(t *testing.T) (callables, types map[string]declaration) {
 						}
 						selector, ok := spec.Type.(*ast.SelectorExpr)
 						if !ok || !spec.Assign.IsValid() {
-							t.Fatalf("%s.%s must alias an implementation type", pkg, spec.Name.Name)
+							if spec.Assign.IsValid() {
+								t.Fatalf("%s.%s aliases a non-implementation type", pkg, spec.Name.Name)
+							}
+							types[pkg+"."+spec.Name.Name] = declaration{path, fset.Position(spec.Pos()).Line}
+							for method, source := range local.methods[spec.Name.Name] {
+								callables[pkg+"."+spec.Name.Name+"."+method] = source
+							}
+							continue
 						}
 						implPkg := selector.X.(*ast.Ident).Name
 						impl, exists := impls[implPkg].types[selector.Sel.Name]

@@ -2,9 +2,9 @@ package multicluster
 
 import "errors"
 
-// Use the same count admission before runtime access and in normalization.
+// NormalizeInitialMirrorDaemonCount applies the same count admission before runtime access and in normalization.
 // Explicit zero construction does not change DaemonCount=0's legacy default.
-func normalizeInitialMirrorDaemonCount(count int, noInitial bool) (int, error) {
+func NormalizeInitialMirrorDaemonCount(count int, noInitial bool) (int, error) {
 	if count < 0 {
 		return 0, errors.New("mirror daemon count must not be negative")
 	}

@@ -1,7 +1,5 @@
-// Package multicluster implements relationships between independent Ceph test
-// clusters: RGW multisite topology and policies, RBD and CephFS mirroring, and
-// RBD full/incremental backup transport and restore. The public rgw, rbd and
-// cephfs packages re-export it. It owns the additional containers and network
-// attachments, not the clusters; Ceph-side replication configuration and data
-// remain in the disposable clusters after Terminate.
+// Package multicluster holds helpers shared by the cross-cluster fixtures of
+// the rbd, cephfs and rgw packages: ownership of the extra containers and
+// network attachments they create, cluster pair validation, CLI execution and
+// bounded locking. It owns no clusters.
 package multicluster

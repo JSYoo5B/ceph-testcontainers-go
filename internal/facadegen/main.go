@@ -1,7 +1,8 @@
 // Command facadegen writes the public ceph, cephfs, rgw and rbd packages'
-// api.go files. They re-export the implementation in internal/cluster and
-// internal/multicluster under service-scoped names: types become aliases,
-// functions become documented wrappers and constants keep their values.
+// api.go files. They re-export the implementation in internal/cluster under
+// service-scoped names: types become aliases, functions become documented
+// wrappers and constants keep their values. Cross-cluster fixtures are
+// declared directly in the rbd, cephfs and rgw packages.
 //
 // Run it from the repository root with "go run ./internal/facadegen".
 package main
@@ -32,7 +33,6 @@ type source struct {
 
 var sources = []source{
 	{"internal/cluster", "cluster", "cluster"},
-	{"internal/multicluster", "multicluster", "multicluster"},
 }
 
 // Names that the generic prefix rule would not produce, and service entry

@@ -1,0 +1,57 @@
+package rbd
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/jsyoo5b/ceph-testcontainers-go/internal/multicluster/mctest"
+)
+
+func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
+	probe := &mctest.ContextLockRuntime{}
+	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
+	m := &Mirror{Container: daemon, daemons: []*MirrorDaemon{daemon}, initialDaemonName: "a", sourceClient: probe, destinationClient: probe}
+	operations := map[string]func(context.Context) error{
+		"AddDaemon":         func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },
+		"RemoveDaemon":      func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") },
+		"Rebootstrap":       m.Rebootstrap,
+		"EnableImage":       func(ctx context.Context) error { return m.EnableImage(ctx, "queued") },
+		"PolicyStatus":      func(ctx context.Context) error { _, err := m.PolicyStatus(ctx); return err },
+		"InterruptPeerLink": func(ctx context.Context) error { _, err := m.InterruptPeerLink(ctx, "a"); return err },
+		"Terminate":         func(ctx context.Context) error { return m.Terminate(ctx) },
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			mctest.AssertContextLockQueued(t, &m.mu, operation)
+			if probe.Execs.Load() != 0 || probe.Stops.Load() != 0 || probe.Terminations.Load() != 0 || m.closed || daemon.terminated {
+				t.Fatal("queued caller changed native runtime, membership or fixture lifecycle")
+			}
+		})
+	}
+	// A new context must enter the same fixture and reach real cleanup.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := m.RemoveDaemon(ctx, "a"); err != nil || len(m.daemons) != 0 || !daemon.terminated {
+		t.Fatalf("fresh RBD cleanup: %v", err)
+	}
+	if probe.Terminations.Load() != 1 || probe.Execs.Load() != 0 || probe.Stops.Load() != 0 {
+		t.Fatal("fresh cleanup did not terminate exactly its owned runtime")
+	}
+}
+
+func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
+	probe := &mctest.ContextLockRuntime{}
+	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
+	m := &Mirror{daemons: []*MirrorDaemon{daemon}}
+	operation := func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") }
+	mctest.AssertContextLockQueued(t, &daemon.mu, operation)
+	if probe.Terminations.Load() != 0 || daemon.terminated || len(m.daemons) != 1 {
+		t.Fatal("nested deadline lost cleanup ownership")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := operation(ctx); err != nil || probe.Terminations.Load() != 1 {
+		t.Fatalf("nested cleanup could not retry with fresh context: %v", err)
+	}
+}

@@ -1,0 +1,123 @@
+package rgw
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.additionalBuckets = map[string]string{"input": "input-instance", "output": "output-instance"}
+	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "translate", Status: SyncEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := SyncPipeConfig{ID: "filtered", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "input"}, DestinationBucket: &SyncBucketSelector{Name: "output"}, Tags: []SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}, Prefix: "published/", Priority: 7}
+	if err := f.CreateSyncPipe(t.Context(), g, config); err != nil {
+		t.Fatal(err)
+	}
+	pipe := syncNativePipe(g.state.group, "filtered")
+	if pipe["source"].(map[string]any)["bucket"] != "input:input-instance" || pipe["dest"].(map[string]any)["bucket"] != "output:output-instance" {
+		t.Fatal("selector did not capture native bucket instance IDs")
+	}
+	filter := pipe["params"].(map[string]any)["source"].(map[string]any)["filter"].(map[string]any)
+	if !reflect.DeepEqual(filter["tags"], []any{map[string]any{"key": "color", "value": "blue"}, map[string]any{"key": "color", "value": "red"}}) {
+		t.Fatal("same-key OR tags were lost or reordered incorrectly")
+	}
+	config.Tags[0].Value = "mutated"
+	if err := f.SetSyncPipePrefix(t.Context(), g, "filtered", "reports/"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RemoveSyncPipe(t.Context(), g, "filtered"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRGWSyncTagsRespectNativeRepresentability(t *testing.T) {
+	for _, tags := range [][]SyncObjectTag{{{Key: "key", Value: "comma,value"}}, {{Key: "comma,key", Value: "v"}}, {{Key: "equals=key", Value: "v"}}, {{Key: "", Value: "v"}}, {{Key: "key", Value: "v"}, {Key: "key", Value: "v"}}, {{Key: "key", Value: strings.Repeat("x", 257)}}} {
+		if _, err := normalizeSyncTags(tags); err == nil {
+			t.Fatal("invalid or ambiguously encoded tags accepted")
+		}
+	}
+	if got, err := normalizeSyncTags([]SyncObjectTag{{Key: "empty", Value: ""}, {Key: "equal", Value: "a=b"}}); err != nil || len(got) != 2 {
+		t.Fatal("representable native tag values were rejected")
+	}
+}
+
+func TestRGWSyncTenantBucketScopeUsesCanonicalNativeKey(t *testing.T) {
+	f, cli, _, _ := newRGWSyncTestFixture()
+	cli.bucketTenant = "tenant-a"
+	cli.additionalBuckets = map[string]string{"tenant-b/output": "output-instance"}
+	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{Bucket: "bucket", Tenant: "tenant-a"}, SyncGroupConfig{ID: "tenant-selector", Status: SyncEnabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := SyncPipeConfig{ID: "tenant-pipe", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket", Tenant: "tenant-a"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant-b"}}
+	if err := f.CreateSyncPipe(t.Context(), g, config); err != nil {
+		t.Fatal(err)
+	}
+	pipe := syncNativePipe(g.state.group, config.ID)
+	if pipe["source"].(map[string]any)["bucket"] != "tenant-a/bucket:bucket-original" || pipe["dest"].(map[string]any)["bucket"] != "tenant-b/output:output-instance" {
+		t.Fatal("tenant bucket selector lost its exact native namespace/instance")
+	}
+	if err := f.RemoveSyncPipe(t.Context(), g, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RemoveSyncGroup(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range cli.calls {
+		if syncTestFlag(args, "--tenant") != "" {
+			t.Fatal("bucket operation used global --tenant without a native user ID")
+		}
+	}
+}
+
+func TestRGWSyncPipeRefusesUnconfirmedPrincipalsAndClassMappings(t *testing.T) {
+	for _, config := range []SyncPipeConfig{
+		{DestinationOwner: &User{}},
+		{User: &User{}},
+		{DestinationStorageClass: "STANDARD_IA"},
+		{DestinationPlacements: map[string]*Placement{"destination": {}}},
+		{SourceBucket: &SyncBucketSelector{Name: "*"}},
+	} {
+		f, cli, _, _ := newRGWSyncTestFixture()
+		g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "guard", Status: SyncEnabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.ID = "unsafe"
+		config.SourceZones = []string{"source"}
+		config.DestinationZones = []string{"destination"}
+		if err := f.CreateSyncPipe(t.Context(), g, config); err == nil {
+			t.Fatal("unconfirmed identity or destination mapping accepted")
+		}
+		for _, args := range cli.calls {
+			if syncTestCommand(args, "pipe", "create") {
+				t.Fatal("invalid pipe reached native mutation")
+			}
+		}
+	}
+}
+
+func TestRGWSyncPrincipalRequiresExactSourceDestinationTenants(t *testing.T) {
+	scope := SyncPolicyScope{Bucket: "input", Tenant: "tenant-a"}
+	config := SyncPipeConfig{SourceBucket: &SyncBucketSelector{Name: "input", Tenant: "tenant-a"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant-a"}}
+	if err := checkSyncPrincipalTenants(scope, config, "tenant-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSyncPrincipalTenants(scope, config, ""); err == nil {
+		t.Fatal("legacy principal accepted for a tenant bucket")
+	}
+	config.DestinationBucket.Tenant = "tenant-b"
+	if err := checkSyncPrincipalTenants(scope, config, "tenant-a"); err == nil {
+		t.Fatal("cross-tenant owner/user-mode translation accepted without proof")
+	}
+	if err := checkSyncPrincipalTenants(SyncPolicyScope{}, SyncPipeConfig{}, ""); err == nil {
+		t.Fatal("unbounded global wildcard source accepted for a principal")
+	}
+	if err := checkSyncPrincipalTenants(SyncPolicyScope{Bucket: "input"}, SyncPipeConfig{}, ""); err != nil {
+		t.Fatal("legacy current-bucket principal rejected")
+	}
+}
