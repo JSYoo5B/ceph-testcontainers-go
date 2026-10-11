@@ -113,14 +113,36 @@ func queryMonitorQuorum(ctx context.Context, control testcontainers.Container) (
 }
 
 func monitorQuorumCommand(ctx context.Context, control testcontainers.Container, processLimit time.Duration) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if control == nil {
-		return nil, errors.New("ceph control container is unavailable")
-	}
 	if processLimit <= 0 || processLimit > monitorQuorumProcessTimeout {
 		return nil, errors.New("invalid monitor quorum process limit")
+	}
+	result, err := supervisedCommand(ctx, control, "monitor quorum", processLimit, monitorQuorumStdoutLimit, monitorQuorumStderrLimit,
+		"ceph", "--connect-timeout", "5", "quorum_status", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	if result.exitCode != 0 {
+		return nil, fmt.Errorf("quorum_status exited %d: %s", result.exitCode, strings.TrimSpace(string(result.stdout)+string(result.stderr)))
+	}
+	return result.stdout, nil
+}
+
+// supervisedResult is the complete output of one supervised command.
+type supervisedResult struct {
+	stdout, stderr []byte
+	exitCode       int
+}
+
+// supervisedCommand runs argv in ctr under the Python supervisor, which kills
+// the command's process group when processLimit or ctx ends first and bounds
+// each output stream. label names the command in errors. A timed-out or
+// truncated run is an error; a nonzero exit is returned in the result.
+func supervisedCommand(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (supervisedResult, error) {
+	if err := ctx.Err(); err != nil {
+		return supervisedResult{}, err
+	}
+	if ctr == nil {
+		return supervisedResult{}, errors.New("ceph control container is unavailable")
 	}
 	// The child expires first, leaving time to kill/reap and return its envelope.
 	// WithTimeout also preserves an earlier caller deadline without extending it.
@@ -131,35 +153,34 @@ func monitorQuorumCommand(ctx context.Context, control testcontainers.Container,
 	cushion := min(monitorQuorumExecCushion, remaining/4)
 	seconds := min(processLimit, remaining-cushion).Seconds()
 	if seconds <= 0 {
-		return nil, context.DeadlineExceeded
+		return supervisedResult{}, context.DeadlineExceeded
 	}
-	argv := []string{"python3", "-c", monitorQuorumCommandScript,
-		strconv.Itoa(monitorQuorumStdoutLimit), strconv.Itoa(monitorQuorumStderrLimit),
-		strconv.FormatFloat(seconds, 'f', 9, 64), "ceph", "--connect-timeout", "5", "quorum_status", "--format", "json"}
-	code, reader, err := control.Exec(attempt, argv, tcexec.Multiplexed())
+	command := append([]string{"python3", "-c", monitorQuorumCommandScript,
+		strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), strconv.FormatFloat(seconds, 'f', 9, 64)}, argv...)
+	code, reader, err := ctr.Exec(attempt, command, tcexec.Multiplexed())
 	if err != nil {
-		return nil, fmt.Errorf("exec monitor quorum supervisor: %w", err)
+		return supervisedResult{}, fmt.Errorf("exec %s supervisor: %w", label, err)
 	}
 	if err := attempt.Err(); err != nil {
-		return nil, err
+		return supervisedResult{}, err
 	}
 	if reader == nil {
-		return nil, errors.New("monitor quorum supervisor returned no output")
+		return supervisedResult{}, fmt.Errorf("%s supervisor returned no output", label)
 	}
 	if closer, ok := reader.(io.Closer); ok {
 		defer func() { _ = closer.Close() }()
 	}
 	// Both streams are bounded inside the container before Testcontainers buffers.
-	envelopeLimit := (monitorQuorumStdoutLimit+monitorQuorumStderrLimit)*2 + 4096
+	envelopeLimit := (stdoutLimit+stderrLimit)*2 + 4096
 	data, err := io.ReadAll(io.LimitReader(reader, int64(envelopeLimit)+1))
 	if ctxErr := attempt.Err(); ctxErr != nil {
-		return nil, ctxErr
+		return supervisedResult{}, ctxErr
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read monitor quorum supervisor: %w", err)
+		return supervisedResult{}, fmt.Errorf("read %s supervisor: %w", label, err)
 	}
 	if len(data) > envelopeLimit || code != 0 {
-		return nil, fmt.Errorf("monitor quorum supervisor failed: exit=%d oversized=%t", code, len(data) > envelopeLimit)
+		return supervisedResult{}, fmt.Errorf("%s supervisor failed: exit=%d oversized=%t", label, code, len(data) > envelopeLimit)
 	}
 	var result struct {
 		SchemaVersion   *int    `json:"schema_version"`
@@ -171,24 +192,21 @@ func monitorQuorumCommand(ctx context.Context, control testcontainers.Container,
 		StderrTruncated *bool   `json:"stderr_truncated"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil || result.SchemaVersion == nil || *result.SchemaVersion != 1 || result.Stdout == nil || result.Stderr == nil || result.ExitCode == nil || result.TimedOut == nil || result.StdoutTruncated == nil || result.StderrTruncated == nil {
-		return nil, errors.New("invalid monitor quorum supervisor protocol")
+		return supervisedResult{}, fmt.Errorf("invalid %s supervisor protocol", label)
 	}
 	stdout, stdoutErr := base64.StdEncoding.DecodeString(*result.Stdout)
 	stderr, stderrErr := base64.StdEncoding.DecodeString(*result.Stderr)
 	if stdoutErr != nil || stderrErr != nil {
-		return nil, errors.New("invalid monitor quorum supervisor encoding")
+		return supervisedResult{}, fmt.Errorf("invalid %s supervisor encoding", label)
 	}
 	if *result.TimedOut {
-		return nil, fmt.Errorf("monitor quorum process timed out: %w", context.DeadlineExceeded)
+		return supervisedResult{}, fmt.Errorf("%s process timed out: %w", label, context.DeadlineExceeded)
 	}
-	if *result.StdoutTruncated || *result.StderrTruncated || len(stdout) > monitorQuorumStdoutLimit || len(stderr) > monitorQuorumStderrLimit {
-		return nil, errors.New("monitor quorum process output was truncated")
-	}
-	if *result.ExitCode != 0 {
-		return nil, fmt.Errorf("quorum_status exited %d: %s", *result.ExitCode, strings.TrimSpace(string(stdout)+string(stderr)))
+	if *result.StdoutTruncated || *result.StderrTruncated || len(stdout) > stdoutLimit || len(stderr) > stderrLimit {
+		return supervisedResult{}, fmt.Errorf("%s process output was truncated", label)
 	}
 	if err := attempt.Err(); err != nil {
-		return nil, err
+		return supervisedResult{}, err
 	}
-	return stdout, nil
+	return supervisedResult{stdout: stdout, stderr: stderr, exitCode: *result.ExitCode}, nil
 }
