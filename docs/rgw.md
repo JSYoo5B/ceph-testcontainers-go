@@ -740,6 +740,15 @@ Same as `Gateways`, but bounds the wait for a concurrent topology change by
 
 ### Types
 
+#### Printing handles: String and GoString
+
+`Gateway`, `User`, `Account`, `Placement`, `TLSConfig` and `SyncGroup`
+implement `String` and `GoString` so that `fmt` verbs, including `%v`, `%+v`
+and `%#v`, print only an identifying label such as `RGW gateway s3` or
+`RGW user app`. Printing a handle never writes its S3 keys, TLS private key or
+other credentials to test logs. Read credentials explicitly with
+`User.Credentials` or the `Gateway` fields when a client needs them.
+
 #### Config
 
 | Field | Meaning |
