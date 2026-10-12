@@ -629,7 +629,7 @@ daemons' `ms_*_mode` settings instead.
 ceph.WithAuth(ceph.AuthConfig{
 	KeyType:          ceph.CipherAES256K,
 	ServiceCipher:    ceph.CipherAES,
-	MonTicketTTL:     1500 * time.Millisecond,
+	MonTicketTTL:     10500 * time.Millisecond,
 	ServiceTicketTTL: 30 * time.Second,
 })
 ```
@@ -665,6 +665,14 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
   [TemporaryConfig](#temporaryconfig) cannot change them later. MONs rotate
   service secrets on their tick, so lifetimes of a few seconds also need a
   shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
+- Keep `MonTicketTTL` at ten seconds or more. MON clients check their tickets
+  only every few seconds, and a renewal that comes after the MONs dropped the
+  secret of the old ticket is refused with `EACCES`, after which the client
+  does not authenticate again. With 1.5 seconds, a MGR that was busy loading its
+  modules lost its MON session this way in about one of eight bootstraps on a
+  loaded host. Ceph 19.2.5 and 20.2.4 then abort that MGR with
+  `ceph_assert(active_modules)` once `mgr_module_load_expiration` (20 seconds)
+  has passed, so `Run` fails waiting for the MGR.
 - The MonMap ciphers can change on a running Tentacle cluster with `ceph mon set`:
 
   ```golang

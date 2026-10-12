@@ -48,15 +48,22 @@ type keyRotationFence struct {
 // sends the command, it stores in argv[1] the nonce of its messenger, by which
 // every MON lists the client's sessions, so that settling can wait until no
 // MON still holds a connection that could deliver the command. argv[2] is the
-// command in JSON; its output goes to stdout and a failure exits 1.
+// command in JSON; its output goes to stdout and a failure exits 1. It shuts
+// its client down before exiting, because a librados client left to the
+// interpreter's shutdown sometimes aborts there, after the command applied
+// (std::bad_variant_access or SIGSEGV, about 2.5% of runs on Squid 19.2.5 and
+// Tentacle 20.2.4).
 const monitorMutationScript = `import os,rados,re,sys
 c=rados.Rados(conffile='/etc/ceph/ceph.conf')
-c.connect(timeout=5)
-nonce=re.search(r'/(\d+)',c.get_addrs()).group(1)
-with open(sys.argv[1]+'.tmp','w') as f:
- f.write(nonce)
-os.rename(sys.argv[1]+'.tmp',sys.argv[1])
-ret,out,err=c.mon_command(sys.argv[2],b'')
+try:
+ c.connect(timeout=5)
+ nonce=re.search(r'/(\d+)',c.get_addrs()).group(1)
+ with open(sys.argv[1]+'.tmp','w') as f:
+  f.write(nonce)
+ os.rename(sys.argv[1]+'.tmp',sys.argv[1])
+ ret,out,err=c.mon_command(sys.argv[2],b'')
+finally:
+ c.shutdown()
 sys.stdout.buffer.write(out)
 sys.stderr.write(err)
 sys.exit(0 if ret==0 else 1)

@@ -43,7 +43,11 @@ try:
     ioctx.notify(obj, "ping", 5000)
 except rados.Error as error:
     errno = getattr(error, "errno", -1)
-print(json.dumps({"errno": errno, "seconds": time.monotonic() - start}))
+seconds = time.monotonic() - start
+# A librados client left to interpreter shutdown sometimes crashes there.
+ioctx.close()
+cluster.shutdown()
+print(json.dumps({"errno": errno, "seconds": seconds}))
 `
 
 // A frozen watcher keeps its watch until osd_client_watch_timeout expires.
