@@ -130,7 +130,9 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 }
 
 // testAuthCiphers starts a cluster of image whose keys are all AES with
-// fractional ticket lifetimes. With key type support it also checks AES256K
+// fractional ticket lifetimes. The MON ticket lifetime stays above the MON
+// clients' renewal cadence: with 1.5 seconds a busy MGR lost its MON session
+// now and then and Ceph aborted it during activation (#23). With key type support it also checks AES256K
 // clients and a second cluster whose service cipher differs from its key
 // type; without it, that AES256K requests are refused before any change.
 func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
@@ -138,7 +140,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	defer cancel()
 	base := append(slices.Clone(imageOpts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
 	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
-		KeyType: ceph.CipherAES, MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
+		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	}))...)
 	keyTypes := keyTypeOption(t, ctx, cluster)
 
@@ -153,7 +155,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 			t.Fatalf("%s has a %s key", entity, got)
 		}
 	}
-	if got := runningOption(t, ctx, cluster, "mon.a", "auth_mon_ticket_ttl"); got != 1.5 {
+	if got := runningOption(t, ctx, cluster, "mon.a", "auth_mon_ticket_ttl"); got != 10.5 {
 		t.Fatalf("mon.a auth_mon_ticket_ttl = %v", got)
 	}
 	if got := runningOption(t, ctx, cluster, "osd.0", "auth_service_ticket_ttl"); got != 120 {

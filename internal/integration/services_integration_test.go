@@ -89,6 +89,13 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 					}
 				}
 				ctrs = append(ctrs, osdContainers(cluster)...)
+				// A MGR that did not register is a common partial bootstrap.
+				ctrs = append(ctrs, cluster.ManagerContainer())
+				for _, mgr := range cluster.Managers() {
+					if mgr != nil && mgr.Container != nil {
+						ctrs = append(ctrs, mgr.Container)
+					}
+				}
 				seen := make(map[string]bool)
 				for _, ctr := range ctrs {
 					if ctr == nil {
@@ -98,6 +105,9 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 						continue
 					} else {
 						seen[id] = true
+					}
+					if state, err := ctr.State(ctx); err == nil && state != nil {
+						t.Logf("container %s state: status=%s exit=%d oom=%t started=%s finished=%s", ctr.GetContainerID(), state.Status, state.ExitCode, state.OOMKilled, state.StartedAt, state.FinishedAt)
 					}
 					logs, err := ctr.Logs(ctx)
 					if err != nil {

@@ -54,9 +54,11 @@ type AuthConfig struct {
 	PreferredCipher CephxCipher
 	// MonTicketTTL and ServiceTicketTTL set auth_mon_ticket_ttl and
 	// auth_service_ticket_ttl, in seconds with fractions kept, such as
-	// 1500 * time.Millisecond. MONs rotate service secrets on their ticks, so
+	// 10500 * time.Millisecond. MONs rotate service secrets on their ticks, so
 	// lifetimes of a few seconds also need a shorter mon_tick_interval, which
-	// WithConfigFile can set.
+	// WithConfigFile can set. Keep MonTicketTTL at ten seconds or more: MON
+	// clients renew their tickets only every few seconds, and a daemon whose
+	// renewal comes too late is refused and does not authenticate again.
 	MonTicketTTL     time.Duration
 	ServiceTicketTTL time.Duration
 }
