@@ -684,6 +684,11 @@ report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{
 - For anything outside the fixed queries, run the command yourself with
   `cluster.Ceph`.
 
+`CollectCrashMetadata` adds the crash reports that daemons wrote into
+`/var/lib/ceph/crash`: daemon, version, time, assertion and backtrace, read
+through Docker's archive API also from stopped containers. Crash logs and
+dumps are not collected. See [ceph.md](../ceph.md#collectcrashmetadata).
+
 ## Avoiding conflicts with fixture bookkeeping
 
 The fixture records what it created and what it changed, and checks native

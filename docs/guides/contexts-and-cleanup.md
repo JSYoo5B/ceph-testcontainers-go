@@ -181,7 +181,9 @@ metadata) disappears with the containers. `Terminate` does not restore
 paused containers, cancels and stops native commands, releases host-port
 reservations, stops gateways and MDS
 daemons while the OSDs are still running, then removes OSDs, the in-memory OSD
-volume, MGRs, MONs, the control container and finally the networks. Each
+volume, MGRs, MONs, the control container, then any container left with the
+cluster's label `org.testcontainers.ceph.cluster` (one that Docker created
+although the create reply was lost), and finally the networks. Each
 container gets a 2-second stop timeout unless you pass
 `testcontainers.StopTimeout`. A container or network that fails to go away
 stays tracked and is reported in the joined error; calling `Terminate` again
@@ -298,7 +300,8 @@ t.Cleanup(func() {
 
 A report is returned together with an error when some observations failed;
 keep it. See [Running native commands](native-commands.md#diagnostics) for the
-options.
+options. `CollectCrashMetadata` works the same way for the crash reports that
+daemons wrote; it also reads containers that have stopped.
 
 ## Handles returned with errors
 

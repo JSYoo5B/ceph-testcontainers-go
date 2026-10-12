@@ -109,7 +109,7 @@ func onlyMissingHostResource(err error) bool {
 	return errdefs.IsNotFound(err)
 }
 
-func reserveHostPorts(ctx context.Context, image, address string, count int, timeout time.Duration) (*hostPortLease, error) {
+func reserveHostPorts(ctx context.Context, image, address string, count int, timeout time.Duration, opts ...testcontainers.ContainerCustomizer) (*hostPortLease, error) {
 	if strings.TrimSpace(image) == "" || count <= 0 || timeout <= 0 {
 		return nil, errors.New("host port reservation requires an image, a positive count and a positive timeout")
 	}
@@ -118,12 +118,12 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ctr, err := testcontainers.Run(ctx, image,
+	ctr, err := testcontainers.Run(ctx, image, append([]testcontainers.ContainerCustomizer{
 		hostContainerCustomizer(address),
 		testcontainers.WithEntrypoint("python3"),
 		testcontainers.WithCmd("-u", "-c", hostPortAllocatorScript, address, strconv.Itoa(count)),
 		testcontainers.WithWaitStrategy(wait.ForLog(hostPortLeasePrefix).WithStartupTimeout(timeout)),
-	)
+	}, opts...)...)
 	lease := &hostPortLease{ctr: ctr}
 	if err != nil {
 		var started testcontainers.Container

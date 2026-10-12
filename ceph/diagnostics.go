@@ -157,9 +157,12 @@ func normalizeDiagnosticsConfig(config DiagnosticsConfig) (DiagnosticsConfig, er
 
 type diagnosticNetwork struct{ id, name string }
 type diagnosticsSnapshot struct {
-	containers          []DiagnosticsContainer
-	networks            []diagnosticNetwork
-	control             testcontainers.Container
+	containers []DiagnosticsContainer
+	networks   []diagnosticNetwork
+	control    testcontainers.Container
+	// controlPlane is the separate control container that the snapshot
+	// added itself, if the cluster has one.
+	controlPlane        testcontainers.Container
 	hostNetwork, closed bool
 	publicAddress       string
 	secrets             []string
@@ -177,6 +180,19 @@ func diagnosticContainerHandle(ctr testcontainers.Container) testcontainers.Cont
 		}
 	}
 	return ctr
+}
+
+// sameContainer reports whether a and b are the same container: by ID, or for
+// containers without one, by the same pointer.
+func sameContainer(a, b testcontainers.Container) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if id := b.GetContainerID(); id != "" {
+		return a.GetContainerID() == id
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	return va.Type() == vb.Type() && va.Kind() == reflect.Pointer && va.Pointer() == vb.Pointer()
 }
 
 func diagnosticLock(ctx context.Context, try func() bool) error {
@@ -256,6 +272,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	}
 	if c.controlPlane != nil {
 		snapshot.control = diagnosticContainerHandle(c.controlPlane)
+		snapshot.controlPlane = snapshot.control
 		add("control", "cli", snapshot.control)
 	}
 	c.controlMu.RUnlock()
@@ -615,15 +632,25 @@ var diagnosticSecretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|
 var diagnosticBearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var diagnosticPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 
+// diagnosticsRedactor masks values and recognized secrets. Values are
+// replaced in one pass, longest first, so that a replacement is never
+// rewritten again and the output grows at most linearly.
 func diagnosticsRedactor(values []string) func(string) string {
-	values = slices.Clone(values)
-	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
-	return func(data string) string {
-		for _, value := range values {
-			if value != "" {
-				data = strings.ReplaceAll(data, value, "[REDACTED]")
-			}
+	values = slices.DeleteFunc(slices.Clone(values), func(value string) bool { return value == "" })
+	slices.SortFunc(values, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
 		}
+		return strings.Compare(a, b)
+	})
+	values = slices.Compact(values)
+	pairs := make([]string, 0, 2*len(values))
+	for _, value := range values {
+		pairs = append(pairs, value, "[REDACTED]")
+	}
+	replacer := strings.NewReplacer(pairs...)
+	return func(data string) string {
+		data = replacer.Replace(data)
 		data = diagnosticPrivateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
 		data = diagnosticSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
 		return diagnosticBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")

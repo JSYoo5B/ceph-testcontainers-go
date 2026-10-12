@@ -575,6 +575,7 @@ rejected with the option to use instead:
 | `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | fixed OSD storage layout |
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon logs always go to container output |
 | `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data` | fixed paths |
+| `crash_dir` | fixed at `/var/lib/ceph/crash` (`ceph.CrashDir`), where [CollectCrashMetadata](#collectcrashmetadata) reads |
 | `mds_join_fs`, `mds_cache_memory_limit` | set on the MDS command line |
 | `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify`, `rgw_sync_lease_period` | set on the RGW command line |
 
@@ -1022,7 +1023,11 @@ containers first, cancels the commands that [RunNativeCommand](#runnativecommand
 still runs, releases host port reservations, stops services (RGW, MDS)
 before OSDs, removes all owned daemons, helper containers, the OSD memory
 volume and the shared run volume of the admin sockets, and finally removes the
-owned networks. It works on a partially
+owned networks. Every container that the cluster creates carries the label
+`org.testcontainers.ceph.cluster` with the cluster's ID, and `Terminate` also
+removes a container with that label that it has no handle for. Docker can
+create such a container when the reply to a create request was lost, for
+example when the startup timeout ended during the request. It works on a partially
 initialized cluster returned by `Run` with an error, and a failed cleanup can be
 retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
@@ -2910,6 +2915,98 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
   `RedactValues` and named secret patterns are masked, but redaction is best
   effort; review arbitrary application logs before sharing a report.
 
+#### CollectCrashMetadata
+
+```golang
+func (c *Container) CollectCrashMetadata(ctx context.Context, config ceph.CrashMetadataConfig) (*ceph.CrashMetadataReport, error)
+```
+
+Collects the crash reports that Ceph daemons wrote, for failure analysis. When a
+daemon dies on a fatal signal or a failed assertion, Ceph writes a report
+directory into its crash directory, `ceph.CrashDir` (`/var/lib/ceph/crash`).
+The directory holds a `meta` JSON file with the daemon, version, time,
+assertion and backtrace, a `log` file of recent events, and a `done` marker.
+`CollectCrashMetadata` reads only the `meta` files, of every MON, MGR, OSD, MDS
+and RGW container and of `config.AdditionalContainers`. It is separate from
+`CollectDiagnostics` and is not called automatically.
+
+```golang
+t.Cleanup(func() {
+	if !t.Failed() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	report, err := cluster.CollectCrashMetadata(ctx, ceph.CrashMetadataConfig{})
+	if report != nil {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		t.Logf("Ceph crash metadata:\n%s", data)
+	}
+	if err != nil {
+		t.Log("crash metadata incomplete:", err)
+	}
+})
+```
+
+- The files come through Docker's archive API, so stopped containers work,
+  and so do a partially bootstrapped or terminated cluster. Nothing is started,
+  stopped, reconfigured or executed in the containers, and nothing is extracted
+  to disk. Caller-owned containers are only read.
+- Only regular files named `meta` in a report directory, or in `posted/`, are
+  read. Crash logs, process memory dumps and every other file are skipped and
+  counted in `IgnoredEntries`. Links, paths outside the directory, files over
+  the size limit and files that are not one JSON object are listed in
+  `Omitted` with the reason.
+- Each record keeps the known Ceph crash fields in `Fields`: `crash_id`,
+  `timestamp`, `process_name`, `entity_name`, `ceph_version`, the `utsname_*` and
+  `os_*` fields, `backtrace`, the `assert_*` and `io_error*` fields,
+  `archived` and `stack_sig`. Other fields are named in `OmittedFields` without
+  their values. Strings are redacted like `CollectDiagnostics`, but host names
+  and paths stay; review a report before sharing it.
+- Each `ceph.CrashRecord` has `CrashID`, `Path`, the convenience fields
+  `Entity`, `Process`, `CephVersion` and `Timestamp`, `Done`, which reports
+  Ceph's `done` marker that completes a report, `Posted` for a report in
+  `posted/`, `Fields` and `OmittedFields`. Each `ceph.CrashOmission` has the
+  file's `Path` and the `Reason`.
+
+`ceph.CrashMetadataConfig` fields (zero selects the default):
+
+| Field | Default | Limit | Meaning |
+| --- | --- | --- | --- |
+| `Timeout` | 1 minute | 5 minutes | Whole collection; the caller's deadline also applies. |
+| `OperationTimeout` | 20 seconds | 1 minute | Each container. |
+| `MaxArchiveBytes` | 16 MiB | 256 MiB | Archive bytes read per container, crash logs included. |
+| `MaxEntries` | 4096 | 65536 | Archive entries per container. |
+| `MaxRecordBytes` | 64 KiB | 1 MiB | Each `meta` file. |
+| `MaxRecords` | 64 | 1024 | Records per container; later ones are listed in `Omitted`. |
+| `AdditionalContainers` | none | 64 | Caller-owned containers, such as mirror daemons, to read as well. Each one is read whatever its `Role` and `Name`; the cluster's separate control container, which runs no daemon, is read only when it is listed here. |
+| `RedactValues` | none | 128 values of up to 4096 bytes | Extra secrets to mask. |
+
+Each `ceph.CrashMetadataContainer` in `ceph.CrashMetadataReport.Containers` has
+the container's role, name, ID, image ID and Docker state (`State`,
+`ExitCode`, `OOMKilled`, `StartedAt`, `FinishedAt`), for correlation with the
+records. Its `Outcome` (a `ceph.CrashOutcome`) is one of:
+
+| Outcome | Meaning |
+| --- | --- |
+| `CrashRecordsFound` | The directory was read and held at least one accepted record. |
+| `CrashEntriesRejected` | The directory was read, but every `meta` file was rejected; see `Omitted`. |
+| `CrashDirectoryEmpty` | The directory was read and held no report. This does not prove that the daemon never crashed. |
+| `CrashDirectoryAbsent` | The container has no crash directory. |
+| `CrashContainerUnavailable` | The container was never created, or was removed with its reports. |
+| `CrashReadFailed` | Docker or the container implementation failed, for example after the context ended; see `Error`. |
+| `CrashArchiveIncomplete` | The archive was malformed, cut off or over a limit; `Records` holds what was read before. |
+
+- A failed or incomplete container makes the call return an error, with the
+  report and every other container's records. Save the report before checking
+  the error.
+- `Complete` means that every crash directory was read in full and every
+  `meta` file in it was accepted, or that the directory is absent. It does not
+  mean that every crash in the cluster's history was captured.
+- A container's exit code alone does not tell a crash. A daemon that is PID 1
+  of its container, as in this cluster, exits 1 after Ceph wrote its report,
+  not with the signal's code.
+
 ### Other module functions and types
 
 #### WithIdleEntrypoint
@@ -3747,7 +3844,8 @@ container, or use host mode.
 
 See [CollectDiagnostics](#collectdiagnostics). Add caller-owned clients and
 mirror daemons with `DiagnosticsConfig.AdditionalContainers` and mask
-application secrets with `RedactValues`.
+application secrets with `RedactValues`. For daemons that crashed, also save
+the crash reports with [CollectCrashMetadata](#collectcrashmetadata).
 
 ## Running native commands
 

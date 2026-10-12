@@ -68,7 +68,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(),
+	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
 		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
 		c.runMount()...)...)
@@ -200,7 +200,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	for attempt := range attempts {
 		var lease *hostPortLease
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			// c.mu is already held, so register ownership without re-locking it.
 			if lease != nil {
 				c.portLeases = append(c.portLeases, lease)
@@ -229,7 +229,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			return mon, err
 		}
 		opts = append(opts, c.runMount()...)
-		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, opts...)
+		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -753,7 +753,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(),
+	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
