@@ -5,8 +5,10 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,17 +89,66 @@ func testClientRevocation(t *testing.T) {
 				t.Fatalf("ClientCapabilities after Restore: %+v, %v", got, err)
 			}
 			startClientContainer(t, ctx, cluster, client)
-			recovered := waitHeldSessionRecovered(t, ctx, holder, restoredAt, time.Minute)
+			t.Logf("%s: container times: revocation %.3f, rejection %.3f, Restore %.3f; MON ticket TTL %v",
+				cipher, revokedAt, revokedAt+rejected, restoredAt, clientKeyMonTicketTTL)
+			// The open session renews its tickets after Restore only while
+			// the MONs keep the rotating secret of its last auth ticket, so
+			// it connects anew, as a recovering client does.
+			renewed := heldRenewedWithin(t, ctx, holder, restoredAt, 5*time.Second)
+			recovered := waitHeldSessionReconnected(t, ctx, holder, reconnectHeldSession(t, ctx, holder), time.Minute)
 			if err := revocation.Restore(ctx); err != nil {
 				t.Fatalf("a repeated Restore: %v", err)
 			}
 			if entry := authEntry(t, ctx, cluster, "client.bystander"); entry.Key != bystander.Key || !maps.Equal(entry.Caps, bystander.Caps) {
 				t.Fatal("client.bystander changed")
 			}
-			t.Logf("%s: the MONs rejected the held session %.1fs after the revocation (its MON reads failed after that: %t; its OSD reads while revoked: %s); it authenticated again and read MON, MGR and OSD %.1fs after Restore",
-				cipher, rejected, failed, revokedReads, recovered)
+			t.Logf("%s: the MONs rejected the held session %.1fs after the revocation (its MON reads failed after that: %t; its OSD reads while revoked: %s); after Restore it renewed by itself within 5s: %t, and on a new connection it authenticated and read MON, MGR and OSD %.1fs after the request",
+				cipher, rejected, failed, revokedReads, renewed, recovered)
 		})
 	}
+
+	// The MONs renew an open session's tickets only with an auth ticket whose
+	// rotating secret they still keep, for a few MonTicketTTL periods; with
+	// auth_allow_insecure_global_id_reclaim off they refuse an older one. A
+	// Restore after that leaves the open session unable to renew. Squid keeps
+	// its MON session answering and Tentacle drops it; a new connection
+	// authenticates either way.
+	t.Run("late restore", func(t *testing.T) {
+		caps := ceph.ClientCaps{Mon: "allow r", MGR: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}
+		client, err := cluster.CreateClient(ctx, "late-restore", caps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		holder := startClientContainer(t, ctx, cluster, client)
+		startHeldSession(t, ctx, holder, client, "hold")
+		revokedAt := containerTime(t, ctx, holder)
+		revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rejected, lost := waitHeldRenewalRejected(t, ctx, holder, revokedAt, clientKeyMonTicketTTL+30*time.Second)
+		// Outlast the rotating secrets of the session's last auth ticket.
+		time.Sleep(3 * clientKeyMonTicketTTL)
+		restoredAt := containerTime(t, ctx, holder)
+		if err := revocation.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("container times: revocation %.3f, rejection %.3f, Restore %.3f; MON ticket TTL %v",
+			revokedAt, revokedAt+rejected, restoredAt, clientKeyMonTicketTTL)
+		if renewed := heldRenewedWithin(t, ctx, holder, restoredAt, 10*time.Second); renewed {
+			t.Fatalf("the open session renewed its tickets %.0fs after the rejection; the MONs kept an older secret than expected:\n%s",
+				restoredAt-revokedAt-rejected, heldAuthTrace(t, ctx, holder))
+		}
+		// A session that kept its MON connection asks for renewals, which the
+		// MONs refuse for its ticket; one that lost it asks for none.
+		refusals := monitorLogLines(t, ctx, cluster, client.Name()+":  attempt to reclaim global_id", "using bad ticket")
+		if !lost && refusals == 0 {
+			t.Fatalf("the open session kept its MON connection, but the MONs logged no refusal of its ticket:\n%s", heldAuthTrace(t, ctx, holder))
+		}
+		recovered := waitHeldSessionReconnected(t, ctx, holder, reconnectHeldSession(t, ctx, holder), time.Minute)
+		t.Logf("a Restore %.0fs after the rejection left the open session unable to renew (its MON session lost at the rejection: %t; MON log lines about its bad ticket: %d); on a new connection it authenticated and read MON, MGR and OSD %.1fs after the request",
+			restoredAt-revokedAt-rejected, lost, refusals, recovered)
+	})
 
 	t.Run("no capabilities", func(t *testing.T) {
 		// auth import refuses an entry without capabilities; Restore puts
@@ -175,25 +226,42 @@ func testClientRevocation(t *testing.T) {
 	})
 }
 
-// waitHeldSessionRecovered waits until the held session authenticates or
-// renews its tickets after since and then reads from the MON, the MGR and the
-// OSD, and returns how many seconds after since it authenticated.
-func waitHeldSessionRecovered(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) float64 {
+// heldRenewedWithin reports whether the held session renewed its tickets
+// or authenticated after since, waiting at most limit for it.
+func heldRenewedWithin(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) bool {
 	t.Helper()
-	deadline := time.Now().Add(limit)
-	for time.Now().Before(deadline) {
+	for deadline := time.Now().Add(limit); ; time.Sleep(time.Second) {
 		for _, result := range heldAuthResults(t, ctx, ctr) {
-			if result.at <= since || result.mon != 0 {
-				continue
-			}
-			for _, line := range heldSessionLog(t, ctx, ctr) {
-				if line.at > result.at && line.mon == 0 && line.mgr == 0 && line.osd == 0 {
-					return result.at - since
-				}
+			if result.at > since && result.mon == 0 {
+				return true
 			}
 		}
-		time.Sleep(2 * time.Second)
+		if time.Now().After(deadline) {
+			return false
+		}
 	}
-	t.Fatalf("the held session did not recover within %v:\n%s", limit, containerFile(t, ctx, ctr, "/tmp/held.log"))
-	return 0
+}
+
+// monitorLogLines counts the lines of the MONs' logs that contain every one
+// of texts.
+func monitorLogLines(t *testing.T, ctx context.Context, cluster *ceph.Container, texts ...string) int {
+	t.Helper()
+	count := 0
+	for _, mon := range cluster.Monitors() {
+		logs, err := mon.Logs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(io.LimitReader(logs, 64<<20))
+		_ = logs.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if !slices.ContainsFunc(texts, func(text string) bool { return !strings.Contains(line, text) }) {
+				count++
+			}
+		}
+	}
+	return count
 }

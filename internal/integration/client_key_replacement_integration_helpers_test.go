@@ -28,8 +28,9 @@ import (
 // the three results and the number of the connection. Its MON client logs
 // each authentication and ticket renewal to stderr. A client whose MON
 // session the MONs rejected keeps failing, unless argv[2] is reconnect: then
-// it connects anew after each failed MON read.
-const heldSessionScript = `import json,rados,sys,time
+// it connects anew after each failed MON read. It also connects anew when the
+// file /tmp/held.reconnect appears, which it removes.
+const heldSessionScript = `import json,os,rados,sys,time
 reconnect=sys.argv[2]=='reconnect'
 pool,namespace,obj=sys.argv[3:6]
 def connect():
@@ -52,6 +53,14 @@ def read(io):
   return -1000
 (c,io),conn=connect(),1
 while True:
+ if os.path.exists('/tmp/held.reconnect'):
+  os.unlink('/tmp/held.reconnect')
+  if c is not None:
+   try:
+    c.shutdown()
+   except Exception:
+    pass
+  c=None
  if c is None:
   try:
    c,io=connect()
@@ -421,6 +430,58 @@ func heldAuthResults(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 		}
 	}
 	return results
+}
+
+// reconnectHeldSession asks the held session to connect anew and returns the
+// container time of the request.
+func reconnectHeldSession(t *testing.T, ctx context.Context, ctr testcontainers.Container) float64 {
+	t.Helper()
+	requested := containerTime(t, ctx, ctr)
+	if code, _, err := ctr.Exec(ctx, []string{"touch", "/tmp/held.reconnect"}); err != nil || code != 0 {
+		t.Fatalf("request a reconnect of the held session: exit %d, %v", code, err)
+	}
+	return requested
+}
+
+// waitHeldSessionReconnected waits until the held session, after since,
+// authenticated on a new connection and read from the MON, the MGR and the
+// OSD through it, and returns how many seconds after since it authenticated.
+func waitHeldSessionReconnected(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) float64 {
+	t.Helper()
+	before := 0
+	for _, line := range heldSessionLog(t, ctx, ctr) {
+		if line.at <= since {
+			before = line.conn
+		}
+	}
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		for _, result := range heldAuthResults(t, ctx, ctr) {
+			if result.at <= since || result.mon != 0 {
+				continue
+			}
+			for _, line := range heldSessionLog(t, ctx, ctr) {
+				if line.at > result.at && line.conn > before && line.mon == 0 && line.mgr == 0 && line.osd == 0 {
+					return result.at - since
+				}
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("the held session did not authenticate on a new connection within %v of the request at %.3f:\n%s\n%s", limit, since,
+		containerFile(t, ctx, ctr, "/tmp/held.log"), heldAuthTrace(t, ctx, ctr))
+	return 0
+}
+
+// heldAuthTrace returns the held session's authentication results, one per
+// line, for a failure message.
+func heldAuthTrace(t *testing.T, ctx context.Context, ctr testcontainers.Container) string {
+	t.Helper()
+	var trace []string
+	for _, result := range heldAuthResults(t, ctx, ctr) {
+		trace = append(trace, fmt.Sprintf("%.3f _finish_auth %d", result.at, result.mon))
+	}
+	return strings.Join(trace, "\n")
 }
 
 // heldOSDReads summarizes the held session's OSD reads after since.

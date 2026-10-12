@@ -2020,9 +2020,16 @@ The client behaves as follows on the official images:
   `MonTicketTTL`). The MONs then reject the renewal, and the client keeps the
   MGR and OSD sessions it already holds.
 - On Tentacle 20.2.4 the client also loses its MON session, and librados does
-  not authenticate again on its own; a new connection with the same
-  credentials works once `Restore` returns. On Squid 19.2.5 the open MON
-  session keeps answering, and the next renewal after `Restore` succeeds.
+  not authenticate again on its own. On Squid 19.2.5 the open MON session
+  keeps answering.
+- After `Restore`, an open session renews its tickets only while the MONs
+  still keep the rotating secret of its last auth ticket. They replace that
+  secret every `MonTicketTTL` and keep a few generations. After a longer
+  revocation, the MONs refuse every renewal of that session and log
+  `attempt to reclaim global_id ... using bad ticket`, because the cluster
+  sets `auth_allow_insecure_global_id_reclaim = false`. A new connection with
+  the same credentials authenticates once `Restore` returns, so a recovery
+  test reconnects its client instead of waiting for a renewal.
 
 `Restore` checks what the MONs hold first:
 
