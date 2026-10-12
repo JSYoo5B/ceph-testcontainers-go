@@ -7,15 +7,18 @@ sessions, full clusters and damaged replicas. This guide lists every way the
 module can create such a condition in a disposable cluster, explains what the
 client and the other daemons observe, and shows how to undo it.
 
-All techniques work with the unmodified official Ceph image and the Docker API.
-No technique needs privileged containers, extra capabilities or additional
-tools in the image.
+All techniques but one work with the unmodified official Ceph image and the
+Docker API, without privileged containers, extra capabilities or additional
+tools in the image. The exception is packet delay below Ceph, an opt-in
+extension: a separate netem helper image applies it, and only that helper gets
+`NET_ADMIN` (see [Delaying packets below Ceph](#delaying-packets-below-ceph)).
 
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
 | A daemon or client is alive but silent | `ceph.Container.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
 | A container loses one Docker network | `ceph.Container.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
+| Packets that a container sends on one network arrive late | `ceph.Container.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `TemporaryConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
@@ -33,22 +36,19 @@ snippets below use `cleanupCtx` for a context that outlives the test's own
 context, for example one made with
 `context.WithTimeout(context.Background(), time.Minute)`.
 
-## Out of scope: packet loss, latency shaping and pairwise filtering
+## Out of scope: packet loss, bandwidth limits and pairwise filtering
 
 The official `quay.io/ceph/ceph` image contains no `tc`, `ip`, `iptables` or
-`nft`. Every module feature must work with that image unmodified (see
-[Ceph releases and images](releases-and-images.md)), so the module cannot use
-netem or packet filters inside daemon containers. Using them would also need
-`NET_ADMIN` capabilities and would behave differently on Docker Desktop and on
-host networking.
+`nft`, and the Docker network API can only connect or disconnect a whole
+container endpoint. Packet delay below Ceph is available as an opt-in
+extension with its own helper image (see
+[Delaying packets below Ceph](#delaying-packets-below-ceph)). The module does
+not offer:
 
-The Docker network API can only connect or disconnect a whole container
-endpoint. As a result the module does not offer:
-
-- random packet loss, corruption or bandwidth limits;
-- network latency injected below Ceph;
+- random packet loss, corruption, duplication, reordering or bandwidth limits;
+- delay of incoming packets, or of packets to selected peers only;
 - pairwise rules such as "OSD 1 cannot reach OSD 2 but can reach the MON";
-- firewall changes in the host namespace.
+- any change in the host namespace, so no packet fault on host networks.
 
 Use one of these instead:
 
@@ -244,6 +244,101 @@ Contract:
 The package function `ceph.InterruptNetwork(ctx, container, networkName)` does
 the same for any named bridge network, but the caller owns the returned handle
 and no fixture restores it.
+
+## Delaying packets below Ceph
+
+`TemporaryNetworkDelay` delays every packet that one container sends through
+its endpoint on one of the cluster's bridges, with the kernel's netem qdisc.
+Ceph does not know about it: the daemon keeps its sessions, and every peer
+sees its answers late, while the container's other bridge and the other
+daemons are unaffected.
+
+This is an opt-in extension. `NetworkDelay.HelperImage` names an image with
+`tc`, `ip` and `python3`, such as `ceph.NetemHelperImage`, which
+[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
+publishes for `linux/amd64` and `linux/arm64`. The module starts that image as
+a helper container in the target's network namespace and grants `NET_ADMIN` to
+the helper alone; the target keeps its own image and capabilities.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+if cluster != nil {
+	testcontainers.CleanupContainer(t, cluster)
+}
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Delay:       200 * time.Millisecond,
+	Jitter:      20 * time.Millisecond,
+})
+if delay != nil {
+	defer delay.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Reads of objects whose primary is osd.0 now take at least 200 ms; reads
+// served by osd.1 do not.
+status, err := delay.Status(ctx)
+if err != nil || !status.Applied {
+	t.Fatalf("delay: %+v, %v", status, err)
+}
+t.Logf("netem delayed %d packets", status.Packets)
+if err := delay.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+```
+
+Before it changes anything, the call checks:
+
+- the target: an owned daemon, or a caller-owned container attached to the
+  plane's bridge, running and not paused, with its own network namespace and
+  an IPv4 endpoint. Host-network clusters are refused, because a delay there
+  would delay the host;
+- the helper, in a separate helper container without a network: the
+  contract's executables, `tc` with JSON output and netem, `python3`,
+  `NET_ADMIN`, and the kernel's netem on that container's loopback. The errors
+  wrap `ceph.ErrNetemImageUnsupported`, `ceph.ErrNetemPermissionDenied` or
+  `ceph.ErrNetemKernelUnsupported`;
+- the interface, found by the endpoint's address and MAC address and then
+  followed by its index: its root qdisc must be the kernel's default. A qdisc that someone else installed is
+  refused, not replaced, and only one delay per endpoint is held.
+
+What to expect:
+
+- The delay applies to packets that leave the target. A request to the target
+  and its answer cross the interface once each way, so the answer arrives at
+  least `Delay` late; a TCP connection setup waits for it too. To delay both
+  directions between two containers, delay both.
+- `Jitter` varies each packet's delay uniformly. With jitter, packets of one
+  connection can be reordered, which TCP repairs at some cost.
+- `Status` reads the kernel's state through the helper: whether the lease's
+  qdisc is the interface's root qdisc, its delay, jitter and packet counters,
+  and tc's JSON output. It is native evidence, separate from the requested
+  values and from what your client measures.
+- The delay ends with the interface. A target that stops, restarts, is removed
+  or loses the bridge (also through `InterruptNetwork`) comes back without it,
+  and `Status` reports `Gone`; `Restore` then only removes the helper and never
+  touches the new namespace.
+- `Restore` removes only the lease's own qdisc. A root qdisc that someone
+  replaced is refused with an error, and the lease stays retryable. A helper
+  that exited or was removed is replaced first, because removing a helper does
+  not remove its qdisc from a live namespace. The replacement runs the image
+  that was checked, by its ID.
+- Every `tc` command runs under the module's command supervisor. A canceled
+  call returns its lease, because the change may have reached the kernel; a
+  stop that cannot be confirmed fences the lease until `Restore` confirms it.
+- The cluster keeps the lease and restores it at the start of `Terminate`.
+  Restore a caller-owned container's delay before you remove that container.
+
+The netem helper has been checked on Docker Engine (GitHub-hosted Ubuntu 24.04
+runners, `amd64` and `arm64`) and on Docker Desktop on macOS (`arm64`).
+Rootless engines, Podman and Docker Desktop's Enhanced Container Isolation may
+refuse `NET_ADMIN` or the namespace join; the call then fails with one of the
+errors above instead of falling back to another mechanism.
 
 ## Interrupting links between clusters
 

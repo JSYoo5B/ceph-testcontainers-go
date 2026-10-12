@@ -786,7 +786,8 @@ Linux) can reach MONs and OSDs directly.
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
 - Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
-  and Docker endpoint interruption ([InterruptNetwork](#interruptnetwork)) is not
+  and Docker endpoint interruption ([InterruptNetwork](#interruptnetwork)) and
+  packet delay ([TemporaryNetworkDelay](#temporarynetworkdelay)) are not
   available.
 
 [UsesHostNetwork](#useshostnetwork) and [PublicAddress](#publicaddress) report the
@@ -969,6 +970,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*ceph.ContainerPause` | [PauseContainer](#pausecontainer) | `Resume` |
 | `*ceph.NetworkInterruption` | [InterruptNetwork](#interruptnetwork) | `Restore` |
+| `*ceph.NetworkDelayLease` | [TemporaryNetworkDelay](#temporarynetworkdelay) | `Restore` |
 | `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
 
 All handles follow the same contract:
@@ -2696,6 +2698,82 @@ if err := cut.Restore(ctx); err != nil {
 	t.Fatal(err)
 }
 ```
+
+#### TemporaryNetworkDelay
+
+```golang
+func (c *Container) TemporaryNetworkDelay(ctx context.Context, ctr testcontainers.Container, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
+```
+
+Delays every packet that `ctr` sends through its endpoint on one of the
+cluster's bridges, with the kernel's netem qdisc, below Ceph. It is an opt-in
+extension: `delay.HelperImage` names a netem helper image, such as
+`ceph.NetemHelperImage` (`ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1`),
+or any image that meets
+[netem contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md).
+The module starts the helper in `ctr`'s network namespace as root and grants
+`NET_ADMIN` to the helper only; `ctr` keeps its own image and capabilities.
+
+| `ceph.NetworkDelay` field | Meaning |
+| --- | --- |
+| `HelperImage` | The helper image. Required; nothing selects it implicitly. |
+| `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
+| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. |
+| `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
+
+`ctr` can be an owned daemon or a caller-owned container attached to the
+plane's bridge; it must be running, not paused, with its own network
+namespace and an IPv4 endpoint. Host-network clusters are refused. Before it
+changes anything, the call checks the helper image, `NET_ADMIN` and the
+kernel's netem in a separate helper container without a network, and fails
+with an error that wraps `ceph.ErrNetemImageUnsupported`,
+`ceph.ErrNetemPermissionDenied` or `ceph.ErrNetemKernelUnsupported`. It
+refuses an interface whose root qdisc is not the kernel's default, and a
+second delay of the same endpoint.
+
+The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
+`NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
+`MACAddress`, `Address`), the helper's `HelperImageID` and the requested
+`Delay` and `Jitter`.
+
+- `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
+  through the helper: `Applied`, the interface's current name (`Interface`)
+  and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter` and
+  `Packets`, `Bytes` and `Drops` counters while `Applied`, and tc's JSON output
+  (`Qdiscs`). After the first lookup by address and MAC, the lease follows
+  the interface by its index, so a changed address, MAC or name does not lose
+  it. `Gone` means that the delayed
+  interface no longer exists, because `ctr` stopped, restarted, was removed or
+  left the bridge.
+- `Restore(ctx)` removes the lease's qdisc and the helper. A gone interface
+  needs no removal, and `Restore` never touches a new namespace. A root qdisc
+  that someone replaced is refused with an error, and the lease stays
+  retryable. A helper that exited or was removed is replaced first, from the
+  checked image by its ID (`HelperImageID`), even if the tag moved.
+- Every `tc` command runs under the module's command supervisor. A non-nil
+  lease returned with an error must be restored: the change may have reached
+  the kernel.
+- The cluster keeps the lease and removes the delay at the start of
+  `Terminate`. Restore a caller-owned container's delay before removing that
+  container.
+
+```golang
+delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Delay:       200 * time.Millisecond,
+})
+if delay != nil {
+	defer delay.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Answers from osd.0 arrive at least 200 ms late until Restore.
+```
+
+See [Fault injection](guides/fault-injection.md#delaying-packets-below-ceph)
+for what clients observe and the engines this was checked on.
 
 ### Container Methods: Networking
 

@@ -168,8 +168,9 @@ resources from calls that failed halfway:
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
 | Host-port reservation helpers | Host mode MON and RGW startup |
 | The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
-| Container pauses | `PauseContainer` (resumed first) |
-| Network interruptions | `cluster.InterruptNetwork` (restored first, also on your client containers) |
+| Network delays and their netem helper containers | `TemporaryNetworkDelay` (removed first, also on your client containers) |
+| Container pauses | `PauseContainer` (resumed before the teardown) |
+| Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |
 | Native commands that are still running or not confirmed as stopped | `RunNativeCommand` (canceled and stopped, also in your client containers) |
 
 Everything stored inside Ceph (pools, Cephx identities, configuration
@@ -177,8 +178,8 @@ database entries, OSD map flags and ratios, blocklist entries, CephFS and RGW
 metadata) disappears with the containers. `Terminate` does not restore
 `Temporary*` overrides one by one; it discards the whole cluster.
 
-`Terminate` works in a fixed order: it restores network interruptions, resumes
-paused containers, cancels and stops native commands, releases host-port
+`Terminate` works in a fixed order: it removes network delays, restores network
+interruptions, resumes paused containers, cancels and stops native commands, releases host-port
 reservations, stops gateways and MDS
 daemons while the OSDs are still running, then removes OSDs, the in-memory OSD
 volume, MGRs, MONs, the control container, then any container left with the
@@ -334,6 +335,7 @@ result:
 | `PauseContainer` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
+| `TemporaryNetworkDelay` | Delay lease (the change may have reached the kernel) | `Restore` |
 | `rbd.RunMirror`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
