@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -142,7 +143,8 @@ func testCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T, host bool) {
 		if err == nil {
 			break
 		}
-		if !strings.Contains(err.Error(), "asynchronous purge of subvolume in progress") {
+		var failure *ceph.NativeFailure
+		if !errors.As(err, &failure) || failure.Errno != "EAGAIN" || !strings.Contains(failure.Reason, "asynchronous purge of subvolume in progress") {
 			t.Fatal(err)
 		}
 		select {

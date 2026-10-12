@@ -28,7 +28,7 @@ messenger_address() {
             ;;
         esac
     done
-    echo "tc-ceph: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
+    echo "tc-ceph: environment: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
     exit 2
 }
 ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}

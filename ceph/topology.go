@@ -154,7 +154,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if (name == "a" && !c.monitorTerminated) || c.monitors[name] != nil {
 		return nil, fmt.Errorf("monitor %s is already owned", name)
@@ -272,14 +272,14 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	mon := c.monitors[name]
 	if name == "a" && !c.monitorTerminated {
 		mon = &MonitorContainer{Container: c.Container, DaemonName: "a"}
 	}
 	if mon == nil {
-		return fmt.Errorf("monitor %s is not owned", name)
+		return invalid(fmt.Errorf("monitor %s is not owned", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -383,7 +383,7 @@ func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	return c.refreshMonitorConfig(ctx)
 }
@@ -710,7 +710,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if c.managers[name] != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
@@ -731,7 +731,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	}
 	for _, identity := range identities.AuthDump {
 		if identity.Entity == "mgr."+name {
-			return nil, fmt.Errorf("manager identity mgr.%s already exists", name)
+			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
 		}
 	}
 	status, err := c.ManagerStatus(ctx)
@@ -795,11 +795,11 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	mgr := c.managers[name]
 	if mgr == nil || !mgr.authOwned {
-		return fmt.Errorf("manager %s is not owned", name)
+		return invalid(fmt.Errorf("manager %s is not owned", name))
 	}
 	if len(c.managers) <= 1 {
 		return errors.New("cannot remove the last manager candidate; add a replacement first")

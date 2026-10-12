@@ -221,7 +221,7 @@ func (c *Container) ReplaceClientKey(ctx context.Context, client *ClientConfig, 
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if client == nil || client.owner != c || !client.created || !client.ready || client.revoked {
 		return nil, errors.New("cephx client must be an active identity created by this cluster")
@@ -292,7 +292,7 @@ func (c *Container) ReplaceClientKey(ctx context.Context, client *ClientConfig, 
 // operation names the caller in errors. The caller holds c.mu.
 func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig, operation string) (clientRecord, error) {
 	if c.closed {
-		return clientRecord{}, errors.New("ceph cluster is terminated")
+		return clientRecord{}, errClusterTerminated
 	}
 	if client == nil || client.owner != c || !client.created || !client.ready || client.revoked {
 		return clientRecord{}, errors.New("cephx client must be an active identity created by this cluster")
@@ -308,7 +308,7 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 		return clientRecord{}, err
 	}
 	if !current.exists || current.key != clientKey(client.keyring, client.name) {
-		return clientRecord{}, fmt.Errorf("cephx identity %s has a different key; refusing %s", client.name, operation)
+		return clientRecord{}, invalid(fmt.Errorf("cephx identity %s has a different key; refusing %s", client.name, operation))
 	}
 	return current, nil
 }
@@ -318,16 +318,16 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 // The caller holds c.mu and has settled the identity when it could.
 func (c *Container) checkCurrentClient(client *ClientConfig) error {
 	if client.replacedBy != nil {
-		return fmt.Errorf("cephx client %s has a new key; ReplaceClientKey with this descriptor returns the current one", client.name)
+		return invalid(fmt.Errorf("cephx client %s has a new key; ReplaceClientKey with this descriptor returns the current one", client.name))
 	}
 	if c.authFences[client.name] != nil {
-		return fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientCapabilities, resolves it", client.name)
+		return invalid(fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientCapabilities, resolves it", client.name))
 	}
 	if c.clientRevocations[client.name] != nil {
-		return fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name)
+		return invalid(fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name))
 	}
 	if key, ok := c.clientKeys[client.name]; !ok || key != clientKey(client.keyring, client.name) {
-		return fmt.Errorf("cephx client %s is stale: the identity has another key or was deleted", client.name)
+		return invalid(fmt.Errorf("cephx client %s is stale: the identity has another key or was deleted", client.name))
 	}
 	return nil
 }

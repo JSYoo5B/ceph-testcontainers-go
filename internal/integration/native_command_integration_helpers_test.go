@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -383,7 +385,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		result, err := cluster.RunNativeCommand(ctx, osd, ceph.NativeCommand{Argv: []string{"ceph-osd", "--version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
 		switch {
-		case err != nil && strings.Contains(err.Error(), "cannot run python3"):
+		case errors.Is(err, ceph.ErrImageCapability) && strings.Contains(err.Error(), "cannot run python3"):
 			t.Logf("the OSD image has no python3: %v", err)
 		case err != nil || !bytes.Contains(result.Stdout, []byte(cluster.CephVersion())):
 			t.Fatalf("OSD container: %+v %v", result, err)
@@ -394,7 +396,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			t.Fatal(err)
 		}
 		quick := ceph.NativeCommand{Argv: []string{"true"}, Timeout: time.Minute, MaxStdout: 64, MaxStderr: 64, Label: "probe"}
-		if _, err := cluster.RunNativeCommand(ctx, foreign, quick); err == nil || !strings.Contains(err.Error(), "neither part of this cluster nor attached") {
+		if _, err := cluster.RunNativeCommand(ctx, foreign, quick); !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), "neither part of this cluster nor attached") {
 			t.Fatalf("an unattached container was admitted: %v", err)
 		}
 		attached, err := testcontainers.Run(ctx, "busybox:1.37.0", cluster.WithClient(), ceph.WithIdleEntrypoint())
@@ -402,7 +404,9 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := cluster.RunNativeCommand(ctx, attached, quick); err == nil || !strings.Contains(err.Error(), "cannot run python3") {
+		var missing *ceph.OperationError
+		if _, err := cluster.RunNativeCommand(ctx, attached, quick); !errors.As(err, &missing) || missing.Kind != ceph.ErrImageCapability ||
+			missing.Capability != "python3" || !strings.Contains(err.Error(), "cannot run python3") {
 			t.Fatalf("a container without python3 returned %v", err)
 		}
 		if state, err := attached.State(ctx); err != nil || !state.Running {
@@ -467,6 +471,34 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 
 	// Terminate cancels a running command, also in a caller's container
 	// that outlives the cluster.
+	t.Run("classified_failures", func(t *testing.T) {
+		// The errno that Ceph's tools print, from the ceph CLI's "Error ENOENT:"
+		// line and from the "(2) No such file or directory" form of rados.
+		_, err := cluster.Ceph(ctx, "osd", "pool", "get", "tc-missing-pool", "size")
+		var failure *ceph.NativeFailure
+		if !errors.Is(err, fs.ErrNotExist) || !errors.As(err, &failure) || failure.Program != "ceph" || failure.Errno != "ENOENT" ||
+			!strings.Contains(failure.Reason, "tc-missing-pool") {
+			t.Fatalf("a missing pool returned %v", err)
+		}
+		control := cluster.ControlContainer()
+		if _, err := servicehook.Command(ctx, control, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
+			!errors.As(err, &failure) || failure.Program != "rados" || failure.Errno != "ENOENT" {
+			t.Fatalf("rados on a missing pool returned %v", err)
+		}
+		// A tool that prints no errno fails without one, whatever its exit code.
+		if _, err := servicehook.Command(ctx, control, "ls", "/tc-missing-path"); !errors.Is(err, ceph.ErrNativeFailure) || !errors.As(err, &failure) ||
+			failure.Errno != "" || errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("ls of a missing path returned %v", err)
+		}
+		// A program that the image lacks.
+		var missing *ceph.OperationError
+		if _, err := servicehook.Command(ctx, control, "tc-no-such-program"); !errors.As(err, &missing) || missing.Kind != ceph.ErrImageCapability ||
+			missing.Capability != "tc-no-such-program" || errors.Is(err, ceph.ErrNativeFailure) {
+			t.Fatalf("a missing program returned %v", err)
+		}
+		t.Logf("Ceph %s: %v", cluster.CephVersion(), failure)
+	})
+
 	t.Run("terminate", func(t *testing.T) {
 		before := scanNative(t, ctx, client).Markers
 		call := startNative(ctx, cluster, client, nativeTree("native-terminate", time.Minute))

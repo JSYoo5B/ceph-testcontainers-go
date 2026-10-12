@@ -25,8 +25,9 @@ const hostPortLeasePrefix = "TC_CEPH_HOST_PORT_LEASE "
 // in the test process: the engine does not run Linux containers, the selected
 // address is not assigned on the Docker host, or the first MON's advertised
 // endpoint is not reachable from this process. Run returns it before creating
-// MGR/OSD daemons; later MON/RGW port reservations may also return it.
-var ErrHostNetworkUnavailable = errors.New("ceph host network is unavailable to the test process")
+// MGR/OSD daemons; later MON/RGW port reservations may also return it. It
+// belongs to ErrEnvironmentUnavailable.
+var ErrHostNetworkUnavailable error = &categoryError{text: "ceph host network is unavailable to the test process", kind: ErrEnvironmentUnavailable}
 
 // A msgr2 listener sends this banner before reading from the peer.
 const monitorBanner = "ceph v2\n"
@@ -206,7 +207,7 @@ func parseHostPortLease(output []byte, count int) ([]int, error) {
 func validateHostAllocatorAddress(address string) error {
 	ip := net.ParseIP(address)
 	if ip == nil || !(ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsLinkLocalUnicast()) {
-		return fmt.Errorf("host network public address must be a concrete unicast IP: %q", address)
+		return invalid(fmt.Errorf("host network public address must be a concrete unicast IP: %q", address))
 	}
 	return nil
 }
@@ -247,12 +248,12 @@ func hostContainerCustomizer(address string) testcontainers.CustomizeRequestOpti
 func checkHostNetworkEngine(ctx context.Context) error {
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
-		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
+		return classifyDocker(ctx, fmt.Errorf("inspect Docker engine for host network mode: %w", err))
 	}
 	defer func() { _ = docker.Close() }()
 	info, err := docker.Info(ctx, mobycl.InfoOptions{})
 	if err != nil {
-		return fmt.Errorf("inspect Docker engine for host network mode: %w", err)
+		return classifyDocker(ctx, fmt.Errorf("inspect Docker engine for host network mode: %w", err))
 	}
 	if info.Info.OSType != "linux" {
 		return fmt.Errorf("%w: Docker engine runs %q containers, host network mode requires a Linux engine", ErrHostNetworkUnavailable, info.Info.OSType)

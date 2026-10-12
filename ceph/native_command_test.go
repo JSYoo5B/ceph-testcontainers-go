@@ -397,17 +397,17 @@ func TestNativeCommandRefusesMalformedCommandsBeforeRunning(t *testing.T) {
 	} {
 		command := valid
 		change(&command)
-		if _, err := cluster.RunNativeCommand(t.Context(), target, command); err == nil {
-			t.Fatalf("%s: malformed command accepted", name)
+		if _, err := cluster.RunNativeCommand(t.Context(), target, command); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("%s: malformed command returned %v", name, err)
 		}
 	}
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := cluster.RunNativeCommand(canceled, target, valid); !errors.Is(err, context.Canceled) {
+	if _, err := cluster.RunNativeCommand(canceled, target, valid); !errors.Is(err, context.Canceled) || classified(err) {
 		t.Fatalf("canceled context returned %v", err)
 	}
-	if _, err := cluster.RunNativeCommand(t.Context(), nil, valid); err == nil {
-		t.Fatal("nil target accepted")
+	if _, err := cluster.RunNativeCommand(t.Context(), nil, valid); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("nil target returned %v", err)
 	}
 	if target.execCount() != 0 || registered(cluster) != 0 {
 		t.Fatalf("a refused command reached the container: %d execs", target.execCount())
@@ -436,7 +436,7 @@ func TestNativeCommandAdmitsOnlyClusterAndAttachedContainers(t *testing.T) {
 			t.Fatalf("%s was refused: %+v %v", target.id, result, err)
 		}
 	}
-	if _, err := cluster.RunNativeCommand(t.Context(), foreign, quick); err == nil || !strings.Contains(err.Error(), "neither part of this cluster nor attached") || foreign.execCount() != 0 {
+	if _, err := cluster.RunNativeCommand(t.Context(), foreign, quick); !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "neither part of this cluster nor attached") || foreign.execCount() != 0 {
 		t.Fatalf("a foreign container was admitted: %v", err)
 	}
 	hostCluster := &Container{settings: options{startupTimeout: time.Second, hostNetwork: true}}
@@ -444,8 +444,8 @@ func TestNativeCommandAdmitsOnlyClusterAndAttachedContainers(t *testing.T) {
 	if result, err := hostCluster.RunNativeCommand(t.Context(), hostClient, quick); !ran(result, err) {
 		t.Fatalf("a host-network client of a host-network cluster was refused: %v", err)
 	}
-	if _, err := hostCluster.RunNativeCommand(t.Context(), public, quick); err == nil {
-		t.Fatal("a bridge container was admitted by a host-network cluster")
+	if _, err := hostCluster.RunNativeCommand(t.Context(), public, quick); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a bridge container of a host-network cluster returned %v", err)
 	}
 	for name, change := range map[string]func(*nativeTarget){
 		"paused":  func(f *nativeTarget) { f.setPaused(true) },
@@ -453,13 +453,13 @@ func TestNativeCommandAdmitsOnlyClusterAndAttachedContainers(t *testing.T) {
 	} {
 		target := newNativeTarget(t, name, "tc-public")
 		target.set(change)
-		if _, err := cluster.RunNativeCommand(t.Context(), target, quick); err == nil || !strings.Contains(err.Error(), "running, unpaused") || target.execCount() != 0 {
+		if _, err := cluster.RunNativeCommand(t.Context(), target, quick); !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "running, unpaused") || target.execCount() != 0 {
 			t.Fatalf("%s container accepted a command: %v", name, err)
 		}
 	}
 	cluster.closed = true
 	before := public.execCount()
-	if _, err := cluster.RunNativeCommand(t.Context(), public, quick); !errors.Is(err, errNativeTerminated) || public.execCount() != before {
+	if _, err := cluster.RunNativeCommand(t.Context(), public, quick); !errors.Is(err, errClusterTerminated) || !errors.Is(err, ErrInvalidRequest) || public.execCount() != before {
 		t.Fatalf("a terminated cluster ran a command: %v", err)
 	}
 }
@@ -508,7 +508,7 @@ sys.stdout.write("secret-output-" * 100)
 sys.stderr.write("diagnostic")`
 	result, err := cluster.RunNativeCommand(t.Context(), target, NativeCommand{Argv: []string{"python3", "-c", script, "secret-argument"},
 		Timeout: 10 * time.Second, MaxStdout: 100, MaxStderr: 4096, Label: "overflow"})
-	if !errors.Is(err, ErrNativeCommandIncomplete) || result.Complete() || !result.StdoutTruncated || result.StderrTruncated || result.TimedOut {
+	if !errors.Is(err, ErrNativeCommandIncomplete) || classified(err) || result.Complete() || !result.StdoutTruncated || result.StderrTruncated || result.TimedOut {
 		t.Fatalf("overflow returned %+v, %v", result, err)
 	}
 	if string(result.Stdout) != strings.Repeat("secret-output-", 100)[:100] || string(result.Stderr) != "diagnostic" {
@@ -523,7 +523,7 @@ func TestNativeCommandTimeoutKillsTheCommandGroup(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
 	cluster := nativeCluster()
 	result, err := cluster.RunNativeCommand(t.Context(), target, waiterCommand(target, "slow", 500*time.Millisecond))
-	if !errors.Is(err, ErrNativeCommandIncomplete) || !result.TimedOut {
+	if !errors.Is(err, ErrNativeCommandIncomplete) || classified(err) || !result.TimedOut {
 		t.Fatalf("timeout returned %+v, %v", result, err)
 	}
 	command, descendant := target.published(t, "slow", "command"), target.published(t, "slow", "descendant")
@@ -608,7 +608,7 @@ func startUnstopped(t *testing.T, cluster *Container, target *nativeTarget, name
 	cancel()
 	err := <-result
 	var unstopped *NativeCommandUnstoppedError
-	if !errors.As(err, &unstopped) || !errors.Is(err, context.Canceled) {
+	if !errors.As(err, &unstopped) || !errors.Is(err, context.Canceled) || classified(err) {
 		t.Fatalf("unconfirmed stop returned %v", err)
 	}
 	if !processAlive(command) || registered(cluster) != 1 {
@@ -747,7 +747,7 @@ func TestTerminateStopsNativeCommands(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-running; !errors.Is(err, errNativeTerminated) || !strings.Contains(err.Error(), "waiter running") {
+	if err := <-running; !errors.Is(err, errNativeTerminated) || classified(err) || !strings.Contains(err.Error(), "waiter running") {
 		t.Fatalf("a running command ended with %v", err)
 	}
 	if processAlive(command) || processAlive(paused) || registered(cluster) != 0 || len(target.leftMarkers(t)) != 0 {
@@ -758,7 +758,7 @@ func TestTerminateStopsNativeCommands(t *testing.T) {
 		t.Fatalf("Stop after Terminate failed: %v", err)
 	}
 	before := target.execCount()
-	if _, err := cluster.RunNativeCommand(t.Context(), target, waiterCommand(target, "after", time.Minute)); !errors.Is(err, errNativeTerminated) || target.execCount() != before {
+	if _, err := cluster.RunNativeCommand(t.Context(), target, waiterCommand(target, "after", time.Minute)); !errors.Is(err, errClusterTerminated) || !errors.Is(err, ErrInvalidRequest) || target.execCount() != before {
 		t.Fatalf("a command ran after Terminate: %v", err)
 	}
 }
@@ -786,7 +786,7 @@ func TestNativeCommandAdmittedDuringTerminateDoesNotRun(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := cluster.RunNativeCommand(t.Context(), target, waiterCommand(target, "racing", time.Minute)); !errors.Is(err, errNativeTerminated) || target.execCount() != 0 || registered(cluster) != 0 {
+	if _, err := cluster.RunNativeCommand(t.Context(), target, waiterCommand(target, "racing", time.Minute)); !errors.Is(err, errClusterTerminated) || !errors.Is(err, ErrInvalidRequest) || target.execCount() != 0 || registered(cluster) != 0 {
 		t.Fatalf("a command admitted during Terminate returned %v after %d execs", err, target.execCount())
 	}
 }
@@ -807,7 +807,7 @@ func TestNativeCommandReportsCancellationBeforeLaunch(t *testing.T) {
 				cancel()
 				return errors.New("read unix ->/var/run/docker.sock: use of closed network connection")
 			})
-			if _, err := cluster.RunNativeCommand(ctx, target, waiterCommand(target, name, time.Minute)); !errors.Is(err, context.Canceled) || target.execCount() != 0 {
+			if _, err := cluster.RunNativeCommand(ctx, target, waiterCommand(target, name, time.Minute)); !errors.Is(err, context.Canceled) || classified(err) || target.execCount() != 0 {
 				t.Fatalf("a call canceled before its launch returned %v after %d execs", err, target.execCount())
 			}
 		})
@@ -835,12 +835,14 @@ func TestNativeCommandHidesBackendErrorText(t *testing.T) {
 	command := NativeCommand{Argv: []string{"python3", "-c", "key = \"secret-key-value\"\nprint(key)", "pin"}, Timeout: time.Minute, MaxStdout: 64, MaxStderr: 64, Label: "probe"}
 	_, err := cluster.RunNativeCommand(t.Context(), quoting, command)
 	if err == nil || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "pin") || strings.Contains(err.Error(), "refused") ||
-		!strings.Contains(err.Error(), "exec probe supervisor: Docker or the container implementation failed") || !errors.Is(err, errQuotingTarget) {
+		!strings.Contains(err.Error(), "exec probe supervisor: Docker or the container implementation failed") || !errors.Is(err, errQuotingTarget) ||
+		!errors.Is(err, ErrEnvironmentUnavailable) {
 		t.Fatalf("a quoted command returned %v", err)
 	}
-	// A removed container is named by its kind.
+	// A removed container is named by its kind, and refuses the request.
 	target.set(func(f *nativeTarget) { f.killAll(); f.removed = true })
-	if _, err := cluster.RunNativeCommand(t.Context(), target, command); err == nil || !strings.Contains(err.Error(), "the container does not exist") || !errdefs.IsNotFound(err) {
+	if _, err := cluster.RunNativeCommand(t.Context(), target, command); err == nil || !strings.Contains(err.Error(), "the container does not exist") || !errdefs.IsNotFound(err) ||
+		!errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("a removed container returned %v", err)
 	}
 }
@@ -861,16 +863,37 @@ func TestNativeCommandExplainsSupervisorFailures(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
 	cluster := nativeCluster()
 	command := NativeCommand{Argv: []string{filepath.Join(target.root, "secret-program")}, Timeout: 10 * time.Second, MaxStdout: 64, MaxStderr: 64, Label: "probe"}
-	if _, err := cluster.RunNativeCommand(t.Context(), target, command); err == nil || !strings.Contains(err.Error(), "could not be started") || strings.Contains(err.Error(), "secret") {
+	var missing *OperationError
+	if _, err := cluster.RunNativeCommand(t.Context(), target, command); !errors.As(err, &missing) || missing.Kind != ErrImageCapability ||
+		!strings.Contains(err.Error(), "could not be started") || strings.Contains(fmt.Sprintf("%v %+v", err, *missing), "secret") {
 		t.Fatalf("a missing program returned %v", err)
 	}
 	target.set(func(f *nativeTarget) { f.noPython = true })
-	if _, err := cluster.RunNativeCommand(t.Context(), target, command); err == nil || !strings.Contains(err.Error(), "cannot run python3") {
+	if _, err := cluster.RunNativeCommand(t.Context(), target, command); !errors.As(err, &missing) || missing.Kind != ErrImageCapability ||
+		missing.Capability != "python3" || !strings.Contains(err.Error(), "cannot run python3") {
 		t.Fatalf("a container without python3 returned %v", err)
 	}
 	if registered(cluster) != 0 || len(target.leftMarkers(t)) != 0 {
 		t.Fatal("a failed launch left state behind")
 	}
+	// A launch that failed for want of a process is the environment's.
+	target.set(func(f *nativeTarget) { f.noPython = false })
+	unavailable := &launchUnavailableTarget{nativeTarget: target}
+	if _, err := cluster.RunNativeCommand(t.Context(), unavailable, command); !errors.As(err, &missing) || missing.Kind != ErrEnvironmentUnavailable ||
+		errors.Is(err, ErrImageCapability) {
+		t.Fatalf("an unavailable launch returned %v", err)
+	}
+}
+
+// launchUnavailableTarget answers each supervisor exec as a supervisor that
+// could not fork its command.
+type launchUnavailableTarget struct{ *nativeTarget }
+
+func (f *launchUnavailableTarget) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if len(args) > 2 && args[2] == supervised.Script {
+		return supervised.LaunchUnavailableExit, bytes.NewReader(nil), nil
+	}
+	return f.nativeTarget.Exec(ctx, args, opts...)
 }
 
 func TestRedactSecretsUsesTheClusterSecrets(t *testing.T) {

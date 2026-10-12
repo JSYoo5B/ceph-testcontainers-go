@@ -29,5 +29,5 @@ func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*ce
 			return multicluster.InterruptOwnedPeerLink(ctx, &f.owned, zone.Gateway, f.httpNetwork.Name)
 		}
 	}
-	return nil, fmt.Errorf("RGW zone %s is not owned", zoneName)
+	return nil, invalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
 }

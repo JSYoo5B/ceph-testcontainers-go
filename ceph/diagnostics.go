@@ -140,16 +140,16 @@ func normalizeDiagnosticsConfig(config DiagnosticsConfig) (DiagnosticsConfig, er
 		config.MaxOutputBytes < 1 || config.MaxOutputBytes > 1<<20 || config.LogTail < 1 || config.LogTail > 10000 ||
 		config.Concurrency < 1 || config.Concurrency > 8 || config.MaxContainers < 1 || config.MaxContainers > 128 ||
 		len(config.AdditionalContainers) > 64 || len(config.RedactValues) > 128 {
-		return config, errors.New("invalid diagnostics limits")
+		return config, invalid(errors.New("invalid diagnostics limits"))
 	}
 	for _, target := range config.AdditionalContainers {
 		if len(target.Role) > 64 || len(target.Name) > 128 || strings.ContainsAny(target.Role+target.Name, "\x00\r\n") {
-			return config, errors.New("invalid diagnostics container description")
+			return config, invalid(errors.New("invalid diagnostics container description"))
 		}
 	}
 	for _, value := range config.RedactValues {
 		if len(value) > 4096 {
-			return config, errors.New("diagnostics redaction value exceeds 4096 bytes")
+			return config, invalid(errors.New("diagnostics redaction value exceeds 4096 bytes"))
 		}
 	}
 	return config, nil
@@ -622,7 +622,10 @@ func diagnosticCephCommand(ctx context.Context, control testcontainers.Container
 		return string(output), truncated, context.DeadlineExceeded
 	}
 	if report.ExitCode != 0 {
-		return string(output), truncated, fmt.Errorf("Ceph diagnostic command exited %d", report.ExitCode)
+		// The output is the artifact; the error repeats none of it.
+		failure := nativeFailure("ceph", report.ExitCode, nil, report.Stderr)
+		failure.Reason = ""
+		return string(output), truncated, fmt.Errorf("Ceph diagnostic command: %w", failure)
 	}
 	return string(output), truncated, nil
 }
@@ -652,7 +655,9 @@ func diagnosticsRedactor(values []string) func(string) string {
 	return func(data string) string {
 		data = replacer.Replace(data)
 		data = diagnosticPrivateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
-		data = diagnosticSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return diagnosticBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		// Bearer tokens first: the secret pattern takes only the word after
+		// "Authorization:", which would leave the token behind it.
+		data = diagnosticBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		return diagnosticSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
 	}
 }

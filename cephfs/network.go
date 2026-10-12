@@ -29,5 +29,5 @@ func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*cep
 			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, m.destination.NetworkName())
 		}
 	}
-	return nil, fmt.Errorf("CephFS mirror daemon %s is not owned", daemonName)
+	return nil, invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemonName))
 }

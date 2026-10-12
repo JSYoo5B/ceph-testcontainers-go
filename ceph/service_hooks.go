@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -19,7 +20,10 @@ import (
 // unexported and never appears in the public packages.
 type serviceHooks struct{}
 
-func init() { hookreg.Value = serviceHooks{} }
+func init() {
+	hookreg.Value = serviceHooks{}
+	clusterutil.Quiet = quiet
+}
 
 // Lock and Unlock hold the cluster mutex that serializes fixture mutations.
 func (serviceHooks) Lock(c *Container)   { c.mu.Lock() }
@@ -194,6 +198,16 @@ func (serviceHooks) PoolMissing(err error) bool { return errors.Is(err, errPoolM
 
 // CephBefore reports whether the recorded Ceph release is older than major.
 func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
+
+// NativeFailure describes a command that exited nonzero.
+func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byte) error {
+	return nativeFailure(program, code, stdout, stderr)
+}
+
+// ClassifyDocker classifies a failed Docker call.
+func (serviceHooks) ClassifyDocker(ctx context.Context, err error) error {
+	return classifyDocker(ctx, err)
+}
 
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.

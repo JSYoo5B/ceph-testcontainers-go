@@ -37,13 +37,15 @@ const netemCommandTimeout = 20 * time.Second
 var (
 	// ErrNetemImageUnsupported reports a helper image that does not meet the
 	// netem contract: a missing or broken tc, ip, sh, sleep or python3, or a
-	// tc without netem.
-	ErrNetemImageUnsupported = errors.New("the netem helper image does not meet the netem contract")
+	// tc without netem. It belongs to ErrImageCapability.
+	ErrNetemImageUnsupported error = &categoryError{text: "the netem helper image does not meet the netem contract", kind: ErrImageCapability}
 	// ErrNetemPermissionDenied reports an engine that did not give the helper
-	// NET_ADMIN, or refused a qdisc change for lack of it.
-	ErrNetemPermissionDenied = errors.New("the netem helper has no NET_ADMIN")
-	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc.
-	ErrNetemKernelUnsupported = errors.New("the engine's kernel has no netem qdisc")
+	// NET_ADMIN, or refused a qdisc change for lack of it. It belongs to
+	// ErrEnvironmentUnavailable.
+	ErrNetemPermissionDenied error = &categoryError{text: "the netem helper has no NET_ADMIN", kind: ErrEnvironmentUnavailable}
+	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc. It
+	// belongs to ErrEnvironmentUnavailable.
+	ErrNetemKernelUnsupported error = &categoryError{text: "the engine's kernel has no netem qdisc", kind: ErrEnvironmentUnavailable}
 )
 
 // NetworkDelay configures TemporaryNetworkDelay.
@@ -244,15 +246,17 @@ func seconds(value float64) time.Duration {
 func validateNetworkDelay(delay NetworkDelay) error {
 	switch {
 	case strings.TrimSpace(delay.HelperImage) == "":
-		return errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")
+		// The extension is not selected.
+		return &OperationError{Kind: ErrImageCapability, Capability: "netem extension",
+			Err: errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")}
 	case delay.Plane != PublicNetworkPlane && delay.Plane != ClusterNetworkPlane:
-		return errors.New("invalid Ceph network plane")
+		return invalidRequest("invalid Ceph network plane")
 	case delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay:
-		return fmt.Errorf("network delay must be between 1ms and %v", MaxNetworkDelay)
+		return invalidRequest("network delay must be between 1ms and %v", MaxNetworkDelay)
 	case delay.Jitter < 0 || delay.Jitter > delay.Delay:
-		return errors.New("network delay jitter must be between 0 and the delay")
+		return invalidRequest("network delay jitter must be between 0 and the delay")
 	case delay.Delay%time.Microsecond != 0 || delay.Jitter%time.Microsecond != 0:
-		return errors.New("network delay and jitter must be whole microseconds")
+		return invalidRequest("network delay and jitter must be whole microseconds")
 	}
 	return nil
 }
@@ -271,6 +275,9 @@ func validateNetworkDelay(delay NetworkDelay) error {
 // network, and returns ErrNetemImageUnsupported, ErrNetemPermissionDenied or
 // ErrNetemKernelUnsupported. It refuses an interface whose root qdisc is not
 // the kernel's default and a target that already has a delay on that bridge.
+// A missing HelperImage is ErrImageCapability, the refusals are
+// ErrInvalidRequest, and a tc command that fails otherwise is a
+// *NativeFailure.
 //
 // The delay lasts until Restore, or until the target stops or leaves the
 // bridge, which removes its interface. Terminate restores delays that are
@@ -280,7 +287,7 @@ func (c *Container) TemporaryNetworkDelay(ctx context.Context, target testcontai
 		return nil, err
 	}
 	if target == nil || target.GetContainerID() == "" {
-		return nil, errors.New("network delay requires a container")
+		return nil, invalidRequest("network delay requires a container")
 	}
 	id := target.GetContainerID()
 	name, key, err := c.reserveNetworkDelay(ctx, target, delay.Plane)
@@ -310,19 +317,19 @@ func (c *Container) reserveNetworkDelay(ctx context.Context, target testcontaine
 	c.mu.Unlock()
 	switch {
 	case closed:
-		return "", "", errNativeTerminated
+		return "", "", errClusterTerminated
 	case hostNetwork:
-		return "", "", errors.New("network delay requires a bridge cluster: a delay on a host network would delay the host")
+		return "", "", invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
 	case name == "":
-		return "", "", errors.New("Ceph bridge is not initialized")
+		return "", "", invalidRequest("Ceph bridge is not initialized")
 	}
 	if !owned {
 		attached, err := target.Networks(ctx)
 		if err != nil {
-			return "", "", fmt.Errorf("inspect the container's networks: %w", err)
+			return "", "", classifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
 		}
 		if !slices.Contains(attached, name) {
-			return "", "", fmt.Errorf("the container is not attached to Ceph network %s", name)
+			return "", "", invalidRequest("the container is not attached to Ceph network %s", name)
 		}
 	}
 	key := name + "/" + target.GetContainerID()
@@ -331,15 +338,15 @@ func (c *Container) reserveNetworkDelay(ctx context.Context, target testcontaine
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return "", "", errNativeTerminated
+		return "", "", errClusterTerminated
 	}
 	// A completed lease leaves c.delays, so a held one still needs Restore.
 	// Its mutex is not taken here: Restore holds it while it takes c.mu.
 	if previous, held := c.delays[key]; held {
 		if previous == nil {
-			return "", "", errors.New("another network delay of this endpoint is being applied")
+			return "", "", invalidRequest("another network delay of this endpoint is being applied")
 		}
-		return "", "", errors.New("restore the existing network delay of this endpoint first")
+		return "", "", invalidRequest("restore the existing network delay of this endpoint first")
 	}
 	if c.delays == nil {
 		c.delays = make(map[string]*NetworkDelayLease)
@@ -373,7 +380,7 @@ func (c *Container) settleNetworkDelay(key string, lease *NetworkDelayLease) boo
 func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkDelay) (*NetworkDelayLease, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return nil, fmt.Errorf("inspect the network delay target: %w", err)
+		return nil, classifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
 		return nil, err
@@ -405,7 +412,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		return discard(err)
 	}
 	if root.Handle != "0:" {
-		return discard(fmt.Errorf("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle))
+		return discard(invalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle))
 	}
 	lease.Namespace, lease.Interface, lease.InterfaceIndex = report.Namespace, report.Links[0].Name, report.Links[0].Index
 	// A restart between the first inspection and the helper's start would
@@ -451,13 +458,13 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 func admitNetemTarget(state netemTarget) error {
 	switch {
 	case !state.running || state.paused:
-		return errors.New("network delay requires a running, unpaused container")
+		return invalidRequest("network delay requires a running, unpaused container")
 	case state.networkMode.IsHost() || state.networkMode.IsNone() || state.networkMode.IsContainer():
-		return fmt.Errorf("network delay cannot join a container in network mode %s", state.networkMode)
+		return invalidRequest("network delay cannot join a container in network mode %s", state.networkMode)
 	case state.sandboxID == "":
-		return errors.New("the container has no network sandbox")
+		return invalidRequest("the container has no network sandbox")
 	case !state.address.Is4() || state.mac == "":
-		return errors.New("network delay requires an IPv4 endpoint with a MAC address")
+		return invalidRequest("network delay requires an IPv4 endpoint with a MAC address")
 	}
 	return nil
 }
@@ -467,7 +474,7 @@ func admitNetemTarget(state netemTarget) error {
 func preflightNetem(ctx context.Context, backend netemBackend, image string) (string, error) {
 	helper, err := backend.startHelper(ctx, image, "none")
 	if err != nil {
-		return "", errors.Join(fmt.Errorf("start the netem preflight helper: %w", err), removeNetemHelper(ctx, backend, helper))
+		return "", errors.Join(classifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
 	}
 	imageID, err := func() (string, error) {
 		_, imageID, err := backend.helper(ctx, helper)
@@ -497,7 +504,7 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string) (st
 			return "", err
 		}
 		if code != 0 {
-			return "", classifyNetem("add netem on the helper's loopback", text)
+			return "", classifyNetem("add netem on the helper's loopback", code, text)
 		}
 		var shown []netemQdisc
 		if err := json.Unmarshal([]byte(report.Shown), &shown); err != nil || len(shown) == 0 || shown[0].Kind != "netem" {
@@ -507,7 +514,7 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string) (st
 			return "", err
 		}
 		if code != 0 {
-			return "", fmt.Errorf("remove netem from the helper's loopback: %w", classifyNetem("tc", text))
+			return "", classifyNetem("remove netem from the helper's loopback", code, text)
 		}
 		return imageID, nil
 	}()
@@ -538,8 +545,13 @@ func runNetemScript(ctx context.Context, backend netemBackend, helper testcontai
 	if err != nil {
 		return netemReport{}, fmt.Errorf("%s: %w", label, err)
 	}
-	if result.ExitCode != 0 || result.TimedOut || result.StdoutTruncated {
-		return netemReport{}, fmt.Errorf("%w: %s", ErrNetemImageUnsupported, netemCommandError(label, result))
+	if result.TimedOut {
+		// Too slow says nothing about the image.
+		return netemReport{}, fmt.Errorf("%s timed out", label)
+	}
+	if result.ExitCode != 0 || result.StdoutTruncated {
+		// The contract's script failed: the image, whatever tc reported.
+		return netemReport{}, fmt.Errorf("%w: %v", ErrNetemImageUnsupported, netemCommandError(label, result))
 	}
 	var report netemReport
 	if err := json.Unmarshal(result.Stdout, &report); err != nil {
@@ -553,7 +565,7 @@ func runNetemScript(ctx context.Context, backend netemBackend, helper testcontai
 func startNetemHelper(ctx context.Context, backend netemBackend, image string, networkMode container.NetworkMode) (testcontainers.Container, error) {
 	helper, err := backend.startHelper(ctx, image, networkMode)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("start the netem helper: %w", err), removeNetemHelper(ctx, backend, helper))
+		return nil, errors.Join(classifyDocker(ctx, fmt.Errorf("start the netem helper: %w", err)), removeNetemHelper(ctx, backend, helper))
 	}
 	if _, started, err := backend.helper(ctx, helper); err != nil || started != image {
 		return nil, errors.Join(fmt.Errorf("the netem helper runs image %q instead of %s", started, image), err,
@@ -576,11 +588,12 @@ func netemCommandError(label string, result supervised.Report) error {
 	if result.TimedOut {
 		return fmt.Errorf("%s timed out", label)
 	}
-	return classifyNetem(label, strings.TrimSpace(string(result.Stderr)))
+	return classifyNetem(label, result.ExitCode, strings.TrimSpace(string(result.Stderr)))
 }
 
-// classifyNetem turns tc's error text into the error kinds of the contract.
-func classifyNetem(label, text string) error {
+// classifyNetem turns tc's exit code and error text into the error kinds of
+// the contract, or a *NativeFailure of tc.
+func classifyNetem(label string, code int, text string) error {
 	switch {
 	case strings.Contains(text, "Operation not permitted"):
 		return fmt.Errorf("%s: %w", label, ErrNetemPermissionDenied)
@@ -589,10 +602,7 @@ func classifyNetem(label, text string) error {
 	case strings.Contains(text, "Unknown qdisc") || strings.Contains(text, "unparsable"):
 		return fmt.Errorf("%s: %w: tc has no netem", label, ErrNetemImageUnsupported)
 	}
-	if len(text) > 400 {
-		text = text[len(text)-400:]
-	}
-	return fmt.Errorf("%s: tc: %s", label, text)
+	return fmt.Errorf("%s: %w", label, nativeFailure("tc", code, nil, []byte(text)))
 }
 
 // removeNetemHelper removes helper, also after ctx ended: a helper of a
@@ -618,7 +628,7 @@ func (l *NetworkDelayLease) Status(ctx context.Context) (NetworkDelayStatus, err
 	}
 	defer l.mu.Unlock()
 	if l.complete {
-		return NetworkDelayStatus{}, errors.New("the network delay was restored")
+		return NetworkDelayStatus{}, invalidRequest("the network delay was restored")
 	}
 	if err := l.settle(ctx); err != nil {
 		return NetworkDelayStatus{}, err
@@ -738,7 +748,7 @@ func (l *NetworkDelayLease) Restore(ctx context.Context) error {
 			}
 		}
 		if !status.Gone && status.RootHandle != "0:" {
-			return fmt.Errorf("the delayed interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
+			return invalidRequest("the delayed interface's root qdisc is now %s %s, which the lease does not own", status.RootKind, status.RootHandle)
 		}
 	}
 	if err := removeNetemHelper(ctx, l.backend, l.helper); err != nil {

@@ -258,10 +258,10 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if !c.ownsDaemon(kind, id) {
-		return fmt.Errorf("daemon %s is not owned by this cluster", daemon)
+		return invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
 	}
 	ctr, keyrings := c.daemonKeyrings(kind, id)
 	if err := c.stopEarlierAuthCommands(ctx, daemon); err != nil {
@@ -489,18 +489,15 @@ func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error 
 // rotationCommand runs one native command of a rotation in the control
 // container under the supervisor, which stops it inside the container before
 // returning when ctx ends first, or reports a supervised.NotStoppedError. A
-// nonzero exit is an error.
+// nonzero exit is a *NativeFailure, which reads only standard error: the
+// standard output of a rotation can hold keys.
 func (c *Container) rotationCommand(ctx context.Context, argv ...string) ([]byte, error) {
 	result, err := c.rotationCommandResult(ctx, 1<<20, 64<<10, argv...)
 	if err != nil {
 		return nil, err
 	}
 	if result.ExitCode != 0 {
-		message := strings.TrimSpace(string(result.Stderr))
-		if len(message) > 512 {
-			message = message[:512]
-		}
-		return result.Stdout, fmt.Errorf("%s exited %d: %s", strings.Join(argv[:min(len(argv), 4)], " "), result.ExitCode, message)
+		return result.Stdout, nativeFailure(argv[0], result.ExitCode, nil, result.Stderr)
 	}
 	return result.Stdout, nil
 }

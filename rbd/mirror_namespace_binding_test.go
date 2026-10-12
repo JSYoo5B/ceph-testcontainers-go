@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 const bindingSourceUUID = "55555555-5555-4555-8555-555555555555"
@@ -667,5 +668,28 @@ func TestRBDNamespaceBindingUnavailableAndClosedOwner(t *testing.T) {
 	before := len(h.source.calls) + len(h.destination.calls)
 	if status, err := view.ReceiverStatus(t.Context()); err == nil || status.Ready || before != len(h.source.calls)+len(h.destination.calls) {
 		t.Fatal("closed owner view reached native or adopted resource")
+	}
+}
+
+// A Squid setup client prints no mirror UUID, also for Tentacle clusters, so
+// Rebootstrap reads it from the pool's rbd_mirroring object as for Squid.
+func TestRBDRebootstrapReadsTheUUIDThatASquidClientOmits(t *testing.T) {
+	h := newNamespaceBindingHarness(t, 1)
+	uuid := h.source.policies["images"].MirrorUUID
+	original := h.source.output
+	h.source.output = func(args []string) (string, bool) {
+		switch {
+		case slices.Equal(args, []string{"rbd", "mirror", "pool", "info", "images", "--format", "json"}):
+			// Squid's formatter has neither mirror_uuid nor remote_namespace.
+			data, _ := json.Marshal(map[string]any{"mode": h.source.policies["images"].Mode, "site_name": "source", "peers": h.source.peers})
+			return string(data), true
+		case slices.Equal(args, []string{"rados", "--pool", "images", "getomapval", "rbd_mirroring", "mirror_uuid", "/dev/stdout"}):
+			return uuid, true
+		}
+		return original(args)
+	}
+	h.m.legacyCLI = map[testcontainers.Container]bool{h.m.sourceClient: true}
+	if err := h.m.Rebootstrap(t.Context()); err != nil {
+		t.Fatalf("Rebootstrap with a Squid setup client: %v", err)
 	}
 }

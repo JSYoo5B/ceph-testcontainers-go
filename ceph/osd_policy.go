@@ -201,7 +201,7 @@ func (change *OSDFlagOverride) Restore(ctx context.Context) error {
 		return nil
 	}
 	if current != change.state.applied {
-		return errors.New("OSD flag changed outside this override; refusing restoration")
+		return invalid(errors.New("OSD flag changed outside this override; refusing restoration"))
 	}
 	if err := c.setOSDFlag(ctx, change.flag, change.state.previous); err != nil {
 		return err

@@ -124,7 +124,7 @@ func (f *Multisite) RemoveZone(ctx context.Context, name string) error {
 	}
 	defer f.topologyMu.Unlock()
 	if f.closed {
-		return errors.New("RGW multisite is terminated")
+		return invalid(errors.New("RGW multisite is terminated"))
 	}
 	for pendingName, pending := range f.removedZones {
 		if pendingName != name && (!pending.converged || !pending.gatewayRemoved || !pending.clientRemoved) {

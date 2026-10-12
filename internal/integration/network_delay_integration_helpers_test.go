@@ -310,7 +310,7 @@ func testNetworkDelay(t *testing.T) {
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
 		if lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: cluster.ControlImage(),
-			Plane: ceph.PublicNetworkPlane, Delay: delayAmount}); !errors.Is(err, ceph.ErrNetemImageUnsupported) || lease != nil {
+			Plane: ceph.PublicNetworkPlane, Delay: delayAmount}); !errors.Is(err, ceph.ErrNetemImageUnsupported) || !errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 			t.Fatalf("a helper without tc: %v", err)
 		}
 		// A root qdisc that the test installed is not replaced.

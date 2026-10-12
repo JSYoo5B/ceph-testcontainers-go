@@ -613,7 +613,8 @@ func TestCollectDiagnosticsRedactsAllArtifactSurfaces(t *testing.T) {
 		}
 	}
 	redact := diagnosticsRedactor([]string{secret})
-	for _, raw := range []string{`secret_key="incomplete-private-token`, "key = incomplete-private-key", "Bearer private-bearer-token"} {
+	for _, raw := range []string{`secret_key="incomplete-private-token`, "key = incomplete-private-key", "Bearer private-bearer-token",
+		"Authorization: Bearer private-bearer-token"} {
 		result := redact(raw)
 		if strings.Contains(result, "incomplete-private") || strings.Contains(result, "private-bearer-token") {
 			t.Fatalf("truncated or plain-text credential retained: %q", result)

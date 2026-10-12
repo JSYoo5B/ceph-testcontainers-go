@@ -133,6 +133,9 @@ Guides for tasks that span packages:
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything
   the typed API does not cover with the Ceph CLIs inside the containers.
+- [Classified errors](docs/guides/errors.md): telling a refused request, a
+  feature the release lacks, a missing image tool, an engine limit and a
+  failed native command apart with `errors.Is` and `errors.As`.
 
 For contributors:
 

@@ -29,9 +29,13 @@ const (
 	// for it to kill and reap its child and report.
 	ExecCushion = 250 * time.Millisecond
 	// LaunchFailedExit is the supervisor's exit code when it could not start
-	// the command, for example because the program does not exist or is not
-	// executable.
+	// the command because of its program: it does not exist, is not
+	// executable or is not a program (ENOENT, EACCES, ENOEXEC and the like).
 	LaunchFailedExit = 120
+	// LaunchUnavailableExit is the supervisor's exit code when it could not
+	// start the command for another reason, such as no free process or
+	// memory, or a security policy that refused the exec (EPERM).
+	LaunchUnavailableExit = 122
 	// CleanupFailedExit is the supervisor's exit code when it could not kill
 	// and reap the command's group; it then keeps its marker, so that no
 	// cancellation is confirmed and the command may still run.
@@ -43,8 +47,9 @@ const (
 // bounds each output stream, kills only that group at the deadline, and prints
 // one JSON envelope. Native stdout stays separate from Ceph's independently
 // nonblocking stderr pipe. When it cannot start the command it exits
-// LaunchFailedExit without an envelope, and when it cannot kill or reap the
-// started command's group it exits CleanupFailedExit and keeps its marker.
+// LaunchFailedExit or LaunchUnavailableExit without an envelope, and when it
+// cannot kill or reap the started command's group it exits CleanupFailedExit
+// and keeps its marker.
 //
 // The supervisor claims its invocation's marker before it starts the child,
 // writing the container instance into it, and stops at once if CancelScript
@@ -60,7 +65,7 @@ const (
 //
 // The marker record ends with a newline, so that a canceler never takes a
 // partly written record for one of another instance.
-const Script = `import base64,json,os,select,signal,subprocess,sys,time
+const Script = `import base64,errno,json,os,select,signal,subprocess,sys,time
 ` + instanceFunction + `limits=[int(sys.argv[1]),int(sys.argv[2])]; deadline=time.monotonic()+float(sys.argv[3])
 marker=os.environ["TC_SUPERVISED"]; cancel_marker=marker+".cancel"
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
@@ -92,7 +97,7 @@ def kill_owned_group():
  group_signaled=True
 try:
  try: p=subprocess.Popen(sys.argv[4:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
- except OSError: sys.exit(120)
+ except OSError as e: sys.exit(120 if e.errno in (errno.ENOENT,errno.EACCES,errno.ENOEXEC,errno.ENOTDIR,errno.EISDIR,errno.ELOOP,errno.ENAMETOOLONG) else 122)
  launched=True
  streams={p.stdout:0,p.stderr:1}
  try:
@@ -167,7 +172,8 @@ func (e *NotStoppedError) Unwrap() error { return e.Err }
 
 // ExitError reports a supervisor that exited without a report. Code 126 or
 // 127 means that the container could not run python3, and LaunchFailedExit
-// that the supervisor could not start the command. A code above 128 means
+// or LaunchUnavailableExit that the supervisor could not start the command,
+// because of its program or for another reason. A code above 128 means
 // that a signal killed the supervisor before its cleanup, and
 // CleanupFailedExit that its cleanup failed; then its command may still run,
 // and Cancel with Marker can confirm that only after the container restarted.

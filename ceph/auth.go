@@ -128,7 +128,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	control, err := c.ControlContainerContext(ctx)
 	if err != nil {
@@ -159,7 +159,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	for _, existing := range listing.AuthDump {
 		if existing.Entity == entity {
-			return nil, fmt.Errorf("cephx identity %q already exists", entity)
+			return nil, invalid(fmt.Errorf("cephx identity %q already exists", entity))
 		}
 	}
 	client := &ClientConfig{owner: c, name: entity}
@@ -218,7 +218,7 @@ func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientConta
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if c.closed {
-			return errors.New("ceph cluster is terminated")
+			return errClusterTerminated
 		}
 		if client == nil || client.owner != c || !client.ready || client.revoked || len(client.keyring) == 0 {
 			return errors.New("cephx client must be an active identity created by this cluster")
@@ -256,7 +256,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if client == nil || client.owner != c || !client.created {
 		return errors.New("cephx client was not created successfully by this cluster")
@@ -292,7 +292,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 			deleted()
 			return nil
 		case !current.equal(revocation.original):
-			return fmt.Errorf("cephx identity %s was created again with another key or other capabilities; refusing revocation", client.name)
+			return invalid(fmt.Errorf("cephx identity %s was created again with another key or other capabilities; refusing revocation", client.name))
 		}
 		_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, deleted)
 		return err
@@ -306,7 +306,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 		return err
 	}
 	if !current.exists || current.key != clientKey(client.keyring, client.name) {
-		return fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name)
+		return invalid(fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name))
 	}
 	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
 		client.revoked = true

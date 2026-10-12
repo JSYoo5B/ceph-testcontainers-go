@@ -498,3 +498,5 @@ func TestSomething(t *testing.T) {
   in practice.
 - [Running native commands](native-commands.md): inspecting state after a
   partial failure.
+- [Classified errors](errors.md): telling refused requests, missing features,
+  image tools, engine limits and native failures apart.

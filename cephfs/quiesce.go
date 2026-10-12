@@ -184,7 +184,7 @@ func (q *Quiesce) Release(ctx context.Context) error {
 		return nil
 	}
 	if current.State != "QUIESCED" || current.Version != q.state.version {
-		return fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version)
+		return invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))
 	}
 	q.state.releaseAttempted = true
 	_, setErr := fs.cluster.Ceph(ctx, "fs", "quiesce", fs.config.Name, "--set-id", q.state.id,

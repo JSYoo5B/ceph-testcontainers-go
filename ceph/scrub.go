@@ -37,7 +37,7 @@ var (
 
 func validatePGID(pgid string) error {
 	if !pgIDPattern.MatchString(pgid) {
-		return errors.New("invalid native PG ID")
+		return invalid(errors.New("invalid native PG ID"))
 	}
 	return nil
 }
@@ -46,7 +46,7 @@ func validatePGID(pgid string) error {
 // arguments; reject names that the CLI would parse as options or truncate.
 func validateObjectName(name string) error {
 	if name == "" || len(name) > 4096 || strings.HasPrefix(name, "-") || strings.ContainsRune(name, 0) {
-		return errors.New("object name must be non-empty, at most 4096 bytes, without NUL and not start with a dash")
+		return invalid(errors.New("object name must be non-empty, at most 4096 bytes, without NUL and not start with a dash"))
 	}
 	return nil
 }
@@ -82,7 +82,7 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 		return err
 	}
 	if osd := c.osds[osdID]; osd == nil || osd.purged {
-		return fmt.Errorf("OSD %d is not owned by this cluster", osdID)
+		return invalid(fmt.Errorf("OSD %d is not owned by this cluster", osdID))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

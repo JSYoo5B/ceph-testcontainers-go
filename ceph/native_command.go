@@ -36,6 +36,9 @@ var ErrNativeCommandIncomplete = errors.New("native command did not complete wit
 // command.
 var errNativeTerminated = errors.New("ceph cluster is terminated")
 
+// errClusterTerminated refuses a request to a terminated cluster.
+var errClusterTerminated error = &categoryError{text: "ceph cluster is terminated", kind: ErrInvalidRequest}
+
 // NativeCommand is one native command that RunNativeCommand runs under a
 // supervisor inside a container.
 type NativeCommand struct {
@@ -260,17 +263,20 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {
-		return NativeCommandResult{}, err
+		return NativeCommandResult{}, classify(ErrInvalidRequest, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return NativeCommandResult{}, err
 	}
 	if target == nil || target.GetContainerID() == "" {
-		return NativeCommandResult{}, fmt.Errorf("%s needs a started container", label)
+		return NativeCommandResult{}, invalidRequest("%s needs a started container", label)
 	}
 	// A Docker call that ctx ended may fail without wrapping ctx's error.
 	if err := c.admitNativeTarget(ctx, target); err != nil {
-		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
+		if ctx.Err() != nil {
+			return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
+		}
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err)))
 	}
 	state, err := target.State(ctx)
 	if err != nil {
@@ -279,8 +285,10 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	switch {
 	case ctx.Err() != nil:
 		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
+	case err != nil && !errdefs.IsNotFound(err) && !errdefs.IsConflict(err):
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err)))
 	case err != nil || state == nil || !state.Running || state.Paused:
-		return NativeCommandResult{}, safeNativeError(errors.Join(fmt.Errorf("%s needs a running, unpaused container", label), err))
+		return NativeCommandResult{}, safeNativeError(classify(ErrInvalidRequest, errors.Join(fmt.Errorf("%s needs a running, unpaused container", label), err)))
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -288,7 +296,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	c.nativeMu.Lock()
 	if c.nativeClosed {
 		c.nativeMu.Unlock()
-		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errNativeTerminated)
+		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
 	if c.nativeInvocations == nil {
 		c.nativeInvocations = make(map[*nativeInvocation]bool)
@@ -326,9 +334,17 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	case unstopped != "":
 		return NativeCommandResult{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
 	case errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127):
-		return NativeCommandResult{}, fmt.Errorf("%s: the container cannot run python3, which the supervisor needs: %w", label, err)
+		return NativeCommandResult{}, &OperationError{Kind: ErrImageCapability, Op: label, Capability: "python3",
+			Err: fmt.Errorf("the container cannot run python3, which the supervisor needs: %w", err)}
 	case errors.As(err, &exit) && exit.Code == supervised.LaunchFailedExit:
-		return NativeCommandResult{}, fmt.Errorf("%s: the program could not be started, for example because it does not exist or is not executable", label)
+		// The program is not named: errors never contain the arguments.
+		return NativeCommandResult{}, &OperationError{Kind: ErrImageCapability, Op: label,
+			Err: errors.New("the program could not be started, for example because it does not exist or is not executable")}
+	case errors.As(err, &exit) && exit.Code == supervised.LaunchUnavailableExit:
+		return NativeCommandResult{}, &OperationError{Kind: ErrEnvironmentUnavailable, Op: label,
+			Err: errors.New("the program could not be started for want of a process or memory, or because a security policy refused it")}
+	case err != nil && ctx.Err() == nil && !errors.Is(err, errNativeTerminated):
+		return NativeCommandResult{}, classifyNativeBackend(err)
 	case err != nil:
 		return NativeCommandResult{}, err
 	}
@@ -366,7 +382,7 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 	}
 	switch {
 	case closed:
-		return errNativeTerminated
+		return errClusterTerminated
 	case owned:
 		return nil
 	}
@@ -382,7 +398,24 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 			return nil
 		}
 	}
-	return errors.New("the container is neither part of this cluster nor attached to its network")
+	return invalidRequest("the container is neither part of this cluster nor attached to its network")
+}
+
+// classifyNativeBackend classifies a failed Docker call of a native command
+// whose context has not ended: a container that is gone, stopped or paused
+// refuses the request, and any other failure is the engine's. An error
+// already classified, or one of the supervisor's own, keeps its meaning.
+func classifyNativeBackend(err error) error {
+	var backend *supervised.BackendError
+	switch {
+	case !errors.As(err, &backend) || classified(err):
+		return err
+	case errdefs.IsNotFound(backend.Err) || errdefs.IsConflict(backend.Err):
+		return classify(ErrInvalidRequest, err)
+	case errors.Is(backend.Err, context.Canceled) || errors.Is(backend.Err, context.DeadlineExceeded):
+		return err
+	}
+	return classify(ErrEnvironmentUnavailable, err)
 }
 
 // ownsNativeTarget reports whether id is a container of this cluster. The

@@ -21,7 +21,7 @@ func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, nil, errors.New("ceph cluster is terminated")
+		return nil, nil, errClusterTerminated
 	}
 	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
 		return nil, nil, err

@@ -88,7 +88,8 @@ func Poll(ctx context.Context, check func() (bool, error)) error {
 
 // OperationError names a failed native operation without its output, which
 // can contain secrets. It keeps the caller's context error and a native
-// cancellation or deadline as causes.
+// cancellation or deadline as causes, and the classification of native
+// without its output.
 func OperationError(ctx context.Context, operation string, native error) error {
 	causes := []error{errors.New(operation)}
 	contextErr := ctx.Err()
@@ -100,8 +101,12 @@ func OperationError(ctx context.Context, operation string, native error) error {
 			causes = append(causes, cause)
 		}
 	}
-	return errors.Join(causes...)
+	return Quiet(errors.Join(causes...), native)
 }
+
+// Quiet returns visible, keeping the classification of native without its
+// output; package ceph sets it.
+var Quiet = func(visible, native error) error { return visible }
 
 // KeyringKey returns the key of entity in a Ceph keyring, or "".
 func KeyringKey(keyring []byte, entity string) string {

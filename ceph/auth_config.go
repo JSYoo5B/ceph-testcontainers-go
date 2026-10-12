@@ -84,24 +84,24 @@ func WithAuth(config AuthConfig) Option {
 func normalizeAuthConfig(config AuthConfig) (AuthConfig, error) {
 	config.AllowedCiphers = slices.Clone(config.AllowedCiphers)
 	if config.MonTicketTTL < 0 || config.ServiceTicketTTL < 0 {
-		return config, errors.New("ticket lifetimes must not be negative")
+		return config, invalid(errors.New("ticket lifetimes must not be negative"))
 	}
 	for _, cipher := range []CephxCipher{config.KeyType, config.ServiceCipher, config.PreferredCipher} {
 		if cipher != "" && !validCephxCipher(cipher) {
-			return config, fmt.Errorf("unknown Cephx cipher %q; use aes or aes256k", cipher)
+			return config, invalid(fmt.Errorf("unknown Cephx cipher %q; use aes or aes256k", cipher))
 		}
 	}
 	for i, cipher := range config.AllowedCiphers {
 		if !validCephxCipher(cipher) {
-			return config, fmt.Errorf("unknown allowed Cephx cipher %q; use aes or aes256k", cipher)
+			return config, invalid(fmt.Errorf("unknown allowed Cephx cipher %q; use aes or aes256k", cipher))
 		}
 		if slices.Contains(config.AllowedCiphers[:i], cipher) {
-			return config, fmt.Errorf("allowed Cephx cipher %s is listed twice", cipher)
+			return config, invalid(fmt.Errorf("allowed Cephx cipher %s is listed twice", cipher))
 		}
 	}
 	if config.KeyType == "" {
 		if config.ServiceCipher != "" || config.PreferredCipher != "" || len(config.AllowedCiphers) != 0 {
-			return config, errors.New("a KeyType is required for ServiceCipher, AllowedCiphers and PreferredCipher")
+			return config, invalid(errors.New("a KeyType is required for ServiceCipher, AllowedCiphers and PreferredCipher"))
 		}
 		return config, nil
 	}
@@ -121,7 +121,7 @@ func normalizeAuthConfig(config AuthConfig) (AuthConfig, error) {
 	}
 	for _, cipher := range required {
 		if !slices.Contains(config.AllowedCiphers, cipher) {
-			return config, fmt.Errorf("allowed ciphers must contain the key type, service cipher and preferred cipher (%s)", cipher)
+			return config, invalid(fmt.Errorf("allowed ciphers must contain the key type, service cipher and preferred cipher (%s)", cipher))
 		}
 	}
 	return config, nil
@@ -164,7 +164,7 @@ type clientOptions struct {
 func WithClientKeyType(cipher CephxCipher) ClientOption {
 	return func(o *clientOptions) error {
 		if !validCephxCipher(cipher) {
-			return fmt.Errorf("unknown Cephx cipher %q; use aes or aes256k", cipher)
+			return invalidRequest("unknown Cephx cipher %q; use aes or aes256k", cipher)
 		}
 		o.keyType = cipher
 		return nil
@@ -181,7 +181,9 @@ func (c *Container) generateKeyArgs(keyType CephxCipher) ([]string, error) {
 	case keyType == "":
 		return args, nil
 	case !c.keyTypeOption && keyType != CipherAES:
-		return nil, fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the control image (Ceph %s) lacks", keyType, c.CephVersion())
+		return nil, &OperationError{Kind: ErrUnsupported, Target: "control", Version: c.CephVersion(), Image: c.controlImageID,
+			Capability: "ceph-authtool --key-type",
+			Err:        fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the control image lacks", keyType)}
 	case !c.keyTypeOption:
 		return args, nil
 	}
@@ -202,29 +204,80 @@ func detectKeyTypeOption(ctx context.Context, ctr testcontainers.Container) (boo
 	return strings.Contains(string(usage), "--key-type"), nil
 }
 
-// bootstrapRefusal returns the reason a bootstrap script printed before it
-// refused to start, such as a Cephx cipher that the image does not support,
-// or "" when the container reported none.
-func bootstrapRefusal(ctx context.Context, ctr testcontainers.Container) string {
-	if ctr == nil {
+// containerImageID returns the ID of the image that ctr runs, or "" when it
+// cannot be read; it only details errors.
+func containerImageID(ctx context.Context, ctr testcontainers.Container) string {
+	inspect, err := ctr.Inspect(ctx)
+	if err != nil || inspect == nil {
 		return ""
+	}
+	return inspect.Image
+}
+
+// bootstrapRefused is what a bootstrap script printed before it refused to
+// start, in lines "tc-ceph: KIND: REASON": an "unsupported" Cephx cipher that
+// the image's tools cannot generate, an "image" without a tool that the
+// bootstrap needs, or an "environment" without an address of the requested
+// family.
+type bootstrapRefused struct {
+	kind    error
+	reasons []string
+}
+
+// with returns the refusal of the first MON with the error of its start. A
+// start that ctx ended keeps the reasons but no category.
+func (r *bootstrapRefused) with(ctx context.Context, err error) error {
+	text := fmt.Errorf("%s: %w", strings.Join(r.reasons, "; "), err)
+	if r.kind == nil || ctx.Err() != nil {
+		return text
+	}
+	return &OperationError{Kind: r.kind, Target: "mon." + daemonName(0), Err: text}
+}
+
+// bootstrapRefusal returns the refusal that ctr's bootstrap script printed,
+// or nil when it printed none.
+func bootstrapRefusal(ctx context.Context, ctr testcontainers.Container) *bootstrapRefused {
+	if ctr == nil {
+		return nil
 	}
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	reader, err := ctr.Logs(logCtx)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(io.LimitReader(reader, 1<<20))
 	if err != nil {
-		return ""
+		return nil
 	}
-	var reasons []string
+	return parseBootstrapRefusal(data)
+}
+
+// parseBootstrapRefusal reads the refusal lines of a bootstrap script's log.
+func parseBootstrapRefusal(data []byte) *bootstrapRefused {
+	refused := &bootstrapRefused{}
+	kinds := map[string]error{"unsupported": ErrUnsupported, "image": ErrImageCapability, "environment": ErrEnvironmentUnavailable}
 	for _, line := range strings.Split(string(data), "\n") {
-		if _, reason, ok := strings.Cut(line, "tc-ceph: "); ok {
-			reasons = append(reasons, strings.TrimSpace(reason))
+		_, reason, ok := strings.Cut(line, "tc-ceph: ")
+		if !ok {
+			continue
 		}
+		name, text, tagged := strings.Cut(strings.TrimSpace(reason), ": ")
+		kind, known := kinds[name]
+		if !tagged || !known {
+			kind, text = nil, strings.TrimSpace(reason)
+		}
+		// Lines of different kinds leave the refusal unclassified.
+		if len(refused.reasons) == 0 {
+			refused.kind = kind
+		} else if refused.kind != kind {
+			refused.kind = nil
+		}
+		refused.reasons = append(refused.reasons, text)
 	}
-	return strings.Join(reasons, "; ")
+	if len(refused.reasons) == 0 {
+		return nil
+	}
+	return refused
 }

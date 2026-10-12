@@ -301,8 +301,13 @@ Before it changes anything, the call checks:
 - the helper, in a separate helper container without a network: the
   contract's executables, `tc` with JSON output and netem, `python3`,
   `NET_ADMIN`, and the kernel's netem on that container's loopback. The errors
-  wrap `ceph.ErrNetemImageUnsupported`, `ceph.ErrNetemPermissionDenied` or
-  `ceph.ErrNetemKernelUnsupported`;
+  wrap `ceph.ErrNetemImageUnsupported`, which belongs to
+  `ceph.ErrImageCapability`, or `ceph.ErrNetemPermissionDenied` or
+  `ceph.ErrNetemKernelUnsupported`, which belong to
+  `ceph.ErrEnvironmentUnavailable`. A request without `HelperImage` has not
+  selected the extension and is `ceph.ErrImageCapability` too, and a `tc`
+  command that fails otherwise is a `*ceph.NativeFailure` (see
+  [Classified errors](errors.md#image-capabilities-and-optional-extensions));
 - the interface, found by the endpoint's address and MAC address and then
   followed by its index: its root qdisc must be the kernel's default. A qdisc that someone else installed is
   refused, not replaced, and only one delay per endpoint is held.

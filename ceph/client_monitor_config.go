@@ -82,7 +82,7 @@ func (c *Container) monitorClientRefreshContext(ctx context.Context) (context.Co
 // the original identity when the fixture has no confirmed bootstrap template.
 func (c *Container) currentMonitorBootstrapAddresses(ctx context.Context) (string, string, error) {
 	if c.closed {
-		return "", "", errors.New("ceph cluster is terminated")
+		return "", "", errClusterTerminated
 	}
 	c.configMu.RLock()
 	template := bytes.Clone(c.config)

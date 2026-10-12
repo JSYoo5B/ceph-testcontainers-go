@@ -170,16 +170,16 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 		config.MaxArchiveBytes < 1 || config.MaxArchiveBytes > 256<<20 || config.MaxEntries < 1 || config.MaxEntries > 65536 ||
 		config.MaxRecordBytes < 1 || config.MaxRecordBytes > 1<<20 || config.MaxRecords < 1 || config.MaxRecords > 1024 ||
 		len(config.AdditionalContainers) > 64 || len(config.RedactValues) > 128 {
-		return config, errors.New("invalid crash metadata limits")
+		return config, invalid(errors.New("invalid crash metadata limits"))
 	}
 	for _, target := range config.AdditionalContainers {
 		if len(target.Role) > 64 || len(target.Name) > 128 || strings.ContainsAny(target.Role+target.Name, "\x00\r\n") {
-			return config, errors.New("invalid crash metadata container description")
+			return config, invalid(errors.New("invalid crash metadata container description"))
 		}
 	}
 	for _, value := range config.RedactValues {
 		if len(value) > 4096 {
-			return config, errors.New("crash metadata redaction value exceeds 4096 bytes")
+			return config, invalid(errors.New("crash metadata redaction value exceeds 4096 bytes"))
 		}
 	}
 	return config, nil

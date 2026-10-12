@@ -84,7 +84,7 @@ func (c *Container) TemporaryBlocklist(ctx context.Context, address string, dura
 		return nil, err
 	}
 	if findBlocklistEntry(entries, address) != nil {
-		return nil, errors.New("client session already has a native blocklist entry; refusing to renew or adopt it")
+		return nil, invalid(errors.New("client session already has a native blocklist entry; refusing to renew or adopt it"))
 	}
 	change := &BlocklistOverride{owner: c, address: address, state: &blocklistOverrideState{}}
 	if c.blocklistOverrides == nil {
@@ -143,7 +143,7 @@ func (change *BlocklistOverride) Restore(ctx context.Context) error {
 		return errors.New("client blocklist apply readback was unavailable; inspect native state or terminate the cluster")
 	}
 	if !current.Until.Equal(change.state.until) {
-		return errors.New("client blocklist entry changed outside this override; refusing removal")
+		return invalid(errors.New("client blocklist entry changed outside this override; refusing removal"))
 	}
 	if _, err := c.Ceph(ctx, "osd", "blocklist", "rm", change.address); err != nil {
 		return err
@@ -228,13 +228,13 @@ func decodeBlocklistEntries(data []byte) ([]BlocklistEntry, error) {
 func normalizeBlocklistSession(address string, strict bool) (string, error) {
 	if strings.HasPrefix(address, "[v1:") || strings.HasPrefix(address, "[v2:") {
 		if !strings.HasSuffix(address, "]") {
-			return "", errors.New("invalid native client address vector")
+			return "", invalid(errors.New("invalid native client address vector"))
 		}
 		var canonical string
 		for _, component := range strings.Split(address[1:len(address)-1], ",") {
 			value, err := normalizeBlocklistSession(component, strict)
 			if err != nil || (canonical != "" && canonical != value) {
-				return "", errors.New("select one exact IP/port/nonce from the native client address vector")
+				return "", invalid(errors.New("select one exact IP/port/nonce from the native client address vector"))
 			}
 			canonical = value
 		}
@@ -247,7 +247,7 @@ func normalizeBlocklistSession(address string, strict bool) (string, error) {
 	port, portErr := strconv.ParseUint(portText, 10, 16)
 	nonce, nonceErr := strconv.ParseUint(nonceText, 10, 32)
 	if !ok || splitErr != nil || ipErr != nil || ip.Zone() != "" || portErr != nil || nonceErr != nil || (strict && (nonce == 0 || ip.IsUnspecified() || ip.IsMulticast())) {
-		return "", errors.New("client fencing requires an exact IP:port/nonzero-nonce session address")
+		return "", invalid(errors.New("client fencing requires an exact IP:port/nonzero-nonce session address"))
 	}
 	return net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)) + "/" + strconv.FormatUint(nonce, 10), nil
 }

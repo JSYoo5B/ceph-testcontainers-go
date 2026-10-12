@@ -29,7 +29,7 @@ messenger_address() {
             ;;
         esac
     done
-    echo "tc-ceph: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
+    echo "tc-ceph: environment: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
     exit 2
 }
 mon_ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
@@ -72,6 +72,10 @@ monmap_cipher_args=
 auth_config=
 mon_auth_config=
 if [ -n "${CEPH_KEY_TYPE:-}" ]; then
+    # A missing tool is the image's, not a limit of its release.
+    for tool in ceph-authtool monmaptool; do
+        command -v "$tool" >/dev/null 2>&1 || fail "image: this image has no $tool"
+    done
     if ceph-authtool --help 2>&1 | grep -q -- '--key-type' && monmaptool --help 2>&1 | grep -q -- '--auth-service-cipher'; then
         key_type_args="--key-type ${CEPH_KEY_TYPE}"
         monmap_cipher_args="--auth-service-cipher ${CEPH_AUTH_SERVICE_CIPHER} --auth-allowed-ciphers ${CEPH_AUTH_ALLOWED_CIPHERS} --auth-preferred-cipher ${CEPH_AUTH_PREFERRED_CIPHER}"
@@ -82,7 +86,7 @@ if [ -n "${CEPH_KEY_TYPE:-}" ]; then
         fi
     else
         for cipher in ${CEPH_KEY_TYPE} ${CEPH_AUTH_SERVICE_CIPHER} $(echo "${CEPH_AUTH_ALLOWED_CIPHERS}" | tr ',' ' ') ${CEPH_AUTH_PREFERRED_CIPHER}; do
-            [ "$cipher" = aes ] || fail "Cephx cipher $cipher needs ceph-authtool --key-type and monmaptool cipher options, as in Ceph 20.2.4 and later; this image supports only aes"
+            [ "$cipher" = aes ] || fail "unsupported: Cephx cipher $cipher needs ceph-authtool --key-type and monmaptool cipher options, as in Ceph 20.2.4 and later; this image supports only aes"
         done
     fi
 fi

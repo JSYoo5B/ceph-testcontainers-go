@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -298,13 +299,16 @@ func rbdNamespaceMappingUnsupported(cluster *ceph.Container) bool {
 }
 
 // requireRBDNamespaceMappingRefused proves that the fixture refused the
-// mapping before any change. That refusal is the whole Ceph 19 contract of a
-// mapping case, so callers return afterwards instead of skipping.
+// mapping before any change, as unsupported by a Ceph 19 cluster. That
+// refusal is the whole Ceph 19 contract of a mapping case, so callers return
+// afterwards instead of skipping.
 func requireRBDNamespaceMappingRefused(t *testing.T, err error, mapping [2]string) {
 	t.Helper()
 	want := fmt.Sprintf("mirroring RBD namespace %q to %q needs Ceph 20 or later", mapping[0], mapping[1])
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("Ceph 19 namespace mapping %q -> %q error = %v, want refusal %q", mapping[0], mapping[1], err, want)
+	var refusal *ceph.OperationError
+	if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || !strings.HasPrefix(refusal.Version, "19.") ||
+		!strings.HasSuffix(refusal.Target, " cluster") || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Ceph 19 namespace mapping %q -> %q error = %v, want ErrUnsupported %q from a Ceph 19 cluster", mapping[0], mapping[1], err, want)
 	}
-	t.Logf("Ceph 19 refused namespace mapping %q -> %q before any change", mapping[0], mapping[1])
+	t.Logf("%s (Ceph %s) refused namespace mapping %q -> %q before any change", refusal.Target, refusal.Version, mapping[0], mapping[1])
 }

@@ -100,7 +100,7 @@ func (f *Multisite) WaitSyncReady(ctx context.Context, zoneName string, sourceZo
 
 func (f *Multisite) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
 	if f.closed {
-		return nil, errors.New("RGW multisite is terminated")
+		return nil, invalid(errors.New("RGW multisite is terminated"))
 	}
 	var target *rgwZoneState
 	states := f.zoneStates()

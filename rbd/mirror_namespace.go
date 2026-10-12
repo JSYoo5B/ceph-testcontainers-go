@@ -45,23 +45,23 @@ type MirrorPolicies struct {
 func (m *Mirror) PolicyStatus(ctx context.Context) (MirrorPolicies, error) {
 	var status MirrorPolicies
 	if m == nil {
-		return status, errors.New("RBD mirror fixture is unavailable")
+		return status, invalid(errors.New("RBD mirror fixture is unavailable"))
 	}
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return MirrorPolicies{}, err
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
-		return status, errors.New("RBD mirror fixture is unavailable or terminated")
+		return status, invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
 	}
 	if err := m.checkRBDMirrorPools(ctx); err != nil {
 		return status, err
 	}
-	source, err := readRBDMirrorNamespacePolicy(ctx, m.sourceClient, m.config.Pool, m.config.SourceNamespace, multicluster.CephBefore(m.config.Source, 20))
+	source, err := readRBDMirrorNamespacePolicy(ctx, m.sourceClient, m.config.Pool, m.config.SourceNamespace, m.legacyClient(m.sourceClient))
 	if err != nil {
 		return status, err
 	}
-	destination, err := readRBDMirrorNamespacePolicy(ctx, m.destinationClient, m.config.Pool, m.config.DestinationNamespace, multicluster.CephBefore(m.config.Destination, 20))
+	destination, err := readRBDMirrorNamespacePolicy(ctx, m.destinationClient, m.config.Pool, m.config.DestinationNamespace, m.legacyClient(m.destinationClient))
 	if err != nil {
 		return status, err
 	}
@@ -88,11 +88,11 @@ func normalizeRBDMirrorScopeAndNamespaces(config MirrorConfig) (MirrorConfig, er
 		config.Scope = MirrorScopeImage
 	}
 	if config.Scope != MirrorScopeImage && config.Scope != MirrorScopePool {
-		return config, errors.New("RBD mirror scope must be image or pool")
+		return config, invalid(errors.New("RBD mirror scope must be image or pool"))
 	}
 	for _, namespace := range []string{config.SourceNamespace, config.DestinationNamespace} {
 		if namespace != "" && !rbdMirrorNamespaceName.MatchString(namespace) {
-			return config, errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash")
+			return config, invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
 		}
 	}
 	if config.Scope == MirrorScopePool {
@@ -100,7 +100,7 @@ func normalizeRBDMirrorScopeAndNamespaces(config MirrorConfig) (MirrorConfig, er
 			config.Mode = MirrorModeJournal
 		}
 		if config.Mode != MirrorModeJournal {
-			return config, errors.New("pool-scope RBD mirroring supports journal mode only")
+			return config, invalid(errors.New("pool-scope RBD mirroring supports journal mode only"))
 		}
 	}
 	return config, nil
@@ -202,18 +202,86 @@ func readRBDMirrorNamespacePolicy(ctx context.Context, client testcontainers.Con
 	return policy, nil
 }
 
-// legacyClient reports whether client is the setup client of a Ceph 19
-// cluster in this link.
+// legacyClient reports whether client is a setup client of this link that
+// cannot map namespaces: its rbd has no --remote-namespace, or its cluster
+// cannot (see legacyCluster). Such a site has no init-only mode either.
 func (m *Mirror) legacyClient(client testcontainers.Container) bool {
 	switch client {
 	case nil:
 		return false
 	case m.sourceClient:
-		return multicluster.CephBefore(m.config.Source, 20)
+		return m.legacyCLI[client] || m.legacyCluster(m.config.Source)
 	case m.destinationClient:
-		return multicluster.CephBefore(m.config.Destination, 20)
+		return m.legacyCLI[client] || m.legacyCluster(m.config.Destination)
 	}
 	return false
+}
+
+// legacyCluster reports whether cluster cannot map namespaces: the rbd of its
+// control image, whose release its daemons run, has no --remote-namespace.
+// A patched image of an older release can have it. Without that evidence,
+// as for a link that RunMirror did not set up, the release decides.
+func (m *Mirror) legacyCluster(cluster *ceph.Container) bool {
+	if legacy, detected := m.legacyClusters[cluster]; detected {
+		return legacy
+	}
+	return multicluster.CephBefore(cluster, 20)
+}
+
+// detectNamespaceMapping reads whether each setup client and each cluster's
+// control image can map namespaces.
+func (m *Mirror) detectNamespaceMapping(ctx context.Context) error {
+	m.legacyCLI, m.legacyClusters = map[testcontainers.Container]bool{}, map[*ceph.Container]bool{}
+	for _, client := range []testcontainers.Container{m.sourceClient, m.destinationClient} {
+		mapping, err := rbdNamespaceMappingOption(ctx, client)
+		if err != nil {
+			return err
+		}
+		m.legacyCLI[client] = !mapping
+	}
+	for _, cluster := range []*ceph.Container{m.config.Source, m.config.Destination} {
+		control, err := cluster.ControlContainerContext(ctx)
+		if err != nil {
+			return fmt.Errorf("inspect RBD mirror cluster control handle: %w", err)
+		}
+		mapping, err := rbdNamespaceMappingOption(ctx, control)
+		if err != nil {
+			return err
+		}
+		m.legacyClusters[cluster] = !mapping
+	}
+	return nil
+}
+
+// rbdNamespaceMappingOption reports whether client's rbd can map a mirrored
+// namespace to another name: its usage of "mirror pool enable" lists
+// --remote-namespace, as from Ceph 20.
+func rbdNamespaceMappingOption(ctx context.Context, client testcontainers.Container) (bool, error) {
+	usage, err := multicluster.Exec(ctx, client, "rbd", "help", "mirror", "pool", "enable")
+	if err != nil {
+		return false, fmt.Errorf("read the options of rbd mirror pool enable: %w", err)
+	}
+	return strings.Contains(string(usage), "--remote-namespace"), nil
+}
+
+// namespaceMappingUnsupported refuses a mapping between differently named
+// namespaces, naming the side that lacks it: the cluster, or else the setup
+// client.
+func (m *Mirror) namespaceMappingUnsupported(ctx context.Context, client testcontainers.Container, cluster *ceph.Container, site, namespace, remote string) error {
+	refusal := &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: site + " setup client",
+		Capability: "rbd mirror pool enable --remote-namespace",
+		Err:        fmt.Errorf("mirroring RBD namespace %q to %q needs Ceph 20 or later; Ceph 19 pairs only namespaces with the same name", namespace, remote)}
+	image := client
+	if m.legacyCluster(cluster) {
+		refusal.Target, refusal.Version = site+" cluster", cluster.CephVersion()
+		image, _ = cluster.ControlContainerContext(ctx)
+	}
+	if image != nil {
+		if inspect, err := image.Inspect(ctx); err == nil && inspect != nil {
+			refusal.Image = inspect.Image
+		}
+	}
+	return refusal
 }
 
 // readLegacyRBDMirrorUUID reads the mirror UUID that Ceph 19's rbd CLI does
@@ -258,7 +326,7 @@ type rbdMirrorPolicyStep struct {
 
 func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope MirrorScope, base, selected nativeRBDMirrorPolicy, legacy bool) ([]rbdMirrorPolicyStep, error) {
 	if base.Mode != "disabled" && base.SiteName != site {
-		return nil, errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly")
+		return nil, invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 	}
 	steps := []rbdMirrorPolicyStep{}
 	if namespace != "" && base.Mode == "disabled" {
@@ -272,7 +340,7 @@ func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site 
 	}
 	if selected.Mode == "image" || selected.Mode == "pool" {
 		if selected.Mode != string(scope) || selected.RemoteNamespace == nil || *selected.RemoteNamespace != remote {
-			return nil, errors.New("existing RBD mirror namespace scope or remote mapping differs; reconfigure explicitly")
+			return nil, invalid(errors.New("existing RBD mirror namespace scope or remote mapping differs; reconfigure explicitly"))
 		}
 		return steps, nil
 	}
@@ -298,16 +366,16 @@ func (m *Mirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 		{m.sourceClient, m.config.Source, m.config.SourceNamespace, m.config.DestinationNamespace, m.config.SourceSite},
 		{m.destinationClient, m.config.Destination, m.config.DestinationNamespace, m.config.SourceNamespace, m.config.DestinationSite},
 	} {
-		legacy := multicluster.CephBefore(site.cluster, 20)
+		legacy := m.legacyClient(site.client)
 		if legacy && site.namespace != site.remote {
-			return fmt.Errorf("mirroring RBD namespace %q to %q needs Ceph 20 or later; Ceph 19 pairs only namespaces with the same name", site.namespace, site.remote)
+			return m.namespaceMappingUnsupported(ctx, site.client, site.cluster, site.name, site.namespace, site.remote)
 		}
 		configuredSite, err := readConfiguredRBDMirrorSite(ctx, site.client)
 		if err != nil {
 			return err
 		}
 		if configuredSite != "" && configuredSite != site.name {
-			return errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly")
+			return invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 		}
 		configuredSites[site.name] = configuredSite
 		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "", legacy)

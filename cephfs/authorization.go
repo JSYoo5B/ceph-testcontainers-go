@@ -389,7 +389,7 @@ func (identity *cephFSAuthorizationIdentity) withoutOwnedClauses(caps map[string
 
 func (fs *Filesystem) validateSubvolumeAuthorization(grant *SubvolumeAuthorization) error {
 	if fs == nil || fs.cluster == nil || grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem != fs || !grant.identity.authorizeAttempted {
-		return errors.New("subvolume authorization must be an owned grant attempted by this filesystem")
+		return invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
 	}
 	return nil
 }

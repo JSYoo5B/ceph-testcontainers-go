@@ -176,7 +176,7 @@ func (change *ConfigOverride) Restore(ctx context.Context) error {
 		}
 	}
 	if current == nil || current.Value != expected {
-		return errors.New("configuration entry changed outside this override; refusing restoration")
+		return invalid(errors.New("configuration entry changed outside this override; refusing restoration"))
 	}
 	var restoreErr error
 	if change.state.previous == nil {
@@ -210,31 +210,31 @@ var configIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 func normalizeConfigSetting(setting ConfigSetting) (ConfigSetting, error) {
 	section, id, hasID := strings.Cut(setting.Section, ".")
 	if !slices.Contains([]string{"global", "mon", "mgr", "osd", "mds", "client"}, section) || (hasID && (section == "global" || !configIDPattern.MatchString(id))) {
-		return setting, errors.New("invalid Ceph configuration section")
+		return setting, invalid(errors.New("invalid Ceph configuration section"))
 	}
 	setting.Name = strings.ReplaceAll(setting.Name, "-", "_")
 	if !configNamePattern.MatchString(setting.Name) || strings.IndexFunc(setting.Value, unicode.IsControl) != -1 {
-		return setting, errors.New("invalid Ceph configuration name or value")
+		return setting, invalid(errors.New("invalid Ceph configuration name or value"))
 	}
 	if setting.Mask != "" {
 		parts := strings.Split(setting.Mask, "/")
 		if len(parts) > 2 {
-			return setting, errors.New("configuration mask accepts one location and one device class")
+			return setting, invalid(errors.New("configuration mask accepts one location and one device class"))
 		}
 		var location, class string
 		for _, part := range parts {
 			kind, value, ok := strings.Cut(part, ":")
 			if !ok || !configMaskKindPattern.MatchString(kind) || !crushLocationName.MatchString(value) {
-				return setting, errors.New("invalid Ceph configuration mask")
+				return setting, invalid(errors.New("invalid Ceph configuration mask"))
 			}
 			if kind == "class" {
 				if class != "" {
-					return setting, errors.New("duplicate configuration class mask")
+					return setting, invalid(errors.New("duplicate configuration class mask"))
 				}
 				class = part
 			} else {
 				if location != "" {
-					return setting, errors.New("duplicate configuration location mask")
+					return setting, invalid(errors.New("duplicate configuration location mask"))
 				}
 				location = part
 			}
@@ -305,7 +305,7 @@ func (c *Container) configCommand(ctx context.Context, args ...string) ([]byte, 
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("Ceph configuration command: %w", ctx.Err())
 		}
-		return nil, errors.New("Ceph configuration command failed; native output is redacted")
+		return nil, quiet(errors.New("Ceph configuration command failed; native output is redacted"), err)
 	}
 	return data, nil
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
@@ -72,7 +71,7 @@ func monitorQuorumCommand(ctx context.Context, control testcontainers.Container,
 		return nil, err
 	}
 	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("quorum_status exited %d: %s", result.ExitCode, strings.TrimSpace(string(result.Stdout)+string(result.Stderr)))
+		return nil, fmt.Errorf("quorum_status: %w", nativeFailure("ceph", result.ExitCode, result.Stdout, result.Stderr))
 	}
 	return result.Stdout, nil
 }

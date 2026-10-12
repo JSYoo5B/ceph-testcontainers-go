@@ -51,14 +51,17 @@ cluster, err := ceph.Run(ctx,
 Right after the first MON starts, `Run` executes `ceph --version` in the
 control image and records the release. `cluster.CephVersion()` returns it, for
 example `"20.2.4"`. The fixture uses this value to choose commands that differ
-between releases. Tests can use it to skip checks for features that a release
-lacks:
+between releases.
 
-```golang
-if major, _, _ := strings.Cut(cluster.CephVersion(), "."); major == "19" {
-	t.Skip("Squid mirrors only RBD namespaces with identical names")
-}
-```
+Where a tool reveals a feature, the fixture checks the tool instead of the
+release number, so that patched and stripped images behave as they are: the
+control image's `ceph-authtool` decides Cephx key types, and the `rbd` of each
+RBD mirror setup client and each cluster's control image decides namespace
+mapping. A feature that the relevant
+target lacks fails before any change with `ceph.ErrUnsupported`, whose
+`*ceph.OperationError` names the target, its version and the feature. Assert
+that outcome instead of skipping on the version string; see
+[Classified errors](errors.md#tests-across-releases).
 
 - The version describes the image of the first MON and of the fixture's Ceph
   CLI. Daemons started from other role images report their own release.
@@ -78,11 +81,11 @@ lists every known difference and what you can observe.
 | --- | --- | --- | --- |
 | CephFS filesystem creation | `fs new` sets `max_mds` and `standby_count_wanted` inline. | Squid does not accept the inline settings, so the fixture runs `fs set` right after `fs new`. | None. Both forms complete before any MDS starts. |
 | RBD mirroring of named namespaces only | The default namespace is put in `init-only` mode. | Squid has no `init-only` mode, so the default namespace is put in `image` mode. | On Squid nothing in the default namespace replicates unless you enable an image explicitly. |
-| RBD namespace mapping | `MirrorConfig.SourceNamespace` and `DestinationNamespace` may differ. | Squid's `rbd` has no `--remote-namespace`, so only namespaces with the same name can be mirrored. | `rbd.RunMirror` returns an error ("needs Ceph 20 or later") before changing anything when the names differ. |
+| RBD namespace mapping | `MirrorConfig.SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name can be mirrored. | `rbd.RunMirror` returns `ceph.ErrUnsupported`, naming the side whose `rbd` lacks the option, before changing anything when the names differ. |
 | RBD mirror UUID | `rbd mirror pool info` prints `mirror_uuid` and `remote_namespace`. | Neither field is printed. The fixture reads the UUID from the pool's `rbd_mirroring` object and uses the same namespace name as the remote namespace. | None for the typed API. Your own parsing of `rbd mirror pool info` must tolerate the missing fields. |
 | RBD receiver status | The rbd-mirror admin socket's `rbd mirror status` reports `namespace_replayers` with local and remote namespace names. | The default namespace's `image_replayers` sit in the pool entry and named namespaces appear by name only under `namespaces`. | None. `rbd.Mirror.ReceiverStatus` and `WaitReceiverReady` normalize both forms. |
 | RGW sync pipe records | A system-mode pipe has no `user` in its `params`. | Squid records `"user": ""`. | None. Pipe readback accepts the empty value on Squid. |
-| RGW account root as user-mode pipe principal | Objects replicate between buckets owned by the same account. | Squid resolves no source for such a pipe and replicates nothing. Ordinary-user user-mode pipes work. | `rgw.Multisite.CreateSyncPipe` returns an error ("needs Ceph 20 or later") before changing anything when any zone runs Ceph 19. |
+| RGW account root as user-mode pipe principal | Objects replicate between buckets owned by the same account. | Squid resolves no source for such a pipe and replicates nothing. Ordinary-user user-mode pipes work. | `rgw.Multisite.CreateSyncPipe` returns `ceph.ErrUnsupported`, naming the Squid zone, before changing anything when any zone runs Ceph 19. |
 | RGW bucket sync status | `radosgw-admin bucket sync status --format json` prints JSON. | Squid ignores `--format json` and prints text. | None for `BucketSyncStatus` and `WaitBucketSyncReady`, which parse the text into the same structure and fail on unknown lines. Your own calls get text. |
 
 ### Differences you may hit in your own native checks
@@ -110,8 +113,9 @@ These affect commands or client libraries you run yourself, not the typed API:
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
   releases generate only `aes` keys, as Squid does. `ceph.WithAuth` and
   `CreateClient` detect the options in the control image: they accept `aes`
-  and refuse `aes256k` before any change. The repository tests this with
-  20.2.3.
+  and refuse `aes256k` before any change with `ceph.ErrUnsupported`, naming
+  `ceph-authtool --key-type` as the capability. The repository tests this
+  with 20.2.3.
 - **Tentacle 20.2.4, CephFS mirror daemons.** When another `cephfs-mirror`
   daemon joins, the MGR `mirroring` module fails to redistribute directories
   that are already assigned (`'DirectoryState' object is not subscriptable`).
@@ -261,9 +265,12 @@ baseline feature and no default uses it.
 
 - The module checks the selected image against the extension's contract, and
   separately what the engine must grant (capabilities, kernel features), before
-  it changes anything. A missing tool, a denied permission and an unsupported
-  kernel return different errors. A tag name is not trusted, nothing is
-  installed at run time, and there is no fallback.
+  it changes anything. A missing selection or tool is
+  `ceph.ErrImageCapability`, and a denied permission or an unsupported kernel
+  is `ceph.ErrEnvironmentUnavailable`, each with a narrower error of the
+  extension (see [Classified errors](errors.md#image-capabilities-and-optional-extensions)).
+  A tag name is not trusted, nothing is installed at run time, and there is
+  no fallback.
 - The Ceph containers keep their images. An extension's tools run in a helper
   container that the module starts and removes.
 - [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
@@ -278,7 +285,9 @@ baseline feature and no default uses it.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `ControlImage`,
-  `WithOSDImage`.
+  `WithOSDImage`, the error categories.
+- [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
+  how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`, `RunMirror`,
   `Mirror.RebalanceDirectories`.
 - [rgw.md](../rgw.md): `WithImage`, `RunMultisite`, `RunTopology`,
