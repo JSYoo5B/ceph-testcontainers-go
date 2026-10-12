@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/netip"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,4 +174,51 @@ func TestRecoverableBridgeEndpointIdentity(t *testing.T) {
 		checkRetained(restored)
 	}
 	t.Log("two distinct Docker-allocated IPv4 bridges: endpoint restored twice at its original IP with identical aliases, gateway priority and native process; second endpoint preserved")
+}
+
+// Parallel tests of one process create their clusters' bridges at the same
+// time; every one must get its own subnet.
+func TestConcurrentRecoverableBridges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = docker.Close() }()
+	const count = 6
+	bridges := make([]*testcontainers.DockerNetwork, count)
+	errs := make([]error, count)
+	var wg sync.WaitGroup
+	for i := range count {
+		wg.Go(func() { bridges[i], errs[i] = dockerbridge.New(ctx) })
+	}
+	wg.Wait()
+	var subnets []netip.Prefix
+	for i, bridge := range bridges {
+		if bridge != nil {
+			t.Cleanup(func() {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cleanupCancel()
+				if err := bridge.Remove(cleanupCtx); err != nil {
+					t.Errorf("remove bridge: %v", err)
+				}
+			})
+		}
+		if errs[i] != nil {
+			t.Fatalf("bridge %d of %d created at once: %v", i+1, count, errs[i])
+		}
+		inspection, err := docker.NetworkInspect(ctx, bridge.ID, mobycl.NetworkInspectOptions{})
+		if err != nil || len(inspection.Network.IPAM.Config) != 1 {
+			t.Fatalf("inspect bridge %d: %v", i+1, err)
+		}
+		subnet := inspection.Network.IPAM.Config[0].Subnet
+		for _, other := range subnets {
+			if subnet.Overlaps(other) {
+				t.Fatalf("bridges %s and %s overlap", subnet, other)
+			}
+		}
+		subnets = append(subnets, subnet)
+	}
+	t.Logf("%d bridges created at once: %v", count, subnets)
 }
