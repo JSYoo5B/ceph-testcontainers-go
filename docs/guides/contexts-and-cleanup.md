@@ -300,7 +300,8 @@ t.Cleanup(func() {
 
 A report is returned together with an error when some observations failed;
 keep it. See [Running native commands](native-commands.md#diagnostics) for the
-options.
+options. `CollectCrashMetadata` works the same way for the crash reports that
+daemons wrote; it also reads containers that have stopped.
 
 ## Handles returned with errors
 

@@ -3,6 +3,7 @@ package ceph
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,7 @@ func TestWithConfigFileRejectsUnsafeInput(t *testing.T) {
 		"messenger mode":   {"[global]\nms_mon_client_mode = secure\n", "use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"},
 		"messenger bind":   {"[global]\nms_bind_ipv6 = true\n", "WithHostNetwork"},
 		"logging":          {"[global]\nlog_to_stderr = false\n", "container output"},
+		"crash dir":        {"[global]\ncrash dir = /tmp/crash\n", "CollectCrashMetadata reads /var/lib/ceph/crash"},
 		"keyring":          {"[client.admin]\nkeyring = /tmp/k\n", "Cephx setup"},
 		"rgw command line": {"[client]\nrgw frontends = beast port=1\n", "RGW command line"},
 		"mds command line": {"[mds]\nmds_cache_memory_limit = 1\n", "MDS command line"},
@@ -172,6 +174,12 @@ func TestMonitorBootstrapMergesUserConfig(t *testing.T) {
 		if len(values) != 1 || values[0] != want {
 			t.Fatalf("%s %s entries = %v, want only %s:\n%s", section, key, values, want, config)
 		}
+	}
+	// The script runs below a temporary root.
+	if !slices.ContainsFunc(sections["[global]"], func(entry string) bool {
+		return strings.HasPrefix(entry, "crash_dir=") && strings.HasSuffix(entry, CrashDir)
+	}) {
+		t.Fatalf("the bootstrap config does not fix the crash directory:\n%s", config)
 	}
 	if !strings.Contains(config, "osd pool default pg num = 8\n") || !strings.Contains(config, "bluestore cache autotune = false\n") {
 		t.Fatalf("generated settings without user overrides were lost:\n%s", config)

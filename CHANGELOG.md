@@ -8,6 +8,14 @@ change the API.
 
 ### Added
 
+- `ceph.Container.CollectCrashMetadata` reads the crash reports that Ceph
+  daemons wrote into `/var/lib/ceph/crash` (`ceph.CrashDir`), through Docker's
+  archive API, also from stopped containers. It keeps only the known fields of
+  each report's `meta` file, redacted, skips crash logs and dumps, rejects
+  links, escaping paths and non-JSON files, bounds every read, and tells
+  records, empty and missing directories, removed containers, failures and
+  incomplete archives apart.
+
 - `ceph.Container.RunNativeCommand` runs one argv command in the control
   container, an owned daemon or service container, or a caller's container on
   the cluster's network, under the supervisor of the module's own native
@@ -71,6 +79,12 @@ change the API.
   created again with another key or capabilities, and `DeleteClient` makes the
   removal permanent.
 
+### Changed
+
+- The bootstrap `ceph.conf` sets `crash dir = /var/lib/ceph/crash`, and
+  `ceph.WithConfigFile` rejects `crash_dir`, so every daemon's crash reports
+  stay where `CollectCrashMetadata` reads them.
+
 ### Fixed
 
 - `ceph.Container.Terminate` removes a container that Docker created although
@@ -78,6 +92,10 @@ change the API.
   timeout ended during the request. The cluster had no handle for it, so it
   stayed, with the shared run volume that it held. Every container of a
   cluster now carries the label `org.testcontainers.ceph.cluster`.
+- Redaction in `CollectDiagnostics` and `RedactSecrets` replaces the secrets
+  in one pass. A short secret that occurs in `[REDACTED]`, given more than
+  once, made the replacements rewrite their own output until the text grew
+  without bound.
 - The supervisor of `AdminSocket`, quorum reads, `RotateDaemonKey` and
   `CollectDiagnostics` now reaps the descendants of a command that it killed.
   They previously stayed as zombies in daemon containers, whose first process

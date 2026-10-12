@@ -173,6 +173,9 @@ log to stderr = true
 err to stderr = true
 mon cluster log to file = false
 mon cluster log to stderr = true
+# Crash reports stay where CollectCrashMetadata reads them, also after a
+# daemon exits; the MON configuration database cannot move them.
+crash dir = /var/lib/ceph/crash
 osd pool default size = ${CEPH_POOL_SIZE:-2}
 osd pool default min size = ${CEPH_POOL_MIN_SIZE:-1}
 osd pool default pg num = 8

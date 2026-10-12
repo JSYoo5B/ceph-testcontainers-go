@@ -194,6 +194,7 @@ var reservedConfigKeys = map[string]string{
 	"osd_data":                    "is managed by the fixture",
 	"mgr_data":                    "is managed by the fixture",
 	"mds_data":                    "is managed by the fixture",
+	"crash_dir":                   "is managed by the fixture; CollectCrashMetadata reads /var/lib/ceph/crash",
 	"log_file":                    "is managed by the fixture; daemon logs go to container output",
 	"log_to_file":                 "is managed by the fixture; daemon logs go to container output",
 	"log_to_stderr":               "is managed by the fixture; daemon logs go to container output",
