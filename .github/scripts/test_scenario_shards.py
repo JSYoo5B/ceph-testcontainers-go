@@ -244,6 +244,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotEqual(compiled[compiled.index("--directory") + 1],
                             native[native.index("--directory") + 1])
 
+    def test_every_go_setup_installs_the_latest_patch(self):
+        # A cached older patch, such as go1.26.8, fails the vulnerability check
+        # on standard-library advisories that the latest patch fixes.
+        for name, workflow in self.workflows.items():
+            for match in re.finditer(r"(?m)^( +)go-version: .+\n", workflow):
+                following = workflow[match.end():].splitlines()[0] if workflow[match.end():] else ""
+                self.assertEqual(following, match.group(1) + "check-latest: true", name)
+        toolchain = re.search(r"(?m)^toolchain go(\d+)\.(\d+)\.(\d+)$", (ROOT / "go.mod").read_text())
+        self.assertIsNotNone(toolchain)
+        self.assertGreaterEqual(tuple(map(int, toolchain.groups())), (1, 26, 9))
+
     def test_code_workflow_has_visible_unit_race_static_and_coverage_jobs(self):
         workflow = self.workflows["code.yml"]
         jobs = self.jobs["code.yml"]

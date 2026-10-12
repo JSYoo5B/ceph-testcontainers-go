@@ -96,7 +96,8 @@ change the API.
 
 - Go 1.26 or later is required. `golang.org/x/crypto` v0.56.0, which fixes
   GO-2026-6354 and GO-2026-6355, needs it, and Go 1.25 is no longer supported
-  upstream.
+  upstream. Use a current patch release: Go 1.26.8, for example, has
+  standard-library vulnerabilities that Go 1.26.9 fixes.
 
 - The bootstrap `ceph.conf` sets `crash dir = /var/lib/ceph/crash`, and
   `ceph.WithConfigFile` rejects `crash_dir`, so every daemon's crash reports

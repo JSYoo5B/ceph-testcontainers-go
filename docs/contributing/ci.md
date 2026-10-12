@@ -92,7 +92,13 @@ most precise level reported:
 
 The job runs with the module's minimum Go (`1.26.x`) and the current release
 (`1.27.x`), because the standard library's findings depend on the toolchain,
-and uploads every scan as `vulncheck-go-<version>`. A weekly scheduled run
+and uploads every scan as `vulncheck-go-<version>`. Every `setup-go` step of
+the workflows sets `check-latest: true`, so a runner's cached older patch is
+not used: Go 1.26.8, for example, has eleven standard-library vulnerabilities
+that the check reports and that 1.26.9 fixes. `go.mod` also names
+`toolchain go1.26.9`, so a `go` command of an older 1.26 patch switches to it
+in this repository (with the default `GOTOOLCHAIN=auto`). The `toolchain`
+line does not apply to modules that use this one. A weekly scheduled run
 catches new advisories without a source change; the other Code checks jobs
 skip it. `.github/dependabot.yml` proposes Go module updates daily, with
 Testcontainers for Go and its modules in one group, and GitHub Actions

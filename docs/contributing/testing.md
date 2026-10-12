@@ -27,7 +27,9 @@ and therefore must not need Docker.
 
 ## Prerequisites
 
-- Go 1.26 or later.
+- Go 1.26 or later. In this repository, `go.mod`'s `toolchain go1.26.9` line
+  makes an older 1.26 patch switch to 1.26.9, which `make vulncheck` needs to
+  pass.
 - A Docker engine that runs Linux containers and that testcontainers-go can
   reach, with pull access to `quay.io/ceph/ceph` and the Ryuk image.
 - A C toolchain for `make race` only. The race detector needs cgo; every other
