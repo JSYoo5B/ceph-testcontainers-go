@@ -48,6 +48,10 @@ change the API.
 - `rbd.Mirror.WaitReplayReady` no longer fails while rbd-mirror creates the
   destination image: the moment in which the new image reports mirroring
   disabled, before rbd-mirror enables it, was taken for a changed identity.
+- `ceph.Container.RotateDaemonKey` no longer fails now and then with a MON
+  command that applied: its librados client script now shuts the client
+  down before exiting. Left to the interpreter's shutdown, the client aborted
+  there in about 2.5% of runs on both Squid 19.2.5 and Tentacle 20.2.4.
 - Canceling `ceph.Container.CollectDiagnostics` now stops its Ceph queries in
   the control container before returning. A query previously ran on for up to
   three quarters of `OperationTimeout`.
