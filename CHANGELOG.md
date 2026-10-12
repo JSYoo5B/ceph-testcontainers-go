@@ -38,12 +38,19 @@ change the API.
 - `ceph.WithAddressFamily` runs every Messenger listener on IPv6: on the
   container's IPv6 address of a dual-stack bridge (`ceph.AddressIPv6`), or on
   its IPv4 address as an IPv4-mapped IPv6 address (`ceph.AddressIPv4MappedIPv6`).
+- `ceph.Container.RotateDaemonKey` replaces the Cephx key of a running MGR or
+  OSD without a restart and keeps its keyring files in step, so later restarts
+  authenticate with the new key. The native commands guide shows how to
+  observe a daemon's rotating service secrets in its debug log.
 
 ### Fixed
 
 - `rbd.Mirror.WaitReplayReady` no longer fails while rbd-mirror creates the
   destination image: the moment in which the new image reports mirroring
   disabled, before rbd-mirror enables it, was taken for a changed identity.
+- Canceling `ceph.Container.CollectDiagnostics` now stops its Ceph queries in
+  the control container before returning. A query previously ran on for up to
+  three quarters of `OperationTimeout`.
 - Canceling `ceph.Container.QuorumStatus` or `ceph.Container.WaitForQuorum`
   now stops its `ceph quorum_status` process in the control container before
   returning. The process previously ran on for up to five seconds.

@@ -1,7 +1,10 @@
 package supervised
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // installedPython returns the host's python3, which runs the exact scripts
@@ -193,4 +199,30 @@ func TestSupervisorCancelRacingStartupLeavesNothingRunning(t *testing.T) {
 		}
 	}
 	t.Logf("the child had started in %d of 20 canceled attempts", started)
+}
+
+// cancelFailingContainer never answers the supervisor and fails every cancel.
+type cancelFailingContainer struct {
+	testcontainers.Container
+	marker string
+}
+
+func (ctr *cancelFailingContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if len(args) > 3 && args[2] == CancelScript {
+		ctr.marker = args[3]
+		return 3, bytes.NewReader(nil), nil
+	}
+	<-ctx.Done()
+	return 0, nil, ctx.Err()
+}
+
+func TestCommandReportsAnInvocationItCouldNotStop(t *testing.T) {
+	ctr := &cancelFailingContainer{}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err := Command(ctx, ctr, "probe", time.Minute, 1024, 1024, "true")
+	var notStopped *NotStoppedError
+	if !errors.As(err, &notStopped) || notStopped.Marker == "" || notStopped.Marker != ctr.marker {
+		t.Fatalf("a failed cancel returned %v", err)
+	}
 }

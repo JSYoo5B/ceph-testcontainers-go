@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -17,11 +16,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // DiagnosticsConfig bounds a read-only collection. Zero fields select a one
@@ -570,45 +569,12 @@ var diagnosticCephQueries = []struct {
 	{"fsmap", []string{"fs", "dump", "--format", "json"}},
 }
 
-// Bound output inside the container: Testcontainers Exec buffers its stream
-// before returning. A host LimitReader alone would not bound that allocation.
-// Kill only this newly spawned read-only CLI process group at the deadline.
-// Keep stderr on its own pipe: Ceph makes FIFO stderr nonblocking, which would
-// also change stdout when both descriptors share the same open file description.
-const diagnosticCommandScript = `import base64,json,os,select,signal,subprocess,sys,time
-limit=int(sys.argv[1]); deadline=time.monotonic()+float(sys.argv[2]); output=bytearray(); truncated=False; timed_out=False
-p=subprocess.Popen(sys.argv[3:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-streams=[p.stdout,p.stderr]
-def kill_owned_group():
- try: os.killpg(p.pid,signal.SIGKILL)
- except ProcessLookupError: pass
-try:
- while streams:
-  remaining=deadline-time.monotonic()
-  if remaining<=0:
-   timed_out=True
-   kill_owned_group()
-   break
-  for stream in select.select(streams,[],[],min(remaining,0.1))[0]:
-   data=os.read(stream.fileno(),32768)
-   if not data:
-    streams.remove(stream)
-    continue
-   room=max(0,limit-len(output)); output.extend(data[:room]); truncated=truncated or len(data)>room
- code=p.wait(timeout=max(0.01,deadline-time.monotonic()))
-except subprocess.TimeoutExpired:
- timed_out=True
- kill_owned_group()
- code=p.wait()
-finally:
- if p.poll() is None:
-  kill_owned_group()
-  p.wait()
- p.stdout.close()
- p.stderr.close()
-print(json.dumps({'output':base64.b64encode(output).decode(),'exit_code':code,'timed_out':timed_out,'truncated':truncated}))
-`
-
+// diagnosticCephCommand runs one read-only Ceph query under the supervisor,
+// which bounds its output inside the container (Testcontainers Exec buffers
+// the whole stream) and kills only its process group at 75% of ctx's time.
+// Stdout precedes stderr in the output, which is clipped to limit. A timed-out
+// or failed query keeps the output it produced. A canceled query leaves no
+// process behind.
 func diagnosticCephCommand(ctx context.Context, control testcontainers.Container, args []string, limit int) (string, bool, error) {
 	if control == nil {
 		return "", false, errors.New("Ceph control container was not created")
@@ -617,50 +583,27 @@ func diagnosticCephCommand(ctx context.Context, control testcontainers.Container
 	if !ok {
 		return "", false, errors.New("diagnostic command requires a deadline")
 	}
-	seconds := time.Until(deadline).Seconds() * 0.75
-	if seconds <= 0 {
+	budget := time.Until(deadline) * 3 / 4
+	if budget <= 0 {
 		return "", false, ctx.Err()
 	}
-	argv := []string{"python3", "-c", diagnosticCommandScript, strconv.Itoa(limit), strconv.FormatFloat(seconds, 'f', 6, 64), "ceph", "--connect-timeout", "2"}
-	argv = append(argv, args...)
-	code, reader, err := control.Exec(ctx, argv, tcexec.Multiplexed())
+	report, err := supervised.Run(ctx, control, "diagnostic", budget, limit, limit,
+		append([]string{"ceph", "--connect-timeout", "2"}, args...)...)
 	if err != nil {
 		return "", false, err
 	}
-	if reader == nil {
-		return "", false, errors.New("diagnostic command returned no output")
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, int64(limit)*2+4096))
-	if err != nil {
-		return "", false, err
-	}
-	if code != 0 {
-		return "", false, fmt.Errorf("diagnostic supervisor exited %d", code)
-	}
-	var result struct {
-		Output    *string `json:"output"`
-		ExitCode  *int    `json:"exit_code"`
-		TimedOut  *bool   `json:"timed_out"`
-		Truncated *bool   `json:"truncated"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil || result.Output == nil || result.ExitCode == nil || result.TimedOut == nil || result.Truncated == nil {
-		return "", false, errors.New("invalid diagnostic supervisor result")
-	}
-	output, err := base64.StdEncoding.DecodeString(*result.Output)
-	if err != nil {
-		return "", false, errors.New("invalid diagnostic supervisor output")
-	}
+	output := append(report.Stdout, report.Stderr...)
+	truncated := report.StdoutTruncated || report.StderrTruncated
 	if len(output) > limit {
-		output = output[:limit]
-		*result.Truncated = true
+		output, truncated = output[:limit], true
 	}
-	if *result.TimedOut {
-		return string(output), *result.Truncated, context.DeadlineExceeded
+	if report.TimedOut {
+		return string(output), truncated, context.DeadlineExceeded
 	}
-	if *result.ExitCode != 0 {
-		return string(output), *result.Truncated, fmt.Errorf("Ceph diagnostic command exited %d", *result.ExitCode)
+	if report.ExitCode != 0 {
+		return string(output), truncated, fmt.Errorf("Ceph diagnostic command exited %d", report.ExitCode)
 	}
-	return string(output), *result.Truncated, nil
+	return string(output), truncated, nil
 }
 
 var diagnosticKeyringPattern = regexp.MustCompile(`(?m)^\s*key\s*=\s*(\S+)`)

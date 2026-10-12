@@ -3,15 +3,12 @@ package ceph
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/netip"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -22,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
@@ -68,9 +66,10 @@ func (d diagnosticsTestDocker) NetworkInspect(ctx context.Context, id string, op
 	return dockerclient.NetworkInspectResult{Network: dockernetwork.Inspect{Network: dockernetwork.Network{ID: id, Name: "public", Driver: "bridge"}}}, nil
 }
 
+// diagnosticsSupervisorResult is the supervisor's report of a diagnostic query
+// whose output went to stdout.
 func diagnosticsSupervisorResult(output string, exit int, timedOut, clipped bool) string {
-	data, _ := json.Marshal(map[string]any{"output": base64.StdEncoding.EncodeToString([]byte(output)), "exit_code": exit, "timed_out": timedOut, "truncated": clipped})
-	return string(data)
+	return string(monitorQuorumTestResult([]byte(output), nil, exit, timedOut, clipped))
 }
 
 func diagnosticsUnitConfig(t *testing.T) DiagnosticsConfig {
@@ -446,16 +445,14 @@ func TestDiagnosticCephCommandProtocol(t *testing.T) {
 		{"timeout-retains-output", diagnosticsSupervisorResult("abc", -9, true, false), 0, "abc", false, true, true},
 		{"native-clipped", diagnosticsSupervisorResult("abc", 0, false, true), 0, "abc", true, false, false},
 		{"oversize-output", diagnosticsSupervisorResult("abcdef", 0, false, false), 0, "abcd", true, false, false},
-		{"missing-exit", `{"output":"YWJj"}`, 0, "", false, true, false},
-		{"null-exit", `{"output":"YWJj","exit_code":null}`, 0, "", false, true, false},
-		{"missing-output", `{"exit_code":0,"timed_out":false,"truncated":false}`, 0, "", false, true, false},
-		{"null-output", `{"output":null,"exit_code":0,"timed_out":false,"truncated":false}`, 0, "", false, true, false},
-		{"missing-timeout", `{"output":"YWJj","exit_code":0,"truncated":false}`, 0, "", false, true, false},
-		{"null-timeout", `{"output":"YWJj","exit_code":0,"timed_out":null,"truncated":false}`, 0, "", false, true, false},
-		{"missing-truncated", `{"output":"YWJj","exit_code":0,"timed_out":false}`, 0, "", false, true, false},
-		{"null-truncated", `{"output":"YWJj","exit_code":0,"timed_out":false,"truncated":null}`, 0, "", false, true, false},
-		{"invalid-json", `{"output":`, 0, "", false, true, false},
-		{"invalid-base64", `{"output":"???","exit_code":0,"timed_out":false,"truncated":false}`, 0, "", false, true, false},
+		{"stderr-follows-stdout", string(monitorQuorumTestResult([]byte("ab"), []byte("c"), 0, false, false)), 0, "abc", false, false, false},
+		{"missing-exit", `{"schema_version":1,"stdout":"YWJj","stderr":"","timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
+		{"null-exit", `{"schema_version":1,"stdout":"YWJj","stderr":"","exit_code":null,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
+		{"missing-stdout", `{"schema_version":1,"stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
+		{"null-timeout", `{"schema_version":1,"stdout":"YWJj","stderr":"","exit_code":0,"timed_out":null,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
+		{"wrong-schema", `{"schema_version":2,"stdout":"YWJj","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
+		{"invalid-json", `{"stdout":`, 0, "", false, true, false},
+		{"invalid-base64", `{"schema_version":1,"stdout":"???","stderr":"","exit_code":0,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false}`, 0, "", false, true, false},
 		{"supervisor-failure", "private-supervisor-stderr", 9, "", false, true, false},
 	}
 	for _, tc := range cases {
@@ -463,10 +460,10 @@ func TestDiagnosticCephCommandProtocol(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			control := &diagnosticsTestContainer{exec: func(_ context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-				if len(argv) != 11 || !slices.Equal(argv[:2], []string{"python3", "-c"}) || argv[2] != diagnosticCommandScript || argv[3] != "4" || !slices.Equal(argv[5:], []string{"ceph", "--connect-timeout", "2", "status", "--format", "json"}) || len(opts) != 1 {
+				if len(argv) != 12 || !slices.Equal(argv[:3], []string{"python3", "-c", supervised.Script}) || argv[3] != "4" || argv[4] != "4" || !slices.Equal(argv[6:], []string{"ceph", "--connect-timeout", "2", "status", "--format", "json"}) || len(opts) != 2 {
 					t.Fatalf("supervisor did not receive the bounded fixed argv: %v", argv)
 				}
-				seconds, err := strconv.ParseFloat(argv[4], 64)
+				seconds, err := strconv.ParseFloat(argv[5], 64)
 				if err != nil || seconds <= 0 || seconds > 0.75 {
 					t.Fatalf("supervisor deadline outside caller budget: %q, %v", argv[4], err)
 				}
@@ -529,7 +526,7 @@ func (r *diagnosticsPartialReader) Read(data []byte) (int, error) {
 func TestCollectDiagnosticsPreservesPartialFailures(t *testing.T) {
 	config := diagnosticsUnitConfig(t)
 	control := &diagnosticsTestContainer{id: "owned", exec: func(_ context.Context, argv []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
-		if argv[8] == "status" {
+		if slices.Contains(argv, "status") {
 			return 0, strings.NewReader(diagnosticsSupervisorResult("partial native status", 1, false, false)), nil
 		}
 		return 0, strings.NewReader(diagnosticsSupervisorResult("native success", 0, false, false)), nil
@@ -723,104 +720,4 @@ func diagnosticsInstalledPython(t *testing.T) string {
 		t.Skip("local Python supervisor regression requires installed python3; native image validation covers the runtime")
 	}
 	return python
-}
-
-type diagnosticsPythonResult struct {
-	Output    string `json:"output"`
-	ExitCode  int    `json:"exit_code"`
-	TimedOut  bool   `json:"timed_out"`
-	Truncated bool   `json:"truncated"`
-}
-
-func diagnosticsRunPythonSupervisor(t *testing.T, python string, limit int, seconds string, child string, args ...string) diagnosticsPythonResult {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	argv := []string{"-c", diagnosticCommandScript, strconv.Itoa(limit), seconds, python, "-c", child}
-	argv = append(argv, args...)
-	command := exec.CommandContext(ctx, python, argv...)
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("actual supervisor failed: %v; stderr=%s", err, stderr.String())
-	}
-	if len(output) > limit*2+4096 {
-		t.Fatalf("actual supervisor exceeded its protocol envelope: %d bytes", len(output))
-	}
-	var result diagnosticsPythonResult
-	if err := json.Unmarshal(output, &result); err != nil {
-		t.Fatalf("actual supervisor returned invalid protocol: %v; output=%q", err, output)
-	}
-	return result
-}
-
-func TestDiagnosticPythonSupervisorNonblockingStderr(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
-	// Ceph's logger applies O_NONBLOCK to stderr. Sharing that pipe with stdout
-	// can make large Python CLI writes fail with EAGAIN and exit 1 or 120.
-	const child = `import fcntl,os,select,sys
-fcntl.fcntl(2,fcntl.F_SETFL,fcntl.fcntl(2,fcntl.F_GETFL)|os.O_NONBLOCK)
-sys.stdout.buffer.write(b'O'*(4*1024*1024)); sys.stdout.buffer.flush()
-pending=b'E'*(256*1024)
-while pending:
- try:
-  count=os.write(2,pending)
-  pending=pending[count:]
- except BlockingIOError:
-  select.select([],[2],[],0.1)
-`
-	result := diagnosticsRunPythonSupervisor(t, python, 512, "3", child)
-	output, err := base64.StdEncoding.DecodeString(result.Output)
-	if err != nil || result.ExitCode != 0 || result.TimedOut || !result.Truncated || string(output) != strings.Repeat("O", 512) {
-		t.Fatalf("nonblocking stderr broke stdout or stopped drain at byte cap: result=%+v, decoded=%d bytes, err=%v", result, len(output), err)
-	}
-	t.Log("installed Python executed supervisor: independent stderr pipe, 4MiB stdout plus 256KiB stderr fully drained after a 512-byte cap")
-}
-
-func TestDiagnosticPythonSupervisorKillsOwnedProcessGroup(t *testing.T) {
-	python := diagnosticsInstalledPython(t)
-	pidPath := filepath.Join(t.TempDir(), "child-pid")
-	heartbeatPath := filepath.Join(t.TempDir(), "grandchild-heartbeat")
-	// Read only this fixture's recorded group identity, even if a failure occurs
-	// before the supervisor returns. Never signal arbitrary host processes.
-	t.Cleanup(func() {
-		data, err := os.ReadFile(pidPath)
-		if err != nil {
-			return
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil || pid <= 0 {
-			t.Error("invalid test-owned process group identity")
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		command := exec.CommandContext(ctx, python, "-c", "import os,signal,sys\ntry: os.killpg(int(sys.argv[1]),signal.SIGKILL)\nexcept ProcessLookupError: pass", strconv.Itoa(pid))
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Errorf("clean test-owned process group: %v; %s", err, output)
-		}
-	})
-	const child = `import os,subprocess,sys,time
-with open(sys.argv[1],'w') as identity: identity.write(str(os.getpid()))
-grandchild="import sys,time\nwith open(sys.argv[1],'ab',buffering=0) as f:\n while True:\n  f.write(b'x'); time.sleep(0.01)"
-subprocess.Popen([sys.executable,'-c',grandchild,sys.argv[2]])
-while True:
- print('child-running',flush=True)
- time.sleep(0.01)
-`
-	result := diagnosticsRunPythonSupervisor(t, python, 64, "0.4", child, pidPath, heartbeatPath)
-	if !result.TimedOut || result.ExitCode != -9 || !result.Truncated {
-		t.Fatalf("deadline did not SIGKILL the owned child group: %+v", result)
-	}
-	before, err := os.ReadFile(heartbeatPath)
-	if err != nil || len(before) == 0 {
-		t.Fatalf("grandchild did not demonstrate activity before deadline: %d bytes, %v", len(before), err)
-	}
-	time.Sleep(100 * time.Millisecond)
-	after, err := os.ReadFile(heartbeatPath)
-	if err != nil || len(after) != len(before) {
-		t.Fatalf("descendant continued after supervisor returned: before=%d, after=%d, err=%v", len(before), len(after), err)
-	}
-	t.Log("installed Python executed supervisor: timeout SIGKILLed its child group and stopped the descendant heartbeat before return")
 }

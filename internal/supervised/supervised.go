@@ -102,26 +102,68 @@ finally:
 print(json.dumps({'schema_version':1,'stdout':base64.b64encode(output[0]).decode(),'stderr':base64.b64encode(output[1]).decode(),'exit_code':code,'timed_out':timed_out,'stdout_truncated':clipped[0],'stderr_truncated':clipped[1]}))
 `
 
+// NotStoppedError reports an invocation that Command could not confirm as
+// stopped after Exec ended early: its command may still run in the container.
+// A later Cancel with Marker that succeeds confirms that it no longer can.
+type NotStoppedError struct {
+	Marker string
+	Err    error
+}
+
+func (e *NotStoppedError) Error() string { return e.Err.Error() }
+
+func (e *NotStoppedError) Unwrap() error { return e.Err }
+
 // Result is the complete output of one supervised command.
 type Result struct {
 	Stdout, Stderr []byte
 	ExitCode       int
 }
 
-// Command runs argv in ctr under Script, which kills the command's process
-// group at its deadline and bounds each output stream. The deadline is
-// processLimit, shortened to the caller's deadline. When Exec ends before the
-// supervisor does, which includes a manual cancellation, Cancel stops this
-// invocation inside the container before Command returns, whether its
-// supervisor is running or has not started yet. label names the command in
-// errors. A timed-out or truncated run is an error; a nonzero exit is returned
-// in the result.
+// Report is the supervisor's complete report of one run.
+type Report struct {
+	Stdout, Stderr []byte
+	ExitCode       int
+	// TimedOut means that the supervisor killed the command's process group
+	// at its deadline; the output is what the command wrote until then.
+	TimedOut bool
+	// StdoutTruncated and StderrTruncated mean that a stream exceeded its
+	// limit; the output holds its first limit bytes.
+	StdoutTruncated, StderrTruncated bool
+}
+
+// Command runs argv like Run and returns its result only for a run that
+// completed within its deadline and output limits; a timed-out or truncated
+// run is an error. A nonzero exit is returned in the result.
 func Command(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (Result, error) {
-	if err := ctx.Err(); err != nil {
+	report, err := Run(ctx, ctr, label, processLimit, stdoutLimit, stderrLimit, argv...)
+	if err != nil {
 		return Result{}, err
 	}
+	if report.TimedOut {
+		return Result{}, fmt.Errorf("%s process timed out: %w", label, context.DeadlineExceeded)
+	}
+	if report.StdoutTruncated || report.StderrTruncated {
+		return Result{}, fmt.Errorf("%s process output was truncated", label)
+	}
+	return Result{Stdout: report.Stdout, Stderr: report.Stderr, ExitCode: report.ExitCode}, nil
+}
+
+// Run runs argv in ctr under Script, which kills the command's process group
+// at its deadline and bounds each output stream. The deadline is
+// processLimit, shortened to the caller's deadline. When Exec ends before the
+// supervisor does, which includes a manual cancellation, Cancel stops this
+// invocation inside the container before Run returns, whether its supervisor
+// is running or has not started yet; when Cancel fails, the error holds a
+// NotStoppedError. label names the command in errors. Run returns the
+// supervisor's report, also for a run that timed out or was truncated, and an
+// error only when it has no complete report.
+func Run(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (Report, error) {
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
 	if ctr == nil {
-		return Result{}, errors.New("ceph control container is unavailable")
+		return Report{}, errors.New("ceph control container is unavailable")
 	}
 	// The child expires first, leaving time to kill/reap and return its envelope.
 	// WithTimeout also preserves an earlier caller deadline without extending it.
@@ -132,7 +174,7 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 	cushion := min(ExecCushion, remaining/4)
 	seconds := min(processLimit, remaining-cushion).Seconds()
 	if seconds <= 0 {
-		return Result{}, context.DeadlineExceeded
+		return Report{}, context.DeadlineExceeded
 	}
 	command := append([]string{"python3", "-c", Script,
 		strconv.Itoa(stdoutLimit), strconv.Itoa(stderrLimit), strconv.FormatFloat(seconds, 'f', 9, 64)}, argv...)
@@ -141,13 +183,17 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 	if err != nil {
 		// Exec stops waiting when attempt ends, but Docker may already have
 		// accepted the exec and start or keep running the supervisor.
-		return Result{}, errors.Join(fmt.Errorf("exec %s supervisor: %w", label, err), Cancel(ctx, ctr, label, marker))
+		err = fmt.Errorf("exec %s supervisor: %w", label, err)
+		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
+			return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr})
+		}
+		return Report{}, err
 	}
 	if err := attempt.Err(); err != nil {
-		return Result{}, err
+		return Report{}, err
 	}
 	if reader == nil {
-		return Result{}, fmt.Errorf("%s supervisor returned no output", label)
+		return Report{}, fmt.Errorf("%s supervisor returned no output", label)
 	}
 	if closer, ok := reader.(io.Closer); ok {
 		defer func() { _ = closer.Close() }()
@@ -156,13 +202,13 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 	envelopeLimit := (stdoutLimit+stderrLimit)*2 + 4096
 	data, err := io.ReadAll(io.LimitReader(reader, int64(envelopeLimit)+1))
 	if ctxErr := attempt.Err(); ctxErr != nil {
-		return Result{}, ctxErr
+		return Report{}, ctxErr
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("read %s supervisor: %w", label, err)
+		return Report{}, fmt.Errorf("read %s supervisor: %w", label, err)
 	}
 	if len(data) > envelopeLimit || code != 0 {
-		return Result{}, fmt.Errorf("%s supervisor failed: exit=%d oversized=%t", label, code, len(data) > envelopeLimit)
+		return Report{}, fmt.Errorf("%s supervisor failed: exit=%d oversized=%t", label, code, len(data) > envelopeLimit)
 	}
 	var envelope struct {
 		SchemaVersion   *int    `json:"schema_version"`
@@ -174,23 +220,25 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 		StderrTruncated *bool   `json:"stderr_truncated"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope.SchemaVersion == nil || *envelope.SchemaVersion != 1 || envelope.Stdout == nil || envelope.Stderr == nil || envelope.ExitCode == nil || envelope.TimedOut == nil || envelope.StdoutTruncated == nil || envelope.StderrTruncated == nil {
-		return Result{}, fmt.Errorf("invalid %s supervisor protocol", label)
+		return Report{}, fmt.Errorf("invalid %s supervisor protocol", label)
 	}
 	stdout, stdoutErr := base64.StdEncoding.DecodeString(*envelope.Stdout)
 	stderr, stderrErr := base64.StdEncoding.DecodeString(*envelope.Stderr)
 	if stdoutErr != nil || stderrErr != nil {
-		return Result{}, fmt.Errorf("invalid %s supervisor encoding", label)
-	}
-	if *envelope.TimedOut {
-		return Result{}, fmt.Errorf("%s process timed out: %w", label, context.DeadlineExceeded)
-	}
-	if *envelope.StdoutTruncated || *envelope.StderrTruncated || len(stdout) > stdoutLimit || len(stderr) > stderrLimit {
-		return Result{}, fmt.Errorf("%s process output was truncated", label)
+		return Report{}, fmt.Errorf("invalid %s supervisor encoding", label)
 	}
 	if err := attempt.Err(); err != nil {
-		return Result{}, err
+		return Report{}, err
 	}
-	return Result{Stdout: stdout, Stderr: stderr, ExitCode: *envelope.ExitCode}, nil
+	report := Report{Stdout: stdout, Stderr: stderr, ExitCode: *envelope.ExitCode, TimedOut: *envelope.TimedOut,
+		StdoutTruncated: *envelope.StdoutTruncated || len(stdout) > stdoutLimit, StderrTruncated: *envelope.StderrTruncated || len(stderr) > stderrLimit}
+	if len(report.Stdout) > stdoutLimit {
+		report.Stdout = report.Stdout[:stdoutLimit]
+	}
+	if len(report.Stderr) > stderrLimit {
+		report.Stderr = report.Stderr[:stderrLimit]
+	}
+	return report, nil
 }
 
 // CancelScript cancels one invocation through its marker and

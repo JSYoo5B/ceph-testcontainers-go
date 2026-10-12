@@ -1817,6 +1817,80 @@ the native key was replaced externally. A repeated call after success is a no-op
 Established sessions may keep their tickets; test revocation with a new
 connection. Credentials already copied elsewhere are not erased.
 
+#### RotateDaemonKey
+
+```golang
+func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) error
+```
+
+Replaces the Cephx key of a running MGR or OSD that the cluster owns, without a
+restart, the way cephadm rotates daemon keys. `daemon` is `mgr.<name>` or
+`osd.<id>`.
+
+1. `ceph auth get-or-create-pending` creates the new key on the MONs.
+2. The daemon's keyring files in its container get the new key, so a later
+   restart authenticates with it.
+3. `ceph tell <daemon> rotate-key` hands the key to the running daemon.
+4. `ceph auth commit-pending` makes it the entity's only key.
+
+```golang
+err := cluster.RotateDaemonKey(ctx, "osd.0")
+key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
+```
+
+- The daemon keeps running and answering throughout.
+- Without step 2, a restarted daemon would read its old key and fail to start;
+  `ceph tell <daemon> rotate-key` changes only the running process.
+- MONs share the `mon.` key and are refused, as are stopped, paused and
+  unknown daemons; nothing changes in these cases.
+- Until step 4, the MONs accept both keys, so the running daemon and a
+  restarted one can always authenticate. The MONs also commit the pending key
+  on their own as soon as the daemon authenticates with it, after a restart or
+  a handoff. Failures keep that property:
+
+  | Failure | State afterwards | Recovery |
+  | --- | --- | --- |
+  | Before step 3, including cancellation | The MONs keep the pending key, and each keyring file holds the old or the new key, so the daemon authenticates with either. Nothing is undone: undoing would race with a restart from a file that already holds the new key. If such a restart has already made the MONs commit the new key, the call returns nil instead. | Call `RotateDaemonKey` again: it finishes with the same key, unless a restart has made the MONs commit it meanwhile, which finishes the rotation. |
+  | Step 3 | Unknown whether the daemon received the new key, and a `rotate-key` that was already sent may still reach it later. The keyring files hold the new key; both keys stay valid. | Call `RotateDaemonKey` again: it finishes with the same key. Until the daemon's container restarts, for example through `Stop` and `Start` on its `testcontainers.Container`, the cluster refuses to give that daemon any other key, because a late `rotate-key` would switch it back to this one. |
+  | Step 4 | The daemon and its files hold the new key, which the MONs accept whether or not the commit applied. `RotateDaemonKey` settles the MONs (see below) and reads the keys: a commit that applied returns nil. | If the error says that the commit did not apply, call `RotateDaemonKey` again or run `ceph auth commit-pending <daemon>`. |
+
+  A call that finds a pending key from an earlier one resumes with it and
+  never clears it, because the daemon may already hold it.
+- A call does not return while one of its commands may still change the keys
+  or the keyring files, unless it records that command for the daemon; the
+  next call then deals with it before it changes anything, and fails while it
+  cannot:
+  - Every `ceph` command runs under the supervisor that
+    [AdminSocket](#adminsocket) uses. A command that the supervisor could not
+    confirm as stopped is stopped by the next call.
+  - Keyring files are written to a new file in the daemon container and moved
+    into place with `mv` through a Docker exec, whose end is confirmed. Docker
+    may complete a file copy after its request failed, but such a copy only
+    creates the new file. An exec whose end is unknown is waited for by the
+    next call. The daemon image needs `mv`, next to the `sh`, `cp` and `mkdir`
+    that the daemon start scripts use.
+  - The MON commands that change the keys (`auth get-or-create-pending` and
+    `auth commit-pending`) are sent by a short Python script through
+    librados, which first records the nonce by which the MONs list its
+    client's sessions. Before a call returns, and before it reports the
+    outcome of a failed command, it settles the MONs for these commands:
+    1. It waits until no MON lists a session of those clients. TCP delivers
+       a connection's data before its end, and a MON drops a command whose
+       connection has closed before it handles it, so each command has then
+       been handled or dropped.
+    2. It adds and removes `client.tc-key-rotation-<uuid>`, an identity
+       without capabilities, through every MON in turn. Each CLI contacts
+       only its MON (`mon_host_override`), and its MON client log must show
+       that it reached no other MON. MONs forward commands to the leader in
+       the order they handle them, and the leader commits auth changes in
+       order, so these changes come after every handled command.
+    3. The quorum's election epoch and monmap must stay the same meanwhile.
+
+    Settling needs every MON in the monmap to answer. A call that cannot
+    settle records its commands, and the next call settles them first.
+- How to observe keys and rotating service secrets from the daemon side is in
+  [Running native commands](guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
+
 #### ConnectionConfig
 
 ```golang
@@ -2600,6 +2674,11 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
 - `Complete` means that every observation succeeded without truncation, not that
   Ceph is healthy.
 - Observations are not taken at one atomic moment.
+- A `ceph` artifact holds the query's stdout followed by its stderr. A query
+  that fails or times out keeps the output it produced.
+- When `ctx` ends, every running query is stopped inside the control container
+  before `CollectDiagnostics` returns, so a canceled collection leaves no Ceph
+  CLI behind.
 - Known admin and RGW secrets, `RedactValues` and named secret patterns are
   masked, but redaction is best effort; review arbitrary application logs before
   sharing a report.
