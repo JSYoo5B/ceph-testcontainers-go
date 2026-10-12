@@ -1,0 +1,24 @@
+# Grouped dependency updates, following the Testcontainers for Go guide
+# (https://golang.testcontainers.org/dependabot/): the core library and its
+# modules update together. The Code checks workflow scans every update.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - "/"
+      - "/internal/integration/goceph/probe"
+    schedule:
+      interval: daily
+    groups:
+      testcontainers-go:
+        patterns:
+          - "github.com/testcontainers/testcontainers-go"
+          - "github.com/testcontainers/testcontainers-go/modules/*"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

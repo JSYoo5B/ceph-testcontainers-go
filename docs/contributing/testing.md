@@ -27,7 +27,9 @@ and therefore must not need Docker.
 
 ## Prerequisites
 
-- Go 1.25 or later.
+- Go 1.26 or later. In this repository, `go.mod`'s `toolchain go1.26.9` line
+  makes an older 1.26 patch switch to 1.26.9, which `make vulncheck` needs to
+  pass.
 - A Docker engine that runs Linux containers and that testcontainers-go can
   reach, with pull access to `quay.io/ceph/ceph` and the Ryuk image.
 - A C toolchain for `make race` only. The race detector needs cgo; every other
@@ -62,9 +64,12 @@ make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
 make tag-compile  # compile every tagged test file without running it
 make check        # all four of the above; never starts Docker
 make lint         # golangci-lint v2.14.0 with .golangci.yml
+make vulncheck    # govulncheck v1.9.0 on every scanned platform and tag set
 ```
 
-`make lint` needs golangci-lint installed. Its configuration enables every
+`make vulncheck` downloads and builds govulncheck itself; see
+[Continuous integration](ci.md#vulnerability-check) for the scans and the
+failure policy. `make lint` needs golangci-lint installed. Its configuration enables every
 build tag, so it also checks the integration and go-ceph files, and the Code
 checks workflow runs the same version.
 

@@ -46,7 +46,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Discover only this workflow family from source tags
         id: plan
@@ -81,7 +82,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Compile selected tagged suite
         id: compile

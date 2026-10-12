@@ -35,7 +35,7 @@ pkg.go.dev.
 
 ## Requirements
 
-- Go 1.25 or later.
+- Go 1.26 or later.
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in
   [the host network guide](docs/guides/host-network.md).

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A weekly scan catches new advisories without a source change.
+  schedule:
+    - cron: '17 5 * * 1'
 
 permissions:
   contents: read
@@ -16,6 +19,7 @@ concurrency:
 jobs:
   unit:
     name: Unit tests
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -24,13 +28,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Run host unit tests
         run: make test
 
   race:
     name: Race detector
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -39,13 +45,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Run race detector
         run: make race
 
   static:
     name: Vet, compile and CI tooling
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -56,7 +64,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Vet Go packages
         run: make vet
@@ -74,6 +83,7 @@ jobs:
 
   tag-coverage:
     name: Compiled tag coverage and helpers
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -84,7 +94,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
+          check-latest: true
           cache-dependency-path: go.sum
       - name: Verify the full compiled all, category and batch partition
         run: python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
@@ -98,4 +109,35 @@ jobs:
           path: |
             artifacts/tag-plan.json
             artifacts/tag-code/
+          if-no-files-found: warn
+
+  # govulncheck with the module's minimum and the current Go release, for
+  # every platform and tag set that make vulncheck lists. Docker-free.
+  vulncheck:
+    name: Vulnerability check (Go ${{ matrix.go }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.26.x', '1.27.x']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          cache-dependency-path: |
+            go.sum
+            internal/integration/goceph/probe/go.sum
+      - name: Scan source and required modules
+        run: make vulncheck VULNCHECK_DIR=artifacts/vulncheck
+      - name: Save the scans
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulncheck-go-${{ matrix.go }}
+          path: artifacts/vulncheck/*.json
           if-no-files-found: warn

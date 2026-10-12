@@ -1,5 +1,5 @@
 .PHONY: test test-all integration topology hostnetwork hostnetwork-multicluster multicluster goceph-linux vet lint image-compatibility image-matrix
-.PHONY: check race tag-compile scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
+.PHONY: check race tag-compile vulncheck scenario-default topology-smoke scenario-rgw-sync-supported rgw-sync-native-regressions
 .PHONY: scenario-topology scenario-multicluster-topology scenario-cephfs-removal scenario-topology-extensions scenario-rbd-receivers
 .PHONY: scenario-diagnostics
 .PHONY: scenario-cluster-fixtures scenario-cephfs-fixtures scenario-rados-fixtures scenario-rbd-fixtures scenario-rgw-fixtures scenario-rgw-sync-fixtures scenario-goceph-linux
@@ -307,6 +307,33 @@ multicluster:
 
 vet:
 	CGO_ENABLED=0 go vet -mod=readonly ./...
+
+# Go vulnerability check, as in the Code checks workflow. govulncheck's JSON
+# mode exits 0 even with findings, so .github/scripts/check_vulns.py applies
+# the policy: a vulnerable symbol or package that the code reaches fails, one
+# only in a required module is listed. The scanner is built for the host with
+# the current toolchain, and each scan loads the packages of its platform and
+# tags. The nested go-ceph probe module, which needs cgo, gets a module scan.
+GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.9.0
+VULNCHECK_DIR ?= artifacts/vulncheck
+VULNCHECK_SCANS ?= linux/amd64: linux/amd64:all linux/amd64:all,goceph,native_regression linux/arm64: darwin/arm64:
+
+vulncheck:
+	mkdir -p $(VULNCHECK_DIR)/bin
+	GOBIN=$(abspath $(VULNCHECK_DIR)/bin) GOFLAGS= go install $(GOVULNCHECK)
+	status=0; for scan in $(VULNCHECK_SCANS); do \
+		platform=$${scan%%:*}; tags=$${scan#*:}; name=$$(echo "$$platform-$${tags:-default}" | tr '/,' '--'); \
+		echo "== govulncheck $$platform tags=$${tags:-none}"; \
+		GOOS=$${platform%/*} GOARCH=$${platform#*/} CGO_ENABLED=0 GOWORK=off GOFLAGS=-mod=readonly \
+			$(VULNCHECK_DIR)/bin/govulncheck -format json -test $${tags:+-tags=$$tags} ./... \
+			> $(VULNCHECK_DIR)/$$name.json || status=1; \
+		python3 .github/scripts/check_vulns.py $(VULNCHECK_DIR)/$$name.json || status=1; \
+	done; \
+	echo "== govulncheck module scan of internal/integration/goceph/probe"; \
+	(cd internal/integration/goceph/probe && GOOS=linux GOARCH=amd64 CGO_ENABLED=1 GOWORK=off GOFLAGS=-mod=readonly \
+		$(abspath $(VULNCHECK_DIR)/bin/govulncheck) -format json -scan module) > $(VULNCHECK_DIR)/goceph-probe-module.json || status=1; \
+	python3 .github/scripts/check_vulns.py $(VULNCHECK_DIR)/goceph-probe-module.json || status=1; \
+	exit $$status
 
 # golangci-lint v2.14.0 with .golangci.yml, as in the Code checks workflow.
 lint:
