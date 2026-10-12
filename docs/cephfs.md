@@ -34,7 +34,7 @@ Please run the following command to add the CephFS module to your Go dependencie
 go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
 ```
 
-The module needs Go 1.25 or later and a Docker engine that runs Linux
+The module needs Go 1.26 or later and a Docker engine that runs Linux
 containers.
 
 ## Usage example

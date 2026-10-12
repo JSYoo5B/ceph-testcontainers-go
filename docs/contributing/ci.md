@@ -8,7 +8,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
-| Code checks | `code.yml` | push to `main`, pull request, manual | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage |
+| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
 | Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
 | Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
 | Ceph topology | `ceph-topology.yml` | push to `main`, pull request, manual | The `topology` category on Tentacle 20.2.4 |
@@ -65,9 +65,38 @@ Practical consequences:
 | Race detector | 15 min | `make race` |
 | Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`) and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
+| Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 
-The last job uploads the `code-tag-coverage` artifact with `tag-plan.json` and
-the `code` batch results.
+The tag coverage job uploads the `code-tag-coverage` artifact with
+`tag-plan.json` and the `code` batch results.
+
+### Vulnerability check
+
+`make vulncheck` builds govulncheck v1.9.0 for the host and scans the module
+with `-test` for linux/amd64 with no tags, `all` and
+`all,goceph,native_regression`, and for linux/arm64 and darwin/arm64 with no
+tags. The nested go-ceph probe module needs cgo, so it gets a module scan,
+which checks its required module versions but not its call paths.
+
+govulncheck's JSON mode exits 0 even when it reports vulnerabilities, so
+`.github/scripts/check_vulns.py` decides. For each vulnerability it takes the
+most precise level reported:
+
+- symbol (the code calls a vulnerable function) and package (the code
+  imports a vulnerable package) fail the check;
+- module (only a required module is affected) is listed and passes, for
+  example the unfixed `golang.org/x/crypto/openpgp` advisory GO-2026-5932,
+  whose package this module does not import;
+- a stream without the scanner's config, malformed JSON or an unknown
+  finding fails as a broken scan.
+
+The job runs with the module's minimum Go (`1.26.x`) and the current release
+(`1.27.x`), because the standard library's findings depend on the toolchain,
+and uploads every scan as `vulncheck-go-<version>`. A weekly scheduled run
+catches new advisories without a source change; the other Code checks jobs
+skip it. `.github/dependabot.yml` proposes Go module updates daily, with
+Testcontainers for Go and its modules in one group, and GitHub Actions
+updates weekly.
 
 The Python tests include `test_tag_scenarios.py` for the planner and
 `test_scenario_shards.py`, which checks the workflow files themselves: one
@@ -140,7 +169,7 @@ steps in order:
 | Identify completed failing tests | n/a | On failure, adds one annotation per failed test or subtest name found in `native.log`. |
 
 The job environment sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
-and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.25.x`. Tentacle workflows use
+and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.26.x`. Tentacle workflows use
 role images for release 20.2.4; the Squid workflows pass release 19.2.5.
 
 ### How a batch passes

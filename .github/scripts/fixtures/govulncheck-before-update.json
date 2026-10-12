@@ -1,0 +1,1863 @@
+{
+  "config": {
+    "protocol_version": "v1.0.0",
+    "scanner_name": "govulncheck",
+    "scanner_version": "v1.9.0",
+    "db": "https://vuln.go.dev",
+    "db_last_modified": "2026-10-08T22:31:09Z",
+    "go_version": "go1.27.2",
+    "scan_level": "symbol",
+    "scan_mode": "source"
+  }
+}
+{
+  "progress": {
+    "message": "Fetching vulnerabilities from the database..."
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-5841",
+    "summary": "OOB read in github.com/klauspost/compress/s2"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-6253",
+    "summary": "moby/go-archive: Crafted tar archive can write outside the extraction directory in github.com/moby/go-archive"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-5932",
+    "summary": "The golang.org/x/crypto/openpgp package is unmaintained, unsafe by design, and has known security issues"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-6303",
+    "summary": "Source-address critical option not enforced for non-public-key auth callbacks in golang.org/x/crypto/ssh"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-6354",
+    "summary": "Prevent DoS on deadlocked undecided channel in golang.org/x/crypto/ssh"
+  }
+}
+{
+  "osv": {
+    "id": "GO-2026-6355",
+    "summary": "Prevent DoS on deadlocked established channel in golang.org/x/crypto/ssh"
+  }
+}
+{
+  "progress": {
+    "message": "Checking the code against the vulnerabilities..."
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-5841",
+    "fixed_version": "v1.18.7",
+    "trace": [
+      {
+        "module": "github.com/klauspost/compress",
+        "version": "v1.18.6"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-5932",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6303",
+    "fixed_version": "v0.55.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6354",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6355",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/compression"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6303",
+    "fixed_version": "v0.55.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0",
+        "package": "golang.org/x/crypto/ssh"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6354",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0",
+        "package": "golang.org/x/crypto/ssh"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6355",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0",
+        "package": "golang.org/x/crypto/ssh"
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "TarWithOptions",
+        "position": {
+          "filename": "archive.go",
+          "offset": 18328,
+          "line": 575,
+          "column": 6
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GetContext",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 14284,
+          "line": 257,
+          "column": 45
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildOptions",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 21805,
+          "line": 499,
+          "column": 35
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage$1",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32510,
+          "line": 1096,
+          "column": 40
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "doRetryNotify[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 2848,
+          "line": 88,
+          "column": 23
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "RetryNotifyWithData[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 1870,
+          "line": 54,
+          "column": 22
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32408,
+          "line": 1093,
+          "column": 42
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CreateContainer",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 35302,
+          "line": 1190,
+          "column": 32
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GenericContainer",
+        "position": {
+          "filename": "generic.go",
+          "offset": 2543,
+          "line": 77,
+          "column": 36
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Run",
+        "position": {
+          "filename": "generic.go",
+          "offset": 4155,
+          "line": 130,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "AddManager",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/topology.go",
+          "offset": 25707,
+          "line": 756,
+          "column": 41
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/compression",
+        "function": "init$1",
+        "position": {
+          "filename": "compression/compression.go",
+          "offset": 1257,
+          "line": 69,
+          "column": 7
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "sync",
+        "function": "Get",
+        "receiver": "*Pool",
+        "position": {
+          "filename": "src/sync/pool.go",
+          "offset": 4777,
+          "line": 156,
+          "column": 12
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "fmt",
+        "function": "newPrinter",
+        "position": {
+          "filename": "src/fmt/print.go",
+          "offset": 4538,
+          "line": 146,
+          "column": 17
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "fmt",
+        "function": "Fprintln",
+        "position": {
+          "filename": "src/fmt/print.go",
+          "offset": 9015,
+          "line": 296,
+          "column": 17
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/tools/tagcatalog",
+        "function": "main",
+        "position": {
+          "filename": "tools/tagcatalog/main.go",
+          "offset": 4272,
+          "line": 145,
+          "column": 15
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader",
+        "function": "Gname",
+        "receiver": "nosysFileInfo",
+        "position": {
+          "filename": "tarheader/tarheader.go",
+          "offset": 944,
+          "line": 31,
+          "column": 25
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "archive/tar",
+        "function": "FileInfoHeader",
+        "position": {
+          "filename": "src/archive/tar/common.go",
+          "offset": 24279,
+          "line": 714,
+          "column": 29
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir$1",
+        "position": {
+          "filename": "file.go",
+          "offset": 1460,
+          "line": 69,
+          "column": 36
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "path/filepath",
+        "function": "Walk",
+        "position": {
+          "filename": "src/path/filepath/path.go",
+          "offset": 14358,
+          "line": 426,
+          "column": 11
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir",
+        "position": {
+          "filename": "file.go",
+          "offset": 1107,
+          "line": 57,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyDirToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20064,
+          "line": 697,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyFileToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20671,
+          "line": 724,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init$3$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 5380,
+          "line": 165,
+          "column": 34
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "containerHookFn$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 14149,
+          "line": 417,
+          "column": 18
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "applyLifecycleHooks",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 12228,
+          "line": 358,
+          "column": 56
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "terminatingHook",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 11413,
+          "line": 342,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Terminate",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 10518,
+          "line": 350,
+          "column": 39
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "Terminate",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/ceph.go",
+          "offset": 32614,
+          "line": 899,
+          "column": 26
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader",
+        "function": "Uname",
+        "receiver": "nosysFileInfo",
+        "position": {
+          "filename": "tarheader/tarheader.go",
+          "offset": 709,
+          "line": 24,
+          "column": 25
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "archive/tar",
+        "function": "FileInfoHeader",
+        "position": {
+          "filename": "src/archive/tar/common.go",
+          "offset": 24351,
+          "line": 718,
+          "column": 29
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir$1",
+        "position": {
+          "filename": "file.go",
+          "offset": 1460,
+          "line": 69,
+          "column": 36
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "path/filepath",
+        "function": "Walk",
+        "position": {
+          "filename": "src/path/filepath/path.go",
+          "offset": 14358,
+          "line": 426,
+          "column": 11
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir",
+        "position": {
+          "filename": "file.go",
+          "offset": 1107,
+          "line": 57,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyDirToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20064,
+          "line": 697,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyFileToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20671,
+          "line": 724,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init$3$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 5380,
+          "line": 165,
+          "column": 34
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "containerHookFn$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 14149,
+          "line": 417,
+          "column": 18
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "applyLifecycleHooks",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 12228,
+          "line": 358,
+          "column": 56
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "terminatingHook",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 11413,
+          "line": 342,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Terminate",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 10518,
+          "line": 350,
+          "column": 39
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "Terminate",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/ceph.go",
+          "offset": 32614,
+          "line": 899,
+          "column": 26
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader",
+        "function": "init",
+        "position": {
+          "filename": "tarheader/tarheader.go",
+          "offset": 0,
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "init",
+        "position": {
+          "filename": "archive.go",
+          "offset": 386,
+          "line": 23,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init",
+        "position": {
+          "filename": "container.go",
+          "offset": 193,
+          "line": 17,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/rgw_test",
+        "function": "init",
+        "position": {
+          "filename": "rgw/examples_test.go",
+          "offset": 146,
+          "line": 9,
+          "column": 2
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/compression",
+        "function": "Close",
+        "receiver": "nopWriteCloser",
+        "position": {
+          "filename": "compression/compression.go",
+          "offset": 1184,
+          "line": 66,
+          "column": 23
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "Do$1",
+        "position": {
+          "filename": "archive.go",
+          "offset": 20464,
+          "line": 645,
+          "column": 35
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "Do",
+        "receiver": "*Tarballer",
+        "position": {
+          "filename": "archive.go",
+          "offset": 20253,
+          "line": 640,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "TarWithOptions",
+        "position": {
+          "filename": "archive.go",
+          "offset": 18487,
+          "line": 580,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GetContext",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 14284,
+          "line": 257,
+          "column": 45
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildOptions",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 21805,
+          "line": 499,
+          "column": 35
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage$1",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32510,
+          "line": 1096,
+          "column": 40
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "doRetryNotify[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 2848,
+          "line": 88,
+          "column": 23
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "RetryNotifyWithData[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 1870,
+          "line": 54,
+          "column": 22
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32408,
+          "line": 1093,
+          "column": 42
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CreateContainer",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 35302,
+          "line": 1190,
+          "column": 32
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GenericContainer",
+        "position": {
+          "filename": "generic.go",
+          "offset": 2543,
+          "line": 77,
+          "column": 36
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Run",
+        "position": {
+          "filename": "generic.go",
+          "offset": 4155,
+          "line": 130,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "AddManager",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/topology.go",
+          "offset": 25707,
+          "line": 756,
+          "column": 41
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader",
+        "function": "FileInfoHeaderNoLookups",
+        "position": {
+          "filename": "tarheader/tarheader.go",
+          "offset": 2304,
+          "line": 61,
+          "column": 6
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "FileInfoHeader",
+        "position": {
+          "filename": "archive.go",
+          "offset": 7015,
+          "line": 213,
+          "column": 47
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "addTarFile",
+        "receiver": "*tarAppender",
+        "position": {
+          "filename": "archive.go",
+          "offset": 9778,
+          "line": 311,
+          "column": 28
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "Do$2",
+        "position": {
+          "filename": "archive.go",
+          "offset": 25054,
+          "line": 794,
+          "column": 27
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "path/filepath",
+        "function": "WalkDir",
+        "position": {
+          "filename": "src/path/filepath/path.go",
+          "offset": 13493,
+          "line": 399,
+          "column": 11
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/tools/tagcatalog",
+        "function": "main",
+        "position": {
+          "filename": "tools/tagcatalog/main.go",
+          "offset": 4471,
+          "line": 154,
+          "column": 24
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/compression",
+        "function": "init",
+        "position": {
+          "filename": "compression/compression.go",
+          "offset": 0,
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "init",
+        "position": {
+          "filename": "archive.go",
+          "offset": 344,
+          "line": 22,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init",
+        "position": {
+          "filename": "container.go",
+          "offset": 193,
+          "line": 17,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/rgw_test",
+        "function": "init",
+        "position": {
+          "filename": "rgw/examples_test.go",
+          "offset": 146,
+          "line": 9,
+          "column": 2
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6354",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0",
+        "package": "golang.org/x/crypto/ssh",
+        "function": "NewClientConn",
+        "position": {
+          "filename": "ssh/client.go",
+          "offset": 1821,
+          "line": 71,
+          "column": 6
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "newPortForwarder",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 9355,
+          "line": 307,
+          "column": 42
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "exposeHostPort",
+        "receiver": "*sshdContainer",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 8232,
+          "line": 266,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "exposeHostPorts$6",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 5376,
+          "line": 166,
+          "column": 40
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "containerHookFn$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 14149,
+          "line": 417,
+          "column": 18
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "applyLifecycleHooks",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 12228,
+          "line": 358,
+          "column": 56
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "terminatingHook",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 11413,
+          "line": 342,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Terminate",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 10518,
+          "line": 350,
+          "column": 39
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "Terminate",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/ceph.go",
+          "offset": 32614,
+          "line": 899,
+          "column": 26
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "Do$2",
+        "position": {
+          "filename": "archive.go",
+          "offset": 21839,
+          "line": 693,
+          "column": 34
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "path/filepath",
+        "function": "WalkDir",
+        "position": {
+          "filename": "src/path/filepath/path.go",
+          "offset": 13493,
+          "line": 399,
+          "column": 11
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/tools/tagcatalog",
+        "function": "main",
+        "position": {
+          "filename": "tools/tagcatalog/main.go",
+          "offset": 4471,
+          "line": 154,
+          "column": 24
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6355",
+    "fixed_version": "v0.56.0",
+    "trace": [
+      {
+        "module": "golang.org/x/crypto",
+        "version": "v0.54.0",
+        "package": "golang.org/x/crypto/ssh",
+        "function": "NewClientConn",
+        "position": {
+          "filename": "ssh/client.go",
+          "offset": 1821,
+          "line": 71,
+          "column": 6
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "newPortForwarder",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 9355,
+          "line": 307,
+          "column": 42
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "exposeHostPort",
+        "receiver": "*sshdContainer",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 8232,
+          "line": 266,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "exposeHostPorts$6",
+        "position": {
+          "filename": "port_forwarding.go",
+          "offset": 5376,
+          "line": 166,
+          "column": 40
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "containerHookFn$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 14149,
+          "line": 417,
+          "column": 18
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "applyLifecycleHooks",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 12228,
+          "line": 358,
+          "column": 56
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "terminatingHook",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 11413,
+          "line": 342,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Terminate",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 10518,
+          "line": 350,
+          "column": 39
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "Terminate",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/ceph.go",
+          "offset": 32614,
+          "line": 899,
+          "column": 26
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/tarheader",
+        "function": "Sys",
+        "receiver": "nosysFileInfo",
+        "position": {
+          "filename": "tarheader/tarheader.go",
+          "offset": 1013,
+          "line": 35,
+          "column": 25
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "archive/tar",
+        "function": "FileInfoHeader",
+        "position": {
+          "filename": "src/archive/tar/common.go",
+          "offset": 23662,
+          "line": 692,
+          "column": 22
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir$1",
+        "position": {
+          "filename": "file.go",
+          "offset": 1460,
+          "line": 69,
+          "column": 36
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "path/filepath",
+        "function": "Walk",
+        "position": {
+          "filename": "src/path/filepath/path.go",
+          "offset": 14358,
+          "line": 426,
+          "column": 11
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "tarDir",
+        "position": {
+          "filename": "file.go",
+          "offset": 1107,
+          "line": 57,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyDirToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20064,
+          "line": 697,
+          "column": 21
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CopyFileToContainer",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 20671,
+          "line": 724,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init$3$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 5380,
+          "line": 165,
+          "column": 34
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "containerHookFn$1",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 14149,
+          "line": 417,
+          "column": 18
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "applyLifecycleHooks",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 12228,
+          "line": 358,
+          "column": 56
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "terminatingHook",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "lifecycle.go",
+          "offset": 11413,
+          "line": 342,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Terminate",
+        "receiver": "*DockerContainer",
+        "position": {
+          "filename": "docker.go",
+          "offset": 10518,
+          "line": 350,
+          "column": 39
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "Terminate",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/ceph.go",
+          "offset": 32614,
+          "line": 899,
+          "column": 26
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive/compression",
+        "function": "CompressStream",
+        "position": {
+          "filename": "compression/compression.go",
+          "offset": 3728,
+          "line": 176,
+          "column": 6
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "NewTarballer",
+        "position": {
+          "filename": "archive.go",
+          "offset": 19309,
+          "line": 606,
+          "column": 51
+        }
+      },
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "TarWithOptions",
+        "position": {
+          "filename": "archive.go",
+          "offset": 18429,
+          "line": 576,
+          "column": 25
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GetContext",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 14284,
+          "line": 257,
+          "column": 45
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildOptions",
+        "receiver": "*ContainerRequest",
+        "position": {
+          "filename": "container.go",
+          "offset": 21805,
+          "line": 499,
+          "column": 35
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage$1",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32510,
+          "line": 1096,
+          "column": 40
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "doRetryNotify[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 2848,
+          "line": 88,
+          "column": 23
+        }
+      },
+      {
+        "module": "github.com/cenkalti/backoff/v4",
+        "version": "v4.3.0",
+        "package": "github.com/cenkalti/backoff/v4",
+        "function": "RetryNotifyWithData[github.com/moby/moby/client.ImageBuildResult]",
+        "position": {
+          "filename": "retry.go",
+          "offset": 1870,
+          "line": 54,
+          "column": 22
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "BuildImage",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 32408,
+          "line": 1093,
+          "column": 42
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "CreateContainer",
+        "receiver": "*DockerProvider",
+        "position": {
+          "filename": "docker.go",
+          "offset": 35302,
+          "line": 1190,
+          "column": 32
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "GenericContainer",
+        "position": {
+          "filename": "generic.go",
+          "offset": 2543,
+          "line": 77,
+          "column": 36
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "Run",
+        "position": {
+          "filename": "generic.go",
+          "offset": 4155,
+          "line": 130,
+          "column": 30
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/ceph",
+        "function": "AddManager",
+        "receiver": "*Container",
+        "position": {
+          "filename": "ceph/topology.go",
+          "offset": 25707,
+          "line": 756,
+          "column": 41
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "init",
+        "position": {
+          "filename": "archive.go",
+          "offset": 77,
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "module": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "package": "github.com/testcontainers/testcontainers-go",
+        "function": "init",
+        "position": {
+          "filename": "container.go",
+          "offset": 193,
+          "line": 17,
+          "column": 2
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/rgw_test",
+        "function": "init",
+        "position": {
+          "filename": "rgw/examples_test.go",
+          "offset": 146,
+          "line": 9,
+          "column": 2
+        }
+      }
+    ]
+  }
+}
+{
+  "finding": {
+    "osv": "GO-2026-6253",
+    "fixed_version": "v0.3.0",
+    "trace": [
+      {
+        "module": "github.com/moby/go-archive",
+        "version": "v0.2.0",
+        "package": "github.com/moby/go-archive",
+        "function": "init$1",
+        "position": {
+          "filename": "copy.go",
+          "offset": 461,
+          "line": 25,
+          "column": 7
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "sync",
+        "function": "Get",
+        "receiver": "*Pool",
+        "position": {
+          "filename": "src/sync/pool.go",
+          "offset": 4777,
+          "line": 156,
+          "column": 12
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "fmt",
+        "function": "newPrinter",
+        "position": {
+          "filename": "src/fmt/print.go",
+          "offset": 4538,
+          "line": 146,
+          "column": 17
+        }
+      },
+      {
+        "module": "stdlib",
+        "version": "v1.27.2",
+        "package": "fmt",
+        "function": "Fprintln",
+        "position": {
+          "filename": "src/fmt/print.go",
+          "offset": 9015,
+          "line": 296,
+          "column": 17
+        }
+      },
+      {
+        "module": "github.com/JSYoo5B/ceph-testcontainers-go",
+        "package": "github.com/JSYoo5B/ceph-testcontainers-go/tools/tagcatalog",
+        "function": "main",
+        "position": {
+          "filename": "tools/tagcatalog/main.go",
+          "offset": 4272,
+          "line": 145,
+          "column": 15
+        }
+      }
+    ]
+  }
+}

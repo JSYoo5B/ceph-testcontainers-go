@@ -39,7 +39,7 @@ RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 
 Requirements:
 
-- Go 1.25 or later.
+- Go 1.26 or later.
 - A Docker engine that runs Linux containers. Docker Desktop works; host
   networking has extra requirements (see [WithHostNetwork](#withhostnetwork)).
 - Access to pull the Ceph image and the Ryuk image.

@@ -248,9 +248,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         workflow = self.workflows["code.yml"]
         jobs = self.jobs["code.yml"]
         self.assertRegex(workflow, r"(?m)^name: Code checks$")
-        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage"})
+        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage", "vulncheck"})
         self.assertEqual({scalar(job.split("    steps:", 1)[0], "name") for job in jobs.values()},
-                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers"})
+                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers",
+                          "Vulnerability check (Go ${{ matrix.go }})"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
@@ -262,6 +263,12 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertNotIn("./.github/actions/runtime-cleanup", block)
             self.assertNotRegex(block, r"\bdocker\s|docker://|docker/setup-")
             self.assertNotRegex(block, r"(?m)^    needs:")
+        # The weekly schedule runs only the vulnerability check.
+        self.assertRegex(workflow, r"(?m)^  schedule:\n    - cron: '[^']+'$")
+        for name in ("unit", "race", "static", "tag-coverage"):
+            self.assertIn("    if: github.event_name != 'schedule'\n", jobs[name])
+        self.assertNotIn("if:", jobs["vulncheck"].split("    steps:", 1)[0])
+        self.assertIn("make vulncheck", jobs["vulncheck"])
         self.assertIn("make test", jobs["unit"])
         self.assertIn("make race", jobs["race"])
         self.assertIn("make vet", jobs["static"])

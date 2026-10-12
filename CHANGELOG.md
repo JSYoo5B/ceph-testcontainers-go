@@ -94,11 +94,20 @@ change the API.
 
 ### Changed
 
+- Go 1.26 or later is required. `golang.org/x/crypto` v0.56.0, which fixes
+  GO-2026-6354 and GO-2026-6355, needs it, and Go 1.25 is no longer supported
+  upstream.
+
 - The bootstrap `ceph.conf` sets `crash dir = /var/lib/ceph/crash`, and
   `ceph.WithConfigFile` rejects `crash_dir`, so every daemon's crash reports
   stay where `CollectCrashMetadata` reads them.
 
 ### Fixed
+
+- Dependencies with vulnerabilities that govulncheck finds reachable are
+  updated: `github.com/moby/go-archive` v0.3.0 (GO-2026-6253), `golang.org/x/crypto`
+  v0.56.0 (GO-2026-6354, GO-2026-6355, GO-2026-6303) and
+  `github.com/klauspost/compress` v1.18.7 (GO-2026-5841).
 
 - `ceph.Container.Terminate` removes a container that Docker created although
   the reply to the create request was lost, for example when `Run`'s startup
