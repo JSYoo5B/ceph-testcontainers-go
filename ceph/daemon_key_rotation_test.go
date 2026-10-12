@@ -249,6 +249,13 @@ func (w *rotationWorld) apply(cmd lateCommand) {
 		w.clients[entity] = client
 	case "remove":
 		delete(w.clients, cmd.entity)
+	case "add":
+		// auth add with a keyring creates its entry, and leaves an existing
+		// one as it is: unchanged when it matches, refused when it does not.
+		entity, client := parseFakeKeyring(cmd.input)
+		if _, ok := w.clients[entity]; !ok && entity == cmd.entity {
+			w.clients[entity] = client
+		}
 	case "caps":
 		// auth caps replaces every capability of an existing entity.
 		if client, ok := w.clients[cmd.entity]; ok {
@@ -580,6 +587,8 @@ func (w *rotationWorld) mutation(path, command, session, input string) rotationR
 			op = "remove"
 		case cmd.Prefix == "auth caps" && strings.HasPrefix(cmd.Entity, "client.") && input == "" && len(cmd.Caps) > 0:
 			op = "caps"
+		case cmd.Prefix == "auth add" && strings.HasPrefix(cmd.Entity, "client.") && input != "":
+			op = "add"
 		}
 	}
 	if op == "" {
@@ -603,12 +612,17 @@ func (w *rotationWorld) mutation(path, command, session, input string) rotationR
 		output = w.entry
 	}
 	content := ""
-	if op == "import" {
+	if op == "import" || op == "add" {
 		var ok bool
 		if content, ok = w.controlFiles[input]; !ok {
 			// The script fails to read its input and sends nothing.
 			w.stop(session)
 			return rotationReply{code: 1, stderr: "no input"}
+		}
+		if _, client := parseFakeKeyring(content); op == "import" && len(client.caps) == 0 {
+			// AuthMonitor::import_keyring refuses an entry without caps.
+			w.stop(session)
+			return rotationReply{code: 1, stderr: "auth import: no caps supplied"}
 		}
 	}
 	reply := w.execute(lateCommand{op: op, via: w.route, session: session, nonce: nonce, entity: cmd.Entity, input: content, caps: cmd.Caps}, output)

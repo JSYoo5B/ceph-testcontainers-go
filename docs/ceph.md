@@ -968,6 +968,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*ceph.ContainerPause` | [PauseContainer](#pausecontainer) | `Resume` |
 | `*ceph.NetworkInterruption` | [InterruptNetwork](#interruptnetwork) | `Restore` |
+| `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
 
 All handles follow the same contract:
 
@@ -1743,8 +1744,9 @@ select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
 creations and revoked identities are rejected, and so are descriptors whose key
-[ReplaceClientKey](#replaceclientkey) replaced or whose identity has a change
-that is not resolved yet. You own the container. The options are those of
+[ReplaceClientKey](#replaceclientkey) replaced, whose identity
+[TemporaryClientRevocation](#temporaryclientrevocation) removed until its
+`Restore`, or whose identity has a change that is not resolved yet. You own the container. The options are those of
 [WithClient](#withclient).
 
 #### CreateClient
@@ -1911,6 +1913,71 @@ volumes module may still create or change the identity later. Do not replace
 or revoke a client after a failed `AuthorizeSubvolume` or
 `DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
 only the state at that moment.
+
+#### TemporaryClientRevocation
+
+```golang
+func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocation, error)
+```
+
+Removes an identity created by this cluster from the MONs until `Restore`
+puts back exactly its key and its capabilities, so a recovery test can watch
+the rejection of a client and then its return with the same credentials. The
+identity keeps its name and key type, and the descriptor is not recreated.
+
+```golang
+revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+// ... check that the client is rejected ...
+err = revocation.Restore(ctx)
+```
+
+While the identity is revoked:
+
+- The descriptor's `ConnectionConfig` keeps returning its credentials, which
+  work again after `Restore`.
+- [WithClientIdentity](#withclientidentity),
+  [ClientCapabilities](#clientcapabilities),
+  [UpdateClientCaps](#updateclientcaps), [ReplaceClientKey](#replaceclientkey)
+  and another `TemporaryClientRevocation` refuse the descriptor.
+- [CreateClient](#createclient) refuses the name.
+- [DeleteClient](#deleteclient) makes the removal permanent, after which
+  `Restore` fails.
+
+The client behaves as follows on the official images:
+
+- A fresh connection fails at once with `EACCES`.
+- A client that authenticated before keeps its sessions until it renews its
+  tickets, within `auth_mon_ticket_ttl` ([WithAuth](#withauth)
+  `MonTicketTTL`). The MONs then reject the renewal, and the client keeps the
+  MGR and OSD sessions it already holds.
+- On Tentacle 20.2.4 the client also loses its MON session, and librados does
+  not authenticate again on its own; a new connection with the same
+  credentials works once `Restore` returns. On Squid 19.2.5 the open MON
+  session keeps answering, and the next renewal after `Restore` succeeds.
+
+`Restore` checks what the MONs hold first:
+
+- An identity that already has the original key and capabilities counts as
+  restored, so a repeated `Restore` succeeds.
+- An identity that was created again with another key or other capabilities
+  is refused and never overwritten.
+- A `Restore` of an earlier revocation does not undo a later one.
+
+The revocation belongs to the identity, not to one descriptor: copies of the
+descriptor are refused the same way, and `DeleteClient` through any
+descriptor of the revoked key makes the removal permanent.
+
+The removal and the restoration are fenced like the import of
+[ReplaceClientKey](#replaceclientkey). A failed or canceled call settles the
+MONs and reports what they hold:
+
+- A removal that did not apply returns no handle, and the descriptor stays
+  usable.
+- When the outcome stays uncertain, `TemporaryClientRevocation` returns the
+  handle with the error, and `Restore` settles first and then restores.
+
+The cluster needs no `Restore` before `Terminate`. The handle's `String` and
+`GoString` never include credentials.
 
 #### RotateDaemonKey
 
@@ -2917,6 +2984,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `ContainerPause` | `ContainerID`; `Resume(ctx) error` | [PauseContainer](#pausecontainer) |
 | `NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [InterruptNetwork](#interruptnetwork) (method or function) |
+| `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
 
 See the [handle contract](#container-methods).
 

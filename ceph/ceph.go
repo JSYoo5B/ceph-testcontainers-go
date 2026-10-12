@@ -61,6 +61,9 @@ type Container struct {
 	// A file whose copy failed stays listed, as true, because Docker may
 	// still write it.
 	strayAuthInputs map[string]bool
+	// clientRevocations holds, per client entity, the state of the temporary
+	// revocation that has removed it until its Restore.
+	clientRevocations map[string]*clientRevocationState
 	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
 	// keyTypeOption records whether the control image's ceph-authtool has

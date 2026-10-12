@@ -49,6 +49,11 @@ change the API.
   and reports the outcome they hold. `UpdateClientCaps` and `DeleteClient` are
   fenced the same way, so a timed-out capability change or removal can no
   longer apply after a later operation on the identity.
+- `ceph.Container.TemporaryClientRevocation` removes an owned client identity
+  until `ceph.ClientRevocation.Restore` puts back exactly its key and
+  capabilities, keeping the descriptor; `Restore` refuses an identity that was
+  created again with another key or capabilities, and `DeleteClient` makes the
+  removal permanent.
 
 ### Fixed
 
