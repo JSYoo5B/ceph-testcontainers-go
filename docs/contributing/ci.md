@@ -28,6 +28,12 @@ checked through the `pull_request` event (`opened`, `synchronize`,
 `reopened`), so a commit on a PR branch is checked once, not once as a push
 and again as a pull request.
 
+Both workflow files set `GOPROXY=https://proxy.golang.org|direct`. With `|`,
+the go command fetches a module from its origin after any failed proxy
+request, such as a reset HTTP/2 stream; with the default `,` it gives up on
+everything but a 404 or 410, which once failed a whole batch at compilation.
+`go.sum` verifies a module from either source.
+
 ### Check names
 
 Displayed names are layered as `<workflow> / <caller job> / <batch>`. For

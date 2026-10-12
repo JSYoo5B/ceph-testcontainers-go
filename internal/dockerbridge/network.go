@@ -21,6 +21,12 @@ import (
 const allocationAttempts = 4
 const cleanupTimeout = 10 * time.Second
 
+// allocation serializes the bridges that this process creates. Between the
+// probe's removal and the final bridge's creation, the allocated subnet is
+// free, and a concurrent probe, for example of a parallel test's cluster,
+// would get the same subnet.
+var allocation = make(chan struct{}, 1)
+
 type inspector interface {
 	NetworkInspect(context.Context, string, mobycl.NetworkInspectOptions) (mobycl.NetworkInspectResult, error)
 	Close() error
@@ -47,8 +53,9 @@ type removeNetwork func(context.Context, *testcontainers.DockerNetwork) error
 // which require an explicit subnet for static endpoint addresses. Both temporary
 // and final networks retain Testcontainers labels and Ryuk lifecycle handling.
 //
-// Only Docker's pool-overlap error is retried, at most four allocations and
-// within ctx. Failure cleanup uses its own bounded context. A non-nil network
+// Allocations of one process run one at a time. Only Docker's pool-overlap
+// error, from a bridge another process created meanwhile, is retried, at
+// most four allocations and within ctx. Failure cleanup uses its own bounded context. A non-nil network
 // returned with an error remains owned by the caller and must be removed;
 // inspection, removal or client-close failures never discard that ownership.
 func New(ctx context.Context) (*testcontainers.DockerNetwork, error) {
@@ -89,6 +96,12 @@ func newNetwork(ctx context.Context, docker inspector, family Family, create cre
 			err = errors.Join(err, fmt.Errorf("close bridge inspection client: %w", closeErr))
 		}
 	}()
+	select {
+	case allocation <- struct{}{}:
+		defer func() { <-allocation }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	for attempt := 0; attempt < allocationAttempts; attempt++ {
 		if err = ctx.Err(); err != nil {
 			return nil, err
@@ -208,6 +221,10 @@ func usableGateway(subnet netip.Prefix, gateway netip.Addr) bool {
 	return gateway.IsValid() && gateway.Is4() == subnet.Addr().Is4() && !gateway.IsUnspecified() && !gateway.IsMulticast() && subnet.Contains(gateway)
 }
 
+// poolOverlap reports Docker's refusal of a subnet that another network
+// holds. Docker answers it with HTTP 403, which the client reports as
+// permission denied; an invalid argument with the same text is accepted too.
 func poolOverlap(err error) bool {
-	return errdefs.IsInvalidArgument(err) && strings.Contains(strings.ToLower(err.Error()), "pool overlaps with other one on this address space")
+	return (errdefs.IsPermissionDenied(err) || errdefs.IsInvalidArgument(err)) &&
+		strings.Contains(strings.ToLower(err.Error()), "pool overlaps with other one on this address space")
 }

@@ -244,6 +244,13 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotEqual(compiled[compiled.index("--directory") + 1],
                             native[native.index("--directory") + 1])
 
+    def test_go_modules_fall_back_to_their_origin(self):
+        # With "|", the go command tries the origin after any proxy error; with
+        # ",", only after a 404 or 410, so one reset stream failed a whole job.
+        for name, workflow in self.workflows.items():
+            if "actions/setup-go" in workflow:
+                self.assertRegex(workflow, r"(?m)^env:\n(?:  .*\n)*  GOPROXY: 'https://proxy\.golang\.org\|direct'$", name)
+
     def test_every_go_setup_installs_the_latest_patch(self):
         # A cached older patch, such as go1.26.8, fails the vulnerability check
         # on standard-library advisories that the latest patch fixes.
