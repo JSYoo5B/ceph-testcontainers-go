@@ -29,6 +29,9 @@ permissions:
 
 env:
   CGO_ENABLED: '0'
+  # A failed request to the module proxy, such as a reset HTTP/2 stream,
+  # falls back to the module's origin; go.sum verifies either source.
+  GOPROXY: 'https://proxy.golang.org|direct'
   TESTCONTAINERS_HOST_OVERRIDE: '127.0.0.1'
   # Opted-in independent tests run two clusters at a time on 16 GB runners.
   CEPH_TEST_PARALLEL: '2'
