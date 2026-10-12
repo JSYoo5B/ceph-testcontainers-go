@@ -45,6 +45,9 @@ change the API.
 
 ### Fixed
 
+- `rbd.Mirror.WaitReplayReady` no longer fails while rbd-mirror creates the
+  destination image: the moment in which the new image reports mirroring
+  disabled, before rbd-mirror enables it, was taken for a changed identity.
 - Canceling `ceph.Container.CollectDiagnostics` now stops its Ceph queries in
   the control container before returning. A query previously ran on for up to
   three quarters of `OperationTimeout`.

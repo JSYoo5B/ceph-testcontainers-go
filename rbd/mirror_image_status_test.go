@@ -684,3 +684,124 @@ func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) 
 		t.Fatalf("post-status cancellation bypassed final native guards: %+v %v", status, err)
 	}
 }
+
+// rbdImageEnrolling is how rbd info reports an image whose mirroring is
+// disabled: with the journaling feature, only the default mode and the state;
+// without it, no mirroring at all. rbd-mirror creates a destination image in
+// that state and enables mirroring on it right after; Squid 19.2.5 reported
+// the journal form for about 50 ms in 2 of 8 creations.
+func rbdImageEnrolling(id string, mode MirrorMode) string {
+	if mode == MirrorModeJournal {
+		return fmt.Sprintf(`{"name":"volume","id":%q,"mirroring":{"mode":"journal","state":"disabled"}}`, id)
+	}
+	return fmt.Sprintf(`{"name":"volume","id":%q}`, id)
+}
+
+func TestRBDMirrorWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) {
+	for _, mode := range []MirrorMode{MirrorModeJournal, MirrorModeSnapshot} {
+		t.Run(string(mode), func(t *testing.T) {
+			link, _, destination, _ := newRBDImageStatusFixture(t, mode, "ns-a", "ns-a")
+			attempt := 0
+			status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+				attempt++
+				destination.imageInfo = rbdImageStatusInfo("destination-local", string(mode), "global-image", false)
+				if attempt == 1 {
+					destination.imageInfo = rbdImageEnrolling("destination-local", mode)
+				}
+				current, err := link.ImageStatus(ctx, "volume")
+				if attempt == 1 && (err == nil || current.ReplayReady || current.SourceImageID != "source-local" || current.DestinationImageID != "destination-local" || current.DestinationMirrorState != "disabled") {
+					t.Errorf("an enrolling destination was not reported as not ready: %+v %v", current, err)
+				}
+				return current, err
+			})
+			if err != nil || !status.ReplayReady || status.DestinationImageID != "destination-local" || attempt != 2 {
+				t.Fatalf("the wait did not go on through destination enrollment: %+v %v attempts=%d", status, err, attempt)
+			}
+		})
+	}
+}
+
+// The destination identity seen during enrollment is pinned, and a destination
+// that was enrolled is never disabled by rbd-mirror while it replays.
+func TestRBDMirrorWaitReplayReadyStopsOnDestinationChangesAroundEnrollment(t *testing.T) {
+	for name, sequence := range map[string][]string{
+		"replaced during enrollment": {rbdImageEnrolling("destination-old", MirrorModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
+		"disabled after enrollment":  {rbdImageStatusInfo("destination-local", "journal", "global-image", false), rbdImageEnrolling("destination-local", MirrorModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "ns-a", "ns-a")
+			// Not replaying yet, so that only the destination decides.
+			destination.imageStatus = `{"name":"volume","global_id":"global-image","state":"up+syncing","description":"","last_update":""}`
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			attempt := 0
+			_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+				destination.imageInfo = sequence[min(attempt, len(sequence)-1)]
+				attempt++
+				return link.ImageStatus(ctx, "volume")
+			})
+			var observation *rbdImageObservationError
+			if !errors.As(err, &observation) || !observation.permanent || attempt > len(sequence) {
+				t.Fatalf("a destination change around enrollment did not stop the wait: %v attempts=%d", err, attempt)
+			}
+		})
+	}
+}
+
+// Only the exact native disabled forms count as enrollment.
+func TestRBDMirrorImageStatusRejectsOtherDisabledForms(t *testing.T) {
+	for _, mirroring := range []string{
+		`{"mode":"snapshot","state":"disabled"}`,
+		`{"mode":"journal","state":"disabled","primary":false}`,
+		`{"mode":"journal","state":"disabled","global_id":""}`,
+		`{"mode":"journal"}`,
+		`{"state":"disabled"}`,
+		`{}`,
+	} {
+		link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "", "")
+		destination.imageInfo = `{"name":"volume","id":"destination-local","mirroring":` + mirroring + `}`
+		_, err := link.ImageStatus(t.Context(), "volume")
+		var observation *rbdImageObservationError
+		if !errors.As(err, &observation) || !observation.permanent {
+			t.Fatalf("mirroring %s was not rejected: %v", mirroring, err)
+		}
+	}
+}
+
+// A bound namespace view waits through enrollment as the owner does.
+func TestRBDNamespaceWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) {
+	h := newNamespaceImageHarness(t, 1)
+	view := namespaceBindingMustBind(t, h.receiverHarness, "ns-e", "ns-f")
+	spec := rbdMirrorImageSpec("images", "ns-f", "volume")
+	enrolled := h.destinationInfo[spec]
+	attempt := 0
+	status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+		attempt++
+		h.destinationInfo[spec] = enrolled
+		if attempt == 1 {
+			h.destinationInfo[spec] = rbdImageEnrolling("destination-2", MirrorModeJournal)
+		}
+		return view.ImageStatus(ctx, "volume")
+	})
+	if err != nil || !status.ReplayReady || status.DestinationImageID != "destination-2" || attempt != 2 {
+		t.Fatalf("the bound view did not wait through enrollment: %+v %v attempts=%d", status, err, attempt)
+	}
+}
+
+// A source image whose mirroring is disabled is not a transition: the wait
+// fails at once, as for any other identity guard.
+func TestRBDMirrorWaitReplayReadyStopsOnDisabledSource(t *testing.T) {
+	link, source, _, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "", "")
+	source.imageInfo = `{"name":"volume","id":"source-local","mirroring":{"mode":"journal","state":"disabled"}}`
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	attempt := 0
+	_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+		attempt++
+		return link.ImageStatus(ctx, "volume")
+	})
+	var observation *rbdImageObservationError
+	if !errors.As(err, &observation) || !observation.permanent || attempt != 1 {
+		t.Fatalf("a disabled source did not stop the wait: %v attempts=%d", err, attempt)
+	}
+}

@@ -598,6 +598,7 @@ if err != nil {
 ```
 
 - It does not wait for any particular write or mirror snapshot. Check the destination data separately (see [`waitReplicated`](#helpers-used-by-the-examples)).
+- It keeps waiting while the destination image is missing or not yet enrolled for mirroring: rbd-mirror creates it first, with mirroring disabled, and enables mirroring right after. The destination's identity is pinned from its first appearance. A source image whose mirroring is disabled ends the wait at once, and so does a destination whose mirroring becomes disabled after it was enrolled.
 - The source image identity is pinned at the first observation, and the destination identity as soon as it appears. An image deleted and re-created under the same name is rejected, never adopted.
 - Transient query failures are retried. A successful read that proves a changed pool, policy or image identity, or an invalid schema, fails immediately.
 - On deadline or cancellation it returns the last observation together with the last query error.

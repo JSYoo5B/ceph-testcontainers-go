@@ -100,6 +100,12 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 		}
 	}
 	destination, err := readRBDMirrorImageInfoForScope(ctx, m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, mode, scope != nil)
+	if errors.Is(err, errRBDImageMirroringDisabled) {
+		// rbd-mirror creates the destination image first and enables mirroring
+		// on it right after. Its identity is kept, so that a wait pins it.
+		result.DestinationImageID, result.DestinationMirrorState = destination.ID, destination.State
+		return result, rbdImagePendingError("RBD destination image is not enrolled for mirroring yet")
+	}
 	if err != nil {
 		return result, err
 	}
@@ -222,8 +228,9 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 // WaitReplayReady waits for up to four minutes, bounded by the caller context,
 // for this link to have a currently running owned receiver replaying the named
 // image. It does not wait for particular data or snapshot completion. The first
-// observed source identity is pinned even while the destination is not present;
-// once a destination appears its local image identity is pinned as well.
+// observed source identity is pinned even while the destination is not present
+// or not enrolled yet, as while rbd-mirror creates it; once a destination
+// appears its local image identity is pinned as well.
 // Source and destination image replacements are rejected, never adopted.
 // Deadline/cancellation returns the last observation and the last query error.
 func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (MirrorImageStatus, error) {
@@ -244,6 +251,7 @@ func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe fu
 	var last MirrorImageStatus
 	var lastErr error
 	var sourceID, destinationID, globalID string
+	enrolled := false
 	for {
 		if err := ctx.Err(); err != nil {
 			last.ReplayReady = false
@@ -272,6 +280,17 @@ func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe fu
 				return last, rbdImageGuardError("RBD destination image changed while waiting for replay")
 			}
 			destinationID = current.DestinationImageID
+		}
+		// A destination is disabled only before rbd-mirror enrolls it.
+		switch current.DestinationMirrorState {
+		case "disabled":
+			if enrolled {
+				last.ReplayReady = false
+				return last, rbdImageGuardError("RBD destination image mirroring was disabled while waiting for replay")
+			}
+		case "":
+		default:
+			enrolled = true
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			last.ReplayReady = false
@@ -306,6 +325,15 @@ func (e *rbdImageObservationError) Unwrap() error { return e.cause }
 func rbdImageGuardError(message string) error {
 	return &rbdImageObservationError{message: message, permanent: true}
 }
+
+// rbdImagePendingError reports a native state that a wait passes through.
+func rbdImagePendingError(message string) error {
+	return &rbdImageObservationError{message: message}
+}
+
+// errRBDImageMirroringDisabled is the info of an image whose mirroring is
+// disabled. The result still holds the image ID.
+var errRBDImageMirroringDisabled = rbdImageGuardError("decode RBD mirror image info: mirroring is disabled")
 
 // Keep arbitrary native stderr out of error text while preserving errors.Is
 // classification for a transport/cancellation error through Unwrap.
@@ -348,10 +376,16 @@ func decodeRBDMirrorObservedInfo(data []byte, name string, mode MirrorMode) (rbd
 			Primary  *bool   `json:"primary"`
 		} `json:"mirroring"`
 	}
-	if json.Unmarshal(data, &tagged) != nil || tagged.Name == nil || tagged.ID == nil || *tagged.Name != name || *tagged.ID == "" || tagged.Mirroring == nil {
+	if json.Unmarshal(data, &tagged) != nil || tagged.Name == nil || tagged.ID == nil || *tagged.Name != name || *tagged.ID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing name/identity")
 	}
 	mirror := tagged.Mirroring
+	// rbd info prints mirroring for a disabled image only when it has the
+	// journaling feature, and then only the default mode and the state.
+	if mirror == nil || (mirror.Mode != nil && *mirror.Mode == "journal" && mirror.State != nil && *mirror.State == "disabled" && mirror.GlobalID == nil && mirror.Primary == nil) {
+		result.ID, result.State = *tagged.ID, "disabled"
+		return result, errRBDImageMirroringDisabled
+	}
 	if mirror.Mode == nil || mirror.State == nil || mirror.GlobalID == nil || mirror.Primary == nil || (mode != "" && *mirror.Mode != string(mode) || mode == "" && !slices.Contains([]string{"snapshot", "journal"}, *mirror.Mode)) || !slices.Contains([]string{"creating", "enabled", "disabling"}, *mirror.State) || *mirror.GlobalID == "" {
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing mirroring fields")
 	}
