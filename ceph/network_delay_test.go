@@ -88,6 +88,8 @@ type fakeNetem struct {
 	onStart func(mode container.NetworkMode)
 	// onRemove runs before a helper is removed.
 	onRemove func()
+	// editPreflight changes the preflight report before it is returned.
+	editPreflight func(map[string]any)
 }
 
 func newFakeNetem() *fakeNetem {
@@ -304,7 +306,8 @@ func (ns *fakeNamespace) link(name string) *fakeLink {
 func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.Report, error) {
 	out := map[string]any{"namespace": fmt.Sprintf("net:[%d]", helper.namespace.id), "net_admin": helper.netAdmin}
 	if args[0] == "preflight" {
-		out["missing"] = n.missing
+		// The script always reports a list, also an empty one.
+		out["missing"] = append([]string{}, n.missing...)
 		if len(n.missing) == 0 {
 			out["broken"] = []string{}
 			switch {
@@ -318,6 +321,9 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 				out["shown"] = string(shown)
 				out["delete"] = []any{0, ""}
 			}
+		}
+		if n.editPreflight != nil {
+			n.editPreflight(out)
 		}
 	} else {
 		var matches []*fakeLink
@@ -858,5 +864,44 @@ func TestNetemHelperOptions(t *testing.T) {
 	}
 	if request.Labels["org.testcontainers.ceph.role"] != "netem-helper" || !slices.Equal(request.Entrypoint, []string{"sleep"}) {
 		t.Fatalf("helper request %+v", request.ContainerRequest)
+	}
+}
+
+// A helper whose preflight report is malformed is refused like any other
+// unsupported helper: with an error, its helper removed and the endpoint free.
+func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any){
+		"no delete result":      func(out map[string]any) { delete(out, "delete") },
+		"empty delete result":   func(out map[string]any) { out["delete"] = []any{} },
+		"short delete result":   func(out map[string]any) { out["delete"] = []any{0} },
+		"failed delete":         func(out map[string]any) { out["delete"] = []any{2, "RTNETLINK answers: Device or resource busy"} },
+		"string add code":       func(out map[string]any) { out["add"] = []any{"0", ""} },
+		"fractional add code":   func(out map[string]any) { out["add"] = []any{0.5, ""} },
+		"numeric add text":      func(out map[string]any) { out["add"] = []any{0, 7} },
+		"no add result":         func(out map[string]any) { delete(out, "add") },
+		"no missing list":       func(out map[string]any) { delete(out, "missing") },
+		"no broken list":        func(out map[string]any) { delete(out, "broken") },
+		"non-netem shown qdisc": func(out map[string]any) { out["shown"] = `[{"kind":"noqueue","root":true}]` },
+	} {
+		t.Run(name, func(t *testing.T) {
+			netem := newFakeNetem()
+			netem.editPreflight = edit
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			if err == nil || lease != nil {
+				t.Fatalf("got %v, %v", lease, err)
+			}
+			if name != "failed delete" && !errors.Is(err, ErrNetemImageUnsupported) {
+				t.Fatalf("not reported as an unsupported helper: %v", err)
+			}
+			for _, command := range netem.commands {
+				if strings.HasPrefix(command, "tc ") {
+					t.Fatalf("ran %q on the target", command)
+				}
+			}
+			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.delays) != 0 {
+				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.delays)
+			}
+		})
 	}
 }

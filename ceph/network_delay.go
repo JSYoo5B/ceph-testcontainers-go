@@ -478,30 +478,54 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string) (st
 		if err != nil {
 			return "", err
 		}
+		// The helper's script wrote this report; anything that it leaves out
+		// or gets wrong is a helper that does not meet the contract.
 		switch {
+		case report.Missing == nil:
+			return "", fmt.Errorf("%w: the preflight report lists no missing executables", ErrNetemImageUnsupported)
 		case len(report.Missing) > 0:
 			return "", fmt.Errorf("%w: missing %s", ErrNetemImageUnsupported, strings.Join(report.Missing, ", "))
+		case report.Broken == nil:
+			return "", fmt.Errorf("%w: the preflight report lists no broken commands", ErrNetemImageUnsupported)
 		case len(report.Broken) > 0:
 			return "", fmt.Errorf("%w: failed %s", ErrNetemImageUnsupported, strings.Join(report.Broken, ", "))
 		case !report.NetAdmin:
 			return "", ErrNetemPermissionDenied
-		case len(report.Add) != 2:
-			return "", errors.New("the netem preflight returned no result")
 		}
-		if code, _ := report.Add[0].(float64); code != 0 {
-			text, _ := report.Add[1].(string)
+		code, text, err := netemResult(report.Add, "add")
+		if err != nil {
+			return "", err
+		}
+		if code != 0 {
 			return "", classifyNetem("add netem on the helper's loopback", text)
 		}
 		var shown []netemQdisc
 		if err := json.Unmarshal([]byte(report.Shown), &shown); err != nil || len(shown) == 0 || shown[0].Kind != "netem" {
 			return "", fmt.Errorf("%w: tc did not show the netem qdisc it added", ErrNetemImageUnsupported)
 		}
-		if code, _ := report.Delete[0].(float64); len(report.Delete) != 2 || code != 0 {
-			return "", errors.New("the netem preflight could not remove its qdisc")
+		if code, text, err = netemResult(report.Delete, "delete"); err != nil {
+			return "", err
+		}
+		if code != 0 {
+			return "", fmt.Errorf("remove netem from the helper's loopback: %w", classifyNetem("tc", text))
 		}
 		return imageID, nil
 	}()
 	return imageID, errors.Join(err, removeNetemHelper(ctx, backend, helper))
+}
+
+// netemResult reads one [exit code, stderr] pair of the preflight report.
+func netemResult(value []any, name string) (int, string, error) {
+	malformed := fmt.Errorf("%w: the preflight report has no valid %s result", ErrNetemImageUnsupported, name)
+	if len(value) != 2 {
+		return 0, "", malformed
+	}
+	code, isNumber := value[0].(float64)
+	text, isText := value[1].(string)
+	if !isNumber || !isText || code != math.Trunc(code) || code < 0 || code > 255 {
+		return 0, "", malformed
+	}
+	return int(code), text, nil
 }
 
 // runNetemScript runs netemScript in helper.
