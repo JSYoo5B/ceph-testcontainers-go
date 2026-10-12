@@ -66,6 +66,11 @@ type Container struct {
 	clientRevocations map[string]*clientRevocationState
 	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
+	// owner labels every container of the cluster; see clusterOwnerLabel.
+	owner string
+	// ownedContainerDocker replaces the Docker client of Terminate's removal
+	// of labeled containers in tests.
+	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
 	// keyTypeOption records whether the control image's ceph-authtool has
 	// --key-type; see generateKeyArgs.
 	keyTypeOption         bool
@@ -168,7 +173,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer)}
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
 	if err != nil {
 		if nw == nil {
 			return nil, fmt.Errorf("create ceph network: %w", err)
@@ -303,7 +308,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		var lease *hostPortLease
 		var err error
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			c.trackHostPortLease(lease)
 			if err != nil {
 				return nil, err
@@ -342,7 +347,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}
-		mon, err := testcontainers.Run(ctx, image, moduleOpts...)
+		mon, err := testcontainers.Run(ctx, image, append(moduleOpts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -579,7 +584,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if c.clusterNetwork != nil {
 		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.osdImage, osdOptions...)
+	ctr, err := testcontainers.Run(ctx, c.settings.osdImage, append(osdOptions, c.ownedLabel())...)
 	if ctr != nil {
 		osd.Container = ctr
 	}
@@ -822,6 +827,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
+	moduleOpts = append(moduleOpts, c.ownedLabel())
 	ctr, err := testcontainers.Run(ctx, image, moduleOpts...)
 	if ctr != nil {
 		c.services[name] = ctr
@@ -886,10 +892,9 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 		delete(c.osds, id)
 	}
+	var memoryErr error
 	if c.osdMemory != nil && len(c.osds) == 0 {
-		if err := c.osdMemory.release(ctx); err != nil {
-			errs = append(errs, err)
-		} else {
+		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
 			c.osdMemory = nil
 		}
 	}
@@ -940,6 +945,15 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
+	errs = append(errs, c.removeLabeledContainers(ctx))
+	// The removed containers can include one that held the OSD memory volume,
+	// such as an OSD or keeper whose create reply was lost.
+	if memoryErr != nil && c.osdMemory != nil && len(c.osds) == 0 {
+		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
+			c.osdMemory = nil
+		}
+	}
+	errs = append(errs, memoryErr)
 	if c.run != nil {
 		if err := c.run.remove(ctx); err != nil {
 			errs = append(errs, err)

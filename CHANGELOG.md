@@ -73,6 +73,11 @@ change the API.
 
 ### Fixed
 
+- `ceph.Container.Terminate` removes a container that Docker created although
+  the reply to the create request was lost, for example when `Run`'s startup
+  timeout ended during the request. The cluster had no handle for it, so it
+  stayed, with the shared run volume that it held. Every container of a
+  cluster now carries the label `org.testcontainers.ceph.cluster`.
 - The supervisor of `AdminSocket`, quorum reads, `RotateDaemonKey` and
   `CollectDiagnostics` now reaps the descendants of a command that it killed.
   They previously stayed as zombies in daemon containers, whose first process

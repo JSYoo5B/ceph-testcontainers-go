@@ -1022,7 +1022,11 @@ containers first, cancels the commands that [RunNativeCommand](#runnativecommand
 still runs, releases host port reservations, stops services (RGW, MDS)
 before OSDs, removes all owned daemons, helper containers, the OSD memory
 volume and the shared run volume of the admin sockets, and finally removes the
-owned networks. It works on a partially
+owned networks. Every container that the cluster creates carries the label
+`org.testcontainers.ceph.cluster` with the cluster's ID, and `Terminate` also
+removes a container with that label that it has no handle for. Docker can
+create such a container when the reply to a create request was lost, for
+example when the startup timeout ended during the request. It works on a partially
 initialized cluster returned by `Run` with an error, and a failed cleanup can be
 retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option

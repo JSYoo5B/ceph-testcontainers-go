@@ -114,6 +114,7 @@ func (c *Container) ensureOSDMemory(ctx context.Context) error {
 		WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) { host.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdMemoryOwnerLabel: s.owner}),
+		c.ownedLabel(),
 		s.mount(osdMemoryKeeperPath),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"sh", "-c",
 			`awk '$5 == "/tc/osd-memory" && / - tmpfs / {found=1} END {exit !found}' /proc/self/mountinfo`,

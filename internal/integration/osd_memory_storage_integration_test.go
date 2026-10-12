@@ -16,6 +16,8 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -253,6 +255,18 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	t.Logf("OSD_MEMORY_KEEPER_REFUSAL keeper_cid=%s registered_before=3 registered_after=3 automatic_restart=false", keeper.ID)
 	osdMemoryPhase(t, "lost-keeper-refusal", started)
 	started = time.Now()
+	// Docker can create a container although the create reply was lost. One
+	// that holds the memory volume, like an OSD, carries the cluster's label,
+	// and the same Terminate removes it before it releases the volume.
+	clusterLabel := keeper.Config.Labels["org.testcontainers.ceph.cluster"]
+	lost, err := docker.Client.ContainerCreate(ctx, mobycl.ContainerCreateOptions{
+		Config:     &container.Config{Image: image, Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": clusterLabel}},
+		HostConfig: &container.HostConfig{Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: volumeName, Target: "/var/lib/ceph/osd"}}},
+	})
+	if err != nil || clusterLabel == "" {
+		t.Fatal("create a container like one whose create reply was lost", clusterLabel, err)
+	}
+	owned[lost.ID] = true
 	cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer done()
 	if err := cluster.Terminate(cleanup); err != nil {
