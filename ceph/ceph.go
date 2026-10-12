@@ -46,6 +46,11 @@ type Container struct {
 	moduleOverrides    map[string]*MGRModuleOverride
 	controlPlane       testcontainers.Container
 	cephVersion        string
+	// keyRotationFences records, per daemon, what an earlier RotateDaemonKey
+	// left uncertain; see keyRotationFence.
+	keyRotationFences map[string]*keyRotationFence
+	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
+	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
 	// keyTypeOption records whether the control image's ceph-authtool has
 	// --key-type; see generateKeyArgs.
 	keyTypeOption         bool
