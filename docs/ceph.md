@@ -1018,7 +1018,8 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 ```
 
 Removes the whole cluster: it restores network interruptions and resumes paused
-containers first, releases host port reservations, stops services (RGW, MDS)
+containers first, cancels the commands that [RunNativeCommand](#runnativecommand)
+still runs, releases host port reservations, stops services (RGW, MDS)
 before OSDs, removes all owned daemons, helper containers, the OSD memory
 volume and the shared run volume of the admin sockets, and finally removes the
 owned networks. It works on a partially
@@ -1051,6 +1052,69 @@ out, err := cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "noscrub", "true
 ```
 
 See [Running native commands](#running-native-commands).
+
+#### RunNativeCommand
+
+```golang
+func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command ceph.NativeCommand) (ceph.NativeCommandResult, error)
+```
+
+Runs one command in `target` under a supervisor that bounds its run time and
+each output stream inside the container, and that stops the command when
+`ctx` ends. `target` is the control container, a daemon or service container
+of this cluster, or a container of yours attached to the cluster's network.
+It must be running, not paused, and have `python3`, which OSD, RGW and MDS
+role images need not have.
+
+```golang
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"ceph-dencoder", "type", "OSDMap", "import", "/tmp/osdmap", "decode", "dump_json"},
+	Timeout:   time.Minute,
+	MaxStdout: 4 << 20,
+	MaxStderr: 64 << 10,
+	Label:     "decode OSDMap",
+})
+```
+
+| `NativeCommand` field | Meaning |
+| --- | --- |
+| `Argv` | Program and arguments, without a shell |
+| `Timeout` | Up to `MaxNativeCommandTimeout` (one hour); `ctx`'s deadline shortens it |
+| `MaxStdout`, `MaxStderr` | Up to `MaxNativeCommandOutput` (64 MiB) each |
+| `Label` | Names the command in errors; at most 128 bytes |
+
+- The result keeps stdout and stderr as separate raw bytes, and the exit code;
+  a nonzero exit is not an error.
+- A timed-out or truncated command returns its partial result with
+  `TimedOut`, `StdoutTruncated` or `StderrTruncated` set, and an error that
+  wraps `ErrNativeCommandIncomplete`.
+- When `ctx` ends first, the command is stopped inside the container before
+  the call returns, within `NativeCommandStopTimeout` (15 seconds) of its own.
+  When that cannot be confirmed, the error is a
+  `*NativeCommandUnstoppedError`; keep it and call its `Stop` with a fresh
+  context. Its `Unwrap` returns the cause, so `errors.Is(err, context.Canceled)`
+  still holds. `Terminate` also cancels and stops these commands.
+- Stopping a command does not undo what it did, and a command is never run
+  again.
+- Errors contain the label but never the arguments or the output. A Docker
+  or container failure appears only by its kind; `errors.Unwrap` returns the
+  original error.
+
+See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
+for cancellation details and an oracle recipe with `rados_stat2` and
+`ceph-dencoder`.
+
+#### RedactSecrets
+
+```golang
+func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error)
+```
+
+Returns a copy of `data` in which the keys of the cluster's keyrings, service
+credentials, `values`, and the private keys, secret assignments and bearer
+tokens it recognizes are replaced by `[REDACTED]`, as in
+[CollectDiagnostics](#collectdiagnostics). Use it before logging native
+output; assertions compare the raw bytes. Redaction is best effort.
 
 #### ControlContainer
 
@@ -3695,6 +3759,7 @@ cluster's containers:
 | Any `ceph` command | `cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "nodelete", "true")` |
 | JSON output | `cluster.Ceph(ctx, "osd", "dump", "--format", "json")` and `json.Unmarshal` |
 | `rados`, `rbd`, `ceph-authtool`, Python clients | `cluster.ControlContainer().Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` |
+| A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
 | Any central option | [TemporaryConfig](#temporaryconfig), so it is restored |

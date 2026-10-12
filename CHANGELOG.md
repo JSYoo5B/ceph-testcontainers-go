@@ -8,6 +8,22 @@ change the API.
 
 ### Added
 
+- `ceph.Container.RunNativeCommand` runs one argv command in the control
+  container, an owned daemon or service container, or a caller's container on
+  the cluster's network, under the supervisor of the module's own native
+  queries. It bounds the run time and each output stream inside the
+  container, returns stdout, stderr, the exit code and explicit timeout and
+  truncation flags, and stops the command's process group inside the
+  container when the context ends, also before Docker started it. A stop that
+  cannot be confirmed returns a retryable `ceph.NativeCommandUnstoppedError`,
+  and `Terminate` cancels and stops these commands. Errors carry a label but
+  never the arguments or the output; a Docker or container failure appears
+  only by its kind, and `errors.Unwrap` returns the original error.
+- `ceph.Container.RedactSecrets` masks the cluster's keys and other secrets in
+  native output, with the rules of `CollectDiagnostics`.
+- The native commands guide has a container-only oracle recipe with
+  `rados_stat2`, `rados_read` and `ceph-dencoder`.
+
 - `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
   in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
   keeps its data.

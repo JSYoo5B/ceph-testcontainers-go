@@ -16,6 +16,7 @@ native changes conflict with what the fixture tracks.
 | --- | --- | --- |
 | The `ceph` CLI as `client.admin` | `cluster.Ceph(ctx, args...)` | The control container |
 | `rados`, `rbd`, `radosgw-admin`, `ceph-authtool`, Python bindings | `cluster.ControlContainer().Exec(ctx, argv, ...)` | The control container |
+| A command with bounded run time and output whose process must not outlive the test | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig()` with host networking | Your process |
 | `radosgw-admin` in a gateway's realm and zone | `rgw.Gateway.Admin(ctx, args...)` | The gateway container |
@@ -101,10 +102,11 @@ Notes:
 - Long or heavy workloads compete with the MON in a single-MON cluster. Run
   them in your own client container instead.
 - Cancelling `ctx` stops waiting for the command but does not prove that the
-  process inside the container stopped. Prefer native timeouts:
-  `--connect-timeout` for `ceph`, and Ceph options such as
-  `--rados-osd-op-timeout 10` or `--rados-mon-op-timeout 10` for `rados` and
-  `rbd`.
+  process inside the container stopped, and Docker buffers all of its output.
+  Use [RunNativeCommand](#bounded-commands-with-confirmed-cleanup) when that
+  matters, or native timeouts: `--connect-timeout` for `ceph`, and Ceph
+  options such as `--rados-osd-op-timeout 10` or `--rados-mon-op-timeout 10`
+  for `rados` and `rbd`.
 - For pipes or redirections, run a shell explicitly:
   `exec(ctx, control, "sh", "-c", "rados -p volumes ls | wc -l")`.
 - Python with the `rados`, `rbd` and `cephfs` bindings is available for
@@ -126,6 +128,235 @@ exceptions:
 Decode only the fields you need, and keep unknown fields tolerated: Ceph adds
 fields between releases. See [Ceph releases and images](releases-and-images.md)
 for release-specific output.
+
+## Bounded commands with confirmed cleanup
+
+`RunNativeCommand` runs one command under the supervisor that the module uses
+for its own native queries. Use it for oracle and probe commands whose run
+time and output must be bounded, and whose process must not outlive a
+canceled call.
+
+```golang
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"rados", "-p", "volumes", "stat", "greeting"},
+	Timeout:   30 * time.Second,
+	MaxStdout: 64 << 10,
+	MaxStderr: 64 << 10,
+	Label:     "stat greeting",
+})
+if err != nil {
+	t.Fatal(err)
+}
+if result.ExitCode != 0 {
+	t.Fatalf("rados stat exited %d", result.ExitCode)
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `Argv` | Program and arguments, run without a shell. Required; no argument may contain NUL. |
+| `Timeout` | Run time, at most `ceph.MaxNativeCommandTimeout` (one hour). The deadline of `ctx` shortens it. |
+| `MaxStdout`, `MaxStderr` | Bytes kept of each stream, at most `ceph.MaxNativeCommandOutput` (64 MiB). The limit applies inside the container, before Docker buffers anything. |
+| `Label` | Names the command in errors: at most 128 bytes without control characters. Defaults to `native command`. |
+
+A malformed command, or a context that has already ended, fails before
+anything runs.
+
+### Where it runs
+
+The target is one of:
+
+- the control container, or a MON, MGR, OSD, RGW or MDS container of this
+  cluster;
+- a container of yours attached to the cluster's network, such as one started
+  with `WithClient` or `WithClientIdentity`. For a host-network cluster, it is
+  a container on the host network.
+
+Any other container is refused. The call never adopts, stops or removes your
+container. The target must be running and not paused, and it needs `python3`,
+which runs the supervisor. The official Ceph images and every control image
+have it. OSD, RGW and MDS role images need not (see
+[Ceph releases and images](releases-and-images.md)); for a container without
+it the error says so, and the control container or a client container can
+run the command instead.
+
+### Reading the result
+
+`Stdout` and `Stderr` are separate raw bytes and binary-safe. `ExitCode` is the
+command's exit code, and a nonzero exit is not an error.
+
+A command that runs into its timeout or exceeds an output limit still returns
+what it wrote, with `TimedOut`, `StdoutTruncated` or `StderrTruncated` set,
+together with an error that wraps `ceph.ErrNativeCommandIncomplete`.
+`result.Complete()` reports whether neither happened. A truncated object, map
+or JSON document is not evidence for an oracle:
+
+```golang
+if errors.Is(err, ceph.ErrNativeCommandIncomplete) {
+	t.Fatalf("incomplete output: timed out %t, stdout truncated %t", result.TimedOut, result.StdoutTruncated)
+}
+```
+
+Errors name the command by its label and never contain its arguments or
+output. A failure of Docker or of your container type appears in the text
+only by its kind, such as a container that does not exist or is paused;
+`errors.Unwrap`, `errors.Is` and `errdefs.IsNotFound` still reach the original
+error, whose text may quote anything. Before you log output, mask the
+cluster's keys and your own secrets with `RedactSecrets`, which uses the same
+rules as `CollectDiagnostics`:
+
+```golang
+safe, err := cluster.RedactSecrets(ctx, result.Stderr, applicationToken)
+if err == nil {
+	t.Logf("stderr: %s", safe)
+}
+```
+
+Compare the raw bytes in assertions; redaction changes the data.
+
+### Cancellation and cleanup
+
+- At its deadline, the supervisor kills the command's process group: the
+  command and every descendant that stayed in its group; a killed process
+  cannot run on. On Linux the supervisor also reaps those descendants for up
+  to 200 ms, which normally leaves no zombie, even in a daemon container whose
+  first process does not reap orphans. A descendant that starts its own
+  session, for example with `setsid`, leaves the group and is not stopped. If
+  the supervisor cannot signal the group, it keeps the invocation unconfirmed
+  rather than report it stopped.
+- The supervisor runs as the container's user and signals what that user may
+  signal. The cluster's containers, and client containers by default, run as
+  root with Docker's default capabilities, where this covers the whole group.
+  In a container whose user lacks `CAP_KILL`, a descendant that switches to
+  another user stays out of reach and is not stopped.
+- When `ctx` ends first, the call stops the command inside the container
+  before it returns. The stop has its own budget of
+  `ceph.NativeCommandStopTimeout` (15 seconds), independent of `ctx`. If
+  Docker had not started the command yet, the stop claims the invocation, and
+  a start that Docker delivers later runs nothing. Such a claim can stay as a
+  small file in `/tmp/tc-supervised` inside the container.
+- When the stop cannot be confirmed, the error is a
+  `*ceph.NativeCommandUnstoppedError`, and the command may still run. This
+  happens when the container is paused or stopped, when the Docker engine does
+  not answer, and when a signal killed the supervisor itself, for example the
+  kernel's OOM killer, or it could not signal the command's group. Keep the error and call `Stop` with a fresh context,
+  for example after resuming the container.
+
+```golang
+var unstopped *ceph.NativeCommandUnstoppedError
+if errors.As(err, &unstopped) {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := unstopped.Stop(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+}
+```
+
+- `Stop` confirms inside the container. It also confirms a command of an
+  earlier instance of a restarted container, without signalling the
+  processes of the new instance. A stopped container confirms nothing until it
+  runs again, because Docker may still start an exec that it accepted before.
+  After the container was removed, `Stop` returns nil.
+- A container instance is recognised by the start time of the first process
+  in its PID namespace. A container that shares another PID namespace, for
+  example with `--pid=host`, keeps that identity across a restart, so a
+  command that a killed supervisor left there is confirmed only after the
+  container was removed.
+- `Terminate` cancels the commands that still run, waits until their calls have
+  returned, and stops the commands that they could not confirm as stopped. A
+  command that `Terminate` cannot stop stays tracked, and `Terminate` reports
+  it. Afterwards `RunNativeCommand` fails.
+- Stopping the process does not undo what the command already did. A MON
+  command that it had sent may have applied, and the call never runs a
+  command again. Typed helpers such as `ReplaceClientKey` settle their own
+  changes; a raw command's outcome is yours to read back.
+
+### Oracle recipe: stat2, read and ceph-dencoder
+
+These commands run in a client container started with `WithClient`, so a
+test process without Ceph libraries or cgo can use the results. The first one
+calls `rados_stat2` and `rados_read` through `ctypes` and prints one JSON
+document with the object's size, modification time and base64 data:
+
+```golang
+const statRead = `import base64,ctypes,json,sys
+pool,name=sys.argv[1].encode(),sys.argv[2].encode()
+lib=ctypes.CDLL("librados.so.2")
+class timespec(ctypes.Structure):
+    _fields_=[("tv_sec",ctypes.c_int64),("tv_nsec",ctypes.c_long)]
+def check(ret,call):
+    if ret<0:
+        raise OSError(-ret,call)
+cluster,ioctx=ctypes.c_void_p(),ctypes.c_void_p()
+check(lib.rados_create(ctypes.byref(cluster),None),"rados_create")
+try:
+    check(lib.rados_conf_read_file(cluster,b"/etc/ceph/ceph.conf"),"rados_conf_read_file")
+    check(lib.rados_connect(cluster),"rados_connect")
+    check(lib.rados_ioctx_create(cluster,pool,ctypes.byref(ioctx)),"rados_ioctx_create")
+    size,mtime=ctypes.c_uint64(),timespec()
+    check(lib.rados_stat2(ioctx,name,ctypes.byref(size),ctypes.byref(mtime)),"rados_stat2")
+    buf=ctypes.create_string_buffer(max(size.value,1))
+    read=lib.rados_read(ioctx,name,buf,ctypes.c_size_t(size.value),ctypes.c_uint64(0))
+    check(read,"rados_read")
+    print(json.dumps({"size":size.value,"mtime":[mtime.tv_sec,mtime.tv_nsec],"data":base64.b64encode(buf.raw[:read]).decode()}))
+finally:
+    if ioctx.value:
+        lib.rados_ioctx_destroy(ioctx)
+    lib.rados_shutdown(cluster)
+`
+
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:    []string{"python3", "-c", statRead, "volumes", "greeting"},
+	Timeout: time.Minute,
+	// Base64 needs 4/3 of the object's size.
+	MaxStdout: 1 << 20,
+	MaxStderr: 64 << 10,
+	Label:     "stat2 and read greeting",
+})
+if err != nil || result.ExitCode != 0 {
+	t.Fatalf("stat2 and read: exit %d, %v", result.ExitCode, err)
+}
+var object struct {
+	Size  int      `json:"size"`
+	MTime [2]int64 `json:"mtime"`
+	Data  []byte   `json:"data"`
+}
+if err := json.Unmarshal(result.Stdout, &object); err != nil {
+	t.Fatal(err)
+}
+```
+
+`rados_create` with `None` connects as `client.admin`. For an identity attached
+with `WithClientIdentity`, pass its `User()` instead, such as `b"reader"`. The
+script shuts the client down in `finally`: a librados client left to the
+interpreter's exit sometimes aborts after its work is done, which turns into a
+nonzero exit code.
+
+`ceph-dencoder` decodes a native structure from a file. Fetch the current
+OSDMap and decode it in two bounded commands:
+
+```golang
+var decoded []byte
+for _, step := range []ceph.NativeCommand{
+	{Argv: []string{"ceph", "osd", "getmap", "-o", "/tmp/osdmap"}, Label: "get OSDMap"},
+	{Argv: []string{"ceph-dencoder", "type", "OSDMap", "import", "/tmp/osdmap", "decode", "dump_json"}, Label: "decode OSDMap"},
+} {
+	step.Timeout, step.MaxStdout, step.MaxStderr = time.Minute, 4<<20, 64<<10
+	result, err := cluster.RunNativeCommand(ctx, client, step)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("%s: exit %d, %v", step.Label, result.ExitCode, err)
+	}
+	decoded = result.Stdout
+}
+```
+
+`ceph-dencoder` is part of the official `quay.io/ceph/ceph` images. In an
+image without it, the call fails with an error saying that the program could
+not be started. The supervisor bounds only the execution; parsing the decoded
+structure and comparing it with your own decoder stays in your test.
 
 ## Changing configuration
 
@@ -507,10 +738,10 @@ and refuse to overwrite outside edits.
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `Ceph`, `ControlContainer`, `ControlImage`,
-  `Configuration`, `TemporaryConfig`, `WithConfigFile`, `WithClient`,
-  `WithClientIdentity`, `CreateClient`, `ConnectionConfig`,
-  `CollectDiagnostics`.
+- [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
+  `ControlContainer`, `ControlImage`, `Configuration`, `TemporaryConfig`,
+  `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
+  `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd.md](../rbd.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
   `MirrorDaemon.Status`.
 - [cephfs.md](../cephfs.md): `Filesystem.Sessions`, `Mirror.DirectoryStatus`.
