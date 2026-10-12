@@ -57,6 +57,11 @@ change the API.
 
 ### Fixed
 
+- The supervisor of `AdminSocket`, quorum reads, `RotateDaemonKey` and
+  `CollectDiagnostics` now reaps the descendants of a command that it killed.
+  They previously stayed as zombies in daemon containers, whose first process
+  does not reap orphans. A canceled call also confirms at once a command that
+  ended with an earlier instance of a restarted container.
 - `rbd.Mirror.WaitReplayReady` no longer fails while rbd-mirror creates the
   destination image: the moment in which the new image reports mirroring
   disabled, before rbd-mirror enables it, was taken for a changed identity.

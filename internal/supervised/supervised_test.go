@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -52,8 +54,13 @@ while time.monotonic()<deadline: time.sleep(0.01)
 
 func startSupervisor(t *testing.T, python, dir, name string) *supervisorInvocation {
 	t.Helper()
+	return startSupervisorScript(t, python, Script, dir, name)
+}
+
+func startSupervisorScript(t *testing.T, python, script, dir, name string) *supervisorInvocation {
+	t.Helper()
 	invocation := &supervisorInvocation{marker: filepath.Join(dir, "markers", name), pidPath: filepath.Join(dir, name+".pid"), done: make(chan struct{})}
-	invocation.cmd = exec.Command(python, "-c", Script, "4096", "1024", "30", python, "-c", supervisorWaitingChild, invocation.pidPath)
+	invocation.cmd = exec.Command(python, "-c", script, "4096", "1024", "30", python, "-c", supervisorWaitingChild, invocation.pidPath)
 	invocation.cmd.Env = append(os.Environ(), MarkerVariable+"="+invocation.marker)
 	if err := invocation.cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -199,6 +206,286 @@ func TestSupervisorCancelRacingStartupLeavesNothingRunning(t *testing.T) {
 		}
 	}
 	t.Logf("the child had started in %d of 20 canceled attempts", started)
+}
+
+// A program that cannot start ends the supervisor with LaunchFailedExit and
+// leaves no marker.
+func TestSupervisorReportsAProgramItCannotStart(t *testing.T) {
+	python := installedPython(t)
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "markers", "missing")
+	for _, program := range []string{filepath.Join(dir, "missing-program"), dir} {
+		cmd := exec.Command(python, "-c", Script, "4096", "1024", "30", program)
+		cmd.Env = append(os.Environ(), MarkerVariable+"="+marker)
+		output, err := cmd.Output()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != LaunchFailedExit || len(output) != 0 {
+			t.Fatalf("%s: supervisor returned %v with %q", program, err, output)
+		}
+		for _, path := range []string{marker, marker + ".cancel"} {
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("supervisor left %s: %v", path, err)
+			}
+		}
+	}
+}
+
+// fakeProc gives the scripts a /proc below dir with one container instance:
+// a boot ID and the start time of PID 1, which restart changes.
+type fakeProc struct {
+	dir    string
+	starts int
+}
+
+func newFakeProc(t *testing.T, dir string) *fakeProc {
+	t.Helper()
+	proc := &fakeProc{dir: dir, starts: 1}
+	if err := os.MkdirAll(filepath.Join(dir, "proc", "sys", "kernel", "random"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "proc", "1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "proc", "sys", "kernel", "random", "boot_id"), []byte("boot\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proc.write(t)
+	return proc
+}
+
+func (proc *fakeProc) write(t *testing.T) {
+	t.Helper()
+	fields := append([]string{"S"}, slices.Repeat([]string{"0"}, 18)...)
+	stat := "1 (init) " + strings.Join(append(fields, strconv.Itoa(proc.starts)), " ") + " 0 0\n"
+	if err := os.WriteFile(filepath.Join(proc.dir, "proc", "1", "stat"), []byte(stat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (proc *fakeProc) restart(t *testing.T) {
+	t.Helper()
+	proc.starts++
+	proc.write(t)
+}
+
+func (proc *fakeProc) instance() string { return "boot/" + strconv.Itoa(proc.starts) }
+
+// script makes s read the fake /proc.
+func (proc *fakeProc) script(s string) string {
+	return strings.ReplaceAll(s, "/proc/", proc.dir+"/proc/")
+}
+
+// cancelWith runs a canceler with a limit in seconds and returns its exit
+// code and run time.
+func cancelWith(t *testing.T, python, script, marker, limit string) (int, time.Duration) {
+	t.Helper()
+	started := time.Now()
+	err := exec.Command(python, "-c", script, marker, limit).Run()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		t.Fatal(err)
+	}
+	if exitErr != nil {
+		return exitErr.ExitCode(), time.Since(started)
+	}
+	return 0, time.Since(started)
+}
+
+// The supervisor records its container instance in its marker, and the
+// canceler stops it through the usual protocol in the same instance.
+func TestSupervisorRecordsItsInstance(t *testing.T) {
+	python := installedPython(t)
+	dir := t.TempDir()
+	proc := newFakeProc(t, dir)
+	invocation := startSupervisorScript(t, python, proc.script(Script), dir, "recorded")
+	pid := invocation.childPID(t)
+	if owner, err := os.ReadFile(invocation.marker); err != nil || string(owner) != "run "+proc.instance()+"\n" {
+		t.Fatalf("marker holds %q, %v", owner, err)
+	}
+	if code, _ := cancelWith(t, python, proc.script(CancelScript), invocation.marker, "5"); code != 0 || supervisedProcessExists(t, python, pid) {
+		t.Fatalf("cancel in the same instance exited %d", code)
+	}
+	invocation.exited(t, 5*time.Second)
+}
+
+// A supervisor that a signal killed leaves its marker. The canceler cannot
+// confirm the invocation in the same instance, and confirms it at once after
+// a restart. The marker then still keeps a late start from running.
+func TestCancelConfirmsAnInvocationOfAnEarlierInstance(t *testing.T) {
+	python := installedPython(t)
+	dir := t.TempDir()
+	proc := newFakeProc(t, dir)
+	invocation := startSupervisorScript(t, python, proc.script(Script), dir, "killed")
+	pid, err := strconv.Atoi(invocation.childPID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The instance ends: the supervisor and its child's group die.
+	_ = invocation.cmd.Process.Kill()
+	<-invocation.done
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+	if code, _ := cancelWith(t, python, proc.script(CancelScript), invocation.marker, "0.3"); code == 0 {
+		t.Fatal("cancel confirmed a dead supervisor's invocation in the same instance")
+	}
+	proc.restart(t)
+	if code, took := cancelWith(t, python, proc.script(CancelScript), invocation.marker, "5"); code != 0 || took > 3*time.Second {
+		t.Fatalf("cancel after a restart exited %d after %s", code, took)
+	}
+	if _, err := os.Stat(invocation.marker); err != nil {
+		t.Fatalf("cancel removed the marker that blocks a late start: %v", err)
+	}
+	late := exec.Command(python, "-c", proc.script(Script), "4096", "1024", "30", python, "-c", supervisorWaitingChild, filepath.Join(dir, "late.pid"))
+	late.Env = append(os.Environ(), MarkerVariable+"="+invocation.marker)
+	if output, err := late.CombinedOutput(); err != nil || len(output) != 0 {
+		t.Fatalf("late supervisor: %v; %q", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "late.pid")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a late supervisor ran its command")
+	}
+}
+
+// Members of the killed group whose parent died are reaped by the supervisor
+// itself, so they leave no zombie in a container whose PID 1 never reaps.
+func TestSupervisorReapsItsKilledGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("child subreapers are a Linux feature")
+	}
+	python := installedPython(t)
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "descendant.pid")
+	const tree = `import subprocess,sys,time
+subprocess.Popen([sys.executable,"-c","import os,sys,time\nwith open(sys.argv[1],'w') as f: f.write(str(os.getpid()))\ntime.sleep(30)",sys.argv[1]])
+time.sleep(30)`
+	cmd := exec.Command(python, "-c", Script, "4096", "1024", "1", python, "-c", tree, pidPath)
+	cmd.Env = append(os.Environ(), MarkerVariable+"="+filepath.Join(dir, "markers", "reap"))
+	if output, err := cmd.Output(); err != nil || !strings.Contains(string(output), `"timed_out": true`) {
+		t.Fatalf("supervisor: %v; %q", err, output)
+	}
+	pid, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat("/proc/" + string(pid)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("descendant %s remains after the supervisor exited: %v", pid, err)
+	}
+}
+
+// Only a complete record, which ends with a newline, names another instance.
+func TestCancelIgnoresAPartialRecord(t *testing.T) {
+	python := installedPython(t)
+	dir := t.TempDir()
+	proc := newFakeProc(t, dir)
+	marker := filepath.Join(dir, "markers", "partial")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for record, confirmed := range map[string]bool{"run b": false, "run boot/9": false, "run boot/9\n": true, "run \n": false} {
+		if err := os.WriteFile(marker, []byte(record), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code, _ := cancelWith(t, python, proc.script(CancelScript), marker, "0.3"); (code == 0) != confirmed {
+			t.Fatalf("record %q: canceler exited %d", record, code)
+		}
+		_ = os.Remove(marker + ".cancel")
+	}
+}
+
+// A command that exits after starting a descendant in its own session does
+// not keep the supervisor waiting for that descendant.
+func TestSupervisorDoesNotWaitForADetachedDescendant(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the supervisor's group kill after a command exits needs Linux process groups")
+	}
+	python := installedPython(t)
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "detached.pid")
+	const detach = `import subprocess,sys
+p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+open(sys.argv[1],"w").write(str(p.pid))`
+	cmd := exec.Command(python, "-c", Script, "4096", "1024", "30", python, "-c", detach, pidPath)
+	cmd.Env = append(os.Environ(), MarkerVariable+"="+filepath.Join(dir, "markers", "detach"))
+	started := time.Now()
+	output, err := cmd.Output()
+	took := time.Since(started)
+	if data, readErr := os.ReadFile(pidPath); readErr == nil {
+		if pid, convErr := strconv.Atoi(string(data)); convErr == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	if err != nil || !strings.Contains(string(output), `"exit_code": 0`) {
+		t.Fatalf("supervisor: %v; %q", err, output)
+	}
+	if took > 800*time.Millisecond {
+		t.Fatalf("the supervisor waited %s for a descendant outside the group", took)
+	}
+}
+
+// killedSupervisorContainer reports a supervisor that a signal killed just
+// as the caller's context ended.
+type killedSupervisorContainer struct {
+	testcontainers.Container
+	cancel context.CancelFunc
+}
+
+func (ctr *killedSupervisorContainer) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+	ctr.cancel()
+	return 137, bytes.NewReader(nil), nil
+}
+
+func TestRunReportsASupervisorKilledAsTheContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	_, err := Run(ctx, &killedSupervisorContainer{cancel: cancel}, "probe", time.Minute, 1024, 1024, "true")
+	marker, unconfirmed := Unconfirmed(err)
+	if !unconfirmed || marker == "" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("a killed supervisor returned %v", err)
+	}
+}
+
+// A supervisor that cannot signal its command's group, for example under a
+// seccomp profile that denies kill, keeps its marker and exits
+// CleanupFailedExit, so that no cancellation is confirmed while the command
+// may run.
+func TestSupervisorKeepsItsMarkerWhenCleanupFails(t *testing.T) {
+	python := installedPython(t)
+	dir := t.TempDir()
+	script := "import os\ndef deny(*args): raise PermissionError(1, 'denied')\nos.killpg=deny\n" + Script
+	invocation := startSupervisorScript(t, python, script, dir, "denied")
+	pid, err := strconv.Atoi(invocation.childPID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	if code, _ := cancelWith(t, python, CancelScript, invocation.marker, "1"); code == 0 {
+		t.Fatal("a cancellation was confirmed although the command could not be stopped")
+	}
+	<-invocation.done
+	if code := invocation.cmd.ProcessState.ExitCode(); code != CleanupFailedExit {
+		t.Fatalf("supervisor exited %d", code)
+	}
+	if _, err := os.Stat(invocation.marker); err != nil {
+		t.Fatalf("the supervisor removed its marker: %v", err)
+	}
+	if !supervisedProcessExists(t, python, strconv.Itoa(pid)) {
+		t.Fatal("the model lost the command that the supervisor could not stop")
+	}
+	if marker, unconfirmed := Unconfirmed(&ExitError{Code: CleanupFailedExit, Marker: "m"}); !unconfirmed || marker != "m" {
+		t.Fatal("a failed cleanup is not reported as unconfirmed")
+	}
+}
+
+// A canceler that finds its own claim confirms again at once.
+func TestCancelRetriesItsOwnClaim(t *testing.T) {
+	python := installedPython(t)
+	marker := filepath.Join(t.TempDir(), "markers", "claimed")
+	for attempt := range 2 {
+		if code, took := cancelWith(t, python, CancelScript, marker, "5"); code != 0 || took > 3*time.Second {
+			t.Fatalf("attempt %d exited %d after %s", attempt, code, took)
+		}
+	}
+	if owner, err := os.ReadFile(marker); err != nil || string(owner) != "claim" {
+		t.Fatalf("claim holds %q, %v", owner, err)
+	}
 }
 
 // cancelFailingContainer never answers the supervisor and fails every cancel.
