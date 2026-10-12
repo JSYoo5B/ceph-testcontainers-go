@@ -323,6 +323,9 @@ func (c *Container) checkCurrentClient(client *ClientConfig) error {
 	if c.authFences[client.name] != nil {
 		return fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientCapabilities, resolves it", client.name)
 	}
+	if c.clientRevocations[client.name] != nil {
+		return fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name)
+	}
 	if key, ok := c.clientKeys[client.name]; !ok || key != clientKey(client.keyring, client.name) {
 		return fmt.Errorf("cephx client %s is stale: the identity has another key or was deleted", client.name)
 	}

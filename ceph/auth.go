@@ -142,6 +142,9 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	if err := c.settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
+	if c.clientRevocations[entity] != nil {
+		return nil, fmt.Errorf("cephx identity %q is revoked temporarily; restore it or delete it first", entity)
+	}
 	data, err := c.clientAuthCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -271,6 +274,28 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 		// turned out to have applied.
 		client.revoked = true
 		return nil
+	}
+	// The revocation belongs to the identity, whichever descriptor of the
+	// revoked key DeleteClient gets.
+	if revocation := c.clientRevocations[client.name]; revocation != nil && client.replacedBy == nil && clientKey(client.keyring, client.name) == revocation.original.key {
+		// A temporary revocation becomes permanent.
+		deleted := func() {
+			client.revoked, revocation.deleted = true, true
+			delete(c.clientRevocations, client.name)
+			c.setClientKey(client.name, "")
+		}
+		current, err := c.readClientRecord(ctx, client.name)
+		switch {
+		case err != nil:
+			return err
+		case !current.exists:
+			deleted()
+			return nil
+		case !current.equal(revocation.original):
+			return fmt.Errorf("cephx identity %s was created again with another key or other capabilities; refusing revocation", client.name)
+		}
+		_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, deleted)
+		return err
 	}
 	// A creation that failed after auth add applied can be revoked as well.
 	if err := c.checkCurrentClient(client); err != nil {
