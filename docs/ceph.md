@@ -1742,8 +1742,10 @@ section pointing to the keyring) and the keyring at
 select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
-creations and revoked identities are rejected. You own the container. The
-options are those of [WithClient](#withclient).
+creations and revoked identities are rejected, and so are descriptors whose key
+[ReplaceClientKey](#replaceclientkey) replaced or whose identity has a change
+that is not resolved yet. You own the container. The options are those of
+[WithClient](#withclient).
 
 #### CreateClient
 
@@ -1811,8 +1813,10 @@ func (c *Container) UpdateClientCaps(ctx context.Context, client *ceph.ClientCon
 Replaces all capabilities of an owned identity while keeping its key. Services
 omitted from `caps` lose their previous capabilities. Sessions that already hold
 tickets may keep the previous permissions for a while; verify the change with a
-fresh client connection. After an uncertain error, inspect
-[ClientCapabilities](#clientcapabilities) before retrying.
+fresh client connection. The change is fenced like the import of
+[ReplaceClientKey](#replaceclientkey): a failed or canceled call reports what
+the MONs hold once nothing can change it any more, and an outcome that stays
+uncertain is resolved by the next operation on the identity.
 
 #### DeleteClient
 
@@ -1823,7 +1827,90 @@ func (c *Container) DeleteClient(ctx context.Context, client *ceph.ClientConfig)
 Revokes an identity created by this cluster, without deleting data. It refuses if
 the native key was replaced externally. A repeated call after success is a no-op.
 Established sessions may keep their tickets; test revocation with a new
-connection. Credentials already copied elsewhere are not erased.
+connection. Credentials already copied elsewhere are not erased. The removal is
+fenced like the import of [ReplaceClientKey](#replaceclientkey).
+
+#### ReplaceClientKey
+
+```golang
+func (c *Container) ReplaceClientKey(ctx context.Context, client *ceph.ClientConfig, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
+```
+
+Gives an identity created by this cluster a fresh key and keeps its name and
+its exact capabilities. The change is one `ceph auth import` of the identity's
+own keyring with the new key, so the identity never disappears from the MONs.
+The new key has the type of the old one; `ceph.WithClientKeyType` selects
+another (see [CreateClient](#createclient)). The identity needs at least one
+capability, because Ceph refuses to import an entry without any; an identity
+without capabilities is refused before any change.
+
+```golang
+renewed, err := cluster.ReplaceClientKey(ctx, client)
+```
+
+The call returns a new descriptor for the new key and leaves the old one
+stale:
+
+- The old descriptor's `ConnectionConfig` still returns the old credentials,
+  so a test can check that they are rejected.
+- Every other operation with the old descriptor fails:
+  [WithClientIdentity](#withclientidentity),
+  [ClientCapabilities](#clientcapabilities),
+  [UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient).
+  Use the returned descriptor for them.
+- `ReplaceClientKey` with the old descriptor again returns the same new
+  descriptor without another change, as long as that descriptor is still the
+  identity's current one.
+- Containers attached with the old descriptor keep the old keyring.
+- Copies of the old descriptor go stale as well. The cluster records the
+  current key of each identity it created, and every operation refuses a
+  descriptor with another key or of a deleted identity.
+
+The old key behaves as follows on the official images:
+
+- A fresh connection with the old key fails at once with `EACCES`.
+- A client that authenticated before keeps its session until it renews its
+  tickets, within `auth_mon_ticket_ttl` ([WithAuth](#withauth)
+  `MonTicketTTL`). The MONs then reject the renewal (`_finish_auth -13` in its
+  `debug_monc` log).
+- What follows the rejection differs. On Tentacle 20.2.4 the client loses its
+  MON session, and librados does not authenticate again on its own. On Squid
+  19.2.5 the MON session that is already open keeps answering, and only the
+  renewals keep failing.
+- MGR and OSD sessions that the client already holds keep working in both.
+- Fresh MON, MGR and OSD clients with the new key work at once, also when it
+  has another key type than the old one.
+
+The identity must still have the descriptor's key. An identity whose key was
+changed outside the module is refused before any change, and external auth
+changes must not race the call.
+
+The import is fenced like the MON commands of
+[RotateDaemonKey](#rotatedaemonkey): the command runs under the supervisor,
+and after it the call settles the MONs and reads the outcome. So a failed or
+canceled call reports what the MONs hold once nothing can change it any more:
+either the new key, in which case the call returns the new descriptor without
+an error, or the old one. When settling itself fails, the outcome stays open:
+
+- The call returns a descriptor of the attempted key that stays unusable,
+  with an error saying so. A returned descriptor never changes afterwards.
+- The next operation on the identity settles first and then resolves the
+  outcome. `ReplaceClientKey` with the old descriptor returns a usable
+  descriptor of the attempted key once the import turns out to have applied,
+  and replaces the key anew once it turns out not to have.
+- Until then, [WithClientIdentity](#withclientidentity) refuses both
+  descriptors.
+
+[UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient) are
+fenced the same way, so none of these operations races a command of another
+one that may still apply. The CephFS subvolume grants of the
+[cephfs](cephfs.md) package settle these commands before they change a
+client. Their own commands go through the MGR, though, which this settling
+cannot fence, and the module cannot tell when a failed one has ended: the
+volumes module may still create or change the identity later. Do not replace
+or revoke a client after a failed `AuthorizeSubvolume` or
+`DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
+only the state at that moment.
 
 #### RotateDaemonKey
 
@@ -2687,9 +2774,10 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
 - When `ctx` ends, every running query is stopped inside the control container
   before `CollectDiagnostics` returns, so a canceled collection leaves no Ceph
   CLI behind.
-- Known admin and RGW secrets, `RedactValues` and named secret patterns are
-  masked, but redaction is best effort; review arbitrary application logs before
-  sharing a report.
+- Known admin and RGW secrets, every client key the cluster generated (also
+  keys that [ReplaceClientKey](#replaceclientkey) replaced or only attempted),
+  `RedactValues` and named secret patterns are masked, but redaction is best
+  effort; review arbitrary application logs before sharing a report.
 
 ### Other module functions and types
 
@@ -2815,7 +2903,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `Name() string` | The full entity, for example `client.reader`. |
 | `User() string` | The ID without `client.`, for APIs such as librados `rados_create` and go-ceph `rados.NewConnWithUser`. |
 | `KeyringPath() string` | The keyring path used inside attached containers, `/etc/ceph/ceph.client.<id>.keyring`. |
-| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies. |
+| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ReplaceClientKey](#replaceclientkey) replaced keeps returning its old key. |
 | `String() string`, `GoString() string` | A description that never includes credentials, safe for logs and `%v`/`%#v`. |
 
 #### Restoration handles
@@ -2845,6 +2933,7 @@ See the [handle contract](#container-methods).
 | `PoolUsageSnapshot` | [PoolUsage](#poolusage) |
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [PoolPGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientCapabilities](#clientcapabilities), [UpdateClientCaps](#updateclientcaps) |
+| `ClientOption` | [CreateClient](#createclient), [ReplaceClientKey](#replaceclientkey) |
 | `ConfigSetting` | [TemporaryConfig](#temporaryconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |

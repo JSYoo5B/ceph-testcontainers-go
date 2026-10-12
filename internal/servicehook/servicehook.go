@@ -69,6 +69,7 @@ type hooks interface {
 	ClientKeyring(client *ceph.ClientConfig) []byte
 	ClientRevoked(client *ceph.ClientConfig) bool
 	SetClientRevoked(client *ceph.ClientConfig, revoked bool)
+	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 	TestCluster(control testcontainers.Container, config TestConfig) *ceph.Container
 	TestState(c *ceph.Container) TestStateView
 	TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
@@ -244,6 +245,14 @@ func ClientRevoked(client *ceph.ClientConfig) bool { return get().ClientRevoked(
 // The caller holds the cluster mutex.
 func SetClientRevoked(client *ceph.ClientConfig, revoked bool) {
 	get().SetClientRevoked(client, revoked)
+}
+
+// SettleClient makes sure that no earlier auth command of the module for the
+// client's identity can still change it, and refuses a descriptor whose key
+// was replaced or whose identity has a change that is not resolved. The
+// caller holds the cluster mutex.
+func SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error {
+	return get().SettleClient(ctx, c, client)
 }
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.

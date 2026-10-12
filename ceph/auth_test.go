@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -123,15 +125,14 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 		t.Fatal("another cluster attached an unowned client")
 	}
 	ctr.key = "REPLACEMENT-KEY"
-	before := len(ctr.calls)
-	if err := cluster.DeleteClient(t.Context(), client); err == nil || len(ctr.calls) != before+1 {
+	if err := cluster.DeleteClient(t.Context(), client); err == nil || ctr.deleted {
 		t.Fatal("revocation deleted an externally replaced key")
 	}
 	ctr.key = "PRIVATE-KEY"
 	if err := cluster.DeleteClient(t.Context(), client); err != nil {
 		t.Fatal(err)
 	}
-	before = len(ctr.calls)
+	before := len(ctr.calls)
 	if err := cluster.DeleteClient(t.Context(), client); err != nil || len(ctr.calls) != before {
 		t.Fatal("repeat revocation was not a no-op")
 	}
@@ -176,6 +177,8 @@ type authFixtureContainer struct {
 	copyPath string
 	copyMode int64
 	caps     map[string]string
+	// deleted means that auth del removed the identity.
+	deleted bool
 }
 
 func (ctr *authFixtureContainer) CopyToContainer(_ context.Context, content []byte, path string, mode int64) error {
@@ -183,53 +186,102 @@ func (ctr *authFixtureContainer) CopyToContainer(_ context.Context, content []by
 	return nil
 }
 
-func (ctr *authFixtureContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+// nativeArgs returns the Ceph command that args run, without the ceph CLI's
+// connection options: a supervised command runs its own argv, and
+// monitorMutationScript runs its MON command, given here in CLI form.
+func (ctr *authFixtureContainer) nativeArgs(args []string) []string {
+	if len(args) > 6 && args[0] == "python3" && args[2] == supervised.Script {
+		args = args[6:]
+	}
+	if len(args) >= 5 && args[0] == "python3" && args[2] == monitorMutationScript {
+		var command struct {
+			Prefix, Entity string
+			Caps           []string
+		}
+		_ = json.Unmarshal([]byte(args[4]), &command)
+		switch command.Prefix {
+		case "auth rm":
+			return []string{"auth", "del", command.Entity}
+		case "auth caps":
+			return append([]string{"auth", "caps", command.Entity}, command.Caps...)
+		}
+		return []string{"unsupported MON command", args[4]}
+	}
 	if args[0] == "ceph" {
 		args = args[3:]
 	}
-	args = slices.Clone(args)
-	ctr.calls = append(ctr.calls, args)
-	output := ""
-	if args[0] == "ceph-authtool" {
-		output = "PRIVATE-KEY\n"
-	} else if len(args) >= 2 && args[0] == "auth" && args[1] == "ls" {
-		output = ctr.listing
-		if output == "" {
-			output = `{"auth_dump":[]}`
+	return slices.Clone(args)
+}
+
+func (ctr *authFixtureContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	native := ctr.nativeArgs(args)
+	code, output := ctr.run(native)
+	if len(args) > 6 && args[0] == "python3" && args[2] == supervised.Script {
+		stdout, stderr := output, ""
+		if code != 0 {
+			stdout, stderr = "", output
 		}
-	} else if len(args) >= 3 && args[0] == "auth" && args[1] == "get" {
-		key := ctr.key
-		if key == "" {
-			key = "PRIVATE-KEY"
-		}
-		output = "[" + args[2] + "]\n\tkey = " + key + "\n"
-		if slices.Contains(args, "json") {
-			caps := ctr.caps
-			if caps == nil {
-				caps = map[string]string{"mon": "allow r", "osd": "allow rw pool=tenant", "mgr": "allow *"}
-			}
-			data, _ := json.Marshal([]any{map[string]any{"entity": args[2], "key": key, "caps": caps}})
-			output = string(data)
-		}
-	} else if len(args) >= 3 && args[0] == "auth" && args[1] == "caps" && strings.Join(args, " ") != ctr.fail {
-		ctr.caps = map[string]string{}
-		for i := 3; i+1 < len(args); i += 2 {
-			ctr.caps[args[i]] = args[i+1]
-		}
+		return 0, bytes.NewReader(clustertest.QuorumEnvelope([]byte(stdout), []byte(stderr), code, false, false)), nil
 	}
 	var header [8]byte
 	header[0] = byte(stdcopy.Stdout)
-	code := 0
-	failureArgs := args
-	if len(args) > 4 && args[0] == "auth" && args[1] == "add" {
-		failureArgs = append(slices.Clone(args[:3]), args[5:]...)
-	}
-	if strings.Join(failureArgs, " ") == ctr.fail {
-		header[0], code, output = byte(stdcopy.Stderr), 1, "PRIVATE-KEY injected failure"
+	if code != 0 {
+		header[0] = byte(stdcopy.Stderr)
 	}
 	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(output)
 	return code, &stream, nil
+}
+
+// run answers one native command with its exit code and output.
+func (ctr *authFixtureContainer) run(args []string) (int, string) {
+	if len(args) == 5 && args[0] == "sh" {
+		// The fake MON clients store no nonce: they never connected.
+		return 0, ""
+	}
+	ctr.calls = append(ctr.calls, args)
+	failureArgs := args
+	if len(args) > 4 && args[0] == "auth" && args[1] == "add" {
+		failureArgs = append(slices.Clone(args[:3]), args[5:]...)
+	}
+	if strings.Join(failureArgs, " ") == ctr.fail {
+		return 1, "PRIVATE-KEY injected failure"
+	}
+	switch {
+	case args[0] == "ceph-authtool":
+		return 0, "PRIVATE-KEY\n"
+	case len(args) >= 2 && args[0] == "auth" && args[1] == "ls":
+		if ctr.listing == "" {
+			return 0, `{"auth_dump":[]}`
+		}
+		return 0, ctr.listing
+	case len(args) >= 3 && args[0] == "auth" && args[1] == "get" && ctr.deleted:
+		return 2, "Error ENOENT: failed to find " + args[2] + " in keyring"
+	case len(args) >= 3 && args[0] == "auth" && args[1] == "get":
+		key := ctr.key
+		if key == "" {
+			key = "PRIVATE-KEY"
+		}
+		if !slices.Contains(args, "json") {
+			return 0, "[" + args[2] + "]\n\tkey = " + key + "\n"
+		}
+		caps := ctr.caps
+		if caps == nil {
+			caps = map[string]string{"mon": "allow r", "osd": "allow rw pool=tenant", "mgr": "allow *"}
+		}
+		data, _ := json.Marshal([]any{map[string]any{"entity": args[2], "key": key, "caps": caps}})
+		return 0, string(data)
+	case len(args) >= 3 && args[0] == "auth" && args[1] == "caps":
+		ctr.caps = map[string]string{}
+		for i := 3; i+1 < len(args); i += 2 {
+			ctr.caps[args[i]] = args[i+1]
+		}
+	case len(args) == 3 && args[0] == "auth" && args[1] == "del":
+		ctr.deleted = true
+	case args[0] == "unsupported MON command":
+		return 1, strings.Join(args, " ")
+	}
+	return 0, ""
 }

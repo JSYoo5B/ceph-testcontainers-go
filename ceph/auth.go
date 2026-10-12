@@ -40,6 +40,9 @@ type ClientConfig struct {
 	created bool
 	ready   bool
 	revoked bool
+	// replacedBy is the descriptor of the key that ReplaceClientKey gave the
+	// identity in place of this descriptor's key.
+	replacedBy *ClientConfig
 }
 
 // Name returns the fully qualified Cephx entity, for example client.reader.
@@ -136,6 +139,9 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
+	if err := c.settleClient(ctx, entity); err != nil {
+		return nil, err
+	}
 	data, err := c.clientAuthCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -163,6 +169,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
+	c.recordClientSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
 	defer func() {
@@ -180,6 +187,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 		return client, err
 	}
 	client.created = true
+	c.setClientKey(entity, clientKey(client.keyring, entity))
 	keyring, err := c.clientAuthCommand(ctx, "retrieve "+entity, "auth", "get", entity)
 	if err != nil {
 		return client, err
@@ -212,6 +220,9 @@ func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientConta
 		if client == nil || client.owner != c || !client.ready || client.revoked || len(client.keyring) == 0 {
 			return errors.New("cephx client must be an active identity created by this cluster")
 		}
+		if err := c.checkCurrentClient(client); err != nil {
+			return err
+		}
 		if c.settings.hostNetwork {
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
 				return err
@@ -233,7 +244,9 @@ func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientConta
 // DeleteClient revokes an identity created by this cluster without deleting data.
 // It checks for an externally replaced key before deleting; external auth edits
 // must not race this operation. A repeat call after success is a no-op; existing
-// sessions may retain issued tickets.
+// sessions may retain issued tickets. The removal is fenced like the import of
+// ReplaceClientKey: a failed call reports what the MONs hold once settled, and
+// an uncertain one is resolved by the next operation on the identity.
 func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) error {
 	if err := c.lockTopology(ctx); err != nil {
 		return err
@@ -250,18 +263,31 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	keyring, err := c.clientAuthCommand(ctx, "check "+client.name+" before revocation", "auth", "get", client.name)
+	if err := c.settleClient(ctx, client.name); err != nil {
+		return err
+	}
+	if _, ok := c.clientKeys[client.name]; client.revoked || !ok {
+		// An earlier removal, maybe through a copy of the descriptor,
+		// turned out to have applied.
+		client.revoked = true
+		return nil
+	}
+	// A creation that failed after auth add applied can be revoked as well.
+	if err := c.checkCurrentClient(client); err != nil {
+		return err
+	}
+	current, err := c.readClientRecord(ctx, client.name)
 	if err != nil {
 		return err
 	}
-	if len(client.keyring) != 0 && clientKey(keyring, client.name) != clientKey(client.keyring, client.name) {
+	if !current.exists || current.key != clientKey(client.keyring, client.name) {
 		return fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name)
 	}
-	if _, err := c.clientAuthCommand(ctx, "revoke "+client.name, "auth", "del", client.name); err != nil {
-		return err
-	}
-	client.revoked = true
-	return nil
+	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
+		client.revoked = true
+		c.setClientKey(client.name, "")
+	})
+	return err
 }
 
 // Auth command output can contain keys, including on failure. Never include it

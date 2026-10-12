@@ -46,9 +46,21 @@ type Container struct {
 	moduleOverrides    map[string]*MGRModuleOverride
 	controlPlane       testcontainers.Container
 	cephVersion        string
-	// keyRotationFences records, per daemon, what an earlier RotateDaemonKey
-	// left uncertain; see keyRotationFence.
-	keyRotationFences map[string]*keyRotationFence
+	// authFences records, per auth entity, what an earlier RotateDaemonKey
+	// or client key change left uncertain; see authFence.
+	authFences map[string]*authFence
+	// clientSecrets holds every client key that the module generated or
+	// confirmed, old and attempted ones included, for diagnostics to redact.
+	clientSecrets map[string]bool
+	// clientKeys holds, per client identity that this cluster created, the
+	// key that the module last confirmed for it. A descriptor with another
+	// key, or of a deleted identity, is stale, also when it is a copy.
+	clientKeys map[string]string
+	// strayAuthInputs holds files with keys in the control container that
+	// earlier auth calls could not remove for sure; later ones remove them.
+	// A file whose copy failed stays listed, as true, because Docker may
+	// still write it.
+	strayAuthInputs map[string]bool
 	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
 	// keyTypeOption records whether the control image's ceph-authtool has

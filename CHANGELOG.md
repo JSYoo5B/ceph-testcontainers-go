@@ -42,6 +42,13 @@ change the API.
   OSD without a restart and keeps its keyring files in step, so later restarts
   authenticate with the new key. The native commands guide shows how to
   observe a daemon's rotating service secrets in its debug log.
+- `ceph.Container.ReplaceClientKey` gives an owned client identity a fresh key
+  in one `auth import` that keeps its name and exact capabilities, returns a
+  descriptor for the new key and leaves the old descriptor's credentials
+  available for rejection checks. A failed or canceled call settles the MONs
+  and reports the outcome they hold. `UpdateClientCaps` and `DeleteClient` are
+  fenced the same way, so a timed-out capability change or removal can no
+  longer apply after a later operation on the identity.
 
 ### Fixed
 
