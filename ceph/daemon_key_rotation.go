@@ -126,9 +126,8 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 	call.clients = append(call.clients, path+".client")
 	out, err := call.c.rotationCommand(ctx, argv...)
 	if err != nil {
-		var notStopped *supervised.NotStoppedError
-		if errors.As(err, &notStopped) {
-			call.c.fenceUnstopped(ctx, call.c.fenceAuth(call.entity), call.c.cliContainer(), err)
+		if _, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
+			call.c.fenceUnstopped(call.c.fenceAuth(call.entity), call.c.cliContainer(), err)
 			call.unstopped = true
 		}
 		return out, fmt.Errorf("%s %s: %w", prefix, call.entity, err)
@@ -209,9 +208,6 @@ type rotationRun struct {
 	ctr testcontainers.Container
 	// marker names a supervised invocation, and execID a Docker exec.
 	marker, execID string
-	// started is the container's start time when the command ran; a later
-	// start time means that the command ended with the container.
-	started string
 }
 
 // keyRotationExecClient is the part of the Docker client that writes keyring
@@ -359,7 +355,7 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 		// While the CLI may run, it may deliver the key to any later process
 		// too, so handedTo stays unknown until a later call stops it.
 		fence.handedKey, fence.handedTo, fence.handedDone = next, "", false
-		if !c.fenceUnstopped(cleanupCtx, fence, control, tellErr) {
+		if !c.fenceUnstopped(fence, control, tellErr) {
 			// The handoff has ended, so it can reach only the process that
 			// runs now, or none.
 			if after, err := ctr.State(cleanupCtx); err == nil && after != nil {
@@ -408,14 +404,14 @@ func (c *Container) fenceAuth(daemon string) *authFence {
 }
 
 // fenceUnstopped records the supervised invocation of err in fence when its
-// supervisor could not confirm that it stopped, and reports whether it did.
-func (c *Container) fenceUnstopped(ctx context.Context, fence *authFence, ctr testcontainers.Container, err error) bool {
-	var notStopped *supervised.NotStoppedError
-	if !errors.As(err, &notStopped) {
-		return false
+// end is unconfirmed: its cancellation failed, or a signal killed its
+// supervisor before its cleanup. It reports whether it did.
+func (c *Container) fenceUnstopped(fence *authFence, ctr testcontainers.Container, err error) bool {
+	marker, unconfirmed := supervised.Unconfirmed(err)
+	if unconfirmed {
+		fence.running = append(fence.running, rotationRun{ctr: ctr, marker: marker})
 	}
-	fence.running = append(fence.running, rotationRun{ctr: ctr, marker: notStopped.Marker, started: containerStarted(ctx, ctr)})
-	return true
+	return unconfirmed
 }
 
 // daemonIdentity names the daemon process by its container's ID and start
@@ -426,13 +422,6 @@ func daemonIdentity(ctr testcontainers.Container, state *container.State) string
 		return ""
 	}
 	return ctr.GetContainerID() + "@" + state.StartedAt
-}
-
-func containerStarted(ctx context.Context, ctr testcontainers.Container) string {
-	if state, err := ctr.State(ctx); err == nil && state != nil {
-		return state.StartedAt
-	}
-	return ""
 }
 
 // stopEarlierAuthCommands makes sure that no command of an earlier call on
@@ -484,16 +473,14 @@ func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error 
 	if run.execID != "" {
 		return c.finishDaemonExec(ctx, run.execID)
 	}
+	// The canceler also confirms a command that ended with an earlier
+	// instance of a restarted container. A stopped container confirms
+	// nothing, because Docker may still start an exec that it accepted.
 	err := supervised.Cancel(ctx, run.ctr, "key rotation", run.marker)
 	if err == nil {
 		return nil
 	}
-	// The command also ended when its container stopped or was removed.
-	state, stateErr := run.ctr.State(ctx)
-	switch {
-	case errdefs.IsNotFound(stateErr):
-		return nil
-	case stateErr == nil && state != nil && (!state.Running || (run.started != "" && state.StartedAt != run.started)):
+	if _, stateErr := run.ctr.State(ctx); errdefs.IsNotFound(stateErr) {
 		return nil
 	}
 	return err
