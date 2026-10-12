@@ -380,10 +380,7 @@ func (control *clientAdmissionControl) CopyToContainer(ctx context.Context, cont
 
 func (control *clientAdmissionControl) Exec(ctx context.Context, args []string, options ...tcexec.ProcessOption) (int, io.Reader, error) {
 	code, reader, err := control.authFixtureContainer.Exec(ctx, args, options...)
-	if args[0] == "ceph" {
-		args = args[3:]
-	}
-	args = slices.Clone(args)
+	args = control.nativeArgs(args)
 	if control.execError != nil {
 		if err := control.execError(ctx, args); err != nil {
 			return code, reader, err

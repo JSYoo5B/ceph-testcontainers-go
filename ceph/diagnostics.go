@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -241,6 +242,9 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	for _, state := range extensionsWith[serviceSecrets](c) {
 		snapshot.secrets = append(snapshot.secrets, state.Secrets()...)
 	}
+	// Every client key the module generated, including replaced, attempted
+	// and revoked ones.
+	snapshot.secrets = append(snapshot.secrets, slices.Sorted(maps.Keys(c.clientSecrets))...)
 	for _, nw := range []*testcontainers.DockerNetwork{c.network, c.clusterNetwork} {
 		if nw != nil {
 			snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})

@@ -3,6 +3,8 @@ package ceph
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,6 +118,24 @@ type rotationWorld struct {
 	// cleanupTimeout, when set, replaces keyRotationCleanupTimeout during the
 	// test.
 	cleanupTimeout time.Duration
+	// clients holds the auth entries of client identities.
+	clients map[string]fakeClient
+	// lateCopies holds control container copies that Docker completes after
+	// lateCopyDelay more commands in the container, by default after the next
+	// one.
+	lateCopies    map[string]lateCopy
+	lateCopyDelay int
+}
+
+type lateCopy struct {
+	content string
+	after   int
+}
+
+// fakeClient is the auth entry of a client identity.
+type fakeClient struct {
+	key  string
+	caps map[string]string
 }
 
 // lateCommand is a command whose CLI hung, or a copy that Docker completes
@@ -129,6 +149,10 @@ type rotationWorld struct {
 type lateCommand struct {
 	op, key, via, session, nonce string
 	prepared, unsent, inFlight   bool
+	// entity and input are the client and the keyring of a client command,
+	// and caps the capabilities of auth caps.
+	entity, input string
+	caps          []string
 }
 
 // fakeExec is a Docker exec in the daemon container. A start whose request
@@ -185,7 +209,7 @@ func newRotationWorld() *rotationWorld {
 	w := &rotationWorld{current: "key-0", live: "key-0", route: "a", election: 10, monEpoch: 3, daemonID: "osd-0-ctr", started: "start-1",
 		counts: map[string]int{}, faults: map[string]rotationFault{}, daemonFiles: map[string]string{}, controlFiles: map[string]string{},
 		identities: map[string]bool{}, stopped: map[string]bool{}, execs: map[string]fakeExec{}, releaseBefore: map[string]bool{},
-		sessions: map[string]map[string]bool{}, nonceOf: map[string]string{}, listed: map[string]bool{}}
+		sessions: map[string]map[string]bool{}, nonceOf: map[string]string{}, listed: map[string]bool{}, clients: map[string]fakeClient{}}
 	for _, path := range rotationKeyringPaths {
 		w.daemonFiles[path] = string(daemonKeyring("osd.0", "key-0"))
 	}
@@ -218,7 +242,56 @@ func (w *rotationWorld) apply(cmd lateCommand) {
 		}
 	case "copy":
 		w.daemonFiles[cmd.via] = cmd.key
+	case "import":
+		// auth import replaces the key and the caps of every entity of its
+		// keyring at once.
+		entity, client := parseFakeKeyring(cmd.input)
+		w.clients[entity] = client
+	case "remove":
+		delete(w.clients, cmd.entity)
+	case "caps":
+		// auth caps replaces every capability of an existing entity.
+		if client, ok := w.clients[cmd.entity]; ok {
+			client.caps = map[string]string{}
+			for i := 0; i+1 < len(cmd.caps); i += 2 {
+				client.caps[cmd.caps[i]] = cmd.caps[i+1]
+			}
+			w.clients[cmd.entity] = client
+		}
 	}
+}
+
+var fakeKeyringLine = regexp.MustCompile(`^\s*(?:\[(\S+)\]|key = (\S+)|caps (\S+) = "(.*)")\s*$`)
+
+func parseFakeKeyring(keyring string) (string, fakeClient) {
+	entity, client := "", fakeClient{caps: map[string]string{}}
+	for _, line := range strings.Split(keyring, "\n") {
+		match := fakeKeyringLine.FindStringSubmatch(line)
+		switch {
+		case match == nil:
+		case match[1] != "":
+			entity = match[1]
+		case match[2] != "":
+			client.key = match[2]
+		default:
+			client.caps[match[3]] = match[4]
+		}
+	}
+	return entity, client
+}
+
+func fakeClientKeyring(entity string, client fakeClient) string {
+	text := "[" + entity + "]\n\tkey = " + client.key + "\n"
+	for _, service := range slices.Sorted(maps.Keys(client.caps)) {
+		text += fmt.Sprintf("\tcaps %s = %q\n", service, client.caps[service])
+	}
+	return text
+}
+
+// fakeCephxKey returns a key of cipher, encoded as Ceph encodes its type.
+func fakeCephxKey(cipher CephxCipher, n int) string {
+	kind := map[CephxCipher]byte{CipherAES: 1, CipherAES256K: 2}[cipher]
+	return base64.StdEncoding.EncodeToString(append([]byte{kind, 0}, fmt.Sprintf("fake-secret-%04d", n)...))
 }
 
 // release lets the late commands that match go ahead in order: those that can
@@ -328,6 +401,7 @@ func (w *rotationWorld) clone() *rotationWorld {
 	future.late = slices.Clone(w.late)
 	future.identities = maps.Clone(w.identities)
 	future.daemonFiles = maps.Clone(w.daemonFiles)
+	future.clients = maps.Clone(w.clients)
 	future.execs = maps.Clone(w.execs)
 	future.sessions = map[string]map[string]bool{}
 	for mon, sessions := range w.sessions {
@@ -490,11 +564,23 @@ func (w *rotationWorld) entry() string {
 
 // mutation runs monitorMutationScript: its client connects to the MON that
 // route names, stores its nonce in path and sends command.
-func (w *rotationWorld) mutation(path, command, session string) rotationReply {
-	var cmd struct{ Prefix, Entity, Format string }
+func (w *rotationWorld) mutation(path, command, session, input string) rotationReply {
+	var cmd struct {
+		Prefix, Entity, Format string
+		Caps                   []string
+	}
 	op := ""
-	if json.Unmarshal([]byte(command), &cmd) == nil && cmd.Entity == "osd.0" && cmd.Format == "json" {
-		op = map[string]string{"auth get-or-create-pending": "create", "auth clear-pending": "clear", "auth commit-pending": "commit"}[cmd.Prefix]
+	if json.Unmarshal([]byte(command), &cmd) == nil {
+		switch {
+		case cmd.Entity == "osd.0" && cmd.Format == "json" && input == "":
+			op = map[string]string{"auth get-or-create-pending": "create", "auth clear-pending": "clear", "auth commit-pending": "commit"}[cmd.Prefix]
+		case cmd.Prefix == "auth import" && cmd.Entity == "" && input != "":
+			op = "import"
+		case cmd.Prefix == "auth rm" && strings.HasPrefix(cmd.Entity, "client.") && input == "":
+			op = "remove"
+		case cmd.Prefix == "auth caps" && strings.HasPrefix(cmd.Entity, "client.") && input == "" && len(cmd.Caps) > 0:
+			op = "caps"
+		}
 	}
 	if op == "" {
 		return rotationReply{code: 1, stderr: "unexpected MON command " + command}
@@ -516,7 +602,16 @@ func (w *rotationWorld) mutation(path, command, session string) rotationReply {
 	if op == "create" {
 		output = w.entry
 	}
-	reply := w.execute(lateCommand{op: op, via: w.route, session: session, nonce: nonce}, output)
+	content := ""
+	if op == "import" {
+		var ok bool
+		if content, ok = w.controlFiles[input]; !ok {
+			// The script fails to read its input and sends nothing.
+			w.stop(session)
+			return rotationReply{code: 1, stderr: "no input"}
+		}
+	}
+	reply := w.execute(lateCommand{op: op, via: w.route, session: session, nonce: nonce, entity: cmd.Entity, input: content, caps: cmd.Caps}, output)
 	if !reply.hang {
 		// The client exits, and the MONs see its connections close.
 		w.stop(session)
@@ -541,7 +636,10 @@ func (w *rotationWorld) monitorSessions(mon string) rotationReply {
 
 func (w *rotationWorld) run(args []string, session string) rotationReply {
 	if len(args) == 5 && args[0] == "python3" && args[1] == "-c" && args[2] == monitorMutationScript {
-		return w.mutation(args[3], args[4], session)
+		return w.mutation(args[3], args[4], session, "")
+	}
+	if len(args) == 6 && args[0] == "python3" && args[1] == "-c" && args[2] == monitorMutationScript {
+		return w.mutation(args[3], args[4], session, args[5])
 	}
 	if len(args) == 5 && strings.Join(args[:4], " ") == `sh -c test ! -e "$1" || cat "$1" sh` {
 		return rotationReply{stdout: w.controlFiles[args[4]]}
@@ -568,6 +666,31 @@ func (w *rotationWorld) run(args []string, session string) rotationReply {
 		return rotationReply{stdout: w.quorumStatus()}
 	case command == "auth get osd.0 --format json":
 		return rotationReply{stdout: w.entry()}
+	case len(fields) >= 3 && fields[0] == "auth" && (fields[1] == "get" || fields[1] == "del") && strings.HasPrefix(fields[2], "client."):
+		client, ok := w.clients[fields[2]]
+		switch {
+		case !ok:
+			return rotationReply{code: 2, stderr: "Error ENOENT: failed to find " + fields[2] + " in keyring"}
+		case fields[1] == "del" && len(fields) == 3:
+			delete(w.clients, fields[2])
+			return rotationReply{}
+		case len(fields) == 3:
+			return rotationReply{stdout: fakeClientKeyring(fields[2], client)}
+		case strings.Join(fields[3:], " ") == "--format json":
+			entry, _ := json.Marshal([]map[string]any{{"entity": fields[2], "key": client.key, "caps": client.caps}})
+			return rotationReply{stdout: string(entry)}
+		}
+	case len(fields) >= 2 && fields[0] == "ceph-authtool" && fields[1] == "--gen-print-key":
+		// Without --key-type, ceph-authtool prints a key of the release
+		// default type.
+		cipher := CipherAES
+		if len(fields) == 4 && fields[2] == "--key-type" {
+			cipher = CephxCipher(fields[3])
+		} else if len(fields) != 2 {
+			break
+		}
+		w.generated++
+		return rotationReply{stdout: fakeCephxKey(cipher, w.generated) + "\n"}
 	case len(fields) == 5 && fields[0] == "tell" && strings.HasPrefix(fields[1], "mon.") && strings.Join(fields[2:], " ") == "sessions --format json":
 		return w.monitorSessions(strings.TrimPrefix(fields[1], "mon."))
 	case len(fields) == 3 && fields[0] == "auth" && fields[1] == "rm" && strings.HasPrefix(fields[2], "client.tc-key-rotation-"):
@@ -607,6 +730,21 @@ func (ctr *rotationControl) Exec(ctx context.Context, args []string, opts ...tce
 		return 0, nil, err
 	}
 	w := ctr.w
+	// A copy that Docker completes late lands right after a command.
+	arriving := map[string]string{}
+	for path, late := range w.lateCopies {
+		if late.after--; late.after <= 0 {
+			arriving[path] = late.content
+			delete(w.lateCopies, path)
+		} else {
+			w.lateCopies[path] = late
+		}
+	}
+	defer func() {
+		for path, content := range arriving {
+			w.controlFiles[path] = content
+		}
+	}()
 	switch {
 	case len(args) > 3 && args[0] == "python3" && args[2] == supervised.CancelScript:
 		if w.cancelFails > 0 {
@@ -637,7 +775,18 @@ func (ctr *rotationControl) Exec(ctx context.Context, args []string, opts ...tce
 		// Nothing stops a CLI that runs without the supervisor.
 		return 0, nil, errors.New("the CLI did not answer")
 	}
-	return reply.code, strings.NewReader(reply.stdout), nil
+	// Docker multiplexes the output of an exec without a terminal.
+	var stream bytes.Buffer
+	for kind, output := range [][]byte{1: []byte(reply.stdout), 2: []byte(reply.stderr)} {
+		if len(output) > 0 {
+			header := make([]byte, 8)
+			header[0] = byte(kind)
+			binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
+			stream.Write(header)
+			stream.Write(output)
+		}
+	}
+	return reply.code, &stream, nil
 }
 
 func supervisedMarker(opts []tcexec.ProcessOption) string {
@@ -665,8 +814,14 @@ func (ctr *rotationControl) CopyToContainer(ctx context.Context, content []byte,
 		return err
 	}
 	effect, faulted := ctr.w.fault("control-copy")
-	if !faulted || effect == failsAfter {
+	switch {
+	case !faulted || effect == failsAfter:
 		ctr.w.controlFiles[path] = string(content)
+	case effect == hangsPrepared:
+		if ctr.w.lateCopies == nil {
+			ctr.w.lateCopies = map[string]lateCopy{}
+		}
+		ctr.w.lateCopies[path] = lateCopy{content: string(content), after: max(ctr.w.lateCopyDelay, 1)}
 	}
 	if faulted {
 		return errors.New("injected control copy failure")

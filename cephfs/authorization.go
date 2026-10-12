@@ -225,6 +225,11 @@ func (fs *Filesystem) authorizationClientCaps(ctx context.Context, identity *cep
 	if servicehook.Closed(c) || client == nil || !servicehook.ClientConfirmed(client, c) {
 		return nil, errors.New("subvolume principal must be a confirmed identity created by this cluster")
 	}
+	// A key replacement or capability change that may still apply would
+	// race the subvolume grants.
+	if err := servicehook.SettleClient(ctx, c, client); err != nil {
+		return nil, err
+	}
 	data, err := servicehook.AuthCommand(ctx, c, "inspect owned subvolume principal", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err

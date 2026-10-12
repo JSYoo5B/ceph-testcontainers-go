@@ -226,7 +226,26 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
-func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) { client.revoked = revoked }
+func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
+	client.revoked = revoked
+	if revoked {
+		client.owner.setClientKey(client.name, "")
+	}
+}
+
+// SettleClient settles the client's identity and refuses a descriptor that is
+// not its current one. A descriptor of an identity that the service deleted
+// is only settled, for the service's own reconciliation. The caller holds the
+// cluster mutex.
+func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *ClientConfig) error {
+	if err := c.settleClient(ctx, client.name); err != nil {
+		return err
+	}
+	if client.revoked {
+		return nil
+	}
+	return c.checkCurrentClient(client)
+}
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
 func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
