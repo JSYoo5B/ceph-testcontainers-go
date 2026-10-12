@@ -103,6 +103,11 @@ type Container struct {
 	nativeMu          sync.Mutex
 	nativeInvocations map[*nativeInvocation]bool
 	nativeClosed      bool
+	// delays holds network delays by network and container; a nil value
+	// reserves an endpoint while its delay is being applied.
+	delays map[string]*NetworkDelayLease
+	// newNetemBackend replaces the Docker netem backend in tests.
+	newNetemBackend func() netemBackend
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
@@ -852,6 +857,20 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	c.closed = true
 	var errs []error
 	blockedNetworks := make(map[string]bool)
+	// Remove network delays while their helpers and targets still run: removing
+	// a helper leaves its qdisc in a caller-owned target. A failed restore
+	// remains retryable through its lease.
+	for _, delay := range c.delays {
+		if delay == nil {
+			continue
+		}
+		c.mu.Unlock()
+		err := delay.Restore(ctx)
+		c.mu.Lock()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("restore network delay: %w", err))
+		}
+	}
 	// Restore caller-owned clients as well as owned daemons before removing any
 	// network. A failed restore remains retryable through its interruption handle.
 	for _, interruption := range c.interruptions {

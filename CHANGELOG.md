@@ -8,6 +8,19 @@ change the API.
 
 ### Added
 
+- `ceph.Container.TemporaryNetworkDelay` delays every packet that a container
+  sends on one of the cluster's bridges, with the kernel's netem qdisc, until
+  `NetworkDelayLease.Restore`. It is an opt-in extension: the caller selects a
+  netem helper image (`ceph.NetemHelperImage` or another image that meets the
+  netem contract of ceph-testcontainers-images), which runs in the target's
+  network namespace with `NET_ADMIN` while the target keeps its own image.
+  Before any change it checks the helper image, `NET_ADMIN` and the kernel's
+  netem, and reports them as `ErrNetemImageUnsupported`,
+  `ErrNetemPermissionDenied` and `ErrNetemKernelUnsupported`. The lease reads
+  the kernel's qdisc and counters with `Status`, removes only its own qdisc,
+  survives a lost helper, ends with the target's interface, and is restored
+  by `Terminate`.
+
 - `ceph.Container.CollectCrashMetadata` reads the crash reports that Ceph
   daemons wrote into `/var/lib/ceph/crash` (`ceph.CrashDir`), through Docker's
   archive API, also from stopped containers. It keeps only the known fields of

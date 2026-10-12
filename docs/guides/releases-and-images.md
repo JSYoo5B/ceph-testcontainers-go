@@ -235,13 +235,13 @@ local image.
 
 ### Only what the official image ships
 
-Every module feature must work with the unmodified official image of each
-supported release. The module therefore relies only on components that image
-ships and never installs packages at run time. This has visible consequences:
+Every baseline module feature works with the unmodified official image of each
+supported release. The module relies only on components that image ships and
+never installs packages at run time. This has visible consequences:
 
-- No `tc`, `ip`, `iptables` or `nft`: there is no packet loss, latency shaping
-  or pairwise filtering. Network faults are whole-endpoint Docker operations
-  or Ceph messenger options (see [Fault injection](fault-injection.md)).
+- No `tc`, `ip`, `iptables` or `nft` in the Ceph containers. Network faults
+  of the baseline are whole-endpoint Docker operations or Ceph messenger
+  options (see [Fault injection](fault-injection.md)).
 - No kernel RBD mapping or kernel/FUSE CephFS mounts: clients use librbd and
   libcephfs in user space.
 - No privileged containers, host disks or LVM: OSDs use sparse files.
@@ -252,6 +252,28 @@ ships and never installs packages at run time. This has visible consequences:
 Extra tools and services for your own tests (go-ceph programs, S3 SDKs, a
 Vault server for RGW server-side encryption, and so on) belong in their own
 images, not in the Ceph role images.
+
+### Opt-in extensions
+
+An extension is a feature that needs tools the official image does not ship.
+You select it explicitly, together with the image that provides the tools; no
+baseline feature and no default uses it.
+
+- The module checks the selected image against the extension's contract, and
+  separately what the engine must grant (capabilities, kernel features), before
+  it changes anything. A missing tool, a denied permission and an unsupported
+  kernel return different errors. A tag name is not trusted, nothing is
+  installed at run time, and there is no fallback.
+- The Ceph containers keep their images. An extension's tools run in a helper
+  container that the module starts and removes.
+- [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
+  defines each contract, checks images against it and publishes one image per
+  extension. Any image that meets the contract works, including one from a
+  private registry or a local build.
+
+| Extension | API | Helper image | Contract |
+| --- | --- | --- | --- |
+| netem packet delay | `TemporaryNetworkDelay` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `ceph.NetemHelperImage` | netem contract 1: `sh`, `sleep`, `tc` and `ip` with JSON output and netem, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc |
 
 ## Related APIs
 
