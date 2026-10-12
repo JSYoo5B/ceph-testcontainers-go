@@ -92,6 +92,12 @@ type Container struct {
 	closed                bool
 	monitorTerminated     bool
 	networkRemoved        bool
+
+	// nativeMu guards the RunNativeCommand calls that run or whose command
+	// is not confirmed as stopped, and whether Terminate refuses new ones.
+	nativeMu          sync.Mutex
+	nativeInvocations map[*nativeInvocation]bool
+	nativeClosed      bool
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
@@ -854,6 +860,10 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			errs = append(errs, fmt.Errorf("resume paused container: %w", err))
 		}
 	}
+	// Stop native commands while their containers still run. Those that
+	// stay unconfirmed are retried after the teardown, which ends the ones in
+	// the cluster's own containers.
+	_ = c.stopNativeInvocations(ctx)
 	for _, lease := range c.portLeases {
 		if err := lease.Release(ctx); err != nil {
 			errs = append(errs, err)
@@ -949,6 +959,7 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.networkRemoved = true
 		}
 	}
+	errs = append(errs, c.stopNativeInvocations(ctx)...)
 	return errors.Join(errs...)
 }
 

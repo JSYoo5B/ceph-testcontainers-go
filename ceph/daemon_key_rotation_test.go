@@ -88,6 +88,9 @@ type rotationWorld struct {
 	// counts the cancellations that fail before one succeeds.
 	stopped     map[string]bool
 	cancelFails int
+	// killsSupervisor kills the supervisor of a CLI that hangs, which then
+	// runs on until a cancellation stops it.
+	killsSupervisor bool
 	// sessions holds, per MON, the nonces of the MON clients whose
 	// connections the MON still holds; nonceOf maps a supervisor marker to
 	// the nonce of its MON client, and nonces counts the clients.
@@ -778,6 +781,8 @@ func (ctr *rotationControl) Exec(ctx context.Context, args []string, opts ...tce
 				return 0, nil, err
 			}
 			return 0, nil, errors.New("the exec stream broke")
+		case reply.hang && w.killsSupervisor:
+			return 128 + 9, bytes.NewReader(nil), nil
 		case reply.hang:
 			w.stop(marker)
 			return 0, bytes.NewReader(clustertest.QuorumEnvelope(nil, nil, -9, true, false)), nil
@@ -1165,6 +1170,35 @@ func TestRotateDaemonKeyLeavesNoMonitorCommandBehind(t *testing.T) {
 				w.requireUsable(t)
 			}
 			if err == nil || !strings.Contains(err.Error(), "hand the new key") {
+				t.Fatalf("the failed handoff returned %v", err)
+			}
+			w.requireUsable(t)
+			if w.pending == "" || w.live != w.current || len(w.late) != 0 {
+				t.Fatalf("a late command changed the keys: current %s, pending %q, live %s, late %v", w.current, w.pending, w.live, w.late)
+			}
+		})
+	}
+}
+
+// A signal that kills the supervisor of a MON command skips its cleanup, so
+// the CLI may still send the command. The call fences it like a CLI that it
+// could not stop, and the next call stops it before it goes on.
+func TestRotateDaemonKeyFencesAKilledSupervisor(t *testing.T) {
+	for name, effect := range map[string]faultEffect{"queued commit": hangsQueued, "unsent commit": hangsUnsent, "prepared commit": hangsPrepared} {
+		t.Run(name, func(t *testing.T) {
+			w := newRotationWorld()
+			w.faults["commit"] = rotationFault{occurrence: 1, effect: effect}
+			w.killsSupervisor = true
+			c := rotationCluster(w)
+			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil {
+				t.Fatal("a call whose supervisor was killed succeeded")
+			}
+			w.killsSupervisor = false
+			w.requireUsable(t)
+			w.authenticate(w.live)
+			w.releaseBefore["tell"] = true
+			w.faults["tell"] = rotationFault{occurrence: w.counts["tell"] + 1}
+			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "hand the new key") {
 				t.Fatalf("the failed handoff returned %v", err)
 			}
 			w.requireUsable(t)

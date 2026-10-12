@@ -28,28 +28,62 @@ const (
 	// ExecCushion is the time Command leaves after the supervisor's deadline
 	// for it to kill and reap its child and report.
 	ExecCushion = 250 * time.Millisecond
+	// LaunchFailedExit is the supervisor's exit code when it could not start
+	// the command, for example because the program does not exist or is not
+	// executable.
+	LaunchFailedExit = 120
+	// CleanupFailedExit is the supervisor's exit code when it could not kill
+	// and reap the command's group; it then keeps its marker, so that no
+	// cancellation is confirmed and the command may still run.
+	CleanupFailedExit = 121
 )
 
 // Script is the supervisor. It runs its arguments after the three limits
 // (stdout bytes, stderr bytes, seconds) as a child in a new process group,
 // bounds each output stream, kills only that group at the deadline, and prints
 // one JSON envelope. Native stdout stays separate from Ceph's independently
-// nonblocking stderr pipe.
+// nonblocking stderr pipe. When it cannot start the command it exits
+// LaunchFailedExit without an envelope, and when it cannot kill or reap the
+// started command's group it exits CleanupFailedExit and keeps its marker.
 //
 // The supervisor claims its invocation's marker before it starts the child,
-// and stops at once if CancelScript claimed it first. While the
-// child runs, a cancel marker makes the supervisor kill the child's group,
-// which it still owns because the child is not yet reaped. Removing the
-// marker after the reap acknowledges the cancellation.
+// writing the container instance into it, and stops at once if CancelScript
+// claimed it first. While the child runs, a cancel marker makes the
+// supervisor kill the child's group, which it still owns because the child is
+// not yet reaped. Removing the marker after the reap acknowledges the
+// cancellation.
+//
+// On Linux the supervisor is a child subreaper: members of the killed group
+// whose parent died become its children, and it reaps them before it
+// reports, for at most 200 ms while members remain. It does not wait for a
+// descendant that left the group.
+//
+// The marker record ends with a newline, so that a canceler never takes a
+// partly written record for one of another instance.
 const Script = `import base64,json,os,select,signal,subprocess,sys,time
-limits=[int(sys.argv[1]),int(sys.argv[2])]; deadline=time.monotonic()+float(sys.argv[3])
+` + instanceFunction + `limits=[int(sys.argv[1]),int(sys.argv[2])]; deadline=time.monotonic()+float(sys.argv[3])
 marker=os.environ["TC_SUPERVISED"]; cancel_marker=marker+".cancel"
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
-try: os.close(os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600))
+try: fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
 except FileExistsError:
  os.unlink(marker)
  sys.exit(0)
-output=[bytearray(),bytearray()]; clipped=[False,False]; timed_out=False; group_signaled=False
+os.write(fd,b"run "+instance()+b"\n"); os.close(fd)
+try:
+ import ctypes
+ ctypes.CDLL(None).prctl(36,1,0,0,0)
+except Exception: pass
+def reap_descendants(group):
+ until=time.monotonic()+0.2
+ while True:
+  try:
+   while os.waitpid(-1,os.WNOHANG)[0]: pass
+  except ChildProcessError: return
+  try: os.killpg(group,0)
+  except OSError: return
+  if time.monotonic()>=until: return
+  time.sleep(0.005)
+output=[bytearray(),bytearray()]; clipped=[False,False]; timed_out=False; group_signaled=False; launched=False; cleaned=False
 def kill_owned_group():
  global group_signaled
  if group_signaled: return
@@ -57,7 +91,9 @@ def kill_owned_group():
  except ProcessLookupError: pass
  group_signaled=True
 try:
- p=subprocess.Popen(sys.argv[4:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+ try: p=subprocess.Popen(sys.argv[4:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+ except OSError: sys.exit(120)
+ launched=True
  streams={p.stdout:0,p.stderr:1}
  try:
   while streams:
@@ -93,13 +129,28 @@ try:
  finally:
   kill_owned_group()
   p.wait()
+  reap_descendants(p.pid)
+  cleaned=True
   p.stdout.close()
   p.stderr.close()
 finally:
+ if launched and not cleaned: os._exit(121)
  for path in (marker,cancel_marker):
   try: os.unlink(path)
   except FileNotFoundError: pass
 print(json.dumps({'schema_version':1,'stdout':base64.b64encode(output[0]).decode(),'stderr':base64.b64encode(output[1]).decode(),'exit_code':code,'timed_out':timed_out,'stdout_truncated':clipped[0],'stderr_truncated':clipped[1]}))
+`
+
+// instanceFunction defines instance(), which identifies the running container
+// instance by the host's boot ID and the start time of the container's PID 1.
+// A restart starts a new PID 1, and every process of the old instance has
+// ended. It returns b"" when /proc does not tell.
+const instanceFunction = `def instance():
+ try:
+  with open("/proc/sys/kernel/random/boot_id","rb") as f: boot=f.read().strip()
+  with open("/proc/1/stat","rb") as f: stat=f.read()
+  return boot+b"/"+stat[stat.rindex(b")")+2:].split()[19]
+ except (OSError,ValueError,IndexError): return b""
 `
 
 // NotStoppedError reports an invocation that Command could not confirm as
@@ -113,6 +164,49 @@ type NotStoppedError struct {
 func (e *NotStoppedError) Error() string { return e.Err.Error() }
 
 func (e *NotStoppedError) Unwrap() error { return e.Err }
+
+// ExitError reports a supervisor that exited without a report. Code 126 or
+// 127 means that the container could not run python3, and LaunchFailedExit
+// that the supervisor could not start the command. A code above 128 means
+// that a signal killed the supervisor before its cleanup, and
+// CleanupFailedExit that its cleanup failed; then its command may still run,
+// and Cancel with Marker can confirm that only after the container restarted.
+type ExitError struct {
+	Label     string
+	Code      int
+	Oversized bool
+	Marker    string
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("%s supervisor failed: exit=%d oversized=%t", e.Label, e.Code, e.Oversized)
+}
+
+// Unconfirmed returns the marker of the invocation whose end err leaves
+// unconfirmed: Cancel could not stop it, or a signal killed its supervisor
+// before its cleanup. Cancel with the marker confirms it later.
+func Unconfirmed(err error) (string, bool) {
+	var notStopped *NotStoppedError
+	if errors.As(err, &notStopped) {
+		return notStopped.Marker, true
+	}
+	var exit *ExitError
+	if errors.As(err, &exit) && (exit.Code < 0 || exit.Code > 128 || exit.Code == CleanupFailedExit) {
+		return exit.Marker, true
+	}
+	return "", false
+}
+
+// BackendError is an error of Docker or of a container implementation during
+// Op. Its text holds the cause's text, which this package does not control.
+type BackendError struct {
+	Op  string
+	Err error
+}
+
+func (e *BackendError) Error() string { return e.Op + ": " + e.Err.Error() }
+
+func (e *BackendError) Unwrap() error { return e.Err }
 
 // Result is the complete output of one supervised command.
 type Result struct {
@@ -183,11 +277,16 @@ func Run(ctx context.Context, ctr testcontainers.Container, label string, proces
 	if err != nil {
 		// Exec stops waiting when attempt ends, but Docker may already have
 		// accepted the exec and start or keep running the supervisor.
-		err = fmt.Errorf("exec %s supervisor: %w", label, err)
+		err = &BackendError{Op: "exec " + label + " supervisor", Err: err}
 		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
 			return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr})
 		}
 		return Report{}, err
+	}
+	// A signal killed the supervisor, or its cleanup failed, so its command
+	// may still run, whatever happened to attempt meanwhile.
+	if code < 0 || code > 128 || code == CleanupFailedExit {
+		return Report{}, errors.Join(&ExitError{Label: label, Code: code, Marker: marker}, attempt.Err())
 	}
 	if err := attempt.Err(); err != nil {
 		return Report{}, err
@@ -205,10 +304,10 @@ func Run(ctx context.Context, ctr testcontainers.Container, label string, proces
 		return Report{}, ctxErr
 	}
 	if err != nil {
-		return Report{}, fmt.Errorf("read %s supervisor: %w", label, err)
+		return Report{}, &BackendError{Op: "read " + label + " supervisor", Err: err}
 	}
 	if len(data) > envelopeLimit || code != 0 {
-		return Report{}, fmt.Errorf("%s supervisor failed: exit=%d oversized=%t", label, code, len(data) > envelopeLimit)
+		return Report{}, &ExitError{Label: label, Code: code, Oversized: len(data) > envelopeLimit, Marker: marker}
 	}
 	var envelope struct {
 		SchemaVersion   *int    `json:"schema_version"`
@@ -244,17 +343,27 @@ func Run(ctx context.Context, ctr testcontainers.Container, label string, proces
 // CancelScript cancels one invocation through its marker and
 // signals no process itself. If it claims the marker first, the supervisor has
 // not started, and if Docker starts it later it finds the claim, removes it and
-// starts nothing. Otherwise it writes the cancel marker and waits until the
+// starts nothing. A marker that holds its own claim, or that a supervisor of an
+// earlier container instance wrote, needs nothing more: that supervisor and
+// its command ended with their instance, and the file still blocks a late
+// start. Otherwise it writes the cancel marker and waits until the
 // supervisor removes the marker, which it does only after killing and reaping
 // its child's group, or after its child ended on its own. A claim made after
-// the supervisor finished stays as an empty file in MarkerDir.
+// the supervisor finished stays as a small file in MarkerDir.
 const CancelScript = `import os,sys,time
-marker=sys.argv[1]; cancel_marker=marker+".cancel"; deadline=time.monotonic()+float(sys.argv[2])
+` + instanceFunction + `marker=sys.argv[1]; cancel_marker=marker+".cancel"; deadline=time.monotonic()+float(sys.argv[2])
 os.makedirs(os.path.dirname(marker),mode=0o700,exist_ok=True)
 try:
- os.close(os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600))
+ fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
+ os.write(fd,b"claim"); os.close(fd)
  sys.exit(0)
 except FileExistsError: pass
+try:
+ with open(marker,"rb") as f: owner=f.read()
+except FileNotFoundError: sys.exit(0)
+current=instance()
+recorded=owner[4:-1] if owner.startswith(b"run ") and owner.endswith(b"\n") else b""
+if owner==b"claim" or (recorded and current and recorded!=current): sys.exit(0)
 os.close(os.open(cancel_marker,os.O_CREAT|os.O_WRONLY,0o600))
 while os.path.exists(marker):
  if time.monotonic()>deadline: sys.exit(3)
@@ -275,7 +384,7 @@ func Cancel(ctx context.Context, ctr testcontainers.Container, label, marker str
 		_, _ = io.Copy(io.Discard, io.LimitReader(reader, 1<<16))
 	}
 	if err != nil {
-		return fmt.Errorf("cancel %s command: %w", label, err)
+		return &BackendError{Op: "cancel " + label + " command", Err: err}
 	}
 	if code != 0 {
 		return fmt.Errorf("cancel %s command: canceler exited %d", label, code)

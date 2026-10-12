@@ -1,0 +1,470 @@
+package ceph
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/containerd/errdefs"
+	"github.com/testcontainers/testcontainers-go"
+)
+
+// Limits of a NativeCommand.
+const (
+	MaxNativeCommandTimeout = time.Hour
+	MaxNativeCommandOutput  = 64 << 20
+	// NativeCommandStopTimeout bounds one attempt to stop a command inside its
+	// container: the canceler and, when it fails, one inspection of the
+	// container. The attempt has this budget of its own, independent of the
+	// caller's context, which has usually ended.
+	NativeCommandStopTimeout = supervised.CancelTimeout + nativeInspectTimeout
+	nativeInspectTimeout     = 5 * time.Second
+)
+
+// ErrNativeCommandIncomplete marks a NativeCommandResult that timed out or
+// whose output was truncated: its bytes are not the command's complete output.
+var ErrNativeCommandIncomplete = errors.New("native command did not complete within its limits")
+
+// errNativeTerminated is the cause with which Terminate cancels a running
+// command.
+var errNativeTerminated = errors.New("ceph cluster is terminated")
+
+// NativeCommand is one native command that RunNativeCommand runs under a
+// supervisor inside a container.
+type NativeCommand struct {
+	// Argv is the program and its arguments. It runs without a shell.
+	Argv []string
+	// Timeout bounds the command's run time, at most
+	// MaxNativeCommandTimeout. The caller's context can shorten it.
+	Timeout time.Duration
+	// MaxStdout and MaxStderr bound each output stream inside the container,
+	// each at most MaxNativeCommandOutput bytes.
+	MaxStdout, MaxStderr int
+	// Label names the command in errors, which never contain its arguments
+	// or output. It defaults to "native command".
+	Label string
+}
+
+// NativeCommandResult is the outcome of a supervised native command. Stdout
+// and Stderr are separate, raw and binary-safe.
+type NativeCommandResult struct {
+	Stdout, Stderr []byte
+	// ExitCode is the command's exit code; a nonzero one is not an error.
+	ExitCode int
+	// TimedOut means that the supervisor killed the command's process group
+	// at its deadline; the output is what it wrote until then.
+	TimedOut bool
+	// StdoutTruncated and StderrTruncated mean that a stream exceeded its
+	// limit; the result holds its first bytes.
+	StdoutTruncated, StderrTruncated bool
+}
+
+// Complete reports whether the command finished within its time and output
+// limits, so that its output is complete.
+func (r NativeCommandResult) Complete() bool {
+	return !r.TimedOut && !r.StdoutTruncated && !r.StderrTruncated
+}
+
+// NativeCommandUnstoppedError reports a native command that RunNativeCommand
+// could not confirm as stopped after its call ended early: it may still run
+// in its container. Stop retries the confirmation; Terminate also tries it.
+type NativeCommandUnstoppedError struct {
+	invocation *nativeInvocation
+	err        error
+}
+
+func (e *NativeCommandUnstoppedError) Error() string {
+	if e.invocation == nil {
+		return "native command may still run in its container"
+	}
+	return fmt.Sprintf("%s may still run in its container: %v", e.invocation.label, e.err)
+}
+
+func (e *NativeCommandUnstoppedError) Unwrap() error { return e.err }
+
+// Stop stops the command, or confirms that it ended with its container, and
+// returns nil once the command can no longer run: after the container was
+// removed, or once it runs again after a restart. A stopped container cannot
+// confirm anything until then. Each attempt has its own
+// NativeCommandStopTimeout, and waits for a concurrent attempt within ctx.
+// Stop is idempotent and can be retried, also after Terminate.
+func (e *NativeCommandUnstoppedError) Stop(ctx context.Context) error {
+	inv := e.invocation
+	if inv == nil {
+		return errors.New("native command error has no invocation")
+	}
+	if err := inv.stop(ctx); err != nil {
+		return err
+	}
+	inv.owner.nativeMu.Lock()
+	delete(inv.owner.nativeInvocations, inv)
+	inv.owner.nativeMu.Unlock()
+	return nil
+}
+
+// nativeInvocation is one RunNativeCommand call, from its start until its
+// command is known to have ended.
+type nativeInvocation struct {
+	owner  *Container
+	target testcontainers.Container
+	label  string
+	cancel context.CancelCauseFunc
+	// done is closed when the call has returned. It then has set marker if
+	// it could not confirm that its command stopped.
+	done   chan struct{}
+	marker string
+	// mu serializes stop.
+	mu      sync.Mutex
+	stopped bool
+}
+
+// stop returns once the command can no longer run. The canceler confirms
+// that inside the container, also for a command of an earlier instance of a
+// restarted container. Only a removed container is confirmed from outside: an
+// exec that Docker still starts would run in whatever instance runs then.
+func (inv *nativeInvocation) stop(ctx context.Context) error {
+	if err := lockTopologyMutex(ctx, &inv.mu); err != nil {
+		return fmt.Errorf("stop %s: %w", inv.label, err)
+	}
+	defer inv.mu.Unlock()
+	if inv.stopped {
+		return nil
+	}
+	if err := supervised.Cancel(ctx, inv.target, inv.label, inv.marker); err != nil {
+		stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nativeInspectTimeout)
+		_, stateErr := inv.target.State(stateCtx)
+		cancel()
+		if !errdefs.IsNotFound(stateErr) {
+			return safeNativeError(fmt.Errorf("stop %s: %w", inv.label, err))
+		}
+	}
+	inv.stopped = true
+	return nil
+}
+
+// nativeError is an error whose text names each Docker or container
+// implementation failure in it only by its kind; Unwrap returns the original
+// error.
+type nativeError struct {
+	text string
+	err  error
+}
+
+func (e *nativeError) Error() string { return e.text }
+
+func (e *nativeError) Unwrap() error { return e.err }
+
+// safeNativeError replaces the text of every supervised.BackendError in err,
+// which Docker or the caller's container type wrote and which may quote the
+// command or its output, by its operation and kind.
+func safeNativeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	text := err.Error()
+	safe := text
+	var visit func(error)
+	visit = func(err error) {
+		switch e := err.(type) {
+		case *supervised.BackendError:
+			safe = strings.ReplaceAll(safe, e.Error(), e.Op+": "+backendKind(e.Err))
+		case interface{ Unwrap() []error }:
+			for _, inner := range e.Unwrap() {
+				if inner != nil {
+					visit(inner)
+				}
+			}
+		case interface{ Unwrap() error }:
+			if inner := e.Unwrap(); inner != nil {
+				visit(inner)
+			}
+		}
+	}
+	visit(err)
+	if safe == text {
+		return err
+	}
+	return &nativeError{text: safe, err: err}
+}
+
+// backendKind names the kind of a Docker or container implementation error.
+func backendKind(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return context.Canceled.Error()
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded.Error()
+	case errdefs.IsNotFound(err):
+		return "the container does not exist"
+	case errdefs.IsConflict(err):
+		return "the container is not running, or is paused"
+	}
+	return "Docker or the container implementation failed, and errors.Unwrap returns its error"
+}
+
+// validateNativeCommand checks a command before anything runs and returns
+// its label.
+func validateNativeCommand(command NativeCommand) (string, error) {
+	label := command.Label
+	if label == "" {
+		label = "native command"
+	}
+	switch {
+	case len(label) > 128 || strings.IndexFunc(label, unicode.IsControl) >= 0:
+		return "", errors.New("native command label must be at most 128 bytes without control characters")
+	case len(command.Argv) == 0 || command.Argv[0] == "":
+		return "", fmt.Errorf("%s needs a program", label)
+	case slices.ContainsFunc(command.Argv, func(arg string) bool { return strings.IndexByte(arg, 0) >= 0 }):
+		return "", fmt.Errorf("%s arguments must not contain NUL", label)
+	case command.Timeout <= 0 || command.Timeout > MaxNativeCommandTimeout:
+		return "", fmt.Errorf("%s timeout must be positive and at most %v", label, MaxNativeCommandTimeout)
+	case command.MaxStdout <= 0 || command.MaxStdout > MaxNativeCommandOutput || command.MaxStderr <= 0 || command.MaxStderr > MaxNativeCommandOutput:
+		return "", fmt.Errorf("%s output limits must be positive and at most %d bytes", label, MaxNativeCommandOutput)
+	}
+	return label, nil
+}
+
+// RunNativeCommand runs one native command in target under the supervisor
+// that the module's own native queries use. target is the control container,
+// a daemon or service container of this cluster, or a container of the caller
+// attached to the cluster's network (the host network for a host-network
+// cluster); the call never adopts, stops or removes the caller's container.
+// target must be running, not paused, and have python3, which runs the
+// supervisor. A malformed command or an ended ctx fails before anything runs.
+//
+// The supervisor starts the command in its own process group, bounds each
+// output stream inside the container and kills the group at the deadline,
+// Timeout shortened to ctx's deadline. A command that times out or exceeds an
+// output limit returns its result, marked by TimedOut or the Truncated flags,
+// with an error that wraps ErrNativeCommandIncomplete. A descendant that
+// starts its own session leaves the group and is not stopped.
+//
+// When ctx ends first, the call stops the command inside the container before
+// it returns, also when Docker had not started it yet, within its own
+// NativeCommandStopTimeout. When that cannot be confirmed, for example because
+// the container is paused or a signal killed the supervisor, the error is a
+// *NativeCommandUnstoppedError, whose Stop retries. Terminate cancels running
+// commands and stops those not confirmed. Stopping a command does not undo
+// what it already did, such as a MON command it had sent, and nothing is
+// retried. Errors name the command by Label; a failure of Docker or of
+// target's implementation appears only by its kind, and errors.Unwrap returns
+// the original error, whose text may quote anything. RedactSecrets redacts
+// output that a test logs.
+func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
+	label, err := validateNativeCommand(command)
+	if err != nil {
+		return NativeCommandResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return NativeCommandResult{}, err
+	}
+	if target == nil || target.GetContainerID() == "" {
+		return NativeCommandResult{}, fmt.Errorf("%s needs a started container", label)
+	}
+	// A Docker call that ctx ended may fail without wrapping ctx's error.
+	if err := c.admitNativeTarget(ctx, target); err != nil {
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
+	}
+	state, err := target.State(ctx)
+	if err != nil {
+		err = &supervised.BackendError{Op: "inspect the container", Err: err}
+	}
+	switch {
+	case ctx.Err() != nil:
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
+	case err != nil || state == nil || !state.Running || state.Paused:
+		return NativeCommandResult{}, safeNativeError(errors.Join(fmt.Errorf("%s needs a running, unpaused container", label), err))
+	}
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, done: make(chan struct{})}
+	c.nativeMu.Lock()
+	if c.nativeClosed {
+		c.nativeMu.Unlock()
+		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errNativeTerminated)
+	}
+	if c.nativeInvocations == nil {
+		c.nativeInvocations = make(map[*nativeInvocation]bool)
+	}
+	c.nativeInvocations[inv] = true
+	c.nativeMu.Unlock()
+
+	report, err := supervised.Run(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr, command.Argv...)
+	unstopped, _ := supervised.Unconfirmed(err)
+	var notStopped *supervised.NotStoppedError
+	if unstopped != "" && !errors.As(err, &notStopped) {
+		// A signal killed the supervisor before its cleanup, and nothing has
+		// tried to stop its command yet.
+		inv.marker = unstopped
+		if stopErr := inv.stop(context.WithoutCancel(ctx)); stopErr != nil {
+			err = errors.Join(err, stopErr)
+		} else {
+			unstopped = ""
+		}
+	}
+	var exit *supervised.ExitError
+	c.nativeMu.Lock()
+	if unstopped != "" {
+		inv.marker = unstopped
+	} else {
+		delete(c.nativeInvocations, inv)
+	}
+	c.nativeMu.Unlock()
+	close(inv.done)
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
+		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
+	}
+	err = safeNativeError(err)
+	switch {
+	case unstopped != "":
+		return NativeCommandResult{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
+	case errors.As(err, &exit) && (exit.Code == 126 || exit.Code == 127):
+		return NativeCommandResult{}, fmt.Errorf("%s: the container cannot run python3, which the supervisor needs: %w", label, err)
+	case errors.As(err, &exit) && exit.Code == supervised.LaunchFailedExit:
+		return NativeCommandResult{}, fmt.Errorf("%s: the program could not be started, for example because it does not exist or is not executable", label)
+	case err != nil:
+		return NativeCommandResult{}, err
+	}
+	result := NativeCommandResult{Stdout: report.Stdout, Stderr: report.Stderr, ExitCode: report.ExitCode,
+		TimedOut: report.TimedOut, StdoutTruncated: report.StdoutTruncated, StderrTruncated: report.StderrTruncated}
+	if !result.Complete() {
+		return result, fmt.Errorf("%s: %w (timed out %t, stdout truncated %t, stderr truncated %t)", label, ErrNativeCommandIncomplete,
+			result.TimedOut, result.StdoutTruncated, result.StderrTruncated)
+	}
+	return result, nil
+}
+
+// admitNativeTarget accepts a container of this cluster, or one of the caller
+// attached to the cluster's network.
+func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers.Container) error {
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	closed, owned := c.closed, c.ownsNativeTarget(target.GetContainerID())
+	networks := []string{}
+	if c.network != nil {
+		networks = append(networks, c.network.Name)
+	}
+	if c.clusterNetwork != nil {
+		networks = append(networks, c.clusterNetwork.Name)
+	}
+	hostNetwork := c.settings.hostNetwork
+	c.mu.Unlock()
+	if !owned {
+		if err := lockTopologyReadMutex(ctx, &c.controlMu); err != nil {
+			return err
+		}
+		owned = c.controlPlane != nil && c.controlPlane.GetContainerID() == target.GetContainerID()
+		c.controlMu.RUnlock()
+	}
+	switch {
+	case closed:
+		return errNativeTerminated
+	case owned:
+		return nil
+	}
+	attached, err := target.Networks(ctx)
+	if err != nil {
+		return &supervised.BackendError{Op: "inspect the container's networks", Err: err}
+	}
+	if hostNetwork && slices.Contains(attached, "host") {
+		return nil
+	}
+	for _, name := range networks {
+		if slices.Contains(attached, name) {
+			return nil
+		}
+	}
+	return errors.New("the container is neither part of this cluster nor attached to its network")
+}
+
+// ownsNativeTarget reports whether id is a container of this cluster. The
+// caller holds c.mu.
+func (c *Container) ownsNativeTarget(id string) bool {
+	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
+	if matches(c.Container) || matches(c.manager) {
+		return true
+	}
+	for _, mon := range c.monitors {
+		if mon != nil && matches(mon.Container) {
+			return true
+		}
+	}
+	for _, mgr := range c.managers {
+		if mgr != nil && matches(mgr.Container) {
+			return true
+		}
+	}
+	for _, osd := range c.osds {
+		if osd != nil && matches(osd.Container) {
+			return true
+		}
+	}
+	for _, ctr := range c.services {
+		if matches(ctr) {
+			return true
+		}
+	}
+	return false
+}
+
+// stopNativeInvocations refuses new native commands, cancels the running
+// ones, waits until their calls have returned and stops the commands that
+// they could not confirm as stopped. It keeps those it cannot stop and returns
+// their errors.
+func (c *Container) stopNativeInvocations(ctx context.Context) []error {
+	c.nativeMu.Lock()
+	c.nativeClosed = true
+	pending := slices.Collect(maps.Keys(c.nativeInvocations))
+	c.nativeMu.Unlock()
+	for _, inv := range pending {
+		inv.cancel(errNativeTerminated)
+	}
+	var errs []error
+	for _, inv := range pending {
+		// A canceled call returns within its own stop budget.
+		wait := time.NewTimer(NativeCommandStopTimeout + nativeInspectTimeout)
+		select {
+		case <-inv.done:
+			wait.Stop()
+		case <-wait.C:
+			errs = append(errs, fmt.Errorf("%s did not return after its cancellation", inv.label))
+			continue
+		case <-ctx.Done():
+			wait.Stop()
+			errs = append(errs, fmt.Errorf("wait for %s: %w", inv.label, ctx.Err()))
+			continue
+		}
+		if inv.marker == "" {
+			continue
+		}
+		if err := inv.stop(ctx); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		c.nativeMu.Lock()
+		delete(c.nativeInvocations, inv)
+		c.nativeMu.Unlock()
+	}
+	return errs
+}
+
+// RedactSecrets returns a copy of data in which the secrets that the cluster
+// knows, and values, are replaced by [REDACTED], as in CollectDiagnostics:
+// keyring keys, service credentials, and the private keys, secret assignments
+// and bearer tokens that it recognizes. It is meant for output that a test
+// logs or reports; an oracle compares the raw bytes. Redaction is best effort.
+func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
+	snapshot, err := c.diagnosticsSnapshot(ctx, DiagnosticsConfig{RedactValues: values})
+	if err != nil {
+		return nil, err
+	}
+	return []byte(diagnosticsRedactor(snapshot.secrets)(string(data))), nil
+}

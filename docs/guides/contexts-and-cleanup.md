@@ -170,6 +170,7 @@ resources from calls that failed halfway:
 | The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
 | Container pauses | `PauseContainer` (resumed first) |
 | Network interruptions | `cluster.InterruptNetwork` (restored first, also on your client containers) |
+| Native commands that are still running or not confirmed as stopped | `RunNativeCommand` (canceled and stopped, also in your client containers) |
 
 Everything stored inside Ceph (pools, Cephx identities, configuration
 database entries, OSD map flags and ratios, blocklist entries, CephFS and RGW
@@ -177,7 +178,8 @@ metadata) disappears with the containers. `Terminate` does not restore
 `Temporary*` overrides one by one; it discards the whole cluster.
 
 `Terminate` works in a fixed order: it restores network interruptions, resumes
-paused containers, releases host-port reservations, stops gateways and MDS
+paused containers, cancels and stops native commands, releases host-port
+reservations, stops gateways and MDS
 daemons while the OSDs are still running, then removes OSDs, the in-memory OSD
 volume, MGRs, MONs, the control container and finally the networks. Each
 container gets a 2-second stop timeout unless you pass
@@ -327,6 +329,7 @@ result:
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `PauseContainer` | Pause handle | `Resume` |
+| `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `rbd.RunMirror`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
@@ -482,7 +485,8 @@ func TestSomething(t *testing.T) {
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Run`, `Terminate`, `WithStartupTimeout`,
-  `Temporary*`, `CollectDiagnostics`, context-aware getters.
+  `Temporary*`, `RunNativeCommand`, `CollectDiagnostics`, context-aware
+  getters.
 - [rbd.md](../rbd.md), [cephfs.md](../cephfs.md), [rgw.md](../rgw.md): service
   and multicluster fixtures and their `Terminate`.
 - [Fault injection](fault-injection.md): pauses, interruptions and overrides
