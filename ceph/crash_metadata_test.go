@@ -267,6 +267,7 @@ func TestCrashMetadataTellsOutcomesApart(t *testing.T) {
 		"too-many":        {archive: many},
 		"rejected":        {archive: crashArchive(t, crashEntry{name: "crash/x/meta", body: "not json"})},
 		"records-limited": {archive: many},
+		"control":         {archive: records},
 	}}
 	snapshot := crashSnapshot(
 		crashContainer("mon", "a", "records"), crashContainer("mgr", "a", "empty"), crashContainer("osd", "0", "absent"),
@@ -275,6 +276,7 @@ func TestCrashMetadataTellsOutcomesApart(t *testing.T) {
 		crashContainer("osd", "7", "too-many"), crashContainer("osd", "8", "rejected"),
 		DiagnosticsContainer{Role: "osd", Name: "9"}, crashContainer("control", "cli", "control"),
 	)
+	snapshot.controlPlane = crashTarget{id: "control"}
 	config := CrashMetadataConfig{MaxArchiveBytes: int64(len(two) - 1024), MaxEntries: 4}
 	report, err := collectCrashes(t, t.Context(), config, docker, snapshot)
 	want := map[string]CrashOutcome{
@@ -298,7 +300,7 @@ func TestCrashMetadataTellsOutcomesApart(t *testing.T) {
 		!strings.Contains(got["osd 6"].Error, "exceeds") || len(got["osd 5"].Records) != 1 || len(got["osd 7"].Records) != 4 {
 		t.Fatalf("partial results lost: %+v", got)
 	}
-	if docker.containers["control"] != nil {
+	if docker.containers["control"].copies != 0 {
 		t.Fatal("the control container was read")
 	}
 	for _, name := range []string{"osd 3", "osd 4", "osd 5", "osd 6", "osd 7"} {
@@ -452,5 +454,53 @@ func TestCrashMetadataRejectsDamagedArchives(t *testing.T) {
 	data, _ := json.Marshal(report)
 	if strings.Contains(string(data), "hunter2") || err == nil || strings.Contains(err.Error(), "hunter2") {
 		t.Fatalf("a redaction value leaked: %v; %s", err, data)
+	}
+}
+
+// The cluster's own control container is skipped by its identity. A caller's
+// container is read whatever it is called, also one described like the
+// control container, and so is the control container when the caller asks
+// for it.
+func TestCrashMetadataSelectsTargetsByIdentity(t *testing.T) {
+	records := crashArchive(t, crashEntry{name: "crash/", kind: tar.TypeDir}, crashEntry{name: "crash/one/meta", body: `{"crash_id":"one"}`})
+	control := crashTarget{id: "control"}
+	for name, tc := range map[string]struct {
+		additional []DiagnosticsContainer
+		read       []string
+	}{
+		"helper described as a helper":   {[]DiagnosticsContainer{crashContainer("helper", "collector", "helper")}, []string{"helper"}},
+		"helper described as control":    {[]DiagnosticsContainer{crashContainer("control", "cli", "helper")}, []string{"helper"}},
+		"no additional containers":       {nil, nil},
+		"control container asked for":    {[]DiagnosticsContainer{{Role: "control", Name: "mine", Container: control}}, []string{"control"}},
+		"control and a helper asked for": {[]DiagnosticsContainer{crashContainer("control", "cli", "helper"), {Container: control}}, []string{"control", "helper"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			docker := &fakeCrashDocker{containers: map[string]*fakeCrashContainer{
+				"control": {archive: records}, "helper": {archive: records},
+			}}
+			cluster := &Container{controlPlane: control}
+			config, err := normalizeCrashMetadataConfig(CrashMetadataConfig{AdditionalContainers: tc.additional})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := cluster.diagnosticsSnapshot(t.Context(), DiagnosticsConfig{MaxContainers: 128, AdditionalContainers: config.AdditionalContainers})
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := collectCrashMetadata(t.Context(), config, snapshot, docker, &CrashMetadataReport{SchemaVersion: 1, Containers: []CrashMetadataContainer{}})
+			if err != nil || !report.Complete || len(report.Containers) != len(tc.read) {
+				t.Fatalf("report %+v, %v", report, err)
+			}
+			for _, id := range []string{"control", "helper"} {
+				if read := docker.containers[id].copies == 1; read != slices.Contains(tc.read, id) {
+					t.Fatalf("%s read: %t", id, read)
+				}
+			}
+			for _, result := range report.Containers {
+				if result.Outcome != CrashRecordsFound || len(result.Records) != 1 {
+					t.Fatalf("result %+v", result)
+				}
+			}
+		})
 	}
 }

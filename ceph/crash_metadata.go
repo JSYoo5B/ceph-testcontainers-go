@@ -224,8 +224,13 @@ func collectCrashMetadata(ctx context.Context, config CrashMetadataConfig, snaps
 	var errs []error
 	report.Complete = true
 	for _, target := range snapshot.containers {
-		// The separate control container runs no daemon.
-		if target.Role == "control" && target.Name == "cli" {
+		// The separate control container runs no daemon. It is recognized
+		// by its identity, not by a description, which a caller's container
+		// may share, and it is read when the caller asked for it.
+		if sameContainer(target.Container, snapshot.controlPlane) && !slices.ContainsFunc(config.AdditionalContainers,
+			func(requested DiagnosticsContainer) bool {
+				return sameContainer(requested.Container, snapshot.controlPlane)
+			}) {
 			continue
 		}
 		result := readCrashDirectory(ctx, config, target, docker, redact)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,15 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	}
 	if after := dockerObjects(t, ctx, docker); after.containers != before.containers || after.volumes != before.volumes {
 		t.Fatalf("collection changed Docker objects: %+v -> %+v", before, after)
+	}
+	// A caller's container is read whatever it is called, also when it is
+	// described like the cluster's own control container.
+	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
+	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
+		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
+			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryEmpty
+		}) {
+		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
 
 	crashDaemon(t, ctx, cluster.ManagerContainer())

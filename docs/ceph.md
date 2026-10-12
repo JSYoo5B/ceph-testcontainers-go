@@ -2979,7 +2979,7 @@ t.Cleanup(func() {
 | `MaxEntries` | 4096 | 65536 | Archive entries per container. |
 | `MaxRecordBytes` | 64 KiB | 1 MiB | Each `meta` file. |
 | `MaxRecords` | 64 | 1024 | Records per container; later ones are listed in `Omitted`. |
-| `AdditionalContainers` | none | 64 | Caller-owned containers, such as mirror daemons, to read as well. |
+| `AdditionalContainers` | none | 64 | Caller-owned containers, such as mirror daemons, to read as well. Each one is read whatever its `Role` and `Name`; the cluster's separate control container, which runs no daemon, is read only when it is listed here. |
 | `RedactValues` | none | 128 values of up to 4096 bytes | Extra secrets to mask. |
 
 Each `ceph.CrashMetadataContainer` in `ceph.CrashMetadataReport.Containers` has

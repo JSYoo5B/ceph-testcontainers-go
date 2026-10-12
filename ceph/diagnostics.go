@@ -157,9 +157,12 @@ func normalizeDiagnosticsConfig(config DiagnosticsConfig) (DiagnosticsConfig, er
 
 type diagnosticNetwork struct{ id, name string }
 type diagnosticsSnapshot struct {
-	containers          []DiagnosticsContainer
-	networks            []diagnosticNetwork
-	control             testcontainers.Container
+	containers []DiagnosticsContainer
+	networks   []diagnosticNetwork
+	control    testcontainers.Container
+	// controlPlane is the separate control container that the snapshot
+	// added itself, if the cluster has one.
+	controlPlane        testcontainers.Container
 	hostNetwork, closed bool
 	publicAddress       string
 	secrets             []string
@@ -177,6 +180,19 @@ func diagnosticContainerHandle(ctr testcontainers.Container) testcontainers.Cont
 		}
 	}
 	return ctr
+}
+
+// sameContainer reports whether a and b are the same container: by ID, or for
+// containers without one, by the same pointer.
+func sameContainer(a, b testcontainers.Container) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if id := b.GetContainerID(); id != "" {
+		return a.GetContainerID() == id
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	return va.Type() == vb.Type() && va.Kind() == reflect.Pointer && va.Pointer() == vb.Pointer()
 }
 
 func diagnosticLock(ctx context.Context, try func() bool) error {
@@ -256,6 +272,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	}
 	if c.controlPlane != nil {
 		snapshot.control = diagnosticContainerHandle(c.controlPlane)
+		snapshot.controlPlane = snapshot.control
 		add("control", "cli", snapshot.control)
 	}
 	c.controlMu.RUnlock()
