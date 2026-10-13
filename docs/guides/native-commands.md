@@ -476,6 +476,53 @@ with nonaligned writes, append, truncation and zero extension, each read back
 by the independent client, an OSD restart and digests of every snapshot and
 HEAD.
 
+### Oracle recipe: write outcomes
+
+A writer cannot tell from its own result whether a write happened. Decide it
+with a second client that reads the object back, and keep the three things
+apart:
+
+- **The completion.** librados completes a write when the OSD has committed
+  it, and that completion is the receipt. On a file-backed BlueStore OSD,
+  writes whose completion returned 0 survive a `SIGKILL` of the OSD. Receiving
+  the message is not the receipt: in the delayed case below, the OSD's record
+  of the write starts when the message arrived, seconds before the write ran.
+- **A local timeout.** `rados_osd_op_timeout` ends the call with `ETIMEDOUT`
+  (`-110` in an asynchronous completion, reported once). It does not cancel
+  the write: an OSD that still holds it runs it later, while the client stays
+  connected. See [Delaying operations inside an OSD](fault-injection.md#delaying-operations-inside-an-osd).
+- **A killed client.** When the OSD is about to start a write, it discards
+  the write if it has already seen the client's connection close
+  (`osd_discard_disconnected_ops`, true by default). Killing the client does
+  not guarantee that order by itself, so confirm the outcome from the OSD's
+  record of the operation (no `started` event) and an independent read.
+  `RunNativeCommand` confirms that the process group is gone after a timeout
+  or cancellation.
+
+Do not retry an uncertain append or write blindly: if the first attempt ran,
+the retry applies it twice. Guard the retry with the version that the
+independent client read before the first attempt:
+
+```python
+with rados.WriteOpCtx() as op:
+    op.assert_version(version)  # read before the first attempt
+    op.append(b"record;")
+    ioctx.operate_write_op(op, "log")
+```
+
+The guarded retry fails with `ERANGE` (34) when the object changed since that
+read, for example because the first attempt ran, and with `EOVERFLOW` (75)
+when the version is newer than the object's. An object's version is the
+version of its PG's log at the object's last write, so the versions of objects
+in one PG interleave. A refused write still takes a version, because the PG
+log records it to detect resends: after two refused retries, the next append
+was three versions newer, in 20.2.4 and 19.2.5 alike.
+
+`TestRADOSMutationOutcomes` in `internal/integration` shows each case with
+native clients and the OSD's admin socket: acknowledged asynchronous writes
+across a `SIGKILL`, a write that ran after its client's timeout, a guarded and
+an unguarded retry, and a killed writer whose write the OSD discarded.
+
 ## Changing configuration
 
 | Need | Use |
