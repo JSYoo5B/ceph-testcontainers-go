@@ -46,10 +46,13 @@ type options struct {
 // WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
 // retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
 // encrypted v2 connections without CRC-mode or v1 fallback, including later
-// daemons and WithClient containers. This option does not enable RGW HTTP TLS.
+// daemons and WithClient containers. MessengerV2Only removes the v1 listeners
+// and addresses in the same way but leaves the connection modes to Ceph's
+// defaults and the Messenger policy options. This option does not enable RGW
+// HTTP TLS.
 func WithMessengerMode(mode MessengerMode) Option {
 	return func(o *options) error {
-		if mode != MessengerDefault && mode != MessengerV2Secure {
+		if mode != MessengerDefault && mode != MessengerV2Secure && mode != MessengerV2Only {
 			return fmt.Errorf("unsupported Messenger mode %d", mode)
 		}
 		o.messengerMode = mode

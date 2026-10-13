@@ -38,7 +38,7 @@ esac
 v2=${CEPH_MON_PORT_V2:-3300}
 v1=${CEPH_MON_PORT_V1:-6789}
 addrs="[v2:$ip:$v2,v1:$ip:$v1]"
-if [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
     addrs="[v2:$ip:$v2]"
 fi
 mkdir -p "/var/lib/ceph/mon/ceph-$id" /var/run/ceph

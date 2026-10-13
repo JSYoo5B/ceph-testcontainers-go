@@ -8,6 +8,14 @@ change the API.
 
 ### Added
 
+- `ceph.MessengerV2Only` for `WithMessengerMode` listens on and advertises
+  only Messenger v2, like `MessengerV2Secure`, but leaves the connection modes
+  configurable: `WithMessengerPolicy`, `TemporaryMessengerPolicy` and
+  `WithClientMessengerPolicy` select CRC, secure or a per-daemon-type mix, for
+  example a CRC-only cluster without v1. The MON publishes only `3300/tcp`,
+  later daemons inherit the protocols, and `TemporaryConfig` refuses
+  `ms_bind_msgr1` and `ms_bind_msgr2`.
+
 - Classified errors. Every package reports a refused request
   (`ceph.ErrInvalidRequest`), a feature that the Ceph of the relevant target
   lacks (`ceph.ErrUnsupported`), a missing image tool or an unselected
@@ -119,6 +127,9 @@ change the API.
   removal permanent.
 
 ### Changed
+
+- `TemporaryConfig` classifies its refusal of an option that the Messenger mode
+  fixes as `ErrInvalidRequest`.
 
 - Errors of the module's native commands, such as those of `Ceph`, no longer
   contain the command's standard output and standard error. They contain the

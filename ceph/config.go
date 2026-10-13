@@ -75,7 +75,9 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // writes to this key with application/restoration; Ceph has no config CAS.
 // MessengerV2Secure reserves its six ms_*_mode options and ms_bind_msgr1/2 in
 // every section and mask: central overrides cannot change the fixed local
-// bootstrap policy. Select a MessengerMode when creating a new cluster instead.
+// bootstrap policy. MessengerV2Only reserves ms_bind_msgr1/2 the same way and
+// leaves the mode options free. Select a MessengerMode when creating a new
+// cluster instead.
 func (c *Container) TemporaryConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -88,7 +90,10 @@ func (c *Container) TemporaryConfig(ctx context.Context, setting ConfigSetting) 
 		return nil, errors.New("ceph cluster is unavailable")
 	}
 	if c.settings.messengerMode == MessengerV2Secure && messengerBootstrapSetting(setting.Name) {
-		return nil, fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name)
+		return nil, invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+	}
+	if c.settings.messengerMode == MessengerV2Only && messengerProtocolSetting(setting.Name) {
+		return nil, invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err

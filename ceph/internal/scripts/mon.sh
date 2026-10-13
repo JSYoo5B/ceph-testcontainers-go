@@ -47,17 +47,22 @@ mon_v2=${CEPH_MON_PORT_V2:-3300}
 mon_v1=${CEPH_MON_PORT_V1:-6789}
 mon_addrs="[v2:${mon_host}:${mon_v2},v1:${mon_host}:${mon_v1}]"
 messenger_config=
-if [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+# MessengerV2Only and MessengerV2Secure have no v1 listener or address;
+# MessengerV2Secure also fixes every connection mode to secure.
+if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
     mon_addrs="[v2:${mon_host}:${mon_v2}]"
-    messenger_config='ms cluster mode = secure
+    messenger_config='ms bind msgr1 = false
+ms bind msgr2 = true
+'
+fi
+if [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+    messenger_config="ms cluster mode = secure
 ms service mode = secure
 ms client mode = secure
 ms mon cluster mode = secure
 ms mon service mode = secure
 ms mon client mode = secure
-ms bind msgr1 = false
-ms bind msgr2 = true
-'
+${messenger_config}"
 fi
 # Cephx key type, MonMap ciphers and ticket lifetimes from WithAuth. Squid and
 # Tentacle before 20.2.4 have no key types other than AES and no MonMap
