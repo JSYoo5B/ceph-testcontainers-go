@@ -389,14 +389,103 @@ class CompletionTests(unittest.TestCase):
 
     def test_compile_phase_does_not_execute_any_test(self):
         plan = engine.discover([fixture()])
+        outcome = {"exit_code": 0, "timed_out": False, "timeout_seconds": 180, "elapsed_seconds": 1.0}
         with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(engine.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as compiler:
+                patch.object(engine, "bounded_go", return_value=(outcome, "")) as compiler:
             report = engine.compile_profile(plan, "short", "basic", None, Path(temporary) / "compile")
         self.assertTrue(report["passed"])
         self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
         command = compiler.call_args.args[0]
         self.assertIn("-c", command)
         self.assertFalse(any(argument.startswith(("-run", "-short", "-list")) for argument in command))
+        self.assertEqual(compiler.call_args.args[2], engine.COMPILE_TIMEOUT_SECONDS)
+
+
+# A go command that writes to both streams, leaves a child process that keeps
+# running in its process group, and then never finishes on its own. The child
+# records its PID so that a test can check it is gone.
+STALLED_GO = """#!/bin/sh
+echo "go: downloading example.com/module v1.0.0"
+echo "stalled on purpose" >&2
+sleep 300 &
+echo $! > "$STALLED_GO_CHILD"
+sleep 300
+"""
+
+# A go command that fails at once with a compiler error.
+FAILING_GO = """#!/bin/sh
+echo "./broken_test.go:3:2: undefined: missingHelper" >&2
+exit 1
+"""
+
+
+class BoundedPreparationTests(unittest.TestCase):
+    """Run the preparation phases against stand-in go executables."""
+
+    def run_with(self, script, phase):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "bin").mkdir()
+            go = root / "bin" / "go"
+            go.write_text(script)
+            go.chmod(0o755)
+            child = root / "child.pid"
+            environment = {"PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "STALLED_GO_CHILD": str(child)}
+            with patch.dict(os.environ, environment), \
+                    patch.object(engine, "COMPILE_TIMEOUT_SECONDS", 2), patch.object(engine, "MODULES_TIMEOUT_SECONDS", 2):
+                report = phase(root / "receipt")
+            files = {path.name: path.read_text() for path in (root / "receipt").iterdir()}
+            pid = int(child.read_text()) if child.exists() else None
+        return report, files, pid
+
+    def assertGone(self, pid):
+        self.assertIsNotNone(pid)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        self.fail("a process of the timed-out go command is still running")
+
+    def compile(self, directory):
+        return engine.compile_profile(engine.discover([fixture()]), "short", "basic", None, directory)
+
+    def test_compile_timeout_keeps_partial_output_and_a_failed_receipt(self):
+        report, files, pid = self.run_with(STALLED_GO, self.compile)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["classification"], "compile-timeout")
+        self.assertTrue(report["timed_out"])
+        self.assertIsNone(report["exit_code"])
+        self.assertEqual(report["timeout_seconds"], 2)
+        self.assertGreaterEqual(report["elapsed_seconds"], 2)
+        self.assertEqual(json.loads(files["compile-report.json"]), report)
+        self.assertIn("go: downloading example.com/module v1.0.0", files["compile.log"])
+        self.assertIn("stalled on purpose", files["compile.log"])
+        self.assertNotIn("test-binary", files)
+        self.assertGone(pid)
+
+    def test_compile_failure_keeps_the_compiler_error(self):
+        report, files, _ = self.run_with(FAILING_GO, self.compile)
+        self.assertEqual((report["classification"], report["exit_code"], report["timed_out"]), ("compile-failure", 1, False))
+        self.assertIn("undefined: missingHelper", files["compile.log"])
+
+    def test_module_preparation_timeout_keeps_partial_output_and_a_failed_receipt(self):
+        report, files, pid = self.run_with(STALLED_GO, engine.prepare_modules)
+        self.assertEqual((report["passed"], report["classification"], report["exit_code"]), (False, "modules-timeout", None))
+        self.assertEqual(report["command"], ["go", "mod", "download"])
+        self.assertEqual(json.loads(files["modules-report.json"]), report)
+        self.assertIn("go: downloading example.com/module v1.0.0", files["modules.log"])
+        self.assertGone(pid)
+
+    def test_compile_cli_exits_nonzero_after_a_timeout(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch.object(engine, "bounded_go", return_value=({"exit_code": None, "timed_out": True, "timeout_seconds": 180,
+                                                                  "elapsed_seconds": 180.0}, "partial")), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            directory = Path(temporary) / "compile"
+            code = engine.main(["compile", "--category", "short", "--batch", "basic", "--directory", str(directory)])
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads((directory / "compile-report.json").read_text())["classification"], "compile-timeout")
 
 
 class GoSourceEnvironmentTests(unittest.TestCase):

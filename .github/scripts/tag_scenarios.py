@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -30,6 +31,10 @@ CHECKERS = {
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
 DURATION = re.compile(r"([1-9][0-9]*)(ms|s|m|h)\Z")
 SCHEMA = "ceph-tag-scenarios/v1"
+# Bounds of the two preparation phases. Module preparation is the only phase
+# that reaches the network; the compile then reads the module cache.
+MODULES_TIMEOUT_SECONDS = 300
+COMPILE_TIMEOUT_SECONDS = 180
 GO_EXECUTION_ENV = {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"}
 GO_PLATFORMS = frozenset((
     "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "js", "linux", "netbsd",
@@ -475,6 +480,45 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
     return result
 
 
+def bounded_go(command, root, timeout):
+    """Run a go command in its own process group within timeout seconds.
+
+    At the deadline the whole group is killed, so no compiler or download
+    process outlives the phase, and the output written until then is kept.
+    exit_code is None for a command that timed out."""
+    started = time.monotonic()
+    child = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             encoding="utf-8", errors="replace", env=go_environment(), start_new_session=True)
+    try:
+        stdout, stderr = child.communicate(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = child.communicate()
+        timed_out = True
+    outcome = {"exit_code": None if timed_out else child.returncode, "timed_out": timed_out,
+               "timeout_seconds": timeout, "elapsed_seconds": round(time.monotonic() - started, 3)}
+    return outcome, (stdout or "") + (stderr or "")
+
+
+def prepare_modules(directory, root=ROOT):
+    """Download every module that the build list needs into the module cache."""
+    directory.mkdir(parents=True, exist_ok=False)
+    command = ["go", "mod", "download"]
+    outcome, output = bounded_go(command, root, MODULES_TIMEOUT_SECONDS)
+    (directory / "modules.log").write_text(output)
+    passed = outcome["exit_code"] == 0
+    report = {"schema": SCHEMA, "command": command, **outcome, "go_environment": dict(GO_EXECUTION_ENV),
+              "module_cache_restored": os.environ.get("SCENARIO_MODULE_CACHE_HIT", "") == "true",
+              "passed": passed,
+              "classification": "prepared" if passed else "modules-timeout" if outcome["timed_out"] else "modules-failure"}
+    (directory / "modules-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    return report
+
+
 def compile_profile(plan, category, batch, package, directory, root=ROOT):
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
@@ -484,13 +528,13 @@ def compile_profile(plan, category, batch, package, directory, root=ROOT):
     directory.mkdir(parents=True, exist_ok=False)
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o",
                str((directory / "test-binary").resolve()), profile["package"]]
-    result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180,
-                            env=go_environment())
-    (directory / "compile.log").write_text(result.stdout + result.stderr)
-    report = {"schema": SCHEMA, "profile": profile, "command": command, "exit_code": result.returncode,
+    outcome, output = bounded_go(command, root, COMPILE_TIMEOUT_SECONDS)
+    (directory / "compile.log").write_text(output)
+    passed = outcome["exit_code"] == 0
+    report = {"schema": SCHEMA, "profile": profile, "command": command, **outcome,
               "go_environment": dict(GO_EXECUTION_ENV),
-              "passed": result.returncode == 0,
-              "classification": "compiled" if result.returncode == 0 else "compile-failure"}
+              "passed": passed,
+              "classification": "compiled" if passed else "compile-timeout" if outcome["timed_out"] else "compile-failure"}
     (directory / "compile-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
@@ -516,6 +560,8 @@ def main(argv=None):
         command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("code")
     command.add_argument("--directory", required=True, type=Path)
+    command = commands.add_parser("modules")
+    command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("optional")
     command.add_argument("--batch", required=True)
     command.add_argument("--package")
@@ -527,6 +573,10 @@ def main(argv=None):
                 raise ValueError("optional plan requires --batch and excludes --category and --verify")
             if args.batch is not None and not args.optional:
                 raise ValueError("plan --batch requires explicit --optional")
+        if args.command == "modules":
+            report = prepare_modules(args.directory)
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 0 if report["passed"] else 1
         catalog = load_catalog()
         plan = discover(catalog)
         if args.command == "run":
