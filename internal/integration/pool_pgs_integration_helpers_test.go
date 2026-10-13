@@ -49,8 +49,11 @@ func integrationNativePoolPGs(t *testing.T, ctx context.Context, cluster *ceph.C
 	t.Helper()
 	checkFSID := func() {
 		data, err := cluster.Ceph(ctx, "fsid")
-		if err != nil || strings.TrimSpace(string(data)) != fsid {
-			t.Fatal("native PG oracle lost original FSID", err)
+		if err != nil {
+			t.Fatal("native PG oracle cannot read the FSID:", err)
+		}
+		if strings.TrimSpace(string(data)) != fsid {
+			t.Fatalf("native PG oracle lost original FSID %s: %s", fsid, data)
 		}
 	}
 	readPool := func() (ceph.PoolState, uint32) {

@@ -490,16 +490,19 @@ func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error 
 // container under the supervisor, which stops it inside the container before
 // returning when ctx ends first, or reports a supervised.NotStoppedError. A
 // nonzero exit is a *NativeFailure, which reads only standard error: the
-// standard output of a rotation can hold keys.
+// standard output of a rotation can hold keys. A ceph CLI that no MON
+// answered connects again, as in command.
 func (c *Container) rotationCommand(ctx context.Context, argv ...string) ([]byte, error) {
-	result, err := c.rotationCommandResult(ctx, 1<<20, 64<<10, argv...)
-	if err != nil {
-		return nil, err
-	}
-	if result.ExitCode != 0 {
-		return result.Stdout, nativeFailure(argv[0], result.ExitCode, nil, result.Stderr)
-	}
-	return result.Stdout, nil
+	return reconnectCeph(ctx, argv, func() ([]byte, error) {
+		result, err := c.rotationCommandResult(ctx, 1<<20, 64<<10, argv...)
+		if err != nil {
+			return nil, err
+		}
+		if result.ExitCode != 0 {
+			return result.Stdout, nativeFailure(argv[0], result.ExitCode, nil, result.Stderr)
+		}
+		return result.Stdout, nil
+	})
 }
 
 func (c *Container) rotationCommandResult(ctx context.Context, stdoutLimit, stderrLimit int, argv ...string) (supervised.Result, error) {

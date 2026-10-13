@@ -133,6 +133,12 @@ change the API.
 
 ### Fixed
 
+- `Ceph` and the fixture's own `ceph` commands no longer fail with
+  `timed out` when no MON answers within the CLI's 5 second connection
+  timeout, as during a storage stall of a CI runner or an election. The CLI
+  exits before it sends the command, so they connect again until a MON
+  answers, the context ends or a minute has passed.
+
 - `CollectDiagnostics` and `RedactSecrets` redact the token of an
   `Authorization: Bearer` header. The secret-assignment rule replaced only
   the word `Bearer` and left the token after it.

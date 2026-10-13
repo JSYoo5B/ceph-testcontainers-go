@@ -428,9 +428,13 @@ func cephFSDirectoryAdditionWaitScope(t *testing.T, ctx context.Context, p cephF
 func cephFSDirectoryAdditionCheckScope(ctx context.Context, p cephFSOriginalProcessPolicy, wantPaths []string) error {
 	var sourcePeers map[string]json.RawMessage
 	for i, cluster := range []*ceph.Container{p.source, p.destination} {
+		// A failed read is no identity change; report it as what it is.
 		data, err := cluster.Ceph(ctx, "fsid")
-		if err != nil || strings.TrimSpace(string(data)) != p.fsids[i] {
-			return errors.Join(err, errors.New("independent original addition cluster FSID changed"))
+		if err != nil {
+			return fmt.Errorf("read independent original addition cluster FSID: %w", err)
+		}
+		if strings.TrimSpace(string(data)) != p.fsids[i] {
+			return errors.New("independent original addition cluster FSID changed")
 		}
 		fs := []*cephfs.Filesystem{p.sourceFS, p.destinationFS}[i]
 		data, err = cluster.Ceph(ctx, "fs", "get", fs.FilesystemName, "--format", "json")
