@@ -190,6 +190,9 @@ func TestCommandClassifiesHowItFailed(t *testing.T) {
 		target   *commandTarget
 		canceled bool
 		kind     error
+		// unknown is an outcome that no category describes: the command
+		// may have run.
+		unknown bool
 	}{
 		"missing program": {target: &commandTarget{code: 127,
 			stdout: `OCI runtime exec failed: exec failed: unable to start container process: exec: "pgrep": executable file not found in $PATH: unknown`},
@@ -199,8 +202,8 @@ func TestCommandClassifiesHowItFailed(t *testing.T) {
 			kind: ErrImageCapability},
 		"shell without the program": {target: &commandTarget{code: 127, stderr: "sh: 1: pgrep: not found\n"}, kind: ErrNativeFailure},
 		"Ceph refusal":              {target: &commandTarget{code: 2, stderr: "Error ENOENT: unrecognized pool 'x'\n"}, kind: ErrNativeFailure},
-		"removed container":         {target: &commandTarget{err: errdefs.ErrNotFound.WithMessage("No such container: c")}, kind: ErrInvalidRequest},
-		"stopped container":         {target: &commandTarget{err: errdefs.ErrConflict.WithMessage("container c is not running")}, kind: ErrInvalidRequest},
+		"removed container":         {target: &commandTarget{err: errdefs.ErrNotFound.WithMessage("No such container: c")}, unknown: true},
+		"stopped container":         {target: &commandTarget{err: errdefs.ErrConflict.WithMessage("container c is not running")}, unknown: true},
 		"engine failure":            {target: &commandTarget{err: errors.New("Cannot connect to the Docker daemon")}, kind: ErrEnvironmentUnavailable},
 		"canceled call":             {target: &commandTarget{err: errors.New("use of closed network connection")}, canceled: true},
 	} {
@@ -214,7 +217,9 @@ func TestCommandClassifiesHowItFailed(t *testing.T) {
 			switch {
 			case err == nil:
 				t.Fatal("a failed command returned no error")
-			case tc.kind == nil && (classified(err) || !errors.Is(err, context.Canceled)):
+			case tc.unknown && (classified(err) || !errors.Is(err, tc.target.err)):
+				t.Fatalf("an unknown outcome returned %v", err)
+			case tc.kind == nil && !tc.unknown && (classified(err) || !errors.Is(err, context.Canceled)):
 				t.Fatalf("a canceled call returned %v", err)
 			case tc.kind != nil && !errors.Is(err, tc.kind):
 				t.Fatalf("%v is not %v", err, tc.kind)
@@ -235,6 +240,36 @@ func TestCommandClassifiesHowItFailed(t *testing.T) {
 	}
 	if out, err := command(t.Context(), &commandTarget{stdout: "ok"}, "true"); err != nil || string(out) != "ok" {
 		t.Fatalf("a successful command returned %q, %v", out, err)
+	}
+}
+
+// receiptLossTarget models a Docker exec that runs its command, which
+// changes the target's state, and then loses its final inspection.
+type receiptLossTarget struct {
+	testcontainers.Container
+	applied int
+	err     error
+}
+
+func (f *receiptLossTarget) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+	f.applied++
+	return 0, nil, fmt.Errorf("inspect exec: %w", f.err)
+}
+
+// A command whose exec lost its reply after it ran may have changed the
+// target: it is no request refused before any change.
+func TestCommandLeavesAnExecWithALostReplyUnclassified(t *testing.T) {
+	for name, cause := range map[string]error{
+		"removed": errdefs.ErrNotFound.WithMessage("No such exec instance"),
+		"stopped": errdefs.ErrConflict.WithMessage("container c is not running"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := &receiptLossTarget{err: cause}
+			_, err := command(t.Context(), target, "ceph", "config", "set", "mon.a", "debug_mon", "3/6")
+			if target.applied != 1 || err == nil || errors.Is(err, ErrInvalidRequest) || classified(err) || !errors.Is(err, cause) {
+				t.Fatalf("a mutation that ran returned %v after %d changes", err, target.applied)
+			}
+		})
 	}
 }
 

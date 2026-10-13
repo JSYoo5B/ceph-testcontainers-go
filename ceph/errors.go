@@ -19,7 +19,10 @@ import (
 // and *NativeCommandUnstoppedError keep their own contracts and belong to no
 // category: a call that ctx ended is never classified by what it could not
 // finish. An error that matches no category is a failed check of the
-// fixture's own, such as output it could not parse.
+// fixture's own, such as output it could not parse, or a failure whose
+// outcome is unknown, such as a container that disappeared after a native
+// command was sent to it. Only ErrInvalidRequest promises that nothing
+// changed.
 var (
 	// ErrInvalidRequest reports a request that the fixture refused before
 	// any change: malformed arguments, or an operation that the state of the
@@ -40,7 +43,8 @@ var (
 	ErrImageCapability = errors.New("image capability unavailable")
 	// ErrEnvironmentUnavailable reports that the Docker engine, the host, the
 	// kernel or the permissions of a container cannot provide what the
-	// operation needs, although the image may be valid.
+	// operation needs, although the image may be valid. When it comes from a
+	// call that had sent a native command, the command may have run.
 	ErrEnvironmentUnavailable = errors.New("runtime environment unavailable")
 	// ErrNativeFailure reports a native command that ran and failed: Ceph
 	// refused the request, a resource was missing, permission was denied or

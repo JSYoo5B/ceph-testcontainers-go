@@ -579,11 +579,11 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, clusterutil.Quiet(errors.New("RGW native command failed; output is redacted"), servicehook.ClassifyDocker(ctx, err))
+		return nil, clusterutil.Quiet(errors.New("RGW native command failed; output is redacted"), servicehook.ClassifyExec(ctx, err))
 	}
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, clusterutil.Quiet(errors.New("RGW native command stream failed; output is redacted"), servicehook.ClassifyDocker(ctx, err))
+		return nil, clusterutil.Quiet(errors.New("RGW native command stream failed; output is redacted"), servicehook.ClassifyExec(ctx, err))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

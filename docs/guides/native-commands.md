@@ -210,8 +210,9 @@ that is not admitted, stopped or paused, `ceph.ErrImageCapability` for a
 container without `python3` or a program that does not exist or is not
 executable, and `ceph.ErrEnvironmentUnavailable` for a program that could not
 be started for want of a process or memory or because a security policy
-refused it, and for another Docker failure. See
-[Classified errors](errors.md). Before you log output, mask the
+refused it, and for another Docker failure. A container that disappears or
+stops after the command was sent matches no category: the command may have
+run. See [Classified errors](errors.md). Before you log output, mask the
 cluster's keys and your own secrets with `RedactSecrets`, which uses the same
 rules as `CollectDiagnostics`:
 

@@ -204,9 +204,9 @@ func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byt
 	return nativeFailure(program, code, stdout, stderr)
 }
 
-// ClassifyDocker classifies a failed Docker call.
-func (serviceHooks) ClassifyDocker(ctx context.Context, err error) error {
-	return classifyDocker(ctx, err)
+// ClassifyExec classifies a failed Docker exec of a native command.
+func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
+	return classifyDispatched(ctx, err)
 }
 
 // AuthCommand runs a Cephx command with the admin identity and reports a

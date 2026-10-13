@@ -20,6 +20,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -499,6 +500,25 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		t.Logf("Ceph %s: %v", cluster.CephVersion(), failure)
 	})
 
+	t.Run("lost_receipt", func(t *testing.T) {
+		// A mutation that ran keeps its effect when its exec loses the final
+		// inspection; the call is no request refused before any change.
+		control := cluster.ControlContainer()
+		lossy := &nativeReceiptLoss{Container: control, cause: errdefs.ErrNotFound}
+		_, err := cluster.RunNativeCommand(ctx, lossy, ceph.NativeCommand{Argv: []string{"ceph", "--connect-timeout", "5", "config", "set", "mon.a", "debug_mon", "3/6"},
+			Timeout: 20 * time.Second, MaxStdout: 4096, MaxStderr: 4096, Label: "set debug_mon"})
+		t.Cleanup(func() { _, _ = cluster.Ceph(context.Background(), "config", "rm", "mon.a", "debug_mon") })
+		var unstopped *ceph.NativeCommandUnstoppedError
+		if !lossy.lost || err == nil || errors.Is(err, ceph.ErrInvalidRequest) || errors.Is(err, ceph.ErrEnvironmentUnavailable) ||
+			!errdefs.IsNotFound(err) || errors.As(err, &unstopped) {
+			t.Fatalf("a mutation whose receipt was lost returned %v (receipt lost %t)", err, lossy.lost)
+		}
+		value, err := cluster.Ceph(ctx, "config", "get", "mon.a", "debug_mon")
+		if err != nil || strings.TrimSpace(string(value)) != "3/6" {
+			t.Fatalf("the mutation's effect is %q, %v", value, err)
+		}
+	})
+
 	t.Run("terminate", func(t *testing.T) {
 		before := scanNative(t, ctx, client).Markers
 		call := startNative(ctx, cluster, client, nativeTree("native-terminate", time.Minute))
@@ -762,4 +782,24 @@ func nativeStarted(t *testing.T, ctx context.Context, ctr testcontainers.Contain
 		t.Fatal(err)
 	}
 	return code == 0
+}
+
+// nativeReceiptLoss forwards each supervisor exec to completion and then
+// loses its final inspection with cause.
+type nativeReceiptLoss struct {
+	testcontainers.Container
+	cause error
+	lost  bool
+}
+
+func (f *nativeReceiptLoss) Exec(ctx context.Context, argv []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, reader, err := f.Container.Exec(ctx, argv, opts...)
+	if err == nil && code == 0 && len(argv) > 2 && argv[2] == supervised.Script {
+		if reader != nil {
+			_, _ = io.Copy(io.Discard, reader)
+		}
+		f.lost = true
+		return 0, nil, fmt.Errorf("lost final exec receipt: %w", f.cause)
+	}
+	return code, reader, err
 }

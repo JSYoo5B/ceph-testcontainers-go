@@ -63,7 +63,7 @@ type hooks interface {
 	PoolMissing(err error) bool
 	CephBefore(c *ceph.Container, major int) bool
 	NativeFailure(program string, code int, stdout, stderr []byte) error
-	ClassifyDocker(ctx context.Context, err error) error
+	ClassifyExec(ctx context.Context, err error) error
 	AuthCommand(ctx context.Context, c *ceph.Container, operation string, args ...string) ([]byte, error)
 	ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error)
 	MonitorAddresses(status ceph.QuorumStatus) (string, error)
@@ -227,10 +227,11 @@ func NativeFailure(program string, code int, stdout, stderr []byte) error {
 	return get().NativeFailure(program, code, stdout, stderr)
 }
 
-// ClassifyDocker classifies a failed Docker call as the module's own commands
-// do: unclassified when ctx ended, a refused request for a container that is
-// gone or stopped, and the engine's failure otherwise.
-func ClassifyDocker(ctx context.Context, err error) error { return get().ClassifyDocker(ctx, err) }
+// ClassifyExec classifies a failed Docker exec of a native command as the
+// module's own commands do: matching ctx's error when ctx ended, unclassified
+// for a container that is gone or stopped, since the command may have run,
+// and the engine's failure otherwise.
+func ClassifyExec(ctx context.Context, err error) error { return get().ClassifyExec(ctx, err) }
 
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.

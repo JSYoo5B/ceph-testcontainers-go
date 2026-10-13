@@ -1116,9 +1116,11 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   program that does not exist or is not executable, is `ErrImageCapability`;
   a program that could not be started for want of a process or memory, or
   because a security policy refused it, and another Docker failure are
-  `ErrEnvironmentUnavailable`. Context errors,
-  `ErrNativeCommandIncomplete` and `*NativeCommandUnstoppedError` belong to no
-  category. See [Classified errors](guides/errors.md).
+  `ErrEnvironmentUnavailable`. A container that disappears or stops after
+  the command was sent matches no category, since the command may have run.
+  Context errors, `ErrNativeCommandIncomplete` and
+  `*NativeCommandUnstoppedError` belong to no category. See
+  [Classified errors](guides/errors.md).
 
 See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
 for cancellation details and an oracle recipe with `rados_stat2` and
@@ -3206,8 +3208,10 @@ Context errors, `ErrNativeCommandIncomplete` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
 category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
-own, such as native output that it could not parse. See
-[Classified errors](guides/errors.md).
+own, such as native output that it could not parse, or a failure whose
+outcome is unknown, such as a container that disappeared after a native
+command was sent to it. Only `ErrInvalidRequest` promises that nothing
+changed. See [Classified errors](guides/errors.md).
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},

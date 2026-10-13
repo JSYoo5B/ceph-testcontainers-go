@@ -1065,11 +1065,11 @@ func command(ctx context.Context, ctr testcontainers.Container, args ...string) 
 	}
 	exitCode, reader, err := ctr.Exec(ctx, args)
 	if err != nil {
-		return nil, classifyDocker(ctx, fmt.Errorf("exec %s: %w", args[0], err))
+		return nil, classifyDispatched(ctx, fmt.Errorf("exec %s: %w", args[0], err))
 	}
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, classifyDocker(ctx, fmt.Errorf("read %s output: %w", args[0], err))
+		return nil, classifyDispatched(ctx, fmt.Errorf("read %s output: %w", args[0], err))
 	}
 	if exitCode != 0 {
 		if (exitCode == 126 || exitCode == 127) && strings.HasPrefix(strings.TrimSpace(stdout.String()+stderr.String()), dockerExecFailed) {
@@ -1084,6 +1084,19 @@ func command(ctx context.Context, ctr testcontainers.Container, args ...string) 
 // dockerExecFailed starts the output of an exec whose program the runtime
 // could not start.
 const dockerExecFailed = "OCI runtime exec failed"
+
+// classifyDispatched classifies a failed Docker call that may have started a
+// native command, such as an exec whose final inspection failed after the
+// command ran. Its effect is unknown, so a container that is gone or stopped
+// is no refused request: that error stays unclassified. A call that ctx
+// ended matches ctx's error, and any other failure is the engine's.
+func classifyDispatched(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		(errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
+		return err
+	}
+	return classifyDocker(ctx, err)
+}
 
 // classifyDocker classifies a failed Docker call: a call that ctx ended stays
 // unclassified and matches ctx's error, a container that is gone or not

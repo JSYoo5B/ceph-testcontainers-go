@@ -911,3 +911,51 @@ func TestRedactSecretsUsesTheClusterSecrets(t *testing.T) {
 		t.Fatal("RedactSecrets changed its input")
 	}
 }
+
+// receiptLossNativeTarget runs each supervisor exec to completion and then
+// loses its final inspection with cause, as when Docker answers the
+// ExecInspect after the output has been drained.
+type receiptLossNativeTarget struct {
+	*nativeTarget
+	cause error
+}
+
+func (f *receiptLossNativeTarget) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	code, reader, err := f.nativeTarget.Exec(ctx, args, opts...)
+	if err == nil && code == 0 && len(args) > 2 && args[2] == supervised.Script {
+		if reader != nil {
+			_, _ = io.Copy(io.Discard, reader)
+		}
+		return 0, nil, fmt.Errorf("lost final exec receipt: %w", f.cause)
+	}
+	return code, reader, err
+}
+
+// A command that ran before its exec lost the final inspection keeps its
+// effect. The call is no request refused before any change: it keeps
+// Docker's error and matches no category.
+func TestNativeCommandLostReceiptAfterTheCommandRan(t *testing.T) {
+	requireLinuxGroups(t)
+	for name, cause := range map[string]error{"not found": errdefs.ErrNotFound, "conflict": errdefs.ErrConflict} {
+		t.Run(name, func(t *testing.T) {
+			target := newNativeTarget(t, "client", "tc-public")
+			cluster := nativeCluster()
+			effect := filepath.Join(target.root, "effect")
+			command := NativeCommand{Argv: []string{"sh", "-c", `echo applied > "$1"`, "sh", effect}, Timeout: 20 * time.Second,
+				MaxStdout: 4096, MaxStderr: 4096, Label: "mutation"}
+			_, err := cluster.RunNativeCommand(t.Context(), &receiptLossNativeTarget{nativeTarget: target, cause: cause}, command)
+			var unstopped *NativeCommandUnstoppedError
+			if err == nil || errors.Is(err, ErrInvalidRequest) || classified(err) || !errors.Is(err, cause) || errors.As(err, &unstopped) {
+				t.Fatalf("a mutation whose receipt was lost returned %v", err)
+			}
+			if data, readErr := os.ReadFile(effect); readErr != nil || string(data) != "applied\n" {
+				t.Fatalf("the mutation's effect is %q, %v", data, readErr)
+			}
+			// The supervisor's marker stays as the fence of a run that the
+			// lost reply cannot tell from one that has not started.
+			if registered(cluster) != 0 {
+				t.Fatal("the call kept its invocation")
+			}
+		})
+	}
+}

@@ -276,7 +276,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 		if ctx.Err() != nil {
 			return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
 		}
-		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err)))
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err, false)))
 	}
 	state, err := target.State(ctx)
 	if err != nil {
@@ -286,7 +286,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	case ctx.Err() != nil:
 		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, errors.Join(err, ctx.Err())))
 	case err != nil && !errdefs.IsNotFound(err) && !errdefs.IsConflict(err):
-		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err)))
+		return NativeCommandResult{}, safeNativeError(fmt.Errorf("%s: %w", label, classifyNativeBackend(err, false)))
 	case err != nil || state == nil || !state.Running || state.Paused:
 		return NativeCommandResult{}, safeNativeError(classify(ErrInvalidRequest, errors.Join(fmt.Errorf("%s needs a running, unpaused container", label), err)))
 	}
@@ -344,7 +344,8 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 		return NativeCommandResult{}, &OperationError{Kind: ErrEnvironmentUnavailable, Op: label,
 			Err: errors.New("the program could not be started for want of a process or memory, or because a security policy refused it")}
 	case err != nil && ctx.Err() == nil && !errors.Is(err, errNativeTerminated):
-		return NativeCommandResult{}, classifyNativeBackend(err)
+		// The command may have run: its outcome is unknown.
+		return NativeCommandResult{}, classifyNativeBackend(err, true)
 	case err != nil:
 		return NativeCommandResult{}, err
 	}
@@ -402,13 +403,17 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 }
 
 // classifyNativeBackend classifies a failed Docker call of a native command
-// whose context has not ended: a container that is gone, stopped or paused
-// refuses the request, and any other failure is the engine's. An error
-// already classified, or one of the supervisor's own, keeps its meaning.
-func classifyNativeBackend(err error) error {
+// whose context has not ended. Before the command was dispatched, a container
+// that is gone, stopped or paused refuses the request; afterwards the
+// command may have run, so that error stays unclassified. Any other failure
+// is the engine's. An error already classified, or one of the supervisor's
+// own, keeps its meaning.
+func classifyNativeBackend(err error, dispatched bool) error {
 	var backend *supervised.BackendError
 	switch {
 	case !errors.As(err, &backend) || classified(err):
+		return err
+	case (errdefs.IsNotFound(backend.Err) || errdefs.IsConflict(backend.Err)) && dispatched:
 		return err
 	case errdefs.IsNotFound(backend.Err) || errdefs.IsConflict(backend.Err):
 		return classify(ErrInvalidRequest, err)

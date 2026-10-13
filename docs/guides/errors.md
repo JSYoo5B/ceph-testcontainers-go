@@ -32,6 +32,14 @@ The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match
 several.
 
+Only `ErrInvalidRequest` promises that nothing changed. Once a native command
+has been sent, a lost reply leaves its effect unknown: the command may have
+run, as when Docker answers the final inspection of an exec after the
+command finished. Such a failure keeps Docker's error, and is
+`ErrEnvironmentUnavailable` for a failure of the engine or matches no
+category for a container that disappeared or stopped; neither says that the
+command did not run.
+
 The narrower errors of the module belong to a category:
 `ceph.ErrHostNetworkUnavailable`, `ceph.ErrNetemPermissionDenied` and
 `ceph.ErrNetemKernelUnsupported` to `ErrEnvironmentUnavailable`, and
@@ -129,6 +137,7 @@ decides what an exit means. Its errors are about running the command:
 | A container without `python3`, which runs the supervisor, or a program that does not exist or is not executable | `ErrImageCapability` |
 | A program that could not be started for want of a process or memory, or because a security policy refused it | `ErrEnvironmentUnavailable` |
 | Another failure of Docker | `ErrEnvironmentUnavailable` |
+| A container that disappeared or stopped after the command was sent | none: the command may have run |
 | A timeout or truncated output (`ErrNativeCommandIncomplete`), a canceled call, a command that could not be confirmed as stopped | none; see below |
 
 ## Unsupported features
@@ -190,6 +199,9 @@ Some errors keep their own contracts and match no category:
   `Stop`.
 - Failed checks of the fixture's own, such as native output that it could
   not parse, or a readback that differs from the requested change.
+- A failure whose outcome is unknown, such as a container that disappeared
+  or stopped after a native command was sent to it. The command may have
+  run; inspect the native state before you repeat a mutation.
 
 A non-nil handle returned with an error keeps its meaning whatever the
 category: restore it, because the change may have been applied. See
