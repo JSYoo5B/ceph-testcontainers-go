@@ -21,6 +21,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Packets that a container sends on one network arrive late | `ceph.Container.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `TemporaryConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
+| An OSD runs a client's write after the client gave up | `TemporaryConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
 | A failed OSD stays up or in | `TemporaryOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverride.Restore` |
 | The cluster reports nearfull, backfillfull or full | `TemporaryFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
@@ -425,10 +426,64 @@ for _, setting := range []ceph.ConfigSetting{
 
 | Option | Effect |
 | --- | --- |
-| `ms_blackhole_client`, `ms_blackhole_osd`, `ms_blackhole_mon`, `ms_blackhole_mds`, `ms_blackhole_mgr` | The daemon discards messages it receives from that kind of peer. The connection stays open, so the sender only notices through its own timeout. |
+| `ms_blackhole_client`, `ms_blackhole_osd`, `ms_blackhole_mon`, `ms_blackhole_mds`, `ms_blackhole_mgr` | The daemon discards the messages that it receives from and sends to that kind of peer. The connection stays open, so the peer only notices through its own timeout. |
 | `ms_inject_delay_type` | Peer kinds whose messages are delayed, as space-separated entity types such as `client` or `osd`. |
 | `ms_inject_delay_probability` | Probability of delaying each message; `1` delays every message. |
 | `ms_inject_delay_max` | Maximum delay in seconds. Each delay is chosen uniformly between 0 and this value. |
+
+### Delaying operations inside an OSD
+
+`ms_blackhole_*` loses messages in both directions. In a client's own
+configuration, `ms_blackhole_osd` therefore drops the client's requests (the
+client logs `send_msgosd blackhole osd_op(...)`), and the OSD never sees the
+write. To make the OSD run a write after its client gave up, delay the
+operation inside the OSD instead:
+
+```golang
+for _, setting := range []ceph.ConfigSetting{
+	{Section: "osd.0", Name: "osd_debug_inject_dispatch_delay_duration", Value: "2"},
+	{Section: "osd.0", Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
+} {
+	hold, err := cluster.TemporaryConfig(ctx, setting)
+	if hold != nil {
+		defer hold.Restore(cleanupCtx)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+// A client with rados_osd_op_timeout=2 gets ETIMEDOUT; osd.0 runs the write
+// 6 to 8 seconds after it received it.
+```
+
+The OSD sleeps for the duration at each of several points that an operation
+passes: when it dispatches the message and before and after taking the PG
+lock. With a duration of 2 seconds, a write ran 6 to 8 seconds after the OSD
+received it in 20.2.4 and 19.2.5. The sleeps also slow the OSD's handling of
+new OSD maps, so keep the duration short and restore it before you read the
+results.
+
+Whether the OSD runs the delayed write depends on the client's connection
+when the OSD gets to it:
+
+- A client that timed out but stays connected: the OSD runs the write. Its
+  late reply is dropped; the completion reported `-110` once.
+- A client whose process was killed: if the OSD has seen the connection
+  close by the time it would start the write, it discards the write without
+  running it, because `osd_discard_disconnected_ops` is true by default. With
+  a duration of 3 seconds, the write reached its PG 9 seconds after the OSD
+  received it, which left time for that.
+
+The OSD's admin socket shows both outcomes. `dump_ops_in_flight` lists the
+held operation as soon as the OSD received it. Until the OSD decodes it, its
+description names the client and the PG but not the object, so look it up by
+client, as in `osd_op(client.4266.0:1 2.0 2.fdab9b31 (undecoded) ...)`. Shortly
+after the operation ends, `dump_historic_ops_by_duration` keeps its events,
+and the delay makes it one of the longest operations that this history
+retains. An operation that ran has `started` and `commit_sent` events; a
+discarded one goes from `reached_pg` to `done` without them. Read the object
+with another client as well; see
+[Oracle recipe: write outcomes](native-commands.md#oracle-recipe-write-outcomes).
 
 ### Choosing the section
 

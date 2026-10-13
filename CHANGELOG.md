@@ -64,6 +64,12 @@ change the API.
   write contexts, with the native results of Ceph 20.2.4 and 19.2.5 for
   older sequences with and without `ORDERSNAP`, removed and unallocated
   snapshot IDs, snapshot removal, HEAD deletion and an OSD restart.
+- The native commands guide has an oracle recipe for write outcomes: the
+  completion as the receipt across a `SIGKILL` of the OSD, a local timeout
+  that does not cancel the write, a killed client whose write the OSD
+  discards, and retries guarded with `assert_version`. The fault injection
+  guide shows how `osd_debug_inject_dispatch_delay_*` makes an OSD run a
+  write after its client gave up.
 
 - `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
   in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
