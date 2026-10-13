@@ -523,6 +523,41 @@ native clients and the OSD's admin socket: acknowledged asynchronous writes
 across a `SIGKILL`, a write that ran after its client's timeout, a guarded and
 an unguarded retry, and a killed writer whose write the OSD discarded.
 
+### Oracle recipe: erasure-coded pools
+
+An erasure-coded pool splits each object into K data shards and M parity
+shards on separate OSDs, and accepts fewer write operations than a replicated
+pool. Which ones depends on `AllowOverwrites` in `ceph.ErasureCodeConfig`
+(the pool's `allow_ec_overwrites`). The Python binding reports the
+difference: `ioctx.alignment()` returns the required alignment of a pool
+without overwrites and `None` otherwise.
+
+On k=2, m=1 pools created by `CreatePool`, Ceph 20.2.4 and 19.2.5 return:
+
+| Operation | Without overwrites | With overwrites |
+| --- | --- | --- |
+| `write_full` | Accepted, also of an unaligned size | Accepted |
+| `append`, or `write` at the end of the object | Accepted only while the end is a multiple of the alignment (8192); otherwise `EOPNOTSUPP` (95) | Accepted |
+| `write` over existing bytes, `trunc`, `zero` | `EOPNOTSUPP` | Accepted |
+| omap writes | `EOPNOTSUPP` | `EOPNOTSUPP` |
+| xattrs | Accepted | Accepted |
+| A write under a self-managed snapshot context | `write_full` preserves the object as a clone first | A partial write preserves the object as a clone first |
+
+So data can be added once after an aligned size, and is refused once the
+size is no longer aligned. Check the refusals in your test instead of
+skipping them: they are the native outcome of the pool's configuration.
+
+A pool with `MinSize` equal to K stays active while one shard is missing.
+After a clean stop of the OSD that holds shard 1, `PoolPGs` reported the PG as
+`active+undersized+degraded`, with `2147483647` (no OSD) in that slot of
+`Acting`. Reads returned the same bytes, rebuilt from the other shards, and a
+write under a snapshot context still preserved a clone. After the OSD started
+again and recovery finished, every byte and version was unchanged. Hold
+`noout` with `TemporaryOSDFlag` while the OSD is stopped.
+
+`TestRADOSErasureCodedOutcomes` in `internal/integration` runs these cases
+with an independent reader client.
+
 ## Changing configuration
 
 | Need | Use |

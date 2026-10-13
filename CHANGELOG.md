@@ -70,6 +70,10 @@ change the API.
   discards, and retries guarded with `assert_version`. The fault injection
   guide shows how `osd_debug_inject_dispatch_delay_*` makes an OSD run a
   write after its client gave up.
+- The native commands guide has an oracle recipe for erasure-coded pools:
+  the write operations that pools with and without `AllowOverwrites` accept
+  or refuse with `EOPNOTSUPP`, aligned appends, snapshot clones, and reads
+  and writes while a shard is missing.
 
 - `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
   in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
