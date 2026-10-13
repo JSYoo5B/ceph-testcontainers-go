@@ -60,6 +60,10 @@ change the API.
   native output, with the rules of `CollectDiagnostics`.
 - The native commands guide has a container-only oracle recipe with
   `rados_stat2`, `rados_read` and `ceph-dencoder`.
+- The native commands guide has an oracle recipe for self-managed snapshot
+  write contexts, with the native results of Ceph 20.2.4 and 19.2.5 for
+  older sequences with and without `ORDERSNAP`, removed and unallocated
+  snapshot IDs, snapshot removal, HEAD deletion and an OSD restart.
 
 - `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
   in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop

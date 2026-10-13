@@ -376,6 +376,106 @@ image without it, the call fails with an error saying that the program could
 not be started. The supervisor bounds only the execution; parsing the decoded
 structure and comparing it with your own decoder stays in your test.
 
+### Oracle recipe: self-managed snapshot write contexts
+
+A client that manages its own snapshots, as RBD does, asks the MONs for each
+snapshot ID and sends a write context with every write: a sequence and the
+existing snapshot IDs, newest first. When a write to an existing object names
+a snapshot that still exists and is newer than the object's own sequence, the
+OSD first preserves the object as a clone. The Python binding of librados,
+which the official images ship, can produce these contexts, so a test can
+compare its own client with native results.
+
+Create an owned pool, then run the writer and an independent reader as two
+librados clients in one bounded command:
+
+```golang
+const selfSnap = `import hashlib,json,sys,rados
+pool,name=sys.argv[1],sys.argv[2]
+def connected():
+    c=rados.Rados(conffile="/etc/ceph/ceph.conf")
+    c.connect(); return c
+def read(ioctx,snap):
+    ioctx.set_read(snap)
+    try:
+        data=ioctx.read(name,4096,0)
+        return hashlib.sha256(data).hexdigest(),ioctx.get_last_version()
+    finally:
+        ioctx.set_read(rados.LIBRADOS_SNAP_HEAD)
+writer,reader=connected(),connected()
+a,b=writer.open_ioctx(pool),reader.open_ioctx(pool)
+snap=None
+try:
+    a.write_full(name,b"original\0payload"*64)
+    snap=a.create_self_managed_snap()
+    a.set_self_managed_snap_write([snap])
+    a.write(name,b"AFTER",7)
+    a.append(name,b"APPEND")
+    a.trunc(name,64)
+    written=a.get_last_version()
+    print(json.dumps({"snap":snap,"written":written,
+        "snapshot":read(b,snap),"head":read(b,rados.LIBRADOS_SNAP_HEAD)}))
+finally:
+    a.set_self_managed_snap_write([])
+    if snap is not None:
+        a.remove_self_managed_snap(snap)
+    a.close(); b.close(); writer.shutdown(); reader.shutdown()
+`
+
+if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "selfsnap", Application: "rados", PGNum: 1}); err != nil {
+	t.Fatal(err)
+}
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"python3", "-c", selfSnap, "selfsnap", "object"},
+	Timeout:   2 * time.Minute,
+	MaxStdout: 64 << 10,
+	MaxStderr: 64 << 10,
+	Label:     "self-managed snapshot",
+})
+if err != nil || result.ExitCode != 0 {
+	t.Fatalf("self-managed snapshot: exit %d, %v", result.ExitCode, err)
+}
+```
+
+`set_self_managed_snap_write` sorts the IDs and uses the newest as the
+sequence, so the binding cannot send a malformed context. Each version in the
+output comes from the request that read or wrote those bytes: a read at a
+snapshot reports the version that HEAD had before the write that preserved
+it. Versions increase but are not consecutive; in 20.2.4 and 19.2.5 the write
+that makes a clone skips one. Reading `get_last_version` of an ioctx after an
+unrelated request gives that request's version, not the object's.
+
+Ceph 20.2.4 and 19.2.5 handle the contexts alike:
+
+| Write context | Native result |
+| --- | --- |
+| Names an existing snapshot newer than the object's sequence | Before writing an existing object, the OSD preserves it as a clone. The clone keeps the context's snapshots that are newer than the object's sequence and still exist; `rados listsnaps` shows it with its size |
+| Sequence older than the object's | Accepted, without a clone. With the `LIBRADOS_OPERATION_ORDERSNAP` flag (512) the OSD refuses it with `EOLDSNAPC` (85) and changes nothing |
+| Names a removed snapshot | Accepted; the clone keeps only the snapshots that exist. A context of removed snapshots alone makes no clone |
+| An ID that the MONs never allocated | Accepted: it becomes a clone ID and the object's sequence. A snapshot that the MONs allocate later with a lower ID is then not preserved on that object, and a read at it finds no object. The MONs refuse to remove the ID with `ENOENT`, so its clone stays until the pool is removed |
+
+Other outcomes:
+
+- **Removal.** `remove_self_managed_snap` returns before the OSDs trim the
+  snapshot's clone, and until then a read at the snapshot may still return
+  the clone's data. Poll `rados listsnaps` and a read, with a deadline, until
+  both show it gone.
+- **Delete.** Removing HEAD under a context leaves the snapshots readable;
+  reads and `stat` of HEAD fail with `ENOENT`.
+- **Restart.** The default BlueStore OSD keeps the bytes, versions, sizes
+  and modification times (as `stat` reports them, in seconds) of the
+  snapshots and HEAD across `OSDContainer.Stop` and `Start`.
+  MemStore saves its data only on a clean stop, so it does not show
+  durability.
+- **Cleanup.** A command that times out or is canceled is killed before its
+  `finally` runs. `RemovePool` deletes the owned pool with every clone,
+  including the ones that no snapshot removal trims.
+
+`TestRADOSSelfManagedSnapshots` in `internal/integration` runs these cases
+with nonaligned writes, append, truncation and zero extension, each read back
+by the independent client, an OSD restart and digests of every snapshot and
+HEAD.
+
 ## Changing configuration
 
 | Need | Use |
