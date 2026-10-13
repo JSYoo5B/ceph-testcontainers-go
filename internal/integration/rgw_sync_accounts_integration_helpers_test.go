@@ -101,10 +101,12 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 		// Ceph 19 drops this pipe from the destination's resolved sources and
 		// replicates nothing, so the fixture refuses it before any change.
 		const want = "RGW user-mode sync with an account principal needs Ceph 20 or later"
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("Ceph 19 account user-mode pipe error = %v, want refusal %q", err, want)
+		var refusal *ceph.OperationError
+		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || !strings.HasPrefix(refusal.Version, "19.") ||
+			!strings.HasPrefix(refusal.Target, "zone ") || !strings.Contains(err.Error(), want) {
+			t.Fatalf("Ceph 19 account user-mode pipe error = %v, want ErrUnsupported %q from a Ceph 19 zone", err, want)
 		}
-		t.Log("Ceph 19 refused the account user-mode pipe before any change")
+		t.Logf("%s (Ceph %s) refused the account user-mode pipe before any change", refusal.Target, refusal.Version)
 		return
 	}
 	if err != nil {

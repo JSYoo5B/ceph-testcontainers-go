@@ -81,6 +81,10 @@ type Mirror struct {
 	receiverPeer                    *rbdReceiverPeerIdentity
 	receiverPeerGeneration          uint64
 	receiverSetupConfirmed          bool
+	// legacyCLI marks the setup clients whose rbd has no --remote-namespace,
+	// and legacyClusters the clusters whose control image's rbd has none.
+	legacyCLI      map[testcontainers.Container]bool
+	legacyClusters map[*ceph.Container]bool
 }
 
 // MirrorDaemon is one destination-side rbd-mirror process. Every daemon has
@@ -194,14 +198,14 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
 	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
-		return nil, fmt.Errorf("configure RBD mirror: RBD %w", err)
+		return nil, invalid(fmt.Errorf("configure RBD mirror: RBD %w", err))
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
 	config, err := normalizeRBDMirrorConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("configure RBD mirror: %w", err)
+		return nil, invalid(fmt.Errorf("configure RBD mirror: %w", err))
 	}
 	receiverClusters, err := captureRBDReceiverClusters(ctx, config)
 	if err != nil {
@@ -222,6 +226,9 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 		return mirror, fmt.Errorf("run destination RBD setup client: %w", err)
 	}
 	mirror.destinationClient = destinationClient
+	if err := mirror.detectNamespaceMapping(ctx); err != nil {
+		return mirror, err
+	}
 	if err := mirror.provisionRBDMirrorPolicies(ctx); err != nil {
 		return mirror, err
 	}
@@ -275,11 +282,11 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil || m.config.Destination == nil {
-		return nil, errors.New("RBD mirror fixture is unavailable or terminated")
+		return nil, invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
 	}
 	for _, daemon := range m.daemons {
 		if daemon.DaemonName == name {
-			return nil, fmt.Errorf("RBD mirror daemon %q already exists", name)
+			return nil, invalid(fmt.Errorf("RBD mirror daemon %q already exists", name))
 		}
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
@@ -336,7 +343,7 @@ func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcont
 	}
 	defer m.mu.Unlock()
 	if m.closed {
-		return errors.New("RBD mirror fixture is terminated")
+		return invalid(errors.New("RBD mirror fixture is terminated"))
 	}
 	for i, daemon := range m.daemons {
 		if daemon.DaemonName != name {
@@ -351,16 +358,16 @@ func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcont
 		}
 		return nil
 	}
-	return fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name)
+	return invalid(fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name))
 }
 
 func validateRBDMirrorDaemonName(name string) error {
 	if name == "" || len(name) > 63 || name[0] == '-' {
-		return errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen")
+		return invalid(errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen"))
 	}
 	for _, char := range name {
 		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' && char != '-' {
-			return errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens")
+			return invalid(errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens"))
 		}
 	}
 	return nil
@@ -460,7 +467,9 @@ func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 		MirrorUUID string `json:"mirror_uuid"`
 	}
 	err = json.Unmarshal(sourceInfo, &sourcePool)
-	if err == nil && sourcePool.MirrorUUID == "" && multicluster.CephBefore(config.Source, 20) {
+	// An rbd without remote namespaces, as in Ceph 19, does not print the
+	// UUID, whatever release the cluster runs.
+	if err == nil && sourcePool.MirrorUUID == "" && m.legacyClient(m.sourceClient) {
 		sourcePool.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, m.sourceClient, config.Pool, "")
 	}
 	if err != nil || sourcePool.MirrorUUID == "" {
@@ -600,20 +609,20 @@ func (m *Mirror) DestinationRBD(ctx context.Context, args ...string) ([]byte, er
 // quiesce their application before changing an existing image's mirroring.
 func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
-		return errors.New("RBD mirror source setup client is unavailable")
+		return invalid(errors.New("RBD mirror source setup client is unavailable"))
 	}
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return err
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil {
-		return errors.New("RBD mirror source setup client is unavailable or terminated")
+		return invalid(errors.New("RBD mirror source setup client is unavailable or terminated"))
 	}
 	if imageName == "" || strings.TrimSpace(imageName) != imageName || strings.HasPrefix(imageName, "-") || strings.ContainsAny(imageName, "/@\x00\t\r\n") {
-		return errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax")
+		return invalid(errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax"))
 	}
 	if m.config.Scope == MirrorScopePool {
-		return errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope")
+		return invalid(errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
 		return err
@@ -639,15 +648,15 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	}
 	if info.Mirroring != nil && info.Mirroring.State != "disabled" && info.Mirroring.State != "" {
 		if info.Mirroring.State != "enabled" {
-			return fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State)
+			return invalid(fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State))
 		}
 		if info.Mirroring.Mode != string(mode) {
-			return fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode)
+			return invalid(fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode))
 		}
 		return m.checkRBDMirrorPolicyIdentities(ctx)
 	}
 	if mode == MirrorModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
-		return errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring")
+		return invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
 		return err
@@ -724,6 +733,6 @@ func normalizeRBDMirrorMode(mode MirrorMode) (MirrorMode, error) {
 	case MirrorModeSnapshot, MirrorModeJournal:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode)
+		return "", invalid(fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode))
 	}
 }

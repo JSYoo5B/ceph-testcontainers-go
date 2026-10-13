@@ -36,7 +36,7 @@ type UserUsage struct {
 // statistics are created, changed, synchronized, reset or adopted.
 func (g *Gateway) UserUsage(ctx context.Context, user *User) (UserUsage, error) {
 	if g == nil || g.owner == nil {
-		return UserUsage{}, errors.New("RGW gateway is not owned by a Ceph cluster")
+		return UserUsage{}, invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
@@ -113,14 +113,14 @@ func rgwUserUsageReadError(ctx context.Context, err error) error {
 func (g *Gateway) validateUsageGateway() error {
 	service := servicehook.Service(g.owner, rgwServiceName(g.config))
 	if servicehook.DiagnosticHandle(g.Container) == nil || servicehook.DiagnosticHandle(service) == nil {
-		return errors.New("RGW gateway is no longer owned by this cluster")
+		return invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	if err := g.validateAdminGateway(); err != nil {
 		return err
 	}
 	value := reflect.ValueOf(service)
 	if !value.IsValid() || !value.Comparable() || service != g.Container {
-		return errors.New("RGW gateway original container handle changed")
+		return invalid(errors.New("RGW gateway original container handle changed"))
 	}
 	return nil
 }

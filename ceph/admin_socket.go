@@ -26,7 +26,6 @@ const (
 	adminSocketDir         = "/var/run/ceph"
 	adminSocketStdoutLimit = 16 << 20
 	adminSocketStderrLimit = 64 << 10
-	adminSocketErrorLimit  = 512
 )
 
 // runVolume is the Docker volume mounted at /var/run/ceph in every MON, MGR,
@@ -161,11 +160,11 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 	c.mu.Unlock()
 	switch {
 	case closed:
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	case !shared:
 		return nil, errors.New("this cluster has no shared run directory for admin sockets")
 	case !owned:
-		return nil, fmt.Errorf("daemon %s is not owned by this cluster", daemon)
+		return nil, invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
 	}
 	control, err := c.ControlContainerContext(ctx)
 	if err != nil {
@@ -178,11 +177,7 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 		return nil, fmt.Errorf("admin socket of %s: %w", daemon, err)
 	}
 	if result.ExitCode != 0 {
-		message := strings.TrimSpace(string(result.Stderr))
-		if len(message) > adminSocketErrorLimit {
-			message = message[:adminSocketErrorLimit]
-		}
-		return result.Stdout, fmt.Errorf("admin socket of %s exited %d: %s", daemon, result.ExitCode, message)
+		return result.Stdout, fmt.Errorf("admin socket of %s: %w", daemon, nativeFailure("ceph", result.ExitCode, nil, result.Stderr))
 	}
 	return result.Stdout, nil
 }

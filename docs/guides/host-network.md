@@ -165,8 +165,9 @@ reach.
    retried for up to five seconds, to allow for Docker Desktop's port
    forwarding.
 
-On failure the error wraps `ceph.ErrHostNetworkUnavailable`; test it with
-`errors.Is`. The message includes a hint for the detected Docker environment.
+On failure the error wraps `ceph.ErrHostNetworkUnavailable`, which belongs to
+`ceph.ErrEnvironmentUnavailable`; test it with `errors.Is`. The message
+includes a hint for the detected Docker environment.
 Common causes:
 
 - Docker Desktop host networking is disabled.

@@ -77,7 +77,7 @@ func (f *Multisite) ApplySyncGroup(ctx context.Context, g *SyncGroup) error {
 			return err
 		}
 		if staging != nil && !syncPeriodPolicyEqual(staging, current) && !syncPeriodPolicyEqual(staging, want) {
-			return errors.New("RGW existing staging period contains unrelated policy; refusing overwrite")
+			return invalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
 		}
 		data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
 		if err != nil {
@@ -88,6 +88,7 @@ func (f *Multisite) ApplySyncGroup(ctx context.Context, g *SyncGroup) error {
 			return err
 		}
 		if !syncPeriodPolicyEqual(staging, want) {
+			// The staging period is already updated: a failed check, not a refusal.
 			return errors.New("RGW generated staging period changed unrelated policy; refusing publication")
 		}
 		if _, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "commit"); err != nil {

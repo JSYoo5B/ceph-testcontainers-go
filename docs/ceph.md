@@ -1051,8 +1051,12 @@ func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error)
 
 Runs the `ceph` CLI in the control container with `--connect-timeout 5` and
 returns its standard output. Arguments are passed directly, without a shell. Add
-`--format json` for machine-readable output. A non-zero exit returns an error
-that includes the command's output.
+`--format json` for machine-readable output. A non-zero exit returns the
+standard output with a [`*NativeFailure`](#nativefailure): the exit code, the
+errno that Ceph reported, such as `ENOENT`, and Ceph's reason without its log
+lines, with keys redacted. `errors.Is(err, fs.ErrNotExist)` holds for
+`ENOENT`. See
+[Classified errors](guides/errors.md).
 
 ```golang
 out, err := cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "noscrub", "true")
@@ -1106,6 +1110,17 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 - Errors contain the label but never the arguments or the output. A Docker
   or container failure appears only by its kind; `errors.Unwrap` returns the
   original error.
+- Failures before the command runs are classified: a malformed command, a
+  container that the cluster neither owns nor has attached, or one that is
+  stopped or paused is `ErrInvalidRequest`; a target without `python3`, or a
+  program that does not exist or is not executable, is `ErrImageCapability`;
+  a program that could not be started for want of a process or memory, or
+  because a security policy refused it, and another Docker failure are
+  `ErrEnvironmentUnavailable`. A container that disappears or stops after
+  the command was sent matches no category, since the command may have run.
+  Context errors, `ErrNativeCommandIncomplete` and
+  `*NativeCommandUnstoppedError` belong to no category. See
+  [Classified errors](guides/errors.md).
 
 See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
 for cancellation details and an oracle recipe with `rados_stat2` and
@@ -2731,6 +2746,15 @@ with an error that wraps `ceph.ErrNetemImageUnsupported`,
 refuses an interface whose root qdisc is not the kernel's default, and a
 second delay of the same endpoint.
 
+| Failure | Category | Narrower error |
+| --- | --- | --- |
+| No `HelperImage`: the extension is not selected | `ErrImageCapability` | |
+| The helper image does not meet the contract: a missing or broken tool, or a `tc` without netem | `ErrImageCapability` | `ErrNetemImageUnsupported` |
+| The engine gave the helper no `NET_ADMIN` | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied` |
+| The kernel has no netem qdisc | `ErrEnvironmentUnavailable` | `ErrNetemKernelUnsupported` |
+| A malformed request, a refused target, a held endpoint or a foreign root qdisc | `ErrInvalidRequest` | |
+| A `tc` command that ran and failed otherwise | `ErrNativeFailure` | `*NativeFailure` of `tc` |
+
 The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
 `NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
 `MACAddress`, `Address`), the helper's `HelperImageID` and the requested
@@ -3141,7 +3165,8 @@ Linux containers, the [WithHostAddress](#withhostaddress) address is not assigne
 on the Docker host, or the test process cannot reach the first MON's advertised
 endpoint. `Run` returns it before creating managers and OSDs; later MON and RGW
 port reservations can also return it. The error message explains the likely
-cause for the detected Docker environment.
+cause for the detected Docker environment. It belongs to
+[ErrEnvironmentUnavailable](#error-categories).
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithHostNetwork())
@@ -3151,6 +3176,119 @@ if errors.Is(err, ceph.ErrHostNetworkUnavailable) {
 }
 if err != nil {
 	t.Fatal(err)
+}
+```
+
+#### Error categories
+
+```golang
+var (
+	ErrInvalidRequest         error
+	ErrUnsupported            error
+	ErrImageCapability        error
+	ErrEnvironmentUnavailable error
+	ErrNativeFailure          error
+)
+```
+
+Every package of the module classifies its failures with these categories, so
+that a test can tell a refused request from a missing feature, image tool or
+engine capability, and from a native command that failed. Match them with
+`errors.Is`; an error joined from several failures can match several.
+
+| Category | Meaning |
+| --- | --- |
+| `ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids, such as a terminated cluster, an unowned container or an override that is already held. |
+| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release. `*OperationError` names the target, its version and the feature. |
+| `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
+| `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
+| `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
+
+Context errors, `ErrNativeCommandIncomplete` and
+`*NativeCommandUnstoppedError` keep their own contracts and belong to no
+category; a call that `ctx` ended is never classified by what it could not
+finish. An error that matches no category is a failed check of the fixture's
+own, such as native output that it could not parse, or a failure whose
+outcome is unknown, such as a container that disappeared after a native
+command was sent to it. Only `ErrInvalidRequest` promises that nothing
+changed. See [Classified errors](guides/errors.md).
+
+```golang
+_, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
+	ceph.WithClientKeyType(ceph.CipherAES256K))
+var unsupported *ceph.OperationError
+if errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported {
+	t.Logf("Ceph %s lacks %s", unsupported.Version, unsupported.Capability)
+}
+```
+
+#### OperationError
+
+```golang
+type OperationError struct {
+	Kind       error
+	Op         string
+	Target     string
+	Version    string
+	Image      string
+	Capability string
+	Err        error
+}
+func (e *OperationError) Error() string
+func (e *OperationError) Is(target error) bool
+func (e *OperationError) Unwrap() error
+```
+
+A classified failure with the details that identify it. `Kind` is one of the
+[error categories](#error-categories), and `Is` matches it. `Op` names the
+operation when the cause's text does not, `Target` the container or cluster,
+such as `control`, `destination cluster` or `zone source`, `Version` the Ceph
+release observed on it, `Image` its immutable image ID, and `Capability` the
+missing feature, such as `ceph-authtool --key-type` or `python3`. Unset fields
+were not known or do not apply. The text is `Op`, the cause, and `Target`,
+`Version` and `Image` in parentheses; it never includes command arguments,
+raw output or credentials. Service packages return it too.
+
+#### NativeFailure
+
+```golang
+type NativeFailure struct {
+	Program  string
+	ExitCode int
+	Errno    string
+	Reason   string
+}
+const MaxNativeFailureReason = 512
+func (f *NativeFailure) Error() string
+func (f *NativeFailure) Is(target error) bool
+```
+
+The status of a module command that ran and exited nonzero, such as one of
+[Ceph](#ceph) or of the rbd and radosgw-admin helpers of the service packages.
+`Program` is the program alone, never its arguments. `Errno` is the error
+code that the tool printed, from the `Error ENOENT:` that starts a line of
+Ceph or the last `(2) No such file or directory` of a line of the other tools,
+which print it after the names of the request; it is empty when the tool
+printed none and is never guessed from the exit code. `Reason` is the
+tool's own explanation, its error output without Ceph's log lines joined with
+`; `, at most `MaxNativeFailureReason` bytes, with
+keys and the secrets that [RedactSecrets](#redactsecrets) recognizes replaced;
+it can name resources of the request, such as a pool. Errors whose text hides
+native output keep a copy without `Reason`.
+
+`errors.Is` matches it with `ErrNativeFailure`, with `fs.ErrNotExist` for
+`ENOENT`, `fs.ErrPermission` for `EACCES` and `EPERM`, and `fs.ErrExist` for
+`EEXIST`. [RunNativeCommand](#runnativecommand) returns a nonzero exit as its
+result instead.
+
+```golang
+_, err := cluster.Ceph(ctx, "osd", "pool", "get", "missing", "size")
+var failure *ceph.NativeFailure
+if errors.As(err, &failure) {
+	t.Logf("%s exited %d with %s: %s", failure.Program, failure.ExitCode, failure.Errno, failure.Reason)
+}
+if !errors.Is(err, fs.ErrNotExist) {
+	t.Fatalf("a missing pool returned %v", err)
 }
 ```
 

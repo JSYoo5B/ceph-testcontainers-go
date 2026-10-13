@@ -64,7 +64,7 @@ func (c *Container) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return HealthSnapshot{}, errors.New("ceph cluster is terminated")
+		return HealthSnapshot{}, errClusterTerminated
 	}
 	control, err := c.ControlContainerContext(ctx)
 	if err != nil {

@@ -47,9 +47,12 @@ if err := json.Unmarshal(out, &pools); err != nil {
 - Arguments are passed directly, without a shell. Do not quote them for a
   shell; pass each argument as its own string.
 - Add `--format json` for anything you parse.
-- On a non-zero exit, `Ceph` returns the standard output it got and an error
-  that includes standard output and standard error. Output of commands such as
-  `auth get` contains keys; be careful when logging such errors.
+- On a non-zero exit, `Ceph` returns the standard output it got and a
+  `*ceph.NativeFailure` with the exit code, the errno that Ceph printed and
+  Ceph's reason without its log lines, with keys redacted. Standard output, which holds the
+  keys of commands such as `auth get`, never appears in the error. Match the
+  errno with `errors.Is(err, fs.ErrNotExist)` or read it with `errors.As`;
+  see [Classified errors](errors.md#native-failures).
 - `Ceph` does not take the cluster's topology gate, so it can run while
   another goroutine adds or removes daemons. See
   [Contexts, ownership and cleanup](contexts-and-cleanup.md).
@@ -201,7 +204,15 @@ Errors name the command by its label and never contain its arguments or
 output. A failure of Docker or of your container type appears in the text
 only by its kind, such as a container that does not exist or is paused;
 `errors.Unwrap`, `errors.Is` and `errdefs.IsNotFound` still reach the original
-error, whose text may quote anything. Before you log output, mask the
+error, whose text may quote anything. Failures before the command runs are
+classified: `ceph.ErrInvalidRequest` for a malformed command or a container
+that is not admitted, stopped or paused, `ceph.ErrImageCapability` for a
+container without `python3` or a program that does not exist or is not
+executable, and `ceph.ErrEnvironmentUnavailable` for a program that could not
+be started for want of a process or memory or because a security policy
+refused it, and for another Docker failure. A container that disappears or
+stops after the command was sent matches no category: the command may have
+run. See [Classified errors](errors.md). Before you log output, mask the
 cluster's keys and your own secrets with `RedactSecrets`, which uses the same
 rules as `CollectDiagnostics`:
 
@@ -621,7 +632,8 @@ stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "photos")
   `--keyring`, `--key`, `--id`, `--name`, `--mon-host`, `-c`, `-m`, `-n`, `-k`,
   ...) and arguments with control characters are refused.
 - Successful output may contain credentials. A failed command's output is
-  redacted from the error.
+  redacted from the error, which still carries a `*ceph.NativeFailure` with
+  the exit code and errno but no reason.
 - The call is bounded by the cluster's startup timeout and waits for any
   running topology operation on the same cluster.
 - Do not modify users that the fixture created with `CreateUser` while it is

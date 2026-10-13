@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"slices"
 	"strconv"
@@ -173,7 +174,10 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	if !keyTypes {
 		// Without key type support only AES keys exist: an AES256K client and
 		// cluster are refused before anything is created.
-		if _, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K)); err == nil || !strings.Contains(err.Error(), "--key-type") {
+		_, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K))
+		var refusal *ceph.OperationError
+		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || refusal.Capability != "ceph-authtool --key-type" ||
+			refusal.Version != cluster.CephVersion() || !strings.HasPrefix(refusal.Image, "sha256:") {
 			t.Fatalf("an image without --key-type created an AES256K client: %v", err)
 		}
 		if _, err := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader"); err == nil {
@@ -182,7 +186,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 		started := time.Now()
 		refused, err := ceph.Run(ctx, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K}))...)
 		testcontainers.CleanupContainer(t, refused)
-		if err == nil || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
+		if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
 		}
 		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", cluster.CephVersion())

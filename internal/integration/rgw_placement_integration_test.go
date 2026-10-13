@@ -100,6 +100,10 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 					t.Logf("%s recent RGW diagnostics: %s", site.name, rgwPlacementSafeLogDiagnostic(data, site.gateway))
 				}
 			}
+			// A gateway that exited explains admin commands that fail at once.
+			if state, err := site.gateway.State(diagnosticCtx); err == nil {
+				t.Logf("%s gateway container: status=%s exit=%d oom=%t finished=%s", site.name, state.Status, state.ExitCode, state.OOMKilled, state.FinishedAt)
+			}
 		}
 	})
 	config := rgw.PlacementConfig{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}

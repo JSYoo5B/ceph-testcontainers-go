@@ -256,12 +256,12 @@ func decodeFullRatios(data []byte, fsid string) (FullRatioSnapshot, error) {
 func normalizeFullRatios(ratios FullRatios) (FullRatios, error) {
 	for _, ratio := range []float64{ratios.NearFull, ratios.BackfillFull, ratios.Full} {
 		if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio <= 0 || ratio > 1 {
-			return FullRatios{}, errors.New("full ratios must be finite fractions greater than zero and at most one")
+			return FullRatios{}, invalid(errors.New("full ratios must be finite fractions greater than zero and at most one"))
 		}
 	}
 	ratios = FullRatios{NearFull: float64(float32(ratios.NearFull)), BackfillFull: float64(float32(ratios.BackfillFull)), Full: float64(float32(ratios.Full))}
 	if !orderedFullRatios(ratios) {
-		return FullRatios{}, errors.New("full ratios must remain positive and ascending after native float32 normalization")
+		return FullRatios{}, invalid(errors.New("full ratios must remain positive and ascending after native float32 normalization"))
 	}
 	return ratios, nil
 }
@@ -310,7 +310,7 @@ func fullRatioSteps(current, target FullRatios) []fullRatioStep {
 func (change *FullRatiosOverride) reconcile(snapshot FullRatioSnapshot) error {
 	state := change.state
 	if snapshot.Epoch < state.epoch || (snapshot.Ratios != state.expected && (state.pending == nil || snapshot.Ratios != *state.pending)) {
-		return errors.New("native full ratios changed outside this override; refusing mutation")
+		return invalid(errors.New("native full ratios changed outside this override; refusing mutation"))
 	}
 	state.expected, state.pending, state.epoch = snapshot.Ratios, nil, snapshot.Epoch
 	return nil

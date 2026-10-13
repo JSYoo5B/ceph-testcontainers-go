@@ -351,8 +351,11 @@ output. It is the escape hatch for anything without a typed method.
 - Successful output can contain secret keys (for example `user info`). Do not
   log it.
 - On failure the error does not include the native output, because that output
-  can contain keys. To see native error text, run the same command with
-  `gateway.Exec` (see [Running native commands](#running-native-commands)).
+  can contain keys. It keeps a `*ceph.NativeFailure` with the exit code and
+  errno but no reason, so `errors.Is(err, fs.ErrNotExist)` works. To see
+  native error text, run the same command with `gateway.Exec` (see
+  [Running native commands](#running-native-commands)). Refused arguments are
+  `ceph.ErrInvalidRequest`.
 - Calls are serialized with other operations on the same cluster and bounded by
   the cluster startup timeout.
 - The gateway must still be running and owned by the cluster. After `Remove`,
@@ -2918,7 +2921,7 @@ differences; `cluster.CephVersion()` reports the release of the control image.
 | Area | Tentacle | Squid |
 | --- | --- | --- |
 | System-mode sync pipes | The stored pipe has no `user` parameter. | RGW stores `"user": ""`. The fixture expects it when it compares readbacks; it matters only when you read `sync group get` output yourself. |
-| Account root user mode | A user-mode pipe with an account root user replicates between buckets of that account. | Squid resolves no source for such a pipe and replicates nothing. `CreateSyncPipe` refuses it before any change when any zone runs Ceph 19 ("needs Ceph 20 or later"). User mode with ordinary users works. |
+| Account root user mode | A user-mode pipe with an account root user replicates between buckets of that account. | Squid resolves no source for such a pipe and replicates nothing. `CreateSyncPipe` refuses it before any change when any zone runs Ceph 19, with `ceph.ErrUnsupported`; the `*ceph.OperationError` names the zone and its `Version`. User mode with ordinary users works. |
 | Bucket sync status | `bucket sync status --format json` prints JSON. | Squid ignores `--format json` and prints text. `BucketSyncStatus` and `WaitBucketSyncReady` parse the text into the same structure and report unknown lines as errors. Raw `Admin` output is text. |
 | Missing role lookup | `role get` for a missing role exits with status 2 and prints nothing. | Also exits with status 2, but prints one ENOENT log line. |
 

@@ -74,7 +74,7 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 			if skipForeign {
 				return nil
 			}
-			return fmt.Errorf("pool %q was not created by CreatePool or WithPools (CRUSH rule %q); refusing removal", name, rule)
+			return invalid(fmt.Errorf("pool %q was not created by CreatePool or WithPools (CRUSH rule %q); refusing removal", name, rule))
 		}
 		if err := c.refusePoolInUse(ctx, name); err != nil {
 			return err
@@ -171,7 +171,7 @@ func (c *Container) refusePoolInUse(ctx context.Context, name string) error {
 	}
 	for _, fs := range filesystems {
 		if fs.MetadataPool == name || slices.Contains(fs.DataPools, name) {
-			return fmt.Errorf("pool %q is used by CephFS filesystem %q; refusing removal", name, fs.Name)
+			return invalid(fmt.Errorf("pool %q is used by CephFS filesystem %q; refusing removal", name, fs.Name))
 		}
 	}
 	return nil

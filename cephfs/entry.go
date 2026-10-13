@@ -164,7 +164,7 @@ func clonePoolConfig(config ceph.PoolConfig) ceph.PoolConfig {
 
 func validateExistingPool(name string) error {
 	if !naming.ExistingPool.MatchString(name) {
-		return errors.New("invalid native pool name")
+		return invalid(errors.New("invalid native pool name"))
 	}
 	return nil
 }

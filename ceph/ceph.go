@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
+	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -108,6 +109,9 @@ type Container struct {
 	delays map[string]*NetworkDelayLease
 	// newNetemBackend replaces the Docker netem backend in tests.
 	newNetemBackend func() netemBackend
+	// controlImageID is the ID of the first MON's image, which errors about
+	// the control image's capabilities name.
+	controlImageID string
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
@@ -135,33 +139,33 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
 			if err := opt(&settings); err != nil {
-				return nil, fmt.Errorf("configure ceph: %w", err)
+				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
 			}
 		}
 	}
 	if settings.hostAddressSet && !settings.hostNetwork {
-		return nil, errors.New("WithHostAddress requires WithHostNetwork")
+		return nil, invalidRequest("WithHostAddress requires WithHostNetwork")
 	}
 	if settings.hostNetwork && settings.separateClusterNetwork {
-		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
+		return nil, invalidRequest("WithSeparateClusterNetwork requires bridge mode")
 	}
 	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
-		return nil, errors.New("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
+		return nil, invalidRequest("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
 	}
 	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
-		return nil, fmt.Errorf("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
+		return nil, invalidRequest("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
 	}
 	if settings.addressFamily != AddressIPv4 && settings.separateClusterNetwork {
-		return nil, fmt.Errorf("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
+		return nil, invalidRequest("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
-		return nil, errors.New("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+		return nil, invalidRequest("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
 	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
 	if err := prepareInitialComposition(&settings); err != nil {
-		return nil, fmt.Errorf("configure initial ceph topology: %w", err)
+		return nil, classify(ErrInvalidRequest, fmt.Errorf("configure initial ceph topology: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -181,13 +185,13 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
 	if err != nil {
 		if nw == nil {
-			return nil, fmt.Errorf("create ceph network: %w", err)
+			return nil, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 		}
-		return c, fmt.Errorf("create ceph network: %w", err)
+		return c, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 	}
 	if settings.separateClusterNetwork {
 		if c.clusterNetwork, err = dockerbridge.New(ctx); err != nil {
-			return c, fmt.Errorf("create Ceph replication network: %w", err)
+			return c, classifyDocker(ctx, fmt.Errorf("create Ceph replication network: %w", err))
 		}
 		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
 			return c, err
@@ -215,6 +219,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
 		return c, err
 	}
+	c.controlImageID = containerImageID(ctx, mon)
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
 		return c, err
 	}
@@ -369,8 +374,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if err == nil {
 			return mon, nil
 		}
-		if reason := bootstrapRefusal(ctx, mon); reason != "" {
-			return mon, fmt.Errorf("%s: %w", reason, err)
+		if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
+			return mon, refusal.with(ctx, err)
 		}
 		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
 			return mon, err
@@ -386,7 +391,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			return mon, errors.Join(err, cleanupErr)
 		}
 	}
-	return nil, errors.New("monitor port attempts exhausted")
+	return nil, classify(ErrEnvironmentUnavailable, errors.New("monitor port attempts exhausted"))
 }
 
 // NetworkName returns the cluster's bridge name, or "host" in host mode.
@@ -417,7 +422,7 @@ func (c *Container) ConnectionConfig() ([]byte, []byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, nil, errors.New("ceph cluster is terminated")
+		return nil, nil, errClusterTerminated
 	}
 	c.configMu.RLock()
 	defer c.configMu.RUnlock()
@@ -508,7 +513,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -630,14 +635,14 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	osd, ok := c.osds[id]
 	if !ok || osd == nil {
-		return fmt.Errorf("osd.%d is not owned by this cluster", id)
+		return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -821,7 +826,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if _, exists := c.services[name]; exists {
 		return nil, fmt.Errorf("ceph service %s already started", name)
@@ -1050,20 +1055,63 @@ func readFile(ctx context.Context, ctr testcontainers.Container, path string) ([
 	return io.ReadAll(r)
 }
 
+// command runs args in ctr and returns its standard output. A nonzero exit
+// returns the output with a *NativeFailure; a program that the image lacks
+// is ErrImageCapability, and a failure of Docker is ErrEnvironmentUnavailable
+// unless ctx ended or the container is gone or stopped.
 func command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if ctr == nil {
-		return nil, errors.New("ceph control container is unavailable")
+		return nil, invalidRequest("ceph control container is unavailable")
 	}
 	exitCode, reader, err := ctr.Exec(ctx, args)
 	if err != nil {
-		return nil, fmt.Errorf("exec %s: %w", args[0], err)
+		return nil, classifyDispatched(ctx, fmt.Errorf("exec %s: %w", args[0], err))
 	}
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, fmt.Errorf("read %s output: %w", args[0], err)
+		return nil, classifyDispatched(ctx, fmt.Errorf("read %s output: %w", args[0], err))
 	}
 	if exitCode != 0 {
-		return stdout.Bytes(), fmt.Errorf("%s exited %d: %s", args[0], exitCode, strings.TrimSpace(stdout.String()+stderr.String()))
+		if (exitCode == 126 || exitCode == 127) && strings.HasPrefix(strings.TrimSpace(stdout.String()+stderr.String()), dockerExecFailed) {
+			return nil, &OperationError{Kind: ErrImageCapability, Capability: args[0],
+				Err: fmt.Errorf("the container cannot run %s: it is missing or not executable", args[0])}
+		}
+		return stdout.Bytes(), nativeFailure(args[0], exitCode, stdout.Bytes(), stderr.Bytes())
 	}
 	return stdout.Bytes(), nil
+}
+
+// dockerExecFailed starts the output of an exec whose program the runtime
+// could not start.
+const dockerExecFailed = "OCI runtime exec failed"
+
+// classifyDispatched classifies a failed Docker call that may have started a
+// native command, such as an exec whose final inspection failed after the
+// command ran. Its effect is unknown, so a container that is gone or stopped
+// is no refused request: that error stays unclassified. A call that ctx
+// ended matches ctx's error, and any other failure is the engine's.
+func classifyDispatched(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		(errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
+		return err
+	}
+	return classifyDocker(ctx, err)
+}
+
+// classifyDocker classifies a failed Docker call: a call that ctx ended stays
+// unclassified and matches ctx's error, a container that is gone or not
+// running is a refused request, and anything else is the engine's failure.
+func classifyDocker(ctx context.Context, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() != nil && !errors.Is(err, ctx.Err()):
+		// A transport that ctx closed may fail without wrapping its error.
+		return fmt.Errorf("%w: %w", err, ctx.Err())
+	case ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return err
+	case errdefs.IsNotFound(err) || errdefs.IsConflict(err):
+		return classify(ErrInvalidRequest, err)
+	}
+	return classify(ErrEnvironmentUnavailable, err)
 }

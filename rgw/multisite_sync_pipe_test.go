@@ -1,9 +1,13 @@
 package rgw
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) {
@@ -36,8 +40,8 @@ func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) 
 
 func TestRGWSyncTagsRespectNativeRepresentability(t *testing.T) {
 	for _, tags := range [][]SyncObjectTag{{{Key: "key", Value: "comma,value"}}, {{Key: "comma,key", Value: "v"}}, {{Key: "equals=key", Value: "v"}}, {{Key: "", Value: "v"}}, {{Key: "key", Value: "v"}, {Key: "key", Value: "v"}}, {{Key: "key", Value: strings.Repeat("x", 257)}}} {
-		if _, err := normalizeSyncTags(tags); err == nil {
-			t.Fatal("invalid or ambiguously encoded tags accepted")
+		if _, err := normalizeSyncTags(tags); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("invalid or ambiguously encoded tags returned %v", err)
 		}
 	}
 	if got, err := normalizeSyncTags([]SyncObjectTag{{Key: "empty", Value: ""}, {Key: "equal", Value: "a=b"}}); err != nil || len(got) != 2 {
@@ -90,8 +94,8 @@ func TestRGWSyncPipeRefusesUnconfirmedPrincipalsAndClassMappings(t *testing.T) {
 		config.ID = "unsafe"
 		config.SourceZones = []string{"source"}
 		config.DestinationZones = []string{"destination"}
-		if err := f.CreateSyncPipe(t.Context(), g, config); err == nil {
-			t.Fatal("unconfirmed identity or destination mapping accepted")
+		if err := f.CreateSyncPipe(t.Context(), g, config); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("unconfirmed identity or destination mapping %+v returned %v", config, err)
 		}
 		for _, args := range cli.calls {
 			if syncTestCommand(args, "pipe", "create") {
@@ -119,5 +123,26 @@ func TestRGWSyncPrincipalRequiresExactSourceDestinationTenants(t *testing.T) {
 	}
 	if err := checkSyncPrincipalTenants(SyncPolicyScope{Bucket: "input"}, SyncPipeConfig{}, ""); err != nil {
 		t.Fatal("legacy current-bucket principal rejected")
+	}
+}
+
+// Ceph 19 resolves no source for a user-mode pipe of an account principal,
+// and no tool reveals that, so the release of every zone decides; the
+// refusal names the zone that runs it.
+func TestRGWAccountPipeRefusalNamesTheSquidZone(t *testing.T) {
+	cluster := func(version string) *ceph.Container {
+		c := servicehook.TestCluster(nil, servicehook.TestConfig{})
+		*servicehook.TestState(c).CephVersion = version
+		return c
+	}
+	f := &Multisite{config: MultisiteConfig{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}
+	var refusal *ceph.OperationError
+	if err := accountPipeUnsupported(f.zoneBefore(20)); !errors.As(err, &refusal) || !errors.Is(err, ceph.ErrUnsupported) ||
+		refusal.Target != "zone destination" || refusal.Version != "19.2.5" || !strings.Contains(err.Error(), "needs Ceph 20 or later") {
+		t.Fatalf("a Squid destination zone returned %v", err)
+	}
+	f.config.Destination = cluster("20.2.4")
+	if zone := f.zoneBefore(20); zone != nil {
+		t.Fatalf("Tentacle zones returned zone %s", zone.Name)
 	}
 }

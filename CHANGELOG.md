@@ -8,6 +8,22 @@ change the API.
 
 ### Added
 
+- Classified errors. Every package reports a refused request
+  (`ceph.ErrInvalidRequest`), a feature that the Ceph of the relevant target
+  lacks (`ceph.ErrUnsupported`), a missing image tool or an unselected
+  extension (`ceph.ErrImageCapability`), an engine, host or kernel limit
+  (`ceph.ErrEnvironmentUnavailable`) and a native command that ran and failed
+  (`ceph.ErrNativeFailure`), matched with `errors.Is`. `*ceph.OperationError`
+  names the target, its observed version, its image ID and the missing
+  capability, and `*ceph.NativeFailure` the program, exit code, reported
+  errno and the tool's redacted reason; `ENOENT`, `EACCES`/`EPERM` and
+  `EEXIST` also match `fs.ErrNotExist`, `fs.ErrPermission` and `fs.ErrExist`.
+  Errors that hide native output keep this classification without the
+  output. Context errors, `ErrNativeCommandIncomplete` and
+  `NativeCommandUnstoppedError` are unchanged, and `RunNativeCommand` still
+  returns a nonzero exit as its result. See
+  [Classified errors](docs/guides/errors.md).
+
 - `ceph.Container.TemporaryNetworkDelay` delays every packet that a container
   sends on one of the cluster's bridges, with the kernel's netem qdisc, until
   `NetworkDelayLease.Restore`. It is an opt-in extension: the caller selects a
@@ -94,6 +110,18 @@ change the API.
 
 ### Changed
 
+- Errors of the module's native commands, such as those of `Ceph`, no longer
+  contain the command's standard output and standard error. They contain the
+  program, exit code, errno and the tool's reason without its log lines, with
+  keys redacted; `errors.As` with `*ceph.NativeFailure` returns them.
+
+- `rbd.RunMirror` decides whether it can map differently named namespaces
+  from the `rbd` of each setup client and of each cluster's control image
+  (`--remote-namespace`), and refuses the mapping with `ceph.ErrUnsupported`
+  naming the side that lacks it. It previously decided from the release
+  numbers alone, so a backported Squid image could not map namespaces and a
+  Squid setup client for Tentacle clusters failed after its first changes.
+
 - Go 1.26 or later is required. `golang.org/x/crypto` v0.56.0, which fixes
   GO-2026-6354 and GO-2026-6355, needs it, and Go 1.25 is no longer supported
   upstream. Use a current patch release: Go 1.26.8, for example, has
@@ -104,6 +132,10 @@ change the API.
   stay where `CollectCrashMetadata` reads them.
 
 ### Fixed
+
+- `CollectDiagnostics` and `RedactSecrets` redact the token of an
+  `Authorization: Bearer` header. The secret-assignment rule replaced only
+  the word `Bearer` and left the token after it.
 
 - Dependencies with vulnerabilities that govulncheck finds reachable are
   updated: `github.com/moby/go-archive` v0.3.0 (GO-2026-6253), `golang.org/x/crypto`

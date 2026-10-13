@@ -230,6 +230,28 @@ func TestSupervisorReportsAProgramItCannotStart(t *testing.T) {
 	}
 }
 
+// A command that the supervisor cannot fork, for want of a process, ends it
+// with LaunchUnavailableExit, not as a program that it cannot start.
+func TestSupervisorReportsAnUnavailableLaunch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("RLIMIT_NPROC does not bind root")
+	}
+	python := installedPython(t)
+	marker := filepath.Join(t.TempDir(), "markers", "unavailable")
+	// The supervisor runs with a process limit that its fork exceeds.
+	limited := "import os,resource; resource.setrlimit(resource.RLIMIT_NPROC,(1,1)); exec(os.environ['TC_TEST_SCRIPT'])"
+	cmd := exec.Command(python, "-c", limited, "4096", "1024", "30", "true")
+	cmd.Env = append(os.Environ(), MarkerVariable+"="+marker, "TC_TEST_SCRIPT="+Script)
+	output, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != LaunchUnavailableExit || len(output) != 0 {
+		t.Fatalf("supervisor returned %v with %q", err, output)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("supervisor left its marker: %v", err)
+	}
+}
+
 // fakeProc gives the scripts a /proc below dir with one container instance:
 // a boot ID and the start time of PID 1, which restart changes.
 type fakeProc struct {

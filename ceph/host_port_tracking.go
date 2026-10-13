@@ -25,7 +25,7 @@ func (c *Container) reserveTrackedHostPortsWith(ctx context.Context, count int, 
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	lease, err := reserve(ctx, c.settings.controlImage, c.PublicAddress(), count, c.settings.startupTimeout)
 	if lease != nil {

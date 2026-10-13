@@ -516,7 +516,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 		return nil, err
 	}
 	if mirror.closed {
-		return nil, errors.New("CephFS mirror has been terminated")
+		return nil, invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil || mirror.daemonImage == "" || len(mirror.daemonKeyring) == 0 {
 		return nil, errors.New("CephFS mirror is not initialized")
@@ -526,7 +526,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 	}
 	for _, existing := range mirror.daemons {
 		if existing.DaemonName == daemonName {
-			return nil, fmt.Errorf("CephFS mirror daemon %q already exists", daemonName)
+			return nil, invalid(fmt.Errorf("CephFS mirror daemon %q already exists", daemonName))
 		}
 	}
 	const socket = "/var/run/ceph/cephfs-mirror.asok"
@@ -586,7 +586,7 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	for index, daemon := range mirror.daemons {
 		if daemon.DaemonName != daemonName {
@@ -606,11 +606,11 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 
 func validateCephFSMirrorDaemonName(name string) error {
 	if name == "" || len(name) > 63 {
-		return errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens")
+		return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 	}
 	for _, character := range name {
 		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
-			return errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens")
+			return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 		}
 	}
 	return nil
@@ -654,7 +654,7 @@ func (mirror *Mirror) AttachManagers(ctx context.Context) error {
 // cannot close while a topology reconciliation is using it.
 func (mirror *Mirror) attachManagers(ctx context.Context) error {
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
@@ -938,7 +938,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.peerID == "" {
 		return errors.New("CephFS mirror is not initialized")
@@ -1245,7 +1245,7 @@ func matchPendingCephFSPeer(peers map[string]json.RawMessage, expected *cephFSPe
 
 func normalizeMirrorDirectory(directory string) (string, error) {
 	if !path.IsAbs(directory) || strings.ContainsRune(directory, 0) {
-		return "", fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory)
+		return "", invalid(fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory))
 	}
 	return path.Clean(directory), nil
 }
@@ -1258,17 +1258,17 @@ func normalizeCephFSMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
 	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
 		if !validCephFSMirrorFilesystemName(name) {
-			return config, errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore")
+			return config, invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
 		}
 	}
 	if config.DestinationSite == "" {
 		config.DestinationSite = "destination"
 	}
 	if strings.ContainsAny(config.DestinationSite, "@/\x00\r\n\t ") {
-		return config, errors.New("CephFS destination site cannot contain separators or whitespace")
+		return config, invalid(errors.New("CephFS destination site cannot contain separators or whitespace"))
 	}
 	if len(config.Directories) == 0 {
-		return config, errors.New("at least one CephFS mirror directory is required")
+		return config, invalid(errors.New("at least one CephFS mirror directory is required"))
 	}
 	directories := make([]string, 0, len(config.Directories))
 	for _, directory := range config.Directories {
@@ -1279,7 +1279,7 @@ func normalizeCephFSMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
 		}
 		for _, previous := range directories {
 			if directory == previous || directory == "/" || previous == "/" || strings.HasPrefix(directory, previous+"/") || strings.HasPrefix(previous, directory+"/") {
-				return config, fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory)
+				return config, invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
 			}
 		}
 		directories = append(directories, directory)

@@ -150,7 +150,7 @@ func (change *MGRModuleOverride) Restore(ctx context.Context) error {
 		return nil
 	}
 	if module.Enabled != change.state.applied {
-		return errors.New("MGR module changed outside this override; refusing restoration")
+		return invalid(errors.New("MGR module changed outside this override; refusing restoration"))
 	}
 	if change.state.previous {
 		if !module.Available || !module.CanRun {

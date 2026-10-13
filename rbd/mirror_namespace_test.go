@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -134,6 +136,65 @@ func TestRBDMirrorNamespaceProvisionUsesExplicitEmptyRemote(t *testing.T) {
 	// Repeating composition preserves matching policy, UUIDs and enrollment.
 	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil || len(source.mutations) != 2 || len(destination.mutations) != 1 {
 		t.Fatalf("matching policies were rewritten: error=%v", err)
+	}
+}
+
+// A mapping between differently named namespaces needs --remote-namespace in
+// the rbd of both setup clients and of both clusters' control images, whatever
+// their release numbers say. The refusal names the side that lacks it.
+func TestRBDNamespaceMappingRefusalNamesTheSideThatLacksIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		source, destination string
+		// squid lists the rbd that lack the option: "source", "destination",
+		// "source client" or "destination client".
+		squid                  []string
+		target, version, image string
+	}{
+		"Squid destination": {source: "20.2.4", destination: "19.2.5", squid: []string{"destination", "destination client"},
+			target: "destination cluster", version: "19.2.5", image: "sha256:destination"},
+		"Squid source": {source: "19.2.5", destination: "20.2.4", squid: []string{"source", "source client"},
+			target: "source cluster", version: "19.2.5", image: "sha256:source"},
+		"setup client without the option": {source: "20.2.4", destination: "20.2.4", squid: []string{"destination client"},
+			target: "destination setup client", image: "sha256:destination-client"},
+		"stripped Tentacle cluster": {source: "20.2.4", destination: "20.2.4", squid: []string{"destination"},
+			target: "destination cluster", version: "20.2.4", image: "sha256:destination"},
+		"backported Squid": {source: "19.2.5", destination: "19.2.5"},
+		"both sides able":  {source: "20.2.4", destination: "20.2.4"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := func(role string) *rbdNamespacePolicyFixture {
+				f := newRBDNamespacePolicyFixture()
+				f.squidRBD, f.image = slices.Contains(tc.squid, role), "sha256:"+strings.ReplaceAll(role, " ", "-")
+				return f
+			}
+			source, destination := fixture("source client"), fixture("destination client")
+			sourceCluster := servicehook.TestCluster(fixture("source"), servicehook.TestConfig{})
+			destinationCluster := servicehook.TestCluster(fixture("destination"), servicehook.TestConfig{})
+			*servicehook.TestState(sourceCluster).CephVersion, *servicehook.TestState(destinationCluster).CephVersion = tc.source, tc.destination
+			link := &Mirror{sourceClient: source, destinationClient: destination, config: MirrorConfig{
+				Pool: "images", Scope: MirrorScopeImage, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
+				Source: sourceCluster, Destination: destinationCluster,
+			}}
+			if err := link.detectNamespaceMapping(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			err := link.provisionRBDMirrorPolicies(t.Context())
+			if tc.target == "" {
+				if err != nil || len(destination.mutations) == 0 || !slices.Contains(destination.mutations[len(destination.mutations)-1], "--remote-namespace") {
+					t.Fatalf("a supported mapping returned %v after %v", err, destination.mutations)
+				}
+				return
+			}
+			var refusal *ceph.OperationError
+			if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || !errors.Is(err, ceph.ErrUnsupported) || refusal.Target != tc.target ||
+				refusal.Version != tc.version || refusal.Capability != "rbd mirror pool enable --remote-namespace" || refusal.Image != tc.image ||
+				!strings.Contains(err.Error(), `mirroring RBD namespace "ns-`) {
+				t.Fatalf("refusal = %v (%+v)", err, refusal)
+			}
+			if len(source.mutations) != 0 || len(destination.mutations) != 0 {
+				t.Fatalf("a refused mapping changed source=%v destination=%v", source.mutations, destination.mutations)
+			}
+		})
 	}
 }
 
@@ -314,6 +375,15 @@ type rbdNamespacePolicyFixture struct {
 	falseSuccess bool
 	lostReply    bool
 	beforeInfo   func(*rbdNamespacePolicyFixture, string, int)
+	// squidRBD gives the client an rbd without --remote-namespace.
+	squidRBD bool
+	// image is the ID of the client's image.
+	image string
+}
+
+// Inspect reports the client's image.
+func (c *rbdNamespacePolicyFixture) Inspect(context.Context) (*container.InspectResponse, error) {
+	return &container.InspectResponse{Image: c.image}, nil
 }
 
 func newRBDNamespacePolicyFixture() *rbdNamespacePolicyFixture {
@@ -323,6 +393,11 @@ func newRBDNamespacePolicyFixture() *rbdNamespacePolicyFixture {
 func (c *rbdNamespacePolicyFixture) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	var data []byte
 	switch {
+	case slices.Equal(args, []string{"rbd", "help", "mirror", "pool", "enable"}):
+		data = []byte("usage: rbd mirror pool enable [--pool <pool>] [--namespace <namespace>] \n  [--site-name <site-name>] \n")
+		if !c.squidRBD {
+			data = append(data, "  [--remote-namespace <remote-namespace>] \n"...)
+		}
 	case slices.Equal(args, []string{"ceph", "config-key", "ls", "--format", "json"}):
 		data = []byte(`[]`)
 		if c.site != "" {

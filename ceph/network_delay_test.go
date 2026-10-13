@@ -90,6 +90,8 @@ type fakeNetem struct {
 	onRemove func()
 	// editPreflight changes the preflight report before it is returned.
 	editPreflight func(map[string]any)
+	// slowPreflight makes the preflight run into its deadline.
+	slowPreflight bool
 }
 
 func newFakeNetem() *fakeNetem {
@@ -305,6 +307,9 @@ func (ns *fakeNamespace) link(name string) *fakeLink {
 // script answers netemScript from the model; the caller holds n.mu.
 func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.Report, error) {
 	out := map[string]any{"namespace": fmt.Sprintf("net:[%d]", helper.namespace.id), "net_admin": helper.netAdmin}
+	if args[0] == "preflight" && n.slowPreflight {
+		return supervised.Report{TimedOut: true}, nil
+	}
 	if args[0] == "preflight" {
 		// The script always reports a list, also an empty one.
 		out["missing"] = append([]string{}, n.missing...)
@@ -432,21 +437,26 @@ func TestNetworkDelayAppliesAndRestores(t *testing.T) {
 // Each unmet requirement is its own error, found before the target changes.
 func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 	for name, tc := range map[string]struct {
-		setup func(*fakeNetem)
-		want  error
+		setup      func(*fakeNetem)
+		want, kind error
 	}{
-		"no tc":        {func(n *fakeNetem) { n.missing = []string{"tc", "ip"} }, ErrNetemImageUnsupported},
-		"no python3":   {func(n *fakeNetem) { n.noPython = true }, ErrNetemImageUnsupported},
-		"no NET_ADMIN": {func(n *fakeNetem) { n.netAdmin = false }, ErrNetemPermissionDenied},
-		"no netem":     {func(n *fakeNetem) { n.kernel = false }, ErrNetemKernelUnsupported},
+		"no tc":        {func(n *fakeNetem) { n.missing = []string{"tc", "ip"} }, ErrNetemImageUnsupported, ErrImageCapability},
+		"no python3":   {func(n *fakeNetem) { n.noPython = true }, ErrNetemImageUnsupported, ErrImageCapability},
+		"no NET_ADMIN": {func(n *fakeNetem) { n.netAdmin = false }, ErrNetemPermissionDenied, ErrEnvironmentUnavailable},
+		"no netem":     {func(n *fakeNetem) { n.kernel = false }, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			tc.setup(netem)
 			cluster, osd := delayCluster(netem)
 			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
-			if !errors.Is(err, tc.want) || lease != nil {
+			if !errors.Is(err, tc.want) || !errors.Is(err, tc.kind) || lease != nil {
 				t.Fatalf("got %v, lease %v; want %v", err, lease, tc.want)
+			}
+			for _, other := range categories {
+				if other != tc.kind && errors.Is(err, other) {
+					t.Fatalf("%v also matches %v", err, other)
+				}
 			}
 			for _, command := range netem.commands {
 				if strings.HasPrefix(command, "tc ") {
@@ -479,8 +489,8 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 			setup(netem.targets["osd-0"])
 			before := netem.root("osd-0")
 			cluster, osd := delayCluster(netem)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || lease != nil {
-				t.Fatal("accepted")
+			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ErrInvalidRequest) || lease != nil {
+				t.Fatalf("returned %v, lease %v", err, lease)
 			}
 			if name != "custom root" && name != "not on the plane" && len(netem.helpers) != 0 {
 				t.Fatal("a helper started before the target was admitted")
@@ -498,8 +508,55 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
 	cluster.settings.hostNetwork = true
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || len(netem.helpers) != 0 {
+	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ErrInvalidRequest) || len(netem.helpers) != 0 {
 		t.Fatalf("a host-network cluster: %v", err)
+	}
+}
+
+// An unselected extension, an image that fails its contract, an engine that
+// denies what it needs, and a tc command that fails otherwise are told apart.
+func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
+	netem := newFakeNetem()
+	cluster, osd := delayCluster(netem)
+	unselected := testDelay
+	unselected.HelperImage = ""
+	var missing *OperationError
+	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, unselected); !errors.As(err, &missing) || missing.Kind != ErrImageCapability ||
+		missing.Capability != "netem extension" || errors.Is(err, ErrNetemImageUnsupported) || lease != nil || len(netem.helpers) != 0 {
+		t.Fatalf("an unselected extension returned %v", err)
+	}
+	for name, change := range map[string]func(*NetworkDelay){
+		"no delay":      func(d *NetworkDelay) { d.Delay = 0 },
+		"long jitter":   func(d *NetworkDelay) { d.Jitter = 2 * d.Delay },
+		"unknown plane": func(d *NetworkDelay) { d.Plane = "storage" },
+	} {
+		request := testDelay
+		change(&request)
+		if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("%s returned %v", name, err)
+		}
+	}
+	// The kernel refuses the qdisc for another reason: tc's own failure, and
+	// nothing changed.
+	netem.onAdd = func(func() supervised.Report) (supervised.Report, error) {
+		return supervised.Report{ExitCode: 2, Stderr: []byte("RTNETLINK answers: Invalid argument")}, nil
+	}
+	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	var failure *NativeFailure
+	if !errors.As(err, &failure) || failure.Program != "tc" || failure.ExitCode != 2 || failure.Reason != "RTNETLINK answers: Invalid argument" ||
+		errors.Is(err, ErrImageCapability) || errors.Is(err, ErrEnvironmentUnavailable) || lease != nil {
+		t.Fatalf("a refused tc command returned %v, lease %v", err, lease)
+	}
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 {
+		t.Fatal("the failed command left a change or a helper")
+	}
+	// A preflight that runs out of time says nothing about the image.
+	netem = newFakeNetem()
+	netem.slowPreflight = true
+	cluster, osd = delayCluster(netem)
+	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || classified(err) || !strings.Contains(err.Error(), "timed out") ||
+		lease != nil || netem.liveHelpers() != 0 {
+		t.Fatalf("a slow preflight returned %v, lease %v", err, lease)
 	}
 }
 
@@ -513,7 +570,7 @@ func TestNetworkDelayCanceledApplyKeepsALease(t *testing.T) {
 	}
 	cluster, osd := delayCluster(netem)
 	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
-	if !errors.Is(err, context.Canceled) || lease == nil {
+	if !errors.Is(err, context.Canceled) || classified(err) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
 	if status, err := lease.Status(t.Context()); err != nil || !status.Applied {

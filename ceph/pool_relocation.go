@@ -159,7 +159,7 @@ func poolPGCountReached(pool PoolState, pgNum int) bool {
 // configuration change this fixture does not make implicitly.
 func validatePoolPGCount(pgNum int) error {
 	if pgNum < 1 || pgNum > 65536 {
-		return errors.New("pool PG count must be between 1 and 65536")
+		return invalid(errors.New("pool PG count must be between 1 and 65536"))
 	}
 	return nil
 }

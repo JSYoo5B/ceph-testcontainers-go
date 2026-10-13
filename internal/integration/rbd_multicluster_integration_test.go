@@ -8,10 +8,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
@@ -63,7 +65,9 @@ func TestMultiClusterRBDBackup(t *testing.T) {
 
 	// Incremental restore must reject an unrelated image without its baseline.
 	execCommand(t, ctx, destinationClient, "rbd", "create", pool+"/missing-baseline", "--size", "8M", "--image-feature", "layering")
-	if err := rbd.RestoreIncremental(ctx, destinationClient, pool+"/missing-baseline", bytes.NewReader(delta)); err == nil || !strings.Contains(err.Error(), "baseline") {
+	err := rbd.RestoreIncremental(ctx, destinationClient, pool+"/missing-baseline", bytes.NewReader(delta))
+	var refusal *ceph.NativeFailure
+	if !errors.As(err, &refusal) || refusal.Program != "rbd" || refusal.Errno != "EINVAL" || !strings.Contains(refusal.Reason, "'baseline' does not exist") {
 		t.Fatalf("missing baseline should reject incremental restore: %v", err)
 	}
 	execCommand(t, ctx, destinationClient, "rbd", "rm", pool+"/missing-baseline", "--no-progress")

@@ -9,7 +9,7 @@ import (
 // admission without changing poolPolicyReady's other policy callers.
 func (c *Container) waitPolicyReady(ctx context.Context) error {
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	control, err := c.ControlContainerContext(ctx)
 	if err != nil {

@@ -109,7 +109,7 @@ func (r *ClientRevocation) Restore(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if err := c.settleClient(ctx, state.client.name); err != nil {
 		return err
@@ -134,7 +134,7 @@ func (r *ClientRevocation) Restore(ctx context.Context) error {
 		finish()
 		return nil
 	case state.restored || current.exists:
-		return fmt.Errorf("cephx identity %s now has another key or other capabilities; refusing to overwrite it", state.client.name)
+		return invalid(fmt.Errorf("cephx identity %s now has another key or other capabilities; refusing to overwrite it", state.client.name))
 	}
 	// auth add with the original keyring creates exactly the original entry,
 	// which auth import refuses without capabilities, and fails rather than
