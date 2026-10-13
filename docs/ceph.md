@@ -1055,7 +1055,10 @@ returns its standard output. Arguments are passed directly, without a shell. Add
 standard output with a [`*NativeFailure`](#nativefailure): the exit code, the
 errno that Ceph reported, such as `ENOENT`, and Ceph's reason without its log
 lines, with keys redacted. `errors.Is(err, fs.ErrNotExist)` holds for
-`ENOENT`. See
+`ENOENT`. When no MON answers the connection within 5 seconds, the CLI exits
+before it sends the command; `Ceph` then connects again, until a MON
+answers, `ctx` ends or a minute has passed, so a stalled or electing MON
+delays the command instead of failing it, and the command runs once. See
 [Classified errors](guides/errors.md).
 
 ```golang

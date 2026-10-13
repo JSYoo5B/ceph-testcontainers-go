@@ -601,6 +601,7 @@ func rbdScopedImageHealth(t *testing.T, parent context.Context, cluster *ceph.Co
 		if err != nil || code != 0 {
 			t.Fatalf("%s %s raw health query failed: exit=%d error=%v detail=%s", role, phase, code, err, data)
 		}
+		data = withoutRunnerStorageAlert(t, data)
 		t.Logf("RBD_NAMESPACE_IMAGE_HEALTH role=%s phase=%s detail=%s", role, phase, data)
 		var health struct {
 			Status *string                     `json:"status"`

@@ -1058,11 +1058,17 @@ func readFile(ctx context.Context, ctr testcontainers.Container, path string) ([
 // command runs args in ctr and returns its standard output. A nonzero exit
 // returns the output with a *NativeFailure; a program that the image lacks
 // is ErrImageCapability, and a failure of Docker is ErrEnvironmentUnavailable
-// unless ctx ended or the container is gone or stopped.
+// unless ctx ended or the container is gone or stopped. A ceph CLI that no
+// MON answered within its --connect-timeout connects again; see
+// reconnectCeph.
 func command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if ctr == nil {
 		return nil, invalidRequest("ceph control container is unavailable")
 	}
+	return reconnectCeph(ctx, args, func() ([]byte, error) { return commandOnce(ctx, ctr, args...) })
+}
+
+func commandOnce(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	exitCode, reader, err := ctr.Exec(ctx, args)
 	if err != nil {
 		return nil, classifyDispatched(ctx, fmt.Errorf("exec %s: %w", args[0], err))
@@ -1079,6 +1085,48 @@ func command(ctx context.Context, ctr testcontainers.Container, args ...string) 
 		return stdout.Bytes(), nativeFailure(args[0], exitCode, stdout.Bytes(), stderr.Bytes())
 	}
 	return stdout.Bytes(), nil
+}
+
+// The ceph CLI connects again for at most cephConnectWait, pausing
+// cephConnectPause between attempts; tests shorten both.
+var (
+	cephConnectWait  = time.Minute
+	cephConnectPause = time.Second
+)
+
+// reconnectCeph runs a ceph CLI command with run, and runs it again while no
+// MON answered its connection within --connect-timeout. The CLI then exits
+// before it sends the command, so nothing was sent: a MON that stalls, as on
+// a runner whose storage pauses for longer than that timeout, or an election
+// delays the command instead of failing it. The attempts end with ctx, which
+// a call that ends this way matches, or after cephConnectWait, which returns
+// the last failure.
+func reconnectCeph(ctx context.Context, args []string, run func() ([]byte, error)) ([]byte, error) {
+	reconnect := len(args) > 0 && args[0] == "ceph" && slices.Contains(args, "--connect-timeout") &&
+		!slices.Contains(args, "-h") && !slices.Contains(args, "--help")
+	until := time.Now().Add(cephConnectWait)
+	for {
+		out, err := run()
+		var failure *NativeFailure
+		if !reconnect || !errors.As(err, &failure) || !cephConnectTimedOut(failure) || !time.Now().Before(until) {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%s: no MON answered the connection before the context ended: %w", args[0], ctx.Err())
+		case <-time.After(cephConnectPause):
+		}
+	}
+}
+
+// cephConnectTimedOut reports a ceph CLI that gave up connecting to the MONs:
+// its --connect-timeout bounds only the connection, after which it prints
+// "timed out", or the reasons of an interrupted or failed connection, and
+// exits 1 without sending its command.
+func cephConnectTimedOut(failure *NativeFailure) bool {
+	return failure.Program == "ceph" && failure.ExitCode == 1 &&
+		(failure.Reason == "timed out" || failure.Reason == "Cluster connection interrupted or timed out" ||
+			strings.Contains(failure.Reason, "error connecting to the cluster"))
 }
 
 // dockerExecFailed starts the output of an exec whose program the runtime

@@ -117,6 +117,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			})
 			topologyFreshConnection(t, ctx, client, false)
 			session.check(t, ctx, client, "quorum-recovered")
+			topologyQuorumStall(t, ctx, cluster, cluster.Monitors())
 			if _, err := cluster.AddMonitor(ctx, "replacement"); err != nil {
 				t.Fatal(err)
 			}

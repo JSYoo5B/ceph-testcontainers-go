@@ -449,6 +449,7 @@ func noInitialOSDHealth(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	if err != nil {
 		t.Fatal("native health detail unavailable", err)
 	}
+	data = withoutRunnerStorageAlert(t, data)
 	var detail struct {
 		Status string                     `json:"status"`
 		Checks map[string]json.RawMessage `json:"checks"`

@@ -53,6 +53,13 @@ if err := json.Unmarshal(out, &pools); err != nil {
   keys of commands such as `auth get`, never appears in the error. Match the
   errno with `errors.Is(err, fs.ErrNotExist)` or read it with `errors.As`;
   see [Classified errors](errors.md#native-failures).
+- The CLI's `--connect-timeout 5` bounds only its connection to a MON: when
+  it expires, the CLI exits with `timed out` before it sends the command.
+  `Ceph` and the fixture's own CLI commands then connect again, until a MON
+  answers, `ctx` ends or a minute has passed. A MON that stalls, for example
+  on a runner whose disk pauses, or an election delays the command instead
+  of failing it, and the command runs once. A call that `ctx` ends this way
+  matches `ctx`'s error.
 - `Ceph` does not take the cluster's topology gate, so it can run while
   another goroutine adds or removes daemons. See
   [Contexts, ownership and cleanup](contexts-and-cleanup.md).
