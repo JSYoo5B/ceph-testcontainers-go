@@ -21,6 +21,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
   cancel-in-progress: true
 
+# Go jobs restore the module cache that the Plan job of tagged-runtime.yml
+# saves after downloading every module; they never save one themselves.
 jobs:
   unit:
     name: Unit tests
@@ -35,7 +37,12 @@ jobs:
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Run host unit tests
         run: make test
 
@@ -52,7 +59,12 @@ jobs:
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Run race detector
         run: make race
 
@@ -71,7 +83,12 @@ jobs:
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Vet Go packages
         run: make vet
       - name: Lint Go packages with every build tag
@@ -101,7 +118,12 @@ jobs:
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Verify the full compiled all, category and batch partition
         run: python3 .github/scripts/tag_scenarios.py plan --verify --output artifacts/tag-plan.json
       - name: Run code-only tagged helpers

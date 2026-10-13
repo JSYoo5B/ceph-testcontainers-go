@@ -9,6 +9,7 @@ import sys
 
 
 PHASES = (
+    ("modules", "Go module preparation", "SCENARIO_MODULES_OUTCOME"),
     ("compile", "Compilation", "SCENARIO_COMPILE_OUTCOME"),
     ("docker", "Docker baseline", "SCENARIO_DOCKER_OUTCOME"),
     ("images", "Published image preparation", "SCENARIO_IMAGES_OUTCOME"),

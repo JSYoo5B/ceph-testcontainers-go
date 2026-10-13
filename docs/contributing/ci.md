@@ -34,6 +34,14 @@ request, such as a reset HTTP/2 stream; with the default `,` it gives up on
 everything but a 404 or 410, which once failed a whole batch at compilation.
 `go.sum` verifies a module from either source.
 
+The Go jobs share one module cache, keyed by `go.sum`. The `Plan` job of each
+runtime workflow restores it and, when it is missing, downloads every module
+with `tag_scenarios.py modules` and saves it. Runtime jobs start only after
+`Plan`, and Code checks jobs only restore it. `setup-go`'s own cache is off:
+it keeps whatever the first job to finish under a key had, which once was a
+`Plan` job with almost no modules, so every later compile downloaded its
+modules again.
+
 ### Check names
 
 Displayed names are layered as `<workflow> / <caller job> / <batch>`. For
@@ -171,7 +179,9 @@ steps in order:
 
 | Step | Phase in summary | What happens |
 | --- | --- | --- |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c`. Nothing runs. |
+| Restore the Go module cache | n/a | Restores the module cache that the `Plan` job saved. |
+| Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. Nothing runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`. Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) runs the batch and applies the pass rules below. |
@@ -292,11 +302,11 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `compile/compile.log` and `compile/compile-report.json` (compiler output, exit code); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output and outcome); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
-| `plan-<category>` | `tag-plan.json` from the `Plan` job |
+| `plan-<category>` | `tag-plan.json` from the `Plan` job, and `modules/` when it downloaded the modules |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage, and the `code` batch results (Code checks) |
 
 `native/report.json` has these fields of interest:
@@ -315,6 +325,13 @@ workflow and is run locally with `tag_scenarios.py optional`.
 - `command`, `elapsed_seconds`, `exit_code`.
 - `strict_completion`: the checker result for checker batches.
 
+`modules-report.json` and `compile-report.json` record `exit_code`,
+`timed_out`, `timeout_seconds` and `elapsed_seconds`. Their `classification`
+is `prepared` or `compiled`, `modules-failure` or `compile-failure` for a
+nonzero exit, and `modules-timeout` or `compile-timeout` when the bound
+expired. A timed-out command is killed with its whole process group, its
+`exit_code` is `null`, and its log keeps the output written until then.
+
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.
 
@@ -322,7 +339,8 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Failed phase | Look at | Common causes |
 | --- | --- | --- |
-| Compilation | `compile/compile.log` | A test calls a helper defined in a file that only another batch compiles. Run `plan --verify` locally (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). |
+| Go module preparation | `modules/modules.log`, `modules/modules-report.json` | The module proxy and the module's origin did not answer, or `go.sum` lacks an entry. |
+| Compilation | `compile/compile.log`, `compile/compile-report.json` | A test calls a helper defined in a file that only another batch compiles. Run `plan --verify` locally (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). A `compile-timeout` with a complete module cache is the build itself. |
 | Docker baseline | the step log, `runtime-cleanup-<id>-baseline` | Docker did not become ready within 60 seconds. |
 | Published image preparation | `scenario-images-<id>` | A role image for the release is missing from the registry or could not be pulled. |
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait hit its deadline, the batch timeout expired, or a test was skipped. For a Go timeout, the `panic: test timed out` block lists the tests still running and for how long. |

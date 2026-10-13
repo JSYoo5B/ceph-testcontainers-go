@@ -47,11 +47,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # setup-go's own cache is keyed by go.sum and saved by whichever job
+      # finishes first. Once that was this job, which needs almost no modules,
+      # every later job restored an 11 MB cache and downloaded its modules
+      # inside the compile bound (#51). This job fills an explicit module
+      # cache instead, before any runtime job starts.
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        id: modules_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Discover only this workflow family from source tags
         id: plan
         env:
@@ -63,12 +74,23 @@ jobs:
           else
             python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           fi
+      - name: Download every Go module
+        if: steps.modules_cache.outputs.cache-hit != 'true'
+        run: python3 .github/scripts/tag_scenarios.py modules --directory artifacts/modules
+      - name: Save the Go module cache
+        if: steps.modules_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Save family plan
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: plan-${{ inputs.category }}
-          path: artifacts/tag-plan.json
+          path: |
+            artifacts/tag-plan.json
+            artifacts/modules/
           if-no-files-found: error
 
   runtime:
@@ -87,10 +109,24 @@ jobs:
         with:
           go-version: '1.26.x'
           check-latest: true
-          cache-dependency-path: go.sum
+          cache: false
+      - name: Restore the Go module cache
+        id: modules_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Prepare Go modules
+        id: modules
+        env:
+          SCENARIO_MODULE_CACHE_HIT: ${{ steps.modules_cache.outputs.cache-hit }}
+        run: python3 .github/scripts/tag_scenarios.py modules --directory artifacts/scenario/modules
       - name: Compile selected tagged suite
         id: compile
         env:
+          # Only the previous step reaches the network; the compile reads the
+          # module cache, so its bound measures building alone.
+          GOPROXY: 'off'
           SCENARIO_CATEGORY: ${{ matrix.category }}
           SCENARIO_BATCH: ${{ matrix.batch }}
           SCENARIO_PACKAGE: ${{ matrix.package }}
@@ -134,6 +170,7 @@ jobs:
           SCENARIO_CHECK_NAME: ${{ inputs.check_name }}
           SCENARIO_PROFILE: ${{ matrix.id }}
           SCENARIO_REQUIRES_CEPH: ${{ matrix.requires_ceph }}
+          SCENARIO_MODULES_OUTCOME: ${{ steps.modules.outcome }}
           SCENARIO_COMPILE_OUTCOME: ${{ steps.compile.outcome }}
           SCENARIO_DOCKER_OUTCOME: ${{ steps.docker_baseline.outcome }}
           SCENARIO_IMAGES_OUTCOME: ${{ steps.role_images.outcome }}
