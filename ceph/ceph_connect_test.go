@@ -23,6 +23,9 @@ type monStallTarget struct {
 	stalled           int
 	attempts, applied int
 	onStall           func()
+	// stderr is the output of a stalled connection; it defaults to the
+	// expiry of --connect-timeout.
+	stderr string
 }
 
 func (f *monStallTarget) Exec(_ context.Context, _ []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -32,7 +35,11 @@ func (f *monStallTarget) Exec(_ context.Context, _ []string, _ ...tcexec.Process
 		if f.onStall != nil {
 			f.onStall()
 		}
-		return 1, multiplexed(stdcopy.Stderr, "timed out\n"), nil
+		stderr := f.stderr
+		if stderr == "" {
+			stderr = "timed out\n"
+		}
+		return 1, multiplexed(stdcopy.Stderr, stderr), nil
 	}
 	f.applied++
 	return 0, multiplexed(stdcopy.Stdout, "ok"), nil
@@ -82,6 +89,46 @@ func TestCephConnectsAgainOnlyWhenNothingWasSent(t *testing.T) {
 	refusal := &commandTarget{code: 2, stderr: "Error ENOENT: unrecognized pool 'x'\n"}
 	if _, err := command(t.Context(), refusal, "ceph", "--connect-timeout", "5", "osd", "pool", "get", "x", "size"); !errors.Is(err, ErrNativeFailure) {
 		t.Fatalf("a refusal returned %v", err)
+	}
+}
+
+// replyTarget models a ceph CLI that sends its command, which changes state,
+// and then exits with output that only mentions a connection: Ceph's own
+// reply ("Error EPERM: ...") or a connection error that waiting cannot fix.
+type replyTarget struct {
+	testcontainers.Container
+	stderr            string
+	attempts, applied int
+}
+
+func (f *replyTarget) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+	f.attempts++
+	f.applied++
+	return 1, multiplexed(stdcopy.Stderr, f.stderr), nil
+}
+
+// Only the exact outputs of a connection that timed out are retried: a reply
+// to a command that ran is never sent again.
+func TestCephDoesNotResendACommandThatRan(t *testing.T) {
+	shortCephReconnect(t)
+	for name, stderr := range map[string]string{
+		"errno reply":     "Error EPERM: error connecting to the cluster\n",
+		"timeout reply":   "Error ETIMEDOUT: timed out\n",
+		"missing keyring": "[errno 2] RADOS object not found (error connecting to the cluster)\n",
+		"partial output":  "timed out waiting for the PG\n",
+	} {
+		target := &replyTarget{stderr: stderr}
+		_, err := command(t.Context(), target, "ceph", "--connect-timeout", "5", "osd", "pool", "create", "data")
+		var failure *NativeFailure
+		if !errors.As(err, &failure) || target.attempts != 1 || target.applied != 1 {
+			t.Fatalf("%s: returned %v after %d attempts and %d changes", name, err, target.attempts, target.applied)
+		}
+	}
+	// librados's own connection timeout sent nothing either.
+	target := &monStallTarget{stalled: 1}
+	target.stderr = "[errno 110] RADOS timed out (error connecting to the cluster)\n"
+	if _, err := command(t.Context(), target, "ceph", "--connect-timeout", "5", "fsid"); err != nil || target.attempts != 2 || target.applied != 1 {
+		t.Fatalf("a librados timeout returned %v after %d attempts", err, target.attempts)
 	}
 }
 

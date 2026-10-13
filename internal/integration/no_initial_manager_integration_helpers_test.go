@@ -191,7 +191,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		restoreHealthMute()
 	}
 	topologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
-	health := snapshotWithoutRunnerStorageAlert(t, integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager"))
+	health := integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
 	if health.Status != "HEALTH_OK" || len(health.Checks) != 0 || len(health.Mutes) != 0 {
 		t.Fatal("recovered health did not retain strict closure and mute restoration")
 	}
@@ -399,7 +399,7 @@ func noInitialManagerAuth(t *testing.T, parent context.Context, cluster *ceph.Co
 
 func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string, wantOK bool) bool {
 	t.Helper()
-	data := withoutRunnerStorageAlert(t, topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json"))
+	data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
 	t.Logf("NO_INITIAL_MGR_HEALTH phase=%s detail=%s", phase, data)
 	var health struct {
 		Status string                     `json:"status"`

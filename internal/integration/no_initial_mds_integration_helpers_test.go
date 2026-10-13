@@ -595,7 +595,7 @@ func coldMDSHealth(t *testing.T, parent context.Context, cluster *ceph.Container
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	for {
-		data := withoutRunnerStorageAlert(t, topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json"))
+		data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
 		var health struct {
 			Status *string `json:"status"`
 			Checks *map[string]struct {

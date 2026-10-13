@@ -1119,14 +1119,25 @@ func reconnectCeph(ctx context.Context, args []string, run func() ([]byte, error
 	}
 }
 
-// cephConnectTimedOut reports a ceph CLI that gave up connecting to the MONs:
-// its --connect-timeout bounds only the connection, after which it prints
-// "timed out", or the reasons of an interrupted or failed connection, and
-// exits 1 without sending its command.
+// cephConnectTimeouts are the whole error outputs of a ceph CLI whose
+// connection to the MONs timed out before it sent its command: the expiry of
+// --connect-timeout, which bounds only run_in_thread(cluster_handle.connect),
+// a connection that librados reports as interrupted, and librados's own
+// connection timeout.
+var cephConnectTimeouts = []string{
+	"timed out",
+	"Cluster connection interrupted or timed out",
+	"[errno 110] RADOS timed out (error connecting to the cluster)",
+}
+
+// cephConnectTimedOut reports a ceph CLI that gave up connecting to the MONs
+// and exited 1 without sending its command. Only those exact outputs count:
+// a reply to a command that the CLI sent, such as "Error EPERM: ...", names
+// an errno, and another connection error, such as a missing keyring, does
+// not pass by waiting.
 func cephConnectTimedOut(failure *NativeFailure) bool {
-	return failure.Program == "ceph" && failure.ExitCode == 1 &&
-		(failure.Reason == "timed out" || failure.Reason == "Cluster connection interrupted or timed out" ||
-			strings.Contains(failure.Reason, "error connecting to the cluster"))
+	return failure.Program == "ceph" && failure.ExitCode == 1 && failure.Errno == "" &&
+		slices.Contains(cephConnectTimeouts, failure.Reason)
 }
 
 // dockerExecFailed starts the output of an exec whose program the runtime

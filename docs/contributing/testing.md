@@ -534,16 +534,6 @@ request and every push to `main`.
   }
   ```
 
-- An exact health guard, one that accepts only the checks that the scenario
-  causes, passes `ceph health detail --format json` output through
-  `withoutRunnerStorageAlert`, or a `HealthDetails` snapshot through
-  `snapshotWithoutRunnerStorageAlert`. Ceph raises `BLUESTORE_SLOW_OP_ALERT`
-  after one BlueStore operation of more than 5 seconds and keeps it for a
-  day, so a single storage stall of the runner would otherwise fail every
-  later guard of the fixture. The helpers log the alert as
-  `RUNNER_STORAGE_ALERT` and exclude it only when its details report BlueStore
-  slow operations; every other check still counts.
-
 - Opt into parallel runs with `parallelWhenEnabled(t)` as the first statement
   only if the test touches nothing but the clusters and containers it
   created. Do not opt in tests that list or count engine-wide Docker
