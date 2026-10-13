@@ -126,10 +126,33 @@ func rgwPlacementSafeLogDiagnostic(data []byte, gateway *rgw.Gateway) string {
 			}
 		}
 	}
-	if len(selected) == 0 {
-		return "no native sync/lease/reload errors in captured logs"
+	text := "no native sync/lease/reload errors in captured logs"
+	if len(selected) != 0 {
+		text = rgwPlacementSafeDiagnostic([]byte(strings.Join(selected, "\n")), gateway)
 	}
-	return rgwPlacementSafeDiagnostic([]byte(strings.Join(selected, "\n")), gateway)
+	// A crash prints its signal and backtrace before the dump of recent
+	// events, which fills the window above; keep them apart.
+	if crash := rgwCrashTrace(data); crash != "" {
+		text += "\ncrash trace:\n" + rgwPlacementSafeDiagnostic([]byte(crash), gateway)
+	}
+	return text
+}
+
+// rgwCrashTrace returns the first crash report in a daemon log, from its
+// signal or assertion to the end of its backtrace, or "".
+func rgwCrashTrace(data []byte) string {
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "caught signal") || strings.Contains(lower, "ceph_assert") || strings.Contains(lower, "terminate called") {
+			end := i + 1
+			for end < len(lines) && end < i+35 && !strings.Contains(lines[end], "begin dump of recent events") {
+				end++
+			}
+			return strings.Join(lines[i:end], "\n")
+		}
+	}
+	return ""
 }
 
 func rgwPlacementWaitCreateBucket(t *testing.T, parent context.Context, client s3HTTPClient, path string, payload []byte) {
