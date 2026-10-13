@@ -8,6 +8,9 @@ change the API.
 
 ### Added
 
+- The RGW module page has a recipe for the smallest S3 fixture: one MON, one
+  MGR, one OSD and one gateway with single-copy pools, started by `rgw.Run`.
+
 - `ceph.WithAddressFamily(ceph.AddressIPv6)` works with
   `ceph.WithSeparateClusterNetwork()`. Both bridges are then dual-stack, and
   Ceph's public and cluster networks are their IPv6 subnets, so OSDs advertise
