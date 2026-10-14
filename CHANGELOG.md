@@ -149,7 +149,8 @@ change the API.
   its RADOS write: the removal holds the policy lock that the acknowledgement
   needs, and both callbacks run on one librados strand. It now removes one
   directory at a time, while every tracked directory is idle. The deadlock
-  reproduces natively on Ceph 20.2.4 and 19.2.5.
+  reproduces natively on Ceph 20.2.4 and 19.2.5. A mirror daemon that joins or
+  leaves during a removal can still trigger it; see the CephFS limitations.
 
 - `Ceph` and the fixture's own `ceph` commands no longer fail with
   `timed out` when no MON answers within the CLI's 5 second connection

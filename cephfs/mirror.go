@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"path"
 	"slices"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -1056,8 +1056,10 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 }
 
 // waitCephFSMirrorPolicyIdle waits until no tracked directory has a policy
-// action in flight and returns the tracked directories. A directory that
-// leaves the policy while it is inspected counts as idle.
+// action in flight and returns the tracked directories. A "stalled" directory
+// waits for a daemon with no action pending. A directory that leaves the
+// policy while it is inspected is idle and not returned, so a removal that
+// completes meanwhile is not sent again.
 func waitCephFSMirrorPolicyIdle(ctx context.Context, list func(context.Context) ([]string, error), state func(context.Context, string) (string, error), interval time.Duration) ([]string, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -1068,6 +1070,7 @@ func waitCephFSMirrorPolicyIdle(ctx context.Context, list func(context.Context) 
 			return nil, err
 		}
 		busy = ""
+		tracked := make([]string, 0, len(current))
 		for _, directory := range current {
 			value, err := state(waitCtx, directory)
 			if errors.Is(err, fs.ErrNotExist) {
@@ -1080,9 +1083,10 @@ func waitCephFSMirrorPolicyIdle(ctx context.Context, list func(context.Context) 
 				busy = directory + " is " + value
 				break
 			}
+			tracked = append(tracked, directory)
 		}
 		if busy == "" {
-			return current, nil
+			return tracked, nil
 		}
 		select {
 		case <-waitCtx.Done():
