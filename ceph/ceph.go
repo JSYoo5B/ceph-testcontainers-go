@@ -155,7 +155,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
 		return nil, invalidRequest("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
 	}
-	if settings.addressFamily != AddressIPv4 && settings.separateClusterNetwork {
+	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
 		return nil, invalidRequest("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
@@ -190,10 +190,10 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return c, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 	}
 	if settings.separateClusterNetwork {
-		if c.clusterNetwork, err = dockerbridge.New(ctx); err != nil {
+		if c.clusterNetwork, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily()); err != nil {
 			return c, classifyDocker(ctx, fmt.Errorf("create Ceph replication network: %w", err))
 		}
-		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
+		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name, settings.addressFamily); err != nil {
 			return c, err
 		}
 	}

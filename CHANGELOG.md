@@ -8,6 +8,15 @@ change the API.
 
 ### Added
 
+- `ceph.WithAddressFamily(ceph.AddressIPv6)` works with
+  `ceph.WithSeparateClusterNetwork()`. Both bridges are then dual-stack, and
+  Ceph's public and cluster networks are their IPv6 subnets, so OSDs advertise
+  public and heartbeat front addresses from one and cluster and heartbeat back
+  addresses from the other. `InterruptNetwork` with `ClusterNetworkPlane`
+  disconnects an OSD's whole cluster endpoint, both of its families, and
+  keeps its public endpoint. `AddressIPv4MappedIPv6` is still refused with a
+  separate cluster network.
+
 - Classified errors. Every package reports a refused request
   (`ceph.ErrInvalidRequest`), a feature that the Ceph of the relevant target
   lacks (`ceph.ErrUnsupported`), a missing image tool or an unselected

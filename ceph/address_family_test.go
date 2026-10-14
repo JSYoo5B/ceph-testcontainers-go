@@ -49,7 +49,7 @@ func TestAddressFamilyOptions(t *testing.T) {
 	}
 	for name, opts := range map[string][]Option{
 		"host network":             {WithAddressFamily(AddressIPv6), WithHostNetwork()},
-		"separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
+		"mapped separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
 	} {
 		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])
 		if err == nil || cluster != nil || !strings.Contains(err.Error(), "WithAddressFamily") {

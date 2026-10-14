@@ -185,7 +185,7 @@ of option order:
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
 | `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
 | `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
-| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
+| `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -821,6 +821,23 @@ the two bridges, and [InterruptNetwork](#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
+With `WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
+Ceph's `public network` and `cluster network` are their IPv6 subnets. The
+MONs, MGRs and OSDs then advertise only IPv6 addresses: MONs, MGRs and the
+public and heartbeat front addresses of OSDs from the public subnet, and the
+cluster and heartbeat back addresses of OSDs from the cluster subnet.
+`InterruptNetwork` with `ceph.ClusterNetworkPlane` disconnects an OSD's whole
+cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressIPv6), ceph.WithSeparateClusterNetwork())
+addresses, err := cluster.DaemonAddresses(ctx)
+// With Docker Desktop's default IPv6 pool, for example:
+// addresses.OSDs[0].Public[0].Addr  == "[fd62:93fe:2c9e::4]:6800"
+// addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
+```
+
 #### WithAddressFamily
 
 ```golang
@@ -852,7 +869,9 @@ addresses, err := cluster.DaemonAddresses(ctx)
 // addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
 ```
 
-- Bridge mode only, without [WithSeparateClusterNetwork](#withseparateclusternetwork).
+- Bridge mode only. `AddressIPv6` works with
+  [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
+  both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
 - `AddressIPv6` needs a Docker Engine that allocates an IPv6 subnet for a new
   IPv6 bridge without an explicit subnet, from its default pool of unique local
   addresses. `Run` fails with the Engine's error otherwise.
