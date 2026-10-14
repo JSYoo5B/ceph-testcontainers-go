@@ -8,6 +8,11 @@ change the API.
 
 ### Added
 
+- The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
+  maps the profiles and daemon controls of a Messenger client test suite to
+  fixture options, with the tests that prove each one, and lists what differs
+  from a single-container bootstrap.
+
 - `ceph.MessengerV2Only` for `WithMessengerMode` listens on and advertises
   only Messenger v2, like `MessengerV2Secure`, but leaves the connection modes
   configurable: `WithMessengerPolicy`, `TemporaryMessengerPolicy` and
@@ -169,6 +174,15 @@ change the API.
   stay where `CollectCrashMetadata` reads them.
 
 ### Fixed
+
+- On a bridge network, a MON that restarts after other containers started
+  comes back at its monmap address. Docker allocated the address again at each
+  start, so after all MONs stopped, the one started first could take another
+  MON's address, which then failed to bind it with
+  `Cannot assign requested address`. The fixture now requests each MON's
+  original address before it starts again. A MON whose endpoint is
+  interrupted stays detached, and `Start` returns `ErrInvalidRequest` until
+  the interruption is restored.
 
 - `cephfs.Mirror.RebalanceDirectories` no longer hangs the MGR's mirroring
   module. It sent all removals back to back, and the module deadlocks when an

@@ -1300,6 +1300,14 @@ if err := cluster.WaitForQuorum(ctx); err != nil {
 When a majority is stopped, quorum is lost and new clients cannot authenticate.
 After the monitors start again, both existing and new sessions work.
 
+A MON binds the address that the monmap records for it. On a bridge network,
+each MON returns at that address whatever the order of `Start` calls: before
+a stopped MON starts, the fixture requests its original address from Docker
+again. A MON whose endpoint is interrupted with
+[InterruptNetwork](#interruptnetwork) does not start until the interruption is
+restored. MON a's container waits for a quorum when it starts, so after all
+MONs were stopped, start the others first.
+
 #### AddMonitor
 
 ```golang
@@ -2760,6 +2768,10 @@ refused, and the handle can be restored again once the endpoint is back. It is a
 specific peers. The cluster keeps the handle and restores it during `Terminate`;
 restore caller-owned containers explicitly before removing them.
 
+An interrupted MON stays detached when it is stopped and started: `Start`
+refuses to run it with `ceph.ErrInvalidRequest` until `Restore` has
+reattached its endpoint, because the MON can only bind its monmap address.
+
 ```golang
 cut, err := cluster.InterruptNetwork(ctx, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
 if cut != nil {
@@ -4168,7 +4180,8 @@ examples.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- Only IPv4 is configured (`ms_bind_ipv6 = false`).
+- IPv4 is the default. [WithAddressFamily](#withaddressfamily) selects IPv6
+  or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
 

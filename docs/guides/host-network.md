@@ -191,7 +191,7 @@ selection:
 
 | Role | Port selection |
 | --- | --- |
-| MON | The messenger ports (v2, and v1 unless `MessengerV2Secure` is selected) are chosen before the MON starts and written into the configuration and the monmap. |
+| MON | The messenger ports (v2, and v1 unless `MessengerV2Secure` or `MessengerV2Only` is selected) are chosen before the MON starts and written into the configuration and the monmap. |
 | MGR, OSD, MDS | Ceph picks free ports dynamically and registers them in the cluster maps. |
 | RGW | One free port is chosen for HTTP (and one for HTTPS when TLS is configured). It is used as the bind address and returned by `S3Endpoint`. |
 

@@ -70,14 +70,6 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256 << 20)}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 
-	out, err := cluster.Ceph(ctx, "osd", "metadata", "0", "--format", "json")
-	var metadata struct {
-		ObjectStore string `json:"osd_objectstore"`
-	}
-	if err != nil || json.Unmarshal(out, &metadata) != nil || metadata.ObjectStore != "memstore" {
-		t.Fatalf("osd.0 metadata %q, err=%v", out, err)
-	}
-
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
 	assertLegacyCRUSHMap(t, ctx, cluster)
 
@@ -85,25 +77,14 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	if err != nil {
 		t.Fatal(err)
 	}
-	pools, err := cluster.Pools(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, state := range pools {
-		if state.Name != pool.Name {
-			continue
-		}
-		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 || strings.Contains(","+state.Flags+",", ",hashpspool,") {
-			t.Fatalf("pool %+v keeps hashpspool or differs from size 1, PG 1", state)
-		}
-	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	checkMemStoreLegacyPool(t, ctx, cluster, pool.Name)
 
 	// The client writes and reads through the single PG on osd.0.
 	execCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read && cmp /tmp/object /tmp/read")
-	out, err = cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
+	out, err := cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
 	var mapping struct {
 		PGID   string `json:"pgid"`
 		Acting []int  `json:"acting"`
@@ -130,6 +111,44 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	t.Logf("MemStore osd.0 with the legacy CRUSH map served pool %s (1 PG %s, size 1, no hashpspool) before and after a clean restart", pool.Name, mapping.PGID)
 }
 
+// checkMemStoreLegacyPool checks that osd.0 runs MemStore and that pool has
+// one PG, size 1, min_size 1 and no hashpspool flag.
+func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Container, pool string) {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "osd", "metadata", "0", "--format", "json")
+	var metadata struct {
+		ObjectStore string `json:"osd_objectstore"`
+	}
+	if err != nil || json.Unmarshal(out, &metadata) != nil || metadata.ObjectStore != "memstore" {
+		t.Fatalf("osd.0 metadata %q, err=%v", out, err)
+	}
+	pools, err := cluster.Pools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, state := range pools {
+		if state.Name != pool {
+			continue
+		}
+		found = true
+		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 || strings.Contains(","+state.Flags+",", ",hashpspool,") {
+			t.Fatalf("pool %+v keeps hashpspool or differs from size 1, PG 1", state)
+		}
+	}
+	if !found {
+		t.Fatalf("pool %s not found", pool)
+	}
+	out, err = cluster.Ceph(ctx, "osd", "pool", "get", pool, "crush_rule", "--format", "json")
+	var rule struct {
+		Name string `json:"crush_rule"`
+	}
+	if err != nil || json.Unmarshal(out, &rule) != nil || rule.Name == "" {
+		t.Fatalf("CRUSH rule of pool %s: %s, %v", pool, out, err)
+	}
+	assertChoosesOSDs(t, ctx, cluster, rule.Name)
+}
+
 func assertLegacyCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "osd", "crush", "dump", "--format", "json")
@@ -151,5 +170,27 @@ func assertLegacyCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	if len(dump.Buckets) != 1 || dump.Buckets[0].Name != "default" || dump.Buckets[0].Alg != "straw" {
 		t.Fatalf("buckets %+v, want only the straw root default", dump.Buckets)
+	}
+	assertChoosesOSDs(t, ctx, cluster, "replicated_rule")
+}
+
+// assertChoosesOSDs checks that a CRUSH rule takes the default root and
+// chooses OSDs directly, without a chooseleaf step.
+func assertChoosesOSDs(t *testing.T, ctx context.Context, cluster *ceph.Container, rule string) {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "osd", "crush", "rule", "dump", rule, "--format", "json")
+	var dump struct {
+		Steps []struct {
+			Op       string `json:"op"`
+			ItemName string `json:"item_name"`
+			Num      int    `json:"num"`
+			Type     string `json:"type"`
+		} `json:"steps"`
+	}
+	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Steps) != 3 ||
+		dump.Steps[0].Op != "take" || dump.Steps[0].ItemName != "default" ||
+		dump.Steps[1].Op != "choose_firstn" || dump.Steps[1].Num != 0 || dump.Steps[1].Type != "osd" ||
+		dump.Steps[2].Op != "emit" {
+		t.Fatalf("CRUSH rule %s does not take default and choose OSDs: %s, %v", rule, out, err)
 	}
 }

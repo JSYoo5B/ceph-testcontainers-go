@@ -6,10 +6,6 @@ package integration_test
 
 import "testing"
 
-// tentacleWithoutKeyTypes is the last Tentacle release whose ceph-authtool
-// has no --key-type and whose monmaptool has no cipher options.
-const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
-
 func TestAuthCiphersAndTicketLifetimes(t *testing.T) {
 	parallelWhenEnabled(t)
 	image, imageOpts := integrationImages(t)

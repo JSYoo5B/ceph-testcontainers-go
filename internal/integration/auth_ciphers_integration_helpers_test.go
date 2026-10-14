@@ -20,6 +20,10 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// tentacleWithoutKeyTypes is the last Tentacle release whose ceph-authtool
+// has no --key-type and whose monmaptool has no cipher options.
+const tentacleWithoutKeyTypes = "quay.io/ceph/ceph:v20.2.3@sha256:d195020de02512030118e772cef7859e92904e91eb4cb21acb503f8b94118137"
+
 // cephxKeyType decodes the type field of a Cephx secret: 1 is AES and 2 is
 // AES256KRB5.
 func cephxKeyType(t *testing.T, keyring []byte, entity string) ceph.CephxCipher {
