@@ -184,6 +184,15 @@ change the API.
   interrupted stays detached, and `Start` returns `ErrInvalidRequest` until
   the interruption is restored.
 
+- `cephfs.Mirror.RebalanceDirectories` no longer hangs the MGR's mirroring
+  module. It sent all removals back to back, and the module deadlocks when an
+  earlier directory's release is acknowledged while a later removal waits for
+  its RADOS write: the removal holds the policy lock that the acknowledgement
+  needs, and both callbacks run on one librados strand. It now removes one
+  directory at a time, while every tracked directory is idle. The deadlock
+  reproduces natively on Ceph 20.2.4 and 19.2.5. A mirror daemon that joins or
+  leaves during a removal can still trigger it; see the CephFS limitations.
+
 - A service start that fails before Docker creates the container, for
   example when the image cannot be pulled, now returns its error with no
   handle. It returned a non-nil handle that held a nil container:
