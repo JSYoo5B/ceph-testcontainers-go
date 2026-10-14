@@ -11,9 +11,9 @@ The [v0.2.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milesto
 is complete. Its producer-owned result is the public Messenger fixture
 profiles, daemon controls and P0 replicated mutation oracles described in
 [Fixtures for Messenger client tests](../guides/messenger-client-fixtures.md).
-The main implementation at `df38c4402c60bbc8c4cd4283e960f1c94ad874eb` has
-seven successful required workflows. That is evidence for that commit; a
-later candidate needs its own check disposition.
+The release is identified by the root module tag `v0.2.0`. Its release notes
+record the final commit and CI evidence. A later candidate needs its own
+check disposition; a successful run for another SHA is not its CI result.
 
 It does not certify ceph-msgr-go's wire implementation or complete that
 project's adapter migration. Full daemon-path/MDS coverage, selective network
@@ -71,10 +71,9 @@ Before a separately authorized publication:
   date, and update the README's development-version notice so it does not
   tell release users to install an older tag.
 - Rewrite the pre-release wording of the [upgrade guide](../guides/upgrading-to-v0.2.md)
-  for the published tag: its introduction, the `v0.2.0 candidate` column and
-  the commit instructions under "Trying the candidate and adopting the
-  release". Name the tag instead of the implementation commit in the scope
-  section above.
+  for the published tag, including its introduction, version table and
+  installation instructions. Identify the release by its tag and keep the
+  final SHA's validation evidence in the release notes.
 - Point the tag and GitHub Release at the reviewed commit, then verify that
   the Go module proxy resolves that tag and that an external integration
   module builds with it. Do not claim published-tag consumption before this

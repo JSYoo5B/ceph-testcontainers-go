@@ -4,9 +4,9 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
-## Unreleased
+## v0.2.0 (2026-10-14)
 
-The next release is v0.2.0. See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
+See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
 for compatibility changes, platform requirements and known native limits.
 The completed [fixture-readiness milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/1)
 provides server-side profiles and native receipts; it does not certify a

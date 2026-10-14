@@ -1,8 +1,7 @@
 # Upgrading to v0.2.0
 
-This guide describes the upcoming v0.2.0 changes from v0.1.0. Until the
-release is published, `@latest` still selects the latest published tag;
-documentation on `main` describes the candidate. The complete change list is
+This guide describes the v0.2.0 changes from v0.1.0. Select the release tag
+explicitly when upgrading an integration module. The complete change list is
 in [CHANGELOG.md](../../CHANGELOG.md).
 
 The release prepares server-side fixtures for Messenger client tests:
@@ -14,7 +13,7 @@ own client tests; the milestone does not certify a Go Messenger implementation.
 
 ## Go and client platforms
 
-| Requirement | v0.1.0 | v0.2.0 candidate |
+| Requirement | v0.1.0 | v0.2.0 |
 | --- | --- | --- |
 | Go module minimum | Go 1.25 | Go 1.26.0 |
 | Repository toolchain | None (no `toolchain` line) | `go1.26.9` in `go.mod` |
@@ -178,19 +177,18 @@ The [Messenger fixture guide](messenger-client-fixtures.md) records each
 profile and native receipt. Full Messenger/MDS/daemon-path coverage is a
 separate roadmap, not a claim of this release.
 
-## Trying the candidate and adopting the release
+## Installing and adopting the release
 
-Before publication, select a reviewed `main` commit by its full SHA, or use a
-test-only workspace/`replace` in the consumer's integration module:
+Select the root module tag in the consumer's integration module:
 
 ```sh
-go get github.com/JSYoo5B/ceph-testcontainers-go@<full-commit-sha>
+go get github.com/JSYoo5B/ceph-testcontainers-go@v0.2.0
 ```
 
-Go records the commit as a pseudo-version, not as the future release tag.
-Compile the consuming module and run its actual client profiles, including
-restricted auth, mode mismatches, address reachability and restart/readback
-assertions. Retain the old adapter
-until those tests pass. After publication, select `v0.2.0` explicitly and
-repeat the consumer checks against the published tag before removing any
-temporary workspace or `replace` directive.
+All four packages share this tag. Remove test-only workspace or `replace`
+wiring when validating the published dependency, so the checks exercise the
+release rather than a local checkout. Compile the consuming module and run
+its actual client profiles, including restricted auth, mode mismatches,
+address reachability and restart/readback assertions. Retain the old adapter
+until those tests pass. For development candidates of a later release, see
+[Preparing a release](../contributing/releasing.md).

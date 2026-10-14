@@ -17,11 +17,9 @@ and memory-backed BlueStore are also available for faster disposable fixtures.
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
 
-Documentation on `main` includes the unreleased v0.2.0 changes. `@latest`
-installs the latest published release, currently v0.1.0; use the
-[v0.1.0 documentation](https://github.com/JSYoo5B/ceph-testcontainers-go/tree/v0.1.0)
-for that version. See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
-for compatibility changes and how to test a candidate before publication.
+Documentation for a published release is available at its Git tag. See
+[Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md) for compatibility
+changes from v0.1.0 and checks when adopting the release.
 
 ## Modules
 
