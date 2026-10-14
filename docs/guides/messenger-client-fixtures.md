@@ -9,9 +9,12 @@ that pause, stop and fail over. This guide shows how to build those test
 environments with the module instead of a hand-written bootstrap script, and
 what differs when each daemon runs in its own container.
 
-The profiles below are those of the ceph-msgr-go integration environment.
-Each row names the test in `internal/integration` that starts the profile with
-public options and checks the native result.
+The profiles below are derived from the ceph-msgr-go integration environment.
+Each row names a test in this repository's `internal/integration` that starts
+the profile with public options and checks it with native clients and daemon
+observations. These prove fixture readiness, not ceph-msgr-go's own protocol
+implementation or its migration to these APIs. For the compatibility changes
+when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.md).
 
 ## Profiles
 

@@ -772,6 +772,8 @@ A rejected client sees one of two behaviours, depending on the daemon:
 Bound calls that a MGR or an OSD may reject, for example with the context of
 your client or with `timeout` around the CLI.
 
+#### WithClientMessengerPolicy
+
 The policy of a native client is set separately, in that client's own
 configuration, with `ceph.WithClientMessengerPolicy`. It is a
 `ceph.ClientContainerOption` of [WithClient](#withclient) and

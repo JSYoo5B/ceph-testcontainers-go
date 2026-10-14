@@ -30,7 +30,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 
 | Release | Status | Tested image |
 | --- | --- | --- |
-| Tentacle 20.2.x | Default; every feature | `quay.io/ceph/ceph:v20.2.4` (`ceph.DefaultImage`) |
+| Tentacle 20.2.x | Primary test release: 20.2.4; earlier patches lack AES256K key support; native limits below still apply | `quay.io/ceph/ceph:v20.2.4` (`ceph.DefaultImage`) |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
@@ -79,6 +79,7 @@ lists every known difference and what you can observe.
 
 | Area | Tentacle 20.2.x | Squid 19.2.x | Effect on your test |
 | --- | --- | --- | --- |
+| Cephx key types and MonMap ciphers | 20.2.4 supports `aes` and `aes256k`; earlier patches support only `aes`. | Only `aes`. | `WithAuth` and `CreateClient` check the target tools and return `ceph.ErrUnsupported` for an unavailable key type; no silent fallback. |
 | CephFS filesystem creation | `fs new` sets `max_mds` and `standby_count_wanted` inline. | Squid does not accept the inline settings, so the fixture runs `fs set` right after `fs new`. | None. Both forms complete before any MDS starts. |
 | RBD mirroring of named namespaces only | The default namespace is put in `init-only` mode. | Squid has no `init-only` mode, so the default namespace is put in `image` mode. | On Squid nothing in the default namespace replicates unless you enable an image explicitly. |
 | RBD namespace mapping | `MirrorConfig.SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name can be mirrored. | `rbd.RunMirror` returns `ceph.ErrUnsupported`, naming the side whose `rbd` lacks the option, before changing anything when the names differ. |
@@ -152,11 +153,19 @@ run as separate containers from the same `control` image.
 | Multisite gateways | The `image` argument of `rgw.RunMultisite`, `rgw.RunTopology`, `Multisite.AddZone` and `Multisite.AddZonegroup` (an `rgw` or `all` image) | None |
 | Multisite setup clients (`radosgw-admin`) | `rgw.MultisiteConfig.ControlImage` or `rgw.TopologyConfig.ControlImage` | Each zone cluster's own `ControlImage()` |
 | Your client containers | Your choice; `cluster.ControlImage()` has every Ceph CLI and the Python bindings | None |
+| Netem helper | `ceph.NetworkDelay.HelperImage`, selected explicitly (for example `ceph.NetemHelperImage`) | None; never uses the Ceph role image implicitly |
 
 If you omit a role override, that role runs from the `Run` image, which must
 then contain the role's components too. With a `control`-only image you must
 at least set `WithOSDImage`, and also `cephfs.WithMDSImage` or `rgw.WithImage`
 when you start CephFS or RGW.
+
+`RunNativeCommand` needs `python3` in the container that runs its supervisor.
+The `osd`, `mds` and `rgw` role contracts do not require it, so a supervised
+command in one of those containers may return `ceph.ErrImageCapability`.
+Run client oracles in a `control`/`all` client container; `AdminSocket` can
+query owned MON/MGR/OSD admin sockets through the shared run volume from the
+control container. Selecting a helper does not add tools to a daemon image.
 
 ```golang
 cluster, err := ceph.Run(ctx, "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-control",
@@ -248,7 +257,8 @@ never installs packages at run time. This has visible consequences:
   options (see [Fault injection](fault-injection.md)).
 - No kernel RBD mapping or kernel/FUSE CephFS mounts: clients use librbd and
   libcephfs in user space.
-- No privileged containers, host disks or LVM: OSDs use sparse files.
+- No privileged containers, host disks or LVM: OSDs default to sparse
+  BlueStore files; MemStore and memory-backed BlueStore are opt-in alternatives.
 - Operation-only components of the official image, such as the dashboard,
   cephadm, ceph-volume, NFS Ganesha and iSCSI gateways, are never used, so
   custom images may omit them.
@@ -281,6 +291,11 @@ baseline feature and no default uses it.
 | Extension | API | Helper image | Contract |
 | --- | --- | --- | --- |
 | netem packet delay | `TemporaryNetworkDelay` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `ceph.NetemHelperImage` | netem contract 1: `sh`, `sleep`, `tc` and `ip` with JSON output and netem, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc |
+
+`NET_ADMIN` is granted only to the opt-in helper, not to the Ceph daemons.
+This extension does not require Docker's privileged mode. The current API
+delays all outgoing packets on the selected interface; peer-selective loss,
+reordering and packet inspection are not provided by this contract.
 
 ## Related APIs
 

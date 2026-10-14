@@ -14,9 +14,11 @@ react differently to each:
 
 Every package of the module reports these cases with five error categories,
 which you match with `errors.Is`, and with typed details, which you read with
-`errors.As`. You never need to match error text. This guide explains the
-categories, the details they carry and how to write tests that hold on every
-supported release.
+`errors.As`. For classified failures, match these rather than error text.
+This guide explains the categories, the details they carry and how to write
+tests that hold on every supported release. Parse/readback failures and
+unknown outcomes can still be unclassified; the categories do not cover every
+error.
 
 ## The categories
 
@@ -25,17 +27,23 @@ supported release.
 | `ceph.ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
 | `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on a control image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
-| `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
+| `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
 | `ceph.ErrNativeFailure` | A native command ran and failed | `ceph osd pool get missing size` exits with `ENOENT` |
 
 The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match
 several.
 
-Only `ErrInvalidRequest` promises that nothing changed. Once a native command
-has been sent, a lost reply leaves its effect unknown: the command may have
-run, as when Docker answers the final inspection of an exec after the
-command finished. Such a failure keeps Docker's error, and is
+`ErrInvalidRequest` is a validation refusal before any change. Documented
+feature preflights, such as `WithAuth` key-type validation and `RunMirror`
+namespace mapping checks, also refuse unsupported features before changes.
+Extension capability checks run before the fault is applied. These guarantees
+belong to the documented operation or preflight; an image or environment
+error during a later step is not a promise to roll back the entire fixture.
+Always preserve a non-nil partial handle returned with an error.
+Once a native command has been sent, a lost reply leaves its effect unknown:
+the command may have run, as when Docker answers the final inspection of an
+exec after the command finished. Such a failure keeps Docker's error, and is
 `ErrEnvironmentUnavailable` for a failure of the engine or matches no
 category for a container that disappeared or stopped; neither says that the
 command did not run.
@@ -209,12 +217,16 @@ category: restore it, because the change may have been applied. See
 
 ## Retrying
 
-The module does not retry mutations, and a classified error does not mean
-that retrying the same call is safe. As a rule:
+The module does not replay mutations after an uncertain send or lost reply,
+and a classified error does not mean that retrying the same call is safe.
+`Ceph` and the fixture's own CLI commands do reconnect after the CLI's
+connection timeout before it sends a command, bounded by `ctx` and a minute;
+see [The ceph CLI](native-commands.md#the-ceph-cli). That pre-send retry is not
+mutation replay. As a rule:
 
 - `ErrInvalidRequest`, `ErrUnsupported` and `ErrImageCapability` do not
-  change when you repeat the call. Change the request, the release or the
-  image.
+  resolve merely by repeating an unchanged request. Correct the arguments,
+  restore a blocking override or resource state, or select a capable image.
 - `ErrEnvironmentUnavailable` does not change until the environment does.
 - `ErrNativeFailure` depends on the native status. `EAGAIN` and `EBUSY`
   often pass, while `ENOENT` and `EINVAL` do not. Retry only an idempotent

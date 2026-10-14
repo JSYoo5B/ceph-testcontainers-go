@@ -11,10 +11,17 @@ or an S3 SDK.
 The modules control Ceph through the CLIs inside the containers. They have no
 go-ceph, librados or cgo dependency and build with `CGO_ENABLED=0`. The Ceph
 daemons need no privileged mode, host disks, LVM or systemd: each OSD stores
-its data in a sparse BlueStore file inside its container.
+its data in a sparse BlueStore file inside its container by default. MemStore
+and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
+
+Documentation on `main` includes the unreleased v0.2.0 changes. `@latest`
+installs the latest published release, currently v0.1.0; use the
+[v0.1.0 documentation](https://github.com/JSYoo5B/ceph-testcontainers-go/tree/v0.1.0)
+for that version. See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
+for compatibility changes and how to test a candidate before publication.
 
 ## Modules
 
@@ -35,7 +42,9 @@ pkg.go.dev.
 
 ## Requirements
 
-- Go 1.26 or later.
+- Go 1.26 or later for current main; use a patched toolchain. The repository
+  selects Go 1.26.9 for its own checks. A consumer must select its own
+  toolchain (see [the upgrade guide](docs/guides/upgrading-to-v0.2.md#go-and-client-platforms)).
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in
   [the host network guide](docs/guides/host-network.md).
@@ -129,6 +138,8 @@ Guides for tasks that span packages:
   connecting native clients from the test process.
 - [Releases and images](docs/guides/releases-and-images.md): supported Ceph
   releases, role images and image requirements.
+- [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md): Go requirements,
+  API and error compatibility, Messenger policies and release limitations.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything
@@ -146,6 +157,8 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
+- [Preparing a release](docs/contributing/releasing.md): the scope, evidence
+  and publication checks for a candidate.
 
 ## Related projects
 

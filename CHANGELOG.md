@@ -6,6 +6,13 @@ change the API.
 
 ## Unreleased
 
+The next release is v0.2.0. See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
+for compatibility changes, platform requirements and known native limits.
+The completed [fixture-readiness milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/1)
+provides server-side profiles and native receipts; it does not certify a
+downstream client's implementation or migration. Publication checks are in
+[Preparing a release](docs/contributing/releasing.md).
+
 ### Added
 
 - The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
@@ -150,6 +157,11 @@ change the API.
   removal permanent.
 
 ### Changed
+
+- `CreateClient`, `WithClient` and `WithClientIdentity` now take variadic
+  options. Existing direct calls still compile, but interfaces, mocks and
+  stored method values with the old signatures need to be updated; see
+  [API compatibility](docs/guides/upgrading-to-v0.2.md#api-compatibility).
 
 - `TemporaryConfig` classifies its refusal of an option that the Messenger mode
   fixes as `ErrInvalidRequest`.

@@ -15,10 +15,16 @@ and many operations change several of them in sequence. This guide explains:
 
 ## How a context bounds a call
 
-Every method that talks to Docker or Ceph takes a `ctx`. Cancelling it or
-reaching its deadline makes the call return with an error for which
-`errors.Is(err, context.Canceled)` or `errors.Is(err, context.DeadlineExceeded)`
-holds.
+Every method that talks to Docker or Ceph takes a `ctx`. Cancellation normally
+returns an error matching `context.Canceled` or `context.DeadlineExceeded`;
+it does not undo native work already submitted. Identity changes settle
+submitted MON commands and report the observed outcome, and supervised
+commands may need their own stop-confirmation budget. Preserve returned
+results and errors, including `NativeCommandUnstoppedError`; see
+[Partial failures](#partial-failures-and-retries) and
+[Native cancellation](native-commands.md#cancellation-and-cleanup).
+Some methods also wait for a serialized operation regardless of `ctx`, as
+described below. A deadline is not a universal return-time guarantee.
 
 ### The startup timeout
 
@@ -164,6 +170,7 @@ resources from calls that failed halfway:
 | MON containers and the separate control CLI container (multi-MON clusters) | `Run`, `AddMonitor` |
 | MGR containers | `Run`, `AddManager` |
 | OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `AddOSDWithConfig`, `WithOSDInMemoryStorage` |
+| Shared `/var/run/ceph` volume | `Run`; MON/MGR/OSD and the control container share admin sockets |
 | RGW gateways | `rgw.WithGateways`, `rgw.Start` |
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
 | Host-port reservation helpers | Host mode MON and RGW startup |
@@ -184,7 +191,7 @@ reservations, stops gateways and MDS
 daemons while the OSDs are still running, then removes OSDs, the in-memory OSD
 volume, MGRs, MONs, the control container, then any container left with the
 cluster's label `org.testcontainers.ceph.cluster` (one that Docker created
-although the create reply was lost), and finally the networks. Each
+although the create reply was lost), the shared run volume, and finally the networks. Each
 container gets a 2-second stop timeout unless you pass
 `testcontainers.StopTimeout`. A container or network that fails to go away
 stays tracked and is reported in the joined error; calling `Terminate` again
@@ -331,7 +338,8 @@ result:
 | `AddMonitor`, `AddManager`, `AddOSD`, `AddOSDWithConfig`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
-| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
+| `TemporaryConfig`, `TemporaryMessengerPolicy`, `TemporaryClientRevocation`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `PauseContainer` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -342,12 +350,14 @@ result:
 
 ## Temporary overrides
 
-`Temporary*` methods change one setting and return a handle that can put it
-back:
+`Temporary*` methods change fixture state and return a handle that can put it
+back. Some wrap several native settings:
 
 | Method | Changes |
 | --- | --- |
 | `TemporaryConfig` | One central configuration entry (section, optional mask, name) |
+| `TemporaryMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
+| `TemporaryClientRevocation` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
 | `TemporaryOSDFlag` | One global OSD map flag |
 | `TemporaryMGRModule` | Whether one MGR module is enabled |
 | `TemporaryFullRatios` | The nearfull, backfillfull and full ratios |
@@ -388,8 +398,16 @@ Handle-specific details:
 - `TemporaryConfig` records the value as Ceph normalized it, which can differ
   from the string you passed. A key set by `ceph.WithConfigFile` cannot be changed
   this way, because local files take precedence over the configuration
-  database. With `ceph.MessengerV2Secure`, the messenger mode and bind options
-  are reserved.
+  database. Ticket lifetimes written by `WithAuth` also take precedence over
+  later central overrides. `MessengerV2Only` reserves `ms_bind_msgr1` and
+  `ms_bind_msgr2`; `MessengerV2Secure` reserves those and its six mode
+  settings. Refusals of these Messenger settings match `ErrInvalidRequest`.
+- `TemporaryMessengerPolicy` uses `TemporaryConfig` overrides, restoring in
+  reverse order. Application can partly succeed, so keep a non-nil handle
+  returned with an error. It is refused under `MessengerV2Secure`.
+- `TemporaryClientRevocation.Restore` refuses an identity recreated outside
+  the fixture with another key or capabilities. `DeleteClient` makes the
+  removal permanent instead of restoring it.
 - `TemporaryBlocklist.Restore` removes only the entry it created. An entry
   that expired on its own counts as removed; an entry whose expiry someone
   renewed is refused.
@@ -404,6 +422,11 @@ pattern for Docker state, with one difference: the cluster resumes and
 restores them itself during `Terminate`, because a frozen or disconnected
 container would block cleanup.
 
+`TemporaryNetworkDelay` also returns a restorable lease, with ownership tied
+to its interface and qdisc. It removes only its own qdisc and is restored
+before daemon teardown. Its kernel-state checks and helper requirements are
+described in [Fault injection](fault-injection.md#delaying-packets-below-ceph).
+
 ## Partial failures and retries
 
 Operations made of several native steps can fail in the middle. None of them
@@ -416,7 +439,8 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 | `AddMonitor` that joined but could not update every daemon's `ceph.conf` | `RefreshMonitorConfig(ctx)`; do not add the same name again. |
 | `RemovePool` | Retry; it finishes removing whichever owned resources remain. |
 | `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount` | Inspect `PoolStatus`; commands may have partly succeeded. |
-| `UpdateClientCaps` | Inspect `ClientCapabilities` before retrying. |
+| `UpdateClientCaps`, `DeleteClient`, `ReplaceClientKey`, `TemporaryClientRevocation` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientCapabilities` or auth state before relying on a change. |
+| `RotateDaemonKey` | Keep the failure and inspect the daemon/auth state; the operation fences submitted MON commands and reconciles its keyring files. Do not replace keys with a raw command while it runs. |
 | `cephfs.Remove` | Retry; it continues with whatever remains. |
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |
 | `RefreshMonitorConfig`, `RefreshClientMonitorConfig`, mirror `RefreshMonitorConfig` | Successful copies are kept; retry with a fresh context and up-to-date files are skipped. |
