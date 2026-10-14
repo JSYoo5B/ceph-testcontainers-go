@@ -119,7 +119,9 @@ func WithHostNetwork() Option {
 
 // WithSeparateClusterNetwork creates a second owned bridge for OSD replication,
 // recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
-// public bridge. Docker selects both subnets. This option requires bridge mode.
+// public bridge. Docker selects both subnets; with WithAddressFamily(AddressIPv6)
+// both bridges are dual-stack and Ceph uses their IPv6 subnets. This option
+// requires bridge mode.
 func WithSeparateClusterNetwork() Option {
 	return func(o *options) error {
 		o.separateClusterNetwork = true

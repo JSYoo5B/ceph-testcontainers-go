@@ -107,6 +107,45 @@ func TestUploadAndDownload(t *testing.T) {
 }
 ```
 
+### The smallest S3 fixture
+
+For tests that only need an S3 endpoint, keep one daemon of each kind and
+single-copy pools:
+
+```golang
+cluster, err := rgw.Run(ctx, ceph.DefaultImage,
+	ceph.WithMonitorCount(1),
+	ceph.WithManagerCount(1),
+	ceph.WithOSDCount(1),
+	ceph.WithPoolDefaults(1, 1),
+)
+testcontainers.CleanupContainer(t, cluster)
+if err != nil {
+	t.Fatal(err)
+}
+gateway := cluster.Gateways()[0]
+endpoint, err := gateway.S3Endpoint(ctx)
+// Use gateway.AccessKey and gateway.SecretKey with a path-style S3 client,
+// as in the example above. Keep the keys out of test logs.
+```
+
+This runs four containers: the MON, which also runs the Ceph CLIs, the MGR, the
+OSD and the gateway. Every pool, including the ones the gateway creates, has
+size 1 and min_size 1. With cached images on Docker Desktop (arm64), `Run`
+returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
+
+- Each daemon keeps its own container, so `Stop`, `Start` and `PauseContainer`
+  on a handle still act on one daemon only.
+- With one OSD and one copy, nothing can recover from an OSD failure. Tests of
+  OSD faults, recovery or separate traffic planes need the default two OSDs or
+  more.
+- For role images, add `ceph.WithOSDImage` and `rgw.WithImage`, as described
+  under [Image](#image).
+
+`TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
+signed bucket create, a binary PUT and GET, deletes, and a 404 after the
+delete.
+
 ## Module Reference
 
 ### Run function
