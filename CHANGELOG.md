@@ -15,6 +15,12 @@ change the API.
   descriptor opened before the failure keeps reading, writing, renaming and
   setting xattrs, as a client in another container confirms.
 
+- The same guide has a table of daemon-to-daemon paths, with what each test
+  observes and how directly. The held replication write of the separate
+  network tests now records a receipt: its PG and acting set, the request the
+  primary held, controls that kept working during the cut, and the bytes and
+  object version that an independent client reads afterwards.
+
 ## v0.2.0 (2026-10-14)
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)

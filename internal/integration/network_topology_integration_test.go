@@ -11,8 +11,6 @@ import (
 	"net"
 	"net/netip"
 	"reflect"
-	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -132,8 +130,11 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	for id, osd := range before {
 		t.Logf("osd.%d public %v cluster %v heartbeat front %v back %v", id, osd.Public, osd.Cluster, osd.HeartbeatFront, osd.HeartbeatBack)
 	}
-	cephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-topology", "8")
-	cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-topology", "rados")
+	// One PG on both OSDs with min_size 2: every write needs both, and the
+	// held write below has one placement to observe.
+	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-topology", PGNum: 1, Replicas: 2, MinSize: 2, Application: "rados"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -181,22 +182,36 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 		t.Fatal("backend interruption stopped the daemon or removed the public endpoint")
 	}
 	address := before[osd.ID].Public[0].Addr
-	host, port, err := net.SplitHostPort(address)
+	host, _, err := net.SplitHostPort(address)
 	if err != nil || netip.MustParseAddr(host).Is4() != (family == ceph.AddressIPv4) {
 		t.Fatalf("invalid native front address %s: %v", address, err)
 	}
-	execCommand(t, ctx, client, "python3", "-c", `import socket,sys; s=socket.create_connection((sys.argv[1],int(sys.argv[2])),5); s.close()`, host, port)
-	// Both OSDs hold every PG and neither can be marked down by a single
+	receipt := heldReplicationReceipt{Family: family.String()}
+	receipt.Images.Monitor, receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, cluster.Container), imageID(t, ctx, osd), imageID(t, ctx, client)
+	receipt.Interrupted.OSD, receipt.Interrupted.CID = osd.ID, osd.GetContainerID()
+	receipt.Interrupted.Public, receipt.Interrupted.Cluster = before[osd.ID].Public, before[osd.ID].Cluster
+	// Both OSDs hold the PG and neither can be marked down by a single
 	// reporter, so a write waits for its replica while the backend is cut.
-	held := separateNetworkHeldWrite(t, ctx, cluster, client)
+	held := startHeldReplicationWrite(t, ctx, cluster, client, &receipt)
+	checkHeldControls(t, ctx, cluster, client, &receipt, held)
 	if err := backend.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := held(); err != nil {
-		t.Fatal(err)
-	}
+	finishHeldReplicationWrite(t, ctx, cluster, &receipt, held)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
+	}
+	out, err := cluster.Ceph(ctx, "osd", "map", "tc-topology", "held", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.MappingAfter, err = parseHeldMapping(out, "tc-topology", "held"); err != nil || !receipt.MappingAfter.samePlacement(receipt.Mapping) {
+		t.Fatalf("placement after the restore %+v, held in %+v: %v", receipt.MappingAfter, receipt.Mapping, err)
+	}
+	if encoded, err := json.Marshal(receipt); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("HELD_REPLICATION_RECEIPT %s", encoded)
 	}
 	// The same OSD instances, with the same addresses and nonces, recovered.
 	if after := checkAddresses(); !reflect.DeepEqual(after, before) {
@@ -247,118 +262,6 @@ func entityIP(t *testing.T, addr string) netip.Addr {
 		t.Fatalf("native address %q: %v", addr, err)
 	}
 	return parsed.Addr()
-}
-
-// heldOp is an operation from an OSD's dump_ops_in_flight.
-type heldOp struct {
-	Description string `json:"description"`
-	TypeData    struct {
-		FlagPoint string `json:"flag_point"`
-		Events    []struct {
-			Event string `json:"event"`
-		} `json:"events"`
-	} `json:"type_data"`
-}
-
-// request returns the client request that the operation serves, such as
-// "client.4211.0:1".
-func (op heldOp) request() string {
-	request, _, _ := strings.Cut(strings.TrimPrefix(op.Description, "osd_op("), " ")
-	return request
-}
-
-// waitingForReplica reports the write to the object held, waiting for its
-// replica, which has not reported a commit.
-func (op heldOp) waitingForReplica() bool {
-	if !strings.Contains(op.Description, ":::held:head") || op.TypeData.FlagPoint != "waiting for sub ops" {
-		return false
-	}
-	for _, event := range op.TypeData.Events {
-		if strings.HasPrefix(event.Event, "sub_op_commit_rec") {
-			return false
-		}
-	}
-	return true
-}
-
-// separateNetworkHeldWrite starts a write from client and waits until its
-// primary OSD has reported the same request waiting for the replica, without
-// a replica commit, for 10 seconds, while the writer still waits. A normal
-// replicated write passes that state in milliseconds. The returned function
-// waits for the write to finish and reads it back.
-func separateNetworkHeldWrite(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container) func() error {
-	t.Helper()
-	out, err := cluster.Ceph(ctx, "osd", "map", "tc-topology", "held", "--format", "json")
-	var mapping struct {
-		Acting  []int `json:"acting"`
-		Primary int   `json:"acting_primary"`
-	}
-	if err != nil || json.Unmarshal(out, &mapping) != nil || len(mapping.Acting) != 2 {
-		t.Fatalf("map of the held object: %s, %v", out, err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-			Argv: []string{"python3", "-c", `import rados
-payload=bytes(range(256))*64
-with rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'rados_osd_op_timeout':'0'}) as c:
-    with c.open_ioctx('tc-topology') as io:
-        io.write_full('held',payload)
-        assert io.read('held',len(payload),0)==payload
-print('held write replicated and read back')`},
-			Timeout: 5 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "held replicated write",
-		})
-		if err == nil && (!result.Complete() || result.ExitCode != 0) {
-			err = fmt.Errorf("held write: exit %d, complete %t: %s", result.ExitCode, result.Complete(), result.Stderr)
-		}
-		done <- err
-	}()
-	primary := fmt.Sprintf("osd.%d", mapping.Primary)
-	var request string
-	var since time.Time
-	for deadline := time.Now().Add(2 * time.Minute); ; {
-		select {
-		case err := <-done:
-			t.Fatalf("the write finished while the backend was cut: %v", err)
-		default:
-		}
-		data, err := cluster.AdminSocket(ctx, primary, "dump_ops_in_flight")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var dump struct {
-			Ops []heldOp `json:"ops"`
-		}
-		if err := json.Unmarshal(data, &dump); err != nil {
-			t.Fatal(err)
-		}
-		index := slices.IndexFunc(dump.Ops, heldOp.waitingForReplica)
-		switch {
-		case index < 0:
-			request = ""
-		case dump.Ops[index].request() != request:
-			request, since = dump.Ops[index].request(), time.Now()
-		case time.Since(since) >= 10*time.Second:
-			select {
-			case err := <-done:
-				t.Fatalf("the write finished while the backend was cut: %v", err)
-			default:
-			}
-			t.Logf("%s held %s to held for %v, waiting for its replica across the cut backend", primary, request, time.Since(since).Round(time.Second))
-			return func() error {
-				select {
-				case err := <-done:
-					return err
-				case <-time.After(2 * time.Minute):
-					return fmt.Errorf("the held write did not finish after the backend was restored")
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s did not hold the write waiting for its replica for 10 seconds: %s", primary, data)
-		}
-		time.Sleep(time.Second)
-	}
 }
 
 func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {

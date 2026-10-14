@@ -125,6 +125,30 @@ session reconnect, not the replay of a request that was in flight. A standby
 takeover, several active ranks, contended capabilities and a client that
 reconnects too late are separate profiles.
 
+## Daemon-to-daemon paths
+
+A client test that follows a request past its first daemon needs to know which
+internal paths a fixture has actually exercised, and how directly. In the
+table, *native state* means that the daemons themselves reported the
+intermediate condition, such as a write waiting for its replica; *outcome*
+means that only the result was checked. No test inspects the messages on
+these paths.
+
+| Path | What the test observes | Evidence | Proven by |
+| --- | --- | --- | --- |
+| OSD primary to replica, cluster network | The pool has one PG on both OSDs, with two replicas and `min_size` 2. While one OSD's cluster endpoint is cut, the primary reports the client's write `waiting for sub ops`, with no replica commit, for 10 seconds. Meanwhile a MON command answers, both OSDs stay up with the same acting set, and the cut OSD's public listener accepts TCP. After the restore the writer completes, and a client of its own in another container reads the same bytes and object version. The test logs the whole receipt as `HELD_REPLICATION_RECEIPT`. | Native state | `TestSeparateClusterNetworksAndInterruptions`, `TestSeparateIPv6ClusterNetworksAndInterruptions` |
+| MON to MON | Cutting two of five MONs off the public network leaves a quorum of three; restoring them brings back five. | Native state (quorum membership). Which daemon received which map is not observed. | `TestFiveMonitorQuorumAndNetworkRecovery` |
+| OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
+| MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. | Outcome | `TestCephFSPins` |
+| MDS to client after an MDS restart | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart` |
+
+No receipt exists yet for MGR registration and control, erasure-coded shard
+reads across OSDs, heartbeat failure detection, RGW to RADOS, or the RBD and
+CephFS mirror peers with one path cut. A fault on one peer or in one direction
+needs a peer-selective fault, which the fixture does not provide:
+`InterruptNetwork` cuts a whole endpoint, and `TemporaryNetworkDelay` delays
+everything that leaves an interface.
+
 ## Differences from a single-container bootstrap
 
 - **Addresses and ports.** Each daemon runs in its own container, and the
