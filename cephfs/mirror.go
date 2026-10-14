@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"io/fs"
 	"path"
 	"slices"
 	"strconv"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -925,7 +926,9 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 // Replication of these paths pauses during reconciliation; this is a fixture
 // operation, distinct from native daemon failure recovery. It can be used after
 // AddDaemon; Ceph 20.2.4's native MGR fails to reshuffle already-assigned paths
-// when another live daemon joins.
+// when another live daemon joins. Paths are removed one at a time while the
+// native policy is idle, because removals sent back to back can deadlock the
+// MGR's mirroring module.
 // Every current member must be running; remove stopped members first. Intended
 // membership is retained on partial CLI failure so a fresh-context retry can
 // recover. Caller-added policies and other filesystems are not modified.
@@ -967,7 +970,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	if mirror.pendingDirectoryRelease == nil {
 		mirror.pendingDirectoryRelease = make(map[string]bool)
 	}
-	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories,
+	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories, mirror.sourceDirectoryState,
 		func(commandCtx context.Context, operation, directory string) error {
 			mirror.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
@@ -990,14 +993,39 @@ func (mirror *Mirror) sourceDirectories(ctx context.Context) ([]string, error) {
 	return directories, nil
 }
 
+// sourceDirectoryState returns the state of directory in the native mirroring
+// policy, such as "mapped" or "unmapping", or an error matching fs.ErrNotExist
+// once the policy no longer tracks it.
+func (mirror *Mirror) sourceDirectoryState(ctx context.Context, directory string) (string, error) {
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+	if err != nil {
+		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
+	}
+	var status struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil || status.State == "" {
+		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
+	}
+	return status.State, nil
+}
+
 // The intent slice is deliberately unchanged throughout partial mutation. A
 // retry first drains whichever owned paths currently exist, then restores all.
-func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list func(context.Context) ([]string, error), mutate func(context.Context, string, string) error, pending map[string]bool, interval time.Duration) error {
-	current, err := list(ctx)
-	if err != nil {
-		return err
-	}
+//
+// The native mirroring module holds its policy lock while a remove waits for
+// a RADOS write, and that write's completion runs on the same librados
+// callback strand as the acknowledgements of directory acquires and releases,
+// which take the policy lock too. An acknowledgement that arrives during the
+// wait blocks the strand, and the remove never returns. So each remove starts
+// only while every tracked directory is idle, and the next waits until the
+// previous directory has left the policy.
+func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list func(context.Context) ([]string, error), state func(context.Context, string) (string, error), mutate func(context.Context, string, string) error, pending map[string]bool, interval time.Duration) error {
 	for _, directory := range intent {
+		current, err := waitCephFSMirrorPolicyIdle(ctx, list, state, interval)
+		if err != nil {
+			return err
+		}
 		if !slices.Contains(current, directory) {
 			continue
 		}
@@ -1012,25 +1040,8 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 				return fmt.Errorf("release owned CephFS mirror directory %q: %w", directory, err)
 			}
 		}
-	}
-	drainCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	for {
-		current, err := list(drainCtx)
-		if err != nil {
+		if err := waitCephFSMirrorDirectoryReleased(ctx, list, directory, interval); err != nil {
 			return err
-		}
-		remaining := false
-		for _, directory := range intent {
-			remaining = remaining || slices.Contains(current, directory)
-		}
-		if !remaining {
-			break
-		}
-		select {
-		case <-drainCtx.Done():
-			return fmt.Errorf("wait for native CephFS mirror directory release: %w", drainCtx.Err())
-		case <-time.After(interval):
 		}
 	}
 	for _, directory := range intent {
@@ -1042,6 +1053,68 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 		}
 	}
 	return nil
+}
+
+// waitCephFSMirrorPolicyIdle waits until no tracked directory has a policy
+// action in flight and returns the tracked directories. A "stalled" directory
+// waits for a daemon with no action pending. A directory that leaves the
+// policy while it is inspected is idle and not returned, so a removal that
+// completes meanwhile is not sent again.
+func waitCephFSMirrorPolicyIdle(ctx context.Context, list func(context.Context) ([]string, error), state func(context.Context, string) (string, error), interval time.Duration) ([]string, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var busy string
+	for {
+		current, err := list(waitCtx)
+		if err != nil {
+			return nil, err
+		}
+		busy = ""
+		tracked := make([]string, 0, len(current))
+		for _, directory := range current {
+			value, err := state(waitCtx, directory)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if value != "mapped" && value != "stalled" {
+				busy = directory + " is " + value
+				break
+			}
+			tracked = append(tracked, directory)
+		}
+		if busy == "" {
+			return tracked, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return nil, fmt.Errorf("wait for idle native CephFS mirror policy (%s): %w", busy, waitCtx.Err())
+		case <-time.After(interval):
+		}
+	}
+}
+
+// waitCephFSMirrorDirectoryReleased waits until the native policy no longer
+// tracks directory: its release was acknowledged and its mapping removed.
+func waitCephFSMirrorDirectoryReleased(ctx context.Context, list func(context.Context) ([]string, error), directory string, interval time.Duration) error {
+	drainCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		current, err := list(drainCtx)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(current, directory) {
+			return nil
+		}
+		select {
+		case <-drainCtx.Done():
+			return fmt.Errorf("wait for native CephFS mirror directory %q release: %w", directory, drainCtx.Err())
+		case <-time.After(interval):
+		}
+	}
 }
 
 // PeerIDs lists configured source filesystem peers in UUID order. These are

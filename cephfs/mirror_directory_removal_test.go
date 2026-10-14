@@ -53,8 +53,10 @@ func (f *directoryRemovalControlFake) Exec(ctx context.Context, args []string, o
 			}
 			out += "]"
 		}
-	case slices.Equal(a, []string{"fs", "snapshot", "mirror", "dirmap", "source", "/owned"}):
-		out = f.mappingOverride
+	case len(a) == 6 && slices.Equal(a[:5], []string{"fs", "snapshot", "mirror", "dirmap", "source"}) && (a[5] == "/owned" || slices.Contains(f.directories, a[5])):
+		if a[5] == "/owned" {
+			out = f.mappingOverride
+		}
 		if out == "" {
 			out = `{"state":"mapped","instance_id":"4262","last_shuffled":0}`
 		}
