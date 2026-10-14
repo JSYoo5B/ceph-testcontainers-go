@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## Unreleased
+
+### Added
+
+- The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
+  has an MDS session section. Its first receipt keeps a native libcephfs
+  client mounted while the only MDS is killed, failed and started again:
+  the session returns with the same client ID, PID and address, and the file
+  descriptor opened before the failure keeps reading, writing, renaming and
+  setting xattrs, as a client in another container confirms.
+
 ## v0.2.0 (2026-10-14)
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)

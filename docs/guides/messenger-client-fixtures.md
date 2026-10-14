@@ -106,6 +106,25 @@ MemStore OSD loses its data when it is killed, so durability across a crash
 needs BlueStore, as in `TestRADOSMutationOutcomes`. Delays inside the OSD are
 described in [Fault injection](fault-injection.md).
 
+## MDS sessions
+
+A client that implements CephFS sessions needs to know what the native client
+keeps when its MDS fails. These tests keep a native libcephfs client mounted
+in a client container under `RunNativeCommand`, with a file descriptor that it
+opened before the failure, and publish its client ID, PID and inode in
+receipts tied to one run. `Sessions` reports the session; `ceph tell
+mds.<name> session ls` adds counters that `Session` leaves out, such as
+`num_leases` and `num_completed_requests`.
+
+| Profile | Native receipt | Proven by |
+| --- | --- | --- |
+| The only MDS is killed, its GID failed with `mds fail`, and its container started again | rank 0 returns with a new GID in the same container; the client's session is `open` again with the same client ID, PID and address and nonce; through the descriptor opened before the failure the client reads its bytes, appends and fsyncs, renames the file and sets a binary xattr; a client in another container reads the same inode, the exact bytes and the xattr | `TestCephFSRetainedClientAcrossMDSRestart`, with `MessengerV2Secure` on bridge and host networks |
+
+The client fsynced its data before the failure, so this receipt shows a
+session reconnect, not the replay of a request that was in flight. A standby
+takeover, several active ranks, contended capabilities and a client that
+reconnects too late are separate profiles.
+
 ## Differences from a single-container bootstrap
 
 - **Addresses and ports.** Each daemon runs in its own container, and the
