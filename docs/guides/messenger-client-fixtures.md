@@ -149,9 +149,15 @@ these paths.
 | --- | --- | --- | --- |
 | OSD primary to replica, cluster network | The pool has one PG on both OSDs, with two replicas and `min_size` 2. While one OSD's cluster endpoint is cut, the primary reports the client's write `waiting for sub ops`, with no replica commit, for 10 seconds. Meanwhile a MON command answers, both OSDs stay up with the same acting set, and the cut OSD's public listener accepts TCP. After the restore the writer completes, and a client of its own in another container reads the same bytes and object version. The test logs the whole receipt as `HELD_REPLICATION_RECEIPT`. | Native state | `TestSeparateClusterNetworksAndInterruptions`, `TestSeparateIPv6ClusterNetworksAndInterruptions` |
 | MON to MON | Cutting two of five MONs off the public network leaves a quorum of three; restoring them brings back five. | Native state (quorum membership). Which daemon received which map is not observed. | `TestFiveMonitorQuorumAndNetworkRecovery` |
+| OSD to OSD when a replica missed writes | One replica of a one-PG, two-replica pool stops while writes continue, then starts again with recovery held by `norecover` or `nobackfill`. The primary's `pg query` tells the two paths apart. In log recovery the replica stays in the acting set, has no backfill target and `last_backfill` `MAX`, and the PG log still reaches back to the replica's last entry. In backfill the PG log has been trimmed past that entry, and the replica is only in the up set, as the backfill target with `last_backfill` `MIN`. While the flag is set, `num_objects_recovered` does not move; afterwards it grows by exactly the objects written while the replica was down. A client of its own reads every object, and with the primary stopped the replica serves them alone. The test logs `OSD_RECOVERY_RECEIPT`. | Native state | `TestOSDRecoveryAndBackfillReceipts` |
 | OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
 | MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. | Outcome | `TestCephFSPins` |
 | MDS to client after an MDS restart or a standby takeover | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover` |
+
+A short log for the backfill case comes from `TemporaryConfig` on
+`osd_min_pg_log_entries`, `osd_max_pg_log_entries` and `osd_pg_log_trim_min`;
+with the default `osd_pg_log_trim_min` of 100, a log of a few dozen entries is
+not trimmed at all.
 
 No receipt exists yet for MGR registration and control, erasure-coded shard
 reads across OSDs, heartbeat failure detection, RGW to RADOS, or the RBD and
