@@ -404,8 +404,9 @@ Handle-specific details:
   settings. Refusals of these Messenger settings match `ErrInvalidRequest`.
 - `TemporaryMessengerPolicy` uses `TemporaryConfig` overrides, restoring in
   reverse order. Application can partly succeed, so keep a non-nil handle
-  returned with an error. Its refusals, including any use under
-  `MessengerV2Secure`, match `ErrInvalidRequest`.
+  returned with an error. An empty policy, an unknown connection mode and any
+  use under `MessengerV2Secure` are refused before any change with
+  `ErrInvalidRequest`.
 - `TemporaryClientRevocation.Restore` refuses an identity recreated outside
   the fixture with another key or capabilities. `DeleteClient` makes the
   removal permanent instead of restoring it.

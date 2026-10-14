@@ -93,10 +93,11 @@ It leaves daemon-to-daemon modes unchanged and cannot be combined with
 `MessengerV2Secure`. `TemporaryMessengerPolicy` affects new connections;
 established connections keep their negotiated mode. Its non-nil handle must
 be kept even when application partly fails, then restored with a fresh
-context. Its refusals, including any use under `MessengerV2Secure`, match
-`ErrInvalidRequest`. `WithClientMessengerPolicy` configures only the attached
-client container, including intentional mismatch tests; it does not change the
-fixture's control CLI or a host client's configuration.
+context. An empty policy, an unknown connection mode and any use under
+`MessengerV2Secure` are refused before any change with `ErrInvalidRequest`.
+`WithClientMessengerPolicy` configures only the attached client container,
+including intentional mismatch tests; it does not change the fixture's control
+CLI or a host client's configuration.
 
 `TemporaryConfig` refuses `ms_bind_msgr1` and `ms_bind_msgr2` in both v2-only
 modes. Secure-only also refuses the six mode settings; these refusals match
