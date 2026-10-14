@@ -521,13 +521,42 @@ finally:
     c.shutdown()
 `
 
+// profileFreshSessionsClient opens a new librados session every half second
+// for seconds, and sends a MON command and a MGR command through each, as a
+// suite's native oracles do. It prints the number of sessions.
+const profileFreshSessionsClient = `import json,sys,time,rados
+seconds=float(sys.argv[1])
+sessions=0
+started=time.monotonic()
+while time.monotonic()-started<seconds:
+    c=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'rados_mon_op_timeout':'10'})
+    c.connect()
+    try:
+        r,_,err=c.mon_command(json.dumps({'prefix':'fsid','format':'json'}),b'')
+        assert r==0,('mon',r,err)
+        r,_,err=c.mgr_command(json.dumps({'prefix':'pg stat','format':'json'}),b'')
+        assert r==0,('mgr',r,err)
+    finally:
+        c.shutdown()
+    sessions+=1
+    time.sleep(0.5)
+print(json.dumps({'calls':sessions,'seconds':time.monotonic()-started}))
+`
+
 // checkProfileRenewal runs profileRenewalClient in client for seconds, which
 // should exceed the ticket lifetimes, and checks that every call of the one
 // session succeeded until the end.
 func checkProfileRenewal(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, seconds int) {
 	t.Helper()
+	checkProfileSessions(t, ctx, cluster, client, profileRenewalClient, seconds)
+}
+
+// checkProfileSessions runs a session script in client for seconds and checks
+// that every call succeeded until the end.
+func checkProfileSessions(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, script string, seconds int) {
+	t.Helper()
 	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-		Argv: []string{"python3", "-c", profileRenewalClient, fmt.Sprint(seconds)}, Timeout: time.Duration(seconds+60) * time.Second,
+		Argv: []string{"python3", "-c", script, fmt.Sprint(seconds)}, Timeout: time.Duration(seconds+60) * time.Second,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "ticket renewal session",
 	})
 	var session struct {
@@ -535,9 +564,9 @@ func checkProfileRenewal(t *testing.T, ctx context.Context, cluster *ceph.Contai
 		Seconds float64 `json:"seconds"`
 	}
 	if err != nil || result.ExitCode != 0 || json.Unmarshal(result.Stdout, &session) != nil || session.Calls < 2 || session.Seconds < float64(seconds) {
-		t.Fatalf("renewal session: %v, exit %d: %s %s", err, result.ExitCode, result.Stdout, result.Stderr)
+		t.Fatalf("librados sessions: %v, exit %d: %s %s", err, result.ExitCode, result.Stdout, result.Stderr)
 	}
-	t.Logf("one librados session made %d MON and MGR calls over %.1f seconds", session.Calls, session.Seconds)
+	t.Logf("%d rounds of MON and MGR calls over %.1f seconds", session.Calls, session.Seconds)
 }
 
 // testMessengerClientSecureProfile starts the default secure profile: three
@@ -556,6 +585,13 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
+	if osds, err := cluster.DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(cluster.OSDs()) != 0 {
+		t.Fatalf("the profile has OSDs: %+v, %v", osds.OSDs, err)
+	}
+	daemons := profileDaemons(cluster)
+	for _, option := range []string{"ms_cluster_mode", "ms_service_mode", "ms_client_mode", "ms_mon_cluster_mode", "ms_mon_service_mode", "ms_mon_client_mode"} {
+		waitEffectiveMode(t, ctx, cluster, option, "secure", daemons...)
+	}
 	identities := createProfileIdentities(t, ctx, cluster, auth.KeyType)
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "secure")
 	// One session outlives two lifetimes of each ticket.
@@ -664,9 +700,9 @@ func modeNames(modes []ceph.MessengerConnectionMode) []string {
 
 // testMessengerClientTicketProfile starts three MONs and two MGRs with the
 // ticket lifetimes and MON timing of a profile and checks what the daemons
-// and a client container run with. With renewal seconds, one librados session
-// then outlives the tickets, and the MGRs must stay as they were.
-func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64, renewal int) {
+// and a client container run with. With a session script, librados sessions
+// then run for seconds, and the MGRs must stay as they were.
+func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64, sessions string, seconds int) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
@@ -688,14 +724,14 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 			t.Fatalf("client %s = %q, want %v: %v", name, out, want, err)
 		}
 	}
-	if renewal == 0 {
+	if sessions == "" {
 		return
 	}
 	before, err := cluster.ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkProfileRenewal(t, ctx, cluster, client, renewal)
+	checkProfileSessions(t, ctx, cluster, client, sessions, seconds)
 	after, err := cluster.ManagerStatus(ctx)
 	if err != nil || !after.Available || after.ActiveGID != before.ActiveGID || len(after.Standbys) != 1 {
 		t.Fatalf("MGRs changed while tickets renewed: before %+v, after %+v, %v", before, after, err)
@@ -751,6 +787,9 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
+	monsAndMgrs := slices.DeleteFunc(profileDaemons(cluster), func(daemon string) bool { return strings.HasPrefix(daemon, "osd.") })
+	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "crc", monsAndMgrs...)
+	waitEffectiveMode(t, ctx, cluster, "ms_service_mode", "crc", "osd.0")
 	if got := authEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
 		t.Fatalf("osd.0 has a %s key, want %s", got, auth.KeyType)
 	}
@@ -830,15 +869,21 @@ func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}
-	endpoints := map[string]string{"mgr." + native.ActiveManager.Name: native.ActiveManager.Addrs[0].Addr}
+	endpoints := map[string]string{}
+	add := func(name string, vector []ceph.EntityAddress) {
+		for _, entry := range vector {
+			endpoints[entry.Addr] = name
+		}
+	}
+	add("mgr."+native.ActiveManager.Name, native.ActiveManager.Addrs)
 	for _, mon := range native.Monitors {
-		endpoints["mon."+mon.Name] = mon.Addrs[0].Addr
+		add("mon."+mon.Name, mon.Addrs)
 	}
 	for _, osd := range native.OSDs {
-		endpoints[fmt.Sprintf("osd.%d", osd.ID)] = osd.Public[0].Addr
+		add(fmt.Sprintf("osd.%d", osd.ID), slices.Concat(osd.Public, osd.Cluster, osd.HeartbeatFront, osd.HeartbeatBack))
 	}
 	var dialer net.Dialer
-	for name, address := range endpoints {
+	for address, name := range endpoints {
 		dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		conn, err := dialer.DialContext(dialCtx, "tcp", address)
 		cancel()
@@ -854,4 +899,19 @@ func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *
 		}
 	}
 	t.Logf("the test process read the Messenger v2 banner from %d advertised daemon addresses", len(endpoints))
+}
+
+// profileDaemons names every owned MON, MGR and OSD.
+func profileDaemons(cluster *ceph.Container) []string {
+	var daemons []string
+	for _, mon := range cluster.Monitors() {
+		daemons = append(daemons, "mon."+mon.DaemonName)
+	}
+	for _, mgr := range cluster.Managers() {
+		daemons = append(daemons, "mgr."+mgr.DaemonName)
+	}
+	for _, osd := range cluster.OSDs() {
+		daemons = append(daemons, fmt.Sprintf("osd.%d", osd.ID))
+	}
+	return daemons
 }

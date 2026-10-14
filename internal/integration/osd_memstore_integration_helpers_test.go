@@ -139,6 +139,14 @@ func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if !found {
 		t.Fatalf("pool %s not found", pool)
 	}
+	out, err = cluster.Ceph(ctx, "osd", "pool", "get", pool, "crush_rule", "--format", "json")
+	var rule struct {
+		Name string `json:"crush_rule"`
+	}
+	if err != nil || json.Unmarshal(out, &rule) != nil || rule.Name == "" {
+		t.Fatalf("CRUSH rule of pool %s: %s, %v", pool, out, err)
+	}
+	assertChoosesOSDs(t, ctx, cluster, rule.Name)
 }
 
 func assertLegacyCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container) {
@@ -162,5 +170,27 @@ func assertLegacyCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	if len(dump.Buckets) != 1 || dump.Buckets[0].Name != "default" || dump.Buckets[0].Alg != "straw" {
 		t.Fatalf("buckets %+v, want only the straw root default", dump.Buckets)
+	}
+	assertChoosesOSDs(t, ctx, cluster, "replicated_rule")
+}
+
+// assertChoosesOSDs checks that a CRUSH rule takes the default root and
+// chooses OSDs directly, without a chooseleaf step.
+func assertChoosesOSDs(t *testing.T, ctx context.Context, cluster *ceph.Container, rule string) {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "osd", "crush", "rule", "dump", rule, "--format", "json")
+	var dump struct {
+		Steps []struct {
+			Op       string `json:"op"`
+			ItemName string `json:"item_name"`
+			Num      int    `json:"num"`
+			Type     string `json:"type"`
+		} `json:"steps"`
+	}
+	if err != nil || json.Unmarshal(out, &dump) != nil || len(dump.Steps) != 3 ||
+		dump.Steps[0].Op != "take" || dump.Steps[0].ItemName != "default" ||
+		dump.Steps[1].Op != "choose_firstn" || dump.Steps[1].Num != 0 || dump.Steps[1].Type != "osd" ||
+		dump.Steps[2].Op != "emit" {
+		t.Fatalf("CRUSH rule %s does not take default and choose OSDs: %s, %v", rule, out, err)
 	}
 }

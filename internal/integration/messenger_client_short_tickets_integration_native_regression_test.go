@@ -10,12 +10,14 @@ import (
 )
 
 // MON tickets of 1.5 seconds and service tickets of 12 seconds, with a
-// one-second MON tick. One librados session outlives both lifetimes, and the
-// MGRs must stay. With MON tickets this short, Ceph can abort a MGR that
-// renews late while it loads its modules (#23), so the profile runs only on
-// request.
+// one-second MON tick. For 30 seconds a new librados session every half
+// second sends a MON and a MGR command, and the MGRs must stay. With MON
+// tickets this short, Ceph can abort a MGR that renews late while it loads
+// its modules (#23), so the profile runs only on request. A single librados
+// session that lasts longer loses its MON session: its renewal is refused
+// with EACCES, and its MON client does not authenticate again.
 func TestMessengerClientProfileShortTickets(t *testing.T) {
 	parallelWhenEnabled(t)
 	testMessengerClientTicketProfile(t, 1500*time.Millisecond, 12*time.Second, "[global]\nmon_tick_interval = 1\n",
-		map[string]float64{"mon_tick_interval": 1}, 30)
+		map[string]float64{"mon_tick_interval": 1}, profileFreshSessionsClient, 30)
 }

@@ -31,10 +31,10 @@ public options and checks the native result.
 | | `aes256k`/`aes` | `AuthConfig{KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES}` | `TestAuthCiphersAndTicketLifetimes` |
 | Ticket lifetimes | 12 s MON and service tickets | `AuthConfig{MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}` | `TestMessengerClientProfileSecure`, where one librados session outlives two lifetimes of each ticket |
 | | 120 s, with fast MON timing | `AuthConfig{MonTicketTTL: 120 * time.Second, ServiceTicketTTL: 120 * time.Second}` and a `WithConfigFile` `[global]` section with `mon_subscribe_interval`, `mon_tick_interval`, `mon_session_timeout`, `mon_client_ping_interval` and `mon_client_hunt_interval` | `TestMessengerClientProfileIdleTickets` |
-| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag; see [Differences](#differences-from-a-single-container-bootstrap) |
+| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag: a new librados session every half second for 30 s, with the MGRs unchanged; see [Differences](#differences-from-a-single-container-bootstrap) |
 | `global_id` reclaim | not allowed insecurely | always `auth_allow_insecure_global_id_reclaim = false` | `TestMessengerClientProfileSecure` |
-| Connection modes | every connection secure | `MessengerV2Secure` | `TestMessengerClientProfileSecure` |
-| | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC` |
+| Connection modes | every connection secure | `MessengerV2Secure` | `TestMessengerClientProfileSecure`, which reads all six `ms_*_mode` options from each MON and MGR |
+| | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC`, which reads each daemon's service mode |
 | | MONs accept only CRC, MGRs only secure | `MessengerV2Only` with `MessengerPolicy{Monitors: crc, Managers: secure}` | `TestMessengerClientProfileModeRejection/monitors` |
 | | MONs accept only secure, MGRs only CRC | `MessengerV2Only` with `MessengerPolicy{Monitors: secure, Managers: crc}` | `TestMessengerClientProfileModeRejection/managers` |
 | Client modes | secure, CRC, or secure then CRC | `WithClientMessengerPolicy` on a `WithClient` or `WithClientIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
@@ -72,7 +72,7 @@ until it reports an active MGR and one standby.
 | Start MGRs later | `AddManager` | `TestMessengerClientProfileDelayedManagers` |
 | Make the MGRs accept only secure, then restart them | `TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: secure})`, then `Stop` and `Start` each MGR. The MGRs keep the mode across the restart; `Restore` returns them to CRC. | `TestMessengerClientProfileModeRejection/managers` |
 | Revoke a client key and restore it | the suite's own client, or `TemporaryClientRevocation` and `ReplaceClientKey` | `TestClientRevocation`, `TestClientKeyReplacement` |
-| Run native oracles | `python3-rados`, the `ceph` CLI, `crushtool` and `ceph-dencoder` in a `WithClient` container, or `RunNativeCommand` | `TestNativeCommands`, `TestRADOSMutationOutcomes` |
+| Run native oracles | `python3-rados`, the `ceph` CLI, `crushtool` and `ceph-dencoder` in a `WithClient` container, or `RunNativeCommand` | `TestNativeCommands` (`ceph-dencoder`), `TestRADOSMutationOutcomes` (`python3-rados`), `TestMessengerClientProfileCRC` and `TestOSDMemStoreLegacyPlacement` (`crushtool`) |
 
 ## Differences from a single-container bootstrap
 
@@ -100,11 +100,15 @@ until it reports an active MGR and one standby.
   `MessengerV2Only`, `TemporaryConfig` can change them after bootstrap.
 - **Ticket lifetimes.** They are fixed at bootstrap; `TemporaryConfig` cannot
   change them later.
-- **Short MON tickets.** With MON tickets under ten seconds, a MGR that renews
-  late while it loads its modules can lose its MON session, and Ceph then
-  aborts it; see [WithAuth](../ceph.md#withauth). The same happens to a
-  hand-built cluster with the same lifetimes. That is why the 1.5-second
-  profile's test is optional.
+- **Short MON tickets.** With MON tickets under ten seconds, a MON client
+  that renews late is refused with `EACCES` and does not authenticate again;
+  see [WithAuth](../ceph.md#withauth). This is Ceph's behaviour, and a
+  hand-built cluster with the same lifetimes has it too.
+  - A MGR busy loading its modules can lose its MON session this way, and Ceph
+    then aborts it. That is why the 1.5-second profile's test is optional.
+  - With 1.5-second MON tickets, a single native librados session meant to
+    last 30 seconds lost its MON session in each of eight runs on Tentacle
+    20.2.4. Native oracles for this profile open a new session for each check.
 - **Keys.** Each identity has its own keyring. Read a key from
   `ClientConfig.ConnectionConfig`.
 - **Stopping a daemon abruptly.** `Stop` sends SIGTERM and waits. Kill a
