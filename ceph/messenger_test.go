@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,14 +24,17 @@ var messengerSecurePolicy = map[string]string{
 }
 
 func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
-	if MessengerDefault != 0 || MessengerV2Secure != 1 {
-		t.Fatal("Messenger policy zero value changed")
+	if MessengerDefault != 0 || MessengerV2Secure != 1 || MessengerV2Only != 2 {
+		t.Fatal("Messenger policy values changed")
 	}
 	settings := options{}
+	if err := WithMessengerMode(MessengerV2Only)(&settings); err != nil || settings.messengerMode != MessengerV2Only {
+		t.Fatal("MessengerV2Only was refused", err)
+	}
 	if err := WithMessengerMode(MessengerV2Secure)(&settings); err != nil {
 		t.Fatal(err)
 	}
-	for _, unknown := range []MessengerMode{-1, 2, 256} {
+	for _, unknown := range []MessengerMode{-1, 3, 256} {
 		if err := WithMessengerMode(unknown)(&settings); err == nil || settings.messengerMode != MessengerV2Secure {
 			t.Fatal("unknown Messenger mode was accepted or replaced the selected policy")
 		}
@@ -41,7 +45,7 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 	if err := WithMessengerMode(MessengerDefault)(&settings); err != nil || settings.messengerMode != MessengerDefault {
 		t.Fatal("explicit default did not replace the previous option")
 	}
-	for _, mode := range []MessengerMode{MessengerDefault, MessengerV2Secure} {
+	for _, mode := range []MessengerMode{MessengerDefault, MessengerV2Secure, MessengerV2Only} {
 		cluster := &Container{settings: options{messengerMode: mode}}
 		if cluster.MessengerMode() != mode {
 			t.Fatal("accessor did not report the selected bootstrap mode")
@@ -77,7 +81,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 				if err == nil || change != nil || len(control.calls) != 0 || len(cluster.configOverrides) != 0 {
 					t.Fatalf("secure bootstrap %s/%s/%s acquired an override or ran native commands", scope.Section, scope.Mask, scope.Name)
 				}
-				if !strings.Contains(err.Error(), canonical) || !strings.Contains(err.Error(), "WithMessengerMode") || strings.Contains(err.Error(), scope.Value) {
+				if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), canonical) || !strings.Contains(err.Error(), "WithMessengerMode") || strings.Contains(err.Error(), scope.Value) {
 					t.Fatal("bootstrap refusal omitted its precise reason or exposed the requested value")
 				}
 			}
@@ -105,6 +109,35 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 	}
 	if err := change.Restore(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// MessengerV2Only fixes only the protocol options: the connection modes stay
+// central configuration, and other bind options stay free.
+func TestMessengerV2OnlyReservesOnlyProtocolOptions(t *testing.T) {
+	for _, name := range []string{"ms_bind_msgr1", "ms_bind_msgr2", "ms-bind-msgr1"} {
+		for _, scope := range []ConfigSetting{{Section: "global"}, {Section: "mon.b"}, {Section: "osd.0", Mask: "host:node-a"}, {Section: "client"}} {
+			control := &configFixture{}
+			cluster := configCluster(control)
+			cluster.settings.messengerMode = MessengerV2Only
+			scope.Name, scope.Value = name, "true"
+			change, err := cluster.TemporaryConfig(t.Context(), scope)
+			if !errors.Is(err, ErrInvalidRequest) || change != nil || len(control.calls) != 0 || !strings.Contains(err.Error(), "MessengerV2Only") {
+				t.Fatalf("v2-only bootstrap allowed %s/%s/%s or ran native commands: %v", scope.Section, scope.Mask, scope.Name, err)
+			}
+		}
+	}
+	for _, name := range []string{"ms_mon_service_mode", "ms_service_mode", "ms_cluster_mode", "ms_mon_client_mode", "ms_bind_ipv6"} {
+		control := &configFixture{}
+		cluster := configCluster(control)
+		cluster.settings.messengerMode = MessengerV2Only
+		change, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "mon", Name: name, Value: "crc"})
+		if err != nil || change == nil {
+			t.Fatalf("v2-only bootstrap refused %s: %v", name, err)
+		}
+		if err := change.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -150,30 +183,28 @@ func TestMessengerBootstrapGuardPreservesCallerContext(t *testing.T) {
 func TestMessengerBootstrapAndLateMonitorAddressPolicy(t *testing.T) {
 	for _, fixture := range []struct {
 		name, address, ports, vector string
-		secure                       bool
+		mode                         MessengerMode
 	}{
-		{"default bridge", "", "", "[v2:192.0.2.12:3300,v1:192.0.2.12:6789]", false},
-		{"secure bridge", "", "", "[v2:192.0.2.12:3300]", true},
-		{"default host", "127.0.0.1", "34111,34112", "[v2:127.0.0.1:34111,v1:127.0.0.1:34112]", false},
-		{"secure host", "127.0.0.1", "34111", "[v2:127.0.0.1:34111]", true},
+		{"default bridge", "", "", "[v2:192.0.2.12:3300,v1:192.0.2.12:6789]", MessengerDefault},
+		{"secure bridge", "", "", "[v2:192.0.2.12:3300]", MessengerV2Secure},
+		{"v2-only bridge", "", "", "[v2:192.0.2.12:3300]", MessengerV2Only},
+		{"default host", "127.0.0.1", "34111,34112", "[v2:127.0.0.1:34111,v1:127.0.0.1:34112]", MessengerDefault},
+		{"secure host", "127.0.0.1", "34111", "[v2:127.0.0.1:34111]", MessengerV2Secure},
+		{"v2-only host", "127.0.0.1", "34111", "[v2:127.0.0.1:34111]", MessengerV2Only},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			settings := options{}
-			if fixture.secure {
-				if err := WithMessengerMode(MessengerV2Secure)(&settings); err != nil {
-					t.Fatal(err)
-				}
+			if err := WithMessengerMode(fixture.mode)(&settings); err != nil {
+				t.Fatal(err)
 			}
 			env := map[string]string{
 				"CEPH_FSID": "fixture-fsid", "CEPH_OSD_BLOCK_SIZE": "1073741824",
 				"CEPH_PUBLIC_ADDRESS": fixture.address, "CEPH_MON_ID": "b",
 			}
-			if fixture.secure {
-				env[messengerV2SecureEnvironment] = "true"
-			}
+			maps.Copy(env, settings.messengerEnvironment())
 			if fixture.ports != "" {
 				ports := []int{34111}
-				if !fixture.secure {
+				if fixture.mode == MessengerDefault {
 					ports = append(ports, 34112)
 				}
 				if settings.monitorPortCount() != len(ports) {
@@ -188,14 +219,14 @@ func TestMessengerBootstrapAndLateMonitorAddressPolicy(t *testing.T) {
 				t.Fatalf("bootstrap client config advertises the wrong protocols/ports: %s", config)
 			}
 			messengerAssertAddVector(t, calls, "a", fixture.vector)
-			messengerAssertPolicy(t, config, fixture.secure)
+			messengerAssertPolicy(t, config, fixture.mode)
 			joinedConfig, calls := messengerRunScript(t, "mon-join", env, []byte(config))
 			messengerAssertAddVector(t, calls, "b", fixture.vector)
 			if joinedConfig != config {
 				t.Fatal("late monitor replaced its inherited configuration")
 			}
 			wantPorts := []string{"3300/tcp", "6789/tcp"}
-			if fixture.secure {
+			if fixture.mode != MessengerDefault {
 				wantPorts = wantPorts[:1]
 			}
 			if !slices.Equal(settings.monitorExposedPorts(), wantPorts) {
@@ -232,7 +263,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 		t.Fatal(err)
 	}
 	for _, daemon := range []*monitorConfigArchive{control, mon, mgr, osd} {
-		messengerAssertPolicy(t, string(daemon.config), true)
+		messengerAssertPolicy(t, string(daemon.config), MessengerV2Secure)
 		if bytes.Contains(daemon.config, []byte("v1:")) || !bytes.Contains(daemon.config, []byte("[v2:127.0.0.1:34113]")) {
 			t.Fatal("MON refresh changed the secure-only protocol policy")
 		}
@@ -241,7 +272,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	messengerAssertPolicy(t, string(config), true)
+	messengerAssertPolicy(t, string(config), MessengerV2Secure)
 	var req testcontainers.GenericContainerRequest
 	if err := cluster.WithClient()(&req); err != nil {
 		t.Fatal(err)
@@ -261,7 +292,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	messengerAssertPolicy(t, string(clientConfig), true)
+	messengerAssertPolicy(t, string(clientConfig), MessengerV2Secure)
 	req = testcontainers.GenericContainerRequest{}
 	if err := clientCluster.WithClientIdentity(client)(&req); err != nil {
 		t.Fatal(err)
@@ -279,13 +310,16 @@ func messengerAssertAttachedPolicy(t *testing.T, req testcontainers.GenericConta
 		if err != nil {
 			t.Fatal(err)
 		}
-		messengerAssertPolicy(t, string(data), true)
+		messengerAssertPolicy(t, string(data), MessengerV2Secure)
 		return
 	}
 	t.Fatal("client attachment omitted the cluster configuration")
 }
 
-func messengerAssertPolicy(t *testing.T, config string, secure bool) {
+// messengerAssertPolicy checks the [global] Messenger entries of mode: all
+// eight for MessengerV2Secure, only the protocol entries for MessengerV2Only
+// and none for MessengerDefault.
+func messengerAssertPolicy(t *testing.T, config string, mode MessengerMode) {
 	t.Helper()
 	global := false
 	values := map[string]string{}
@@ -310,11 +344,12 @@ func messengerAssertPolicy(t *testing.T, config string, secure bool) {
 	}
 	for key, expected := range messengerSecurePolicy {
 		actual, found := values[key]
-		if secure && (!found || actual != expected) {
+		want := mode == MessengerV2Secure || (mode == MessengerV2Only && strings.HasPrefix(key, "ms bind msgr"))
+		if want && (!found || actual != expected) {
 			t.Fatalf("%s = %q, want singleton %q", key, actual, expected)
 		}
-		if !secure && found {
-			t.Fatalf("default bootstrap overrides Ceph messenger defaults: %s", key)
+		if !want && found {
+			t.Fatalf("mode %d bootstrap overrides Ceph messenger default %s", mode, key)
 		}
 	}
 }

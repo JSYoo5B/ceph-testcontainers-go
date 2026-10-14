@@ -211,9 +211,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
 		monEnv := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
-		if c.settings.messengerMode == MessengerV2Secure {
-			monEnv[messengerV2SecureEnvironment] = "true"
-		}
+		maps.Copy(monEnv, c.settings.messengerEnvironment())
 		opts := []testcontainers.ContainerCustomizer{c.WithClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),

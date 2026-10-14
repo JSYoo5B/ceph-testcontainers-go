@@ -348,8 +348,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				testcontainers.WithEnv(monEnv))
 		}
 		moduleOpts = append(moduleOpts, opts...)
-		if c.settings.messengerMode == MessengerV2Secure {
-			moduleOpts = append(moduleOpts, testcontainers.WithEnv(map[string]string{messengerV2SecureEnvironment: "true"}))
+		if env := c.settings.messengerEnvironment(); env != nil {
+			moduleOpts = append(moduleOpts, testcontainers.WithEnv(env))
 		}
 		if len(c.settings.userConfig) > 0 {
 			moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))

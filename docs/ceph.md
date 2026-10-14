@@ -591,27 +591,65 @@ such as `"a;b"` is rejected; escape literal characters as `\#` and `\;`.
 ceph.WithMessengerMode(ceph.MessengerV2Secure)
 ```
 
-Selects the Messenger connection policy at bootstrap. The policy is immutable for
-the lifetime of the cluster.
+Selects, at bootstrap, the Messenger protocols that every daemon listens on and
+advertises, and whether the connection modes stay configurable. Both are
+immutable for the lifetime of the cluster.
 
-| Mode | Behaviour |
+| Mode | Listeners and addresses | Connection modes |
+| --- | --- | --- |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [TemporaryMessengerPolicy](#temporarymessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
+| `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
+
+With `MessengerV2Only`, the global `ceph.conf` sets `ms_bind_msgr1` to `false`
+and `ms_bind_msgr2` to `true` and nothing else, so a CRC-only cluster is:
+
+```golang
+crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithMessengerMode(ceph.MessengerV2Only),
+	ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc}),
+)
+// Native clients attached with WithClient(ceph.WithClientMessengerPolicy(
+// ceph.ClientMessengerPolicy{MonitorsAndManagers: crc, OtherDaemons: crc}))
+// connect with CRC; a client that offers only secure is refused.
+```
+
+Connections between daemons keep Ceph's defaults in both configurable modes, so
+every policy leaves the cluster working.
+
+To move a cluster that a `ceph.conf` with `ms_bind_msgr1 = false` used to
+describe to these options:
+
+| `ceph.conf` | Options |
 | --- | --- |
-| `ceph.MessengerDefault` | Ceph's own defaults: v1 and v2 MON addresses; connection modes as configured in the image. Not every connection is encrypted. |
-| `ceph.MessengerV2Secure` | Only encrypted Messenger v2 (`secure`, AES-GCM). No CRC mode and no v1 listener. |
+| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
+| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
+| `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
+| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [TemporaryConfig](#temporaryconfig) can change them |
+| `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
 With `MessengerV2Secure`, the global `ceph.conf` sets `ms_cluster_mode`,
 `ms_service_mode`, `ms_client_mode`, `ms_mon_cluster_mode`,
 `ms_mon_service_mode` and `ms_mon_client_mode` to `secure`, `ms_bind_msgr1` to
 `false` and `ms_bind_msgr2` to `true`.
 
-- The monmap and `mon_host` contain only v2 addresses. In bridge mode the MON
-  publishes only `3300/tcp`, so `MappedPort(ctx, "6789/tcp")` fails.
+In both v2 modes:
+
+- The monmap and `mon_host` contain only v2 addresses, and no daemon listens on
+  a v1 port. In bridge mode the MON publishes only `3300/tcp`, so
+  `MappedPort(ctx, "6789/tcp")` fails; in host mode only one MON port is
+  reserved.
 - Later daemons, `WithClient` and `WithClientIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
-- [TemporaryConfig](#temporaryconfig) refuses the six mode options and the two
-  bind options in every section and mask, because the local file would override
-  them anyway.
+- [TemporaryConfig](#temporaryconfig) refuses `ms_bind_msgr1` and
+  `ms_bind_msgr2` in every section and mask with `ErrInvalidRequest`, because
+  the local file would override them anyway. With `MessengerV2Secure` it also
+  refuses the six mode options.
+
+With `MessengerV2Secure`:
+
 - A client configured for CRC only is rejected by the cluster (`AUTH_BAD_METHOD`)
   rather than timing out.
 - Cephx authentication and Messenger encryption are separate settings; Cephx is
@@ -2275,7 +2313,8 @@ The helper verifies the stored value, not its effect:
 - Check the effective value of a running daemon with
   `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
 - With [MessengerV2Secure](#withmessengermode), the Messenger mode and bind options
-  are refused.
+  are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and `ms_bind_msgr2`
+  options.
 
 Configuration output can contain secrets; log only selected fields. Typical uses:
 lowering thresholds such as `osd_op_complaint_time` (when `SLOW_OPS` is
@@ -3335,10 +3374,11 @@ type MessengerMode int
 const (
 	MessengerDefault MessengerMode = iota
 	MessengerV2Secure
+	MessengerV2Only
 )
 ```
 
-The bootstrap connection policy for [WithMessengerMode](#withmessengermode).
+The bootstrap protocols and connection policy for [WithMessengerMode](#withmessengermode).
 Unknown values are rejected by `Run`.
 
 #### NetworkPlane
@@ -4147,7 +4187,8 @@ examples.
 ### Networking
 
 - In bridge mode, MON `a` is the only Ceph daemon with published ports
-  (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Secure`).
+  (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Only` and
+  `MessengerV2Secure`).
   Native RADOS, RBD and CephFS clients must run in a `WithClient` container; a
   host process cannot reach the OSDs. RGW's HTTP endpoint is published and
   reachable from the host (see [rgw](rgw.md)).
