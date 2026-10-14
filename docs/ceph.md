@@ -1300,6 +1300,12 @@ if err := cluster.WaitForQuorum(ctx); err != nil {
 When a majority is stopped, quorum is lost and new clients cannot authenticate.
 After the monitors start again, both existing and new sessions work.
 
+A MON binds the address that the monmap records for it. On a bridge network,
+each MON returns at that address whatever the order of `Start` calls: before
+a stopped MON starts, the fixture requests its original address from Docker
+again. MON a's container waits for a quorum when it starts, so after all MONs
+were stopped, start the others first.
+
 #### AddMonitor
 
 ```golang

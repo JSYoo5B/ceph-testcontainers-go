@@ -222,6 +222,8 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			portEnv := c.settings.monitorPortEnvironment(lease.Ports)
 			portEnv["CEPH_PUBLIC_ADDRESS"] = c.PublicAddress()
 			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
+		} else {
+			opts = append(opts, keepMonitorAddress(c.NetworkName()))
 		}
 		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
 			return mon, err

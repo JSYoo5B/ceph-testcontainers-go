@@ -170,6 +170,13 @@ change the API.
 
 ### Fixed
 
+- On a bridge network, a MON that restarts after other containers started
+  comes back at its monmap address. Docker allocated the address again at each
+  start, so after all MONs stopped, the one started first could take another
+  MON's address, which then failed to bind it with
+  `Cannot assign requested address`. The fixture now requests each MON's
+  original address before it starts again.
+
 - A service start that fails before Docker creates the container, for
   example when the image cannot be pulled, now returns its error with no
   handle. It returned a non-nil handle that held a nil container:

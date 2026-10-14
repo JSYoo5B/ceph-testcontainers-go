@@ -340,7 +340,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		moduleOpts = append(moduleOpts, c.runMount()...)
 		if lease == nil {
-			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network))
+			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network),
+				keepMonitorAddress(c.network.Name))
 		} else {
 			monEnv := c.settings.monitorPortEnvironment(lease.Ports)
 			monEnv["CEPH_PUBLIC_ADDRESS"] = c.settings.publicAddress
