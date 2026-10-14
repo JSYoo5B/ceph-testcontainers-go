@@ -172,14 +172,14 @@ var existingPoolNamePattern = naming.ExistingPool
 
 func validateExistingPoolName(name string) error {
 	if !existingPoolNamePattern.MatchString(name) {
-		return errors.New("invalid native pool name")
+		return invalid(errors.New("invalid native pool name"))
 	}
 	return nil
 }
 
 func (c *Container) poolPolicyReady() error {
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if c.cliContainer() == nil {
 		return errors.New("ceph control container is unavailable")

@@ -114,13 +114,13 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		if err := readRBDMirrorObservedPool(ctx, control, m.config.Pool, site.poolID); err != nil {
 			return err
 		}
-		base, err := readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, "", multicluster.CephBefore(site.cluster, 20))
+		base, err := readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, "", m.legacyCluster(site.cluster))
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, site.namespace, multicluster.CephBefore(site.cluster, 20))
+			selected, err = readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, site.namespace, m.legacyCluster(site.cluster))
 			if err != nil {
 				return err
 			}

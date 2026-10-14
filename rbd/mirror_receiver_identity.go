@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"io"
 	"slices"
@@ -48,7 +49,7 @@ func rbdReceiverQuery(ctx context.Context, operation string, native error) error
 			causes = append(causes, cause)
 		}
 	}
-	return &rbdReceiverObservationError{message: operation + " failed", cause: errors.Join(causes...)}
+	return &rbdReceiverObservationError{message: operation + " failed", cause: clusterutil.Quiet(errors.Join(causes...), native)}
 }
 
 func rbdReceiverJSON(data []byte) error {

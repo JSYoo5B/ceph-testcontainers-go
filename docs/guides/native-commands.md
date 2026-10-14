@@ -16,6 +16,7 @@ native changes conflict with what the fixture tracks.
 | --- | --- | --- |
 | The `ceph` CLI as `client.admin` | `cluster.Ceph(ctx, args...)` | The control container |
 | `rados`, `rbd`, `radosgw-admin`, `ceph-authtool`, Python bindings | `cluster.ControlContainer().Exec(ctx, argv, ...)` | The control container |
+| A command with bounded run time and output whose process must not outlive the test | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig()` with host networking | Your process |
 | `radosgw-admin` in a gateway's realm and zone | `rgw.Gateway.Admin(ctx, args...)` | The gateway container |
@@ -46,9 +47,19 @@ if err := json.Unmarshal(out, &pools); err != nil {
 - Arguments are passed directly, without a shell. Do not quote them for a
   shell; pass each argument as its own string.
 - Add `--format json` for anything you parse.
-- On a non-zero exit, `Ceph` returns the standard output it got and an error
-  that includes standard output and standard error. Output of commands such as
-  `auth get` contains keys; be careful when logging such errors.
+- On a non-zero exit, `Ceph` returns the standard output it got and a
+  `*ceph.NativeFailure` with the exit code, the errno that Ceph printed and
+  Ceph's reason without its log lines, with keys redacted. Standard output, which holds the
+  keys of commands such as `auth get`, never appears in the error. Match the
+  errno with `errors.Is(err, fs.ErrNotExist)` or read it with `errors.As`;
+  see [Classified errors](errors.md#native-failures).
+- The CLI's `--connect-timeout 5` bounds only its connection to a MON: when
+  it expires, the CLI exits with `timed out` before it sends the command.
+  `Ceph` and the fixture's own CLI commands then connect again, until a MON
+  answers, `ctx` ends or a minute has passed. A MON that stalls, for example
+  on a runner whose disk pauses, or an election delays the command instead
+  of failing it, and the command runs once. A call that `ctx` ends this way
+  matches `ctx`'s error.
 - `Ceph` does not take the cluster's topology gate, so it can run while
   another goroutine adds or removes daemons. See
   [Contexts, ownership and cleanup](contexts-and-cleanup.md).
@@ -101,10 +112,11 @@ Notes:
 - Long or heavy workloads compete with the MON in a single-MON cluster. Run
   them in your own client container instead.
 - Cancelling `ctx` stops waiting for the command but does not prove that the
-  process inside the container stopped. Prefer native timeouts:
-  `--connect-timeout` for `ceph`, and Ceph options such as
-  `--rados-osd-op-timeout 10` or `--rados-mon-op-timeout 10` for `rados` and
-  `rbd`.
+  process inside the container stopped, and Docker buffers all of its output.
+  Use [RunNativeCommand](#bounded-commands-with-confirmed-cleanup) when that
+  matters, or native timeouts: `--connect-timeout` for `ceph`, and Ceph
+  options such as `--rados-osd-op-timeout 10` or `--rados-mon-op-timeout 10`
+  for `rados` and `rbd`.
 - For pipes or redirections, run a shell explicitly:
   `exec(ctx, control, "sh", "-c", "rados -p volumes ls | wc -l")`.
 - Python with the `rados`, `rbd` and `cephfs` bindings is available for
@@ -126,6 +138,425 @@ exceptions:
 Decode only the fields you need, and keep unknown fields tolerated: Ceph adds
 fields between releases. See [Ceph releases and images](releases-and-images.md)
 for release-specific output.
+
+## Bounded commands with confirmed cleanup
+
+`RunNativeCommand` runs one command under the supervisor that the module uses
+for its own native queries. Use it for oracle and probe commands whose run
+time and output must be bounded, and whose process must not outlive a
+canceled call.
+
+```golang
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"rados", "-p", "volumes", "stat", "greeting"},
+	Timeout:   30 * time.Second,
+	MaxStdout: 64 << 10,
+	MaxStderr: 64 << 10,
+	Label:     "stat greeting",
+})
+if err != nil {
+	t.Fatal(err)
+}
+if result.ExitCode != 0 {
+	t.Fatalf("rados stat exited %d", result.ExitCode)
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `Argv` | Program and arguments, run without a shell. Required; no argument may contain NUL. |
+| `Timeout` | Run time, at most `ceph.MaxNativeCommandTimeout` (one hour). The deadline of `ctx` shortens it. |
+| `MaxStdout`, `MaxStderr` | Bytes kept of each stream, at most `ceph.MaxNativeCommandOutput` (64 MiB). The limit applies inside the container, before Docker buffers anything. |
+| `Label` | Names the command in errors: at most 128 bytes without control characters. Defaults to `native command`. |
+
+A malformed command, or a context that has already ended, fails before
+anything runs.
+
+### Where it runs
+
+The target is one of:
+
+- the control container, or a MON, MGR, OSD, RGW or MDS container of this
+  cluster;
+- a container of yours attached to the cluster's network, such as one started
+  with `WithClient` or `WithClientIdentity`. For a host-network cluster, it is
+  a container on the host network.
+
+Any other container is refused. The call never adopts, stops or removes your
+container. The target must be running and not paused, and it needs `python3`,
+which runs the supervisor. The official Ceph images and every control image
+have it. OSD, RGW and MDS role images need not (see
+[Ceph releases and images](releases-and-images.md)); for a container without
+it the error says so, and the control container or a client container can
+run the command instead.
+
+### Reading the result
+
+`Stdout` and `Stderr` are separate raw bytes and binary-safe. `ExitCode` is the
+command's exit code, and a nonzero exit is not an error.
+
+A command that runs into its timeout or exceeds an output limit still returns
+what it wrote, with `TimedOut`, `StdoutTruncated` or `StderrTruncated` set,
+together with an error that wraps `ceph.ErrNativeCommandIncomplete`.
+`result.Complete()` reports whether neither happened. A truncated object, map
+or JSON document is not evidence for an oracle:
+
+```golang
+if errors.Is(err, ceph.ErrNativeCommandIncomplete) {
+	t.Fatalf("incomplete output: timed out %t, stdout truncated %t", result.TimedOut, result.StdoutTruncated)
+}
+```
+
+Errors name the command by its label and never contain its arguments or
+output. A failure of Docker or of your container type appears in the text
+only by its kind, such as a container that does not exist or is paused;
+`errors.Unwrap`, `errors.Is` and `errdefs.IsNotFound` still reach the original
+error, whose text may quote anything. Failures before the command runs are
+classified: `ceph.ErrInvalidRequest` for a malformed command or a container
+that is not admitted, stopped or paused, `ceph.ErrImageCapability` for a
+container without `python3` or a program that does not exist or is not
+executable, and `ceph.ErrEnvironmentUnavailable` for a program that could not
+be started for want of a process or memory or because a security policy
+refused it, and for another Docker failure. A container that disappears or
+stops after the command was sent matches no category: the command may have
+run. See [Classified errors](errors.md). Before you log output, mask the
+cluster's keys and your own secrets with `RedactSecrets`, which uses the same
+rules as `CollectDiagnostics`:
+
+```golang
+safe, err := cluster.RedactSecrets(ctx, result.Stderr, applicationToken)
+if err == nil {
+	t.Logf("stderr: %s", safe)
+}
+```
+
+Compare the raw bytes in assertions; redaction changes the data.
+
+### Cancellation and cleanup
+
+- At its deadline, the supervisor kills the command's process group: the
+  command and every descendant that stayed in its group; a killed process
+  cannot run on. On Linux the supervisor also reaps those descendants for up
+  to 200 ms, which normally leaves no zombie, even in a daemon container whose
+  first process does not reap orphans. A descendant that starts its own
+  session, for example with `setsid`, leaves the group and is not stopped. If
+  the supervisor cannot signal the group, it keeps the invocation unconfirmed
+  rather than report it stopped.
+- The supervisor runs as the container's user and signals what that user may
+  signal. The cluster's containers, and client containers by default, run as
+  root with Docker's default capabilities, where this covers the whole group.
+  In a container whose user lacks `CAP_KILL`, a descendant that switches to
+  another user stays out of reach and is not stopped.
+- When `ctx` ends first, the call stops the command inside the container
+  before it returns. The stop has its own budget of
+  `ceph.NativeCommandStopTimeout` (15 seconds), independent of `ctx`. If
+  Docker had not started the command yet, the stop claims the invocation, and
+  a start that Docker delivers later runs nothing. Such a claim can stay as a
+  small file in `/tmp/tc-supervised` inside the container.
+- When the stop cannot be confirmed, the error is a
+  `*ceph.NativeCommandUnstoppedError`, and the command may still run. This
+  happens when the container is paused or stopped, when the Docker engine does
+  not answer, and when a signal killed the supervisor itself, for example the
+  kernel's OOM killer, or it could not signal the command's group. Keep the error and call `Stop` with a fresh context,
+  for example after resuming the container.
+
+```golang
+var unstopped *ceph.NativeCommandUnstoppedError
+if errors.As(err, &unstopped) {
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := unstopped.Stop(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+}
+```
+
+- `Stop` confirms inside the container. It also confirms a command of an
+  earlier instance of a restarted container, without signalling the
+  processes of the new instance. A stopped container confirms nothing until it
+  runs again, because Docker may still start an exec that it accepted before.
+  After the container was removed, `Stop` returns nil.
+- A container instance is recognised by the start time of the first process
+  in its PID namespace. A container that shares another PID namespace, for
+  example with `--pid=host`, keeps that identity across a restart, so a
+  command that a killed supervisor left there is confirmed only after the
+  container was removed.
+- `Terminate` cancels the commands that still run, waits until their calls have
+  returned, and stops the commands that they could not confirm as stopped. A
+  command that `Terminate` cannot stop stays tracked, and `Terminate` reports
+  it. Afterwards `RunNativeCommand` fails.
+- Stopping the process does not undo what the command already did. A MON
+  command that it had sent may have applied, and the call never runs a
+  command again. Typed helpers such as `ReplaceClientKey` settle their own
+  changes; a raw command's outcome is yours to read back.
+
+### Oracle recipe: stat2, read and ceph-dencoder
+
+These commands run in a client container started with `WithClient`, so a
+test process without Ceph libraries or cgo can use the results. The first one
+calls `rados_stat2` and `rados_read` through `ctypes` and prints one JSON
+document with the object's size, modification time and base64 data:
+
+```golang
+const statRead = `import base64,ctypes,json,sys
+pool,name=sys.argv[1].encode(),sys.argv[2].encode()
+lib=ctypes.CDLL("librados.so.2")
+class timespec(ctypes.Structure):
+    _fields_=[("tv_sec",ctypes.c_int64),("tv_nsec",ctypes.c_long)]
+def check(ret,call):
+    if ret<0:
+        raise OSError(-ret,call)
+cluster,ioctx=ctypes.c_void_p(),ctypes.c_void_p()
+check(lib.rados_create(ctypes.byref(cluster),None),"rados_create")
+try:
+    check(lib.rados_conf_read_file(cluster,b"/etc/ceph/ceph.conf"),"rados_conf_read_file")
+    check(lib.rados_connect(cluster),"rados_connect")
+    check(lib.rados_ioctx_create(cluster,pool,ctypes.byref(ioctx)),"rados_ioctx_create")
+    size,mtime=ctypes.c_uint64(),timespec()
+    check(lib.rados_stat2(ioctx,name,ctypes.byref(size),ctypes.byref(mtime)),"rados_stat2")
+    buf=ctypes.create_string_buffer(max(size.value,1))
+    read=lib.rados_read(ioctx,name,buf,ctypes.c_size_t(size.value),ctypes.c_uint64(0))
+    check(read,"rados_read")
+    print(json.dumps({"size":size.value,"mtime":[mtime.tv_sec,mtime.tv_nsec],"data":base64.b64encode(buf.raw[:read]).decode()}))
+finally:
+    if ioctx.value:
+        lib.rados_ioctx_destroy(ioctx)
+    lib.rados_shutdown(cluster)
+`
+
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:    []string{"python3", "-c", statRead, "volumes", "greeting"},
+	Timeout: time.Minute,
+	// Base64 needs 4/3 of the object's size.
+	MaxStdout: 1 << 20,
+	MaxStderr: 64 << 10,
+	Label:     "stat2 and read greeting",
+})
+if err != nil || result.ExitCode != 0 {
+	t.Fatalf("stat2 and read: exit %d, %v", result.ExitCode, err)
+}
+var object struct {
+	Size  int      `json:"size"`
+	MTime [2]int64 `json:"mtime"`
+	Data  []byte   `json:"data"`
+}
+if err := json.Unmarshal(result.Stdout, &object); err != nil {
+	t.Fatal(err)
+}
+```
+
+`rados_create` with `None` connects as `client.admin`. For an identity attached
+with `WithClientIdentity`, pass its `User()` instead, such as `b"reader"`. The
+script shuts the client down in `finally`: a librados client left to the
+interpreter's exit sometimes aborts after its work is done, which turns into a
+nonzero exit code.
+
+`ceph-dencoder` decodes a native structure from a file. Fetch the current
+OSDMap and decode it in two bounded commands:
+
+```golang
+var decoded []byte
+for _, step := range []ceph.NativeCommand{
+	{Argv: []string{"ceph", "osd", "getmap", "-o", "/tmp/osdmap"}, Label: "get OSDMap"},
+	{Argv: []string{"ceph-dencoder", "type", "OSDMap", "import", "/tmp/osdmap", "decode", "dump_json"}, Label: "decode OSDMap"},
+} {
+	step.Timeout, step.MaxStdout, step.MaxStderr = time.Minute, 4<<20, 64<<10
+	result, err := cluster.RunNativeCommand(ctx, client, step)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("%s: exit %d, %v", step.Label, result.ExitCode, err)
+	}
+	decoded = result.Stdout
+}
+```
+
+`ceph-dencoder` is part of the official `quay.io/ceph/ceph` images. In an
+image without it, the call fails with an error saying that the program could
+not be started. The supervisor bounds only the execution; parsing the decoded
+structure and comparing it with your own decoder stays in your test.
+
+### Oracle recipe: self-managed snapshot write contexts
+
+A client that manages its own snapshots, as RBD does, asks the MONs for each
+snapshot ID and sends a write context with every write: a sequence and the
+existing snapshot IDs, newest first. When a write to an existing object names
+a snapshot that still exists and is newer than the object's own sequence, the
+OSD first preserves the object as a clone. The Python binding of librados,
+which the official images ship, can produce these contexts, so a test can
+compare its own client with native results.
+
+Create an owned pool, then run the writer and an independent reader as two
+librados clients in one bounded command:
+
+```golang
+const selfSnap = `import hashlib,json,sys,rados
+pool,name=sys.argv[1],sys.argv[2]
+def connected():
+    c=rados.Rados(conffile="/etc/ceph/ceph.conf")
+    c.connect(); return c
+def read(ioctx,snap):
+    ioctx.set_read(snap)
+    try:
+        data=ioctx.read(name,4096,0)
+        return hashlib.sha256(data).hexdigest(),ioctx.get_last_version()
+    finally:
+        ioctx.set_read(rados.LIBRADOS_SNAP_HEAD)
+writer,reader=connected(),connected()
+a,b=writer.open_ioctx(pool),reader.open_ioctx(pool)
+snap=None
+try:
+    a.write_full(name,b"original\0payload"*64)
+    snap=a.create_self_managed_snap()
+    a.set_self_managed_snap_write([snap])
+    a.write(name,b"AFTER",7)
+    a.append(name,b"APPEND")
+    a.trunc(name,64)
+    written=a.get_last_version()
+    print(json.dumps({"snap":snap,"written":written,
+        "snapshot":read(b,snap),"head":read(b,rados.LIBRADOS_SNAP_HEAD)}))
+finally:
+    a.set_self_managed_snap_write([])
+    if snap is not None:
+        a.remove_self_managed_snap(snap)
+    a.close(); b.close(); writer.shutdown(); reader.shutdown()
+`
+
+if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "selfsnap", Application: "rados", PGNum: 1}); err != nil {
+	t.Fatal(err)
+}
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"python3", "-c", selfSnap, "selfsnap", "object"},
+	Timeout:   2 * time.Minute,
+	MaxStdout: 64 << 10,
+	MaxStderr: 64 << 10,
+	Label:     "self-managed snapshot",
+})
+if err != nil || result.ExitCode != 0 {
+	t.Fatalf("self-managed snapshot: exit %d, %v", result.ExitCode, err)
+}
+```
+
+`set_self_managed_snap_write` sorts the IDs and uses the newest as the
+sequence, so the binding cannot send a malformed context. Each version in the
+output comes from the request that read or wrote those bytes: a read at a
+snapshot reports the version that HEAD had before the write that preserved
+it. Versions increase but are not consecutive; in 20.2.4 and 19.2.5 the write
+that makes a clone skips one. Reading `get_last_version` of an ioctx after an
+unrelated request gives that request's version, not the object's.
+
+Ceph 20.2.4 and 19.2.5 handle the contexts alike:
+
+| Write context | Native result |
+| --- | --- |
+| Names an existing snapshot newer than the object's sequence | Before writing an existing object, the OSD preserves it as a clone. The clone keeps the context's snapshots that are newer than the object's sequence and still exist; `rados listsnaps` shows it with its size |
+| Sequence older than the object's | Accepted, without a clone. With the `LIBRADOS_OPERATION_ORDERSNAP` flag (512) the OSD refuses it with `EOLDSNAPC` (85) and changes nothing |
+| Names a removed snapshot | Accepted; the clone keeps only the snapshots that exist. A context of removed snapshots alone makes no clone |
+| An ID that the MONs never allocated | Accepted: it becomes a clone ID and the object's sequence. A snapshot that the MONs allocate later with a lower ID is then not preserved on that object, and a read at it finds no object. The MONs refuse to remove the ID with `ENOENT`, so its clone stays until the pool is removed |
+
+Other outcomes:
+
+- **Removal.** `remove_self_managed_snap` returns before the OSDs trim the
+  snapshot's clone, and until then a read at the snapshot may still return
+  the clone's data. Poll `rados listsnaps` and a read, with a deadline, until
+  both show it gone.
+- **Delete.** Removing HEAD under a context leaves the snapshots readable;
+  reads and `stat` of HEAD fail with `ENOENT`.
+- **Restart.** The default BlueStore OSD keeps the bytes, versions, sizes
+  and modification times (as `stat` reports them, in seconds) of the
+  snapshots and HEAD across `OSDContainer.Stop` and `Start`.
+  MemStore saves its data only on a clean stop, so it does not show
+  durability.
+- **Cleanup.** A command that times out or is canceled is killed before its
+  `finally` runs. `RemovePool` deletes the owned pool with every clone,
+  including the ones that no snapshot removal trims.
+
+`TestRADOSSelfManagedSnapshots` in `internal/integration` runs these cases
+with nonaligned writes, append, truncation and zero extension, each read back
+by the independent client, an OSD restart and digests of every snapshot and
+HEAD.
+
+### Oracle recipe: write outcomes
+
+A writer cannot tell from its own result whether a write happened. Decide it
+with a second client that reads the object back, and keep the three things
+apart:
+
+- **The completion.** librados completes a write when the OSD has committed
+  it, and that completion is the receipt. On a file-backed BlueStore OSD,
+  writes whose completion returned 0 survive a `SIGKILL` of the OSD. Receiving
+  the message is not the receipt: in the delayed case below, the OSD's record
+  of the write starts when the message arrived, seconds before the write ran.
+- **A local timeout.** `rados_osd_op_timeout` ends the call with `ETIMEDOUT`
+  (`-110` in an asynchronous completion, reported once). It does not cancel
+  the write: an OSD that still holds it runs it later, while the client stays
+  connected. See [Delaying operations inside an OSD](fault-injection.md#delaying-operations-inside-an-osd).
+- **A killed client.** When the OSD is about to start a write, it discards
+  the write if it has already seen the client's connection close
+  (`osd_discard_disconnected_ops`, true by default). Killing the client does
+  not guarantee that order by itself, so confirm the outcome from the OSD's
+  record of the operation (no `started` event) and an independent read.
+  `RunNativeCommand` confirms that the process group is gone after a timeout
+  or cancellation.
+
+Do not retry an uncertain append or write blindly: if the first attempt ran,
+the retry applies it twice. Guard the retry with the version that the
+independent client read before the first attempt:
+
+```python
+with rados.WriteOpCtx() as op:
+    op.assert_version(version)  # read before the first attempt
+    op.append(b"record;")
+    ioctx.operate_write_op(op, "log")
+```
+
+The guarded retry fails with `ERANGE` (34) when the object changed since that
+read, for example because the first attempt ran, and with `EOVERFLOW` (75)
+when the version is newer than the object's. An object's version is the
+version of its PG's log at the object's last write, so the versions of objects
+in one PG interleave. A refused write still takes a version, because the PG
+log records it to detect resends: after two refused retries, the next append
+was three versions newer, in 20.2.4 and 19.2.5 alike.
+
+`TestRADOSMutationOutcomes` in `internal/integration` shows each case with
+native clients and the OSD's admin socket: acknowledged asynchronous writes
+across a `SIGKILL`, a write that ran after its client's timeout, a guarded and
+an unguarded retry, and a killed writer whose write the OSD discarded.
+
+### Oracle recipe: erasure-coded pools
+
+An erasure-coded pool splits each object into K data shards and M parity
+shards on separate OSDs, and accepts fewer write operations than a replicated
+pool. Which ones depends on `AllowOverwrites` in `ceph.ErasureCodeConfig`
+(the pool's `allow_ec_overwrites`). The Python binding reports the
+difference: `ioctx.alignment()` returns the required alignment of a pool
+without overwrites and `None` otherwise.
+
+On k=2, m=1 pools created by `CreatePool`, Ceph 20.2.4 and 19.2.5 return:
+
+| Operation | Without overwrites | With overwrites |
+| --- | --- | --- |
+| `write_full` | Accepted, also of an unaligned size | Accepted |
+| `append`, or `write` at the end of the object | Accepted only while the end is a multiple of the alignment (8192); otherwise `EOPNOTSUPP` (95) | Accepted |
+| `write` over existing bytes, `trunc`, `zero` | `EOPNOTSUPP` | Accepted |
+| omap writes | `EOPNOTSUPP` | `EOPNOTSUPP` |
+| xattrs | Accepted | Accepted |
+| A write under a self-managed snapshot context | `write_full` preserves the object as a clone first | A partial write preserves the object as a clone first |
+
+So data can be added once after an aligned size, and is refused once the
+size is no longer aligned. Check the refusals in your test instead of
+skipping them: they are the native outcome of the pool's configuration.
+
+A pool with `MinSize` equal to K stays active while one shard is missing.
+After a clean stop of the OSD that holds shard 1, `PoolPGs` reported the PG as
+`active+undersized+degraded`, with `2147483647` (no OSD) in that slot of
+`Acting`. Reads returned the same bytes, rebuilt from the other shards, and a
+write under a snapshot context still preserved a clone. After the OSD started
+again and recovery finished, every byte and version was unchanged. Hold
+`noout` with `TemporaryOSDFlag` while the OSD is stopped.
+
+`TestRADOSErasureCodedOutcomes` in `internal/integration` runs these cases
+with an independent reader client.
 
 ## Changing configuration
 
@@ -256,10 +687,19 @@ from the process, which normally requires `ceph.WithHostNetwork()`. See
 ## Daemon admin sockets
 
 Every daemon has an admin socket with commands for status, performance
-counters and debugging. There are two ways to reach it.
+counters and debugging.
 
-`ceph tell` from the control container works for MON, MGR, OSD and MDS daemons
-regardless of the daemon's image:
+For MON, MGR and OSD daemons, use
+[`Container.AdminSocket`](../ceph.md#adminsocket). It reaches the socket of
+any owned daemon, whatever its image, without the Messenger or Cephx:
+
+```golang
+status, err := cluster.AdminSocket(ctx, "osd.0", "status")
+```
+
+`ceph tell` from the control container also works for MON, MGR, OSD and MDS
+daemons regardless of the daemon's image, but it travels over the Messenger
+like any client request:
 
 ```golang
 help, err := cluster.Ceph(ctx, "tell", "osd.0", "help")
@@ -298,6 +738,45 @@ out, err = exec(ctx, fsDaemon, "ceph", "--admin-daemon",
 
 Prefer the typed observers when they cover your case: `rbd.MirrorDaemon.Status`,
 `rbd.Mirror.ReceiverStatus`, `ImageStatus`, `cephfs.Mirror.DirectoryStatus`.
+
+### Observing Cephx keys from the daemon side
+
+No admin socket command prints a daemon's own key or the rotating service
+secrets that it holds. Observe them in two ways instead.
+
+**The daemon's key.** After
+[`Container.RotateDaemonKey`](../ceph.md#rotatedaemonkey), `auth get-key` on
+the MONs returns the new key, and a restart of the daemon proves that it
+authenticates with the key in its keyring files.
+
+**Service secrets.** The MONs rotate the secret of each service (MON, MGR, OSD,
+MDS) every `auth_service_ticket_ttl`, and daemons fetch them as they change.
+Raise the daemon's `debug_auth` through its admin socket. The daemon then logs
+two things to its container output:
+- the secrets it holds, at every MON client tick;
+- the secret that decrypted each client ticket it accepts.
+
+```golang
+_, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "10/10")
+// ... let a client connect to osd.0 ...
+logs, err := cluster.OSDs()[0].Logs(ctx)
+```
+
+| Event | Tentacle 20.2.4 | Squid 19.2.5 |
+| --- | --- | --- |
+| Secrets held, one line per secret | `RKR(...).dump_rotating  id 3 <secret> expires <time>` | `auth:  id 3 <secret> expires <time>` after `auth: dump_rotating:` |
+| A client ticket accepted | `cephx: cephx_verify_authorizer: decoded service osd secret_id=3`, then `global_id=<client>` | `cephx: verify_authorizer decrypted service osd secret_id=3` |
+
+- With short tickets, for example `AuthConfig.ServiceTicketTTL` of 10 seconds
+  and a `mon_tick_interval` of 1 second through
+  [WithConfigFile](../ceph.md#withconfigfile), the highest held secret ID grows
+  by one per lifetime. The daemon holds three secrets: the previous, the
+  current and the next one.
+- The log contains the secrets themselves. Keep it to disposable test
+  clusters, and set `debug_auth` back to `1/5` when you are done.
+- On Tentacle, `ceph auth dump-keys --format json` on the MONs lists the same
+  secret IDs and expirations under `rotating_secrets`. Squid has no such
+  command.
 
 ## RBD mirror setup clients
 
@@ -342,7 +821,8 @@ stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "photos")
   `--keyring`, `--key`, `--id`, `--name`, `--mon-host`, `-c`, `-m`, `-n`, `-k`,
   ...) and arguments with control characters are refused.
 - Successful output may contain credentials. A failed command's output is
-  redacted from the error.
+  redacted from the error, which still carries a `*ceph.NativeFailure` with
+  the exit code and errno but no reason.
 - The call is bounded by the cluster's startup timeout and waits for any
   running topology operation on the same cluster.
 - Do not modify users that the fixture created with `CreateUser` while it is
@@ -405,6 +885,11 @@ report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{
 - For anything outside the fixed queries, run the command yourself with
   `cluster.Ceph`.
 
+`CollectCrashMetadata` adds the crash reports that daemons wrote into
+`/var/lib/ceph/crash`: daemon, version, time, assertion and backtrace, read
+through Docker's archive API also from stopped containers. Crash logs and
+dumps are not collected. See [ceph.md](../ceph.md#collectcrashmetadata).
+
 ## Avoiding conflicts with fixture bookkeeping
 
 The fixture records what it created and what it changed, and checks native
@@ -459,10 +944,10 @@ and refuse to overwrite outside edits.
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `Ceph`, `ControlContainer`, `ControlImage`,
-  `Configuration`, `TemporaryConfig`, `WithConfigFile`, `WithClient`,
-  `WithClientIdentity`, `CreateClient`, `ConnectionConfig`,
-  `CollectDiagnostics`.
+- [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
+  `ControlContainer`, `ControlImage`, `Configuration`, `TemporaryConfig`,
+  `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
+  `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd.md](../rbd.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
   `MirrorDaemon.Status`.
 - [cephfs.md](../cephfs.md): `Filesystem.Sessions`, `Mirror.DirectoryStatus`.

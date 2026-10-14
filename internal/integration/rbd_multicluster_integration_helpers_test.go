@@ -96,6 +96,7 @@ func rbdMirrorReplayReady(t *testing.T, ctx context.Context, link *rbd.Mirror, n
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
 	if err != nil || !status.ReplayReady || status.State != "up+replaying" || status.Mode != mode || !status.SourcePrimary || status.DestinationPrimary || status.SourceNamespace != sourceNamespace || status.DestinationNamespace != destinationNamespace || status.SourceImageID == "" || status.DestinationImageID == "" || status.GlobalID == "" || status.DaemonName == "" || status.InstanceID == "" {
+		logRBDMirrorImageState(t, ctx, link, status.Pool, sourceNamespace, destinationNamespace, name)
 		t.Fatalf("public RBD replay readiness differs: %+v error=%v", status, err)
 	}
 	t.Logf("public RBD replay-ready mode=%s source=%q destination=%q image=%s daemon=%s instance=%s", status.Mode, sourceNamespace, destinationNamespace, name, status.DaemonName, status.InstanceID)
@@ -229,4 +230,24 @@ func rbdMultiClusterExec(ctx context.Context, ctr testcontainers.Container, args
 	}
 	data, err := io.ReadAll(reader)
 	return code, data, err
+}
+
+// logRBDMirrorImageState records both sites' native view of an image that
+// did not become replay-ready.
+func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbd.Mirror, pool, sourceNamespace, destinationNamespace, name string) {
+	t.Helper()
+	for _, site := range []struct {
+		name, spec string
+		run        func(context.Context, ...string) ([]byte, error)
+	}{
+		{"source", rbdScopeImage(pool, sourceNamespace, name), link.SourceRBD},
+		{"destination", rbdScopeImage(pool, destinationNamespace, name), link.DestinationRBD},
+	} {
+		for _, args := range [][]string{{"info", site.spec, "--format", "json"}, {"mirror", "image", "status", site.spec, "--format", "json"}} {
+			inspect, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			out, err := site.run(inspect, args...)
+			stop()
+			t.Logf("RBD %s %v: %s error=%v", site.name, args, out, err)
+		}
+	}
 }

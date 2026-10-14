@@ -231,10 +231,10 @@ func validateCephFSSessionTimeouts(requested SessionTimeouts) error {
 		value time.Duration
 	}{{"Timeout", requested.Timeout}, {"Autoclose", requested.Autoclose}} {
 		if value.value%time.Second != 0 {
-			return fmt.Errorf("CephFS session %s must be a whole number of seconds", value.name)
+			return invalid(fmt.Errorf("CephFS session %s must be a whole number of seconds", value.name))
 		}
 		if value.value < minCephFSSessionTimeout || value.value/time.Second > math.MaxInt32 {
-			return fmt.Errorf("CephFS session %s must be between 30s and %ds", value.name, math.MaxInt32)
+			return invalid(fmt.Errorf("CephFS session %s must be between 30s and %ds", value.name, math.MaxInt32))
 		}
 	}
 	return nil

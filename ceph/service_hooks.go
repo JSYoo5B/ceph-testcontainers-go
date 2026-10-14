@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -19,7 +20,10 @@ import (
 // unexported and never appears in the public packages.
 type serviceHooks struct{}
 
-func init() { hookreg.Value = serviceHooks{} }
+func init() {
+	hookreg.Value = serviceHooks{}
+	clusterutil.Quiet = quiet
+}
 
 // Lock and Unlock hold the cluster mutex that serializes fixture mutations.
 func (serviceHooks) Lock(c *Container)   { c.mu.Lock() }
@@ -195,6 +199,16 @@ func (serviceHooks) PoolMissing(err error) bool { return errors.Is(err, errPoolM
 // CephBefore reports whether the recorded Ceph release is older than major.
 func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
 
+// NativeFailure describes a command that exited nonzero.
+func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byte) error {
+	return nativeFailure(program, code, stdout, stderr)
+}
+
+// ClassifyExec classifies a failed Docker exec of a native command.
+func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
+	return classifyDispatched(ctx, err)
+}
+
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.
 func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
@@ -226,7 +240,26 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
-func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) { client.revoked = revoked }
+func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
+	client.revoked = revoked
+	if revoked {
+		client.owner.setClientKey(client.name, "")
+	}
+}
+
+// SettleClient settles the client's identity and refuses a descriptor that is
+// not its current one. A descriptor of an identity that the service deleted
+// is only settled, for the service's own reconciliation. The caller holds the
+// cluster mutex.
+func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *ClientConfig) error {
+	if err := c.settleClient(ctx, client.name); err != nil {
+		return err
+	}
+	if client.revoked {
+		return nil
+	}
+	return c.checkCurrentClient(client)
+}
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
 func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {

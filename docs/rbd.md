@@ -598,6 +598,7 @@ if err != nil {
 ```
 
 - It does not wait for any particular write or mirror snapshot. Check the destination data separately (see [`waitReplicated`](#helpers-used-by-the-examples)).
+- It keeps waiting while the destination image is missing or not yet enrolled for mirroring: rbd-mirror creates it first, with mirroring disabled, and enables mirroring right after. The destination's identity is pinned from its first appearance. A source image whose mirroring is disabled ends the wait at once, and so does a destination whose mirroring becomes disabled after it was enrolled.
 - The source image identity is pinned at the first observation, and the destination identity as soon as it appears. An image deleted and re-created under the same name is rejected, never adopted.
 - Transient query failures are retried. A successful read that proves a changed pool, policy or image identity, or an invalid schema, fails immediately.
 - On deadline or cancellation it returns the last observation together with the last query error.
@@ -1839,13 +1840,14 @@ cleanup order are in [the contexts and cleanup guide](guides/contexts-and-cleanu
 ### Squid (Ceph 19.2.x)
 
 Tentacle (20.2.x, `ceph.DefaultImage`) is the default release. Squid works
-with these differences, which the fixture handles by reading
-`cluster.CephVersion()`:
+with these differences, which the fixture handles from the options of `rbd`
+in each setup client and each cluster's control image, and from each
+cluster's `CephVersion()` where no tool shows the difference:
 
 | Area | Tentacle | Squid |
 | --- | --- | --- |
 | Default namespace while mirroring only a named namespace | Set to `init-only`. | Squid has no `init-only`; the default namespace is set to `image` mode, which mirrors nothing until an image is enabled explicitly. |
-| Namespace mapping | `SourceNamespace` and `DestinationNamespace` may differ. | Squid's `rbd` has no `--remote-namespace`, so only namespaces with the same name are mirrored. A different pair makes `RunMirror` fail before any change ("needs Ceph 20 or later"). The `BindNamespace` example above therefore needs Ceph 20. |
+| Namespace mapping | `SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name are mirrored. A different pair makes `RunMirror` fail before any change with `ceph.ErrUnsupported`; the `*ceph.OperationError` names the side whose `rbd` lacks `--remote-namespace`: a cluster, with its `Version` and control image, or a setup client. A backported Squid image that has the option maps namespaces. The `BindNamespace` example above therefore needs Ceph 20 on both sides. |
 | Mirror UUID | `rbd mirror pool info` prints `mirror_uuid` and `remote_namespace`. | Neither is printed. The fixture reads the UUID from the `mirror_uuid` omap key of the `rbd_mirroring` object (`rados --pool volumes [--namespace ns] getomapval rbd_mirroring mirror_uuid /dev/stdout`) and fills the remote namespace with the same name. Do the same if your test reads `mirror pool info` directly. |
 | `rbd-mirror` admin socket status | `rbd mirror status` lists each namespace under `namespace_replayers` with its local and remote namespace. | The default namespace's `image_replayers` sit on the pool entry, and named namespaces appear under `namespaces` by name only. `ReceiverStatus` and `WaitReceiverReady` normalize both shapes. `MirrorDaemon.Status` decodes only the pool-level fields. |
 
@@ -1853,11 +1855,25 @@ Client libraries differ too: Squid's Python `rbd` binding has no `Group.id()`
 or `get_snap_info()`, so group snapshot tests read the group ID from the
 `rbd_group_directory` object and member snapshots from each image.
 
+A refused mapping is the contract on Squid, so assert it instead of skipping
+the test:
+
 ```golang
-if strings.HasPrefix(cluster.CephVersion(), "19.") {
-	t.Skip("namespace mapping needs Ceph 20")
+link, err := rbd.RunMirror(ctx, source.ControlImage(), config)
+if link != nil {
+	t.Cleanup(func() { _ = link.Terminate(context.Background()) })
+}
+var unsupported *ceph.OperationError
+switch {
+case errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported:
+	t.Logf("%s (Ceph %s) cannot map namespaces; nothing changed", unsupported.Target, unsupported.Version)
+	return
+case err != nil:
+	t.Fatal(err)
 }
 ```
+
+See [Classified errors](guides/errors.md#unsupported-features).
 
 ### Common pitfalls
 

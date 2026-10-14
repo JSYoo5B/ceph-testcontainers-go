@@ -194,6 +194,7 @@ var reservedConfigKeys = map[string]string{
 	"osd_data":                    "is managed by the fixture",
 	"mgr_data":                    "is managed by the fixture",
 	"mds_data":                    "is managed by the fixture",
+	"crash_dir":                   "is managed by the fixture; CollectCrashMetadata reads /var/lib/ceph/crash",
 	"log_file":                    "is managed by the fixture; daemon logs go to container output",
 	"log_to_file":                 "is managed by the fixture; daemon logs go to container output",
 	"log_to_stderr":               "is managed by the fixture; daemon logs go to container output",
@@ -228,7 +229,7 @@ func reservedConfigKey(key string) string {
 	case strings.HasPrefix(key, "auth_"):
 		return "is managed by the fixture's Cephx setup"
 	case reservedMessengerMode.MatchString(key):
-		return "is managed by the fixture; use WithMessengerMode"
+		return "is managed by the fixture; use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"
 	case strings.HasPrefix(key, "ms_bind_"):
 		return "is managed by the fixture; use WithMessengerMode or WithHostNetwork"
 	}

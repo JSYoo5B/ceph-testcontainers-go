@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
+	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -36,16 +37,44 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu                    sync.Mutex
-	controlMu             sync.RWMutex
-	configMu              sync.RWMutex
-	configOverrides       map[string]*ConfigOverride
-	flagOverrides         map[string]*OSDFlagOverride
-	fullRatiosOverride    *FullRatiosOverride
-	blocklistOverrides    map[string]*BlocklistOverride
-	moduleOverrides       map[string]*MGRModuleOverride
-	controlPlane          testcontainers.Container
-	cephVersion           string
+	mu                 sync.Mutex
+	controlMu          sync.RWMutex
+	configMu           sync.RWMutex
+	configOverrides    map[string]*ConfigOverride
+	flagOverrides      map[string]*OSDFlagOverride
+	fullRatiosOverride *FullRatiosOverride
+	blocklistOverrides map[string]*BlocklistOverride
+	moduleOverrides    map[string]*MGRModuleOverride
+	controlPlane       testcontainers.Container
+	cephVersion        string
+	// authFences records, per auth entity, what an earlier RotateDaemonKey
+	// or client key change left uncertain; see authFence.
+	authFences map[string]*authFence
+	// clientSecrets holds every client key that the module generated or
+	// confirmed, old and attempted ones included, for diagnostics to redact.
+	clientSecrets map[string]bool
+	// clientKeys holds, per client identity that this cluster created, the
+	// key that the module last confirmed for it. A descriptor with another
+	// key, or of a deleted identity, is stale, also when it is a copy.
+	clientKeys map[string]string
+	// strayAuthInputs holds files with keys in the control container that
+	// earlier auth calls could not remove for sure; later ones remove them.
+	// A file whose copy failed stays listed, as true, because Docker may
+	// still write it.
+	strayAuthInputs map[string]bool
+	// clientRevocations holds, per client entity, the state of the temporary
+	// revocation that has removed it until its Restore.
+	clientRevocations map[string]*clientRevocationState
+	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
+	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
+	// owner labels every container of the cluster; see clusterOwnerLabel.
+	owner string
+	// ownedContainerDocker replaces the Docker client of Terminate's removal
+	// of labeled containers in tests.
+	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
+	// keyTypeOption records whether the control image's ceph-authtool has
+	// --key-type; see generateKeyArgs.
+	keyTypeOption         bool
 	settings              options
 	network               *testcontainers.DockerNetwork
 	clusterNetwork        *testcontainers.DockerNetwork
@@ -62,12 +91,27 @@ type Container struct {
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
+	run                   *runVolume
 	config                []byte
 	keyring               []byte
 	portLeases            []*hostPortLease
 	closed                bool
 	monitorTerminated     bool
 	networkRemoved        bool
+
+	// nativeMu guards the RunNativeCommand calls that run or whose command
+	// is not confirmed as stopped, and whether Terminate refuses new ones.
+	nativeMu          sync.Mutex
+	nativeInvocations map[*nativeInvocation]bool
+	nativeClosed      bool
+	// delays holds network delays by network and container; a nil value
+	// reserves an endpoint while its delay is being applied.
+	delays map[string]*NetworkDelayLease
+	// newNetemBackend replaces the Docker netem backend in tests.
+	newNetemBackend func() netemBackend
+	// controlImageID is the ID of the first MON's image, which errors about
+	// the control image's capabilities name.
+	controlImageID string
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
@@ -95,21 +139,33 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
 			if err := opt(&settings); err != nil {
-				return nil, fmt.Errorf("configure ceph: %w", err)
+				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
 			}
 		}
 	}
 	if settings.hostAddressSet && !settings.hostNetwork {
-		return nil, errors.New("WithHostAddress requires WithHostNetwork")
+		return nil, invalidRequest("WithHostAddress requires WithHostNetwork")
 	}
 	if settings.hostNetwork && settings.separateClusterNetwork {
-		return nil, errors.New("WithSeparateClusterNetwork requires bridge mode")
+		return nil, invalidRequest("WithSeparateClusterNetwork requires bridge mode")
+	}
+	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
+		return nil, invalidRequest("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
+	}
+	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
+		return nil, invalidRequest("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
+	}
+	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
+		return nil, invalidRequest("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
+	}
+	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
+		return nil, invalidRequest("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
 	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
 	}
 	if err := prepareInitialComposition(&settings); err != nil {
-		return nil, fmt.Errorf("configure initial ceph topology: %w", err)
+		return nil, classify(ErrInvalidRequest, fmt.Errorf("configure initial ceph topology: %w", err))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -123,23 +179,29 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return nil, err
 		}
 	} else {
-		nw, err = dockerbridge.New(ctx)
+		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
 	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer)}
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
 	if err != nil {
 		if nw == nil {
-			return nil, fmt.Errorf("create ceph network: %w", err)
+			return nil, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 		}
-		return c, fmt.Errorf("create ceph network: %w", err)
+		return c, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 	}
 	if settings.separateClusterNetwork {
-		if c.clusterNetwork, err = dockerbridge.New(ctx); err != nil {
-			return c, fmt.Errorf("create Ceph replication network: %w", err)
+		if c.clusterNetwork, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily()); err != nil {
+			return c, classifyDocker(ctx, fmt.Errorf("create Ceph replication network: %w", err))
 		}
-		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name); err != nil {
+		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name, settings.addressFamily); err != nil {
 			return c, err
 		}
+	}
+	// Publish before creation: an interrupted create may have committed, and the
+	// generated volume name stays owned for removal by Terminate.
+	c.run = newRunVolume()
+	if err := c.run.create(ctx); err != nil {
+		return c, err
 	}
 	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
 	if mon != nil {
@@ -154,11 +216,18 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.recordCephVersion(ctx); err != nil {
 		return c, err
 	}
+	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
+		return c, err
+	}
+	c.controlImageID = containerImageID(ctx, mon)
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
 		return c, err
 	}
 	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
 		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
+	}
+	if err := c.applyMessengerPolicy(ctx); err != nil {
+		return c, fmt.Errorf("apply messenger policy: %w", err)
 	}
 	for i := 1; i < settings.monitors; i++ {
 		if _, err := c.AddMonitor(ctx, daemonName(i)); err != nil {
@@ -249,7 +318,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		var lease *hostPortLease
 		var err error
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			c.trackHostPortLease(lease)
 			if err != nil {
 				return nil, err
@@ -260,14 +329,19 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithCmd(),
 			testcontainers.WithEnv(map[string]string{
 				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
-				"CEPH_POOL_SIZE": strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
+				"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
+				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
 				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
+				addressFamilyEnvironment: c.settings.addressFamily.String(),
 			}),
+			testcontainers.WithEnv(c.settings.auth.environment()),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
+		moduleOpts = append(moduleOpts, c.runMount()...)
 		if lease == nil {
-			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network))
+			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network),
+				keepMonitorAddress(c.network.Name))
 		} else {
 			monEnv := c.settings.monitorPortEnvironment(lease.Ports)
 			monEnv["CEPH_PUBLIC_ADDRESS"] = c.settings.publicAddress
@@ -275,8 +349,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				testcontainers.WithEnv(monEnv))
 		}
 		moduleOpts = append(moduleOpts, opts...)
-		if c.settings.messengerMode == MessengerV2Secure {
-			moduleOpts = append(moduleOpts, testcontainers.WithEnv(map[string]string{messengerV2SecureEnvironment: "true"}))
+		if env := c.settings.messengerEnvironment(); env != nil {
+			moduleOpts = append(moduleOpts, testcontainers.WithEnv(env))
 		}
 		if len(c.settings.userConfig) > 0 {
 			moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))
@@ -284,7 +358,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}
-		mon, err := testcontainers.Run(ctx, image, moduleOpts...)
+		mon, err := testcontainers.Run(ctx, image, append(moduleOpts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -301,6 +375,9 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if err == nil {
 			return mon, nil
 		}
+		if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
+			return mon, refusal.with(ctx, err)
+		}
 		if lease == nil || attempt == attempts-1 || ctx.Err() != nil {
 			return mon, err
 		}
@@ -315,7 +392,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			return mon, errors.Join(err, cleanupErr)
 		}
 	}
-	return nil, errors.New("monitor port attempts exhausted")
+	return nil, classify(ErrEnvironmentUnavailable, errors.New("monitor port attempts exhausted"))
 }
 
 // NetworkName returns the cluster's bridge name, or "host" in host mode.
@@ -346,7 +423,7 @@ func (c *Container) ConnectionConfig() ([]byte, []byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, nil, errors.New("ceph cluster is terminated")
+		return nil, nil, errClusterTerminated
 	}
 	c.configMu.RLock()
 	defer c.configMu.RUnlock()
@@ -378,11 +455,16 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // WithClient connects another container to Ceph and copies its admin credentials.
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
-func (c *Container) WithClient() testcontainers.CustomizeRequestOption {
+// The options customize the container's ceph.conf.
+func (c *Container) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c.configMu.RLock()
 		config, keyring := bytes.Clone(c.config), bytes.Clone(c.keyring)
 		c.configMu.RUnlock()
+		config, err := clientContainerConfig(config, opts)
+		if err != nil {
+			return err
+		}
 		if c.settings.hostNetwork {
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
 				return err
@@ -432,7 +514,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -450,12 +532,17 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	// Refuse an unsupported key type before allocating anything.
+	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.ensureOSDMemory(ctx); err != nil {
 		return nil, err
 	}
 	osdUUID := uuid.NewString()
 	control := c.cliContainer()
-	secret, err := command(ctx, control, "ceph-authtool", "--gen-print-key")
+	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return nil, err
 	}
@@ -501,10 +588,14 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 		}
 		osdOptions = append(osdOptions, c.osdMemory.mount("/var/lib/ceph/osd"))
 	}
+	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
+		return osd, err
+	}
+	osdOptions = append(osdOptions, c.runMount()...)
 	if c.clusterNetwork != nil {
 		osdOptions = append(osdOptions, network.WithNetworkName(nil, c.clusterNetwork.Name))
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.osdImage, osdOptions...)
+	ctr, err := testcontainers.Run(ctx, c.settings.osdImage, append(osdOptions, c.ownedLabel())...)
 	if ctr != nil {
 		osd.Container = ctr
 	}
@@ -545,14 +636,14 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	osd, ok := c.osds[id]
 	if !ok || osd == nil {
-		return fmt.Errorf("osd.%d is not owned by this cluster", id)
+		return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -736,7 +827,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if _, exists := c.services[name]; exists {
 		return nil, fmt.Errorf("ceph service %s already started", name)
@@ -747,8 +838,14 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
-	ctr, err := testcontainers.Run(ctx, image, moduleOpts...)
-	if ctr != nil {
+	moduleOpts = append(moduleOpts, c.ownedLabel())
+	created, err := testcontainers.Run(ctx, image, moduleOpts...)
+	// Run returns a nil *DockerContainer when it fails before a container
+	// exists. Returned as testcontainers.Container, that would be a non-nil
+	// interface holding a nil pointer, so only a real handle is returned.
+	var ctr testcontainers.Container
+	if created != nil {
+		ctr = created
 		c.services[name] = ctr
 	}
 	if err != nil {
@@ -771,6 +868,20 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 	c.closed = true
 	var errs []error
 	blockedNetworks := make(map[string]bool)
+	// Remove network delays while their helpers and targets still run: removing
+	// a helper leaves its qdisc in a caller-owned target. A failed restore
+	// remains retryable through its lease.
+	for _, delay := range c.delays {
+		if delay == nil {
+			continue
+		}
+		c.mu.Unlock()
+		err := delay.Restore(ctx)
+		c.mu.Lock()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("restore network delay: %w", err))
+		}
+	}
 	// Restore caller-owned clients as well as owned daemons before removing any
 	// network. A failed restore remains retryable through its interruption handle.
 	for _, interruption := range c.interruptions {
@@ -785,6 +896,10 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			errs = append(errs, fmt.Errorf("resume paused container: %w", err))
 		}
 	}
+	// Stop native commands while their containers still run. Those that
+	// stay unconfirmed are retried after the teardown, which ends the ones in
+	// the cluster's own containers.
+	_ = c.stopNativeInvocations(ctx)
 	for _, lease := range c.portLeases {
 		if err := lease.Release(ctx); err != nil {
 			errs = append(errs, err)
@@ -807,10 +922,9 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 		delete(c.osds, id)
 	}
+	var memoryErr error
 	if c.osdMemory != nil && len(c.osds) == 0 {
-		if err := c.osdMemory.release(ctx); err != nil {
-			errs = append(errs, err)
-		} else {
+		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
 			c.osdMemory = nil
 		}
 	}
@@ -861,6 +975,20 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
+	errs = append(errs, c.removeLabeledContainers(ctx))
+	// The removed containers can include one that held the OSD memory volume,
+	// such as an OSD or keeper whose create reply was lost.
+	if memoryErr != nil && c.osdMemory != nil && len(c.osds) == 0 {
+		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
+			c.osdMemory = nil
+		}
+	}
+	errs = append(errs, memoryErr)
+	if c.run != nil {
+		if err := c.run.remove(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if c.clusterNetwork != nil && !c.clusterNetworkRemoved && !blockedNetworks[c.clusterNetwork.Name] {
 		if err := c.clusterNetwork.Remove(ctx); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
@@ -875,6 +1003,7 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.networkRemoved = true
 		}
 	}
+	errs = append(errs, c.stopNativeInvocations(ctx)...)
 	return errors.Join(errs...)
 }
 
@@ -932,20 +1061,122 @@ func readFile(ctx context.Context, ctr testcontainers.Container, path string) ([
 	return io.ReadAll(r)
 }
 
+// command runs args in ctr and returns its standard output. A nonzero exit
+// returns the output with a *NativeFailure; a program that the image lacks
+// is ErrImageCapability, and a failure of Docker is ErrEnvironmentUnavailable
+// unless ctx ended or the container is gone or stopped. A ceph CLI that no
+// MON answered within its --connect-timeout connects again; see
+// reconnectCeph.
 func command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if ctr == nil {
-		return nil, errors.New("ceph control container is unavailable")
+		return nil, invalidRequest("ceph control container is unavailable")
 	}
+	return reconnectCeph(ctx, args, func() ([]byte, error) { return commandOnce(ctx, ctr, args...) })
+}
+
+func commandOnce(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	exitCode, reader, err := ctr.Exec(ctx, args)
 	if err != nil {
-		return nil, fmt.Errorf("exec %s: %w", args[0], err)
+		return nil, classifyDispatched(ctx, fmt.Errorf("exec %s: %w", args[0], err))
 	}
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, fmt.Errorf("read %s output: %w", args[0], err)
+		return nil, classifyDispatched(ctx, fmt.Errorf("read %s output: %w", args[0], err))
 	}
 	if exitCode != 0 {
-		return stdout.Bytes(), fmt.Errorf("%s exited %d: %s", args[0], exitCode, strings.TrimSpace(stdout.String()+stderr.String()))
+		if (exitCode == 126 || exitCode == 127) && strings.HasPrefix(strings.TrimSpace(stdout.String()+stderr.String()), dockerExecFailed) {
+			return nil, &OperationError{Kind: ErrImageCapability, Capability: args[0],
+				Err: fmt.Errorf("the container cannot run %s: it is missing or not executable", args[0])}
+		}
+		return stdout.Bytes(), nativeFailure(args[0], exitCode, stdout.Bytes(), stderr.Bytes())
 	}
 	return stdout.Bytes(), nil
+}
+
+// The ceph CLI connects again for at most cephConnectWait, pausing
+// cephConnectPause between attempts; tests shorten both.
+var (
+	cephConnectWait  = time.Minute
+	cephConnectPause = time.Second
+)
+
+// reconnectCeph runs a ceph CLI command with run, and runs it again while no
+// MON answered its connection within --connect-timeout. The CLI then exits
+// before it sends the command, so nothing was sent: a MON that stalls, as on
+// a runner whose storage pauses for longer than that timeout, or an election
+// delays the command instead of failing it. The attempts end with ctx, which
+// a call that ends this way matches, or after cephConnectWait, which returns
+// the last failure.
+func reconnectCeph(ctx context.Context, args []string, run func() ([]byte, error)) ([]byte, error) {
+	reconnect := len(args) > 0 && args[0] == "ceph" && slices.Contains(args, "--connect-timeout") &&
+		!slices.Contains(args, "-h") && !slices.Contains(args, "--help")
+	until := time.Now().Add(cephConnectWait)
+	for {
+		out, err := run()
+		var failure *NativeFailure
+		if !reconnect || !errors.As(err, &failure) || !cephConnectTimedOut(failure) || !time.Now().Before(until) {
+			return out, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%s: no MON answered the connection before the context ended: %w", args[0], ctx.Err())
+		case <-time.After(cephConnectPause):
+		}
+	}
+}
+
+// cephConnectTimeouts are the whole error outputs of a ceph CLI whose
+// connection to the MONs timed out before it sent its command: the expiry of
+// --connect-timeout, which bounds only run_in_thread(cluster_handle.connect),
+// a connection that librados reports as interrupted, and librados's own
+// connection timeout.
+var cephConnectTimeouts = []string{
+	"timed out",
+	"Cluster connection interrupted or timed out",
+	"[errno 110] RADOS timed out (error connecting to the cluster)",
+}
+
+// cephConnectTimedOut reports a ceph CLI that gave up connecting to the MONs
+// and exited 1 without sending its command. Only those exact outputs count:
+// a reply to a command that the CLI sent, such as "Error EPERM: ...", names
+// an errno, and another connection error, such as a missing keyring, does
+// not pass by waiting.
+func cephConnectTimedOut(failure *NativeFailure) bool {
+	return failure.Program == "ceph" && failure.ExitCode == 1 && failure.Errno == "" &&
+		slices.Contains(cephConnectTimeouts, failure.Reason)
+}
+
+// dockerExecFailed starts the output of an exec whose program the runtime
+// could not start.
+const dockerExecFailed = "OCI runtime exec failed"
+
+// classifyDispatched classifies a failed Docker call that may have started a
+// native command, such as an exec whose final inspection failed after the
+// command ran. Its effect is unknown, so a container that is gone or stopped
+// is no refused request: that error stays unclassified. A call that ctx
+// ended matches ctx's error, and any other failure is the engine's.
+func classifyDispatched(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		(errdefs.IsNotFound(err) || errdefs.IsConflict(err)) {
+		return err
+	}
+	return classifyDocker(ctx, err)
+}
+
+// classifyDocker classifies a failed Docker call: a call that ctx ended stays
+// unclassified and matches ctx's error, a container that is gone or not
+// running is a refused request, and anything else is the engine's failure.
+func classifyDocker(ctx context.Context, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() != nil && !errors.Is(err, ctx.Err()):
+		// A transport that ctx closed may fail without wrapping its error.
+		return fmt.Errorf("%w: %w", err, ctx.Err())
+	case ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+		return err
+	case errdefs.IsNotFound(err) || errdefs.IsConflict(err):
+		return classify(ErrInvalidRequest, err)
+	}
+	return classify(ErrEnvironmentUnavailable, err)
 }

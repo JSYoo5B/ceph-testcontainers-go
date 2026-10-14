@@ -26,6 +26,8 @@ type options struct {
 	noInitialManagers      bool
 	blockSize              int64
 	osdMemorySize          int64
+	auth                   AuthConfig
+	osdObjectStore         OSDObjectStore
 	startupTimeout         time.Duration
 	osdImage               string
 	rgwImage               string
@@ -36,16 +38,21 @@ type options struct {
 	publicAddress          string
 	hostAddressSet         bool
 	messengerMode          MessengerMode
+	messengerPolicy        MessengerPolicy
+	addressFamily          AddressFamily
 	userConfig             []userConfigSection
 }
 
 // WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
 // retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
 // encrypted v2 connections without CRC-mode or v1 fallback, including later
-// daemons and WithClient containers. This option does not enable RGW HTTP TLS.
+// daemons and WithClient containers. MessengerV2Only removes the v1 listeners
+// and addresses in the same way but leaves the connection modes to Ceph's
+// defaults and the Messenger policy options. This option does not enable RGW
+// HTTP TLS.
 func WithMessengerMode(mode MessengerMode) Option {
 	return func(o *options) error {
-		if mode != MessengerDefault && mode != MessengerV2Secure {
+		if mode != MessengerDefault && mode != MessengerV2Secure && mode != MessengerV2Only {
 			return fmt.Errorf("unsupported Messenger mode %d", mode)
 		}
 		o.messengerMode = mode
@@ -112,7 +119,9 @@ func WithHostNetwork() Option {
 
 // WithSeparateClusterNetwork creates a second owned bridge for OSD replication,
 // recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
-// public bridge. Docker selects both subnets. This option requires bridge mode.
+// public bridge. Docker selects both subnets; with WithAddressFamily(AddressIPv6)
+// both bridges are dual-stack and Ceph uses their IPv6 subnets. This option
+// requires bridge mode.
 func WithSeparateClusterNetwork() Option {
 	return func(o *options) error {
 		o.separateClusterNetwork = true
@@ -244,6 +253,34 @@ func WithOSDBlockSize(size int64) Option {
 	}
 }
 
+// OSDObjectStore names the object store that OSDs keep their data in.
+type OSDObjectStore string
+
+const (
+	// OSDBlueStore keeps each OSD's data in a sparse BlueStore file. It is the
+	// default.
+	OSDBlueStore OSDObjectStore = "bluestore"
+	// OSDMemStore keeps each OSD's data in the OSD process's memory, with
+	// WithOSDBlockSize as its capacity. A clean stop saves the store to the
+	// OSD's data directory and Start loads it again; a killed OSD loses it.
+	// It is Ceph's test backend and needs no block file.
+	OSDMemStore OSDObjectStore = "memstore"
+)
+
+// WithOSDObjectStore selects the object store of every OSD in the cluster,
+// including OSDs added later. WithOSDBlockSize sets the capacity of a
+// MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage, which
+// places BlueStore files in memory, and InjectObjectDataError needs BlueStore.
+func WithOSDObjectStore(store OSDObjectStore) Option {
+	return func(o *options) error {
+		if store != OSDBlueStore && store != OSDMemStore {
+			return fmt.Errorf("unknown OSD object store %q", store)
+		}
+		o.osdObjectStore = store
+		return nil
+	}
+}
+
 // WithOSDInMemoryStorage keeps all OSD stores in one Docker-managed tmpfs
 // volume. maxBytes is a positive cluster-wide filesystem allocation ceiling,
 // independent of each sparse file's logical WithOSDBlockSize. It does not
@@ -274,4 +311,12 @@ func WithStartupTimeout(timeout time.Duration) Option {
 		o.startupTimeout = timeout
 		return nil
 	}
+}
+
+// objectStore returns the selected OSD object store, BlueStore by default.
+func (o options) objectStore() OSDObjectStore {
+	if o.osdObjectStore == "" {
+		return OSDBlueStore
+	}
+	return o.osdObjectStore
 }

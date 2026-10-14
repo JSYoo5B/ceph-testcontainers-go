@@ -3,7 +3,9 @@ package cephfs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	iofs "io/fs"
 	"slices"
 	"strings"
 
@@ -30,7 +32,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, name string) error
 	}
 	fs := filesystems(c).byName[name]
 	if fs == nil {
-		return fmt.Errorf("cephfs filesystem %q is not owned by this cluster", name)
+		return invalid(fmt.Errorf("cephfs filesystem %q is not owned by this cluster", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
@@ -58,7 +60,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, name string) error
 				servicehook.DeleteService(c, service)
 			}
 		}
-		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !strings.Contains(err.Error(), "ENOENT") && !strings.Contains(err.Error(), "does not exist") {
+		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
 			return fmt.Errorf("remove key of mds.%s: %w", daemon.ID, err)
 		}
 		fs.mdss = slices.DeleteFunc(fs.mdss, func(owned *MDS) bool { return owned == daemon })

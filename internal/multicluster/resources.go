@@ -1,7 +1,6 @@
 package multicluster
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/containerd/errdefs"
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 )
@@ -121,16 +120,16 @@ func (r *Resources) Terminate(ctx context.Context, opts ...testcontainers.Termin
 // network mode before a cross-cluster fixture uses them.
 func ValidatePair(ctx context.Context, image string, source, destination *ceph.Container) error {
 	if strings.TrimSpace(image) == "" {
-		return errors.New("multicluster image must not be empty")
+		return invalid(errors.New("multicluster image must not be empty"))
 	}
 	if source == nil || destination == nil || source.Container == nil || destination.Container == nil {
-		return errors.New("multicluster requires two initialized Ceph clusters")
+		return invalid(errors.New("multicluster requires two initialized Ceph clusters"))
 	}
 	if source.UsesHostNetwork() != destination.UsesHostNetwork() {
-		return errors.New("multicluster requires both Ceph clusters to use the same network mode")
+		return invalid(errors.New("multicluster requires both Ceph clusters to use the same network mode"))
 	}
 	if source == destination || source.GetContainerID() == destination.GetContainerID() || (!source.UsesHostNetwork() && source.NetworkName() == destination.NetworkName()) {
-		return errors.New("multicluster requires independent Ceph clusters")
+		return invalid(errors.New("multicluster requires independent Ceph clusters"))
 	}
 	// A multi-MON fixture can remain live after its embedded primary MON was
 	// stopped or removed. Its independent CLI is the control handle; checking
@@ -146,15 +145,21 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 	if source.NetworkName() == "" || destination.NetworkName() == "" ||
 		sourceControl == nil || destinationControl == nil ||
 		!sourceControl.IsRunning() || !destinationControl.IsRunning() {
-		return errors.New("multicluster requires two running Ceph clusters")
+		return invalid(errors.New("multicluster requires two running Ceph clusters"))
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
 		if _, _, err := cluster.ConnectionConfigContext(ctx); err != nil {
-			return fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err)
+			if ctx.Err() != nil {
+				return fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err)
+			}
+			return invalid(fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err))
 		}
 	}
 	return nil
 }
+
+// invalid marks a refused request.
+func invalid(err error) error { return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: err} }
 
 // RunClient starts an idle CLI client attached to cluster and, on bridge
 // networks, to peerNetwork. owned records it for cleanup.
@@ -171,24 +176,17 @@ func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerN
 	return ctr, nil
 }
 
-// Exec runs args in ctr and returns stdout; a non-zero exit is an error that
-// carries both output streams.
+// Exec runs args in ctr and returns stdout. It classifies failures as the
+// module's own commands do: a nonzero exit is a *ceph.NativeFailure.
 func Exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	if len(args) == 0 {
-		return nil, errors.New("empty multicluster command")
+		return nil, invalid(errors.New("empty multicluster command"))
 	}
-	code, reader, err := ctr.Exec(ctx, args)
+	out, err := servicehook.Command(ctx, ctr, args...)
 	if err != nil {
-		return nil, fmt.Errorf("execute %s: %w", args[0], err)
+		return nil, err
 	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, fmt.Errorf("read %s output: %w", args[0], err)
-	}
-	if code != 0 {
-		return nil, fmt.Errorf("%s exited %d: %s%s", args[0], code, stdout.String(), stderr.String())
-	}
-	return stdout.Bytes(), nil
+	return out, nil
 }
 
 // CephBefore reports whether cluster's recorded release is older than major.

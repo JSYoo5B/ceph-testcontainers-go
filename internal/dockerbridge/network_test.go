@@ -7,6 +7,8 @@ import (
 	"maps"
 	"net/netip"
 	"reflect"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,7 +78,7 @@ func (f *bridgeFake) remove(ctx context.Context, n *testcontainers.DockerNetwork
 func (f *bridgeFake) Close() error { f.closes++; return f.closeErr }
 
 func (f *bridgeFake) run(ctx context.Context) (*testcontainers.DockerNetwork, error) {
-	return newNetwork(ctx, f, f.create, f.remove)
+	return newNetwork(ctx, f, IPv4Only, f.create, f.remove)
 }
 
 func TestBridgeRetainsDaemonSelectedAddressPool(t *testing.T) {
@@ -259,7 +261,7 @@ func TestBridgeCopiesObservedIPAMAndRejectsCanceledAdmission(t *testing.T) {
 	native := f.active[probe.ID]
 	native.IPAM.Config[0].AuxAddress = map[string]netip.Addr{"reserved": netip.MustParseAddr("10.23.1.9")}
 	f.active[probe.ID] = native
-	selected, err := inspectBridge(t.Context(), f, probe)
+	selected, err := inspectBridge(t.Context(), f, probe, IPv4Only)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,5 +274,170 @@ func TestBridgeCopiesObservedIPAMAndRejectsCanceledAdmission(t *testing.T) {
 	cancel()
 	if n, err := New(ctx); n != nil || !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled admission reached Docker")
+	}
+}
+
+func TestDualStackBridgeKeepsBothSubnets(t *testing.T) {
+	v4 := dockernetwork.IPAMConfig{Subnet: netip.MustParsePrefix("10.23.1.0/24"), Gateway: netip.MustParseAddr("10.23.1.1")}
+	v6 := dockernetwork.IPAMConfig{Subnet: netip.MustParsePrefix("fd62:93fe:2c9e::/64"), Gateway: netip.MustParseAddr("fd62:93fe:2c9e::1")}
+	inspect := func(enableIPv6 bool, family Family, configs ...dockernetwork.IPAMConfig) (*dockernetwork.IPAM, error) {
+		n := &testcontainers.DockerNetwork{ID: "owned", Name: "fixture", Driver: "bridge"}
+		f := &bridgeFake{active: map[string]dockernetwork.Inspect{"owned": {Network: dockernetwork.Network{ID: "owned", Name: "fixture", Driver: "bridge",
+			EnableIPv6: enableIPv6, IPAM: dockernetwork.IPAM{Driver: "default", Config: configs}}}}}
+		return inspectBridge(t.Context(), f, n, family)
+	}
+	// Docker may list the IPv6 subnet first; the result is IPv4 then IPv6.
+	ipam, err := inspect(true, DualStack, v6, v4)
+	if err != nil || len(ipam.Config) != 2 || ipam.Config[0].Subnet != v4.Subnet || ipam.Config[1].Subnet != v6.Subnet {
+		t.Fatalf("dual-stack IPAM %+v, %v", ipam, err)
+	}
+	for name, test := range map[string]struct {
+		enableIPv6 bool
+		family     Family
+		configs    []dockernetwork.IPAMConfig
+	}{
+		"IPv6 on an IPv4 bridge":      {true, IPv4Only, []dockernetwork.IPAMConfig{v4, v6}},
+		"IPv6 disabled on dual stack": {false, DualStack, []dockernetwork.IPAMConfig{v4, v6}},
+		"no IPv6 subnet":              {true, DualStack, []dockernetwork.IPAMConfig{v4}},
+		"no IPv4 subnet":              {true, DualStack, []dockernetwork.IPAMConfig{v6}},
+		"two IPv6 subnets":            {true, DualStack, []dockernetwork.IPAMConfig{v4, v6, {Subnet: netip.MustParsePrefix("fd00:1::/64"), Gateway: netip.MustParseAddr("fd00:1::1")}}},
+		"IPv4 gateway in IPv6 subnet": {true, DualStack, []dockernetwork.IPAMConfig{v4, {Subnet: v6.Subnet, Gateway: netip.MustParseAddr("10.23.1.1")}}},
+		"IPv4-mapped IPv6 subnet":     {true, DualStack, []dockernetwork.IPAMConfig{v4, {Subnet: netip.MustParsePrefix("::ffff:10.23.1.0/120"), Gateway: netip.MustParseAddr("::ffff:10.23.1.1")}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if ipam, err := inspect(test.enableIPv6, test.family, test.configs...); err == nil {
+				t.Fatalf("accepted %+v", ipam)
+			}
+		})
+	}
+}
+
+// overlapError is the error that Docker returns for an explicit subnet that
+// another network holds: HTTP 403, which the client reports as permission
+// denied, not as an invalid argument.
+func overlapError() error {
+	return errdefs.ErrPermissionDenied.WithMessage("create network: Error response from daemon: invalid pool request: Pool overlaps with other one on this address space: failed to create network")
+}
+
+func TestBridgeRetriesTheOverlapThatDockerReportsAsForbidden(t *testing.T) {
+	f := &bridgeFake{}
+	finalCreates := 0
+	f.createHook = func(_ context.Context, ipam *dockernetwork.IPAM) (*testcontainers.DockerNetwork, error, bool) {
+		if ipam != nil {
+			finalCreates++
+			if finalCreates == 1 {
+				return nil, overlapError(), true
+			}
+		}
+		return nil, nil, false
+	}
+	if n, err := f.run(t.Context()); err != nil || n == nil || finalCreates != 2 || len(f.active) != 1 {
+		t.Fatalf("a forbidden pool overlap was not retried: network=%v error=%v", n, err)
+	}
+	other := &bridgeFake{createHook: func(_ context.Context, ipam *dockernetwork.IPAM) (*testcontainers.DockerNetwork, error, bool) {
+		return nil, errdefs.ErrPermissionDenied.WithMessage("permission denied"), ipam != nil
+	}}
+	if n, err := other.run(t.Context()); n != nil || err == nil || len(other.requested) != 2 {
+		t.Fatalf("another forbidden error was retried: network=%v error=%v", n, err)
+	}
+}
+
+// poolEngine models Docker's address pool: a network without IPAM gets the
+// lowest free /24, and an explicit subnet that a network holds is refused
+// as an overlap. It is safe for concurrent use. beforeExplicit runs before
+// a bridge with an explicit subnet is created.
+type poolEngine struct {
+	mu             sync.Mutex
+	networks       map[string]netip.Prefix
+	next           int
+	overlaps       int
+	beforeExplicit func()
+}
+
+func (e *poolEngine) create(_ context.Context, ipam *dockernetwork.IPAM) (*testcontainers.DockerNetwork, error) {
+	if ipam != nil && e.beforeExplicit != nil {
+		e.beforeExplicit()
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	taken := slices.Collect(maps.Values(e.networks))
+	var subnet netip.Prefix
+	if ipam == nil {
+		for i := 1; ; i++ {
+			if subnet = netip.MustParsePrefix(fmt.Sprintf("10.24.%d.0/24", i)); !slices.Contains(taken, subnet) {
+				break
+			}
+		}
+	} else if subnet = ipam.Config[0].Subnet; slices.Contains(taken, subnet) {
+		e.overlaps++
+		return nil, overlapError()
+	}
+	e.next++
+	id := fmt.Sprintf("net-%d", e.next)
+	e.networks[id] = subnet
+	return &testcontainers.DockerNetwork{ID: id, Name: "fixture-" + id, Driver: "bridge"}, nil
+}
+
+func (e *poolEngine) remove(_ context.Context, n *testcontainers.DockerNetwork) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.networks, n.ID)
+	return nil
+}
+
+func (e *poolEngine) NetworkInspect(_ context.Context, id string, _ mobycl.NetworkInspectOptions) (mobycl.NetworkInspectResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	subnet, ok := e.networks[id]
+	if !ok {
+		return mobycl.NetworkInspectResult{}, errdefs.ErrNotFound
+	}
+	return mobycl.NetworkInspectResult{Network: dockernetwork.Inspect{Network: dockernetwork.Network{ID: id, Name: "fixture-" + id, Driver: "bridge",
+		IPAM: dockernetwork.IPAM{Driver: "default", Config: []dockernetwork.IPAMConfig{{Subnet: subnet, Gateway: subnet.Addr().Next()}}}}}}, nil
+}
+
+func (e *poolEngine) Close() error { return nil }
+
+// Two bridges of one process, as of parallel tests, must not take the same
+// allocated subnet. The second allocation starts after the first removed its
+// probe and before it recreated the bridge, which is when the subnet is free
+// in between; the first waits up to 300 ms for the second's probe.
+func TestConcurrentBridgesDoNotCollide(t *testing.T) {
+	engine := &poolEngine{networks: map[string]netip.Prefix{}}
+	secondProbed := make(chan struct{})
+	probes := 0
+	create := func(ctx context.Context, ipam *dockernetwork.IPAM) (*testcontainers.DockerNetwork, error) {
+		n, err := engine.create(ctx, ipam)
+		engine.mu.Lock()
+		if ipam == nil {
+			if probes++; probes == 2 {
+				close(secondProbed)
+			}
+		}
+		engine.mu.Unlock()
+		return n, err
+	}
+	var once sync.Once
+	second := make(chan error, 1)
+	engine.beforeExplicit = func() {
+		once.Do(func() {
+			go func() {
+				_, err := newNetwork(t.Context(), engine, IPv4Only, create, engine.remove)
+				second <- err
+			}()
+			select {
+			case <-secondProbed:
+			case <-time.After(300 * time.Millisecond):
+			}
+		})
+	}
+	if _, err := newNetwork(t.Context(), engine, IPv4Only, create, engine.remove); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.networks) != 2 || engine.overlaps != 0 {
+		t.Fatalf("%d networks, %d overlapping requests", len(engine.networks), engine.overlaps)
 	}
 }

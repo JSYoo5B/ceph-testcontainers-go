@@ -392,7 +392,7 @@ func (fs *Filesystem) RemoveUnusedDataPool(ctx context.Context, attachment *Data
 			identity.removed = true
 			return nil
 		}
-		return errors.New("data pool was detached externally; refusing removal")
+		return invalid(errors.New("data pool was detached externally; refusing removal"))
 	}
 	if !identity.confirmed {
 		return errors.New("attachment must be confirmed before removal; retry AddDataPool first")

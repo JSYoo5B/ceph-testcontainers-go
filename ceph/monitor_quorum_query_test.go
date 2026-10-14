@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -35,7 +36,7 @@ func monitorQuorumTestResult(stdout, stderr []byte, code int, timeout, clipped b
 }
 
 func monitorQuorumTestCommand(args []string) bool {
-	return len(args) == 12 && slices.Equal(args[:3], []string{"python3", "-c", monitorQuorumCommandScript}) &&
+	return len(args) == 12 && slices.Equal(args[:3], []string{"python3", "-c", supervised.Script}) &&
 		args[3] == strconv.Itoa(monitorQuorumStdoutLimit) && args[4] == strconv.Itoa(monitorQuorumStderrLimit) &&
 		slices.Equal(args[6:], []string{"ceph", "--connect-timeout", "5", "quorum_status", "--format", "json"})
 }
@@ -132,7 +133,7 @@ func TestMonitorQuorumAttemptStaysInsideCallerBudget(t *testing.T) {
 	for _, timeout := range []time.Duration{40 * time.Millisecond, 10 * time.Second} {
 		ctx, cancel := context.WithTimeout(t.Context(), timeout)
 		control := &diagnosticsTestContainer{exec: func(attempt context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-			if !monitorQuorumTestCommand(args) || len(opts) != 1 {
+			if !monitorQuorumTestCommand(args) || len(opts) != 2 {
 				t.Fatalf("quorum read lost its fixed supervised command: %v", args)
 			}
 			callerDeadline, _ := ctx.Deadline()

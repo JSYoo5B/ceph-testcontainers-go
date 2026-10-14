@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -306,3 +307,59 @@ else:
     assert len(events) == 2 and events[0]['state'] == 'connecting' and events[-1]['state'] == expected, 'fresh native probe reported: ' + result.stdout
     print(json.dumps(events[-1]))
 `
+
+// topologyQuorumStall freezes every MON for longer than the CLI's 5 s
+// connection timeout, as a stalled runner disk does, and runs a mutation
+// through cluster.Ceph meanwhile. No MON answers the connection, so the CLI
+// sends nothing; the call connects again and applies the mutation once the
+// MONs answer, instead of failing with "timed out". Freezing only a
+// majority is not enough: a MON that still holds its lease authenticates the
+// client, and the command then waits for the quorum without a CLI timeout.
+func topologyQuorumStall(t *testing.T, ctx context.Context, cluster *ceph.Container, frozen []*ceph.MonitorContainer) {
+	t.Helper()
+	pauses := make([]*ceph.ContainerPause, 0, len(frozen))
+	resume := func() {
+		for _, pause := range pauses {
+			if err := pause.Resume(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+		pauses = nil
+	}
+	defer resume()
+	for _, mon := range frozen {
+		pause, err := cluster.PauseContainer(ctx, mon.Container)
+		if pause != nil {
+			pauses = append(pauses, pause)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	const stall = 8 * time.Second
+	value := strconv.FormatInt(time.Now().UnixNano(), 10)
+	done := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := cluster.Ceph(ctx, "config-key", "set", "tc/quorum-stall", value)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("a mutation completed without a quorum after %v: %v", time.Since(started), err)
+	case <-time.After(stall):
+	}
+	resume()
+	if err := <-done; err != nil {
+		t.Fatalf("a mutation during a %v quorum stall returned %v", stall, err)
+	}
+	elapsed := time.Since(started)
+	stored, err := cluster.Ceph(ctx, "config-key", "get", "tc/quorum-stall")
+	if err != nil || string(stored) != value {
+		t.Fatalf("the stalled mutation stored %q, %v", stored, err)
+	}
+	if _, err := cluster.Ceph(ctx, "config-key", "rm", "tc/quorum-stall"); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("quorum stall of %v: the mutation connected again and applied after %v", stall, elapsed.Round(time.Millisecond))
+}

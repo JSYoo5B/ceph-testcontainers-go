@@ -39,7 +39,7 @@ RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 
 Requirements:
 
-- Go 1.25 or later.
+- Go 1.26 or later.
 - A Docker engine that runs Linux containers. Docker Desktop works; host
   networking has extra requirements (see [WithHostNetwork](#withhostnetwork)).
 - Access to pull the Ceph image and the Ryuk image.
@@ -183,6 +183,9 @@ of option order:
 | --- | --- |
 | `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
+| `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
+| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
+| `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -392,6 +395,7 @@ all options have been applied. `Run` does not wait for the pools to become clean
 | `CRUSHRoot` | the cluster's default root | Root of the placement hierarchy. |
 | `DeviceClass` | none | Restricts placement to OSDs configured with this class. |
 | `ErasureCode` | nil (replicated) | `*ceph.ErasureCodeConfig`. |
+| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. |
 
 `ceph.ErasureCodeConfig` selects `K` data and `M` parity shards (`K >= 2`,
 `M >= 1`, `K+M <= 128`) with the portable Jerasure `reed_sol_van` plugin. An
@@ -435,8 +439,9 @@ root for the default replica count; this check is skipped with
 ceph.WithOSDBlockSize(256 << 20)
 ```
 
-Sets the logical size in bytes of each OSD's sparse BlueStore file. The default
-is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
+Sets the logical size in bytes of each OSD's sparse BlueStore file, or the
+capacity of each MemStore OSD (see [WithOSDObjectStore](#withosdobjectstore)).
+The default is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
 not real disks; the space is allocated as data is written.
 
 Caveat: with Ceph's default mClock scheduler, a fresh OSD runs a startup capacity
@@ -480,6 +485,30 @@ the logical sizes.
   refuse it. No host path, privileged container or extra image is needed.
 
 The default (without this option) remains a container-local sparse file per OSD.
+
+#### WithOSDObjectStore
+
+```golang
+ceph.WithOSDObjectStore(ceph.OSDMemStore)
+```
+
+Selects the object store of every OSD, including OSDs added later. The
+argument is a `ceph.OSDObjectStore`:
+
+| Value | Store |
+| --- | --- |
+| `ceph.OSDBlueStore` | Default. A sparse BlueStore file per OSD. |
+| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [WithOSDBlockSize](#withosdblocksize) sets its capacity (`memstore_device_bytes`). |
+
+- MemStore saves its contents to the OSD's data directory when the store is
+  unmounted, so the fixture disables Ceph's fast OSD shutdown for MemStore
+  OSDs. A stopped OSD keeps its data across `Stop` and `Start`; an OSD that is
+  killed, or whose container is removed, loses it.
+- MemStore cannot be combined with
+  [WithOSDInMemoryStorage](#withosdinmemorystorage), which keeps BlueStore files
+  in memory, and [InjectObjectDataError](#injectobjectdataerror) needs
+  BlueStore.
+- `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
 #### WithOSDImage
 
@@ -538,14 +567,15 @@ rejected with the option to use instead:
 | --- | --- |
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
 | `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
-| `auth_*`, `keyring`, `key`, `keyfile` | fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithHostNetwork` |
+| `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
 | `bluestore_block_size` | `WithOSDBlockSize` |
 | `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | fixed OSD storage layout |
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon logs always go to container output |
 | `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data` | fixed paths |
+| `crash_dir` | fixed at `/var/lib/ceph/crash` (`ceph.CrashDir`), where [CollectCrashMetadata](#collectcrashmetadata) reads |
 | `mds_join_fs`, `mds_cache_memory_limit` | set on the MDS command line |
 | `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify`, `rgw_sync_lease_period` | set on the RGW command line |
 
@@ -561,27 +591,65 @@ such as `"a;b"` is rejected; escape literal characters as `\#` and `\;`.
 ceph.WithMessengerMode(ceph.MessengerV2Secure)
 ```
 
-Selects the Messenger connection policy at bootstrap. The policy is immutable for
-the lifetime of the cluster.
+Selects, at bootstrap, the Messenger protocols that every daemon listens on and
+advertises, and whether the connection modes stay configurable. Both are
+immutable for the lifetime of the cluster.
 
-| Mode | Behaviour |
+| Mode | Listeners and addresses | Connection modes |
+| --- | --- | --- |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [TemporaryMessengerPolicy](#temporarymessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
+| `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
+
+With `MessengerV2Only`, the global `ceph.conf` sets `ms_bind_msgr1` to `false`
+and `ms_bind_msgr2` to `true` and nothing else, so a CRC-only cluster is:
+
+```golang
+crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithMessengerMode(ceph.MessengerV2Only),
+	ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc}),
+)
+// Native clients attached with WithClient(ceph.WithClientMessengerPolicy(
+// ceph.ClientMessengerPolicy{MonitorsAndManagers: crc, OtherDaemons: crc}))
+// connect with CRC; a client that offers only secure is refused.
+```
+
+Connections between daemons keep Ceph's defaults in both configurable modes, so
+every policy leaves the cluster working.
+
+To move a cluster that a `ceph.conf` with `ms_bind_msgr1 = false` used to
+describe to these options:
+
+| `ceph.conf` | Options |
 | --- | --- |
-| `ceph.MessengerDefault` | Ceph's own defaults: v1 and v2 MON addresses; connection modes as configured in the image. Not every connection is encrypted. |
-| `ceph.MessengerV2Secure` | Only encrypted Messenger v2 (`secure`, AES-GCM). No CRC mode and no v1 listener. |
+| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
+| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
+| `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
+| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [TemporaryConfig](#temporaryconfig) can change them |
+| `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
 With `MessengerV2Secure`, the global `ceph.conf` sets `ms_cluster_mode`,
 `ms_service_mode`, `ms_client_mode`, `ms_mon_cluster_mode`,
 `ms_mon_service_mode` and `ms_mon_client_mode` to `secure`, `ms_bind_msgr1` to
 `false` and `ms_bind_msgr2` to `true`.
 
-- The monmap and `mon_host` contain only v2 addresses. In bridge mode the MON
-  publishes only `3300/tcp`, so `MappedPort(ctx, "6789/tcp")` fails.
+In both v2 modes:
+
+- The monmap and `mon_host` contain only v2 addresses, and no daemon listens on
+  a v1 port. In bridge mode the MON publishes only `3300/tcp`, so
+  `MappedPort(ctx, "6789/tcp")` fails; in host mode only one MON port is
+  reserved.
 - Later daemons, `WithClient` and `WithClientIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
-- [TemporaryConfig](#temporaryconfig) refuses the six mode options and the two
-  bind options in every section and mask, because the local file would override
-  them anyway.
+- [TemporaryConfig](#temporaryconfig) refuses `ms_bind_msgr1` and
+  `ms_bind_msgr2` in every section and mask with `ErrInvalidRequest`, because
+  the local file would override them anyway. With `MessengerV2Secure` it also
+  refuses the six mode options.
+
+With `MessengerV2Secure`:
+
 - A client configured for CRC only is rejected by the cluster (`AUTH_BAD_METHOD`)
   rather than timing out.
 - Cephx authentication and Messenger encryption are separate settings; Cephx is
@@ -593,6 +661,147 @@ live connections. To verify encryption on Tentacle, query a daemon's
 `messenger dump` admin command (through `ceph tell`), which reports the mode and
 cipher of each READY connection. Squid has no `messenger dump`; check the
 daemons' `ms_*_mode` settings instead.
+
+#### WithAuth
+
+```golang
+ceph.WithAuth(ceph.AuthConfig{
+	KeyType:          ceph.CipherAES256K,
+	ServiceCipher:    ceph.CipherAES,
+	MonTicketTTL:     10500 * time.Millisecond,
+	ServiceTicketTTL: 30 * time.Second,
+})
+```
+
+Selects the Cephx key type, the MonMap ciphers and the ticket lifetimes of a new
+cluster. Zero fields keep the defaults of the image's Ceph release. On Tentacle
+20.2.4 and later every key and cipher is `aes256k`. Squid and Tentacle before
+20.2.4 generate only `aes` keys and have no MonMap ciphers.
+
+| Field | Sets |
+| --- | --- |
+| `KeyType` | the type of the keys the fixture generates itself: `mon.`, `client.admin` and OSD keys, and the default for [CreateClient](#createclient) |
+| `ServiceCipher` | the MonMap's `auth_service_cipher`, which encrypts service tickets; defaults to `KeyType` |
+| `AllowedCiphers` | the MonMap's `auth_allowed_ciphers`, the key types that the MONs accept for authentication; defaults to the distinct values of `KeyType`, `ServiceCipher` and `PreferredCipher`, and must contain all three |
+| `PreferredCipher` | the MonMap's `auth_preferred_cipher`, the type of keys that the MONs generate with `auth get-or-create`: MGR, MDS and RGW identities and mirror peers; defaults to `KeyType` |
+| `MonTicketTTL` | `auth_mon_ticket_ttl` |
+| `ServiceTicketTTL` | `auth_service_ticket_ttl` |
+
+The cipher type `ceph.CephxCipher` has two values: `ceph.CipherAES` (`aes`,
+AES-128) and `ceph.CipherAES256K` (`aes256k`, AES-256 with Kerberos-style key
+derivation). The decoded key itself
+records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
+`aes256k`.
+
+- The key type and ciphers apply from the first MON: they are passed to
+  `ceph-authtool` and `monmaptool` before the MON creates its store. A cipher
+  field needs `KeyType`.
+- A `PreferredCipher` of `aes` also sets `mon_auth_allow_insecure_key = true` in
+  `[mon]`, which Tentacle requires before its MONs generate AES keys.
+- Lifetimes keep fractions of a second and are written to the `[global]` section
+  of the bootstrap `ceph.conf`. Every daemon, `WithClient` container and
+  [ConnectionConfig](#connectionconfig) gets them, and
+  [TemporaryConfig](#temporaryconfig) cannot change them later. MONs rotate
+  service secrets on their tick, so lifetimes of a few seconds also need a
+  shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
+- Keep `MonTicketTTL` at ten seconds or more. MON clients check their tickets
+  only every few seconds, and a renewal that comes after the MONs dropped the
+  secret of the old ticket is refused with `EACCES`, after which the client
+  does not authenticate again. With 1.5 seconds, a MGR that was busy loading its
+  modules lost its MON session this way in about one of eight bootstraps on a
+  loaded host. Ceph 19.2.5 and 20.2.4 then abort that MGR with
+  `ceph_assert(active_modules)` once `mgr_module_load_expiration` (20 seconds)
+  has passed, so `Run` fails waiting for the MGR.
+- The MonMap ciphers can change on a running Tentacle cluster with `ceph mon set`:
+
+  ```golang
+  _, err := cluster.Ceph(ctx, "mon", "set", "auth_allowed_ciphers", "aes,aes256k")
+  ```
+
+  `ceph mon dump` reports the current values; it lists allowed ciphers in its own
+  order.
+- `aes256k` and the MonMap ciphers need an image whose `ceph-authtool` has
+  `--key-type` and whose `monmaptool` has the cipher options. Squid and Tentacle
+  20.2.0 to 20.2.3 have neither. `Run` checks the options themselves, not the
+  release number. Such an image accepts a configuration in which every cipher
+  is `aes`, and `Run` fails before any daemon starts, with
+  `needs ceph-authtool --key-type and monmaptool cipher options`, when one is
+  `aes256k`.
+- `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
+
+#### WithMessengerPolicy
+
+```golang
+ceph.WithMessengerPolicy(ceph.MessengerPolicy{
+	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerSecure},
+	Managers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+```
+
+Selects, for each daemon type, the Messenger v2 connection modes that it accepts
+from clients. A `ceph.MessengerConnectionMode` is `ceph.MessengerSecure`
+(`secure`, AES-GCM) or `ceph.MessengerCRC` (`crc`). A nil field keeps Ceph's
+default, which accepts both. The order of a daemon's list does not matter: the
+connection uses the first mode in the client's order of preference that the
+daemon accepts, so a daemon cannot force `secure` on a client that prefers
+`crc` while it accepts both.
+
+| Field | Native option |
+| --- | --- |
+| `Monitors` | `ms_mon_service_mode` in the `mon` section |
+| `Managers` | `ms_mon_service_mode` in the `mgr` section. Ceph treats MGRs like MONs here, so `ms_service_mode` has no effect on them |
+| `OSDs` | `ms_service_mode` in the `osd` section |
+
+- `Run` stores the policy in the central configuration right after MON `a`
+  starts, before any other daemon. Later daemons start with it, and it survives
+  daemon restarts.
+- Connections between daemons keep their defaults, so the cluster itself and the
+  fixture's own CLI keep working under every policy.
+- [TemporaryMessengerPolicy](#temporarymessengerpolicy) changes the policy on a
+  running cluster. The daemons apply it to new connections without a restart.
+- It cannot be combined with `MessengerV2Secure`, whose local configuration
+  fixes every mode.
+
+A rejected client sees one of two behaviours, depending on the daemon:
+
+| Daemon | A client that offers no accepted mode |
+| --- | --- |
+| MON | fails at once: `handle_auth_bad_method ... (95) Operation not supported` |
+| MGR, OSD | gets no error; the client keeps retrying the connection until its own timeout |
+
+Bound calls that a MGR or an OSD may reject, for example with the context of
+your client or with `timeout` around the CLI.
+
+#### WithClientMessengerPolicy
+
+The policy of a native client is set separately, in that client's own
+configuration, with `ceph.WithClientMessengerPolicy`. It is a
+`ceph.ClientContainerOption` of [WithClient](#withclient) and
+[WithClientIdentity](#withclientidentity), so a mode rejection test can give
+the native reference client and the client under test different policies:
+
+```golang
+crcOnly := ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{
+	MonitorsAndManagers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+native, err := testcontainers.Run(ctx, cluster.ControlImage(),
+	cluster.WithClient(crcOnly), ceph.WithIdleEntrypoint())
+```
+
+| Field | Native option | Used for connections to |
+| --- | --- | --- |
+| `MonitorsAndManagers` | `ms_mon_client_mode` | MONs and MGRs |
+| `OtherDaemons` | `ms_client_mode` | other daemons, such as OSDs |
+
+The option writes the fields into the `[client]` section of that container's
+`ceph.conf`. A local file takes precedence over the central configuration, and
+`[client]` over `[global]`, so the client policy also applies on a
+`MessengerV2Secure` cluster. The cluster's own control CLI and other containers
+are unaffected. A process that reads [ConnectionConfig](#connectionconfig)
+instead sets the same two options itself, for example with go-ceph
+`conn.SetConfigOption("ms_mon_client_mode", "crc")`. A policy with an empty
+list or an unknown mode makes the container request fail with
+`ceph.ErrInvalidRequest`.
 
 #### WithHostNetwork
 
@@ -619,7 +828,8 @@ Linux) can reach MONs and OSDs directly.
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
 - Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
-  and Docker endpoint interruption ([InterruptNetwork](#interruptnetwork)) is not
+  and Docker endpoint interruption ([InterruptNetwork](#interruptnetwork)) and
+  packet delay ([TemporaryNetworkDelay](#temporarynetworkdelay)) are not
   available.
 
 [UsesHostNetwork](#useshostnetwork) and [PublicAddress](#publicaddress) report the
@@ -652,6 +862,73 @@ MON, MGR, MDS, RGW and `WithClient` containers use only the public bridge.
 the two bridges, and [InterruptNetwork](#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
+
+With `WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
+Ceph's `public network` and `cluster network` are their IPv6 subnets. The
+MONs, MGRs and OSDs then advertise only IPv6 addresses: MONs, MGRs and the
+public and heartbeat front addresses of OSDs from the public subnet, and the
+cluster and heartbeat back addresses of OSDs from the cluster subnet.
+`InterruptNetwork` with `ceph.ClusterNetworkPlane` disconnects an OSD's whole
+cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressIPv6), ceph.WithSeparateClusterNetwork())
+addresses, err := cluster.DaemonAddresses(ctx)
+// With Docker Desktop's default IPv6 pool, for example:
+// addresses.OSDs[0].Public[0].Addr  == "[fd62:93fe:2c9e::4]:6800"
+// addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
+```
+
+#### WithAddressFamily
+
+```golang
+ceph.WithAddressFamily(ceph.AddressIPv6)
+```
+
+Selects the addresses that the Messenger of every MON, MGR, OSD and MDS binds
+and advertises. `cluster.AddressFamily()` returns the selected value.
+
+| Family | Bridge | Messenger listeners and advertised addresses |
+| --- | --- | --- |
+| `ceph.AddressIPv4` (default) | IPv4 | the container's IPv4 address, such as `172.19.0.2:3300` |
+| `ceph.AddressIPv6` | dual-stack: one IPv4 and one IPv6 subnet | the container's IPv6 address, such as `[fd62:93fe:2c9e::2]:3300`; no IPv4 listener |
+| `ceph.AddressIPv4MappedIPv6` | IPv4 | the container's IPv4 address as an IPv4-mapped IPv6 address on an IPv6 socket, such as `[::ffff:172.19.0.2]:3300` |
+
+The MONs get these addresses in the monmap and bind them. The generated
+`ceph.conf` sets `ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
+OSDs and MDSs bind the IPv6 wildcard address, `[::]`, and advertise the address
+from which the MONs see them. No daemon has an IPv4 Messenger socket; with
+`AddressIPv4MappedIPv6` the IPv6 sockets accept the IPv4 connections that the
+mapped addresses stand for. The address
+vectors from [DaemonAddresses](#daemonaddresses) and `ceph ... dump` show the
+selected family for every daemon, including the heartbeat addresses of OSDs.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6))
+addresses, err := cluster.DaemonAddresses(ctx)
+// addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
+```
+
+- Bridge mode only. `AddressIPv6` works with
+  [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
+  both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
+- `AddressIPv6` needs a Docker Engine that allocates an IPv6 subnet for a new
+  IPv6 bridge without an explicit subnet, from its default pool of unique local
+  addresses. `Run` fails with the Engine's error otherwise.
+- With `AddressIPv6`, Docker forwards an IPv4 connection to a published MON
+  port to the container's IPv4 address, where no MON listens, so an IPv4
+  connection to `MappedPort` does not reach a MON. Run clients in containers on
+  the cluster network with [WithClient](#withclient). With
+  `AddressIPv4MappedIPv6`, the IPv6 sockets also accept the forwarded IPv4
+  connections.
+- Ceph prints an IPv4-mapped address in dotted form, `::ffff:172.19.0.2`, but
+  parses only hexadecimal groups, `::ffff:ac13:2`. The fixture writes
+  `mon_host` in the parseable form; convert an address the same way before you
+  pass it to a Ceph tool, for example with `-m`. Go's `net/netip` parses both.
+- HTTP endpoints, such as RGW's, are not Messenger listeners and keep their
+  addresses.
 
 #### WithStartupTimeout
 
@@ -754,6 +1031,8 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*ceph.ContainerPause` | [PauseContainer](#pausecontainer) | `Resume` |
 | `*ceph.NetworkInterruption` | [InterruptNetwork](#interruptnetwork) | `Restore` |
+| `*ceph.NetworkDelayLease` | [TemporaryNetworkDelay](#temporarynetworkdelay) | `Restore` |
+| `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
 
 All handles follow the same contract:
 
@@ -803,9 +1082,15 @@ func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.Termin
 ```
 
 Removes the whole cluster: it restores network interruptions and resumes paused
-containers first, releases host port reservations, stops services (RGW, MDS)
-before OSDs, removes all owned daemons, helper containers and the OSD memory
-volume, and finally removes the owned networks. It works on a partially
+containers first, cancels the commands that [RunNativeCommand](#runnativecommand)
+still runs, releases host port reservations, stops services (RGW, MDS)
+before OSDs, removes all owned daemons, helper containers, the OSD memory
+volume and the shared run volume of the admin sockets, and finally removes the
+owned networks. Every container that the cluster creates carries the label
+`org.testcontainers.ceph.cluster` with the cluster's ID, and `Terminate` also
+removes a container with that label that it has no handle for. Docker can
+create such a container when the reply to a create request was lost, for
+example when the startup timeout ended during the request. It works on a partially
 initialized cluster returned by `Run` with an error, and a failed cleanup can be
 retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
@@ -827,14 +1112,95 @@ func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error)
 
 Runs the `ceph` CLI in the control container with `--connect-timeout 5` and
 returns its standard output. Arguments are passed directly, without a shell. Add
-`--format json` for machine-readable output. A non-zero exit returns an error
-that includes the command's output.
+`--format json` for machine-readable output. A non-zero exit returns the
+standard output with a [`*NativeFailure`](#nativefailure): the exit code, the
+errno that Ceph reported, such as `ENOENT`, and Ceph's reason without its log
+lines, with keys redacted. `errors.Is(err, fs.ErrNotExist)` holds for
+`ENOENT`. When no MON answers the connection within 5 seconds, the CLI exits
+before it sends the command; `Ceph` then connects again, until a MON
+answers, `ctx` ends or a minute has passed, so a stalled or electing MON
+delays the command instead of failing it, and the command runs once. See
+[Classified errors](guides/errors.md).
 
 ```golang
 out, err := cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "noscrub", "true")
 ```
 
 See [Running native commands](#running-native-commands).
+
+#### RunNativeCommand
+
+```golang
+func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command ceph.NativeCommand) (ceph.NativeCommandResult, error)
+```
+
+Runs one command in `target` under a supervisor that bounds its run time and
+each output stream inside the container, and that stops the command when
+`ctx` ends. `target` is the control container, a daemon or service container
+of this cluster, or a container of yours attached to the cluster's network.
+It must be running, not paused, and have `python3`, which OSD, RGW and MDS
+role images need not have.
+
+```golang
+result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	Argv:      []string{"ceph-dencoder", "type", "OSDMap", "import", "/tmp/osdmap", "decode", "dump_json"},
+	Timeout:   time.Minute,
+	MaxStdout: 4 << 20,
+	MaxStderr: 64 << 10,
+	Label:     "decode OSDMap",
+})
+```
+
+| `NativeCommand` field | Meaning |
+| --- | --- |
+| `Argv` | Program and arguments, without a shell |
+| `Timeout` | Up to `MaxNativeCommandTimeout` (one hour); `ctx`'s deadline shortens it |
+| `MaxStdout`, `MaxStderr` | Up to `MaxNativeCommandOutput` (64 MiB) each |
+| `Label` | Names the command in errors; at most 128 bytes |
+
+- The result keeps stdout and stderr as separate raw bytes, and the exit code;
+  a nonzero exit is not an error.
+- A timed-out or truncated command returns its partial result with
+  `TimedOut`, `StdoutTruncated` or `StderrTruncated` set, and an error that
+  wraps `ErrNativeCommandIncomplete`.
+- When `ctx` ends first, the command is stopped inside the container before
+  the call returns, within `NativeCommandStopTimeout` (15 seconds) of its own.
+  When that cannot be confirmed, the error is a
+  `*NativeCommandUnstoppedError`; keep it and call its `Stop` with a fresh
+  context. Its `Unwrap` returns the cause, so `errors.Is(err, context.Canceled)`
+  still holds. `Terminate` also cancels and stops these commands.
+- Stopping a command does not undo what it did, and a command is never run
+  again.
+- Errors contain the label but never the arguments or the output. A Docker
+  or container failure appears only by its kind; `errors.Unwrap` returns the
+  original error.
+- Failures before the command runs are classified: a malformed command, a
+  container that the cluster neither owns nor has attached, or one that is
+  stopped or paused is `ErrInvalidRequest`; a target without `python3`, or a
+  program that does not exist or is not executable, is `ErrImageCapability`;
+  a program that could not be started for want of a process or memory, or
+  because a security policy refused it, and another Docker failure are
+  `ErrEnvironmentUnavailable`. A container that disappears or stops after
+  the command was sent matches no category, since the command may have run.
+  Context errors, `ErrNativeCommandIncomplete` and
+  `*NativeCommandUnstoppedError` belong to no category. See
+  [Classified errors](guides/errors.md).
+
+See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
+for cancellation details and an oracle recipe with `rados_stat2` and
+`ceph-dencoder`.
+
+#### RedactSecrets
+
+```golang
+func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error)
+```
+
+Returns a copy of `data` in which the keys of the cluster's keyrings, service
+credentials, `values`, and the private keys, secret assignments and bearer
+tokens it recognizes are replaced by `[REDACTED]`, as in
+[CollectDiagnostics](#collectdiagnostics). Use it before logging native
+output; assertions compare the raw bytes. Redaction is best effort.
 
 #### ControlContainer
 
@@ -937,6 +1303,14 @@ if err := cluster.WaitForQuorum(ctx); err != nil {
 
 When a majority is stopped, quorum is lost and new clients cannot authenticate.
 After the monitors start again, both existing and new sessions work.
+
+A MON binds the address that the monmap records for it. On a bridge network,
+each MON returns at that address whatever the order of `Start` calls: before
+a stopped MON starts, the fixture requests its original address from Docker
+again. A MON whose endpoint is interrupted with
+[InterruptNetwork](#interruptnetwork) does not start until the interruption is
+restored. MON a's container waits for a quorum when it starts, so after all
+MONs were stopped, start the others first.
 
 #### AddMonitor
 
@@ -1485,7 +1859,7 @@ for _, pg := range snapshot.PGs {
 #### WithClient
 
 ```golang
-func (c *Container) WithClient() testcontainers.CustomizeRequestOption
+func (c *Container) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 ```
 
 Returns a customizer for your own container that connects it to the cluster and
@@ -1501,6 +1875,9 @@ the cluster's public network; in host mode it joins the host network.
   clients.
 - Combine it with [WithIdleEntrypoint](#withidleentrypoint) for a container in
   which you run commands with `Exec`.
+- Options change the copied `ceph.conf`: `ceph.WithClientMessengerPolicy` sets
+  the client's Messenger connection modes (see
+  [WithMessengerPolicy](#withmessengerpolicy)).
 - You own the container. Terminate it before the cluster (register its cleanup
   after the cluster's).
 
@@ -1513,7 +1890,7 @@ MON's mapped port alone. Run the client in a `WithClient` container, or use
 #### WithClientIdentity
 
 ```golang
-func (c *Container) WithClientIdentity(client *ceph.ClientConfig) testcontainers.CustomizeRequestOption
+func (c *Container) WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 ```
 
 Like [WithClient](#withclient), but copies only the keyring of a restricted
@@ -1524,12 +1901,16 @@ section pointing to the keyring) and the keyring at
 select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
-creations and revoked identities are rejected. You own the container.
+creations and revoked identities are rejected, and so are descriptors whose key
+[ReplaceClientKey](#replaceclientkey) replaced, whose identity
+[TemporaryClientRevocation](#temporaryclientrevocation) removed until its
+`Restore`, or whose identity has a change that is not resolved yet. You own the container. The options are those of
+[WithClient](#withclient).
 
 #### CreateClient
 
 ```golang
-func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
+func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
 ```
 
 Creates a fresh Cephx identity with exactly the given capabilities. `name` is an
@@ -1558,6 +1939,21 @@ attempted or partial creation; inspect auth state or terminate the cluster rathe
 than retrying with broader caps. The returned `*ceph.ClientConfig` keeps the
 credentials private; see [ClientConfig](#clientconfig).
 
+The key has the cluster's [WithAuth](#withauth) `KeyType`, or the release
+default without one. The `ceph.ClientOption` `ceph.WithClientKeyType` selects
+another type for this identity, for example to check that the MONs reject a key type they do not
+allow:
+
+```golang
+legacy, err := cluster.CreateClient(ctx, "legacy", ceph.ClientCaps{Mon: "allow r"},
+	ceph.WithClientKeyType(ceph.CipherAES))
+```
+
+The identity is created whether or not the MONs allow its type; whether it can
+authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs a
+control image whose `ceph-authtool` has `--key-type` (see
+[WithAuth](#withauth)); without it the call fails before any change.
+
 #### ClientCapabilities
 
 ```golang
@@ -1577,8 +1973,10 @@ func (c *Container) UpdateClientCaps(ctx context.Context, client *ceph.ClientCon
 Replaces all capabilities of an owned identity while keeping its key. Services
 omitted from `caps` lose their previous capabilities. Sessions that already hold
 tickets may keep the previous permissions for a while; verify the change with a
-fresh client connection. After an uncertain error, inspect
-[ClientCapabilities](#clientcapabilities) before retrying.
+fresh client connection. The change is fenced like the import of
+[ReplaceClientKey](#replaceclientkey): a failed or canceled call reports what
+the MONs hold once nothing can change it any more, and an outcome that stays
+uncertain is resolved by the next operation on the identity.
 
 #### DeleteClient
 
@@ -1589,7 +1987,236 @@ func (c *Container) DeleteClient(ctx context.Context, client *ceph.ClientConfig)
 Revokes an identity created by this cluster, without deleting data. It refuses if
 the native key was replaced externally. A repeated call after success is a no-op.
 Established sessions may keep their tickets; test revocation with a new
-connection. Credentials already copied elsewhere are not erased.
+connection. Credentials already copied elsewhere are not erased. The removal is
+fenced like the import of [ReplaceClientKey](#replaceclientkey).
+
+#### ReplaceClientKey
+
+```golang
+func (c *Container) ReplaceClientKey(ctx context.Context, client *ceph.ClientConfig, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
+```
+
+Gives an identity created by this cluster a fresh key and keeps its name and
+its exact capabilities. The change is one `ceph auth import` of the identity's
+own keyring with the new key, so the identity never disappears from the MONs.
+The new key has the type of the old one; `ceph.WithClientKeyType` selects
+another (see [CreateClient](#createclient)). The identity needs at least one
+capability, because Ceph refuses to import an entry without any; an identity
+without capabilities is refused before any change.
+
+```golang
+renewed, err := cluster.ReplaceClientKey(ctx, client)
+```
+
+The call returns a new descriptor for the new key and leaves the old one
+stale:
+
+- The old descriptor's `ConnectionConfig` still returns the old credentials,
+  so a test can check that they are rejected.
+- Every other operation with the old descriptor fails:
+  [WithClientIdentity](#withclientidentity),
+  [ClientCapabilities](#clientcapabilities),
+  [UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient).
+  Use the returned descriptor for them.
+- `ReplaceClientKey` with the old descriptor again returns the same new
+  descriptor without another change, as long as that descriptor is still the
+  identity's current one.
+- Containers attached with the old descriptor keep the old keyring.
+- Copies of the old descriptor go stale as well. The cluster records the
+  current key of each identity it created, and every operation refuses a
+  descriptor with another key or of a deleted identity.
+
+The old key behaves as follows on the official images:
+
+- A fresh connection with the old key fails at once with `EACCES`.
+- A client that authenticated before keeps its session until it renews its
+  tickets, within `auth_mon_ticket_ttl` ([WithAuth](#withauth)
+  `MonTicketTTL`). The MONs then reject the renewal (`_finish_auth -13` in its
+  `debug_monc` log).
+- What follows the rejection differs. On Tentacle 20.2.4 the client loses its
+  MON session, and librados does not authenticate again on its own. On Squid
+  19.2.5 the MON session that is already open keeps answering, and only the
+  renewals keep failing.
+- MGR and OSD sessions that the client already holds keep working in both.
+- Fresh MON, MGR and OSD clients with the new key work at once, also when it
+  has another key type than the old one.
+
+The identity must still have the descriptor's key. An identity whose key was
+changed outside the module is refused before any change, and external auth
+changes must not race the call.
+
+The import is fenced like the MON commands of
+[RotateDaemonKey](#rotatedaemonkey): the command runs under the supervisor,
+and after it the call settles the MONs and reads the outcome. So a failed or
+canceled call reports what the MONs hold once nothing can change it any more:
+either the new key, in which case the call returns the new descriptor without
+an error, or the old one. When settling itself fails, the outcome stays open:
+
+- The call returns a descriptor of the attempted key that stays unusable,
+  with an error saying so. A returned descriptor never changes afterwards.
+- The next operation on the identity settles first and then resolves the
+  outcome. `ReplaceClientKey` with the old descriptor returns a usable
+  descriptor of the attempted key once the import turns out to have applied,
+  and replaces the key anew once it turns out not to have.
+- Until then, [WithClientIdentity](#withclientidentity) refuses both
+  descriptors.
+
+[UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient) are
+fenced the same way, so none of these operations races a command of another
+one that may still apply. The CephFS subvolume grants of the
+[cephfs](cephfs.md) package settle these commands before they change a
+client. Their own commands go through the MGR, though, which this settling
+cannot fence, and the module cannot tell when a failed one has ended: the
+volumes module may still create or change the identity later. Do not replace
+or revoke a client after a failed `AuthorizeSubvolume` or
+`DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
+only the state at that moment.
+
+#### TemporaryClientRevocation
+
+```golang
+func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocation, error)
+```
+
+Removes an identity created by this cluster from the MONs until `Restore`
+puts back exactly its key and its capabilities, so a recovery test can watch
+the rejection of a client and then its return with the same credentials. The
+identity keeps its name and key type, and the descriptor is not recreated.
+
+```golang
+revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+// ... check that the client is rejected ...
+err = revocation.Restore(ctx)
+```
+
+While the identity is revoked:
+
+- The descriptor's `ConnectionConfig` keeps returning its credentials, which
+  work again after `Restore`.
+- [WithClientIdentity](#withclientidentity),
+  [ClientCapabilities](#clientcapabilities),
+  [UpdateClientCaps](#updateclientcaps), [ReplaceClientKey](#replaceclientkey)
+  and another `TemporaryClientRevocation` refuse the descriptor.
+- [CreateClient](#createclient) refuses the name.
+- [DeleteClient](#deleteclient) makes the removal permanent, after which
+  `Restore` fails.
+
+The client behaves as follows on the official images:
+
+- A fresh connection fails at once with `EACCES`.
+- A client that authenticated before keeps its sessions until it renews its
+  tickets, within `auth_mon_ticket_ttl` ([WithAuth](#withauth)
+  `MonTicketTTL`). The MONs then reject the renewal, and the client keeps the
+  MGR and OSD sessions it already holds.
+- On Tentacle 20.2.4 the client also loses its MON session, and librados does
+  not authenticate again on its own. On Squid 19.2.5 the open MON session
+  keeps answering.
+- After `Restore`, an open session renews its tickets only while the MONs
+  still keep the rotating secret of its last auth ticket. They replace that
+  secret every `MonTicketTTL` and keep a few generations. After a longer
+  revocation, the MONs refuse every renewal of that session and log
+  `attempt to reclaim global_id ... using bad ticket`, because the cluster
+  sets `auth_allow_insecure_global_id_reclaim = false`. A new connection with
+  the same credentials authenticates once `Restore` returns, so a recovery
+  test reconnects its client instead of waiting for a renewal.
+
+`Restore` checks what the MONs hold first:
+
+- An identity that already has the original key and capabilities counts as
+  restored, so a repeated `Restore` succeeds.
+- An identity that was created again with another key or other capabilities
+  is refused and never overwritten.
+- A `Restore` of an earlier revocation does not undo a later one.
+
+The revocation belongs to the identity, not to one descriptor: copies of the
+descriptor are refused the same way, and `DeleteClient` through any
+descriptor of the revoked key makes the removal permanent.
+
+The removal and the restoration are fenced like the import of
+[ReplaceClientKey](#replaceclientkey). A failed or canceled call settles the
+MONs and reports what they hold:
+
+- A removal that did not apply returns no handle, and the descriptor stays
+  usable.
+- When the outcome stays uncertain, `TemporaryClientRevocation` returns the
+  handle with the error, and `Restore` settles first and then restores.
+
+The cluster needs no `Restore` before `Terminate`. The handle's `String` and
+`GoString` never include credentials.
+
+#### RotateDaemonKey
+
+```golang
+func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) error
+```
+
+Replaces the Cephx key of a running MGR or OSD that the cluster owns, without a
+restart, the way cephadm rotates daemon keys. `daemon` is `mgr.<name>` or
+`osd.<id>`.
+
+1. `ceph auth get-or-create-pending` creates the new key on the MONs.
+2. The daemon's keyring files in its container get the new key, so a later
+   restart authenticates with it.
+3. `ceph tell <daemon> rotate-key` hands the key to the running daemon.
+4. `ceph auth commit-pending` makes it the entity's only key.
+
+```golang
+err := cluster.RotateDaemonKey(ctx, "osd.0")
+key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
+```
+
+- The daemon keeps running and answering throughout.
+- Without step 2, a restarted daemon would read its old key and fail to start;
+  `ceph tell <daemon> rotate-key` changes only the running process.
+- MONs share the `mon.` key and are refused, as are stopped, paused and
+  unknown daemons; nothing changes in these cases.
+- Until step 4, the MONs accept both keys, so the running daemon and a
+  restarted one can always authenticate. The MONs also commit the pending key
+  on their own as soon as the daemon authenticates with it, after a restart or
+  a handoff. Failures keep that property:
+
+  | Failure | State afterwards | Recovery |
+  | --- | --- | --- |
+  | Before step 3, including cancellation | The MONs keep the pending key, and each keyring file holds the old or the new key, so the daemon authenticates with either. Nothing is undone: undoing would race with a restart from a file that already holds the new key. If such a restart has already made the MONs commit the new key, the call returns nil instead. | Call `RotateDaemonKey` again: it finishes with the same key, unless a restart has made the MONs commit it meanwhile, which finishes the rotation. |
+  | Step 3 | Unknown whether the daemon received the new key, and a `rotate-key` that was already sent may still reach it later. The keyring files hold the new key; both keys stay valid. | Call `RotateDaemonKey` again: it finishes with the same key. Until the daemon's container restarts, for example through `Stop` and `Start` on its `testcontainers.Container`, the cluster refuses to give that daemon any other key, because a late `rotate-key` would switch it back to this one. |
+  | Step 4 | The daemon and its files hold the new key, which the MONs accept whether or not the commit applied. `RotateDaemonKey` settles the MONs (see below) and reads the keys: a commit that applied returns nil. | If the error says that the commit did not apply, call `RotateDaemonKey` again or run `ceph auth commit-pending <daemon>`. |
+
+  A call that finds a pending key from an earlier one resumes with it and
+  never clears it, because the daemon may already hold it.
+- A call does not return while one of its commands may still change the keys
+  or the keyring files, unless it records that command for the daemon; the
+  next call then deals with it before it changes anything, and fails while it
+  cannot:
+  - Every `ceph` command runs under the supervisor that
+    [AdminSocket](#adminsocket) uses. A command that the supervisor could not
+    confirm as stopped is stopped by the next call.
+  - Keyring files are written to a new file in the daemon container and moved
+    into place with `mv` through a Docker exec, whose end is confirmed. Docker
+    may complete a file copy after its request failed, but such a copy only
+    creates the new file. An exec whose end is unknown is waited for by the
+    next call. The daemon image needs `mv`, next to the `sh`, `cp` and `mkdir`
+    that the daemon start scripts use.
+  - The MON commands that change the keys (`auth get-or-create-pending` and
+    `auth commit-pending`) are sent by a short Python script through
+    librados, which first records the nonce by which the MONs list its
+    client's sessions. Before a call returns, and before it reports the
+    outcome of a failed command, it settles the MONs for these commands:
+    1. It waits until no MON lists a session of those clients. TCP delivers
+       a connection's data before its end, and a MON drops a command whose
+       connection has closed before it handles it, so each command has then
+       been handled or dropped.
+    2. It adds and removes `client.tc-key-rotation-<uuid>`, an identity
+       without capabilities, through every MON in turn. Each CLI contacts
+       only its MON (`mon_host_override`), and its MON client log must show
+       that it reached no other MON. MONs forward commands to the leader in
+       the order they handle them, and the leader commits auth changes in
+       order, so these changes come after every handled command.
+    3. The quorum's election epoch and monmap must stay the same meanwhile.
+
+    Settling needs every MON in the monmap to answer. A call that cannot
+    settle records its commands, and the next call settles them first.
+- How to observe keys and rotating service secrets from the daemon side is in
+  [Running native commands](guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
 
 #### ConnectionConfig
 
@@ -1698,7 +2325,8 @@ The helper verifies the stored value, not its effect:
 - Check the effective value of a running daemon with
   `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
 - With [MessengerV2Secure](#withmessengermode), the Messenger mode and bind options
-  are refused.
+  are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and `ms_bind_msgr2`
+  options.
 
 Configuration output can contain secrets; log only selected fields. Typical uses:
 lowering thresholds such as `osd_op_complaint_time` (when `SLOW_OPS` is
@@ -1883,6 +2511,38 @@ Returns the bootstrap policy selected with [WithMessengerMode](#withmessengermod
 (`ceph.MessengerDefault` for a nil container). It does not inspect effective
 settings or live connections.
 
+#### TemporaryMessengerPolicy
+
+```golang
+func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverride, error)
+```
+
+Changes the connection modes that the running daemons accept from clients (see
+[WithMessengerPolicy](#withmessengerpolicy) for the fields). Each non-nil field
+becomes a [TemporaryConfig](#temporaryconfig) override of its option; nil fields
+stay as they are.
+
+```golang
+override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{
+	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+if override != nil {
+	defer override.Restore(ctx)
+}
+```
+
+- The daemons apply the change to new connections without a restart.
+  Established connections keep their mode.
+- `MessengerPolicyOverride.Restore` returns every option to its previous value,
+  including the bootstrap policy. It is idempotent and can be retried.
+- A non-nil result returned with an error holds the overrides that were made;
+  restore it.
+- A single daemon, such as only `osd.0`, is changed with `TemporaryConfig` and
+  the option in the table, with the daemon name as `Section`. It takes
+  precedence over the daemon type's entry.
+- A policy that selects no valid mode, and any policy on a `MessengerV2Secure`
+  cluster, is refused with `ceph.ErrInvalidRequest` before any change.
+
 ### Container Methods: Object watchers and client fencing
 
 #### ObjectWatchers
@@ -1985,7 +2645,8 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 ```
 
 Makes one replica of an existing object on an owned OSD return a read error to
-scrub and recovery, through Ceph's `injectdataerr` debug command. The OSD must be
+scrub and recovery, through Ceph's `injectdataerr` debug command. It needs
+BlueStore OSDs and refuses a cluster that uses `ceph.OSDMemStore`. The OSD must be
 in the object's current acting set, and the pool must be replicated (EC pools are
 refused). The method enables `bluestore_debug_inject_read_err` on that daemon only,
 at runtime, until it restarts; the setting affects only objects with an injected
@@ -2103,12 +2764,18 @@ select the same endpoint. Host mode is refused because Docker cannot disconnect 
 host-network endpoint.
 
 The returned `*ceph.NetworkInterruption` has `ContainerID`, `NetworkName` and
-`OriginalAddress`. `Restore` reconnects the endpoint with its original IP and
-aliases, so the address Ceph advertises stays valid and the daemon is not
-restarted. An endpoint that someone else reattached with a different address is
-refused. It is a whole-endpoint interruption, not a packet filter between
+`OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
+its original IPv6 address on the dual-stack bridge of
+[WithAddressFamily](#withaddressfamily)`(AddressIPv6)`, and its aliases, so the
+address Ceph advertises stays valid and the daemon is not restarted. An
+endpoint that someone else reattached with a different or missing address is
+refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
 specific peers. The cluster keeps the handle and restores it during `Terminate`;
 restore caller-owned containers explicitly before removing them.
+
+An interrupted MON stays detached when it is stopped and started: `Start`
+refuses to run it with `ceph.ErrInvalidRequest` until `Restore` has
+reattached its endpoint, because the MON can only bind its monmap address.
 
 ```golang
 cut, err := cluster.InterruptNetwork(ctx, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
@@ -2124,6 +2791,91 @@ if err := cut.Restore(ctx); err != nil {
 	t.Fatal(err)
 }
 ```
+
+#### TemporaryNetworkDelay
+
+```golang
+func (c *Container) TemporaryNetworkDelay(ctx context.Context, ctr testcontainers.Container, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
+```
+
+Delays every packet that `ctr` sends through its endpoint on one of the
+cluster's bridges, with the kernel's netem qdisc, below Ceph. It is an opt-in
+extension: `delay.HelperImage` names a netem helper image, such as
+`ceph.NetemHelperImage` (`ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1`),
+or any image that meets
+[netem contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md).
+The module starts the helper in `ctr`'s network namespace as root and grants
+`NET_ADMIN` to the helper only; `ctr` keeps its own image and capabilities.
+
+| `ceph.NetworkDelay` field | Meaning |
+| --- | --- |
+| `HelperImage` | The helper image. Required; nothing selects it implicitly. |
+| `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
+| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. |
+| `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
+
+`ctr` can be an owned daemon or a caller-owned container attached to the
+plane's bridge; it must be running, not paused, with its own network
+namespace and an IPv4 endpoint. Host-network clusters are refused. Before it
+changes anything, the call checks the helper image, `NET_ADMIN` and the
+kernel's netem in a separate helper container without a network, and fails
+with an error that wraps `ceph.ErrNetemImageUnsupported`,
+`ceph.ErrNetemPermissionDenied` or `ceph.ErrNetemKernelUnsupported`. It
+refuses an interface whose root qdisc is not the kernel's default, and a
+second delay of the same endpoint.
+
+| Failure | Category | Narrower error |
+| --- | --- | --- |
+| No `HelperImage`: the extension is not selected | `ErrImageCapability` | |
+| The helper image does not meet the contract: a missing or broken tool, or a `tc` without netem | `ErrImageCapability` | `ErrNetemImageUnsupported` |
+| The engine gave the helper no `NET_ADMIN` | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied` |
+| The kernel has no netem qdisc | `ErrEnvironmentUnavailable` | `ErrNetemKernelUnsupported` |
+| A malformed request, a refused target, a held endpoint or a foreign root qdisc | `ErrInvalidRequest` | |
+| A `tc` command that ran and failed otherwise | `ErrNativeFailure` | `*NativeFailure` of `tc` |
+
+The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
+`NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
+`MACAddress`, `Address`), the helper's `HelperImageID` and the requested
+`Delay` and `Jitter`.
+
+- `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
+  through the helper: `Applied`, the interface's current name (`Interface`)
+  and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter` and
+  `Packets`, `Bytes` and `Drops` counters while `Applied`, and tc's JSON output
+  (`Qdiscs`). After the first lookup by address and MAC, the lease follows
+  the interface by its index, so a changed address, MAC or name does not lose
+  it. `Gone` means that the delayed
+  interface no longer exists, because `ctr` stopped, restarted, was removed or
+  left the bridge.
+- `Restore(ctx)` removes the lease's qdisc and the helper. A gone interface
+  needs no removal, and `Restore` never touches a new namespace. A root qdisc
+  that someone replaced is refused with an error, and the lease stays
+  retryable. A helper that exited or was removed is replaced first, from the
+  checked image by its ID (`HelperImageID`), even if the tag moved.
+- Every `tc` command runs under the module's command supervisor. A non-nil
+  lease returned with an error must be restored: the change may have reached
+  the kernel.
+- The cluster keeps the lease and removes the delay at the start of
+  `Terminate`. Restore a caller-owned container's delay before removing that
+  container.
+
+```golang
+delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Delay:       200 * time.Millisecond,
+})
+if delay != nil {
+	defer delay.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Answers from osd.0 arrive at least 200 ms late until Restore.
+```
+
+See [Fault injection](guides/fault-injection.md#delaying-packets-below-ceph)
+for what clients observe and the engines this was checked on.
 
 ### Container Methods: Networking
 
@@ -2173,6 +2925,101 @@ func (c *Container) PublicAddress() string
 
 Returns the IPv4 address advertised in host mode (`127.0.0.1` unless
 [WithHostAddress](#withhostaddress) selected another); empty in bridge mode.
+
+#### DaemonAddresses
+
+```golang
+func (c *Container) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+```
+
+Reads the names and advertised addresses of the cluster's MONs, MGRs and OSDs
+from the native maps. These are the addresses a client learns from the cluster,
+so a test of a client implementation can compare what it decoded or connected
+to with what Ceph advertises.
+
+| Field | Source and meaning |
+| --- | --- |
+| `MonMapEpoch`, `Monitors` | monmap epoch; every member in rank order with its name and public address vector |
+| `MgrMapEpoch`, `ActiveManager`, `ManagerAvailable`, `StandbyManagers` | MGRMap epoch; the active MGR's name and address vector (nil without an active MGR), whether it is available, and the standby names |
+| `OSDMapEpoch`, `OSDs` | OSDMap epoch; every OSD in ID order with `Up`, `In` and its `Public`, `Cluster`, `HeartbeatFront` and `HeartbeatBack` address vectors |
+
+Each address is a `ceph.EntityAddress` with `Type` (`v2`, `v1` or `any`),
+`Addr` as Ceph prints it (`172.20.0.3:6800`, `[fd00::3]:6800`) and `Nonce`, the
+instance nonce that MONs leave at 0. `ceph.DaemonAddress` pairs a MON or MGR
+name with its vector, and `ceph.OSDAddress` holds one OSD's entry.
+
+```golang
+addresses, err := cluster.DaemonAddresses(ctx)
+for _, mon := range addresses.Monitors {
+	fmt.Println(mon.Name, mon.Addrs) // a [{v2 172.20.0.2:3300 0} {v1 172.20.0.2:6789 0}]
+}
+```
+
+- In bridge mode the addresses are the daemon containers' addresses on the
+  fixture network; in host mode they are [PublicAddress](#publicaddress) with
+  the allocated ports.
+- Standby MGRs advertise no address in the MGRMap. A MGR that has just become
+  active advertises its address vector only once it is available, so wait for
+  `ManagerAvailable` after a failover.
+- An OSD that is down keeps the addresses of its last boot; one that never
+  booted has empty vectors.
+- The three maps are read one after another, not as one snapshot; compare the
+  epochs when the order matters.
+
+### Container Methods: Admin sockets
+
+#### AdminSocket
+
+```golang
+func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
+```
+
+Runs one command on the admin socket of a MON, MGR or OSD that the cluster
+owns and returns its output. `daemon` is the Ceph daemon name, such as `mon.a`,
+`mgr.b` or `osd.0`; `args` are the command words. `help` lists a daemon's
+commands.
+
+The admin socket bypasses the Messenger and Cephx: the command reaches the
+daemon through a local Unix socket. Use it to check what a daemon has applied
+independently of the client under test, for example:
+
+| Command | Shows |
+| --- | --- |
+| `version` | the daemon's build version, release name and release type |
+| `status` (OSD) | `newest_map` and `oldest_map`: the OSDMap epochs the OSD holds, as JSON strings |
+| `mon_status` (MON) | the MON's own name, rank, state and monmap, including `auth_epoch` on Tentacle |
+| `config get <option>` | the value the running daemon uses, after local files and the central database |
+| `perf dump` | the daemon's performance counters |
+
+```golang
+// Wait until osd.0 has applied the OSDMap epoch the cluster reports.
+out, err := cluster.AdminSocket(ctx, "osd.0", "status")
+var status struct {
+	NewestMap string `json:"newest_map"`
+}
+err = json.Unmarshal(out, &status)
+```
+
+Every MON, MGR, OSD and control container shares one run directory, a Docker
+volume mounted at `/var/run/ceph`, and the command runs in the control
+container. It therefore works with OSD role images that have no `ceph` CLI. The
+volume belongs to the cluster and `Terminate` removes it.
+
+- The daemon must be running. A stopped or removed daemon returns an error. A
+  daemon that has just started can answer before it registers all of its
+  commands (`no valid command found`); poll with a deadline.
+- A paused daemon (see [PauseContainer](#pausecontainer)) accepts the
+  connection but does not answer, so the call waits until the context ends.
+- A nonzero exit returns the command's output together with an error.
+- The call is bounded by the context and by
+  [WithStartupTimeout](#withstartuptimeout), and runs no command for a daemon
+  the cluster does not own. When the context ends first, the call stops its
+  command in the control container before it returns, including a command that
+  Docker has accepted but not yet started, so canceled calls leave no process
+  behind and other calls keep running. An effect that the daemon has already
+  applied stays.
+- MDS and RGW daemons are not included; reach them with `ceph tell` (see
+  [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
 
 ### Container Methods: Diagnostics
 
@@ -2245,9 +3092,107 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
 - `Complete` means that every observation succeeded without truncation, not that
   Ceph is healthy.
 - Observations are not taken at one atomic moment.
-- Known admin and RGW secrets, `RedactValues` and named secret patterns are
-  masked, but redaction is best effort; review arbitrary application logs before
-  sharing a report.
+- A `ceph` artifact holds the query's stdout followed by its stderr. A query
+  that fails or times out keeps the output it produced.
+- When `ctx` ends, every running query is stopped inside the control container
+  before `CollectDiagnostics` returns, so a canceled collection leaves no Ceph
+  CLI behind.
+- Known admin and RGW secrets, every client key the cluster generated (also
+  keys that [ReplaceClientKey](#replaceclientkey) replaced or only attempted),
+  `RedactValues` and named secret patterns are masked, but redaction is best
+  effort; review arbitrary application logs before sharing a report.
+
+#### CollectCrashMetadata
+
+```golang
+func (c *Container) CollectCrashMetadata(ctx context.Context, config ceph.CrashMetadataConfig) (*ceph.CrashMetadataReport, error)
+```
+
+Collects the crash reports that Ceph daemons wrote, for failure analysis. When a
+daemon dies on a fatal signal or a failed assertion, Ceph writes a report
+directory into its crash directory, `ceph.CrashDir` (`/var/lib/ceph/crash`).
+The directory holds a `meta` JSON file with the daemon, version, time,
+assertion and backtrace, a `log` file of recent events, and a `done` marker.
+`CollectCrashMetadata` reads only the `meta` files, of every MON, MGR, OSD, MDS
+and RGW container and of `config.AdditionalContainers`. It is separate from
+`CollectDiagnostics` and is not called automatically.
+
+```golang
+t.Cleanup(func() {
+	if !t.Failed() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	report, err := cluster.CollectCrashMetadata(ctx, ceph.CrashMetadataConfig{})
+	if report != nil {
+		data, _ := json.MarshalIndent(report, "", "  ")
+		t.Logf("Ceph crash metadata:\n%s", data)
+	}
+	if err != nil {
+		t.Log("crash metadata incomplete:", err)
+	}
+})
+```
+
+- The files come through Docker's archive API, so stopped containers work,
+  and so do a partially bootstrapped or terminated cluster. Nothing is started,
+  stopped, reconfigured or executed in the containers, and nothing is extracted
+  to disk. Caller-owned containers are only read.
+- Only regular files named `meta` in a report directory, or in `posted/`, are
+  read. Crash logs, process memory dumps and every other file are skipped and
+  counted in `IgnoredEntries`. Links, paths outside the directory, files over
+  the size limit and files that are not one JSON object are listed in
+  `Omitted` with the reason.
+- Each record keeps the known Ceph crash fields in `Fields`: `crash_id`,
+  `timestamp`, `process_name`, `entity_name`, `ceph_version`, the `utsname_*` and
+  `os_*` fields, `backtrace`, the `assert_*` and `io_error*` fields,
+  `archived` and `stack_sig`. Other fields are named in `OmittedFields` without
+  their values. Strings are redacted like `CollectDiagnostics`, but host names
+  and paths stay; review a report before sharing it.
+- Each `ceph.CrashRecord` has `CrashID`, `Path`, the convenience fields
+  `Entity`, `Process`, `CephVersion` and `Timestamp`, `Done`, which reports
+  Ceph's `done` marker that completes a report, `Posted` for a report in
+  `posted/`, `Fields` and `OmittedFields`. Each `ceph.CrashOmission` has the
+  file's `Path` and the `Reason`.
+
+`ceph.CrashMetadataConfig` fields (zero selects the default):
+
+| Field | Default | Limit | Meaning |
+| --- | --- | --- | --- |
+| `Timeout` | 1 minute | 5 minutes | Whole collection; the caller's deadline also applies. |
+| `OperationTimeout` | 20 seconds | 1 minute | Each container. |
+| `MaxArchiveBytes` | 16 MiB | 256 MiB | Archive bytes read per container, crash logs included. |
+| `MaxEntries` | 4096 | 65536 | Archive entries per container. |
+| `MaxRecordBytes` | 64 KiB | 1 MiB | Each `meta` file. |
+| `MaxRecords` | 64 | 1024 | Records per container; later ones are listed in `Omitted`. |
+| `AdditionalContainers` | none | 64 | Caller-owned containers, such as mirror daemons, to read as well. Each one is read whatever its `Role` and `Name`; the cluster's separate control container, which runs no daemon, is read only when it is listed here. |
+| `RedactValues` | none | 128 values of up to 4096 bytes | Extra secrets to mask. |
+
+Each `ceph.CrashMetadataContainer` in `ceph.CrashMetadataReport.Containers` has
+the container's role, name, ID, image ID and Docker state (`State`,
+`ExitCode`, `OOMKilled`, `StartedAt`, `FinishedAt`), for correlation with the
+records. Its `Outcome` (a `ceph.CrashOutcome`) is one of:
+
+| Outcome | Meaning |
+| --- | --- |
+| `CrashRecordsFound` | The directory was read and held at least one accepted record. |
+| `CrashEntriesRejected` | The directory was read, but every `meta` file was rejected; see `Omitted`. |
+| `CrashDirectoryEmpty` | The directory was read and held no report. This does not prove that the daemon never crashed. |
+| `CrashDirectoryAbsent` | The container has no crash directory. |
+| `CrashContainerUnavailable` | The container was never created, or was removed with its reports. |
+| `CrashReadFailed` | Docker or the container implementation failed, for example after the context ended; see `Error`. |
+| `CrashArchiveIncomplete` | The archive was malformed, cut off or over a limit; `Records` holds what was read before. |
+
+- A failed or incomplete container makes the call return an error, with the
+  report and every other container's records. Save the report before checking
+  the error.
+- `Complete` means that every crash directory was read in full and every
+  `meta` file in it was accepted, or that the directory is absent. It does not
+  mean that every crash in the cluster's history was captured.
+- A container's exit code alone does not tell a crash. A daemon that is PID 1
+  of its container, as in this cluster, exits 1 after Ceph wrote its report,
+  not with the signal's code.
 
 ### Other module functions and types
 
@@ -2298,7 +3243,8 @@ Linux containers, the [WithHostAddress](#withhostaddress) address is not assigne
 on the Docker host, or the test process cannot reach the first MON's advertised
 endpoint. `Run` returns it before creating managers and OSDs; later MON and RGW
 port reservations can also return it. The error message explains the likely
-cause for the detected Docker environment.
+cause for the detected Docker environment. It belongs to
+[ErrEnvironmentUnavailable](#error-categories).
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithHostNetwork())
@@ -2308,6 +3254,119 @@ if errors.Is(err, ceph.ErrHostNetworkUnavailable) {
 }
 if err != nil {
 	t.Fatal(err)
+}
+```
+
+#### Error categories
+
+```golang
+var (
+	ErrInvalidRequest         error
+	ErrUnsupported            error
+	ErrImageCapability        error
+	ErrEnvironmentUnavailable error
+	ErrNativeFailure          error
+)
+```
+
+Every package of the module classifies its failures with these categories, so
+that a test can tell a refused request from a missing feature, image tool or
+engine capability, and from a native command that failed. Match them with
+`errors.Is`; an error joined from several failures can match several.
+
+| Category | Meaning |
+| --- | --- |
+| `ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids, such as a terminated cluster, an unowned container or an override that is already held. |
+| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release. `*OperationError` names the target, its version and the feature. |
+| `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
+| `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
+| `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
+
+Context errors, `ErrNativeCommandIncomplete` and
+`*NativeCommandUnstoppedError` keep their own contracts and belong to no
+category; a call that `ctx` ended is never classified by what it could not
+finish. An error that matches no category is a failed check of the fixture's
+own, such as native output that it could not parse, or a failure whose
+outcome is unknown, such as a container that disappeared after a native
+command was sent to it. Only `ErrInvalidRequest` promises that nothing
+changed. See [Classified errors](guides/errors.md).
+
+```golang
+_, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
+	ceph.WithClientKeyType(ceph.CipherAES256K))
+var unsupported *ceph.OperationError
+if errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported {
+	t.Logf("Ceph %s lacks %s", unsupported.Version, unsupported.Capability)
+}
+```
+
+#### OperationError
+
+```golang
+type OperationError struct {
+	Kind       error
+	Op         string
+	Target     string
+	Version    string
+	Image      string
+	Capability string
+	Err        error
+}
+func (e *OperationError) Error() string
+func (e *OperationError) Is(target error) bool
+func (e *OperationError) Unwrap() error
+```
+
+A classified failure with the details that identify it. `Kind` is one of the
+[error categories](#error-categories), and `Is` matches it. `Op` names the
+operation when the cause's text does not, `Target` the container or cluster,
+such as `control`, `destination cluster` or `zone source`, `Version` the Ceph
+release observed on it, `Image` its immutable image ID, and `Capability` the
+missing feature, such as `ceph-authtool --key-type` or `python3`. Unset fields
+were not known or do not apply. The text is `Op`, the cause, and `Target`,
+`Version` and `Image` in parentheses; it never includes command arguments,
+raw output or credentials. Service packages return it too.
+
+#### NativeFailure
+
+```golang
+type NativeFailure struct {
+	Program  string
+	ExitCode int
+	Errno    string
+	Reason   string
+}
+const MaxNativeFailureReason = 512
+func (f *NativeFailure) Error() string
+func (f *NativeFailure) Is(target error) bool
+```
+
+The status of a module command that ran and exited nonzero, such as one of
+[Ceph](#ceph) or of the rbd and radosgw-admin helpers of the service packages.
+`Program` is the program alone, never its arguments. `Errno` is the error
+code that the tool printed, from the `Error ENOENT:` that starts a line of
+Ceph or the last `(2) No such file or directory` of a line of the other tools,
+which print it after the names of the request; it is empty when the tool
+printed none and is never guessed from the exit code. `Reason` is the
+tool's own explanation, its error output without Ceph's log lines joined with
+`; `, at most `MaxNativeFailureReason` bytes, with
+keys and the secrets that [RedactSecrets](#redactsecrets) recognizes replaced;
+it can name resources of the request, such as a pool. Errors whose text hides
+native output keep a copy without `Reason`.
+
+`errors.Is` matches it with `ErrNativeFailure`, with `fs.ErrNotExist` for
+`ENOENT`, `fs.ErrPermission` for `EACCES` and `EPERM`, and `fs.ErrExist` for
+`EEXIST`. [RunNativeCommand](#runnativecommand) returns a nonzero exit as its
+result instead.
+
+```golang
+_, err := cluster.Ceph(ctx, "osd", "pool", "get", "missing", "size")
+var failure *ceph.NativeFailure
+if errors.As(err, &failure) {
+	t.Logf("%s exited %d with %s: %s", failure.Program, failure.ExitCode, failure.Errno, failure.Reason)
+}
+if !errors.Is(err, fs.ErrNotExist) {
+	t.Fatalf("a missing pool returned %v", err)
 }
 ```
 
@@ -2332,10 +3391,11 @@ type MessengerMode int
 const (
 	MessengerDefault MessengerMode = iota
 	MessengerV2Secure
+	MessengerV2Only
 )
 ```
 
-The bootstrap connection policy for [WithMessengerMode](#withmessengermode).
+The bootstrap protocols and connection policy for [WithMessengerMode](#withmessengermode).
 Unknown values are rejected by `Run`.
 
 #### NetworkPlane
@@ -2373,7 +3433,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `Name() string` | The full entity, for example `client.reader`. |
 | `User() string` | The ID without `client.`, for APIs such as librados `rados_create` and go-ceph `rados.NewConnWithUser`. |
 | `KeyringPath() string` | The keyring path used inside attached containers, `/etc/ceph/ceph.client.<id>.keyring`. |
-| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies. |
+| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ReplaceClientKey](#replaceclientkey) replaced keeps returning its old key. |
 | `String() string`, `GoString() string` | A description that never includes credentials, safe for logs and `%v`/`%#v`. |
 
 #### Restoration handles
@@ -2387,6 +3447,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `ContainerPause` | `ContainerID`; `Resume(ctx) error` | [PauseContainer](#pausecontainer) |
 | `NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [InterruptNetwork](#interruptnetwork) (method or function) |
+| `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
 
 See the [handle contract](#container-methods).
 
@@ -2403,6 +3464,7 @@ See the [handle contract](#container-methods).
 | `PoolUsageSnapshot` | [PoolUsage](#poolusage) |
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [PoolPGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientCapabilities](#clientcapabilities), [UpdateClientCaps](#updateclientcaps) |
+| `ClientOption` | [CreateClient](#createclient), [ReplaceClientKey](#replaceclientkey) |
 | `ConfigSetting` | [TemporaryConfig](#temporaryconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
@@ -2603,6 +3665,83 @@ if err := cluster.WaitForClean(ctx); err != nil {
 
 Add `ceph.WithNoInitialOSDs()` for a MON-only phase; you can add the first
 manager before or after the first OSD.
+
+### Reproduce a minimal legacy placement setup
+
+A client that implements only the oldest CRUSH and placement features can be
+tested against one MemStore OSD, a legacy CRUSH map and a pool with one PG, one
+replica and no `hashpspool` flag. The fixture has no option for a hand-written
+CRUSH map; install it with the native tools, as below. `crushtool` is in the
+official image and the published control images.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithOSDCount(1),
+	ceph.WithPoolDefaults(1, 1),
+	ceph.WithOSDObjectStore(ceph.OSDMemStore),
+	ceph.WithOSDBlockSize(256<<20),
+)
+testcontainers.CleanupContainer(t, cluster)
+if err != nil {
+	t.Fatal(err)
+}
+
+// Keep OSDs from moving themselves into host buckets or setting a device
+// class when they start, so the installed map stays as written.
+for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
+	if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+		t.Fatal(err)
+	}
+}
+const legacyMap = `tunable choose_local_tries 2
+tunable choose_local_fallback_tries 5
+tunable choose_total_tries 19
+tunable chooseleaf_descend_once 0
+tunable chooseleaf_vary_r 0
+tunable chooseleaf_stable 0
+tunable straw_calc_version 0
+device 0 osd.0
+type 0 osd
+type 10 root
+root default {
+    id -1
+    alg straw
+    hash 0
+    item osd.0 weight 1.00000
+}
+rule replicated_rule {
+    id 0
+    type replicated
+    step take default
+    step choose firstn 0 type osd
+    step emit
+}
+`
+control := cluster.ControlContainer()
+if err := control.CopyToContainer(ctx, []byte(legacyMap), "/tmp/crush.txt", 0o644); err != nil {
+	t.Fatal(err)
+}
+if code, _, err := control.Exec(ctx, []string{"crushtool", "-c", "/tmp/crush.txt", "-o", "/tmp/crush.bin"}); err != nil || code != 0 {
+	t.Fatalf("crushtool exited %d: %v", code, err)
+}
+if _, err := cluster.Ceph(ctx, "osd", "setcrushmap", "-i", "/tmp/crush.bin"); err != nil {
+	t.Fatal(err)
+}
+
+pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
+	Name: "legacy", PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true, Application: "rados",
+})
+```
+
+- `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
+  default `osd` failure domain also chooses OSDs directly. To use the map's
+  `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",
+  "create", ...)` instead; such a pool is not one that `RemovePool` removes.
+- The legacy tunables lower the features a client needs to read the CRUSH map.
+  Switching to modern tunables later (`ceph osd crush tunables optimal`) raises
+  them again, which tests a client's refusal of unsupported features.
+- Ceph reports `POOL_NO_REDUNDANCY` for a pool with one replica; `WaitForClean`
+  still passes.
 
 ### Run small OSDs
 
@@ -3007,7 +4146,8 @@ container, or use host mode.
 
 See [CollectDiagnostics](#collectdiagnostics). Add caller-owned clients and
 mirror daemons with `DiagnosticsConfig.AdditionalContainers` and mask
-application secrets with `RedactValues`.
+application secrets with `RedactValues`. For daemons that crashed, also save
+the crash reports with [CollectCrashMetadata](#collectcrashmetadata).
 
 ## Running native commands
 
@@ -3019,6 +4159,7 @@ cluster's containers:
 | Any `ceph` command | `cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "nodelete", "true")` |
 | JSON output | `cluster.Ceph(ctx, "osd", "dump", "--format", "json")` and `json.Unmarshal` |
 | `rados`, `rbd`, `ceph-authtool`, Python clients | `cluster.ControlContainer().Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` |
+| A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
 | Any central option | [TemporaryConfig](#temporaryconfig), so it is restored |
@@ -3044,7 +4185,8 @@ examples.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- Only IPv4 is configured (`ms_bind_ipv6 = false`).
+- IPv4 is the default. [WithAddressFamily](#withaddressfamily) selects IPv6
+  or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
 
@@ -3063,7 +4205,8 @@ examples.
 ### Networking
 
 - In bridge mode, MON `a` is the only Ceph daemon with published ports
-  (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Secure`).
+  (`3300/tcp` and `6789/tcp`, or only `3300/tcp` with `MessengerV2Only` and
+  `MessengerV2Secure`).
   Native RADOS, RBD and CephFS clients must run in a `WithClient` container; a
   host process cannot reach the OSDs. RGW's HTTP endpoint is published and
   reachable from the host (see [rgw](rgw.md)).

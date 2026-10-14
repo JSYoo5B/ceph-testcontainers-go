@@ -31,6 +31,12 @@ type PoolConfig struct {
 	CRUSHRoot   string
 	DeviceClass string
 	ErasureCode *ErasureCodeConfig
+	// NoHashPSPool clears the pool's hashpspool flag. Ceph then computes each
+	// PG's placement seed with the legacy additive formula, the PG number plus
+	// the pool ID, instead of hashing the PG number with the pool ID, as for
+	// pools that predate the flag. It is set right after the pool is created,
+	// before any data is written.
+	NoHashPSPool bool
 }
 
 // ErasureCodeConfig selects data (K) and parity (M) shards on separate failure
@@ -73,7 +79,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if c.Container == nil {
 		return nil, errors.New("ceph control container is unavailable")
@@ -116,7 +122,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 			return nil, fmt.Errorf("decode pool resource names: %w", err)
 		}
 		if slices.Contains(names, check.name) {
-			return nil, fmt.Errorf("pool resource %q already exists", check.name)
+			return nil, invalid(fmt.Errorf("pool resource %q already exists", check.name))
 		}
 	}
 	pg := strconv.Itoa(config.PGNum)
@@ -150,6 +156,9 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		commands = append(commands, size)
 	}
 	commands = append(commands, []string{"osd", "pool", "set", pool.Name, "min_size", strconv.Itoa(config.MinSize)})
+	if config.NoHashPSPool {
+		commands = append(commands, []string{"osd", "pool", "set", pool.Name, "hashpspool", "false", "--yes-i-really-mean-it"})
+	}
 	if config.Application != "" {
 		commands = append(commands, []string{"osd", "pool", "application", "enable", pool.Name, config.Application})
 	}
@@ -204,31 +213,31 @@ var poolResourceName = naming.PoolResource
 
 func normalizePoolConfig(config PoolConfig) (PoolConfig, error) {
 	if len(config.Name) > 128 || !poolResourceName.MatchString(config.Name) {
-		return config, errors.New("pool name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash")
+		return config, invalid(errors.New("pool name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash"))
 	}
 	if config.Application != "" && (len(config.Application) > 128 || !poolResourceName.MatchString(config.Application)) {
-		return config, errors.New("pool application must use letters, digits, underscores, dots or dashes")
+		return config, invalid(errors.New("pool application must use letters, digits, underscores, dots or dashes"))
 	}
 	if config.FailureDomain == "" {
 		config.FailureDomain = "osd"
 	}
 	if config.FailureDomain != "osd" && config.FailureDomain != "host" && config.FailureDomain != "rack" {
-		return config, errors.New("pool failure domain must be osd, host or rack")
+		return config, invalid(errors.New("pool failure domain must be osd, host or rack"))
 	}
 	if config.CRUSHRoot == "" {
 		config.CRUSHRoot = "default"
 	}
 	if len(config.CRUSHRoot) > 128 || !poolResourceName.MatchString(config.CRUSHRoot) {
-		return config, errors.New("pool CRUSH root must use letters, digits, underscores, dots or dashes")
+		return config, invalid(errors.New("pool CRUSH root must use letters, digits, underscores, dots or dashes"))
 	}
 	if config.DeviceClass != "" && (len(config.DeviceClass) > 128 || !poolResourceName.MatchString(config.DeviceClass)) {
-		return config, errors.New("pool device class must use letters, digits, underscores, dots or dashes")
+		return config, invalid(errors.New("pool device class must use letters, digits, underscores, dots or dashes"))
 	}
 	if config.PGNum == 0 {
 		config.PGNum = 8
 	}
 	if config.PGNum < 1 || uint64(config.PGNum) > uint64(^uint32(0)) {
-		return config, errors.New("pool PG count must be a positive 32-bit integer")
+		return config, invalid(errors.New("pool PG count must be a positive 32-bit integer"))
 	}
 	if config.ErasureCode == nil {
 		if config.Replicas == 0 {
@@ -238,31 +247,31 @@ func normalizePoolConfig(config PoolConfig) (PoolConfig, error) {
 			config.MinSize = 1
 		}
 		if config.Replicas < 1 || config.Replicas > 10 {
-			return config, errors.New("pool replicas must be between 1 and 10")
+			return config, invalid(errors.New("pool replicas must be between 1 and 10"))
 		}
 		if config.MinSize < 1 || config.MinSize > config.Replicas {
-			return config, errors.New("replicated pool min size must be between 1 and replicas")
+			return config, invalid(errors.New("replicated pool min size must be between 1 and replicas"))
 		}
 		return config, nil
 	}
 	ec := *config.ErasureCode
 	config.ErasureCode = &ec
 	if config.Replicas != 0 {
-		return config, errors.New("erasure-coded pool cannot set replicas; use K and M")
+		return config, invalid(errors.New("erasure-coded pool cannot set replicas; use K and M"))
 	}
 	// Ceph represents the shard set with 128 entries; bound both terms before
 	// adding them so even an oversized caller value cannot overflow an int.
 	if ec.K < 2 || ec.M < 1 || ec.K > 127 || ec.M > 126 || ec.K+ec.M > 128 {
-		return config, errors.New("erasure code requires K >= 2, M >= 1 and K+M <= 128")
+		return config, invalid(errors.New("erasure code requires K >= 2, M >= 1 and K+M <= 128"))
 	}
 	if config.MinSize == 0 {
 		config.MinSize = ec.K + 1
 	}
 	if config.MinSize < ec.K || config.MinSize > ec.K+ec.M {
-		return config, errors.New("erasure-coded pool min size must be between K and K+M")
+		return config, invalid(errors.New("erasure-coded pool min size must be between K and K+M"))
 	}
 	if (config.Application == "rbd" || config.Application == "cephfs") && !ec.AllowOverwrites {
-		return config, errors.New("RBD and CephFS erasure-coded data pools require AllowOverwrites")
+		return config, invalid(errors.New("RBD and CephFS erasure-coded data pools require AllowOverwrites"))
 	}
 	return config, nil
 }

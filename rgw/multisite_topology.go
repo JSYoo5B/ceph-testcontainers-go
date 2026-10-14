@@ -138,7 +138,7 @@ func prepareRGWTopology(ctx context.Context, image string, config TopologyConfig
 func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 	if len(config.Zonegroups) > 0 {
 		if len(config.Zones) > 0 || config.Zonegroup != "" || config.MetadataMaster != "" {
-			return nil, errors.New("RGW topology must use either Zones or Zonegroups")
+			return nil, invalid(errors.New("RGW topology must use either Zones or Zonegroups"))
 		}
 		groups := slices.Clone(config.Zonegroups)
 		masterGroup := config.MasterZonegroup
@@ -150,7 +150,7 @@ func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 		seen := make(map[string]bool)
 		for _, group := range groups {
 			if !validRGWZoneName(group.Name) || seen[group.Name] || len(group.Zones) == 0 {
-				return nil, errors.New("RGW zonegroups require unique valid names and at least one zone")
+				return nil, invalid(errors.New("RGW zonegroups require unique valid names and at least one zone"))
 			}
 			seen[group.Name] = true
 			ordered := slices.Clone(group.Zones)
@@ -160,14 +160,14 @@ func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 			}
 			index := slices.IndexFunc(ordered, func(zone ZoneConfig) bool { return zone.Name == master })
 			if index < 0 {
-				return nil, errors.New("RGW zonegroup master must name a zone in that group")
+				return nil, invalid(errors.New("RGW zonegroup master must name a zone in that group"))
 			}
 			selected := ordered[index]
 			ordered = slices.Delete(ordered, index, index+1)
 			ordered = append([]ZoneConfig{selected}, ordered...)
 			for i := range ordered {
 				if ordered[i].Zonegroup != "" && ordered[i].Zonegroup != group.Name {
-					return nil, errors.New("RGW zone has conflicting zonegroup")
+					return nil, invalid(errors.New("RGW zone has conflicting zonegroup"))
 				}
 				ordered[i].Zonegroup = group.Name
 			}
@@ -179,29 +179,29 @@ func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 			}
 		}
 		if masterName == "" {
-			return nil, errors.New("RGW master zonegroup must name a configured group")
+			return nil, invalid(errors.New("RGW master zonegroup must name a configured group"))
 		}
 		config.Zones, config.MetadataMaster = zones, masterName
 	} else {
 		if config.MasterZonegroup != "" {
-			return nil, errors.New("MasterZonegroup requires Zonegroups")
+			return nil, invalid(errors.New("MasterZonegroup requires Zonegroups"))
 		}
 		if config.Zonegroup == "" {
 			config.Zonegroup = "us-east-1"
 		}
 		if !validRGWZoneName(config.Zonegroup) {
-			return nil, errors.New("invalid RGW zonegroup name")
+			return nil, invalid(errors.New("invalid RGW zonegroup name"))
 		}
 		config.Zones = slices.Clone(config.Zones)
 		for i := range config.Zones {
 			if config.Zones[i].Zonegroup != "" && config.Zones[i].Zonegroup != config.Zonegroup {
-				return nil, errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups")
+				return nil, invalid(errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups"))
 			}
 			config.Zones[i].Zonegroup = config.Zonegroup
 		}
 	}
 	if len(config.Zones) < 2 {
-		return nil, errors.New("RGW multisite topology requires at least two zones")
+		return nil, invalid(errors.New("RGW multisite topology requires at least two zones"))
 	}
 	zones := slices.Clone(config.Zones)
 	master := config.MetadataMaster
@@ -211,19 +211,19 @@ func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 	masterIndex := -1
 	for i, zone := range zones {
 		if !validRGWZoneName(zone.Name) {
-			return nil, errors.New("invalid RGW zone name")
+			return nil, invalid(errors.New("invalid RGW zone name"))
 		}
 		if zone.Name == master {
 			masterIndex = i
 		}
 		for j := range i {
 			if zones[j].Name == zone.Name {
-				return nil, fmt.Errorf("duplicate RGW zone %s", zone.Name)
+				return nil, invalid(fmt.Errorf("duplicate RGW zone %s", zone.Name))
 			}
 		}
 	}
 	if masterIndex < 0 {
-		return nil, errors.New("RGW metadata master must name a configured zone")
+		return nil, invalid(errors.New("RGW metadata master must name a configured zone"))
 	}
 	// Move the initial master to the front without reordering the other sites.
 	selected := zones[masterIndex]
@@ -381,7 +381,7 @@ func (f *Multisite) addZone(ctx context.Context, image string, config ZoneConfig
 	for _, group := range period.PeriodMap.Zonegroups {
 		for _, zone := range group.Zones {
 			if zone.Name == config.Name {
-				return nil, fmt.Errorf("RGW zone %s already exists in the committed period", config.Name)
+				return nil, invalid(fmt.Errorf("RGW zone %s already exists in the committed period", config.Name))
 			}
 		}
 	}

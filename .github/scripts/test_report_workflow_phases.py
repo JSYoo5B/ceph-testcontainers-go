@@ -157,6 +157,20 @@ class WorkflowPhaseMainTests(unittest.TestCase):
         self.assertIn("::error title=Recovery / Compilation::Compilation failure", output.getvalue())
         self.assertNotIn("Native assertions", output.getvalue())
 
+    def test_module_preparation_failure_is_its_own_phase_before_compilation(self):
+        values = environment(SCENARIO_MODULES_OUTCOME="failure", SCENARIO_COMPILE_OUTCOME="skipped",
+                             SCENARIO_DOCKER_OUTCOME="skipped", SCENARIO_IMAGES_OUTCOME="skipped",
+                             SCENARIO_NATIVE_OUTCOME="skipped", SCENARIO_CLEANUP_OUTCOME="skipped")
+        with temporary_working_directory() as root, patch.dict(os.environ, values, clear=True), \
+                patch("sys.stdout", new=io.StringIO()) as output:
+            self.assertEqual(reporter.main(), 0)
+            receipt = json.loads((root / "artifacts/scenario/phases.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["failed_phases"], ["modules"])
+        self.assertEqual([phase["phase"] for phase in receipt["phases"]][:2], ["modules", "compile"])
+        self.assertEqual(phase(receipt, "compile")["display"], "skipped")
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertIn("::error title=Recovery / Go module preparation::Go module preparation failure", output.getvalue())
+
     def test_main_emits_cancelled_warning_and_does_not_require_summary_file(self):
         values = environment(SCENARIO_NATIVE_OUTCOME="cancelled", SCENARIO_CLEANUP_OUTCOME="cancelled")
         with temporary_working_directory() as root, patch.dict(os.environ, values, clear=True), \

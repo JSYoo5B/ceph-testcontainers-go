@@ -34,7 +34,7 @@ Please run the following command to add the CephFS module to your Go dependencie
 go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
 ```
 
-The module needs Go 1.25 or later and a Docker engine that runs Linux
+The module needs Go 1.26 or later and a Docker engine that runs Linux
 containers.
 
 ## Usage example
@@ -1418,6 +1418,24 @@ joins (it logs `'DirectoryState' object is not subscriptable`). Call
 `RebalanceDirectories` after `AddDaemon` when the test needs the new daemon to
 take work. Failover from a dead daemon to a survivor works without it.
 
+It removes one path at a time, and only while no tracked directory has an
+assignment change in flight: `fs snapshot mirror dirmap` reports each as
+`mapped`, or as `stalled` while no daemon runs. The MGR's mirroring module
+holds its policy lock while a removal waits for a RADOS write, and the
+acknowledgement of an earlier release, which needs that lock, runs on the same
+librados callback strand as the write's completion. Removals sent back to back
+can therefore hang the module for good: with Ceph 20.2.4 and 19.2.5,
+`fs snapshot mirror remove`, `ls`, `dirmap` and `show distribution` for the
+filesystem stop answering until the active MGR restarts, for example after
+`ceph mgr fail`.
+
+This ordering closes the window that the rebalance's own removals would open.
+It cannot fence what happens outside the fixture while a removal waits: a
+mirror daemon that joins, restarts or times out, or another client that changes
+directories at the same time, can still trigger the same hang. `RemoveDirectory` and
+`BeginDirectoryRemoval` do not wait for an idle policy, so when you remove
+directories yourself, wait until the others report `mapped` first.
+
 ### Mirror Methods: daemons
 
 #### Daemons
@@ -2682,6 +2700,11 @@ resources at the same time. More escape hatches are listed in
 - On Ceph 20.2.4 the MGR does not redistribute directories when a daemon joins;
   call `RebalanceDirectories`. Multiple mirror daemons are marked as untested
   in Ceph's documentation.
+- The MGR's mirroring module can hang for good when a directory is removed
+  while another directory's assignment change is in flight or a mirror daemon
+  joins or leaves. `RebalanceDirectories` waits for an idle policy before each
+  removal; `RemoveDirectory` and `BeginDirectoryRemoval` do not. Recover with
+  `ceph mgr fail`; see [RebalanceDirectories](#rebalancedirectories).
 - Native mirroring is not guaranteed to reproduce `user.*` extended attributes;
   compare them separately if they matter.
 - `WaitSnapshotSynced` waits for one exact snapshot and times out if a newer one

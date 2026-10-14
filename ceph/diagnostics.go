@@ -2,12 +2,12 @@ package ceph
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -17,11 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	dockerclient "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // DiagnosticsConfig bounds a read-only collection. Zero fields select a one
@@ -140,16 +140,16 @@ func normalizeDiagnosticsConfig(config DiagnosticsConfig) (DiagnosticsConfig, er
 		config.MaxOutputBytes < 1 || config.MaxOutputBytes > 1<<20 || config.LogTail < 1 || config.LogTail > 10000 ||
 		config.Concurrency < 1 || config.Concurrency > 8 || config.MaxContainers < 1 || config.MaxContainers > 128 ||
 		len(config.AdditionalContainers) > 64 || len(config.RedactValues) > 128 {
-		return config, errors.New("invalid diagnostics limits")
+		return config, invalid(errors.New("invalid diagnostics limits"))
 	}
 	for _, target := range config.AdditionalContainers {
 		if len(target.Role) > 64 || len(target.Name) > 128 || strings.ContainsAny(target.Role+target.Name, "\x00\r\n") {
-			return config, errors.New("invalid diagnostics container description")
+			return config, invalid(errors.New("invalid diagnostics container description"))
 		}
 	}
 	for _, value := range config.RedactValues {
 		if len(value) > 4096 {
-			return config, errors.New("diagnostics redaction value exceeds 4096 bytes")
+			return config, invalid(errors.New("diagnostics redaction value exceeds 4096 bytes"))
 		}
 	}
 	return config, nil
@@ -157,9 +157,12 @@ func normalizeDiagnosticsConfig(config DiagnosticsConfig) (DiagnosticsConfig, er
 
 type diagnosticNetwork struct{ id, name string }
 type diagnosticsSnapshot struct {
-	containers          []DiagnosticsContainer
-	networks            []diagnosticNetwork
-	control             testcontainers.Container
+	containers []DiagnosticsContainer
+	networks   []diagnosticNetwork
+	control    testcontainers.Container
+	// controlPlane is the separate control container that the snapshot
+	// added itself, if the cluster has one.
+	controlPlane        testcontainers.Container
 	hostNetwork, closed bool
 	publicAddress       string
 	secrets             []string
@@ -177,6 +180,19 @@ func diagnosticContainerHandle(ctr testcontainers.Container) testcontainers.Cont
 		}
 	}
 	return ctr
+}
+
+// sameContainer reports whether a and b are the same container: by ID, or for
+// containers without one, by the same pointer.
+func sameContainer(a, b testcontainers.Container) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if id := b.GetContainerID(); id != "" {
+		return a.GetContainerID() == id
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	return va.Type() == vb.Type() && va.Kind() == reflect.Pointer && va.Pointer() == vb.Pointer()
 }
 
 func diagnosticLock(ctx context.Context, try func() bool) error {
@@ -242,6 +258,9 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	for _, state := range extensionsWith[serviceSecrets](c) {
 		snapshot.secrets = append(snapshot.secrets, state.Secrets()...)
 	}
+	// Every client key the module generated, including replaced, attempted
+	// and revoked ones.
+	snapshot.secrets = append(snapshot.secrets, slices.Sorted(maps.Keys(c.clientSecrets))...)
 	for _, nw := range []*testcontainers.DockerNetwork{c.network, c.clusterNetwork} {
 		if nw != nil {
 			snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
@@ -253,6 +272,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	}
 	if c.controlPlane != nil {
 		snapshot.control = diagnosticContainerHandle(c.controlPlane)
+		snapshot.controlPlane = snapshot.control
 		add("control", "cli", snapshot.control)
 	}
 	c.controlMu.RUnlock()
@@ -570,45 +590,12 @@ var diagnosticCephQueries = []struct {
 	{"fsmap", []string{"fs", "dump", "--format", "json"}},
 }
 
-// Bound output inside the container: Testcontainers Exec buffers its stream
-// before returning. A host LimitReader alone would not bound that allocation.
-// Kill only this newly spawned read-only CLI process group at the deadline.
-// Keep stderr on its own pipe: Ceph makes FIFO stderr nonblocking, which would
-// also change stdout when both descriptors share the same open file description.
-const diagnosticCommandScript = `import base64,json,os,select,signal,subprocess,sys,time
-limit=int(sys.argv[1]); deadline=time.monotonic()+float(sys.argv[2]); output=bytearray(); truncated=False; timed_out=False
-p=subprocess.Popen(sys.argv[3:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-streams=[p.stdout,p.stderr]
-def kill_owned_group():
- try: os.killpg(p.pid,signal.SIGKILL)
- except ProcessLookupError: pass
-try:
- while streams:
-  remaining=deadline-time.monotonic()
-  if remaining<=0:
-   timed_out=True
-   kill_owned_group()
-   break
-  for stream in select.select(streams,[],[],min(remaining,0.1))[0]:
-   data=os.read(stream.fileno(),32768)
-   if not data:
-    streams.remove(stream)
-    continue
-   room=max(0,limit-len(output)); output.extend(data[:room]); truncated=truncated or len(data)>room
- code=p.wait(timeout=max(0.01,deadline-time.monotonic()))
-except subprocess.TimeoutExpired:
- timed_out=True
- kill_owned_group()
- code=p.wait()
-finally:
- if p.poll() is None:
-  kill_owned_group()
-  p.wait()
- p.stdout.close()
- p.stderr.close()
-print(json.dumps({'output':base64.b64encode(output).decode(),'exit_code':code,'timed_out':timed_out,'truncated':truncated}))
-`
-
+// diagnosticCephCommand runs one read-only Ceph query under the supervisor,
+// which bounds its output inside the container (Testcontainers Exec buffers
+// the whole stream) and kills only its process group at 75% of ctx's time.
+// Stdout precedes stderr in the output, which is clipped to limit. A timed-out
+// or failed query keeps the output it produced. A canceled query leaves no
+// process behind.
 func diagnosticCephCommand(ctx context.Context, control testcontainers.Container, args []string, limit int) (string, bool, error) {
 	if control == nil {
 		return "", false, errors.New("Ceph control container was not created")
@@ -617,50 +604,30 @@ func diagnosticCephCommand(ctx context.Context, control testcontainers.Container
 	if !ok {
 		return "", false, errors.New("diagnostic command requires a deadline")
 	}
-	seconds := time.Until(deadline).Seconds() * 0.75
-	if seconds <= 0 {
+	budget := time.Until(deadline) * 3 / 4
+	if budget <= 0 {
 		return "", false, ctx.Err()
 	}
-	argv := []string{"python3", "-c", diagnosticCommandScript, strconv.Itoa(limit), strconv.FormatFloat(seconds, 'f', 6, 64), "ceph", "--connect-timeout", "2"}
-	argv = append(argv, args...)
-	code, reader, err := control.Exec(ctx, argv, tcexec.Multiplexed())
+	report, err := supervised.Run(ctx, control, "diagnostic", budget, limit, limit,
+		append([]string{"ceph", "--connect-timeout", "2"}, args...)...)
 	if err != nil {
 		return "", false, err
 	}
-	if reader == nil {
-		return "", false, errors.New("diagnostic command returned no output")
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, int64(limit)*2+4096))
-	if err != nil {
-		return "", false, err
-	}
-	if code != 0 {
-		return "", false, fmt.Errorf("diagnostic supervisor exited %d", code)
-	}
-	var result struct {
-		Output    *string `json:"output"`
-		ExitCode  *int    `json:"exit_code"`
-		TimedOut  *bool   `json:"timed_out"`
-		Truncated *bool   `json:"truncated"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil || result.Output == nil || result.ExitCode == nil || result.TimedOut == nil || result.Truncated == nil {
-		return "", false, errors.New("invalid diagnostic supervisor result")
-	}
-	output, err := base64.StdEncoding.DecodeString(*result.Output)
-	if err != nil {
-		return "", false, errors.New("invalid diagnostic supervisor output")
-	}
+	output := append(report.Stdout, report.Stderr...)
+	truncated := report.StdoutTruncated || report.StderrTruncated
 	if len(output) > limit {
-		output = output[:limit]
-		*result.Truncated = true
+		output, truncated = output[:limit], true
 	}
-	if *result.TimedOut {
-		return string(output), *result.Truncated, context.DeadlineExceeded
+	if report.TimedOut {
+		return string(output), truncated, context.DeadlineExceeded
 	}
-	if *result.ExitCode != 0 {
-		return string(output), *result.Truncated, fmt.Errorf("Ceph diagnostic command exited %d", *result.ExitCode)
+	if report.ExitCode != 0 {
+		// The output is the artifact; the error repeats none of it.
+		failure := nativeFailure("ceph", report.ExitCode, nil, report.Stderr)
+		failure.Reason = ""
+		return string(output), truncated, fmt.Errorf("Ceph diagnostic command: %w", failure)
 	}
-	return string(output), *result.Truncated, nil
+	return string(output), truncated, nil
 }
 
 var diagnosticKeyringPattern = regexp.MustCompile(`(?m)^\s*key\s*=\s*(\S+)`)
@@ -668,17 +635,29 @@ var diagnosticSecretPattern = regexp.MustCompile(`(?i)((?:secret_key|access_key|
 var diagnosticBearerPattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
 var diagnosticPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
 
+// diagnosticsRedactor masks values and recognized secrets. Values are
+// replaced in one pass, longest first, so that a replacement is never
+// rewritten again and the output grows at most linearly.
 func diagnosticsRedactor(values []string) func(string) string {
-	values = slices.Clone(values)
-	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
-	return func(data string) string {
-		for _, value := range values {
-			if value != "" {
-				data = strings.ReplaceAll(data, value, "[REDACTED]")
-			}
+	values = slices.DeleteFunc(slices.Clone(values), func(value string) bool { return value == "" })
+	slices.SortFunc(values, func(a, b string) int {
+		if len(a) != len(b) {
+			return len(b) - len(a)
 		}
+		return strings.Compare(a, b)
+	})
+	values = slices.Compact(values)
+	pairs := make([]string, 0, 2*len(values))
+	for _, value := range values {
+		pairs = append(pairs, value, "[REDACTED]")
+	}
+	replacer := strings.NewReplacer(pairs...)
+	return func(data string) string {
+		data = replacer.Replace(data)
 		data = diagnosticPrivateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
-		data = diagnosticSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
-		return diagnosticBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		// Bearer tokens first: the secret pattern takes only the word after
+		// "Authorization:", which would leave the token behind it.
+		data = diagnosticBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
+		return diagnosticSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
 	}
 }

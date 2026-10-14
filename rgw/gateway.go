@@ -59,14 +59,14 @@ func removeGateway(ctx context.Context, c *ceph.Container, name string) error {
 	}
 	defer servicehook.Unlock(c)
 	if servicehook.Closed(c) {
-		return errors.New("ceph cluster is terminated")
+		return invalid(errors.New("ceph cluster is terminated"))
 	}
 	if name == "" {
 		name = "default"
 	}
 	gateway, ok := gateways(c).byName[name]
 	if !ok || gateway.Container == nil {
-		return fmt.Errorf("RGW gateway %q is not owned by this cluster", name)
+		return invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
@@ -144,14 +144,14 @@ func normalizeRGWConfig(config Config) (Config, error) {
 		config.Name = "default"
 	}
 	if !naming.DaemonName.MatchString(config.Name) {
-		return Config{}, errors.New("RGW name must use letters, digits, dots, underscores or hyphens")
+		return Config{}, invalid(errors.New("RGW name must use letters, digits, dots, underscores or hyphens"))
 	}
 	if config.Region == "" {
 		config.Region = "us-east-1"
 	}
 	for _, value := range []string{config.Realm, config.Zonegroup, config.Zone, config.Region} {
 		if strings.TrimSpace(value) != value || strings.HasPrefix(value, "-") || strings.IndexFunc(value, unicode.IsControl) != -1 {
-			return Config{}, errors.New("invalid RGW realm, zonegroup, zone or region")
+			return Config{}, invalid(errors.New("invalid RGW realm, zonegroup, zone or region"))
 		}
 	}
 	if config.TLS != nil {

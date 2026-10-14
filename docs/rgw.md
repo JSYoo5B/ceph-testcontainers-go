@@ -107,6 +107,45 @@ func TestUploadAndDownload(t *testing.T) {
 }
 ```
 
+### The smallest S3 fixture
+
+For tests that only need an S3 endpoint, keep one daemon of each kind and
+single-copy pools:
+
+```golang
+cluster, err := rgw.Run(ctx, ceph.DefaultImage,
+	ceph.WithMonitorCount(1),
+	ceph.WithManagerCount(1),
+	ceph.WithOSDCount(1),
+	ceph.WithPoolDefaults(1, 1),
+)
+testcontainers.CleanupContainer(t, cluster)
+if err != nil {
+	t.Fatal(err)
+}
+gateway := cluster.Gateways()[0]
+endpoint, err := gateway.S3Endpoint(ctx)
+// Use gateway.AccessKey and gateway.SecretKey with a path-style S3 client,
+// as in the example above. Keep the keys out of test logs.
+```
+
+This runs four containers: the MON, which also runs the Ceph CLIs, the MGR, the
+OSD and the gateway. Every pool, including the ones the gateway creates, has
+size 1 and min_size 1. With cached images on Docker Desktop (arm64), `Run`
+returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
+
+- Each daemon keeps its own container, so `Stop`, `Start` and `PauseContainer`
+  on a handle still act on one daemon only.
+- With one OSD and one copy, nothing can recover from an OSD failure. Tests of
+  OSD faults, recovery or separate traffic planes need the default two OSDs or
+  more.
+- For role images, add `ceph.WithOSDImage` and `rgw.WithImage`, as described
+  under [Image](#image).
+
+`TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
+signed bucket create, a binary PUT and GET, deletes, and a 404 after the
+delete.
+
 ## Module Reference
 
 ### Run function
@@ -351,8 +390,11 @@ output. It is the escape hatch for anything without a typed method.
 - Successful output can contain secret keys (for example `user info`). Do not
   log it.
 - On failure the error does not include the native output, because that output
-  can contain keys. To see native error text, run the same command with
-  `gateway.Exec` (see [Running native commands](#running-native-commands)).
+  can contain keys. It keeps a `*ceph.NativeFailure` with the exit code and
+  errno but no reason, so `errors.Is(err, fs.ErrNotExist)` works. To see
+  native error text, run the same command with `gateway.Exec` (see
+  [Running native commands](#running-native-commands)). Refused arguments are
+  `ceph.ErrInvalidRequest`.
 - Calls are serialized with other operations on the same cluster and bounded by
   the cluster startup timeout.
 - The gateway must still be running and owned by the cluster. After `Remove`,
@@ -957,7 +999,9 @@ clients use each cluster's control image unless `config.ControlImage` is set.
 
 It creates one ordinary S3 test user on the master. Both gateways expose its
 keys in `AccessKey` and `SecretKey`, and their `Region` is the zonegroup name.
-Setup is bounded by six minutes in addition to `ctx`.
+Setup is bounded by six minutes in addition to `ctx`. Before writing objects
+into a new bucket, wait for its metadata in both zones (see
+[`WaitSyncReady`](#waitsyncready)).
 
 ```golang
 source, err := ceph.Run(ctx, ceph.DefaultImage)
@@ -1248,6 +1292,24 @@ client.
 if _, err := ms.WaitSyncReady(ctx, "west", "east"); err != nil {
 	t.Fatal(err)
 }
+```
+
+Wait for metadata in every zone after you create a bucket and before you
+write objects into it. RGW can otherwise lose those objects in another zone,
+as seen with Tentacle 20.2.4: that zone's data sync stores the new bucket's
+metadata itself, a second data sync shard may sync the bucket while its index
+does not exist yet, and RGW takes the failed index updates for deleted
+objects. The zone then reports that it is caught up, and the objects are
+missing until they change again.
+
+```golang
+// Create the bucket through the S3 client, then:
+for _, zone := range ms.Zones() {
+	if _, err := ms.WaitSyncReady(ctx, zone.Name); err != nil {
+		t.Fatal(err)
+	}
+}
+// Write objects into the bucket.
 ```
 
 ### Multisite Methods: Sync policy
@@ -2898,7 +2960,7 @@ differences; `cluster.CephVersion()` reports the release of the control image.
 | Area | Tentacle | Squid |
 | --- | --- | --- |
 | System-mode sync pipes | The stored pipe has no `user` parameter. | RGW stores `"user": ""`. The fixture expects it when it compares readbacks; it matters only when you read `sync group get` output yourself. |
-| Account root user mode | A user-mode pipe with an account root user replicates between buckets of that account. | Squid resolves no source for such a pipe and replicates nothing. `CreateSyncPipe` refuses it before any change when any zone runs Ceph 19 ("needs Ceph 20 or later"). User mode with ordinary users works. |
+| Account root user mode | A user-mode pipe with an account root user replicates between buckets of that account. | Squid resolves no source for such a pipe and replicates nothing. `CreateSyncPipe` refuses it before any change when any zone runs Ceph 19, with `ceph.ErrUnsupported`; the `*ceph.OperationError` names the zone and its `Version`. User mode with ordinary users works. |
 | Bucket sync status | `bucket sync status --format json` prints JSON. | Squid ignores `--format json` and prints text. `BucketSyncStatus` and `WaitBucketSyncReady` parse the text into the same structure and report unknown lines as errors. Raw `Admin` output is text. |
 | Missing role lookup | `role get` for a missing role exits with status 2 and prints nothing. | Also exits with status 2, but prints one ENOENT log line. |
 

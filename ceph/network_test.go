@@ -20,6 +20,26 @@ func TestSeparateClusterNetworkRejectsHostBeforeCreation(t *testing.T) {
 	}
 }
 
+func TestFamilySubnetSelectsThePlaneOfTheAddressFamily(t *testing.T) {
+	ipv4, ipv6 := netip.MustParsePrefix("172.20.0.0/16"), netip.MustParsePrefix("fd5e:1c4f:9a7b::/64")
+	dualStack := []dockernetwork.IPAMConfig{{Subnet: ipv4}, {Subnet: ipv6}}
+	for family, want := range map[AddressFamily]netip.Prefix{AddressIPv4: ipv4, AddressIPv6: ipv6} {
+		if got, err := familySubnet(dualStack, family); err != nil || got != want {
+			t.Errorf("%s: %v %v, want %v", family, got, err, want)
+		}
+	}
+	// Docker lists the IPv6 configuration first on some engines.
+	if got, err := familySubnet([]dockernetwork.IPAMConfig{{Subnet: ipv6}, {Subnet: ipv4}}, AddressIPv4); err != nil || got != ipv4 {
+		t.Errorf("IPv4 after IPv6: %v %v", got, err)
+	}
+	if _, err := familySubnet([]dockernetwork.IPAMConfig{{Subnet: ipv4}}, AddressIPv6); err == nil {
+		t.Error("an IPv4-only bridge gave an IPv6 subnet")
+	}
+	if _, err := familySubnet([]dockernetwork.IPAMConfig{{Subnet: netip.MustParsePrefix("::ffff:172.20.0.0/112")}}, AddressIPv6); err == nil {
+		t.Error("an IPv4-mapped prefix was taken for an IPv6 subnet")
+	}
+}
+
 type linkDockerFake struct {
 	endpoint                         *dockernetwork.EndpointSettings
 	inspectErr, connectErr, closeErr error
@@ -51,6 +71,7 @@ func (d *linkDockerFake) NetworkConnect(_ context.Context, _ string, opts mobycl
 	if d.connectErr == nil || d.applyOnError {
 		d.endpoint = opts.EndpointConfig.Copy()
 		d.endpoint.IPAddress = opts.EndpointConfig.IPAMConfig.IPv4Address
+		d.endpoint.GlobalIPv6Address = opts.EndpointConfig.IPAMConfig.IPv6Address
 	}
 	return mobycl.NetworkConnectResult{}, d.connectErr
 }
@@ -62,6 +83,41 @@ func newLinkFake() (*NetworkInterruption, *linkDockerFake) {
 	original := &dockernetwork.EndpointSettings{IPAddress: ip, Aliases: []string{"osd-0"}, NetworkID: "old-network-id", EndpointID: "old-endpoint-id", Gateway: netip.MustParseAddr("172.22.0.1"), GwPriority: 5}
 	d := &linkDockerFake{}
 	return &NetworkInterruption{ContainerID: "osd-0", NetworkName: "cluster-network", OriginalAddress: ip, endpoint: restoreEndpoint(original), docker: d}, d
+}
+
+// newDualStackLinkFake is newLinkFake for an endpoint of a dual-stack bridge.
+func newDualStackLinkFake() (*NetworkInterruption, *linkDockerFake) {
+	ip := netip.MustParseAddr("172.22.0.8")
+	original := &dockernetwork.EndpointSettings{IPAddress: ip, GlobalIPv6Address: netip.MustParseAddr("fd62:93fe:2c9e::8"), Aliases: []string{"osd-0"}, GwPriority: 5}
+	d := &linkDockerFake{}
+	return &NetworkInterruption{ContainerID: "osd-0", NetworkName: "cluster-network", OriginalAddress: ip, endpoint: restoreEndpoint(original), docker: d}, d
+}
+
+func TestInterruptedDualStackEndpointRestoresBothAddresses(t *testing.T) {
+	link, d := newDualStackLinkFake()
+	if err := link.Restore(t.Context()); err != nil || !link.complete {
+		t.Fatal(err)
+	}
+	if d.endpoint.IPAddress != link.OriginalAddress || d.endpoint.GlobalIPv6Address != netip.MustParseAddr("fd62:93fe:2c9e::8") {
+		t.Fatalf("restored endpoint lost an advertised address: %+v", d.endpoint)
+	}
+}
+
+// An external reattachment with the original IPv4 address, aliases and
+// gateway priority but another or no IPv6 address is refused, and the handle
+// can restore once the endpoint is back at its original addresses.
+func TestInterruptedDualStackEndpointRefusesChangedIPv6(t *testing.T) {
+	link, d := newDualStackLinkFake()
+	for _, ipv6 := range []netip.Addr{netip.MustParseAddr("fd62:93fe:2c9e::9"), {}} {
+		d.endpoint = &dockernetwork.EndpointSettings{IPAddress: link.OriginalAddress, GlobalIPv6Address: ipv6, Aliases: []string{"osd-0"}, GwPriority: 5}
+		if err := link.Restore(t.Context()); err == nil || link.complete || d.connects != 0 || d.closes != 0 || d.endpoint.GlobalIPv6Address != ipv6 {
+			t.Fatalf("accepted or overwrote an endpoint with IPv6 %v: %v", ipv6, err)
+		}
+	}
+	d.endpoint.GlobalIPv6Address = netip.MustParseAddr("fd62:93fe:2c9e::8")
+	if err := link.Restore(t.Context()); err != nil || !link.complete || d.connects != 0 || d.closes != 1 {
+		t.Fatalf("restoring the original addresses failed: %v", err)
+	}
 }
 
 func TestInterruptedEndpointRestoresAdvertisedIdentity(t *testing.T) {

@@ -11,10 +11,15 @@ or an S3 SDK.
 The modules control Ceph through the CLIs inside the containers. They have no
 go-ceph, librados or cgo dependency and build with `CGO_ENABLED=0`. The Ceph
 daemons need no privileged mode, host disks, LVM or systemd: each OSD stores
-its data in a sparse BlueStore file inside its container.
+its data in a sparse BlueStore file inside its container by default. MemStore
+and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
+
+Documentation for a published release is available at its Git tag. See
+[Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md) for compatibility
+changes from v0.1.0 and checks when adopting the release.
 
 ## Modules
 
@@ -35,7 +40,9 @@ pkg.go.dev.
 
 ## Requirements
 
-- Go 1.25 or later.
+- Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
+  repository selects Go 1.26.9 for its own checks. A consumer must select its
+  own toolchain (see [the upgrade guide](docs/guides/upgrading-to-v0.2.md#go-and-client-platforms)).
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in
   [the host network guide](docs/guides/host-network.md).
@@ -129,10 +136,18 @@ Guides for tasks that span packages:
   connecting native clients from the test process.
 - [Releases and images](docs/guides/releases-and-images.md): supported Ceph
   releases, role images and image requirements.
+- [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md): Go requirements,
+  API and error compatibility, Messenger policies and release limitations.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything
   the typed API does not cover with the Ceph CLIs inside the containers.
+- [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md):
+  the profiles, daemon controls and differences for testing a Messenger client
+  implementation against native daemons.
+- [Classified errors](docs/guides/errors.md): telling a refused request, a
+  feature the release lacks, a missing image tool, an engine limit and a
+  failed native command apart with `errors.Is` and `errors.As`.
 
 For contributors:
 
@@ -140,6 +155,8 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
+- [Preparing a release](docs/contributing/releasing.md): the scope, evidence
+  and publication checks for a candidate.
 
 ## Related projects
 

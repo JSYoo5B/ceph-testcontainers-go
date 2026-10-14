@@ -165,8 +165,9 @@ reach.
    retried for up to five seconds, to allow for Docker Desktop's port
    forwarding.
 
-On failure the error wraps `ceph.ErrHostNetworkUnavailable`; test it with
-`errors.Is`. The message includes a hint for the detected Docker environment.
+On failure the error wraps `ceph.ErrHostNetworkUnavailable`, which belongs to
+`ceph.ErrEnvironmentUnavailable`; test it with `errors.Is`. The message
+includes a hint for the detected Docker environment.
 Common causes:
 
 - Docker Desktop host networking is disabled.
@@ -190,7 +191,7 @@ selection:
 
 | Role | Port selection |
 | --- | --- |
-| MON | The messenger ports (v2, and v1 unless `MessengerV2Secure` is selected) are chosen before the MON starts and written into the configuration and the monmap. |
+| MON | The messenger ports (v2, and v1 unless `MessengerV2Secure` or `MessengerV2Only` is selected) are chosen before the MON starts and written into the configuration and the monmap. |
 | MGR, OSD, MDS | Ceph picks free ports dynamically and registers them in the cluster maps. |
 | RGW | One free port is chosen for HTTP (and one for HTTPS when TLS is configured). It is used as the bind address and returned by `S3Endpoint`. |
 
@@ -293,6 +294,7 @@ Linux processes. When the setting is off, `Run` fails with
   `WithHostNetwork` is rejected too.
 - Docker cannot disconnect a host-network endpoint, so `InterruptNetwork`,
   `InterruptPeerLink` and `InterruptZoneLink` are refused in host mode.
+  `TemporaryNetworkDelay` is refused too: a delay there would delay the host.
   `PauseContainer` and the Ceph messenger options work in both modes (see
   [Fault injection](fault-injection.md)).
 - Every host-network container shares the host's hostname. Identify CephFS

@@ -29,5 +29,5 @@ func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*cep
 			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, m.config.Source.NetworkName())
 		}
 	}
-	return nil, fmt.Errorf("RBD mirror daemon %s is not owned", daemonName)
+	return nil, invalid(fmt.Errorf("RBD mirror daemon %s is not owned", daemonName))
 }

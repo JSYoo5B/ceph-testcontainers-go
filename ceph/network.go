@@ -33,7 +33,10 @@ func (c *Container) ClusterNetworkName() string {
 // HasSeparateClusterNetwork reports whether OSDs have a dedicated second bridge.
 func (c *Container) HasSeparateClusterNetwork() bool { return c.clusterNetwork != nil }
 
-func inspectNetworkSubnets(ctx context.Context, public, cluster string) (string, string, error) {
+// inspectNetworkSubnets returns the subnets of the public and cluster bridges
+// that Ceph's public and cluster networks select: the IPv6 subnets of the
+// dual-stack bridges for AddressIPv6, the IPv4 subnets otherwise.
+func inspectNetworkSubnets(ctx context.Context, public, cluster string, family AddressFamily) (string, string, error) {
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
 		return "", "", err
@@ -45,14 +48,8 @@ func inspectNetworkSubnets(ctx context.Context, public, cluster string) (string,
 			err = fmt.Errorf("inspect Ceph network %s: %w", name, inspectErr)
 			break
 		}
-		for _, config := range inspection.Network.IPAM.Config {
-			if config.Subnet.IsValid() && config.Subnet.Addr().Is4() {
-				subnets[i] = config.Subnet.Masked()
-				break
-			}
-		}
-		if !subnets[i].IsValid() {
-			err = fmt.Errorf("Ceph network %s has no IPv4 subnet", name)
+		if subnets[i], err = familySubnet(inspection.Network.IPAM.Config, family); err != nil {
+			err = fmt.Errorf("Ceph network %s: %w", name, err)
 			break
 		}
 	}
@@ -64,6 +61,21 @@ func inspectNetworkSubnets(ctx context.Context, public, cluster string) (string,
 		return "", "", err
 	}
 	return subnets[0].String(), subnets[1].String(), nil
+}
+
+// familySubnet returns the first subnet of a bridge's IPAM configuration
+// that has the addresses Ceph binds for family.
+func familySubnet(configs []dockernetwork.IPAMConfig, family AddressFamily) (netip.Prefix, error) {
+	ipv6 := family == AddressIPv6
+	for _, config := range configs {
+		if config.Subnet.IsValid() && config.Subnet.Addr().Is6() == ipv6 && !config.Subnet.Addr().Is4In6() {
+			return config.Subnet.Masked(), nil
+		}
+	}
+	if ipv6 {
+		return netip.Prefix{}, errors.New("no IPv6 subnet")
+	}
+	return netip.Prefix{}, errors.New("no IPv4 subnet")
 }
 
 type networkLinkClient interface {
@@ -193,9 +205,11 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 	return link.complete, nil
 }
 
-// Restore reattaches the original endpoint, preserving the IP advertised by
-// Ceph. Removed containers need no restoration. An externally reattached
-// endpoint with a different address is refused rather than overwritten.
+// Restore reattaches the original endpoint, preserving the IPv4 and, on a
+// dual-stack bridge, the IPv6 address advertised by Ceph. Removed containers
+// need no restoration. An externally reattached endpoint with a different
+// address is refused rather than overwritten, and the handle stays
+// retryable.
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
 	if err := lockTopologyMutex(ctx, &link.mu); err != nil {
 		return err
@@ -216,6 +230,9 @@ func (link *NetworkInterruption) Restore(ctx context.Context) error {
 		if current != nil {
 			if current.IPAddress != link.endpoint.IPAMConfig.IPv4Address || current.GwPriority != link.endpoint.GwPriority {
 				return errors.New("interrupted endpoint was externally reattached with a different address or gateway priority")
+			}
+			if original := link.endpoint.IPAMConfig.IPv6Address; original.IsValid() && current.GlobalIPv6Address != original {
+				return fmt.Errorf("interrupted endpoint was externally reattached without its original IPv6 address %s", original)
 			}
 			for _, alias := range link.endpoint.Aliases {
 				if !slices.Contains(current.Aliases, alias) {

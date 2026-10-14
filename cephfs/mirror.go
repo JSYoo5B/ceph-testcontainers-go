@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"io/fs"
 	"path"
 	"slices"
 	"strconv"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -516,7 +517,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 		return nil, err
 	}
 	if mirror.closed {
-		return nil, errors.New("CephFS mirror has been terminated")
+		return nil, invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil || mirror.daemonImage == "" || len(mirror.daemonKeyring) == 0 {
 		return nil, errors.New("CephFS mirror is not initialized")
@@ -526,7 +527,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 	}
 	for _, existing := range mirror.daemons {
 		if existing.DaemonName == daemonName {
-			return nil, fmt.Errorf("CephFS mirror daemon %q already exists", daemonName)
+			return nil, invalid(fmt.Errorf("CephFS mirror daemon %q already exists", daemonName))
 		}
 	}
 	const socket = "/var/run/ceph/cephfs-mirror.asok"
@@ -586,7 +587,7 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	for index, daemon := range mirror.daemons {
 		if daemon.DaemonName != daemonName {
@@ -606,11 +607,11 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 
 func validateCephFSMirrorDaemonName(name string) error {
 	if name == "" || len(name) > 63 {
-		return errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens")
+		return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 	}
 	for _, character := range name {
 		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
-			return errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens")
+			return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 		}
 	}
 	return nil
@@ -654,7 +655,7 @@ func (mirror *Mirror) AttachManagers(ctx context.Context) error {
 // cannot close while a topology reconciliation is using it.
 func (mirror *Mirror) attachManagers(ctx context.Context) error {
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
@@ -925,7 +926,9 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 // Replication of these paths pauses during reconciliation; this is a fixture
 // operation, distinct from native daemon failure recovery. It can be used after
 // AddDaemon; Ceph 20.2.4's native MGR fails to reshuffle already-assigned paths
-// when another live daemon joins.
+// when another live daemon joins. Paths are removed one at a time while the
+// native policy is idle, because removals sent back to back can deadlock the
+// MGR's mirroring module.
 // Every current member must be running; remove stopped members first. Intended
 // membership is retained on partial CLI failure so a fresh-context retry can
 // recover. Caller-added policies and other filesystems are not modified.
@@ -938,7 +941,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	if mirror.closed {
-		return errors.New("CephFS mirror has been terminated")
+		return invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.peerID == "" {
 		return errors.New("CephFS mirror is not initialized")
@@ -967,7 +970,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	if mirror.pendingDirectoryRelease == nil {
 		mirror.pendingDirectoryRelease = make(map[string]bool)
 	}
-	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories,
+	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories, mirror.sourceDirectoryState,
 		func(commandCtx context.Context, operation, directory string) error {
 			mirror.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
@@ -990,14 +993,39 @@ func (mirror *Mirror) sourceDirectories(ctx context.Context) ([]string, error) {
 	return directories, nil
 }
 
+// sourceDirectoryState returns the state of directory in the native mirroring
+// policy, such as "mapped" or "unmapping", or an error matching fs.ErrNotExist
+// once the policy no longer tracks it.
+func (mirror *Mirror) sourceDirectoryState(ctx context.Context, directory string) (string, error) {
+	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+	if err != nil {
+		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
+	}
+	var status struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &status); err != nil || status.State == "" {
+		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
+	}
+	return status.State, nil
+}
+
 // The intent slice is deliberately unchanged throughout partial mutation. A
 // retry first drains whichever owned paths currently exist, then restores all.
-func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list func(context.Context) ([]string, error), mutate func(context.Context, string, string) error, pending map[string]bool, interval time.Duration) error {
-	current, err := list(ctx)
-	if err != nil {
-		return err
-	}
+//
+// The native mirroring module holds its policy lock while a remove waits for
+// a RADOS write, and that write's completion runs on the same librados
+// callback strand as the acknowledgements of directory acquires and releases,
+// which take the policy lock too. An acknowledgement that arrives during the
+// wait blocks the strand, and the remove never returns. So each remove starts
+// only while every tracked directory is idle, and the next waits until the
+// previous directory has left the policy.
+func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list func(context.Context) ([]string, error), state func(context.Context, string) (string, error), mutate func(context.Context, string, string) error, pending map[string]bool, interval time.Duration) error {
 	for _, directory := range intent {
+		current, err := waitCephFSMirrorPolicyIdle(ctx, list, state, interval)
+		if err != nil {
+			return err
+		}
 		if !slices.Contains(current, directory) {
 			continue
 		}
@@ -1012,25 +1040,8 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 				return fmt.Errorf("release owned CephFS mirror directory %q: %w", directory, err)
 			}
 		}
-	}
-	drainCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	for {
-		current, err := list(drainCtx)
-		if err != nil {
+		if err := waitCephFSMirrorDirectoryReleased(ctx, list, directory, interval); err != nil {
 			return err
-		}
-		remaining := false
-		for _, directory := range intent {
-			remaining = remaining || slices.Contains(current, directory)
-		}
-		if !remaining {
-			break
-		}
-		select {
-		case <-drainCtx.Done():
-			return fmt.Errorf("wait for native CephFS mirror directory release: %w", drainCtx.Err())
-		case <-time.After(interval):
 		}
 	}
 	for _, directory := range intent {
@@ -1042,6 +1053,68 @@ func rebalanceCephFSMirrorDirectories(ctx context.Context, intent []string, list
 		}
 	}
 	return nil
+}
+
+// waitCephFSMirrorPolicyIdle waits until no tracked directory has a policy
+// action in flight and returns the tracked directories. A "stalled" directory
+// waits for a daemon with no action pending. A directory that leaves the
+// policy while it is inspected is idle and not returned, so a removal that
+// completes meanwhile is not sent again.
+func waitCephFSMirrorPolicyIdle(ctx context.Context, list func(context.Context) ([]string, error), state func(context.Context, string) (string, error), interval time.Duration) ([]string, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var busy string
+	for {
+		current, err := list(waitCtx)
+		if err != nil {
+			return nil, err
+		}
+		busy = ""
+		tracked := make([]string, 0, len(current))
+		for _, directory := range current {
+			value, err := state(waitCtx, directory)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if value != "mapped" && value != "stalled" {
+				busy = directory + " is " + value
+				break
+			}
+			tracked = append(tracked, directory)
+		}
+		if busy == "" {
+			return tracked, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return nil, fmt.Errorf("wait for idle native CephFS mirror policy (%s): %w", busy, waitCtx.Err())
+		case <-time.After(interval):
+		}
+	}
+}
+
+// waitCephFSMirrorDirectoryReleased waits until the native policy no longer
+// tracks directory: its release was acknowledged and its mapping removed.
+func waitCephFSMirrorDirectoryReleased(ctx context.Context, list func(context.Context) ([]string, error), directory string, interval time.Duration) error {
+	drainCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	for {
+		current, err := list(drainCtx)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(current, directory) {
+			return nil
+		}
+		select {
+		case <-drainCtx.Done():
+			return fmt.Errorf("wait for native CephFS mirror directory %q release: %w", directory, drainCtx.Err())
+		case <-time.After(interval):
+		}
+	}
 }
 
 // PeerIDs lists configured source filesystem peers in UUID order. These are
@@ -1245,7 +1318,7 @@ func matchPendingCephFSPeer(peers map[string]json.RawMessage, expected *cephFSPe
 
 func normalizeMirrorDirectory(directory string) (string, error) {
 	if !path.IsAbs(directory) || strings.ContainsRune(directory, 0) {
-		return "", fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory)
+		return "", invalid(fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory))
 	}
 	return path.Clean(directory), nil
 }
@@ -1258,17 +1331,17 @@ func normalizeCephFSMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
 	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
 		if !validCephFSMirrorFilesystemName(name) {
-			return config, errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore")
+			return config, invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
 		}
 	}
 	if config.DestinationSite == "" {
 		config.DestinationSite = "destination"
 	}
 	if strings.ContainsAny(config.DestinationSite, "@/\x00\r\n\t ") {
-		return config, errors.New("CephFS destination site cannot contain separators or whitespace")
+		return config, invalid(errors.New("CephFS destination site cannot contain separators or whitespace"))
 	}
 	if len(config.Directories) == 0 {
-		return config, errors.New("at least one CephFS mirror directory is required")
+		return config, invalid(errors.New("at least one CephFS mirror directory is required"))
 	}
 	directories := make([]string, 0, len(config.Directories))
 	for _, directory := range config.Directories {
@@ -1279,7 +1352,7 @@ func normalizeCephFSMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
 		}
 		for _, previous := range directories {
 			if directory == previous || directory == "/" || previous == "/" || strings.HasPrefix(directory, previous+"/") || strings.HasPrefix(previous, directory+"/") {
-				return config, fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory)
+				return config, invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
 			}
 		}
 		directories = append(directories, directory)

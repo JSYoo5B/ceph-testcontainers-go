@@ -87,7 +87,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.FilesystemName] == fs && fs.FilesystemName == fs.config.Name && fs.Container == nil && len(fs.mdss) == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
 	servicehook.Unlock(c)
 	if !valid {
-		return errors.New("cold filesystem is unavailable, incomplete or already attempted")
+		return invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))
 	}
 	if err := fs.verifyColdMDS(ctx, cap); err != nil {
 		return err
@@ -200,7 +200,7 @@ func (fs *Filesystem) checkColdMDSAuth(ctx context.Context) error {
 		}
 		seen[*entry.Entity] = true
 		if *entry.Entity == reserved {
-			return errors.New("initial MDS identity already exists")
+			return invalid(errors.New("initial MDS identity already exists"))
 		}
 	}
 	return ctx.Err()

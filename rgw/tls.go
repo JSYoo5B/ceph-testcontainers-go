@@ -46,7 +46,7 @@ func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {
 		return nil, nil
 	}
 	if _, err := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM); err != nil {
-		return nil, errors.New("RGW TLS requires a valid PEM certificate chain and matching unencrypted private key")
+		return nil, invalid(errors.New("RGW TLS requires a valid PEM certificate chain and matching unencrypted private key"))
 	}
 	return &TLSConfig{CertificatePEM: slices.Clone(config.CertificatePEM), PrivateKeyPEM: slices.Clone(config.PrivateKeyPEM)}, nil
 }

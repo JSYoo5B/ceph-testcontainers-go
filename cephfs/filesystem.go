@@ -126,7 +126,7 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	for _, fs := range existing.Filesystems {
 		if fs.MDSMap.Name == config.Name {
-			return nil, fmt.Errorf("cephfs filesystem %q already exists", config.Name)
+			return nil, invalid(fmt.Errorf("cephfs filesystem %q already exists", config.Name))
 		}
 	}
 	fs := &Filesystem{
@@ -148,7 +148,7 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	if _, exists := filesystems(c).byName[config.Name]; exists || servicehook.Closed(c) {
 		servicehook.Unlock(c)
-		return nil, fmt.Errorf("cephfs filesystem %q setup was already attempted or the cluster is terminated", config.Name)
+		return nil, invalid(fmt.Errorf("cephfs filesystem %q setup was already attempted or the cluster is terminated", config.Name))
 	}
 	filesystems(c).byName[config.Name] = fs
 	servicehook.Unlock(c)
@@ -439,7 +439,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 	}
 	if servicehook.Closed(c) || filesystems(c).byName[fs.FilesystemName] != fs {
 		servicehook.Unlock(c)
-		return nil, errors.New("cephfs cluster is terminated or filesystem ownership changed")
+		return nil, invalid(errors.New("cephfs cluster is terminated or filesystem ownership changed"))
 	}
 	id := cephFSMDSID(fs.FilesystemName, fs.nextMDSIndex)
 	opts := slices.Clone(fs.mdsOpts)
@@ -506,6 +506,9 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 	moduleOpts = append(moduleOpts, opts...)
 	var daemon *MDS
 	ctr, err := start(ctx, "mds."+id, servicehook.ServiceImage(c, "mds"), moduleOpts...)
+	// Publish only a real handle: a starter may return a typed nil with its
+	// error when no container was created.
+	ctr = servicehook.DiagnosticHandle(ctr)
 	if ctr != nil {
 		servicehook.Lock(c)
 		daemon = &MDS{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
@@ -542,7 +545,7 @@ func (fs *Filesystem) retireMDS(ctx context.Context, candidate MDSStatus) error 
 		}
 	}
 	if daemon == nil || !candidate.Owned || candidate.GID == 0 || (candidate.State != "up:standby" && candidate.State != "up:standby-replay") {
-		return errors.New("refuse to retire an unowned or non-standby MDS")
+		return invalid(errors.New("refuse to retire an unowned or non-standby MDS"))
 	}
 	grace := 5 * time.Second
 	if err := daemon.Stop(ctx, &grace); err != nil {
@@ -779,7 +782,7 @@ func validatePoolPlacement(ctx context.Context, c *ceph.Container, config Config
 	}
 	defer servicehook.Unlock(c)
 	if servicehook.Closed(c) {
-		return errors.New("ceph cluster is terminated")
+		return invalid(errors.New("ceph cluster is terminated"))
 	}
 	if c.Container == nil {
 		return errors.New("ceph control container is unavailable")
@@ -806,10 +809,10 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 		config.Name = "tc-cephfs"
 	}
 	if len(config.Name) > 110 || !naming.PoolResource.MatchString(config.Name) {
-		return config, errors.New("filesystem name must use letters, digits, underscores, dots or dashes, start with a letter, digit or underscore, and fit generated pool names")
+		return config, invalid(errors.New("filesystem name must use letters, digits, underscores, dots or dashes, start with a letter, digit or underscore, and fit generated pool names"))
 	}
 	if config.NoInitialMDS && (config.ActiveMDS != 0 || config.StandbyMDS != 0 || config.StandbyReplay) {
-		return config, errors.New("NoInitialMDS requires omitted active/standby counts and no standby replay")
+		return config, invalid(errors.New("NoInitialMDS requires omitted active/standby counts and no standby replay"))
 	}
 	if config.ActiveMDS == 0 {
 		config.ActiveMDS = 1
@@ -818,7 +821,7 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 		return config, err
 	}
 	if config.StandbyReplay && config.StandbyMDS == 0 {
-		return config, errors.New("standby replay requires at least one standby MDS")
+		return config, invalid(errors.New("standby replay requires at least one standby MDS"))
 	}
 	if config.MetadataPool.Name == "" {
 		config.MetadataPool.Name = config.Name + "-metadata"
@@ -827,7 +830,7 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 		config.DataPool.Name = config.Name + "-data"
 	}
 	if config.MetadataPool.ErasureCode != nil || config.DataPool.ErasureCode != nil {
-		return config, errors.New("CephFS metadata and default data pools must be replicated; use additional pools for erasure-coded file data")
+		return config, invalid(errors.New("CephFS metadata and default data pools must be replicated; use additional pools for erasure-coded file data"))
 	}
 	config.AdditionalDataPools = slices.Clone(config.AdditionalDataPools)
 	pools := []*ceph.PoolConfig{&config.MetadataPool, &config.DataPool}
@@ -837,7 +840,7 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 	names := make(map[string]bool, len(pools))
 	for _, pool := range pools {
 		if pool.Application != "" && pool.Application != "cephfs" {
-			return config, fmt.Errorf("CephFS pool %q must use application cephfs", pool.Name)
+			return config, invalid(fmt.Errorf("CephFS pool %q must use application cephfs", pool.Name))
 		}
 		pool.Application = "cephfs"
 		resolved, err := servicehook.NormalizePool(*pool)
@@ -846,7 +849,7 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 		}
 		*pool = resolved
 		if names[pool.Name] {
-			return config, fmt.Errorf("CephFS pool name %q is duplicated", pool.Name)
+			return config, invalid(fmt.Errorf("CephFS pool name %q is duplicated", pool.Name))
 		}
 		names[pool.Name] = true
 	}
@@ -856,7 +859,7 @@ func normalizeCephFSConfig(config Config) (Config, error) {
 func validateMDSCounts(active, standby int) error {
 	// Ceph's MAX_MDS is 0x100; standby_count_wanted is a signed 32-bit field.
 	if active < 1 || active > 256 || standby < 0 || uint64(standby) > 1<<31-1 || active > int(^uint(0)>>1)-standby {
-		return errors.New("active MDS count must be 1..256 and standby count 0..2147483647 without overflowing their total")
+		return invalid(errors.New("active MDS count must be 1..256 and standby count 0..2147483647 without overflowing their total"))
 	}
 	return nil
 }

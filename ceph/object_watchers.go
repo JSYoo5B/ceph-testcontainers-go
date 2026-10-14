@@ -59,10 +59,10 @@ func validateRADOSArgument(kind, value string, optional bool) error {
 		if optional {
 			return nil
 		}
-		return fmt.Errorf("RADOS %s name is empty", kind)
+		return invalid(fmt.Errorf("RADOS %s name is empty", kind))
 	}
 	if strings.HasPrefix(value, "-") || len(value) > 1024 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
-		return fmt.Errorf("RADOS %s name must not start with a dash or contain control characters", kind)
+		return invalid(fmt.Errorf("RADOS %s name must not start with a dash or contain control characters", kind))
 	}
 	return nil
 }

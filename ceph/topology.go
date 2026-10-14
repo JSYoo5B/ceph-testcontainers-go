@@ -68,9 +68,10 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, c.WithClient(),
+	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
 		WithIdleEntrypoint(),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
+		c.runMount()...)...)
 	if ctr != nil {
 		c.controlMu.Lock()
 		c.controlPlane = ctr
@@ -153,7 +154,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if (name == "a" && !c.monitorTerminated) || c.monitors[name] != nil {
 		return nil, fmt.Errorf("monitor %s is already owned", name)
@@ -199,7 +200,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	for attempt := range attempts {
 		var lease *hostPortLease
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout)
+			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			// c.mu is already held, so register ownership without re-locking it.
 			if lease != nil {
 				c.portLeases = append(c.portLeases, lease)
@@ -209,10 +210,8 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
-		monEnv := map[string]string{"CEPH_MON_ID": name}
-		if c.settings.messengerMode == MessengerV2Secure {
-			monEnv[messengerV2SecureEnvironment] = "true"
-		}
+		monEnv := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
+		maps.Copy(monEnv, c.settings.messengerEnvironment())
 		opts := []testcontainers.ContainerCustomizer{c.WithClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),
@@ -223,8 +222,14 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			portEnv := c.settings.monitorPortEnvironment(lease.Ports)
 			portEnv["CEPH_PUBLIC_ADDRESS"] = c.PublicAddress()
 			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
+		} else {
+			opts = append(opts, keepMonitorAddress(c.NetworkName()))
 		}
-		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, opts...)
+		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
+			return mon, err
+		}
+		opts = append(opts, c.runMount()...)
+		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -267,14 +272,14 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	mon := c.monitors[name]
 	if name == "a" && !c.monitorTerminated {
 		mon = &MonitorContainer{Container: c.Container, DaemonName: "a"}
 	}
 	if mon == nil {
-		return fmt.Errorf("monitor %s is not owned", name)
+		return invalid(fmt.Errorf("monitor %s is not owned", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -378,7 +383,7 @@ func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	return c.refreshMonitorConfig(ctx)
 }
@@ -482,7 +487,8 @@ func monitorBootstrapAddresses(status QuorumStatus) (string, error) {
 					return "", errors.New("native monmap contains an invalid address nonce")
 				}
 			}
-			address := addr.Type + ":" + endpoint
+			// Ceph prints IPv4-mapped addresses in a form it cannot parse.
+			address := addr.Type + ":" + net.JoinHostPort(cephAddress(ip), port)
 			if seen[address] {
 				return "", errors.New("native monmap contains a duplicate member address")
 			}
@@ -704,7 +710,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	if c.managers[name] != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
@@ -725,7 +731,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	}
 	for _, identity := range identities.AuthDump {
 		if identity.Entity == "mgr."+name {
-			return nil, fmt.Errorf("manager identity mgr.%s already exists", name)
+			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
 		}
 	}
 	status, err := c.ManagerStatus(ctx)
@@ -744,11 +750,15 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 		c.managers = make(map[string]*ManagerContainer)
 	}
 	c.managers[name] = mgr
-	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, c.WithClient(),
+	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
+		return mgr, err
+	}
+	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout)))
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))},
+		c.runMount()...)...)
 	if name == "a" {
 		c.manager = mgr.Container
 	}
@@ -785,11 +795,11 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return errors.New("ceph cluster is terminated")
+		return errClusterTerminated
 	}
 	mgr := c.managers[name]
 	if mgr == nil || !mgr.authOwned {
-		return fmt.Errorf("manager %s is not owned", name)
+		return invalid(fmt.Errorf("manager %s is not owned", name))
 	}
 	if len(c.managers) <= 1 {
 		return errors.New("cannot remove the last manager candidate; add a replacement first")

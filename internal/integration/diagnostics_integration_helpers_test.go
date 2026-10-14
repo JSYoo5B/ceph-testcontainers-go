@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func testClusterDiagnostics(t *testing.T, host bool) {
@@ -431,4 +433,70 @@ try:
     fs.close(fd)
 finally: fs.shutdown()
 print("diagnostics native RADOS/CephFS retained bytes verified")`, phase)
+}
+
+// diagnosticsProcessScript prints the PID and command line of every process
+// whose command line contains the token in argv[1], except itself.
+const diagnosticsProcessScript = `import os,sys
+for name in os.listdir("/proc"):
+ if not name.isdigit() or int(name)==os.getpid(): continue
+ try:
+  with open("/proc/"+name+"/cmdline","rb") as f: argv=f.read().split(b"\0")
+ except OSError: continue
+ if any(sys.argv[1].encode() in a for a in argv): print(name, b" ".join(argv[:2]+argv[-4:]).decode(errors="replace"))
+`
+
+func diagnosticsProcesses(t *testing.T, ctx context.Context, control testcontainers.Container, token string) []string {
+	t.Helper()
+	code, reader, err := control.Exec(ctx, []string{"python3", "-c", diagnosticsProcessScript, token}, tcexec.Multiplexed())
+	if err != nil || code != 0 {
+		t.Fatalf("list control processes: exit %d, %v", code, err)
+	}
+	output, _ := io.ReadAll(reader)
+	return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(output)), "\n", "|"))
+}
+
+// testCanceledDiagnostics freezes the MGR so that the MGR's PG query hangs,
+// cancels the collection while that query runs, and checks that the call
+// returns at once and leaves no diagnostic CLI in the control container.
+func testCanceledDiagnostics(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	pause, err := cluster.PauseContainer(ctx, cluster.ManagerContainer())
+	if pause != nil {
+		defer func() { _ = pause.Resume(context.Background()) }()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := cluster.ControlContainer()
+	callCtx, cancelCall := context.WithCancel(ctx)
+	defer cancelCall()
+	done := make(chan error, 1)
+	go func() {
+		_, err := cluster.CollectDiagnostics(callCtx, ceph.DiagnosticsConfig{Timeout: 2 * time.Minute, OperationTimeout: time.Minute})
+		done <- err
+	}()
+	deadline := time.Now().Add(time.Minute)
+	for len(diagnosticsProcesses(t, ctx, control, "pgs_brief")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the PG query did not start")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	started := time.Now()
+	cancelCall()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled diagnostics returned %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("canceled diagnostics did not return")
+	}
+	if left := diagnosticsProcesses(t, ctx, control, "--connect-timeout"); len(left) != 0 {
+		t.Fatalf("diagnostic commands remain after the call returned: %v", left)
+	}
+	t.Logf("canceled diagnostics returned after %s with no diagnostic command left", time.Since(started).Round(time.Millisecond))
 }

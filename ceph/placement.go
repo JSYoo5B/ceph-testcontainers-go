@@ -35,10 +35,10 @@ func validateCRUSHHierarchy(defaultRoot string, locations []OSDConfig) error {
 			return nil
 		}
 		if crushDeviceName.MatchString(name) {
-			return fmt.Errorf("CRUSH %s %q conflicts with the OSD device namespace", kind, name)
+			return invalid(fmt.Errorf("CRUSH %s %q conflicts with the OSD device namespace", kind, name))
 		}
 		if previous := types[name]; previous != "" && previous != kind {
-			return fmt.Errorf("CRUSH bucket %q cannot be both %s and %s", name, previous, kind)
+			return invalid(fmt.Errorf("CRUSH bucket %q cannot be both %s and %s", name, previous, kind))
 		}
 		types[name] = kind
 		return nil
@@ -62,13 +62,13 @@ func validateCRUSHHierarchy(defaultRoot string, locations []OSDConfig) error {
 		}
 		if location.Rack != "" {
 			if root, exists := rackRoots[location.Rack]; exists && root != location.Root {
-				return fmt.Errorf("CRUSH rack %q already belongs to root %q, cannot move it to %q", location.Rack, root, location.Root)
+				return invalid(fmt.Errorf("CRUSH rack %q already belongs to root %q, cannot move it to %q", location.Rack, root, location.Root))
 			}
 			rackRoots[location.Rack] = location.Root
 		}
 		if location.Host != "" {
 			if previous, exists := hostLocations[location.Host]; exists && (previous.Root != location.Root || previous.Rack != location.Rack) {
-				return fmt.Errorf("CRUSH host %q already belongs to root %q rack %q, cannot change its location", location.Host, previous.Root, previous.Rack)
+				return invalid(fmt.Errorf("CRUSH host %q already belongs to root %q rack %q, cannot change its location", location.Host, previous.Root, previous.Rack))
 			}
 			hostLocations[location.Host] = location
 		}
@@ -180,10 +180,10 @@ func normalizeOSDConfig(config OSDConfig) (OSDConfig, error) {
 		{"host", config.Host}, {"rack", config.Rack}, {"root", config.Root}, {"device class", config.DeviceClass},
 	} {
 		if field.value != "" && (len(field.value) > 128 || !crushLocationName.MatchString(field.value)) {
-			return config, fmt.Errorf("CRUSH %s must use letters, digits, underscores, dots or dashes", field.name)
+			return config, invalid(fmt.Errorf("CRUSH %s must use letters, digits, underscores, dots or dashes", field.name))
 		}
 		if field.name != "device class" && crushDeviceName.MatchString(field.value) {
-			return config, fmt.Errorf("CRUSH %s %q conflicts with the OSD device namespace", field.name, field.value)
+			return config, invalid(fmt.Errorf("CRUSH %s %q conflicts with the OSD device namespace", field.name, field.value))
 		}
 	}
 	return config, nil

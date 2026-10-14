@@ -37,9 +37,27 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 		if cluster != nil {
 			t.Cleanup(func() {
 				if t.Failed() {
-					ctrs := append([]testcontainers.Container{cluster.Container}, cluster.ServiceContainers()...)
+					// The current MONs and MGRs too: after a MON replacement the
+					// first MON is gone, and MGR modules serve mirror commands.
+					ctrs := append([]testcontainers.Container{cluster.Container, cluster.ControlContainer()}, cluster.ServiceContainers()...)
+					for _, monitor := range cluster.Monitors() {
+						if monitor != nil && monitor.Container != nil {
+							ctrs = append(ctrs, monitor.Container)
+						}
+					}
 					ctrs = append(ctrs, osdContainers(cluster)...)
+					ctrs = append(ctrs, cluster.ManagerContainer())
+					for _, mgr := range cluster.Managers() {
+						if mgr != nil && mgr.Container != nil {
+							ctrs = append(ctrs, mgr.Container)
+						}
+					}
+					seen := make(map[string]bool)
 					for _, ctr := range ctrs {
+						if ctr == nil || seen[ctr.GetContainerID()] {
+							continue
+						}
+						seen[ctr.GetContainerID()] = true
 						logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
 						multiClusterLogContainer(t, logCtx, ctr)
 						logCancel()
@@ -120,6 +138,9 @@ func multiClusterLogContainer(t *testing.T, ctx context.Context, ctr testcontain
 	t.Helper()
 	if ctr == nil {
 		return
+	}
+	if state, err := ctr.State(ctx); err == nil && state != nil {
+		t.Logf("container %s state: status=%s exit=%d oom=%t started=%s finished=%s", ctr.GetContainerID(), state.Status, state.ExitCode, state.OOMKilled, state.StartedAt, state.FinishedAt)
 	}
 	logs, err := ctr.Logs(ctx)
 	if err != nil {

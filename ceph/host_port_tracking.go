@@ -9,7 +9,9 @@ import (
 // Called before native allocation, without the topology owner held. A non-nil
 // partial allocator remains owned even when reservation or its context fails.
 func (c *Container) reserveTrackedHostPorts(ctx context.Context, count int) (*hostPortLease, error) {
-	return c.reserveTrackedHostPortsWith(ctx, count, reserveHostPorts)
+	return c.reserveTrackedHostPortsWith(ctx, count, func(ctx context.Context, image, address string, count int, timeout time.Duration) (*hostPortLease, error) {
+		return reserveHostPorts(ctx, image, address, count, timeout, c.ownedLabel())
+	})
 }
 
 // The callback seam is private; production always uses reserveHostPorts. The
@@ -23,7 +25,7 @@ func (c *Container) reserveTrackedHostPortsWith(ctx context.Context, count int, 
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errors.New("ceph cluster is terminated")
+		return nil, errClusterTerminated
 	}
 	lease, err := reserve(ctx, c.settings.controlImage, c.PublicAddress(), count, c.settings.startupTimeout)
 	if lease != nil {

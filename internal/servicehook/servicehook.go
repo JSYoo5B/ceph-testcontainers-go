@@ -62,6 +62,8 @@ type hooks interface {
 	RemovePool(ctx context.Context, c *ceph.Container, name string, skipForeign bool) error
 	PoolMissing(err error) bool
 	CephBefore(c *ceph.Container, major int) bool
+	NativeFailure(program string, code int, stdout, stderr []byte) error
+	ClassifyExec(ctx context.Context, err error) error
 	AuthCommand(ctx context.Context, c *ceph.Container, operation string, args ...string) ([]byte, error)
 	ClusterIdentity(ctx context.Context, c *ceph.Container) (string, bool, error)
 	MonitorAddresses(status ceph.QuorumStatus) (string, error)
@@ -69,6 +71,7 @@ type hooks interface {
 	ClientKeyring(client *ceph.ClientConfig) []byte
 	ClientRevoked(client *ceph.ClientConfig) bool
 	SetClientRevoked(client *ceph.ClientConfig, revoked bool)
+	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 	TestCluster(control testcontainers.Container, config TestConfig) *ceph.Container
 	TestState(c *ceph.Container) TestStateView
 	TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
@@ -217,6 +220,19 @@ func PoolMissing(err error) bool { return get().PoolMissing(err) }
 // CephBefore reports whether the recorded Ceph release is older than major.
 func CephBefore(c *ceph.Container, major int) bool { return get().CephBefore(c, major) }
 
+// NativeFailure describes a command that exited nonzero, as the module's own
+// commands do: a *ceph.NativeFailure read from its error output, or from its
+// standard output when stdout is not nil and it wrote no error output.
+func NativeFailure(program string, code int, stdout, stderr []byte) error {
+	return get().NativeFailure(program, code, stdout, stderr)
+}
+
+// ClassifyExec classifies a failed Docker exec of a native command as the
+// module's own commands do: matching ctx's error when ctx ended, unclassified
+// for a container that is gone or stopped, since the command may have run,
+// and the engine's failure otherwise.
+func ClassifyExec(ctx context.Context, err error) error { return get().ClassifyExec(ctx, err) }
+
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.
 func AuthCommand(ctx context.Context, c *ceph.Container, operation string, args ...string) ([]byte, error) {
@@ -244,6 +260,14 @@ func ClientRevoked(client *ceph.ClientConfig) bool { return get().ClientRevoked(
 // The caller holds the cluster mutex.
 func SetClientRevoked(client *ceph.ClientConfig, revoked bool) {
 	get().SetClientRevoked(client, revoked)
+}
+
+// SettleClient makes sure that no earlier auth command of the module for the
+// client's identity can still change it, and refuses a descriptor whose key
+// was replaced or whose identity has a change that is not resolved. The
+// caller holds the cluster mutex.
+func SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error {
+	return get().SettleClient(ctx, c, client)
 }
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.

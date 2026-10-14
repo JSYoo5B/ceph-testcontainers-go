@@ -225,6 +225,11 @@ func (fs *Filesystem) authorizationClientCaps(ctx context.Context, identity *cep
 	if servicehook.Closed(c) || client == nil || !servicehook.ClientConfirmed(client, c) {
 		return nil, errors.New("subvolume principal must be a confirmed identity created by this cluster")
 	}
+	// A key replacement or capability change that may still apply would
+	// race the subvolume grants.
+	if err := servicehook.SettleClient(ctx, c, client); err != nil {
+		return nil, err
+	}
 	data, err := servicehook.AuthCommand(ctx, c, "inspect owned subvolume principal", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -384,7 +389,7 @@ func (identity *cephFSAuthorizationIdentity) withoutOwnedClauses(caps map[string
 
 func (fs *Filesystem) validateSubvolumeAuthorization(grant *SubvolumeAuthorization) error {
 	if fs == nil || fs.cluster == nil || grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem != fs || !grant.identity.authorizeAttempted {
-		return errors.New("subvolume authorization must be an owned grant attempted by this filesystem")
+		return invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
 	}
 	return nil
 }

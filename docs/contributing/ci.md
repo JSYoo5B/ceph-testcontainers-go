@@ -8,7 +8,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
-| Code checks | `code.yml` | push to `main`, pull request, manual | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage |
+| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
 | Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
 | Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
 | Ceph topology | `ceph-topology.yml` | push to `main`, pull request, manual | The `topology` category on Tentacle 20.2.4 |
@@ -27,6 +27,20 @@ Pushes to branches other than `main` trigger nothing. Pull requests are
 checked through the `pull_request` event (`opened`, `synchronize`,
 `reopened`), so a commit on a PR branch is checked once, not once as a push
 and again as a pull request.
+
+Both workflow files set `GOPROXY=https://proxy.golang.org|direct`. With `|`,
+the go command fetches a module from its origin after any failed proxy
+request, such as a reset HTTP/2 stream; with the default `,` it gives up on
+everything but a 404 or 410, which once failed a whole batch at compilation.
+`go.sum` verifies a module from either source.
+
+The Go jobs share one module cache, keyed by `go.sum`. The `Plan` job of each
+runtime workflow restores it and, when it is missing, downloads every module
+with `tag_scenarios.py modules` and saves it. Runtime jobs start only after
+`Plan`, and Code checks jobs only restore it. `setup-go`'s own cache is off:
+it keeps whatever the first job to finish under a key had, which once was a
+`Plan` job with almost no modules, so every later compile downloaded its
+modules again.
 
 ### Check names
 
@@ -65,9 +79,44 @@ Practical consequences:
 | Race detector | 15 min | `make race` |
 | Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`) and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
+| Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 
-The last job uploads the `code-tag-coverage` artifact with `tag-plan.json` and
-the `code` batch results.
+The tag coverage job uploads the `code-tag-coverage` artifact with
+`tag-plan.json` and the `code` batch results.
+
+### Vulnerability check
+
+`make vulncheck` builds govulncheck v1.9.0 for the host and scans the module
+with `-test` for linux/amd64 with no tags, `all` and
+`all,goceph,native_regression`, and for linux/arm64 and darwin/arm64 with no
+tags. The nested go-ceph probe module needs cgo, so it gets a module scan,
+which checks its required module versions but not its call paths.
+
+govulncheck's JSON mode exits 0 even when it reports vulnerabilities, so
+`.github/scripts/check_vulns.py` decides. For each vulnerability it takes the
+most precise level reported:
+
+- symbol (the code calls a vulnerable function) and package (the code
+  imports a vulnerable package) fail the check;
+- module (only a required module is affected) is listed and passes, for
+  example the unfixed `golang.org/x/crypto/openpgp` advisory GO-2026-5932,
+  whose package this module does not import;
+- a stream without the scanner's config, malformed JSON or an unknown
+  finding fails as a broken scan.
+
+The job runs with the module's minimum Go (`1.26.x`) and the current release
+(`1.27.x`), because the standard library's findings depend on the toolchain,
+and uploads every scan as `vulncheck-go-<version>`. Every `setup-go` step of
+the workflows sets `check-latest: true`, so a runner's cached older patch is
+not used: Go 1.26.8, for example, has eleven standard-library vulnerabilities
+that the check reports and that 1.26.9 fixes. `go.mod` also names
+`toolchain go1.26.9`, so a `go` command of an older 1.26 patch switches to it
+in this repository (with the default `GOTOOLCHAIN=auto`). The `toolchain`
+line does not apply to modules that use this one. A weekly scheduled run
+catches new advisories without a source change; the other Code checks jobs
+skip it. `.github/dependabot.yml` proposes Go module updates daily, with
+Testcontainers for Go and its modules in one group, and GitHub Actions
+updates weekly.
 
 The Python tests include `test_tag_scenarios.py` for the planner and
 `test_scenario_shards.py`, which checks the workflow files themselves: one
@@ -130,7 +179,9 @@ steps in order:
 
 | Step | Phase in summary | What happens |
 | --- | --- | --- |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c`. Nothing runs. |
+| Restore the Go module cache | n/a | Restores the module cache that the `Plan` job saved. |
+| Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. Nothing runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`. Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) runs the batch and applies the pass rules below. |
@@ -140,7 +191,7 @@ steps in order:
 | Identify completed failing tests | n/a | On failure, adds one annotation per failed test or subtest name found in `native.log`. |
 
 The job environment sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
-and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.25.x`. Tentacle workflows use
+and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.26.x`. Tentacle workflows use
 role images for release 20.2.4; the Squid workflows pass release 19.2.5.
 
 ### How a batch passes
@@ -251,11 +302,11 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `compile/compile.log` and `compile/compile-report.json` (compiler output, exit code); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output and outcome); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
-| `plan-<category>` | `tag-plan.json` from the `Plan` job |
+| `plan-<category>` | `tag-plan.json` from the `Plan` job, and `modules/` when it downloaded the modules |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage, and the `code` batch results (Code checks) |
 
 `native/report.json` has these fields of interest:
@@ -274,6 +325,13 @@ workflow and is run locally with `tag_scenarios.py optional`.
 - `command`, `elapsed_seconds`, `exit_code`.
 - `strict_completion`: the checker result for checker batches.
 
+`modules-report.json` and `compile-report.json` record `exit_code`,
+`timed_out`, `timeout_seconds` and `elapsed_seconds`. Their `classification`
+is `prepared` or `compiled`, `modules-failure` or `compile-failure` for a
+nonzero exit, and `modules-timeout` or `compile-timeout` when the bound
+expired. A timed-out command is killed with its whole process group, its
+`exit_code` is `null`, and its log keeps the output written until then.
+
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.
 
@@ -281,7 +339,8 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Failed phase | Look at | Common causes |
 | --- | --- | --- |
-| Compilation | `compile/compile.log` | A test calls a helper defined in a file that only another batch compiles. Run `plan --verify` locally (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). |
+| Go module preparation | `modules/modules.log`, `modules/modules-report.json` | The module proxy and the module's origin did not answer, or `go.sum` lacks an entry. |
+| Compilation | `compile/compile.log`, `compile/compile-report.json` | A test calls a helper defined in a file that only another batch compiles. Run `plan --verify` locally (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). A `compile-timeout` with a complete module cache is the build itself. |
 | Docker baseline | the step log, `runtime-cleanup-<id>-baseline` | Docker did not become ready within 60 seconds. |
 | Published image preparation | `scenario-images-<id>` | A role image for the release is missing from the registry or could not be pulled. |
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait hit its deadline, the batch timeout expired, or a test was skipped. For a Go timeout, the `panic: test timed out` block lists the tests still running and for how long. |

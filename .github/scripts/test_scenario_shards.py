@@ -244,13 +244,32 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotEqual(compiled[compiled.index("--directory") + 1],
                             native[native.index("--directory") + 1])
 
+    def test_go_modules_fall_back_to_their_origin(self):
+        # With "|", the go command tries the origin after any proxy error; with
+        # ",", only after a 404 or 410, so one reset stream failed a whole job.
+        for name, workflow in self.workflows.items():
+            if "actions/setup-go" in workflow:
+                self.assertRegex(workflow, r"(?m)^env:\n(?:  .*\n)*  GOPROXY: 'https://proxy\.golang\.org\|direct'$", name)
+
+    def test_every_go_setup_installs_the_latest_patch(self):
+        # A cached older patch, such as go1.26.8, fails the vulnerability check
+        # on standard-library advisories that the latest patch fixes.
+        for name, workflow in self.workflows.items():
+            for match in re.finditer(r"(?m)^( +)go-version: .+\n", workflow):
+                following = workflow[match.end():].splitlines()[0] if workflow[match.end():] else ""
+                self.assertEqual(following, match.group(1) + "check-latest: true", name)
+        toolchain = re.search(r"(?m)^toolchain go(\d+)\.(\d+)\.(\d+)$", (ROOT / "go.mod").read_text())
+        self.assertIsNotNone(toolchain)
+        self.assertGreaterEqual(tuple(map(int, toolchain.groups())), (1, 26, 9))
+
     def test_code_workflow_has_visible_unit_race_static_and_coverage_jobs(self):
         workflow = self.workflows["code.yml"]
         jobs = self.jobs["code.yml"]
         self.assertRegex(workflow, r"(?m)^name: Code checks$")
-        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage"})
+        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage", "vulncheck"})
         self.assertEqual({scalar(job.split("    steps:", 1)[0], "name") for job in jobs.values()},
-                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers"})
+                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers",
+                          "Vulnerability check (Go ${{ matrix.go }})"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
@@ -262,6 +281,12 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertNotIn("./.github/actions/runtime-cleanup", block)
             self.assertNotRegex(block, r"\bdocker\s|docker://|docker/setup-")
             self.assertNotRegex(block, r"(?m)^    needs:")
+        # The weekly schedule runs only the vulnerability check.
+        self.assertRegex(workflow, r"(?m)^  schedule:\n    - cron: '[^']+'$")
+        for name in ("unit", "race", "static", "tag-coverage"):
+            self.assertIn("    if: github.event_name != 'schedule'\n", jobs[name])
+        self.assertNotIn("if:", jobs["vulncheck"].split("    steps:", 1)[0])
+        self.assertIn("make vulncheck", jobs["vulncheck"])
         self.assertIn("make test", jobs["unit"])
         self.assertIn("make race", jobs["race"])
         self.assertIn("make vet", jobs["static"])

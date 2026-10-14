@@ -25,7 +25,7 @@ func ExportBackup(ctx context.Context, client testcontainers.Container, image st
 // can include @snapshot). Restore requires the matching baseline snapshot.
 func ExportIncremental(ctx context.Context, client testcontainers.Container, image, fromSnapshot string, destination io.Writer) error {
 	if fromSnapshot == "" || strings.ContainsAny(fromSnapshot, "/@\x00\r\n") || strings.HasPrefix(fromSnapshot, "-") {
-		return errors.New("incremental backup requires a valid baseline snapshot name")
+		return invalid(errors.New("incremental backup requires a valid baseline snapshot name"))
 	}
 	return exportRBDArchive(ctx, client, image, fromSnapshot, destination)
 }
@@ -44,10 +44,10 @@ func RestoreIncremental(ctx context.Context, client testcontainers.Container, im
 
 func validateRBDArchiveClient(client testcontainers.Container, image string) error {
 	if client == nil {
-		return errors.New("RBD archive operation requires a client container")
+		return invalid(errors.New("RBD archive operation requires a client container"))
 	}
 	if image == "" || strings.HasPrefix(image, "-") || strings.ContainsAny(image, "\x00\r\n") {
-		return errors.New("RBD archive operation requires a valid image specification")
+		return invalid(errors.New("RBD archive operation requires a valid image specification"))
 	}
 	return nil
 }
@@ -57,7 +57,7 @@ func exportRBDArchive(ctx context.Context, client testcontainers.Container, imag
 		return err
 	}
 	if destination == nil {
-		return errors.New("RBD archive destination writer is required")
+		return invalid(errors.New("RBD archive destination writer is required"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,7 +84,7 @@ func restoreRBDArchive(ctx context.Context, client testcontainers.Container, ima
 		return err
 	}
 	if archive == nil {
-		return errors.New("RBD archive reader is required")
+		return invalid(errors.New("RBD archive reader is required"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err

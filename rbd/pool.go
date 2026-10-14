@@ -95,7 +95,7 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 		return nil, err
 	}
 	if slices.Contains(names, name) {
-		return nil, fmt.Errorf("RBD namespace %q in pool %q already exists", name, poolName)
+		return nil, invalid(fmt.Errorf("RBD namespace %q in pool %q already exists", name, poolName))
 	}
 	ns := &Namespace{owner: c, poolName: poolName, name: name, poolID: poolID, state: &rbdNamespaceState{}}
 	if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "namespace", "create", "--pool", poolName, "--namespace", name); err != nil {
@@ -151,7 +151,7 @@ func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 		return err
 	}
 	if poolID != ns.poolID {
-		return fmt.Errorf("RBD pool %q was replaced; namespace removal refused", ns.poolName)
+		return invalid(fmt.Errorf("RBD pool %q was replaced; namespace removal refused", ns.poolName))
 	}
 	names, err := nativeNamespaces(ctx, c, ns.poolName)
 	if err != nil {
@@ -170,17 +170,17 @@ func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 
 func validateResourceName(kind, name string) error {
 	if len(name) > 128 || !naming.PoolResource.MatchString(name) {
-		return fmt.Errorf("RBD %s name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash", kind)
+		return invalid(fmt.Errorf("RBD %s name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash", kind))
 	}
 	return nil
 }
 
 func controlReady(c *ceph.Container) error {
 	if servicehook.Closed(c) {
-		return errors.New("ceph cluster is terminated")
+		return invalid(errors.New("ceph cluster is terminated"))
 	}
 	if servicehook.CLI(c) == nil {
-		return errors.New("ceph control container is unavailable")
+		return invalid(errors.New("ceph control container is unavailable"))
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func inspectPool(ctx context.Context, c *ceph.Container, poolName string, initia
 		}
 		for app := range pool.Applications {
 			if app != "rbd" {
-				return 0, fmt.Errorf("pool %q is registered to application %q; RBD initialization refused", poolName, app)
+				return 0, invalid(fmt.Errorf("pool %q is registered to application %q; RBD initialization refused", poolName, app))
 			}
 		}
 		if initialized {
@@ -297,4 +297,4 @@ func RemoveNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 	return removeNamespace(ctx, c, ns)
 }
 
-var errNilCluster = errors.New("ceph cluster is unavailable")
+var errNilCluster = invalid(errors.New("ceph cluster is unavailable"))

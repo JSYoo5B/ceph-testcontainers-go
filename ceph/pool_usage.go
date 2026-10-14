@@ -56,7 +56,7 @@ func (c *Container) PoolUsage(ctx context.Context, name string) (PoolUsageSnapsh
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return PoolUsageSnapshot{}, errors.New("ceph cluster is terminated")
+		return PoolUsageSnapshot{}, errClusterTerminated
 	}
 	control, err := c.ControlContainerContext(ctx)
 	if err != nil {

@@ -68,12 +68,15 @@ func Reply(args []string, code int, output []byte) (int, io.Reader, error) {
 
 // CLI answers each command from Output, keyed by the command's words joined
 // with spaces. Commands with an ls word default to an empty JSON list. The
-// command equal to Fail exits 1. Calls records every command's words.
+// command equal to Fail exits FailCode, or 1, and writes FailReason, or a
+// generic message, to standard error. Calls records every command's words.
 type CLI struct {
 	testcontainers.Container
-	Calls  [][]string
-	Output map[string]string
-	Fail   string
+	Calls      [][]string
+	Output     map[string]string
+	Fail       string
+	FailReason string
+	FailCode   int
 }
 
 // Exec answers args from the table.
@@ -94,6 +97,12 @@ func (ctr *CLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption
 	code := 0
 	if command == ctr.Fail {
 		header[0], code, output = byte(stdcopy.Stderr), 1, "injected command failure"
+		if ctr.FailCode != 0 {
+			code = ctr.FailCode
+		}
+		if ctr.FailReason != "" {
+			output = ctr.FailReason
+		}
 	}
 	if Quorum(commandArgs) {
 		return Reply(commandArgs, code, []byte(output))
@@ -262,13 +271,15 @@ func (f *StateFake) Exec(ctx context.Context, args []string, opts ...tcexec.Proc
 	f.render()
 	words := ModuleArgs(args)
 	command := strings.Join(words, " ")
-	f.Fail = ""
+	f.Fail, f.FailReason, f.FailCode = "", "", 0
 	if f.failures[command] > 0 {
 		f.failures[command]--
 		f.Fail = command
 	} else if refusal := f.refuse(words); refusal != "" {
-		// The embedded fake reports every failure with one generic message.
-		f.Fail = command
+		// The ceph CLI prints the MON's errno and reason and exits with the
+		// errno.
+		name, _, _ := strings.Cut(refusal, ":")
+		f.Fail, f.FailReason, f.FailCode = command, "Error "+refusal+"\n", errnos[name]
 	}
 	code, reader, err := f.CLI.Exec(ctx, args, opts...)
 	if code == 0 && err == nil {
@@ -276,6 +287,9 @@ func (f *StateFake) Exec(ctx context.Context, args []string, opts ...tcexec.Proc
 	}
 	return code, reader, err
 }
+
+// errnos are the Linux values of the errnos that refuse returns.
+var errnos = map[string]int{"EPERM": 1, "ENOENT": 2, "EBUSY": 16}
 
 // refuse reports why Ceph would reject a mutation in the current state.
 func (f *StateFake) refuse(words []string) string {
