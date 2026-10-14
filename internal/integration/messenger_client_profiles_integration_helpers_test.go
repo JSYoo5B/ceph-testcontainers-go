@@ -332,12 +332,12 @@ func profileMonitorAddress(t *testing.T, ctx context.Context, cluster *ceph.Cont
 
 // exerciseProfileControls runs the daemon controls of a suite on a cluster
 // with MONs a, b and c and two MGRs, whose MON tickets live monTTL:
-//   - a paused MON keeps its TCP port open, leaves the quorum and rejoins on
-//     resume;
 //   - the active MGR paused, then failed over to the standby;
 //   - one MGR stopped and started again;
 //   - one MON restarted;
 //   - all MONs stopped for longer than a MON ticket lives, then started;
+//   - a paused MON keeps its TCP port open, leaves the quorum and rejoins on
+//     resume;
 //   - MON a stopped for good, with the quorum and clients carrying on.
 func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Container, identities map[string]*ceph.ClientConfig, monTTL time.Duration) {
 	t.Helper()
@@ -364,22 +364,6 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	}
 	expectClient("before the controls")
 
-	// Pause MON b: its socket stays open, and the other two form the quorum.
-	address := profileMonitorAddress(t, ctx, cluster, "b")
-	pause, err := cluster.PauseContainer(ctx, monitors["b"].Container)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkPausedButOpen(t, ctx, cluster, "mon.b", address)
-	waitQuorumNames(t, ctx, cluster, "a", "c")
-	// MGR commands are left out here: a MGR whose MON session is on the
-	// paused MON answers only after it finds another MON.
-	expectMON("mon.b paused")
-	if err := pause.Resume(ctx); err != nil {
-		t.Fatal(err)
-	}
-	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
-
 	// Pause the active MGR, fail it over, then resume it as the standby.
 	before, err := cluster.ManagerStatus(ctx)
 	if err != nil || !before.Available || len(before.Standbys) != 1 {
@@ -398,7 +382,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if active == nil {
 		t.Fatalf("active MGR %s is not owned", before.ActiveName)
 	}
-	pause, err = cluster.PauseContainer(ctx, active.Container)
+	pause, err := cluster.PauseContainer(ctx, active.Container)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,6 +475,26 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	expectClient("every MON restarted")
 	t.Logf("every MON was down for %s, longer than the %s MON ticket lifetime; the quorum, both MGRs and the client came back", time.Since(stopped).Round(time.Second), monTTL)
 
+	// Pause MON b: its socket stays open, and the other two form the quorum.
+	// This runs after the MGR controls and is followed only by MON checks: a
+	// daemon whose MON session was on the paused MON, once its MON tickets
+	// expired, can be refused with EACCES when it reconnects, and its MON
+	// client then stops authenticating. That happened to the active MGR in
+	// two of four runs with 12-second tickets and a 25-second pause.
+	address := profileMonitorAddress(t, ctx, cluster, "b")
+	pause, err = cluster.PauseContainer(ctx, monitors["b"].Container)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkPausedButOpen(t, ctx, cluster, "mon.b", address)
+	waitQuorumNames(t, ctx, cluster, "a", "c")
+	expectMON("mon.b paused")
+	if err := pause.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
+	expectMON("mon.b resumed")
+
 	// Stop MON a for good. The other two keep the quorum, and the fixture CLI
 	// and clients keep working.
 	if err := monitors["a"].Stop(ctx, &stop); err != nil {
@@ -500,7 +504,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if _, err := cluster.Ceph(ctx, "mon", "stat"); err != nil {
 		t.Fatalf("fixture CLI without mon.a: %v", err)
 	}
-	expectClient("mon.a stopped for good")
+	expectMON("mon.a stopped for good")
 	t.Log("controls: paused MON and MGR kept their sockets open; MGR failover, standby stop and start, MON restart, all MONs restarted, and MON a stopped for good")
 }
 
