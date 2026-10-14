@@ -1,0 +1,16 @@
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_fixtures_sessions))))
+
+//ci: timeout=25m job-timeout=35
+
+package integration_test
+
+import (
+	"testing"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+)
+
+func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
+	t.Run("bridge", func(t *testing.T) { testCephFSRetainedClient(t) })
+	t.Run("host", func(t *testing.T) { testCephFSRetainedClient(t, ceph.WithHostNetwork()) })
+}
