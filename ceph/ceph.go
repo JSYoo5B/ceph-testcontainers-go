@@ -838,8 +838,13 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
 	moduleOpts = append(moduleOpts, c.ownedLabel())
-	ctr, err := testcontainers.Run(ctx, image, moduleOpts...)
-	if ctr != nil {
+	created, err := testcontainers.Run(ctx, image, moduleOpts...)
+	// Run returns a nil *DockerContainer when it fails before a container
+	// exists. Returned as testcontainers.Container, that would be a non-nil
+	// interface holding a nil pointer, so only a real handle is returned.
+	var ctr testcontainers.Container
+	if created != nil {
+		ctr = created
 		c.services[name] = ctr
 	}
 	if err != nil {
