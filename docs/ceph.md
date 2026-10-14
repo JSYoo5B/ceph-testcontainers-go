@@ -799,7 +799,9 @@ The option writes the fields into the `[client]` section of that container's
 `MessengerV2Secure` cluster. The cluster's own control CLI and other containers
 are unaffected. A process that reads [ConnectionConfig](#connectionconfig)
 instead sets the same two options itself, for example with go-ceph
-`conn.SetConfigOption("ms_mon_client_mode", "crc")`.
+`conn.SetConfigOption("ms_mon_client_mode", "crc")`. A policy with an empty
+list or an unknown mode makes the container request fail with
+`ceph.ErrInvalidRequest`.
 
 #### WithHostNetwork
 
@@ -2538,7 +2540,8 @@ if override != nil {
 - A single daemon, such as only `osd.0`, is changed with `TemporaryConfig` and
   the option in the table, with the daemon name as `Section`. It takes
   precedence over the daemon type's entry.
-- It is refused with `MessengerV2Secure`.
+- A policy that selects no valid mode, and any policy on a `MessengerV2Secure`
+  cluster, is refused with `ceph.ErrInvalidRequest` before any change.
 
 ### Container Methods: Object watchers and client fencing
 

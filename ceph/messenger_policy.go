@@ -120,18 +120,19 @@ type MessengerPolicyOverride struct {
 // override of the policy's option; nil fields stay as they are. The daemons
 // apply the change to new connections without a restart, and established
 // connections keep their mode. A non-nil result returned with an error holds
-// the overrides that were made and must be restored. It is refused with
-// MessengerV2Secure.
+// the overrides that were made and must be restored. A policy that selects no
+// valid mode, and any policy with MessengerV2Secure, is refused with
+// ErrInvalidRequest before any change.
 func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error) {
 	settings, err := policy.settings()
 	if err != nil {
-		return nil, fmt.Errorf("messenger policy: %w", err)
+		return nil, invalid(fmt.Errorf("messenger policy: %w", err))
 	}
 	if len(settings) == 0 {
-		return nil, errors.New("messenger policy selects no mode")
+		return nil, invalidRequest("messenger policy selects no mode")
 	}
 	if c != nil && c.settings.messengerMode == MessengerV2Secure {
-		return nil, errors.New("MessengerV2Secure fixes every connection mode in the local configuration")
+		return nil, invalidRequest("MessengerV2Secure fixes every connection mode in the local configuration")
 	}
 	result := &MessengerPolicyOverride{}
 	for _, setting := range settings {
@@ -211,7 +212,7 @@ func WithClientMessengerPolicy(policy ClientMessengerPolicy) ClientContainerOpti
 	return func(o *clientContainerOptions) error {
 		lines, err := policy.configLines()
 		if err != nil {
-			return fmt.Errorf("client messenger policy: %w", err)
+			return invalid(fmt.Errorf("client messenger policy: %w", err))
 		}
 		o.messengerLines = lines
 		return nil
@@ -223,7 +224,7 @@ func clientContainerConfig(config []byte, opts []ClientContainerOption) ([]byte,
 	var settings clientContainerOptions
 	for _, opt := range opts {
 		if opt == nil {
-			return nil, errors.New("client container option is nil")
+			return nil, invalidRequest("client container option is nil")
 		}
 		if err := opt(&settings); err != nil {
 			return nil, err

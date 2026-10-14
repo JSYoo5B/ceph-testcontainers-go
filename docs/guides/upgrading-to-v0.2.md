@@ -17,14 +17,17 @@ own client tests; the milestone does not certify a Go Messenger implementation.
 | Requirement | v0.1.0 | v0.2.0 candidate |
 | --- | --- | --- |
 | Go module minimum | Go 1.25 | Go 1.26.0 |
-| Repository toolchain | See the v0.1.0 tag | `go1.26.9` in `go.mod` |
+| Repository toolchain | None (no `toolchain` line) | `go1.26.9` in `go.mod` |
 | Testcontainers for Go | v0.44.0 | v0.44.0 |
+| Docker client modules (`github.com/moby/moby/client`, `github.com/moby/moby/api`) | v0.5.0, v1.55.0 | v0.6.2, v1.56.1 |
 | Native dependencies in the public module | None | None; builds with `CGO_ENABLED=0` |
 
 When upgrading, check the consuming module's `go` and `toolchain` lines and
 use a patched Go release. The dependency's `toolchain go1.26.9` line selects
 this repository's toolchain; it does not set the toolchain of a consuming
-module. If fixtures live in a separate integration module, upgrade that
+module. Minimum version selection raises the consuming module's Docker client
+modules to at least these versions, which matters if it calls the Docker API
+directly. If fixtures live in a separate integration module, upgrade that
 module without adding Ceph native dependencies to the product module.
 
 The Go fixture library runs from macOS with Docker Desktop or from Linux,
@@ -60,7 +63,6 @@ Other changes that may affect assertions or cleanup:
 | Old assumption | What to do now |
 | --- | --- |
 | Native errors contain stdout/stderr and can be matched as strings | Match categories with `errors.Is` and read `*ceph.NativeFailure` with `errors.As`. Raw output is not included in the error; some sensitive operations also omit `Reason`. |
-| A nonzero `RunNativeCommand` exit is a Go error | Inspect `NativeCommandResult.ExitCode`. Timeouts and truncated output return `ErrNativeCommandIncomplete`; a nonzero exit alone does not. |
 | Every failed service start returns a handle | A failure before container creation returns nil. Register nil-safe cleanup before checking the error; preserve any non-nil partial result. |
 | `WithConfigFile` can set `crash_dir` | It is reserved at `/var/lib/ceph/crash`, where `CollectCrashMetadata` reads bounded, redacted metadata. |
 | RBD namespace mapping support follows only the version number | The relevant setup and control clients' `rbd --remote-namespace` capability is checked. Backported images may work; an unsupported target returns `ErrUnsupported` before setup changes. |
@@ -91,8 +93,9 @@ It leaves daemon-to-daemon modes unchanged and cannot be combined with
 `MessengerV2Secure`. `TemporaryMessengerPolicy` affects new connections;
 established connections keep their negotiated mode. Its non-nil handle must
 be kept even when application partly fails, then restored with a fresh
-context. `WithClientMessengerPolicy` configures only the attached client
-container, including intentional mismatch tests; it does not change the
+context. Its refusals, including any use under `MessengerV2Secure`, match
+`ErrInvalidRequest`. `WithClientMessengerPolicy` configures only the attached
+client container, including intentional mismatch tests; it does not change the
 fixture's control CLI or a host client's configuration.
 
 `TemporaryConfig` refuses `ms_bind_msgr1` and `ms_bind_msgr2` in both v2-only
@@ -113,8 +116,10 @@ Ticket lifetimes set by `WithAuth` are written to local configuration files;
 a later central `TemporaryConfig` does not change them. Keep MON ticket
 lifetimes at least ten seconds for ordinary tests. Shorter lifetimes can
 strand native daemon MON sessions; the 1.5-second regression profile is
-optional. Read [WithAuth](../ceph.md#withauth) before designing expiry tests.
-Key replacement/revocation affects fresh authentication; existing sessions
+optional. Longer lifetimes do not protect a daemon from a MON pause that
+outlasts them; see [Remaining native limits](#remaining-native-limits). Read
+[WithAuth](../ceph.md#withauth) before designing expiry tests. Key
+replacement/revocation affects fresh authentication; existing sessions
 can keep tickets. Keep the descriptor returned by `ReplaceClientKey`;
 containers attached with the old descriptor retain the old keyring.
 
@@ -126,6 +131,10 @@ assertions need the appropriate BlueStore fixture; see
 [OSD storage](../ceph.md#withosdobjectstore).
 
 ## Native commands, outcomes and images
+
+`RunNativeCommand` is new in this release. It reports a nonzero exit in
+`NativeCommandResult.ExitCode`, not as a Go error; a timeout or truncated
+output returns `ErrNativeCommandIncomplete`.
 
 Cancellation stops a supervised command's process group; it does not undo a
 MON command or an OSD mutation that was already submitted. Preserve partial
@@ -151,6 +160,11 @@ See [Native commands](native-commands.md),
 - CephFS rebalance now serializes removals on an idle policy. External
   directory changes or mirror daemons joining/leaving can still trigger the
   upstream MGR hang; see [CephFS limitations](../cephfs.md#limitations-and-release-differences).
+- A MON paused for longer than the MON ticket lifetime can strand a daemon
+  whose MON session was on it: its reconnect is refused with `EACCES`, and it
+  stops authenticating until it is restarted. With 12-second tickets and a
+  25-second pause, this happened to the active MGR in two of four native
+  runs. See [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - Intermittent MON join timeout and long-lived session loss after replacing
   every MON remain under investigation in [#61](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/61).
   A later green retry does not establish their cause or a fix.
@@ -165,18 +179,17 @@ separate roadmap, not a claim of this release.
 
 ## Trying the candidate and adopting the release
 
-Before publication, use a reviewed commit or a test-only workspace/`replace`
-in the consumer's integration module. For example, the milestone's completed
-implementation is pinned at this commit:
+Before publication, select a reviewed `main` commit by its full SHA, or use a
+test-only workspace/`replace` in the consumer's integration module:
 
 ```sh
-go get github.com/JSYoo5B/ceph-testcontainers-go@df38c4402c60bbc8c4cd4283e960f1c94ad874eb
+go get github.com/JSYoo5B/ceph-testcontainers-go@<full-commit-sha>
 ```
 
-That is a development commit, not the future release tag. Select the final
-reviewed candidate when it is ready. Compile the consuming module and run
-its actual client profiles, including restricted auth, mode mismatches,
-address reachability and restart/readback assertions. Retain the old adapter
+Go records the commit as a pseudo-version, not as the future release tag.
+Compile the consuming module and run its actual client profiles, including
+restricted auth, mode mismatches, address reachability and restart/readback
+assertions. Retain the old adapter
 until those tests pass. After publication, select `v0.2.0` explicitly and
 repeat the consumer checks against the published tag before removing any
 temporary workspace or `replace` directive.

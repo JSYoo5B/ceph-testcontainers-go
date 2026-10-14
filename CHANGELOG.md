@@ -183,6 +183,10 @@ downstream client's implementation or migration. Publication checks are in
   upstream. Use a current patch release: Go 1.26.8, for example, has
   standard-library vulnerabilities that Go 1.26.9 fixes.
 
+- The module requires `github.com/moby/moby/client` v0.6.2 and
+  `github.com/moby/moby/api` v1.56.1 instead of v0.5.0 and v1.55.0. A module
+  that uses the Docker client directly gets these versions too.
+
 - The bootstrap `ceph.conf` sets `crash dir = /var/lib/ceph/crash`, and
   `ceph.WithConfigFile` rejects `crash_dir`, so every daemon's crash reports
   stay where `CollectCrashMetadata` reads them.

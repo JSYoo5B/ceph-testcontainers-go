@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -68,11 +69,17 @@ func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
 	}
 	control := &poolFixtureContainer{Output: map[string]string{}}
 	c := &Container{Container: control, settings: options{startupTimeout: time.Second, messengerMode: MessengerV2Secure}}
-	if _, err := c.TemporaryMessengerPolicy(t.Context(), MessengerPolicy{OSDs: []MessengerConnectionMode{MessengerCRC}}); err == nil || len(control.Calls) != 0 {
+	if _, err := c.TemporaryMessengerPolicy(t.Context(), MessengerPolicy{OSDs: []MessengerConnectionMode{MessengerCRC}}); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
 		t.Fatalf("temporary policy under MessengerV2Secure: %v, calls %v", err, control.Calls)
 	}
-	if _, err := c.TemporaryMessengerPolicy(t.Context(), MessengerPolicy{}); err == nil || len(control.Calls) != 0 {
-		t.Fatalf("empty temporary policy: %v, calls %v", err, control.Calls)
+	c.settings.messengerMode = MessengerV2Only
+	for name, policy := range map[string]MessengerPolicy{
+		"empty":        {},
+		"unknown mode": {OSDs: []MessengerConnectionMode{"plain"}},
+	} {
+		if _, err := c.TemporaryMessengerPolicy(t.Context(), policy); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
+			t.Fatalf("%s temporary policy: %v, calls %v", name, err, control.Calls)
+		}
 	}
 }
 
@@ -95,10 +102,10 @@ func TestClientContainerConfigWritesClientSection(t *testing.T) {
 	if got, err := clientContainerConfig([]byte(base), nil); err != nil || string(got) != base {
 		t.Fatalf("no options changed the config: %q, %v", got, err)
 	}
-	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{nil}); err == nil {
-		t.Fatal("nil option accepted")
+	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{nil}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("nil option: %v", err)
 	}
-	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{WithClientMessengerPolicy(ClientMessengerPolicy{OtherDaemons: []MessengerConnectionMode{}})}); err == nil {
-		t.Fatal("invalid client policy accepted")
+	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{WithClientMessengerPolicy(ClientMessengerPolicy{OtherDaemons: []MessengerConnectionMode{}})}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("invalid client policy: %v", err)
 	}
 }

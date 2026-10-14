@@ -186,12 +186,12 @@ metadata) disappears with the containers. `Terminate` does not restore
 `Temporary*` overrides one by one; it discards the whole cluster.
 
 `Terminate` works in a fixed order: it removes network delays, restores network
-interruptions, resumes paused containers, cancels and stops native commands, releases host-port
-reservations, stops gateways and MDS
-daemons while the OSDs are still running, then removes OSDs, the in-memory OSD
-volume, MGRs, MONs, the control container, then any container left with the
-cluster's label `org.testcontainers.ceph.cluster` (one that Docker created
-although the create reply was lost), the shared run volume, and finally the networks. Each
+interruptions, resumes paused containers, cancels and stops native commands,
+releases host-port reservations, stops gateways and MDS daemons while the OSDs
+are still running, then removes OSDs, the in-memory OSD volume, MGRs, MONs, the
+control container, then any container left with the cluster's label
+`org.testcontainers.ceph.cluster` (one that Docker created although the create
+reply was lost), the shared run volume, and finally the networks. Each
 container gets a 2-second stop timeout unless you pass
 `testcontainers.StopTimeout`. A container or network that fails to go away
 stays tracked and is reported in the joined error; calling `Terminate` again
@@ -404,7 +404,8 @@ Handle-specific details:
   settings. Refusals of these Messenger settings match `ErrInvalidRequest`.
 - `TemporaryMessengerPolicy` uses `TemporaryConfig` overrides, restoring in
   reverse order. Application can partly succeed, so keep a non-nil handle
-  returned with an error. It is refused under `MessengerV2Secure`.
+  returned with an error. Its refusals, including any use under
+  `MessengerV2Secure`, match `ErrInvalidRequest`.
 - `TemporaryClientRevocation.Restore` refuses an identity recreated outside
   the fixture with another key or capabilities. `DeleteClient` makes the
   removal permanent instead of restoring it.

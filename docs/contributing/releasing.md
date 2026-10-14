@@ -70,6 +70,11 @@ Before a separately authorized publication:
 - When publishing, replace `Unreleased` with the version and actual release
   date, and update the README's development-version notice so it does not
   tell release users to install an older tag.
+- Rewrite the pre-release wording of the [upgrade guide](../guides/upgrading-to-v0.2.md)
+  for the published tag: its introduction, the `v0.2.0 candidate` column and
+  the commit instructions under "Trying the candidate and adopting the
+  release". Name the tag instead of the implementation commit in the scope
+  section above.
 - Point the tag and GitHub Release at the reviewed commit, then verify that
   the Go module proxy resolves that tag and that an external integration
   module builds with it. Do not claim published-tag consumption before this

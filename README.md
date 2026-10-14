@@ -42,9 +42,9 @@ pkg.go.dev.
 
 ## Requirements
 
-- Go 1.26 or later for current main; use a patched toolchain. The repository
-  selects Go 1.26.9 for its own checks. A consumer must select its own
-  toolchain (see [the upgrade guide](docs/guides/upgrading-to-v0.2.md#go-and-client-platforms)).
+- Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
+  repository selects Go 1.26.9 for its own checks. A consumer must select its
+  own toolchain (see [the upgrade guide](docs/guides/upgrading-to-v0.2.md#go-and-client-platforms)).
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in
   [the host network guide](docs/guides/host-network.md).
