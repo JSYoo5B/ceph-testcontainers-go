@@ -39,8 +39,10 @@ func (family AddressFamily) String() string {
 
 // WithAddressFamily selects the addresses of the Messenger listeners of every
 // MON, MGR, OSD and service daemon. AddressIPv6 and AddressIPv4MappedIPv6
-// need bridge mode without WithSeparateClusterNetwork; AddressIPv6 also needs
-// a Docker Engine that can allocate an IPv6 subnet.
+// need bridge mode, and AddressIPv6 a Docker Engine that can allocate IPv6
+// subnets. With WithSeparateClusterNetwork, AddressIPv6 makes both bridges
+// dual-stack and their IPv6 subnets Ceph's public and cluster networks;
+// AddressIPv4MappedIPv6 cannot be combined with it.
 func WithAddressFamily(family AddressFamily) Option {
 	return func(o *options) error {
 		if family != AddressIPv4 && family != AddressIPv6 && family != AddressIPv4MappedIPv6 {

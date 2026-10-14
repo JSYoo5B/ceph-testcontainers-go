@@ -8,6 +8,18 @@ change the API.
 
 ### Added
 
+- The RGW module page has a recipe for the smallest S3 fixture: one MON, one
+  MGR, one OSD and one gateway with single-copy pools, started by `rgw.Run`.
+
+- `ceph.WithAddressFamily(ceph.AddressIPv6)` works with
+  `ceph.WithSeparateClusterNetwork()`. Both bridges are then dual-stack, and
+  Ceph's public and cluster networks are their IPv6 subnets, so OSDs advertise
+  public and heartbeat front addresses from one and cluster and heartbeat back
+  addresses from the other. `InterruptNetwork` with `ClusterNetworkPlane`
+  disconnects an OSD's whole cluster endpoint, both of its families, and
+  keeps its public endpoint. `AddressIPv4MappedIPv6` is still refused with a
+  separate cluster network.
+
 - Classified errors. Every package reports a refused request
   (`ceph.ErrInvalidRequest`), a feature that the Ceph of the relevant target
   lacks (`ceph.ErrUnsupported`), a missing image tool or an unselected
@@ -70,6 +82,10 @@ change the API.
   discards, and retries guarded with `assert_version`. The fault injection
   guide shows how `osd_debug_inject_dispatch_delay_*` makes an OSD run a
   write after its client gave up.
+- The native commands guide has an oracle recipe for erasure-coded pools:
+  the write operations that pools with and without `AllowOverwrites` accept
+  or refuse with `EOPNOTSUPP`, aligned appends, snapshot clones, and reads
+  and writes while a shard is missing.
 
 - `ceph.WithOSDObjectStore(ceph.OSDMemStore)` runs every OSD on Ceph's
   in-memory MemStore, with `WithOSDBlockSize` as its capacity. A clean stop
@@ -151,6 +167,13 @@ change the API.
   directory at a time, while every tracked directory is idle. The deadlock
   reproduces natively on Ceph 20.2.4 and 19.2.5. A mirror daemon that joins or
   leaves during a removal can still trigger it; see the CephFS limitations.
+
+- A service start that fails before Docker creates the container, for
+  example when the image cannot be pulled, now returns its error with no
+  handle. It returned a non-nil handle that held a nil container:
+  - `cephfs` read that handle's ID and panicked while holding the topology
+    lock, so `Terminate` then waited for the lock until its context ended;
+  - `rgw` returned a `Gateway` without a container along with the error.
 
 - `Ceph` and the fixture's own `ceph` commands no longer fail with
   `timed out` when no MON answers within the CLI's 5 second connection
