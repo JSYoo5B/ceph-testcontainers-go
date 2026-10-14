@@ -180,7 +180,9 @@ change the API.
   start, so after all MONs stopped, the one started first could take another
   MON's address, which then failed to bind it with
   `Cannot assign requested address`. The fixture now requests each MON's
-  original address before it starts again.
+  original address before it starts again. A MON whose endpoint is
+  interrupted stays detached, and `Start` returns `ErrInvalidRequest` until
+  the interruption is restored.
 
 - A service start that fails before Docker creates the container, for
   example when the image cannot be pulled, now returns its error with no

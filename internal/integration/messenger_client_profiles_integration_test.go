@@ -46,3 +46,10 @@ func TestMessengerClientProfileDelayedManagers(t *testing.T) {
 	parallelWhenEnabled(t)
 	testMessengerClientDelayedManagers(t)
 }
+
+// A network interruption of a MON outlasts a restart of the MON until its
+// owner restores it; then the MON gets its addresses back.
+func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
+	parallelWhenEnabled(t)
+	testMonitorAddressAcrossNetworkInterruption(t)
+}
