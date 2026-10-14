@@ -143,6 +143,13 @@ change the API.
 
 ### Fixed
 
+- A service start that fails before Docker creates the container, for
+  example when the image cannot be pulled, now returns its error with no
+  handle. It returned a non-nil handle that held a nil container:
+  - `cephfs` read that handle's ID and panicked while holding the topology
+    lock, so `Terminate` then waited for the lock until its context ended;
+  - `rgw` returned a `Gateway` without a container along with the error.
+
 - `Ceph` and the fixture's own `ceph` commands no longer fail with
   `timed out` when no MON answers within the CLI's 5 second connection
   timeout, as during a storage stall of a CI runner or an election. The CLI

@@ -188,6 +188,38 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	return fs, n, fs.mdss[0], first, second
 }
 
+// A starter that fails before any container exists may return a typed nil
+// with its error. The MDS start must return that error without publishing a
+// daemon, and leave the topology lock free for cleanup.
+func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) {
+	fs, _, _, _, _ := stoppedMDSFixture(t)
+	published := len(fs.mdss)
+	cause := errors.New("create failed before a container exists")
+	var returned error
+	var panicValue any
+	func() {
+		defer func() { panicValue = recover() }()
+		returned = fs.startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+			var missing *testcontainers.DockerContainer
+			return missing, cause
+		})
+	}()
+	if panicValue != nil {
+		t.Fatalf("MDS start panicked: %v", panicValue)
+	}
+	if !errors.Is(returned, cause) {
+		t.Fatalf("starter error lost: %v", returned)
+	}
+	if len(fs.mdss) != published {
+		t.Fatalf("a daemon without a container was published: %d -> %d", published, len(fs.mdss))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if err := fs.cluster.Terminate(ctx); err != nil {
+		t.Fatalf("cleanup could not run: %v", err)
+	}
+}
+
 func stoppedMDSPublish(t *testing.T, fs *Filesystem, daemon *stoppedMDSDaemon, startErr error) {
 	t.Helper()
 	err := fs.startMDSWithService(t.Context(), func(ctx context.Context, name, _ string, _ ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
