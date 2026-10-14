@@ -13,7 +13,10 @@ change the API.
   client mounted while the only MDS is killed, failed and started again:
   the session returns with the same client ID, PID and address, and the file
   descriptor opened before the failure keeps reading, writing, renaming and
-  setting xattrs, as a client in another container confirms.
+  setting xattrs, as a client in another container confirms. A second
+  receipt does the same while an idle standby, or the journal follower of
+  `StandbyReplay`, takes over rank 0; the killed daemon then rejoins as a
+  standby with a new GID.
 
 - The same guide has a table of daemon-to-daemon paths, with what each test
   observes and how directly. The held replication write of the separate

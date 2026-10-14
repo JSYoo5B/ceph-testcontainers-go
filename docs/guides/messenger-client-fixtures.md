@@ -129,11 +129,12 @@ mds.<name> session ls` adds counters that `Session` leaves out, such as
 | Profile | Native receipt | Proven by |
 | --- | --- | --- |
 | The only MDS is killed, its GID failed with `mds fail`, and its container started again | rank 0 returns with a new GID in the same container; the client's session is `open` again with the same client ID, PID and address and nonce; through the descriptor opened before the failure the client reads its bytes, appends and fsyncs, renames the file and sets a binary xattr; a client in another container reads the same inode, the exact bytes and the xattr | `TestCephFSRetainedClientAcrossMDSRestart`, with `MessengerV2Secure` on bridge and host networks |
+| The active MDS is killed and its GID failed; an idle standby, or the journal follower of rank 0 (`StandbyReplay`), takes the rank | the same receipts, with rank 0 served by the standby under the GID it had before; afterwards the killed daemon starts again and rejoins as a standby or follower with a new GID, which `WaitReady` waits for | `TestCephFSRetainedClientAcrossStandbyTakeover/standby` and `/standby-replay`, with `MessengerV2Secure` |
 
-The client fsynced its data before the failure, so this receipt shows a
-session reconnect, not the replay of a request that was in flight. A standby
-takeover, several active ranks, contended capabilities and a client that
-reconnects too late are separate profiles.
+The client fsynced its data before the failure, so these receipts show a
+session reconnect, not the replay of a request that was in flight. Several
+active ranks, contended capabilities and a client that reconnects too late
+are separate profiles.
 
 ## Daemon-to-daemon paths
 
@@ -150,7 +151,7 @@ these paths.
 | MON to MON | Cutting two of five MONs off the public network leaves a quorum of three; restoring them brings back five. | Native state (quorum membership). Which daemon received which map is not observed. | `TestFiveMonitorQuorumAndNetworkRecovery` |
 | OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
 | MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. | Outcome | `TestCephFSPins` |
-| MDS to client after an MDS restart | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart` |
+| MDS to client after an MDS restart or a standby takeover | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover` |
 
 No receipt exists yet for MGR registration and control, erasure-coded shard
 reads across OSDs, heartbeat failure detection, RGW to RADOS, or the RBD and
