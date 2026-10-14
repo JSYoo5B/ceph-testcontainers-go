@@ -38,7 +38,7 @@ mon_tick_interval = 1
 mon_session_timeout = 3
 mon_client_ping_interval = 1
 mon_client_hunt_interval = 1
-`, map[string]float64{"mon_subscribe_interval": 2, "mon_tick_interval": 1, "mon_session_timeout": 3, "mon_client_ping_interval": 1, "mon_client_hunt_interval": 1}, "", 0)
+`, map[string]float64{"mon_subscribe_interval": 2, "mon_tick_interval": 1, "mon_session_timeout": 3, "mon_client_ping_interval": 1, "mon_client_hunt_interval": 1})
 }
 
 // Three MONs without a MGR, then two MGRs started later.

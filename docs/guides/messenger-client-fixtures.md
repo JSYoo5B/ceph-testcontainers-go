@@ -31,7 +31,7 @@ public options and checks the native result.
 | | `aes256k`/`aes` | `AuthConfig{KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES}` | `TestAuthCiphersAndTicketLifetimes` |
 | Ticket lifetimes | 12 s MON and service tickets | `AuthConfig{MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}` | `TestMessengerClientProfileSecure`, where one librados session outlives two lifetimes of each ticket |
 | | 120 s, with fast MON timing | `AuthConfig{MonTicketTTL: 120 * time.Second, ServiceTicketTTL: 120 * time.Second}` and a `WithConfigFile` `[global]` section with `mon_subscribe_interval`, `mon_tick_interval`, `mon_session_timeout`, `mon_client_ping_interval` and `mon_client_hunt_interval` | `TestMessengerClientProfileIdleTickets` |
-| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag: a new librados session every half second for 30 s, with the MGRs unchanged; see [Differences](#differences-from-a-single-container-bootstrap) |
+| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag: the bootstrap, the lifetimes, and a MON and a MGR command from a client; see [Differences](#differences-from-a-single-container-bootstrap) |
 | `global_id` reclaim | not allowed insecurely | always `auth_allow_insecure_global_id_reclaim = false` | `TestMessengerClientProfileSecure` |
 | Connection modes | every connection secure | `MessengerV2Secure` | `TestMessengerClientProfileSecure`, which reads all six `ms_*_mode` options from each MON and MGR |
 | | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC`, which reads each daemon's service mode |
@@ -102,13 +102,19 @@ until it reports an active MGR and one standby.
   change them later.
 - **Short MON tickets.** With MON tickets under ten seconds, a MON client
   that renews late is refused with `EACCES` and does not authenticate again;
-  see [WithAuth](../ceph.md#withauth). This is Ceph's behaviour, and a
-  hand-built cluster with the same lifetimes has it too.
+  see [WithAuth](../ceph.md#withauth). This is the behaviour of Ceph's MON
+  client, not of the fixture.
   - A MGR busy loading its modules can lose its MON session this way, and Ceph
     then aborts it. That is why the 1.5-second profile's test is optional.
-  - With 1.5-second MON tickets, a single native librados session meant to
-    last 30 seconds lost its MON session in each of eight runs on Tentacle
-    20.2.4. Native oracles for this profile open a new session for each check.
+  - With 1.5-second MON tickets, native clients stopped working within
+    30 seconds on Tentacle 20.2.4 with AES256K keys:
+    - a single librados session meant to last 30 seconds lost its MON session
+      in each of eight runs;
+    - a new session every half second worked at first, but MGR commands went
+      unanswered within 30 seconds in each of four runs.
+
+    On Squid 19.2.5 with AES keys, the new sessions kept working for
+    30 seconds. Keep native checks in this profile short and early.
 - **Keys.** Each identity has its own keyring. Read a key from
   `ClientConfig.ConnectionConfig`.
 - **Stopping a daemon abruptly.** `Stop` sends SIGTERM and waits. Kill a

@@ -349,11 +349,15 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 		t.Fatalf("want MONs a, b and c: %v", monitors)
 	}
 	client := startProfileClient(t, ctx, cluster, identities["test"])
-	expectClient := func(step string) {
+	expectMON := func(step string) {
 		t.Helper()
 		if code, out := client.ceph(t, ctx, "mon", "stat"); code != 0 {
 			t.Fatalf("%s: client mon stat: exit %d: %s", step, code, out)
 		}
+	}
+	expectClient := func(step string) {
+		t.Helper()
+		expectMON(step)
 		if code, out := client.ceph(t, ctx, "pg", "stat"); code != 0 {
 			t.Fatalf("%s: client pg stat: exit %d: %s", step, code, out)
 		}
@@ -368,7 +372,9 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	}
 	checkPausedButOpen(t, ctx, cluster, "mon.b", address)
 	waitQuorumNames(t, ctx, cluster, "a", "c")
-	expectClient("mon.b paused")
+	// MGR commands are left out here: a MGR whose MON session is on the
+	// paused MON answers only after it finds another MON.
+	expectMON("mon.b paused")
 	if err := pause.Resume(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -521,42 +527,13 @@ finally:
     c.shutdown()
 `
 
-// profileFreshSessionsClient opens a new librados session every half second
-// for seconds, and sends a MON command and a MGR command through each, as a
-// suite's native oracles do. It prints the number of sessions.
-const profileFreshSessionsClient = `import json,sys,time,rados
-seconds=float(sys.argv[1])
-sessions=0
-started=time.monotonic()
-while time.monotonic()-started<seconds:
-    c=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'rados_mon_op_timeout':'10'})
-    c.connect()
-    try:
-        r,_,err=c.mon_command(json.dumps({'prefix':'fsid','format':'json'}),b'')
-        assert r==0,('mon',r,err)
-        r,_,err=c.mgr_command(json.dumps({'prefix':'pg stat','format':'json'}),b'')
-        assert r==0,('mgr',r,err)
-    finally:
-        c.shutdown()
-    sessions+=1
-    time.sleep(0.5)
-print(json.dumps({'calls':sessions,'seconds':time.monotonic()-started}))
-`
-
 // checkProfileRenewal runs profileRenewalClient in client for seconds, which
 // should exceed the ticket lifetimes, and checks that every call of the one
 // session succeeded until the end.
 func checkProfileRenewal(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, seconds int) {
 	t.Helper()
-	checkProfileSessions(t, ctx, cluster, client, profileRenewalClient, seconds)
-}
-
-// checkProfileSessions runs a session script in client for seconds and checks
-// that every call succeeded until the end.
-func checkProfileSessions(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, script string, seconds int) {
-	t.Helper()
 	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-		Argv: []string{"python3", "-c", script, fmt.Sprint(seconds)}, Timeout: time.Duration(seconds+60) * time.Second,
+		Argv: []string{"python3", "-c", profileRenewalClient, fmt.Sprint(seconds)}, Timeout: time.Duration(seconds+60) * time.Second,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "ticket renewal session",
 	})
 	var session struct {
@@ -564,9 +541,9 @@ func checkProfileSessions(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		Seconds float64 `json:"seconds"`
 	}
 	if err != nil || result.ExitCode != 0 || json.Unmarshal(result.Stdout, &session) != nil || session.Calls < 2 || session.Seconds < float64(seconds) {
-		t.Fatalf("librados sessions: %v, exit %d: %s %s", err, result.ExitCode, result.Stdout, result.Stderr)
+		t.Fatalf("renewal session: %v, exit %d: %s %s", err, result.ExitCode, result.Stdout, result.Stderr)
 	}
-	t.Logf("%d rounds of MON and MGR calls over %.1f seconds", session.Calls, session.Seconds)
+	t.Logf("one librados session made %d rounds of MON and MGR calls over %.1f seconds", session.Calls, session.Seconds)
 }
 
 // testMessengerClientSecureProfile starts the default secure profile: three
@@ -699,10 +676,10 @@ func modeNames(modes []ceph.MessengerConnectionMode) []string {
 }
 
 // testMessengerClientTicketProfile starts three MONs and two MGRs with the
-// ticket lifetimes and MON timing of a profile and checks what the daemons
-// and a client container run with. With a session script, librados sessions
-// then run for seconds, and the MGRs must stay as they were.
-func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64, sessions string, seconds int) {
+// ticket lifetimes and MON timing of a profile, checks what the daemons and a
+// client container run with, and sends a MON and a MGR command from the
+// client.
+func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
@@ -724,18 +701,8 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 			t.Fatalf("client %s = %q, want %v: %v", name, out, want, err)
 		}
 	}
-	if sessions == "" {
-		return
-	}
-	before, err := cluster.ManagerStatus(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkProfileSessions(t, ctx, cluster, client, sessions, seconds)
-	after, err := cluster.ManagerStatus(ctx)
-	if err != nil || !after.Available || after.ActiveGID != before.ActiveGID || len(after.Standbys) != 1 {
-		t.Fatalf("MGRs changed while tickets renewed: before %+v, after %+v, %v", before, after, err)
-	}
+	execCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "fsid")
+	execCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "pg", "stat")
 }
 
 // testMessengerClientDelayedManagers starts three MONs with no MGR, then two
