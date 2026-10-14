@@ -7,7 +7,9 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,15 +110,50 @@ func TestRADOSMutationContracts(t *testing.T) {
 	phase(&before, "prepare", pool, namespace)
 	restore := holdDispatchDelay(t, ctx, cluster, "osd.0", 2*time.Second)
 	var late struct {
-		Truncate int     `json:"truncate"`
-		Remove   int     `json:"remove"`
-		Compound int     `json:"compound"`
-		Seconds  float64 `json:"seconds"`
+		Client    string    `json:"client"`
+		Completed []float64 `json:"completed"`
+		Truncate  int       `json:"truncate"`
+		Remove    int       `json:"remove"`
+		Compound  int       `json:"compound"`
 	}
-	phase(&late, "late", pool, namespace, "2", "15")
+	phase(&late, "late", pool, namespace, "2", "90")
 	restore()
-	if late.Truncate != 110 || late.Remove != 110 || late.Compound != 110 {
+	if late.Truncate != 110 || late.Remove != 110 || late.Compound != 110 || len(late.Completed) != 3 {
 		t.Fatalf("the client's timeout did not end each operation with ETIMEDOUT: %+v", late)
+	}
+	// The OSD's records show that it started and committed each operation
+	// after the client had given up on it.
+	poolState, err := cluster.PoolStatus(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg := fmt.Sprintf("%d.0", poolState.ID)
+	var records []osdTrackedOp
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		records = records[:0]
+		for _, op := range osdClientWrites(t, ctx, cluster, "osd.0", "dump_historic_ops_by_duration", pg) {
+			if trackedClient(op.Description) == late.Client {
+				records = append(records, op)
+			}
+		}
+		if len(records) == 3 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if len(records) != 3 {
+		t.Fatalf("osd.0 recorded %d finished operations of %s, want 3", len(records), late.Client)
+	}
+	slices.SortFunc(records, func(x, y osdTrackedOp) int {
+		return strings.Compare(trackedRequest(x.Description), trackedRequest(y.Description))
+	})
+	for i, record := range records {
+		started, ok := record.event("started")
+		_, committed := record.event("commit_sent")
+		gaveUp := time.Unix(0, int64(late.Completed[i]*1e9))
+		if !ok || !committed || !started.After(gaveUp) {
+			t.Fatalf("osd.0 did not start and commit operation %d of %s after the client gave up at %v: %+v", i+1, late.Client, gaveUp, record)
+		}
 	}
 	phase(&after, "state", pool, namespace)
 	// The pool has one PG, whose version every applied write advances by one,
@@ -134,6 +171,15 @@ func TestRADOSMutationContracts(t *testing.T) {
 	if compound.Data != "636f6d706f756e64" || compound.XAttr == nil || *compound.XAttr != "v2" || compound.Version != last+3 {
 		t.Fatalf("the late compound write was not applied once and whole at version %d: %+v", last+3, compound)
 	}
-	t.Logf("contracts: zero, create, guarded compound refusals (cmpext %d, omap_cmp %d, cmpxattr %d); late truncate, remove and compound applied once after ETIMEDOUT after %.1fs",
-		contracts.CmpextMismatch, contracts.OmapMismatch, contracts.CmpxattrMismatch, late.Seconds)
+	t.Logf("contracts: zero, create, guarded compound refusals (cmpext %d, omap_cmp %d, cmpxattr %d); osd.0 started the late truncate, remove and compound of %s after its ETIMEDOUT and applied each once",
+		contracts.CmpextMismatch, contracts.OmapMismatch, contracts.CmpxattrMismatch, late.Client)
+}
+
+// trackedRequest returns the request ID of an operation description such as
+// "osd_op(client.4199.0:12 2.0 ...)", "client.4199.0:12", padded so that
+// request IDs of one client sort in order.
+func trackedRequest(description string) string {
+	request, _, _ := strings.Cut(strings.TrimPrefix(description, "osd_op("), " ")
+	client, tid, _ := strings.Cut(request, ":")
+	return fmt.Sprintf("%s:%020s", client, tid)
 }

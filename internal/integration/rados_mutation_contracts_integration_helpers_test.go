@@ -16,8 +16,6 @@ phase,pool,namespace=sys.argv[1],sys.argv[2],sys.argv[3]
 def connected(timeout='10'):
     c=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_osd_op_timeout':timeout,'rados_mon_op_timeout':'10'})
     c.connect(); return c
-def opened(c):
-    i=c.open_ioctx(pool); i.set_namespace(namespace); return i
 def refused(io,name,build):
     try:
         with rados.WriteOpCtx() as op:
@@ -41,24 +39,27 @@ def view(io,name):
 def cmpxattr(name,value,data):
     # python-rados has no cmpxattr; call librados directly.
     lib=ctypes.CDLL('librados.so.2')
-    cluster=ctypes.c_void_p(); io=ctypes.c_void_p()
+    lib.rados_create_write_op.restype=ctypes.c_void_p
+    cluster=ctypes.c_void_p(); io=ctypes.c_void_p(); op=None
     assert lib.rados_create2(ctypes.byref(cluster),b'ceph',b'client.admin',ctypes.c_uint64(0))==0
     try:
         assert lib.rados_conf_read_file(cluster,b'/etc/ceph/ceph.conf')==0
         assert lib.rados_connect(cluster)==0
         assert lib.rados_ioctx_create(cluster,pool.encode(),ctypes.byref(io))==0
         lib.rados_ioctx_set_namespace(io,namespace.encode())
-        lib.rados_create_write_op.restype=ctypes.c_void_p
         op=ctypes.c_void_p(lib.rados_create_write_op())
         lib.rados_write_op_cmpxattr(op,b'tc',ctypes.c_uint8(rados.LIBRADOS_CMPXATTR_OP_EQ),value,ctypes.c_size_t(len(value)))
         lib.rados_write_op_write_full(op,data,ctypes.c_size_t(len(data)))
-        result=lib.rados_write_op_operate(op,io,name.encode(),None,0)
-        lib.rados_release_write_op(op)
-        lib.rados_ioctx_destroy(io)
-        return result
+        return lib.rados_write_op_operate(op,io,name.encode(),None,0)
     finally:
+        if op is not None:
+            lib.rados_release_write_op(op)
+        if io.value:
+            lib.rados_ioctx_destroy(io)
         lib.rados_shutdown(cluster)
-clients=[]
+clients=[]; ioctxs=[]
+def opened(c):
+    i=c.open_ioctx(pool); i.set_namespace(namespace); ioctxs.append(i); return i
 try:
     writer,reader=connected(),connected(); clients+=[writer,reader]
     a,b=opened(writer),opened(reader)
@@ -98,19 +99,30 @@ try:
             a.set_xattr(name,'tc',b'v1')
             receipt[name]=view(b,name)
     elif phase=='late':
-        timeout,linger=sys.argv[4],float(sys.argv[5])
+        timeout,bound=sys.argv[4],float(sys.argv[5])
         late=connected(timeout); clients.append(late)
         l=opened(late)
-        started=time.time()
-        receipt['truncate']=refused(l,'late-truncate',lambda op: op.truncate(10))
-        receipt['remove']=refused(l,'late-remove',lambda op: op.remove())
-        receipt['compound']=refused(l,'late-compound',lambda op: (op.cmpext(b'0123456789',0),op.write_full(b'compound'),op.set_xattr('tc',b'v2')))
-        receipt['seconds']=time.time()-started
-        time.sleep(linger)
+        receipt['client']='client.%d'%late.get_instance_id()
+        receipt['completed']=[]
+        for key,name,build in (('truncate','late-truncate',lambda op: op.truncate(10)),
+                               ('remove','late-remove',lambda op: op.remove()),
+                               ('compound','late-compound',lambda op: (op.cmpext(b'0123456789',0),op.write_full(b'compound'),op.set_xattr('tc',b'v2')))):
+            receipt[key]=refused(l,name,build)
+            receipt['completed'].append(time.time())
+        # Stay connected until the OSD has applied all three: it discards an
+        # operation whose connection closed before it started.
+        deadline=time.monotonic()+bound
+        while True:
+            truncated,removed,compound=view(b,'late-truncate'),view(b,'late-remove'),view(b,'late-compound')
+            if truncated.get('size')==10 and not removed['exists'] and compound.get('xattr')=='v2':
+                break
+            assert time.monotonic()<deadline,'the OSD did not apply the late operations'
+            time.sleep(0.5)
     elif phase=='state':
         for name in ('late-truncate','late-remove','late-compound'):
             receipt[name]=view(b,name)
     print(json.dumps(receipt))
 finally:
+    for i in ioctxs: i.close()
     for c in clients: c.shutdown()
 `

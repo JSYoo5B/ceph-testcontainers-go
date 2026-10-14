@@ -79,8 +79,8 @@ until it reports an active MGR and one standby.
 A client that implements object mutations needs native receipts for each
 outcome it reports. The module wraps no data APIs; these tests show the
 native recipes with `python3-rados` (and `ctypes` for librados calls that
-python-rados lacks) in a client container. A second client reads every
-result back.
+python-rados lacks) in a client container. `TestRADOSMutationContracts` and
+`TestRADOSMutationOutcomes` read every result back with a second client.
 
 | Contract | Native receipt | Proven by |
 | --- | --- | --- |
@@ -91,7 +91,7 @@ result back.
 | version guard | `assert_version` with an older version fails with `ERANGE` (34), with a newer one `EOVERFLOW` (75); a refused write still takes a PG version | `TestRADOSMutationOutcomes` |
 | compare guards | a failed `cmpext` returns `MAX_ERRNO` (4095) plus the offset of the first differing byte; failed `omap_cmp` and `cmpxattr` return `ECANCELED` (125); the whole compound operation is refused | `TestRADOSMutationContracts`, `TestRADOSClientFixtures` |
 | acknowledged outcome | a write whose completion returned 0 survives a SIGKILL of a BlueStore OSD | `TestRADOSMutationOutcomes` |
-| unknown outcome | the client's own timeout ends an append, truncate, remove or guarded compound write with `ETIMEDOUT` (110) while the OSD delays it; the OSD applies each exactly once afterwards, a compound write whole | `TestRADOSMutationOutcomes`, `TestRADOSMutationContracts` |
+| unknown outcome | the client's own timeout ends an append, truncate, remove or guarded compound write with `ETIMEDOUT` (110) while the OSD delays it; the OSD's operation records show that it started each one afterwards, and it applied each exactly once, a compound write whole | `TestRADOSMutationOutcomes`, `TestRADOSMutationContracts` |
 | no automatic re-execution | an unguarded retry of an uncertain append appends again; a retry guarded by the version read before is refused | `TestRADOSMutationOutcomes` |
 | killed client | the OSD discards an operation whose client's connection closed before it started | `TestRADOSMutationOutcomes` |
 | OSD restart | SIGKILL and restart with BlueStore; a clean restart with MemStore | `TestRADOSMutationOutcomes`, `TestOSDMemStoreLegacyPlacement` |
