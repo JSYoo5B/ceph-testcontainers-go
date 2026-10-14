@@ -290,20 +290,43 @@ func cephFSRetainedSession(t *testing.T, parent context.Context, fs *cephfs.File
 	}
 }
 
+// cephFSFailover selects which daemon takes rank 0 after the active MDS is
+// killed.
+type cephFSFailover int
+
+const (
+	// cephFSRestart starts the killed MDS's container again; the filesystem
+	// has no standby.
+	cephFSRestart cephFSFailover = iota
+	// cephFSStandbyTakeover lets an idle standby take rank 0.
+	cephFSStandbyTakeover
+	// cephFSReplayTakeover lets the journal follower of rank 0 take it.
+	cephFSReplayTakeover
+)
+
+func (f cephFSFailover) String() string {
+	return [...]string{"restart", "standby", "standby-replay"}[f]
+}
+
 // testCephFSRetainedClient keeps one native client, its mount and an open fd
-// across a SIGKILL and restart of the filesystem's only MDS. The restarted
-// daemon takes rank 0 with a new GID in the same container, and the client's
+// across a SIGKILL of the filesystem's active MDS. Depending on failover,
+// rank 0 then comes back in the killed daemon's restarted container with a
+// new GID, or a standby or standby-replay daemon takes it over. The client's
 // session continues with the same client ID, PID and address: the actor
 // reads, appends, fsyncs, renames and sets an xattr through its original fd.
 // A reader in another container then checks the inode, the bytes and the
-// xattr. This proves reconnect of a client whose data was fsynced before the
-// failure; it does not cover replay of an outstanding request, a standby
-// takeover or several ranks.
-func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+// xattr. After a takeover the killed daemon starts again and must rejoin as a
+// standby, a separate condition from the client's recovery. This proves
+// reconnect of a client whose data was fsynced before the failure; it does
+// not cover replay of an outstanding request or several ranks.
+func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
 	opts = append(append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure)), opts...)
+	if failover != cephFSRestart {
+		opts = append(opts, cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1, StandbyReplay: failover == cephFSReplayTakeover}))
+	}
 	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
 	filesystems := cephfs.Filesystems(cluster)
 	if len(filesystems) != 1 {
@@ -317,18 +340,34 @@ func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCust
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.MaxMDS != 1 || len(before.Active) != 1 || len(before.Standby) != 0 || len(before.StandbyReplay) != 0 || !before.Active[0].Owned || before.Active[0].Rank != 0 {
-		t.Fatalf("want one owned active MDS and no standby: %+v", before)
+	standbys, replays, members := 0, 0, 1
+	switch failover {
+	case cephFSStandbyTakeover:
+		standbys, members = 1, 2
+	case cephFSReplayTakeover:
+		replays, members = 1, 2
+	}
+	if before.MaxMDS != 1 || len(before.Active) != 1 || len(before.Standby) != standbys || len(before.StandbyReplay) != replays || !before.Active[0].Owned || before.Active[0].Rank != 0 {
+		t.Fatalf("want one owned active MDS, %d standby and %d standby-replay: %+v", standbys, replays, before)
 	}
 	old := before.Active[0]
+	// takeover is the daemon that must take rank 0: the killed one itself
+	// after its restart, or the standby.
+	takeover := old
+	switch failover {
+	case cephFSStandbyTakeover:
+		takeover = before.Standby[0]
+	case cephFSReplayTakeover:
+		takeover = before.StandbyReplay[0]
+	}
 	var daemon *cephfs.MDS
 	for _, member := range fs.MDSs() {
 		if member.ID == old.Name {
 			daemon = member
 		}
 	}
-	if daemon == nil || len(fs.MDSs()) != 1 {
-		t.Fatalf("active mds.%s is not the filesystem's only owned daemon", old.Name)
+	if daemon == nil || len(fs.MDSs()) != members || !takeover.Owned {
+		t.Fatalf("active mds.%s or its successor mds.%s is not owned: %+v", old.Name, takeover.Name, before)
 	}
 	cid := daemon.GetContainerID()
 
@@ -357,7 +396,7 @@ func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCust
 		before.FilesystemID, old.Name, old.GID, cid, baseline.Client, baseline.PID, session.Address, baseline.Inode, cephFSRawSessionSummary(rawBefore))
 
 	// SIGKILL leaves the MDS no chance to hand off its rank. Failing its GID
-	// lets the restarted process, with a new GID, take rank 0 at once.
+	// lets the successor take rank 0 at once.
 	kill := time.Duration(0)
 	if err := daemon.Stop(ctx, &kill); err != nil {
 		t.Fatal("kill MDS:", err)
@@ -368,9 +407,11 @@ func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCust
 	if _, err := cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(old.GID, 10)); err != nil {
 		t.Fatal("fail MDS GID:", err)
 	}
-	restarted := time.Now()
-	if err := daemon.Start(ctx); err != nil {
-		t.Fatal("restart MDS:", err)
+	failed := time.Now()
+	if failover == cephFSRestart {
+		if err := daemon.Start(ctx); err != nil {
+			t.Fatal("restart MDS:", err)
+		}
 	}
 	var after *cephfs.FilesystemStatus
 	for {
@@ -385,8 +426,14 @@ func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCust
 		}
 	}
 	current := after.Active[0]
-	if after.FilesystemID != before.FilesystemID || current.Name != old.Name || current.Rank != 0 || !current.Owned || len(after.Standby) != 0 || daemon.GetContainerID() != cid || len(fs.MDSs()) != 1 {
-		t.Fatalf("restarted rank 0 is not the same owned container with a new GID: %+v", after)
+	recovered := time.Since(failed)
+	// The restarted daemon has a new GID; a standby keeps the GID it had.
+	wantGID := current.GID
+	if failover != cephFSRestart {
+		wantGID = takeover.GID
+	}
+	if after.FilesystemID != before.FilesystemID || current.Name != takeover.Name || current.GID != wantGID || current.Rank != 0 || !current.Owned || daemon.GetContainerID() != cid || len(fs.MDSs()) != members {
+		t.Fatalf("rank 0 is not served by mds.%s (GID %d) of the same filesystem: %+v", takeover.Name, wantGID, after)
 	}
 
 	actor.open(t, ctx, "act")
@@ -435,6 +482,30 @@ func testCephFSRetainedClient(t *testing.T, opts ...testcontainers.ContainerCust
 	}
 	actor.wait(t, ctx)
 	sum := sha256.Sum256(want)
-	t.Logf("CEPHFS_RETAINED restarted fscid=%d mds=%s gid=%d->%d cid=%s restart=%s client=%d pid=%d address=%s inode=%d sha256=%x reader=%d raw: %s",
-		after.FilesystemID, current.Name, old.GID, current.GID, cid, time.Since(restarted).Round(time.Second), baseline.Client, baseline.PID, retained.Address, baseline.Inode, sum, independent.Client, cephFSRawSessionSummary(rawAfter))
+	t.Logf("CEPHFS_RETAINED %s fscid=%d rank0 %s/%d -> %s/%d after %s, killed cid=%s client=%d pid=%d address=%s inode=%d sha256=%x reader=%d raw: %s",
+		failover, after.FilesystemID, old.Name, old.GID, current.Name, current.GID, recovered.Round(time.Second), cid, baseline.Client, baseline.PID, retained.Address, baseline.Inode, sum, independent.Client, cephFSRawSessionSummary(rawAfter))
+	if failover == cephFSRestart {
+		return
+	}
+
+	// Standby capacity is a separate condition: the killed daemon starts
+	// again in its container and rejoins with a new GID.
+	if err := daemon.Start(ctx); err != nil {
+		t.Fatal("restart killed MDS:", err)
+	}
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := fs.MDSStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejoined := restored.Standby
+	if failover == cephFSReplayTakeover {
+		rejoined = restored.StandbyReplay
+	}
+	if len(restored.Active) != 1 || restored.Active[0].GID != current.GID || len(rejoined) != 1 || rejoined[0].Name != old.Name || rejoined[0].GID == old.GID || daemon.GetContainerID() != cid {
+		t.Fatalf("mds.%s did not rejoin as a %s with a new GID: %+v", old.Name, failover, restored)
+	}
+	t.Logf("CEPHFS_RETAINED %s capacity restored: mds.%s rejoined with GID %d", failover, old.Name, rejoined[0].GID)
 }

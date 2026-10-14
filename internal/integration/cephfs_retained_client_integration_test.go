@@ -11,6 +11,13 @@ import (
 )
 
 func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
-	t.Run("bridge", func(t *testing.T) { testCephFSRetainedClient(t) })
-	t.Run("host", func(t *testing.T) { testCephFSRetainedClient(t, ceph.WithHostNetwork()) })
+	t.Run("bridge", func(t *testing.T) { testCephFSRetainedClient(t, cephFSRestart) })
+	t.Run("host", func(t *testing.T) { testCephFSRetainedClient(t, cephFSRestart, ceph.WithHostNetwork()) })
+}
+
+// A standby or the journal follower takes rank 0 while the client keeps its
+// mount, session and open file.
+func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
+	t.Run("standby", func(t *testing.T) { testCephFSRetainedClient(t, cephFSStandbyTakeover) })
+	t.Run("standby-replay", func(t *testing.T) { testCephFSRetainedClient(t, cephFSReplayTakeover) })
 }
