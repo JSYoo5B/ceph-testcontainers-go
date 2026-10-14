@@ -11,7 +11,9 @@ change the API.
 - The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
   maps the profiles and daemon controls of a Messenger client test suite to
   fixture options, with the tests that prove each one, and lists what differs
-  from a single-container bootstrap.
+  from a single-container bootstrap. Its mutation oracle table names the
+  native receipt of each mutation outcome, from zero, create and compare
+  guards to operations that the OSD applies after the client gave up.
 
 - `ceph.MessengerV2Only` for `WithMessengerMode` listens on and advertises
   only Messenger v2, like `MessengerV2Secure`, but leaves the connection modes

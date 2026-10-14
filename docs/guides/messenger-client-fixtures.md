@@ -74,6 +74,35 @@ until it reports an active MGR and one standby.
 | Revoke a client key and restore it | the suite's own client, or `TemporaryClientRevocation` and `ReplaceClientKey` | `TestClientRevocation`, `TestClientKeyReplacement` |
 | Run native oracles | `python3-rados`, the `ceph` CLI, `crushtool` and `ceph-dencoder` in a `WithClient` container, or `RunNativeCommand` | `TestNativeCommands` (`ceph-dencoder`), `TestRADOSMutationOutcomes` (`python3-rados`), `TestMessengerClientProfileCRC` and `TestOSDMemStoreLegacyPlacement` (`crushtool`) |
 
+## Mutation oracles
+
+A client that implements object mutations needs native receipts for each
+outcome it reports. The module wraps no data APIs; these tests show the
+native recipes with `python3-rados` (and `ctypes` for librados calls that
+python-rados lacks) in a client container. `TestRADOSMutationContracts` and
+`TestRADOSMutationOutcomes` read every result back with a second client.
+
+| Contract | Native receipt | Proven by |
+| --- | --- | --- |
+| write at an offset, `write_full`, append | readback of the exact bytes | `TestRADOSMutationOutcomes`, `TestRADOSSelfManagedSnapshots` |
+| zero | the range reads as zeros and the size is unchanged | `TestRADOSMutationContracts` |
+| truncate, remove | the new size; `ENOENT` after a remove | `TestRADOSSelfManagedSnapshots`, `TestRADOSMutationContracts` |
+| create | an exclusive create of an existing object fails with `EEXIST` (17), also inside a compound write, which then changes nothing; an idempotent create succeeds | `TestRADOSMutationContracts` |
+| version guard | `assert_version` with an older version fails with `ERANGE` (34), with a newer one `EOVERFLOW` (75); a refused write still takes a PG version | `TestRADOSMutationOutcomes` |
+| compare guards | a failed `cmpext` returns `MAX_ERRNO` (4095) plus the offset of the first differing byte; failed `omap_cmp` and `cmpxattr` return `ECANCELED` (125); the whole compound operation is refused | `TestRADOSMutationContracts`, `TestRADOSClientFixtures` |
+| acknowledged outcome | a write whose completion returned 0 survives a SIGKILL of a BlueStore OSD | `TestRADOSMutationOutcomes` |
+| unknown outcome | the client's own timeout ends an append, truncate, remove or guarded compound write with `ETIMEDOUT` (110) while the OSD delays it; the OSD's operation records show that it started each one afterwards, and it applied each exactly once, a compound write whole | `TestRADOSMutationOutcomes`, `TestRADOSMutationContracts` |
+| no automatic re-execution | an unguarded retry of an uncertain append appends again; a retry guarded by the version read before is refused | `TestRADOSMutationOutcomes` |
+| killed client | the OSD discards an operation whose client's connection closed before it started | `TestRADOSMutationOutcomes` |
+| OSD restart | SIGKILL and restart with BlueStore; a clean restart with MemStore | `TestRADOSMutationOutcomes`, `TestOSDMemStoreLegacyPlacement` |
+
+`TestRADOSMutationContracts` runs on the topology of the profiles above:
+Messenger v2 only with CRC, AES256K keys where the image can make them, and a
+MemStore OSD with the legacy CRUSH map and a pool without `hashpspool`. A
+MemStore OSD loses its data when it is killed, so durability across a crash
+needs BlueStore, as in `TestRADOSMutationOutcomes`. Delays inside the OSD are
+described in [Fault injection](fault-injection.md).
+
 ## Differences from a single-container bootstrap
 
 - **Addresses and ports.** Each daemon runs in its own container, and the
