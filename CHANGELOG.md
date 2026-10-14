@@ -24,6 +24,12 @@ change the API.
   primary held, controls that kept working during the cut, and the bytes and
   object version that an independent client reads afterwards.
 
+- The daemon-to-daemon path table has a receipt that tells log recovery
+  from backfill. A replica that missed writes rejoins with recovery held,
+  and the primary's `pg query` shows which path it took. The test records
+  that path, the objects recovered per PG, an independent readback and the
+  replica serving every object alone.
+
 - The legacy placement recipe keeps `hashpspool` off every pool, the MGR's
   `.mgr` pool included: `osd_pool_default_flag_hashpspool = false` in a
   `WithConfigFile` file applies before the MGR creates `.mgr`. While any pool
