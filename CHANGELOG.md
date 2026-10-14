@@ -16,7 +16,9 @@ change the API.
   setting xattrs, as a client in another container confirms. A second
   receipt does the same while an idle standby, or the journal follower of
   `StandbyReplay`, takes over rank 0; the killed daemon then rejoins as a
-  standby with a new GID.
+  standby with a new GID. A third keeps the client's file in a directory
+  pinned to rank 1 of two active ranks while a standby takes over rank 1, and
+  rank 0 keeps its daemon and its session with the client.
 
 - The same guide has a table of daemon-to-daemon paths, with what each test
   observes and how directly. The held replication write of the separate
