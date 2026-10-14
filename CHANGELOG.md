@@ -143,6 +143,14 @@ change the API.
 
 ### Fixed
 
+- `cephfs.Mirror.RebalanceDirectories` no longer hangs the MGR's mirroring
+  module. It sent all removals back to back, and the module deadlocks when an
+  earlier directory's release is acknowledged while a later removal waits for
+  its RADOS write: the removal holds the policy lock that the acknowledgement
+  needs, and both callbacks run on one librados strand. It now removes one
+  directory at a time, while every tracked directory is idle. The deadlock
+  reproduces natively on Ceph 20.2.4 and 19.2.5.
+
 - `Ceph` and the fixture's own `ceph` commands no longer fail with
   `timed out` when no MON answers within the CLI's 5 second connection
   timeout, as during a storage stall of a CI runner or an election. The CLI

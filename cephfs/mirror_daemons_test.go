@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -247,7 +250,7 @@ func TestCephFSMirrorExplicitRebalanceWaitsForNativeReleaseAndPreservesForeignPo
 		native = append(native, directory)
 		return nil
 	}
-	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mutate, make(map[string]bool), time.Millisecond); err != nil {
+	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mappedState, mutate, make(map[string]bool), time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(actions, []string{"remove:/owned-a", "remove:/owned-b", "add:/owned-a", "add:/owned-b"}) || !reflect.DeepEqual(native, []string{"/foreign", "/owned-a", "/owned-b"}) {
@@ -284,10 +287,10 @@ func TestCephFSMirrorExplicitRebalanceRetriesUncertainPartialMutations(t *testin
 				}
 				return nil
 			}
-			if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mutate, pending, time.Millisecond); err == nil {
+			if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mappedState, mutate, pending, time.Millisecond); err == nil {
 				t.Fatal("partial mutation error was lost")
 			}
-			if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mutate, pending, time.Millisecond); err != nil {
+			if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mappedState, mutate, pending, time.Millisecond); err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(native, map[string]bool{"/owned-a": true, "/owned-b": true, "/foreign": true}) || !reflect.DeepEqual(intent, []string{"/owned-a", "/owned-b"}) {
@@ -307,7 +310,7 @@ func TestCephFSMirrorExplicitRebalanceHonorsCanceledReleaseWithoutRestoringEarly
 			cancel()
 		}
 		return []string{"/owned", "/foreign"}, nil
-	}, func(_ context.Context, operation, _ string) error {
+	}, mappedState, func(_ context.Context, operation, _ string) error {
 		if operation == "add" {
 			t.Fatal("canceled release restored an in-flight assignment")
 		}
@@ -352,13 +355,21 @@ func TestCephFSMirrorExplicitRebalanceRetriesLostResponseWhileNativeRemovalIsPen
 		restored = true
 		return nil
 	}
-	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mutate, pending, time.Millisecond); err == nil || !pending["/owned"] {
+	state := func(_ context.Context, directory string) (string, error) {
+		if directory == "/owned" && removing {
+			return "unmapping", nil
+		}
+		return "mapped", nil
+	}
+	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, state, mutate, pending, time.Millisecond); err == nil || !pending["/owned"] {
 		t.Fatal("uncertain async removal was not retained")
 	}
-	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, mutate, pending, time.Millisecond); err != nil {
+	// The retry waits for the removal that the lost response started instead
+	// of sending another remove into it.
+	if err := rebalanceCephFSMirrorDirectories(t.Context(), intent, list, state, mutate, pending, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	if removeCalls != 2 || !restored || len(pending) != 0 {
+	if removeCalls != 1 || !restored || len(pending) != 0 {
 		t.Fatalf("retry lost pending release or skipped recovery: removeCalls=%d restored=%t pending=%v", removeCalls, restored, pending)
 	}
 }
@@ -381,8 +392,15 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 	if len(args) >= 3 && args[0] == "ceph" && args[1] == "--connect-timeout" {
 		args = args[3:]
 	}
-	var output []byte
+	var output, stderr []byte
+	code := 0
 	switch {
+	case len(args) == 6 && reflect.DeepEqual(args[:4], []string{"fs", "snapshot", "mirror", "dirmap"}):
+		if control.directories[args[5]] {
+			output = []byte(`{"instance_id": "4262", "last_shuffled": 1791898606.5, "state": "mapped"}`)
+		} else {
+			code, stderr = 2, []byte("Error ENOENT: "+args[5]+" is not tracked\n")
+		}
 	case len(args) >= 3 && args[0] == "fs" && args[1] == "get":
 		output = []byte(`{"id":1,"mdsmap":{"metadata_pool":7}}`)
 	case len(args) >= 4 && reflect.DeepEqual(args[:4], []string{"osd", "pool", "ls", "detail"}):
@@ -425,11 +443,19 @@ func (control *cephFSMirrorNativeControlFake) Exec(ctx context.Context, argument
 		return 0, nil, errors.New("unexpected native command: " + strings.Join(arguments, " "))
 	}
 	var framed bytes.Buffer
-	header := [8]byte{byte(stdcopy.Stdout)}
-	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
-	framed.Write(header[:])
-	framed.Write(output)
-	return 0, bytes.NewReader(framed.Bytes()), nil
+	for _, stream := range []struct {
+		kind byte
+		data []byte
+	}{{byte(stdcopy.Stdout), output}, {byte(stdcopy.Stderr), stderr}} {
+		if stream.kind == byte(stdcopy.Stderr) && len(stream.data) == 0 {
+			continue
+		}
+		header := [8]byte{stream.kind}
+		binary.BigEndian.PutUint32(header[4:], uint32(len(stream.data)))
+		framed.Write(header[:])
+		framed.Write(stream.data)
+	}
+	return code, bytes.NewReader(framed.Bytes()), nil
 }
 
 func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *testing.T) {
@@ -450,5 +476,93 @@ func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *
 	}
 	if !reflect.DeepEqual(control.mutations, []string{"remove:/owned", "add:/owned"}) || !control.directories["/foreign"] || !reflect.DeepEqual(mirror.Directories, []string{"/owned", "/foreign"}) {
 		t.Fatalf("rebalance adopted public caller-added membership: mutations=%v policies=%v", control.mutations, control.directories)
+	}
+}
+
+// mappedState reports every tracked directory idle.
+func mappedState(context.Context, string) (string, error) { return "mapped", nil }
+
+// mirrorPolicyModel is the native mirroring policy as rebalance sees it. A
+// removed directory stays "unmapping" for a few list calls until its release
+// is acknowledged. A remove issued while any directory is not idle deadlocks
+// the module (its policy lock against the librados callback strand), so the
+// model blocks it until the caller's deadline.
+type mirrorPolicyModel struct {
+	states     map[string]string
+	releasing  map[string]int
+	deadlocked bool
+	actions    []string
+}
+
+func (m *mirrorPolicyModel) list(context.Context) ([]string, error) {
+	for directory, polls := range m.releasing {
+		if polls <= 1 {
+			delete(m.releasing, directory)
+			delete(m.states, directory)
+			continue
+		}
+		m.releasing[directory] = polls - 1
+	}
+	directories := make([]string, 0, len(m.states))
+	for directory := range m.states {
+		directories = append(directories, directory)
+	}
+	slices.Sort(directories)
+	return directories, nil
+}
+
+func (m *mirrorPolicyModel) state(_ context.Context, directory string) (string, error) {
+	value, ok := m.states[directory]
+	if !ok {
+		return "", fmt.Errorf("Error ENOENT: %s is not tracked: %w", directory, fs.ErrNotExist)
+	}
+	return value, nil
+}
+
+func (m *mirrorPolicyModel) mutate(ctx context.Context, operation, directory string) error {
+	m.actions = append(m.actions, operation+":"+directory)
+	if operation == "add" {
+		m.states[directory] = "mapped"
+		return nil
+	}
+	for other, value := range m.states {
+		if other != directory && value != "mapped" {
+			m.deadlocked = true
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	m.states[directory] = "unmapping"
+	m.releasing[directory] = 3
+	return nil
+}
+
+func TestCephFSMirrorRebalanceNeverRemovesWhileAReleaseIsInFlight(t *testing.T) {
+	model := &mirrorPolicyModel{
+		states:    map[string]string{"/daemon-a": "mapped", "/daemon-b": "mapped", "/daemon-c": "mapped", "/foreign": "mapped"},
+		releasing: map[string]int{},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	intent := []string{"/daemon-a", "/daemon-b", "/daemon-c"}
+	if err := rebalanceCephFSMirrorDirectories(ctx, intent, model.list, model.state, model.mutate, map[string]bool{}, time.Millisecond); err != nil || model.deadlocked {
+		t.Fatalf("rebalance removed a directory while another release was in flight: %v, actions %v", err, model.actions)
+	}
+	want := []string{"remove:/daemon-a", "remove:/daemon-b", "remove:/daemon-c", "add:/daemon-a", "add:/daemon-b", "add:/daemon-c"}
+	if !reflect.DeepEqual(model.actions, want) || model.states["/foreign"] != "mapped" || len(model.states) != 4 {
+		t.Fatalf("actions %v, states %v", model.actions, model.states)
+	}
+
+	// A caller's directory still acquiring delays the first remove too.
+	model = &mirrorPolicyModel{states: map[string]string{"/daemon-a": "mapped", "/foreign": "mapping"}, releasing: map[string]int{}}
+	acquired := 0
+	list := func(ctx context.Context) ([]string, error) {
+		if acquired++; acquired == 3 {
+			model.states["/foreign"] = "mapped"
+		}
+		return model.list(ctx)
+	}
+	if err := rebalanceCephFSMirrorDirectories(ctx, []string{"/daemon-a"}, list, model.state, model.mutate, map[string]bool{}, time.Millisecond); err != nil || model.deadlocked {
+		t.Fatalf("rebalance removed while a caller's directory was acquiring: %v", err)
 	}
 }
