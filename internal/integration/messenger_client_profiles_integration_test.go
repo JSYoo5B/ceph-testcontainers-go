@@ -47,6 +47,13 @@ func TestMessengerClientProfileDelayedManagers(t *testing.T) {
 	testMessengerClientDelayedManagers(t)
 }
 
+// A MON that never answers joins the monmap and leaves it again; new clients
+// connect once the election that each change starts has settled.
+func TestMessengerClientProfileUnreachableMonitor(t *testing.T) {
+	parallelWhenEnabled(t)
+	testMessengerClientUnreachableMonitor(t)
+}
+
 // A network interruption of a MON outlasts a restart of the MON until its
 // owner restores it; then the MON gets its addresses back.
 func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
