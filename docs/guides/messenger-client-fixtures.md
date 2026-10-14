@@ -29,9 +29,9 @@ public options and checks the native result.
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
 | | `aes`/`aes256k` | `AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K}` | `TestMessengerClientProfileCRC/bridge` |
 | | `aes256k`/`aes` | `AuthConfig{KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES}` | `TestAuthCiphersAndTicketLifetimes` |
-| Ticket lifetimes | 12 s MON and service tickets | `AuthConfig{MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}` | `TestMessengerClientProfileSecure` |
-| | 120 s, with fast MON timing | `AuthConfig{MonTicketTTL: 120 * time.Second, ServiceTicketTTL: 120 * time.Second}` and a `WithConfigFile` `[global]` section with `mon_subscribe_interval`, `mon_tick_interval`, `mon_session_timeout`, `mon_client_ping_interval` and `mon_client_hunt_interval` | `TestMessengerClientProfileTickets/idle` |
-| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileTickets/short` |
+| Ticket lifetimes | 12 s MON and service tickets | `AuthConfig{MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}` | `TestMessengerClientProfileSecure`, where one librados session outlives two lifetimes of each ticket |
+| | 120 s, with fast MON timing | `AuthConfig{MonTicketTTL: 120 * time.Second, ServiceTicketTTL: 120 * time.Second}` and a `WithConfigFile` `[global]` section with `mon_subscribe_interval`, `mon_tick_interval`, `mon_session_timeout`, `mon_client_ping_interval` and `mon_client_hunt_interval` | `TestMessengerClientProfileIdleTickets` |
+| | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag; see [Differences](#differences-from-a-single-container-bootstrap) |
 | `global_id` reclaim | not allowed insecurely | always `auth_allow_insecure_global_id_reclaim = false` | `TestMessengerClientProfileSecure` |
 | Connection modes | every connection secure | `MessengerV2Secure` | `TestMessengerClientProfileSecure` |
 | | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC` |
@@ -42,7 +42,7 @@ public options and checks the native result.
 | | IPv6 | `WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
 | | IPv4-mapped IPv6 | `WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
 | Where the tests run | a container on the cluster network | a container with `WithClient` or `WithClientIdentity` | every profile |
-| | a host process | `WithHostNetwork` (see [Host network](host-network.md)) | `TestMessengerClientProfileCRC/host` |
+| | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host`, where the test process reads each daemon's Messenger v2 banner |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |
 
 `MessengerConnectionMode` values are `ceph.MessengerSecure` and
@@ -54,10 +54,10 @@ makes only AES keys. `Run` refuses a profile that needs `aes256k` with
 
 ### Readiness
 
-`Run` returns once the first MGR it started is available. A suite that also
-waits for every MON and a standby MGR polls `QuorumStatus` until the quorum
-lists all three MONs, and `ManagerStatus` until it reports an active MGR and
-one standby.
+`Run` returns once a MGR is available, or, with `WithNoInitialManagers`, once
+the MONs have a quorum and the initial OSDs are up and in. A suite that also waits for every MON and a standby MGR polls
+`QuorumStatus` until the quorum lists all three MONs, and `ManagerStatus`
+until it reports an active MGR and one standby.
 
 ## Daemon controls
 
@@ -90,9 +90,10 @@ one standby.
   epoch and initial features differ from a map that `monmaptool` created with
   all three MONs and `--enable-all-features`. Read the actual map with
   `ceph mon dump`.
-- **MonMap ciphers.** On an image with MonMap cipher support, the fixture
-  always writes `auth_allowed_ciphers`, by default the distinct key types of
-  `KeyType`, `ServiceCipher` and `PreferredCipher`.
+- **MonMap ciphers.** When `WithAuth` sets `KeyType`, the fixture writes all
+  three MonMap ciphers, including `auth_allowed_ciphers`, which defaults to
+  the distinct key types of `KeyType`, `ServiceCipher` and `PreferredCipher`.
+  Without `WithAuth` the release's defaults apply.
 - **Connections between daemons.** `ms_cluster_mode` and
   `ms_mon_cluster_mode` keep Ceph's defaults, which accept both modes, except
   under `MessengerV2Secure`, which fixes them to secure. Under
@@ -100,7 +101,10 @@ one standby.
 - **Ticket lifetimes.** They are fixed at bootstrap; `TemporaryConfig` cannot
   change them later.
 - **Short MON tickets.** With MON tickets under ten seconds, a MGR that renews
-  late can lose its MON session; see [WithAuth](../ceph.md#withauth).
+  late while it loads its modules can lose its MON session, and Ceph then
+  aborts it; see [WithAuth](../ceph.md#withauth). The same happens to a
+  hand-built cluster with the same lifetimes. That is why the 1.5-second
+  profile's test is optional.
 - **Keys.** Each identity has its own keyring. Read a key from
   `ClientConfig.ConnectionConfig`.
 - **Stopping a daemon abruptly.** `Stop` sends SIGTERM and waits. Kill a

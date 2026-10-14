@@ -29,23 +29,16 @@ func TestMessengerClientProfileModeRejection(t *testing.T) {
 	})
 }
 
-// Long tickets with fast MON timing, and MON tickets shorter than two
-// seconds.
-func TestMessengerClientProfileTickets(t *testing.T) {
+// Long tickets with fast MON timing.
+func TestMessengerClientProfileIdleTickets(t *testing.T) {
 	parallelWhenEnabled(t)
-	t.Run("idle", func(t *testing.T) {
-		testMessengerClientTicketProfile(t, 120*time.Second, 120*time.Second, `[global]
+	testMessengerClientTicketProfile(t, 120*time.Second, 120*time.Second, `[global]
 mon_subscribe_interval = 2
 mon_tick_interval = 1
 mon_session_timeout = 3
 mon_client_ping_interval = 1
 mon_client_hunt_interval = 1
-`, map[string]float64{"mon_subscribe_interval": 2, "mon_tick_interval": 1, "mon_session_timeout": 3, "mon_client_ping_interval": 1, "mon_client_hunt_interval": 1}, 10)
-	})
-	t.Run("short", func(t *testing.T) {
-		testMessengerClientTicketProfile(t, 1500*time.Millisecond, 12*time.Second, "[global]\nmon_tick_interval = 1\n",
-			map[string]float64{"mon_tick_interval": 1}, 10)
-	})
+`, map[string]float64{"mon_subscribe_interval": 2, "mon_tick_interval": 1, "mon_session_timeout": 3, "mon_client_ping_interval": 1, "mon_client_hunt_interval": 1}, 0)
 }
 
 // Three MONs without a MGR, then two MGRs started later.

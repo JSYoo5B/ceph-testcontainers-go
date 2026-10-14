@@ -25,7 +25,9 @@ func keepMonitorAddress(network string) testcontainers.CustomizeRequestOption {
 	var recorded *dockernetwork.EndpointSettings
 	return testcontainers.WithLifecycleHooks(testcontainers.ContainerLifecycleHooks{
 		PostReadies: []testcontainers.ContainerHook{func(ctx context.Context, ctr testcontainers.Container) error {
-			mu.Lock()
+			if err := lockTopologyMutex(ctx, &mu); err != nil {
+				return err
+			}
 			defer mu.Unlock()
 			if recorded != nil {
 				return nil
@@ -43,7 +45,9 @@ func keepMonitorAddress(network string) testcontainers.CustomizeRequestOption {
 			return nil
 		}},
 		PreStarts: []testcontainers.ContainerHook{func(ctx context.Context, ctr testcontainers.Container) error {
-			mu.Lock()
+			if err := lockTopologyMutex(ctx, &mu); err != nil {
+				return err
+			}
 			defer mu.Unlock()
 			if recorded == nil {
 				return nil

@@ -70,14 +70,6 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256 << 20)}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 
-	out, err := cluster.Ceph(ctx, "osd", "metadata", "0", "--format", "json")
-	var metadata struct {
-		ObjectStore string `json:"osd_objectstore"`
-	}
-	if err != nil || json.Unmarshal(out, &metadata) != nil || metadata.ObjectStore != "memstore" {
-		t.Fatalf("osd.0 metadata %q, err=%v", out, err)
-	}
-
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
 	assertLegacyCRUSHMap(t, ctx, cluster)
 
@@ -85,25 +77,14 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	if err != nil {
 		t.Fatal(err)
 	}
-	pools, err := cluster.Pools(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, state := range pools {
-		if state.Name != pool.Name {
-			continue
-		}
-		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 || strings.Contains(","+state.Flags+",", ",hashpspool,") {
-			t.Fatalf("pool %+v keeps hashpspool or differs from size 1, PG 1", state)
-		}
-	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	checkMemStoreLegacyPool(t, ctx, cluster, pool.Name)
 
 	// The client writes and reads through the single PG on osd.0.
 	execCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read && cmp /tmp/object /tmp/read")
-	out, err = cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
+	out, err := cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
 	var mapping struct {
 		PGID   string `json:"pgid"`
 		Acting []int  `json:"acting"`
@@ -128,6 +109,36 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	execCommand(t, ctx, client, "sh", "-c", "rados -p tc-legacy get legacy /tmp/after && cmp /tmp/object /tmp/after")
 	assertLegacyCRUSHMap(t, ctx, cluster)
 	t.Logf("MemStore osd.0 with the legacy CRUSH map served pool %s (1 PG %s, size 1, no hashpspool) before and after a clean restart", pool.Name, mapping.PGID)
+}
+
+// checkMemStoreLegacyPool checks that osd.0 runs MemStore and that pool has
+// one PG, size 1, min_size 1 and no hashpspool flag.
+func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Container, pool string) {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "osd", "metadata", "0", "--format", "json")
+	var metadata struct {
+		ObjectStore string `json:"osd_objectstore"`
+	}
+	if err != nil || json.Unmarshal(out, &metadata) != nil || metadata.ObjectStore != "memstore" {
+		t.Fatalf("osd.0 metadata %q, err=%v", out, err)
+	}
+	pools, err := cluster.Pools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, state := range pools {
+		if state.Name != pool {
+			continue
+		}
+		found = true
+		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 || strings.Contains(","+state.Flags+",", ",hashpspool,") {
+			t.Fatalf("pool %+v keeps hashpspool or differs from size 1, PG 1", state)
+		}
+	}
+	if !found {
+		t.Fatalf("pool %s not found", pool)
+	}
 }
 
 func assertLegacyCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container) {

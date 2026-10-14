@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -498,41 +499,45 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 }
 
 // profileRenewalClient keeps one librados session for seconds while it sends
-// a MON command and a MGR command every half second, so that it renews its
-// tickets several times. It prints the number of calls that succeeded.
+// a MON command and a MGR command every half second, so that the session
+// renews its tickets when they expire. It prints the number of calls and the
+// seconds the session lasted.
 const profileRenewalClient = `import json,sys,time,rados
 seconds=float(sys.argv[1])
 c=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'rados_mon_op_timeout':'10','rados_osd_op_timeout':'10'})
 c.connect()
 calls=0
 try:
-    deadline=time.monotonic()+seconds
-    while time.monotonic()<deadline:
+    started=time.monotonic()
+    while time.monotonic()-started<seconds:
         r,_,err=c.mon_command(json.dumps({'prefix':'fsid','format':'json'}),b'')
         assert r==0,('mon',r,err)
         r,_,err=c.mgr_command(json.dumps({'prefix':'pg stat','format':'json'}),b'')
         assert r==0,('mgr',r,err)
         calls+=1
         time.sleep(0.5)
-    print(json.dumps({'calls':calls}))
+    print(json.dumps({'calls':calls,'seconds':time.monotonic()-started}))
 finally:
     c.shutdown()
 `
 
-// checkProfileRenewal runs profileRenewalClient in client for seconds.
+// checkProfileRenewal runs profileRenewalClient in client for seconds, which
+// should exceed the ticket lifetimes, and checks that every call of the one
+// session succeeded until the end.
 func checkProfileRenewal(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, seconds int) {
 	t.Helper()
 	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 		Argv: []string{"python3", "-c", profileRenewalClient, fmt.Sprint(seconds)}, Timeout: time.Duration(seconds+60) * time.Second,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "ticket renewal session",
 	})
-	var calls struct {
-		Calls int `json:"calls"`
+	var session struct {
+		Calls   int     `json:"calls"`
+		Seconds float64 `json:"seconds"`
 	}
-	if err != nil || result.ExitCode != 0 || json.Unmarshal(result.Stdout, &calls) != nil || calls.Calls < seconds {
+	if err != nil || result.ExitCode != 0 || json.Unmarshal(result.Stdout, &session) != nil || session.Calls < 2 || session.Seconds < float64(seconds) {
 		t.Fatalf("renewal session: %v, exit %d: %s %s", err, result.ExitCode, result.Stdout, result.Stderr)
 	}
-	t.Logf("one librados session made %d MON and MGR calls over %d seconds", calls.Calls, seconds)
+	t.Logf("one librados session made %d MON and MGR calls over %.1f seconds", session.Calls, session.Seconds)
 }
 
 // testMessengerClientSecureProfile starts the default secure profile: three
@@ -546,13 +551,15 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, admin := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
 	identities := createProfileIdentities(t, ctx, cluster, auth.KeyType)
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "secure")
+	// One session outlives two lifetimes of each ticket.
+	checkProfileRenewal(t, ctx, cluster, admin, 30)
 	exerciseProfileControls(t, ctx, cluster, identities, 12*time.Second)
 }
 
@@ -656,9 +663,9 @@ func modeNames(modes []ceph.MessengerConnectionMode) []string {
 }
 
 // testMessengerClientTicketProfile starts three MONs and two MGRs with the
-// ticket lifetimes and MON timing of a profile, checks what the daemons and a
-// client container run with, and keeps one librados session renewing its
-// tickets.
+// ticket lifetimes and MON timing of a profile and checks what the daemons
+// and a client container run with. With renewal seconds, one librados session
+// then outlives the tickets, and the MGRs must stay as they were.
 func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64, renewal int) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -668,6 +675,7 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: monTTL, ServiceTicketTTL: serviceTTL})
 	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
+	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileTickets(t, ctx, cluster, monTTL.Seconds(), serviceTTL.Seconds())
 	for name, want := range options {
 		for _, daemon := range []string{"mon.a", "mgr." + cluster.Managers()[0].DaemonName} {
@@ -680,7 +688,9 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 			t.Fatalf("client %s = %q, want %v: %v", name, out, want, err)
 		}
 	}
-	checkProfileRenewal(t, ctx, cluster, client, renewal)
+	if renewal == 0 {
+		return
+	}
 	before, err := cluster.ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -754,6 +764,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	checkMemStoreLegacyPool(t, ctx, cluster, pool.Name)
 
 	crc := startPolicyClient(t, ctx, cluster, "crc", cluster.WithClient(
 		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC, OtherDaemons: modeCRC})))
@@ -765,6 +776,9 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
 	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read && cmp /tmp/object /tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
+	if cluster.UsesHostNetwork() {
+		checkHostProcessReachesDaemons(t, ctx, cluster)
+	}
 	t.Logf("CRC profile: v2 only, %s keys, legacy CRUSH and pool %s without hashpspool on a MemStore OSD; a CRC-only client wrote and read an object, a secure-only client was refused", auth.KeyType, pool.Name)
 }
 
@@ -805,4 +819,39 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 	checkProfileTickets(t, ctx, cluster, 12, 12)
 	createProfileIdentities(t, ctx, cluster, ceph.CipherAES)
 	t.Logf("Ceph %s: v2-only secure profile with three MONs, two MGRs and AES keys", cluster.CephVersion())
+}
+
+// checkHostProcessReachesDaemons dials every address that the MON, MGR and
+// OSD maps advertise from the test process itself, not from a container, and
+// reads the Messenger v2 banner that the daemon sends first.
+func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *ceph.Container) {
+	t.Helper()
+	native, err := cluster.DaemonAddresses(ctx)
+	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
+		t.Fatalf("daemon addresses: %+v, %v", native, err)
+	}
+	endpoints := map[string]string{"mgr." + native.ActiveManager.Name: native.ActiveManager.Addrs[0].Addr}
+	for _, mon := range native.Monitors {
+		endpoints["mon."+mon.Name] = mon.Addrs[0].Addr
+	}
+	for _, osd := range native.OSDs {
+		endpoints[fmt.Sprintf("osd.%d", osd.ID)] = osd.Public[0].Addr
+	}
+	var dialer net.Dialer
+	for name, address := range endpoints {
+		dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		conn, err := dialer.DialContext(dialCtx, "tcp", address)
+		cancel()
+		if err != nil {
+			t.Fatalf("the test process cannot reach %s at %s: %v", name, address, err)
+		}
+		banner := make([]byte, 8)
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, err = io.ReadFull(conn, banner)
+		_ = conn.Close()
+		if err != nil || string(banner) != "ceph v2\n" {
+			t.Fatalf("%s at %s sent %q: %v", name, address, banner, err)
+		}
+	}
+	t.Logf("the test process read the Messenger v2 banner from %d advertised daemon addresses", len(endpoints))
 }
