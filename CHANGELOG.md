@@ -21,6 +21,13 @@ change the API.
   primary held, controls that kept working during the cut, and the bytes and
   object version that an independent client reads afterwards.
 
+- The legacy placement recipe keeps `hashpspool` off every pool, the MGR's
+  `.mgr` pool included: `osd_pool_default_flag_hashpspool = false` in a
+  `WithConfigFile` file applies before the MGR creates `.mgr`. While any pool
+  has the flag, the MON requires the `OSDHASHPSPOOL` feature of every client,
+  so `NoHashPSPool` on the test's own pool was not enough for a client
+  without it. The tests of the recipe check the flags of every pool.
+
 ## v0.2.0 (2026-10-14)
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)

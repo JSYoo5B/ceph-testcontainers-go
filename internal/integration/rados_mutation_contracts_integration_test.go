@@ -35,7 +35,7 @@ func TestRADOSMutationContracts(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20),
+		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20), legacyPoolFlags(t),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K})
 	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)

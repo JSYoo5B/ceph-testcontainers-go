@@ -5,6 +5,9 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,13 +64,25 @@ func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	}
 }
 
+// legacyPoolFlags returns a configuration file option that creates every
+// pool without hashpspool, the MGR's .mgr pool included. The MON requires
+// CEPH_FEATURE_OSDHASHPSPOOL of every client while any pool has the flag.
+func legacyPoolFlags(t *testing.T) testcontainers.ContainerCustomizer {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "legacy-pools.conf")
+	if err := os.WriteFile(path, []byte("[global]\nosd_pool_default_flag_hashpspool = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return ceph.WithConfigFile(path)
+}
+
 // testOSDMemStoreLegacyPlacement reproduces a single MemStore OSD with a
 // legacy CRUSH map and a one-PG, size-one pool without hashpspool.
 func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256 << 20)}, opts...)
+		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256 << 20), legacyPoolFlags(t)}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
@@ -111,8 +126,9 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	t.Logf("MemStore osd.0 with the legacy CRUSH map served pool %s (1 PG %s, size 1, no hashpspool) before and after a clean restart", pool.Name, mapping.PGID)
 }
 
-// checkMemStoreLegacyPool checks that osd.0 runs MemStore and that pool has
-// one PG, size 1, min_size 1 and no hashpspool flag.
+// checkMemStoreLegacyPool checks that osd.0 runs MemStore, that pool has one
+// PG, size 1 and min_size 1, and that no pool has the hashpspool flag, once
+// the MGR's .mgr pool exists.
 func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Container, pool string) {
 	t.Helper()
 	out, err := cluster.Ceph(ctx, "osd", "metadata", "0", "--format", "json")
@@ -122,18 +138,31 @@ func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if err != nil || json.Unmarshal(out, &metadata) != nil || metadata.ObjectStore != "memstore" {
 		t.Fatalf("osd.0 metadata %q, err=%v", out, err)
 	}
-	pools, err := cluster.Pools(ctx)
-	if err != nil {
-		t.Fatal(err)
+	var pools []ceph.PoolState
+	for deadline := time.Now().Add(2 * time.Minute); ; {
+		pools, err = cluster.Pools(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.ContainsFunc(pools, func(state ceph.PoolState) bool { return state.Name == ".mgr" }) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the MGR did not create .mgr: %+v", pools)
+		}
+		time.Sleep(time.Second)
 	}
 	found := false
 	for _, state := range pools {
+		if strings.Contains(","+state.Flags+",", ",hashpspool,") {
+			t.Fatalf("pool %s has hashpspool: %+v", state.Name, state)
+		}
 		if state.Name != pool {
 			continue
 		}
 		found = true
-		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 || strings.Contains(","+state.Flags+",", ",hashpspool,") {
-			t.Fatalf("pool %+v keeps hashpspool or differs from size 1, PG 1", state)
+		if state.Size != 1 || state.MinSize != 1 || state.PGNum != 1 {
+			t.Fatalf("pool %+v differs from size 1, PG 1", state)
 		}
 	}
 	if !found {
