@@ -4174,7 +4174,8 @@ examples.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- Only IPv4 is configured (`ms_bind_ipv6 = false`).
+- IPv4 is the default. [WithAddressFamily](#withaddressfamily) selects IPv6
+  or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
 
