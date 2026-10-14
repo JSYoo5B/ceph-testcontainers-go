@@ -28,6 +28,12 @@ change the API.
   so `NoHashPSPool` on the test's own pool was not enough for a client
   without it. The tests of the recipe check the flags of every pool.
 
+- The Messenger fixture guide has a recipe for a monmap-only membership
+  change: `mon add` of a MON that never answers, then `mon remove`. Each
+  change starts an election that holds MON commands and new client sessions
+  for several seconds, the remove too on Tentacle; the recipe waits until `quorum_status` reports the
+  same election epoch twice before starting new native clients.
+
 ## v0.2.0 (2026-10-14)
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
