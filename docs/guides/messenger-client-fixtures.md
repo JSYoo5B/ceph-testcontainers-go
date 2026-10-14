@@ -27,7 +27,7 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 | | none at bootstrap, two started later | `WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
 | OSD | none | `WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
 | | one MemStore OSD | `WithOSDCount(1)`, `WithOSDObjectStore(OSDMemStore)`, `WithPoolDefaults(1, 1)` | `TestMessengerClientProfileCRC` |
-| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG, size 1 and no `hashpspool` | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../ceph.md#reproduce-a-minimal-legacy-placement-setup)); `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement` |
+| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, the MGR's `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../ceph.md#reproduce-a-minimal-legacy-placement-setup)); `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts`, which check the flags of every pool |
 | Key type / service cipher | `aes256k`/`aes256k` | `WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})` | `TestMessengerClientProfileSecure` |
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
 | | `aes`/`aes256k` | `AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K}` | `TestMessengerClientProfileCRC/bridge` |
@@ -50,6 +50,15 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 
 `MessengerConnectionMode` values are `ceph.MessengerSecure` and
 `ceph.MessengerCRC`; the table abbreviates them.
+
+The MON requires the `OSDHASHPSPOOL` feature (`0x40000000`) of every client
+while any pool has `hashpspool`, so a client without it is refused when it
+opens its MON session. `NoHashPSPool` clears the flag only on the pool that
+`CreatePool` creates. Ceph creates the MGR's `.mgr` pool on its own, with the
+MON's default flags, so the default has to be off before that:
+`osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` file does
+that at bootstrap. Check every pool's flags with `cluster.Pools`, not only
+the pool under test.
 
 An image without `ceph-authtool --key-type`, such as Tentacle 20.2.3 or Squid,
 makes only AES keys. `Run` refuses a profile that needs `aes256k` with

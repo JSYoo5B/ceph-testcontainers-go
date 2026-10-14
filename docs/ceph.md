@@ -395,7 +395,7 @@ all options have been applied. `Run` does not wait for the pools to become clean
 | `CRUSHRoot` | the cluster's default root | Root of the placement hierarchy. |
 | `DeviceClass` | none | Restricts placement to OSDs configured with this class. |
 | `ErasureCode` | nil (replicated) | `*ceph.ErasureCodeConfig`. |
-| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. |
+| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. Other pools, such as the MGR's `.mgr`, keep the flag unless `osd_pool_default_flag_hashpspool` is off (see [Reproduce a minimal legacy placement setup](#reproduce-a-minimal-legacy-placement-setup)). |
 
 `ceph.ErasureCodeConfig` selects `K` data and `M` parity shards (`K >= 2`,
 `M >= 1`, `K+M <= 128`) with the portable Jerasure `reed_sol_van` plugin. An
@@ -3670,16 +3670,23 @@ manager before or after the first OSD.
 
 A client that implements only the oldest CRUSH and placement features can be
 tested against one MemStore OSD, a legacy CRUSH map and a pool with one PG, one
-replica and no `hashpspool` flag. The fixture has no option for a hand-written
-CRUSH map; install it with the native tools, as below. `crushtool` is in the
-official image and the published control images.
+replica and no `hashpspool` flag on any pool. The fixture has no option for a
+hand-written CRUSH map; install it with the native tools, as below. `crushtool`
+is in the official image and the published control images.
 
 ```golang
+// Ceph creates the MGR's .mgr pool with the MON's default flags, so turn
+// the hashpspool default off before any pool exists.
+legacyPools := filepath.Join(t.TempDir(), "legacy-pools.conf")
+if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hashpspool = false\n"), 0o644); err != nil {
+	t.Fatal(err)
+}
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
 	ceph.WithOSDObjectStore(ceph.OSDMemStore),
 	ceph.WithOSDBlockSize(256<<20),
+	ceph.WithConfigFile(legacyPools),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -3733,6 +3740,11 @@ pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 })
 ```
 
+- While any pool has `hashpspool`, the MON requires the `OSDHASHPSPOOL`
+  feature of every client and refuses a client without it when it opens its
+  MON session. `NoHashPSPool` clears the flag only on the pool it creates;
+  the configuration file keeps it off `.mgr` and every later pool. Check
+  every pool with `cluster.Pools` once `.mgr` exists.
 - `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
   default `osd` failure domain also chooses OSDs directly. To use the map's
   `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",

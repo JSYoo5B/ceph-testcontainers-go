@@ -750,7 +750,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithOSDCount(1),
-		ceph.WithPoolDefaults(1, 1), ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20),
+		ceph.WithPoolDefaults(1, 1), ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20), legacyPoolFlags(t),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))
 	base = append(base, extra...)
 	auth = profileAuth(t, ctx, image, base, auth)
