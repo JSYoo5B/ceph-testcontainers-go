@@ -296,6 +296,30 @@ func cephFSRetainedSession(t *testing.T, parent context.Context, fs *cephfs.File
 	}
 }
 
+// mdsMigration holds an MDS's subtree export and import counters from its
+// "mds" perf counters.
+type mdsMigration struct {
+	Exported       int64 `json:"exported"`
+	ExportedInodes int64 `json:"exported_inodes"`
+	Imported       int64 `json:"imported"`
+	ImportedInodes int64 `json:"imported_inodes"`
+}
+
+func cephFSMigrationCounters(t *testing.T, ctx context.Context, cluster *ceph.Container, mds string) mdsMigration {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "tell", "mds."+mds, "perf", "dump", "mds")
+	if err != nil {
+		t.Fatalf("perf dump of mds.%s: %v", mds, err)
+	}
+	var dump struct {
+		MDS *mdsMigration `json:"mds"`
+	}
+	if err := json.Unmarshal(out, &dump); err != nil || dump.MDS == nil {
+		t.Fatalf("perf dump of mds.%s: %v: %.512s", mds, err, out)
+	}
+	return *dump.MDS
+}
+
 // cephFSFailover selects which daemon takes the failed rank after its active
 // MDS is killed.
 type cephFSFailover int
@@ -414,6 +438,10 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	tail := []byte{0xfe, 0x00, 't', 'a', 'i', 'l', 0x01, 0x02, 0x03, 0xff, '\n', 0x00, 0x7f, 0x80}
 	xattr := []byte{0x00, 'r', 'e', 'c', 'e', 'i', 'p', 't', 0xff, '\n'}
 	want := append(append([]byte{}, base...), tail...)
+	var zeroBefore, oneBefore mdsMigration
+	if pin != "-" {
+		zeroBefore, oneBefore = cephFSMigrationCounters(t, ctx, cluster, untouched.Name), cephFSMigrationCounters(t, ctx, cluster, old.Name)
+	}
 	actor := startCephFSActor(t, ctx, cluster, client, fs.FilesystemName, "/tmp/retained-actor",
 		path, renamed, hex.EncodeToString(base), hex.EncodeToString(tail), hex.EncodeToString(xattr), pin)
 
@@ -425,6 +453,16 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 		// The pin exports the directory, with the client's open file and its
 		// capabilities, to rank 1, which opens a session with the client.
 		cephFSWaitForPinnedSubtree(t, ctx, cluster, fs, "/pinned", failedRank)
+		// Each daemon's own counters record the migration: rank 0 exported
+		// the subtree and rank 1 imported it.
+		zeroAfter, oneAfter := cephFSMigrationCounters(t, ctx, cluster, untouched.Name), cephFSMigrationCounters(t, ctx, cluster, old.Name)
+		if zeroAfter.Exported <= zeroBefore.Exported || zeroAfter.ExportedInodes <= zeroBefore.ExportedInodes ||
+			oneAfter.Imported <= oneBefore.Imported || oneAfter.ImportedInodes <= oneBefore.ImportedInodes {
+			t.Fatalf("export counters of mds.%s %+v -> %+v, import counters of mds.%s %+v -> %+v", untouched.Name, zeroBefore, zeroAfter, old.Name, oneBefore, oneAfter)
+		}
+		t.Logf("CEPHFS_RETAINED export of /pinned: mds.%s exported %d subtrees with %d inodes, mds.%s imported %d with %d inodes",
+			untouched.Name, zeroAfter.Exported-zeroBefore.Exported, zeroAfter.ExportedInodes-zeroBefore.ExportedInodes,
+			old.Name, oneAfter.Imported-oneBefore.Imported, oneAfter.ImportedInodes-oneBefore.ImportedInodes)
 	}
 	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, failedRank)
 	if session.PID != strconv.Itoa(baseline.PID) || session.EntityID != "admin" || session.Address == "" || session.Caps == 0 {
