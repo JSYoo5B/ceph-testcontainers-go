@@ -21,3 +21,9 @@ func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
 	t.Run("standby", func(t *testing.T) { testCephFSRetainedClient(t, cephFSStandbyTakeover) })
 	t.Run("standby-replay", func(t *testing.T) { testCephFSRetainedClient(t, cephFSReplayTakeover) })
 }
+
+// With two active ranks, the standby takes over rank 1, where the client's
+// file lives in a pinned directory, while rank 0 keeps its daemon.
+func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
+	testCephFSRetainedClient(t, cephFSRankOneTakeover)
+}
