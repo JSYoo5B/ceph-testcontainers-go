@@ -22,6 +22,10 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// cephFSActorScript is the Python source of an actor. Its own type keeps a
+// filesystem name or path from being passed as the script by mistake.
+type cephFSActorScript string
+
 // cephFSActorHelpers starts every actor script: it reads the filesystem, the
 // work directory and the run's token from argv and defines publish, which
 // renames a receipt for one phase into place, and gate, which waits until the
@@ -54,13 +58,14 @@ def gate(name):
 // mounting or opening again, it reads the base bytes, appends the tail,
 // fsyncs, renames the file and sets a binary xattr, reads the whole file back
 // through the fd, and publishes receipt 2.
-// It closes everything after the "finish" gate and publishes receipt 3.
+// It closes everything after the "finish" gate and publishes receipt 3, with
+// the errno of a close or unmount that failed, as for an evicted client.
 // Every receipt and gate carries the run's token; receipts are renamed into
 // place, so a reader never sees half of one. Arguments: filesystem, work
 // directory, token, path, new path, the hex of the base bytes, the tail and
 // the xattr value, and a rank to pin the file's directory to, or "-". The
 // directory is created and pinned before the file is opened.
-const cephFSRetainedActor = cephFSActorHelpers + `
+const cephFSRetainedActor cephFSActorScript = cephFSActorHelpers + `
 path, renamed = sys.argv[4].encode(), sys.argv[5].encode()
 base, tail, xattr = (bytes.fromhex(arg) for arg in sys.argv[6:9])
 pin = sys.argv[9]
@@ -90,15 +95,20 @@ except cephfs.Error as error:
     result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
 publish(2, **result)
 gate("finish")
-fs.close(fd)
-fs.unmount()
+closing = {}
+try:
+    fs.close(fd)
+    fs.unmount()
+except cephfs.Error as error:
+    closing.update(close_errno=getattr(error, "errno", None) or -1)
 fs.shutdown()
-publish(3, closed=True)
+publish(3, closed=True, **closing)
 `
 
 // cephFSIndependentReader reads a file and its xattr through a mount of its
 // own, in another container and process than the actor, and prints them with
-// its client ID. It reads one byte more than the size to see extra data.
+// its client ID; a missing xattr prints as null. It reads one byte more than
+// the size to see extra data.
 const cephFSIndependentReader = `
 import cephfs, json, os, sys
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
@@ -110,8 +120,11 @@ try:
     fd = fs.open(path, os.O_RDONLY, 0)
     data = fs.read(fd, 0, stat.st_size + 1)
     fs.close(fd)
-    xattr = fs.getxattr(path, "user.receipt", 255)
-    print(json.dumps({"client": fs.get_instance_id(), "inode": stat.st_ino, "size": stat.st_size, "data": data.hex(), "xattr": xattr.hex()}))
+    try:
+        xattr = fs.getxattr(path, "user.receipt", 255).hex()
+    except cephfs.Error:
+        xattr = None
+    print(json.dumps({"client": fs.get_instance_id(), "inode": stat.st_ino, "size": stat.st_size, "data": data.hex(), "xattr": xattr}))
 finally:
     fs.unmount()
     fs.shutdown()
@@ -149,7 +162,7 @@ type cephFSActorRun struct {
 
 // startCephFSActor starts the actor in client under RunNativeCommand and
 // registers its cancellation and confirmed stop before anything can fail.
-func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, script, filesystem, workdir string, args ...string) *cephFSActorRun {
+func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, script cephFSActorScript, filesystem, workdir string, args ...string) *cephFSActorRun {
 	t.Helper()
 	nonce := make([]byte, 8)
 	if _, err := rand.Read(nonce); err != nil {
@@ -158,7 +171,7 @@ func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container
 	execOutput(t, ctx, client, "mkdir", "-p", workdir)
 	actorCtx, cancel := context.WithCancel(ctx)
 	run := &cephFSActorRun{cluster: cluster, client: client, workdir: workdir, token: hex.EncodeToString(nonce), cancel: cancel, done: make(chan struct{})}
-	argv := append([]string{"python3", "-c", script, filesystem, workdir, run.token}, args...)
+	argv := append([]string{"python3", "-c", string(script), filesystem, workdir, run.token}, args...)
 	go func() {
 		defer close(run.done)
 		run.result, run.err = cluster.RunNativeCommand(actorCtx, client, ceph.NativeCommand{
@@ -679,7 +692,7 @@ func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *c
 // and what it read, keeps its mount and fd open until the "release" gate, and
 // publishes receipt 2 once it has closed and shut down. Arguments after the
 // common ones: path, offset, hex payload.
-const cephFSContender = cephFSActorHelpers + `
+const cephFSContender cephFSActorScript = cephFSActorHelpers + `
 path, offset, payload = sys.argv[4].encode(), int(sys.argv[5]), bytes.fromhex(sys.argv[6])
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
@@ -877,4 +890,206 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 	holder.wait(t, ctx)
 	t.Logf("CEPHFS_CAPS inode=%d holder client.%d issued %s (loner) -> %s, last_sent %d -> %d; contender client.%d (%s) wrote %d bytes at %d in %s; holder kept session %s and read the write; reader client.%d",
 		baseline.Inode, baseline.Client, before.Issued, after.Issued, before.LastSent, after.LastSent, wrote.Client, contenderCaps.Issued, len(payload), offset, took.Round(100*time.Millisecond), session.Address, independent.Client)
+}
+
+// cephFSDaemonState returns the FSMap state of one MDS GID in filesystem, such
+// as "up:reconnect", or "" when the GID is not in its MDSMap. MDSStatus lists
+// only active ranks, so it does not show the recovery states.
+func cephFSDaemonState(t *testing.T, ctx context.Context, cluster *ceph.Container, filesystem string, gid uint64) string {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+	if err != nil {
+		t.Fatal("fs dump:", err)
+	}
+	var dump struct {
+		Filesystems []struct {
+			MDSMap struct {
+				Name string `json:"fs_name"`
+				Info map[string]struct {
+					GID   uint64 `json:"gid"`
+					State string `json:"state"`
+				} `json:"info"`
+			} `json:"mdsmap"`
+		} `json:"filesystems"`
+	}
+	if err := json.Unmarshal(out, &dump); err != nil {
+		t.Fatalf("fs dump: %v: %.512s", err, out)
+	}
+	for _, fs := range dump.Filesystems {
+		if fs.MDSMap.Name != filesystem {
+			continue
+		}
+		for _, info := range fs.MDSMap.Info {
+			if info.GID == gid {
+				return info.State
+			}
+		}
+	}
+	return ""
+}
+
+// testCephFSLateReconnect freezes a mounted client while the only active MDS
+// fails over to a standby, so the client misses the new MDS's reconnect
+// window, shortened to 10 s with mds_reconnect_timeout. The MDS's own state
+// passes through up:reconnect for that window; then it evicts the silent
+// client, whose address enters the blocklist, and its session disappears.
+// When the client thaws, its open fd fails (ESHUTDOWN on Tentacle, EPERM on
+// Squid), it closes and shuts down cleanly, and a fresh client still reads
+// the bytes it fsynced.
+// The killed daemon then rejoins as the standby.
+func testCephFSLateReconnect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	image, imageOpts := integrationImages(t)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure),
+		cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))...)
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fs.MDSStatus(ctx)
+	if err != nil || len(before.Active) != 1 || len(before.Standby) != 1 {
+		t.Fatalf("want one active MDS and one standby: %+v, %v", before, err)
+	}
+	old, takeover := before.Active[0], before.Standby[0]
+	var daemon *cephfs.MDS
+	for _, member := range fs.MDSs() {
+		if member.ID == old.Name {
+			daemon = member
+		}
+	}
+	if daemon == nil {
+		t.Fatalf("active mds.%s is not owned", old.Name)
+	}
+	window, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
+	if window != nil {
+		t.Cleanup(func() {
+			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := window.Restore(restoreCtx); err != nil {
+				t.Errorf("restore mds_reconnect_timeout: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := make([]byte, 0, 266)
+	for value := range 256 {
+		base = append(base, byte(value))
+	}
+	base = append(base, 0x00, 0xff, 0x7f, 0x80, '\r', '\n', 0x1b, 0x00, 'c', 'f')
+	const path = "/late"
+	actor := startCephFSActor(t, ctx, cluster, client, cephFSRetainedActor, fs.FilesystemName, "/tmp/late-actor",
+		path, "/late-renamed", hex.EncodeToString(base), "fe", "00", "-")
+	baseline := actor.receipt(t, ctx, 1)
+	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
+
+	pause, err := cluster.PauseContainer(ctx, client)
+	if pause != nil {
+		t.Cleanup(func() {
+			resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := pause.Resume(resumeCtx); err != nil {
+				t.Errorf("resume client: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal("pause client:", err)
+	}
+	kill := time.Duration(0)
+	if err := daemon.Stop(ctx, &kill); err != nil {
+		t.Fatal("kill MDS:", err)
+	}
+	if _, err := cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(old.GID, 10)); err != nil {
+		t.Fatal("fail MDS GID:", err)
+	}
+	// Follow rank 0 through the standby's recovery states.
+	failed := time.Now()
+	var reconnectFirst, reconnectLast time.Duration
+	var states []string
+	for {
+		state := cephFSDaemonState(t, ctx, cluster, fs.FilesystemName, takeover.GID)
+		if state != "" && !slices.Contains(states, state) {
+			states = append(states, state)
+		}
+		if state == "up:reconnect" {
+			if reconnectFirst == 0 {
+				reconnectFirst = time.Since(failed)
+			}
+			reconnectLast = time.Since(failed)
+		}
+		if state == "up:active" {
+			break
+		}
+		if time.Since(failed) > 3*time.Minute {
+			t.Fatalf("mds.%s did not take rank 0: states %v", takeover.Name, states)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if status, err := fs.MDSStatus(ctx); err != nil || len(status.Active) != 1 || status.Active[0].GID != takeover.GID {
+		t.Fatalf("rank 0 is not served by mds.%s: %+v, %v", takeover.Name, status, err)
+	}
+	held := reconnectLast - reconnectFirst
+	if reconnectFirst == 0 || held < 5*time.Second || held > time.Minute {
+		t.Fatalf("rank 0 states %v, up:reconnect for %s, want the 10 s window", states, held)
+	}
+	sessions, err := fs.Sessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(sessions, func(s cephfs.Session) bool { return s.ID == baseline.Client }) {
+		t.Fatalf("the frozen client.%d kept a session: %+v", baseline.Client, sessions)
+	}
+	entries, err := cluster.BlocklistEntries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
+		t.Fatalf("the frozen client %s is not blocklisted: %+v", session.Address, entries)
+	}
+
+	if err := pause.Resume(ctx); err != nil {
+		t.Fatal("resume client:", err)
+	}
+	actor.open(t, ctx, "act")
+	acted := actor.receipt(t, ctx, 2)
+	// The blocklisted instance cannot use its session again: Tentacle's
+	// client reports ESHUTDOWN (108), Squid's EPERM (1).
+	if (acted.Errno != 108 && acted.Errno != 1) || acted.PID != baseline.PID {
+		t.Fatalf("the evicted client's fd gave %+v, want errno 108 or 1", acted)
+	}
+	actor.open(t, ctx, "finish")
+	closed := actor.receipt(t, ctx, 3)
+	if !closed.Closed {
+		t.Fatalf("closing receipt = %+v", closed)
+	}
+	actor.wait(t, ctx)
+
+	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, path}, Timeout: 2 * time.Minute,
+		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
+	})
+	stop()
+	var independent struct {
+		Client uint64 `json:"client"`
+		Inode  uint64 `json:"inode"`
+		Data   string `json:"data"`
+	}
+	if err != nil || read.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &independent) != nil ||
+		independent.Data != hex.EncodeToString(base) || independent.Inode != baseline.Inode || independent.Client == baseline.Client {
+		t.Fatalf("independent reader: exit=%d err=%v out=%.1024s", read.ExitCode, err, read.Stdout)
+	}
+	t.Logf("CEPHFS_LATE client.%d frozen across the failover of rank 0 %s/%d -> %s/%d; states %v, up:reconnect for %s from %s; evicted and blocklisted %s; old fd errno %d, close errno %d; reader client.%d read the fsynced %d bytes",
+		baseline.Client, old.Name, old.GID, takeover.Name, takeover.GID, states, held.Round(time.Second), reconnectFirst.Round(time.Second), session.Address, acted.Errno, closed.CloseErrno, independent.Client, len(base))
+
+	if err := daemon.Start(ctx); err != nil {
+		t.Fatal("restart killed MDS:", err)
+	}
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
 }

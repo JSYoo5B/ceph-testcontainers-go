@@ -28,7 +28,10 @@ change the API.
   rank 0 keeps its daemon and its session with the client. Another shows a
   capability handoff: a second client writes a file that a live client holds
   with exclusive, buffered capabilities, and the MDS's `dump inode` shows them
-  revoked without an eviction.
+  revoked without an eviction. A last one freezes a client across an MDS
+  failover: it misses the shortened reconnect window, is evicted and
+  blocklisted, and its open file then fails (`ESHUTDOWN` on Tentacle, `EPERM`
+  on Squid).
 
 - The same guide has a table of daemon-to-daemon paths, with what each test
   observes and how directly. The held replication write of the separate
