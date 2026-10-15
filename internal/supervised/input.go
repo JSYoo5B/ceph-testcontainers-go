@@ -213,14 +213,21 @@ func RunInput(ctx context.Context, ctr testcontainers.Container, label string, p
 		_, err := stdcopy.StdCopy(output, output, attachment.Output)
 		read <- err
 	}()
+	// The output reader sends one result; it is received exactly once. The
+	// run can end before the output, or just after it, as the connection
+	// closes.
 	var readErr error
+	outputEnded := false
 	select {
 	case readErr = <-read:
+		outputEnded = true
 	case <-attempt.Done():
 	}
 	close(stop)
 	_ = attachment.Input.Close()
-	if attempt.Err() != nil {
+	if !outputEnded {
+		// The closed connection ends the reader; the supervisor may still
+		// run, so it is stopped inside the container.
 		<-read
 		<-pumped
 		err := &BackendError{Op: "exec " + label + " supervisor", Err: attempt.Err()}
@@ -230,6 +237,12 @@ func RunInput(ctx context.Context, ctr testcontainers.Container, label string, p
 		return Report{}, err
 	}
 	<-pumped
+	if err := attempt.Err(); err != nil && readErr == nil {
+		// The output ended with the supervisor, and the run ended after
+		// that. As Run does once its exec returned, the call reports the
+		// context's error and has nothing to stop.
+		return Report{}, err
+	}
 	if readErr != nil {
 		// A container that could not run python3 answers with its own
 		// message instead of the multiplexed stream.

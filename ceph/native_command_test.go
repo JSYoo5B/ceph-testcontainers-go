@@ -52,6 +52,8 @@ type nativeTarget struct {
 	refuseCancel bool
 	// refuseAttach fails every exec with its input attached.
 	refuseAttach bool
+	// attachClosed runs when an attached exec's connection closes.
+	attachClosed func()
 	// stateHook and networksHook run before State and Networks answer, and
 	// an error that they return is the answer.
 	stateHook, networksHook func() error
@@ -230,6 +232,8 @@ func (f *nativeTarget) Exec(ctx context.Context, args []string, opts ...tcexec.P
 type nativeAttached struct {
 	stdin  io.WriteCloser
 	output *io.PipeReader
+	closed func()
+	once   sync.Once
 }
 
 func (a *nativeAttached) Write(p []byte) (int, error) { return a.stdin.Write(p) }
@@ -238,7 +242,11 @@ func (a *nativeAttached) CloseWrite() error { return a.stdin.Close() }
 
 func (a *nativeAttached) Close() error {
 	_ = a.stdin.Close()
-	return a.output.Close()
+	err := a.output.Close()
+	if a.closed != nil {
+		a.once.Do(a.closed)
+	}
+	return err
 }
 
 // dockerFrames frames each write to one stream as Docker does.
@@ -271,7 +279,7 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 	case f.refuseAttach:
 		refused = errors.New("engine unreachable")
 	}
-	delay := f.startDelay
+	delay, closed := f.startDelay, f.attachClosed
 	f.mu.Unlock()
 	if refused != nil {
 		return supervised.Attachment{}, refused
@@ -327,7 +335,7 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 		exited <- code
 	}()
 	return supervised.Attachment{
-		Input:  &nativeAttached{stdin: stdin, output: reader},
+		Input:  &nativeAttached{stdin: stdin, output: reader, closed: closed},
 		Output: reader,
 		ExitCode: func(ctx context.Context) (int, error) {
 			select {

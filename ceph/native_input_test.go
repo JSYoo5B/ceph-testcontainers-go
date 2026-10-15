@@ -425,3 +425,40 @@ func TestNativeCommandInputSupervisorKilledBySignal(t *testing.T) {
 		t.Fatalf("Stop after the restart returned %v", err)
 	}
 }
+
+// A cancellation that arrives just as the command's output ended returns the
+// call, which keeps no registration and claims no marker, and Terminate
+// finds nothing left to wait for.
+func TestNativeCommandInputCancellationAtCompletion(t *testing.T) {
+	requireLinuxGroups(t)
+	target := newNativeTarget(t, "client", "tc-public")
+	cluster := nativeCluster()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	target.attachClosed = cancel
+	input := NewNativeInput()
+	_ = input.Close()
+	done := startNative(ctx, cluster, target, NativeCommand{Argv: []string{"python3", "-c", "print('done')"},
+		Timeout: 10 * time.Second, MaxStdout: 64, MaxStderr: 4096, Input: input, MaxInput: 1})
+	select {
+	case run := <-done:
+		if !errors.Is(run.err, context.Canceled) {
+			t.Fatalf("result %+v, %v", run.result, run.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunNativeCommand stuck after its output completion coincided with cancellation")
+	}
+	if markers := target.leftMarkers(t); len(markers) != 0 || registered(cluster) != 0 {
+		t.Fatalf("left markers %v or a registration", markers)
+	}
+	terminated := make(chan []error, 1)
+	go func() { terminated <- cluster.stopNativeInvocations(t.Context()) }()
+	select {
+	case errs := <-terminated:
+		if len(errs) != 0 {
+			t.Fatal(errs)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Terminate waited for the finished call")
+	}
+}
