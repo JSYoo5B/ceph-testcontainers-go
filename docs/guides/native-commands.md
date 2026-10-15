@@ -778,6 +778,10 @@ logs, err := cluster.OSDs()[0].Logs(ctx)
   secret IDs and expirations under `rotating_secrets`. Squid has no such
   command.
 
+To keep the first rejected authentication and the metadata around it without
+any key, see the
+[authentication first-failure bundle](messenger-client-fixtures.md#authentication-first-failure-bundle).
+
 ## RBD mirror setup clients
 
 `rbd.RunMirror` starts one setup client per side. `SourceRBD` and
