@@ -23,11 +23,33 @@ import (
 // its secrets.
 const authGenerationUnavailable = "unavailable/unverified"
 
+const authBundleSchema = "auth-first-failure/v1"
+
+// Statuses of one query of a collection.
+const (
+	authQueryComplete    = "complete"
+	authQueryUnsupported = "unsupported"
+	authQueryTimedOut    = "timed_out"
+	authQueryTruncated   = "truncated"
+	authQueryFailed      = "failed"
+	authQueryUnavailable = "unavailable"
+)
+
+// authProvenance names, as the caller declares them, the producer and subject
+// sources, the run and a report. The collector does not verify them.
+type authProvenance struct {
+	Producer string `json:"producer"`
+	Subject  string `json:"subject"`
+	Run      string `json:"run"`
+	Report   string `json:"report,omitempty"`
+}
+
 // authTestedRejection is the caller's redacted record of the first rejected
 // authentication that it tested. The collector stores it as given; it
 // neither repeats that authentication nor replaces the record with a later
 // result.
 type authTestedRejection struct {
+	Run     string    `json:"run"`
 	Cycle   int       `json:"cycle"`
 	Attempt int       `json:"attempt"`
 	At      time.Time `json:"at"`
@@ -48,6 +70,18 @@ type authTestedRejection struct {
 	Error           string  `json:"error"`
 }
 
+// authExpectedTarget is the identity that the caller froze when the
+// authentication failed, before any diagnostic ran: the cluster, its MONs and
+// the target MGR's GID and container instance.
+type authExpectedTarget struct {
+	FSID        string   `json:"fsid"`
+	Monitors    []string `json:"monitors"`
+	Manager     string   `json:"manager"`
+	GID         uint64   `json:"gid"`
+	ContainerID string   `json:"container_id"`
+	StartedAt   string   `json:"started_at"`
+}
+
 // authHeldSession is the caller's control: a session established before the
 // rejection, and whether it was still usable.
 type authHeldSession struct {
@@ -55,24 +89,30 @@ type authHeldSession struct {
 	Usable   bool   `json:"usable"`
 }
 
-// authTicketRecord is the caller's provenance of a ticket it installed in one
-// cycle, with an opaque label.
+// authTicketRecord is the caller's provenance of a ticket it installed, with
+// an opaque, run-scoped label and the epochs that its issuer connection
+// showed. Those epochs are not carried by the ticket.
 type authTicketRecord struct {
-	Cycle    int    `json:"cycle"`
-	Service  int    `json:"service"`
-	SecretID uint64 `json:"secret_id"`
-	Label    string `json:"label"`
+	Run             string `json:"run"`
+	Cycle           int    `json:"cycle"`
+	Service         int    `json:"service"`
+	SecretID        uint64 `json:"secret_id"`
+	Label           string `json:"label"`
+	IssuerMonmap    uint64 `json:"issuer_monmap_epoch,omitempty"`
+	IssuerAuthEpoch uint64 `json:"issuer_auth_epoch,omitempty"`
 }
 
-// authQuery is one bounded query of a collection. Error holds a redacted,
-// shortened error text.
+// authQuery is one bounded query of a collection. Error and Excerpt are
+// redacted and capped; Excerpt keeps output that did not yield a complete
+// observation.
 type authQuery struct {
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	Started   time.Time `json:"started"`
-	Elapsed   string    `json:"elapsed"`
-	Error     string    `json:"error,omitempty"`
-	Truncated bool      `json:"truncated,omitempty"`
+	Name     string    `json:"name"`
+	Kind     string    `json:"kind"`
+	Started  time.Time `json:"started"`
+	Finished time.Time `json:"finished"`
+	Status   string    `json:"status"`
+	Error    string    `json:"error,omitempty"`
+	Excerpt  string    `json:"excerpt,omitempty"`
 }
 
 // authMonitorObservation is one MON's own mon_status, read through its admin
@@ -90,7 +130,8 @@ type authMonitorObservation struct {
 
 // authManagerObservation is one MGR: its MgrMap GID, its container instance,
 // and the global IDs of its MON sessions, split as after #75 into the beacon
-// session (con_type "mgr") and the clients of its modules.
+// session (con_type "mgr") and the clients of its modules. GID 0 means that
+// the MgrMap could not be read.
 type authManagerObservation struct {
 	Name            string   `json:"name"`
 	GID             uint64   `json:"gid"`
@@ -101,40 +142,43 @@ type authManagerObservation struct {
 	ModuleGlobalIDs []uint64 `json:"module_global_ids"`
 }
 
-// authControl is one fresh native command run as a behavioral control. Its
-// success shows that a new client authenticated with its own ticket; it says
-// nothing about the tested client's ticket.
+// authControl is one fresh native command run as a behavioral control after
+// the rejection. Its success shows that a new client authenticated with its
+// own ticket; it says nothing about the tested client's ticket.
 type authControl struct {
-	Target   string `json:"target"`
-	Command  string `json:"command"`
-	ExitCode int    `json:"exit_code"`
-	Complete bool   `json:"complete"`
+	Target   string    `json:"target"`
+	Command  string    `json:"command"`
+	Phase    string    `json:"phase"`
+	Started  time.Time `json:"started"`
+	ExitCode int       `json:"exit_code"`
+	Complete bool      `json:"complete"`
 }
 
 // authFirstFailureBundle is what a collection retains after the first
 // rejection of a tested authentication.
 type authFirstFailureBundle struct {
 	Schema             string                   `json:"schema"`
+	Provenance         authProvenance           `json:"provenance"`
 	Release            string                   `json:"release"`
 	Images             map[string]string        `json:"images"`
-	FSID               string                   `json:"fsid"`
+	Expected           authExpectedTarget       `json:"expected_target"`
 	Budget             string                   `json:"budget"`
 	QueryBound         string                   `json:"query_bound"`
 	Started            time.Time                `json:"started"`
 	Ended              time.Time                `json:"ended"`
-	Rejection          authTestedRejection      `json:"tested_rejection"`
+	Rejection          authTestedRejection      `json:"first_failure"`
 	Held               *authHeldSession         `json:"held_session,omitempty"`
-	Tickets            []authTicketRecord       `json:"tickets,omitempty"`
+	Tickets            []authTicketRecord       `json:"consumer_tickets,omitempty"`
 	Monitors           []authMonitorObservation `json:"monitors"`
+	Quorum             []string                 `json:"quorum_names,omitempty"`
 	Managers           []authManagerObservation `json:"managers"`
 	ManagersAfter      []authManagerObservation `json:"managers_after"`
-	Controls           []authControl            `json:"controls"`
+	Controls           []authControl            `json:"native_controls"`
 	Queries            []authQuery              `json:"queries"`
 	CleanupErrors      []string                 `json:"cleanup_errors,omitempty"`
+	CollectionComplete bool                     `json:"collection_complete"`
 	GenerationEquality string                   `json:"generation_equality"`
 }
-
-const authBundleSchema = "auth-first-failure/v1"
 
 // authBundleVerdict classifies a bundle. Problems lists what makes it
 // incomplete or invalid; the rest describes what it shows.
@@ -142,30 +186,34 @@ type authBundleVerdict struct {
 	Complete bool
 	Problems []string
 	// Target is "registered" when the MGR that the client dialed still had
-	// the GID that it dialed, "changed" when it had another, and "absent".
+	// the GID and container instance that the caller froze, "changed" when
+	// either differs, "absent" when the MgrMap was read without it, and
+	// "unavailable" when its observation is missing.
 	Target string
 	// RefusedClient is "registered-mgr" when a MON's refusal named the
 	// target's GID, "module-client" when it named another global ID of that
 	// MGR, and "unknown" otherwise.
 	RefusedClient string
-	// ReusedSecretIDs are secret IDs that tickets of different cycles share.
-	// A secret ID repeats across wipes and identifies no generation.
+	// ReusedSecretIDs are secret IDs that tickets of different runs or
+	// cycles share. A secret ID repeats across wipes and identifies no
+	// generation.
 	ReusedSecretIDs    []uint64
 	ControlsSucceeded  bool
+	Result             int
 	GenerationEquality string
 }
 
-// classifyAuthBundle checks a bundle's completeness and identities. It
+// classifyAuthBundle checks a bundle's completeness and associations. It
 // never establishes generation equality: a stock bundle cannot.
 func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
-	verdict := authBundleVerdict{Target: "absent", RefusedClient: "unknown", GenerationEquality: authGenerationUnavailable}
+	rejection := bundle.Rejection
+	verdict := authBundleVerdict{Target: "unavailable", RefusedClient: "unknown", Result: rejection.Result, GenerationEquality: authGenerationUnavailable}
 	problem := func(format string, args ...any) {
 		verdict.Problems = append(verdict.Problems, fmt.Sprintf(format, args...))
 	}
 	if bundle.Schema != authBundleSchema {
 		problem("schema %q", bundle.Schema)
 	}
-	rejection := bundle.Rejection
 	if rejection.Target == "" || rejection.TargetGID == 0 || rejection.Result == 0 || rejection.At.IsZero() {
 		problem("no tested rejection")
 	}
@@ -173,28 +221,27 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 		problem("generation equality %q: a stock bundle cannot establish it", bundle.GenerationEquality)
 	}
 	for _, query := range bundle.Queries {
+		if query.Status != authQueryComplete {
+			problem("%s: %s %s", query.Name, query.Status, query.Error)
+		}
+	}
+	for _, cleanup := range bundle.CleanupErrors {
+		problem("cleanup: %s", cleanup)
+	}
+	expected := bundle.Expected
+	for _, name := range expected.Monitors {
+		index := slices.IndexFunc(bundle.Monitors, func(m authMonitorObservation) bool { return m.Name == name })
 		switch {
-		case query.Error != "":
-			problem("%s failed: %s", query.Name, query.Error)
-		case query.Truncated:
-			problem("%s was truncated", query.Name)
+		case index < 0:
+			problem("mon.%s unavailable", name)
+		case bundle.Monitors[index].FSID != expected.FSID:
+			problem("mon.%s reports FSID %q, not %q", name, bundle.Monitors[index].FSID, expected.FSID)
 		}
-	}
-	if len(bundle.Monitors) == 0 {
-		problem("no MON observed")
-	}
-	for _, monitor := range bundle.Monitors {
-		if monitor.FSID != bundle.FSID {
-			problem("mon.%s reports FSID %q, not %q", monitor.Name, monitor.FSID, bundle.FSID)
-		}
-	}
-	if len(bundle.Managers) == 0 || len(bundle.ManagersAfter) == 0 {
-		problem("no MGR observed")
 	}
 	for _, before := range bundle.Managers {
 		index := slices.IndexFunc(bundle.ManagersAfter, func(after authManagerObservation) bool { return after.Name == before.Name })
 		if index < 0 {
-			problem("mgr.%s left during the collection", before.Name)
+			problem("mgr.%s unavailable after the collection", before.Name)
 			continue
 		}
 		if after := bundle.ManagersAfter[index]; after.GID != before.GID || after.ContainerID != before.ContainerID || after.StartedAt != before.StartedAt {
@@ -202,11 +249,12 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 				before.Name, before.GID, after.GID, before.ContainerID, before.StartedAt, after.ContainerID, after.StartedAt)
 		}
 	}
-	if index := slices.IndexFunc(bundle.Managers, func(m authManagerObservation) bool { return "mgr."+m.Name == rejection.Target }); index >= 0 {
+	if index := slices.IndexFunc(bundle.Managers, func(m authManagerObservation) bool { return "mgr."+m.Name == rejection.Target }); index >= 0 && bundle.Managers[index].GID != 0 {
 		target := bundle.Managers[index]
-		verdict.Target = "changed"
-		if target.GID == rejection.TargetGID {
-			verdict.Target = "registered"
+		verdict.Target = "registered"
+		if target.GID != rejection.TargetGID || target.GID != expected.GID ||
+			expected.ContainerID != "" && (target.ContainerID != expected.ContainerID || target.StartedAt != expected.StartedAt) {
+			verdict.Target = "changed"
 		}
 		if refused := rejection.RefusedGlobalID; refused != nil {
 			switch {
@@ -216,22 +264,30 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 				verdict.RefusedClient = "module-client"
 			}
 		}
+	} else if index < 0 && slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Name == "mgr dump" && q.Status == authQueryComplete }) {
+		verdict.Target = "absent"
 	}
-	labels := map[uint64]map[string]bool{}
-	cycles := map[uint64]map[int]bool{}
-	record := func(cycle int, secretID uint64, label string) {
-		if labels[secretID] == nil {
-			labels[secretID], cycles[secretID] = map[string]bool{}, map[int]bool{}
+	if verdict.Target != "registered" {
+		problem("target %s is %s", rejection.Target, verdict.Target)
+	}
+	type origin struct {
+		run   string
+		cycle int
+	}
+	origins := map[uint64]map[origin]bool{}
+	record := func(run string, cycle int, secretID uint64) {
+		if origins[secretID] == nil {
+			origins[secretID] = map[origin]bool{}
 		}
-		labels[secretID][label], cycles[secretID][cycle] = true, true
+		origins[secretID][origin{run, cycle}] = true
 	}
 	for _, ticket := range bundle.Tickets {
-		record(ticket.Cycle, ticket.SecretID, ticket.Label)
+		record(ticket.Run, ticket.Cycle, ticket.SecretID)
 	}
 	if rejection.SecretID != nil {
-		record(rejection.Cycle, *rejection.SecretID, rejection.TicketLabel)
+		record(rejection.Run, rejection.Cycle, *rejection.SecretID)
 	}
-	for secretID, seen := range cycles {
+	for secretID, seen := range origins {
 		if len(seen) > 1 {
 			verdict.ReusedSecretIDs = append(verdict.ReusedSecretIDs, secretID)
 		}
@@ -259,6 +315,75 @@ func checkAuthBundleSecrecy(data []byte, secrets ...string) error {
 	return nil
 }
 
+// authQueryStatus classifies a query that returned err: an ended context or
+// a command that ran into its timeout is "timed_out", a command the daemon
+// does not know is "unsupported", output past its limit is "truncated", and
+// anything else "failed".
+func authQueryStatus(err error) string {
+	if err == nil {
+		return authQueryComplete
+	}
+	text := err.Error()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, ceph.ErrNativeCommandIncomplete) && strings.Contains(text, "timed out true"):
+		return authQueryTimedOut
+	case errors.Is(err, ceph.ErrNativeCommandIncomplete) && strings.Contains(text, "truncated true"):
+		return authQueryTruncated
+	case strings.Contains(text, "invalid command") || strings.Contains(text, "no valid command found") || strings.Contains(text, "unknown command"):
+		return authQueryUnsupported
+	}
+	return authQueryFailed
+}
+
+// parseMonStatusObservation reads a MON's mon_status. Empty output, output
+// that is not JSON and a status without its name, FSID or MonMap epoch are
+// errors: none of them is an observation.
+func parseMonStatusObservation(data []byte) (authMonitorObservation, error) {
+	var status struct {
+		Name          string `json:"name"`
+		Rank          int    `json:"rank"`
+		State         string `json:"state"`
+		ElectionEpoch uint64 `json:"election_epoch"`
+		Quorum        []int  `json:"quorum"`
+		Monmap        *struct {
+			Epoch     uint64  `json:"epoch"`
+			AuthEpoch *uint64 `json:"auth_epoch"`
+			FSID      string  `json:"fsid"`
+		} `json:"monmap"`
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return authMonitorObservation{}, errors.New("mon_status printed nothing")
+	}
+	if err := json.Unmarshal(data, &status); err != nil {
+		return authMonitorObservation{}, fmt.Errorf("mon_status is not JSON: %w", err)
+	}
+	if status.Name == "" || status.Monmap == nil || status.Monmap.FSID == "" || status.Monmap.Epoch == 0 {
+		return authMonitorObservation{}, errors.New("mon_status lacks its name, FSID or MonMap epoch")
+	}
+	return authMonitorObservation{Name: status.Name, Rank: status.Rank, State: status.State, ElectionEpoch: status.ElectionEpoch,
+		Quorum: status.Quorum, MonmapEpoch: status.Monmap.Epoch, AuthEpoch: status.Monmap.AuthEpoch, FSID: status.Monmap.FSID}, nil
+}
+
+// parseMonSessions reads a MON's sessions and keeps those of MGRs, by entity
+// name. Empty output and output that is not a JSON list are errors.
+func parseMonSessions(data []byte) (map[string][]monSession, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, errors.New("sessions printed nothing")
+	}
+	var list []monSession
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, fmt.Errorf("sessions is not a JSON list: %w", err)
+	}
+	managers := map[string][]monSession{}
+	for _, session := range list {
+		if strings.HasPrefix(session.EntityName, "mgr.") {
+			managers[session.EntityName] = append(managers[session.EntityName], session)
+		}
+	}
+	return managers, nil
+}
+
 // authCollector runs the bounded queries of one collection.
 type authCollector struct {
 	cluster *ceph.Container
@@ -267,51 +392,74 @@ type authCollector struct {
 	bundle  *authFirstFailureBundle
 }
 
-// query runs one query within the per-query bound and records it.
-func (c *authCollector) query(name, kind string, run func(context.Context) (truncated bool, err error)) bool {
+// authExcerptLimit caps the output and error text that a query retains.
+const authExcerptLimit = 1024
+
+// redact masks the cluster's secrets in text and caps it.
+func (c *authCollector) redact(text string) string {
+	ctx, stop := context.WithTimeout(context.WithoutCancel(c.ctx), 10*time.Second)
+	defer stop()
+	redacted, err := c.cluster.RedactSecrets(ctx, []byte(text))
+	if err != nil {
+		return "text withheld: redaction failed"
+	}
+	return string(redacted[:min(len(redacted), authExcerptLimit)])
+}
+
+// query runs one query within the per-query bound and records its status.
+// run returns the output it read, which the query keeps as an excerpt when
+// it did not yield a complete observation.
+func (c *authCollector) query(name, kind string, run func(context.Context) ([]byte, error)) bool {
 	ctx, cancel := context.WithTimeout(c.ctx, c.bound)
 	defer cancel()
-	started := time.Now()
-	truncated, err := run(ctx)
-	entry := authQuery{Name: name, Kind: kind, Started: started.UTC(), Elapsed: time.Since(started).Round(time.Millisecond).String(), Truncated: truncated}
+	entry := authQuery{Name: name, Kind: kind, Started: time.Now().UTC(), Status: authQueryComplete}
+	output, err := run(ctx)
+	entry.Finished = time.Now().UTC()
 	if err != nil {
-		text := err.Error()
-		redactCtx, stop := context.WithTimeout(context.WithoutCancel(c.ctx), 10*time.Second)
-		if redacted, redactErr := c.cluster.RedactSecrets(redactCtx, []byte(text)); redactErr == nil {
-			text = string(redacted)
-		} else {
-			text = "error text withheld: " + redactErr.Error()
+		entry.Status = authQueryStatus(err)
+		entry.Error = c.redact(err.Error())
+		if len(output) > 0 {
+			entry.Excerpt = c.redact(string(output))
 		}
-		stop()
-		entry.Error = text[:min(len(text), 300)]
 	}
 	c.bundle.Queries = append(c.bundle.Queries, entry)
-	return err == nil && !truncated
+	return err == nil
 }
 
 // observeManagers records every owned MGR with its MgrMap GID and container
 // instance, and, when sessions is set, the global IDs of its MON sessions.
-func (c *authCollector) observeManagers(sessions map[string][]monSession) []authManagerObservation {
+func (c *authCollector) observeManagers(phase string, sessions map[string][]monSession) []authManagerObservation {
 	var status ceph.ManagerStatus
-	c.query("mgr dump", "observation", func(ctx context.Context) (bool, error) {
+	c.query("mgr dump", "observation", func(ctx context.Context) ([]byte, error) {
 		var err error
 		status, err = c.cluster.ManagerStatus(ctx)
-		return false, err
+		return nil, err
 	})
-	gids := map[string]uint64{status.ActiveName: status.ActiveGID}
+	gids := map[string]uint64{}
+	if status.ActiveName != "" {
+		gids[status.ActiveName] = status.ActiveGID
+	}
 	for _, standby := range status.Standbys {
 		gids[standby.Name] = standby.GID
 	}
+	var managers []*ceph.ManagerContainer
+	if !c.query("owned MGRs "+phase, "observation", func(ctx context.Context) ([]byte, error) {
+		var err error
+		managers, err = c.cluster.ManagersContext(ctx)
+		return nil, err
+	}) {
+		return nil
+	}
 	var observed []authManagerObservation
-	for _, manager := range c.cluster.Managers() {
+	for _, manager := range managers {
 		entry := authManagerObservation{Name: manager.DaemonName, GID: gids[manager.DaemonName], Active: manager.DaemonName == status.ActiveName,
 			ContainerID: manager.GetContainerID()}
-		c.query("state of mgr."+manager.DaemonName, "observation", func(ctx context.Context) (bool, error) {
+		c.query("container of mgr."+manager.DaemonName+" "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 			state, err := manager.State(ctx)
 			if err == nil {
 				entry.StartedAt = state.StartedAt
 			}
-			return false, err
+			return nil, err
 		})
 		if sessions != nil {
 			beacon, others := splitManagerSessions(sessions["mgr."+manager.DaemonName])
@@ -330,66 +478,61 @@ func (c *authCollector) observeManagers(sessions map[string][]monSession) []auth
 // collectAuthFirstFailureBundle collects the bundle of one tested rejection
 // within budget, from a context of its own, since the test's own may have
 // ended with the failure, and bounds each query by bound. It reads every
-// owned MON's mon_status and sessions through its admin socket, the MgrMap
-// and each MGR's container instance before and after, and runs a fresh
-// "tell mgr.<name> version" from control for the tested target and the
-// active MGR as a behavioral control. A query that fails or is truncated is recorded, not retried, and
-// the rejection is kept as given.
-func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Container, control testcontainers.Container, images map[string]string,
-	rejection authTestedRejection, held *authHeldSession, tickets []authTicketRecord, budget, bound time.Duration) authFirstFailureBundle {
+// expected MON's mon_status and sessions through its admin socket, the
+// Messenger quorum, the MgrMap and each owned MGR's container instance before
+// and after, and runs a fresh "tell mgr.<name> version" from control for the
+// tested target and the active MGR as a behavioral control, keeping at most
+// controlOutput bytes of its output. Every query keeps its status; a query
+// that fails or is truncated is recorded, not retried, and the rejection is
+// kept as given.
+func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Container, control testcontainers.Container, provenance authProvenance,
+	images map[string]string, expected authExpectedTarget, rejection authTestedRejection, held *authHeldSession, tickets []authTicketRecord,
+	budget, bound time.Duration, controlOutput int) authFirstFailureBundle {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), budget)
 	defer cancel()
-	bundle := authFirstFailureBundle{Schema: authBundleSchema, Images: images, Budget: budget.String(), QueryBound: bound.String(),
-		Started: time.Now().UTC(), Rejection: rejection, Held: held, Tickets: tickets, GenerationEquality: authGenerationUnavailable}
+	bundle := authFirstFailureBundle{Schema: authBundleSchema, Provenance: provenance, Images: images, Expected: expected,
+		Budget: budget.String(), QueryBound: bound.String(), Started: time.Now().UTC(), Rejection: rejection, Held: held,
+		Tickets: tickets, GenerationEquality: authGenerationUnavailable}
 	collector := &authCollector{cluster: cluster, ctx: ctx, bound: bound, bundle: &bundle}
 	sessions := map[string][]monSession{}
-	for _, monitor := range cluster.Monitors() {
-		name := monitor.DaemonName
-		collector.query("mon."+name+" mon_status", "observation", func(ctx context.Context) (bool, error) {
+	for _, name := range expected.Monitors {
+		collector.query("mon."+name+" mon_status", "local observation", func(ctx context.Context) ([]byte, error) {
 			out, err := cluster.AdminSocket(ctx, "mon."+name, "mon_status")
 			if err != nil {
-				return false, err
+				return out, err
 			}
-			var status struct {
-				Name          string `json:"name"`
-				Rank          int    `json:"rank"`
-				State         string `json:"state"`
-				ElectionEpoch uint64 `json:"election_epoch"`
-				Quorum        []int  `json:"quorum"`
-				Monmap        struct {
-					Epoch     uint64  `json:"epoch"`
-					AuthEpoch *uint64 `json:"auth_epoch"`
-					FSID      string  `json:"fsid"`
-				} `json:"monmap"`
+			observed, err := parseMonStatusObservation(out)
+			if err != nil {
+				return out, err
 			}
-			if err := json.Unmarshal(out, &status); err != nil {
-				return false, fmt.Errorf("mon_status: %w", err)
-			}
-			bundle.Monitors = append(bundle.Monitors, authMonitorObservation{Name: status.Name, Rank: status.Rank, State: status.State,
-				ElectionEpoch: status.ElectionEpoch, Quorum: status.Quorum, MonmapEpoch: status.Monmap.Epoch, AuthEpoch: status.Monmap.AuthEpoch, FSID: status.Monmap.FSID})
-			if bundle.FSID == "" {
-				bundle.FSID = status.Monmap.FSID
-			}
-			return false, nil
+			bundle.Monitors = append(bundle.Monitors, observed)
+			return out, nil
 		})
-		collector.query("mon."+name+" sessions", "observation", func(ctx context.Context) (bool, error) {
+		collector.query("mon."+name+" sessions", "local observation", func(ctx context.Context) ([]byte, error) {
 			out, err := cluster.AdminSocket(ctx, "mon."+name, "sessions")
 			if err != nil {
-				return false, err
+				return out, err
 			}
-			var list []monSession
-			if err := json.Unmarshal(out, &list); err != nil {
-				return false, fmt.Errorf("sessions: %w", err)
+			managers, err := parseMonSessions(out)
+			if err != nil {
+				return out, err
 			}
-			for _, session := range list {
-				if strings.HasPrefix(session.EntityName, "mgr.") {
-					sessions[session.EntityName] = append(sessions[session.EntityName], session)
-				}
+			for entity, list := range managers {
+				sessions[entity] = append(sessions[entity], list...)
 			}
-			return false, nil
+			return out, nil
 		})
 	}
-	bundle.Managers = collector.observeManagers(sessions)
+	// The quorum as a MON session reports it is a different observation from
+	// each MON's own state.
+	collector.query("quorum", "messenger observation", func(ctx context.Context) ([]byte, error) {
+		quorum, err := cluster.QuorumStatus(ctx)
+		if err == nil {
+			bundle.Quorum = quorum.QuorumNames
+		}
+		return nil, err
+	})
+	bundle.Managers = collector.observeManagers("before", sessions)
 	// A standby MGR answers no tell, so the controls address the tested
 	// target and the active MGR.
 	targets := []string{rejection.Target}
@@ -399,10 +542,11 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Contain
 		}
 	}
 	for _, target := range targets {
-		collector.query("tell "+target+" version", "behavioral-control", func(ctx context.Context) (bool, error) {
+		collector.query("tell "+target+" version", "behavioral control", func(ctx context.Context) ([]byte, error) {
+			started := time.Now().UTC()
 			result, err := cluster.RunNativeCommand(ctx, control, ceph.NativeCommand{
 				Argv: []string{"ceph", "--connect-timeout", "5", "tell", target, "version"}, Timeout: bound,
-				MaxStdout: 4096, MaxStderr: 16 << 10, Label: "tell " + target + " version",
+				MaxStdout: controlOutput, MaxStderr: 16 << 10, Label: "tell " + target + " version",
 			})
 			var unstopped *ceph.NativeCommandUnstoppedError
 			if errors.As(err, &unstopped) {
@@ -412,7 +556,8 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Contain
 				}
 				stop()
 			}
-			bundle.Controls = append(bundle.Controls, authControl{Target: target, Command: "version", ExitCode: result.ExitCode, Complete: err == nil && result.Complete()})
+			bundle.Controls = append(bundle.Controls, authControl{Target: target, Command: "version", Phase: "after first failure", Started: started,
+				ExitCode: result.ExitCode, Complete: err == nil && result.Complete()})
 			if err == nil && bundle.Release == "" && result.ExitCode == 0 {
 				var version struct {
 					Version string `json:"version"`
@@ -422,27 +567,28 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Contain
 					bundle.Release = version.Version + " " + version.Release
 				}
 			}
-			if errors.Is(err, ceph.ErrNativeCommandIncomplete) {
-				return true, nil
-			}
-			return false, err
+			return append(result.Stdout, result.Stderr...), err
 		})
 	}
-	bundle.ManagersAfter = collector.observeManagers(nil)
+	bundle.ManagersAfter = collector.observeManagers("after", nil)
 	bundle.Ended = time.Now().UTC()
+	bundle.CollectionComplete = len(bundle.CleanupErrors) == 0 &&
+		!slices.ContainsFunc(bundle.Queries, func(q authQuery) bool { return q.Status != authQueryComplete })
 	return bundle
 }
 
 // testAuthFirstFailureBundle runs the collection recipe on a fixture of three
 // MONs and two MGRs after one rotating-key wipe, where the MONs have that
-// command. Its tested authentication is
-// a native client with a wrong key, which the MONs refuse; it runs once and
-// is never retried. The bundle must be complete, keep that rejection as it
-// was recorded, show the target MGR still registered with the GID it had,
-// record successful behavioral controls, and leave generation equality
-// unavailable/unverified. It must hold neither the admin key nor a field
-// beyond its schema. A second collection whose budget ends at once fails
-// every query and still keeps the rejection.
+// command. Its tested authentication is a native client with a wrong key,
+// which the MONs refuse; it runs once and is never retried. The caller
+// freezes the expected identities right after the rejection. The bundle must
+// be complete, keep that rejection as it was recorded, show the target MGR
+// still registered with its GID and container instance, record successful
+// behavioral controls, and leave generation equality unavailable/unverified.
+// It must hold neither the admin key nor a field beyond its schema. Two more
+// collections show partial results that keep the rejection: one whose budget
+// ends at once, so that every query times out, and one whose control may keep
+// only 8 bytes, so that the control is truncated.
 func testAuthFirstFailureBundle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -455,9 +601,14 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	}
 	var monmap struct {
 		Epoch uint64 `json:"epoch"`
+		FSID  string `json:"fsid"`
 	}
 	if err := json.Unmarshal(before, &monmap); err != nil {
 		t.Fatal(err)
+	}
+	var monitors []string
+	for _, monitor := range cluster.Monitors() {
+		monitors = append(monitors, monitor.DaemonName)
 	}
 	// One wipe, as in a consumer's cycle; every MON's own MonMap must move
 	// past it before the tested authentication. MONs that do not know the
@@ -465,32 +616,33 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	// collection then runs without a wipe.
 	wiped := true
 	if _, err := cluster.Ceph(ctx, "auth", "wipe-rotating-service-keys"); err != nil {
-		if !strings.Contains(err.Error(), "no valid command found") {
+		if authQueryStatus(err) != authQueryUnsupported {
 			t.Fatal("wipe rotating service keys:", err)
 		}
 		wiped = false
 		t.Log("the MONs do not know auth wipe-rotating-service-keys; collecting without a wipe")
 	}
-	for _, monitor := range cluster.Monitors() {
+	for _, name := range monitors {
 		if !wiped {
 			break
 		}
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := cluster.AdminSocket(ctx, "mon."+monitor.DaemonName, "mon_status")
-			var status struct {
-				Monmap struct {
-					Epoch uint64 `json:"epoch"`
-				} `json:"monmap"`
-			}
-			if err == nil && json.Unmarshal(out, &status) == nil && status.Monmap.Epoch > monmap.Epoch {
-				break
+			out, err := cluster.AdminSocket(ctx, "mon."+name, "mon_status")
+			if err == nil {
+				if observed, err := parseMonStatusObservation(out); err == nil && observed.MonmapEpoch > monmap.Epoch {
+					break
+				}
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("mon.%s did not move past MonMap epoch %d: %v", monitor.DaemonName, monmap.Epoch, err)
+				t.Fatalf("mon.%s did not move past MonMap epoch %d: %v", name, monmap.Epoch, err)
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
+	}
+	// A command that the MON does not know is classified as unsupported.
+	if _, err := cluster.AdminSocket(ctx, "mon."+monitors[0], "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
+		t.Fatalf("an unknown admin socket command gave %v, status %s", err, authQueryStatus(err))
 	}
 	status, err := cluster.ManagerStatus(ctx)
 	if err != nil || !status.Available {
@@ -508,14 +660,29 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatalf("the tested authentication was not refused: exit=%d err=%v stderr=%.512s", tested.ExitCode, err, tested.Stderr)
 	}
 	lines := strings.Split(strings.TrimSpace(string(tested.Stderr)), "\n")
-	rejection := authTestedRejection{Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1]}
+	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1]}
 	recorded := rejection
+	// The expected identities are frozen now, before any diagnostic.
+	expected := authExpectedTarget{FSID: monmap.FSID, Monitors: monitors, Manager: status.ActiveName, GID: status.ActiveGID}
+	for _, manager := range cluster.Managers() {
+		if manager.DaemonName == status.ActiveName {
+			state, err := manager.State(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected.ContainerID, expected.StartedAt = manager.GetContainerID(), state.StartedAt
+		}
+	}
+	provenance := authProvenance{Producer: "ceph-testcontainers-go internal/integration", Subject: "native client with a wrong key", Run: t.Name()}
 
 	adminKey, err := cluster.Ceph(ctx, "auth", "get-key", "client.admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle := collectAuthFirstFailureBundle(ctx, cluster, client, map[string]string{"control": image}, rejection, nil, nil, time.Minute, 15*time.Second)
+	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
+		return collectAuthFirstFailureBundle(ctx, cluster, client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+	}
+	bundle := collect(time.Minute, 4096)
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -524,8 +691,8 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	verdict := classifyAuthBundle(bundle)
-	if !verdict.Complete || verdict.Target != "registered" || verdict.RefusedClient != "unknown" || !verdict.ControlsSucceeded ||
-		verdict.GenerationEquality != authGenerationUnavailable || len(bundle.Monitors) != 3 || len(bundle.Managers) != 2 || len(bundle.CleanupErrors) != 0 {
+	if !verdict.Complete || !bundle.CollectionComplete || verdict.Target != "registered" || verdict.RefusedClient != "unknown" || !verdict.ControlsSucceeded ||
+		verdict.Result != -13 || verdict.GenerationEquality != authGenerationUnavailable || len(bundle.Monitors) != 3 || len(bundle.Managers) != 2 || len(bundle.Quorum) != 3 {
 		t.Fatalf("verdict %+v for bundle %s", verdict, data)
 	}
 	if bundle.Rejection != recorded {
@@ -541,13 +708,21 @@ func testAuthFirstFailureBundle(t *testing.T) {
 			t.Fatalf("mgr.%s beacon sessions %v, GID %d", manager.Name, manager.BeaconGlobalIDs, manager.GID)
 		}
 	}
-	// Diagnostics that fail keep the rejection: with a budget that ends at
-	// once, every query fails, the bundle is incomplete, and the rejection is
-	// still the one recorded.
-	starved := collectAuthFirstFailureBundle(ctx, cluster, client, map[string]string{"control": image}, rejection, nil, nil, time.Nanosecond, time.Second)
-	if starvedVerdict := classifyAuthBundle(starved); starvedVerdict.Complete || starved.Rejection != recorded || len(starved.Queries) == 0 ||
-		slices.ContainsFunc(starved.Queries, func(q authQuery) bool { return q.Error == "" }) {
-		t.Fatalf("a starved collection gave verdict %+v, rejection %+v, queries %+v", starvedVerdict, starved.Rejection, starved.Queries)
+	// Diagnostics that fail keep the rejection.
+	for name, test := range map[string]struct {
+		budget        time.Duration
+		controlOutput int
+		status        string
+	}{
+		"starved budget":    {time.Nanosecond, 4096, authQueryTimedOut},
+		"truncated control": {time.Minute, 8, authQueryTruncated},
+	} {
+		partial := collect(test.budget, test.controlOutput)
+		partialVerdict := classifyAuthBundle(partial)
+		if partialVerdict.Complete || partial.CollectionComplete || partial.Rejection != recorded || partialVerdict.Result != -13 ||
+			!slices.ContainsFunc(partial.Queries, func(q authQuery) bool { return q.Status == test.status }) {
+			t.Fatalf("%s: verdict %+v, rejection %+v, queries %+v", name, partialVerdict, partial.Rejection, partial.Queries)
+		}
 	}
 	// The controls ran under the supervisor; none may have left a marker.
 	if code, out, err := sessionExec(ctx, client, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null"); err != nil || strings.TrimSpace(out) != "" {

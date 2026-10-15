@@ -16,13 +16,15 @@ change the API.
   GID. A test checks the sessions on every owned MON.
 
 - The Messenger fixture guide has a recipe for a refused first MGR
-  authentication: a test helper that keeps the rejection as recorded and,
-  within one budget, collects each MON's own `mon_status`, each MGR's GID,
-  container instance and MON sessions, and fresh native controls, with every
-  query's errors and truncation. Its classifier reports completeness, whether
-  the target MGR kept its GID, which client a MON's refusal named, and reused
-  secret IDs, and always reports generation equality as
-  `unavailable/unverified`. The bundle holds no keys.
+  authentication: a test helper that keeps the rejection and the identities
+  frozen after it as recorded and, within one budget, collects each MON's own
+  `mon_status`, the quorum, each MGR's GID, container instance and MON
+  sessions, and fresh native controls, with each query's status (complete,
+  unsupported, timed out, truncated, failed or unavailable). Its classifier
+  reports completeness, whether the target MGR kept its GID and container
+  instance, which client a MON's refusal named, and reused secret IDs, and
+  always reports generation equality as `unavailable/unverified`. The bundle
+  holds no keys.
 
 - The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
   has an MDS session section. Its first receipt keeps a native libcephfs
