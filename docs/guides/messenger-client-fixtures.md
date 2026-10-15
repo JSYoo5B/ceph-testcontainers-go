@@ -108,6 +108,91 @@ the MgrMap. The MON logs are each MON container's output, of which
 `CollectDiagnostics` keeps a bounded tail. Compare the global IDs; the entity
 name alone is the same for every client of the daemon.
 
+### Authentication first-failure bundle
+
+When a client's first authentication to a MGR is refused, for example after
+a rotating-key wipe, keep that rejection and collect what the stock images can
+observe around it. Do not retry the authentication, wipe again, restart a
+daemon or wait a fixed time to get a pass: each would replace the first
+failure with a different run.
+
+`collectAuthFirstFailureBundle` in
+`internal/integration/auth_first_failure_integration_helpers_test.go` is the
+recipe as a test helper; copy it into your tests. Right after the rejection,
+before any diagnostic, freeze what you expect: the FSID, the MON names, and
+the target MGR's name, GID, container ID and start time. Pass them with the
+rejection as you recorded it, your declared provenance (producer and subject
+sources, run, report), a held session if you kept one, and your installed
+tickets with opaque, run-scoped labels and the epochs that their issuer
+connection showed. Those epochs are not carried by the ticket. The helper
+collects:
+
+| Field | Source | Meaning |
+| --- | --- | --- |
+| `monitors` | `AdminSocket(ctx, "mon.<name>", "mon_status")` for each expected MON | each MON's own rank, state, election epoch, quorum, MonMap epoch, `auth_epoch` (Tentacle; absent on Squid) and FSID, without a MON session |
+| `quorum_names` | `QuorumStatus` | the quorum as a MON session reports it, a different observation from each MON's own state |
+| `managers`, `managers_after` | `mgr dump`, `ManagersContext` and each MGR container's start time, and every expected MON's `sessions` | each MGR's GID and container instance, before and after the collection, and its MON sessions split as in [MGR MonClients](#mgr-monclients): the beacon session's global ID and the module clients' |
+| `native_controls` | `RunNativeCommand` of `ceph tell mgr.<name> version` for the tested target and the active MGR | behavioral controls, with their phase: a new client authenticated with its own ticket |
+| `queries` | every query above | name, kind, start and end, and a status: `complete`, `unsupported`, `timed_out`, `truncated`, `failed` or `unavailable`, with a redacted error and output excerpt of at most 1 KiB otherwise |
+| `first_failure`, `held_session`, `consumer_tickets`, `provenance`, `expected_target` | your records | stored as given |
+| `generation_equality` | | always `unavailable/unverified` |
+
+The collection has one total budget, here a minute, and a bound per query.
+It runs from a context of its own, so a test context that ended with the
+failure does not stop it, and it keeps going after a query fails. Every wait
+ends with the budget: the MONs come from your frozen list, the MGR
+containers from `ManagersContext`, and errors are redacted within what is
+left of the budget. An error that could not be redacted in time is replaced
+by a fixed "text withheld" marker. The one exception is a control that
+`RunNativeCommand` could not confirm as stopped: its `Stop` has a separate
+cleanup allowance of a minute, outside the budget. A query that
+fails is recorded with its status, not retried. Empty or non-JSON output, or a
+status without its name, FSID or MonMap epoch, is a failed query, not an
+observation; an empty session list is an answer. A command that the daemon
+does not know, such as `quorum_status` on a MON's admin socket, is
+`unsupported`. A native command whose stop cannot be confirmed is stopped
+again and, if that fails, recorded under `cleanup_errors`. The rejection stays
+as you recorded it, also when every query fails.
+
+`classifyAuthBundle` then reports:
+- whether the bundle is complete, and the problems if not: a query that did
+  not complete, an expected MON without an observation or with another FSID,
+  a MGR whose GID or container instance changed during the collection, a
+  failed cleanup, a missing rejection, or a claimed generation equality;
+- whether the target MGR still had the GID and container instance that you
+  froze (`registered`), had another (`changed`), was missing from a MgrMap
+  that was read (`absent`), or could not be observed (`unavailable`);
+- which client a MON's refusal named, when you recorded its global ID: the
+  registered MGR, one of its module clients, or unknown;
+- secret IDs that tickets of different runs or cycles share. A wipe
+  recreates the MGR key set, and its secret IDs start again, so an equal ID is
+  not the same key;
+- whether every control succeeded, and the rejection's result, unchanged.
+
+It never reports generation equality. No stock command shows the rotating
+key that the issuing MON used, or the one that the MGR selected to verify a
+ticket, without the keys themselves. A successful control, before or after
+the failure, or a later passing run does not show it either. Proving
+equality needs a native observer outside the stock images; see
+[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71).
+
+`checkAuthBundleSecrecy` refuses a bundle that contains a secret you pass or a
+field beyond its schema. The bundle holds no key, ticket, proof or auth
+dump. Do not add `debug_auth` output, which prints keys (see
+[Observing Cephx keys from the daemon side](native-commands.md#observing-cephx-keys-from-the-daemon-side)).
+
+`TestAuthFirstFailureBundle` runs the recipe with three MONs and two MGRs
+after one `auth wipe-rotating-service-keys`. Squid's MONs do not know that
+command, and the test then collects without a wipe. Its tested
+authentication is a native client with a wrong key, which the MONs refuse with
+errno 13. Besides the complete bundle, it collects one with a budget that
+ends at once (every query `timed_out`) and one whose control may keep 8 bytes
+(`truncated`); both are incomplete and keep the rejection.
+`TestAuthBundleRetainedFailure` replays a consumer's retained failure as a
+bundle, with synthetic labels that keep their equality: complete, target
+registered, controls successful, -13 preserved and generation equality still
+unverified. `TestAuthBundleClassification` changes one fact at a time.
+
 ## Mutation oracles
 
 A client that implements object mutations needs native receipts for each

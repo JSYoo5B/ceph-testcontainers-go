@@ -67,3 +67,10 @@ func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 	parallelWhenEnabled(t)
 	testMonitorAddressAcrossNetworkInterruption(t)
 }
+
+// After one rotating-key wipe, a tested authentication that the MONs refuse
+// is kept as recorded while a bounded bundle of MON, MGR and control
+// observations is collected around it.
+func TestAuthFirstFailureBundle(t *testing.T) {
+	testAuthFirstFailureBundle(t)
+}
