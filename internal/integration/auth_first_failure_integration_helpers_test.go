@@ -25,6 +25,12 @@ const authGenerationUnavailable = "unavailable/unverified"
 
 const authBundleSchema = "auth-first-failure/v1"
 
+// authStopAllowance bounds the stop of one control that RunNativeCommand
+// could not confirm as stopped. It is a cleanup allowance outside the
+// collection budget, since a command that may still run must not be left
+// behind.
+const authStopAllowance = time.Minute
+
 // Statuses of one query of a collection.
 const (
 	authQueryComplete    = "complete"
@@ -384,9 +390,20 @@ func parseMonSessions(data []byte) (map[string][]monSession, error) {
 	return managers, nil
 }
 
+// authSources is what a collection reads; *ceph.Container provides it. Each
+// method waits at most until its context ends.
+type authSources interface {
+	AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
+	ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
+	ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error)
+	QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
+	RunNativeCommand(ctx context.Context, target testcontainers.Container, command ceph.NativeCommand) (ceph.NativeCommandResult, error)
+	RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error)
+}
+
 // authCollector runs the bounded queries of one collection.
 type authCollector struct {
-	cluster *ceph.Container
+	sources authSources
 	ctx     context.Context
 	bound   time.Duration
 	bundle  *authFirstFailureBundle
@@ -395,33 +412,36 @@ type authCollector struct {
 // authExcerptLimit caps the output and error text that a query retains.
 const authExcerptLimit = 1024
 
-// redact masks the cluster's secrets in text and caps it.
-func (c *authCollector) redact(text string) string {
-	ctx, stop := context.WithTimeout(context.WithoutCancel(c.ctx), 10*time.Second)
-	defer stop()
-	redacted, err := c.cluster.RedactSecrets(ctx, []byte(text))
+// authTextWithheld replaces text that could not be redacted within the
+// collection's budget.
+const authTextWithheld = "text withheld: redaction did not finish within the collection budget"
+
+// redact masks the cluster's secrets in text and caps it, within ctx.
+func (c *authCollector) redact(ctx context.Context, text string) string {
+	redacted, err := c.sources.RedactSecrets(ctx, []byte(text))
 	if err != nil {
-		return "text withheld: redaction failed"
+		return authTextWithheld
 	}
 	return string(redacted[:min(len(redacted), authExcerptLimit)])
 }
 
 // query runs one query within the per-query bound and records its status.
 // run returns the output it read, which the query keeps as an excerpt when
-// it did not yield a complete observation.
+// it did not yield a complete observation. Redaction runs within what is
+// left of the collection's budget, and Finished includes it.
 func (c *authCollector) query(name, kind string, run func(context.Context) ([]byte, error)) bool {
 	ctx, cancel := context.WithTimeout(c.ctx, c.bound)
 	defer cancel()
 	entry := authQuery{Name: name, Kind: kind, Started: time.Now().UTC(), Status: authQueryComplete}
 	output, err := run(ctx)
-	entry.Finished = time.Now().UTC()
 	if err != nil {
 		entry.Status = authQueryStatus(err)
-		entry.Error = c.redact(err.Error())
+		entry.Error = c.redact(c.ctx, err.Error())
 		if len(output) > 0 {
-			entry.Excerpt = c.redact(string(output))
+			entry.Excerpt = c.redact(c.ctx, string(output))
 		}
 	}
+	entry.Finished = time.Now().UTC()
 	c.bundle.Queries = append(c.bundle.Queries, entry)
 	return err == nil
 }
@@ -432,7 +452,7 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 	var status ceph.ManagerStatus
 	c.query("mgr dump", "observation", func(ctx context.Context) ([]byte, error) {
 		var err error
-		status, err = c.cluster.ManagerStatus(ctx)
+		status, err = c.sources.ManagerStatus(ctx)
 		return nil, err
 	})
 	gids := map[string]uint64{}
@@ -445,7 +465,7 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 	var managers []*ceph.ManagerContainer
 	if !c.query("owned MGRs "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 		var err error
-		managers, err = c.cluster.ManagersContext(ctx)
+		managers, err = c.sources.ManagersContext(ctx)
 		return nil, err
 	}) {
 		return nil
@@ -484,8 +504,11 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 // tested target and the active MGR as a behavioral control, keeping at most
 // controlOutput bytes of its output. Every query keeps its status; a query
 // that fails or is truncated is recorded, not retried, and the rejection is
-// kept as given.
-func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Container, control testcontainers.Container, provenance authProvenance,
+// kept as given. Every wait, the redaction of errors included, ends with the
+// budget. The one exception is the stop of a control that could not be
+// confirmed as stopped: it has a separate allowance of authStopAllowance,
+// outside the budget, and its failure is recorded under cleanup_errors.
+func collectAuthFirstFailureBundle(parent context.Context, cluster authSources, control testcontainers.Container, provenance authProvenance,
 	images map[string]string, expected authExpectedTarget, rejection authTestedRejection, held *authHeldSession, tickets []authTicketRecord,
 	budget, bound time.Duration, controlOutput int) authFirstFailureBundle {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), budget)
@@ -493,7 +516,7 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Contain
 	bundle := authFirstFailureBundle{Schema: authBundleSchema, Provenance: provenance, Images: images, Expected: expected,
 		Budget: budget.String(), QueryBound: bound.String(), Started: time.Now().UTC(), Rejection: rejection, Held: held,
 		Tickets: tickets, GenerationEquality: authGenerationUnavailable}
-	collector := &authCollector{cluster: cluster, ctx: ctx, bound: bound, bundle: &bundle}
+	collector := &authCollector{sources: cluster, ctx: ctx, bound: bound, bundle: &bundle}
 	sessions := map[string][]monSession{}
 	for _, name := range expected.Monitors {
 		collector.query("mon."+name+" mon_status", "local observation", func(ctx context.Context) ([]byte, error) {
@@ -550,7 +573,7 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster *ceph.Contain
 			})
 			var unstopped *ceph.NativeCommandUnstoppedError
 			if errors.As(err, &unstopped) {
-				stopCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+				stopCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), authStopAllowance)
 				if stopErr := unstopped.Stop(stopCtx); stopErr != nil {
 					bundle.CleanupErrors = append(bundle.CleanupErrors, fmt.Sprintf("stop %s: %v", target, stopErr))
 				}

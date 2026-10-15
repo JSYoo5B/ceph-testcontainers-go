@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // retainedAuthFailureBundle replays, as a bundle, the consumer's retained
@@ -244,5 +247,103 @@ func TestAuthBundleSecrecy(t *testing.T) {
 	extra := strings.Replace(retainedAuthFailureBundle, `"budget": "1m0s"`, `"ticket": "AAAA", "budget": "1m0s"`, 1)
 	if err := checkAuthBundleSecrecy([]byte(extra)); err == nil {
 		t.Fatal("a bundle with a field beyond its schema passed")
+	}
+}
+
+// heldSources answers like a cluster whose teardown holds its topology lock:
+// every call waits until the gate opens or its context ends. With failFast
+// the queries fail at once and only redaction waits.
+type heldSources struct {
+	gate     chan struct{}
+	failFast bool
+	mu       sync.Mutex
+	active   int
+}
+
+func (h *heldSources) wait(ctx context.Context) error {
+	h.mu.Lock()
+	h.active++
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		h.active--
+		h.mu.Unlock()
+	}()
+	select {
+	case <-h.gate:
+		return errors.New("teardown released")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (h *heldSources) query(ctx context.Context) error {
+	if h.failFast {
+		return errors.New("container is paused")
+	}
+	return h.wait(ctx)
+}
+
+func (h *heldSources) AdminSocket(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+	return nil, h.query(ctx)
+}
+
+func (h *heldSources) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error) {
+	return ceph.ManagerStatus{}, h.query(ctx)
+}
+
+func (h *heldSources) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+	return nil, h.query(ctx)
+}
+
+func (h *heldSources) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error) {
+	return ceph.QuorumStatus{}, h.query(ctx)
+}
+
+func (h *heldSources) RunNativeCommand(ctx context.Context, _ testcontainers.Container, _ ceph.NativeCommand) (ceph.NativeCommandResult, error) {
+	return ceph.NativeCommandResult{}, h.query(ctx)
+}
+
+func (h *heldSources) RedactSecrets(ctx context.Context, data []byte, _ ...string) ([]byte, error) {
+	return nil, h.wait(ctx)
+}
+
+// A collection against a held teardown returns within its 20 ms budget,
+// before the teardown is released, with the rejection unchanged and every
+// query incomplete: the inventory and the queries wait no longer than the
+// budget, and so does the redaction of their errors.
+func TestAuthCollectionWithinItsBudget(t *testing.T) {
+	retained := retainedBundle(t)
+	for name, failFast := range map[string]bool{"held queries": false, "held redaction": true} {
+		sources := &heldSources{gate: make(chan struct{}), failFast: failFast}
+		returned := make(chan authFirstFailureBundle, 1)
+		started := time.Now()
+		go func() {
+			returned <- collectAuthFirstFailureBundle(t.Context(), sources, nil, retained.Provenance, retained.Images, retained.Expected,
+				retained.Rejection, retained.Held, retained.Tickets, 20*time.Millisecond, 20*time.Millisecond, 4096)
+		}()
+		var bundle authFirstFailureBundle
+		select {
+		case bundle = <-returned:
+		case <-time.After(3 * time.Second):
+			close(sources.gate)
+			<-returned
+			t.Fatalf("%s: the collection waited for the teardown", name)
+		}
+		took := time.Since(started)
+		close(sources.gate)
+		sources.mu.Lock()
+		active := sources.active
+		sources.mu.Unlock()
+		verdict := classifyAuthBundle(bundle)
+		if took > time.Second || active != 0 || verdict.Complete || bundle.CollectionComplete || verdict.Result != -13 ||
+			bundle.Rejection.Target != retained.Rejection.Target || len(bundle.Queries) == 0 {
+			t.Fatalf("%s: took %s, %d calls still waiting, verdict %+v", name, took, active, verdict)
+		}
+		for _, query := range bundle.Queries {
+			if query.Status == authQueryComplete || query.Error != authTextWithheld || query.Finished.Before(query.Started) {
+				t.Fatalf("%s: query %+v", name, query)
+			}
+		}
 	}
 }

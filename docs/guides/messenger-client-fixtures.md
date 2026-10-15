@@ -139,7 +139,13 @@ collects:
 
 The collection has one total budget, here a minute, and a bound per query.
 It runs from a context of its own, so a test context that ended with the
-failure does not stop it, and it keeps going after a query fails. A query that
+failure does not stop it, and it keeps going after a query fails. Every wait
+ends with the budget: the MONs come from your frozen list, the MGR
+containers from `ManagersContext`, and errors are redacted within what is
+left of the budget. An error that could not be redacted in time is replaced
+by a fixed "text withheld" marker. The one exception is a control that
+`RunNativeCommand` could not confirm as stopped: its `Stop` has a separate
+cleanup allowance of a minute, outside the budget. A query that
 fails is recorded with its status, not retried. Empty or non-JSON output, or a
 status without its name, FSID or MonMap epoch, is a failed query, not an
 observation; an empty session list is an answer. A command that the daemon
