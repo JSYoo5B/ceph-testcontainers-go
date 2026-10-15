@@ -138,7 +138,8 @@ Nothing in the workflows names a test.
    belong to exactly one category (`ci_<category>`) and one batch
    (`ci_batch_<name>`), compile under `all`, and carry one valid `//ci:` line.
    Files without tests must not carry `//ci:`. One `(category, batch,
-   package)` triple is one profile; all its files must agree on the budget.
+   package)` triple is one profile; all its files must agree on the budget
+   and the image roles.
    Optional (`ci_optional`) and SDK (`ci_sdk`) files are kept out of the
    required set and must need an extra tag beyond `all`.
 3. **Profile tags.** A batch compiles with every capability tag found in the
@@ -183,7 +184,7 @@ steps in order:
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. Nothing runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`. Pulls only, never builds. |
+| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves the batch's roles of `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`, with `SCENARIO_IMAGE_LAYOUT=roles` and `SCENARIO_IMAGE_ROLES`. A batch gets all four roles unless its `//ci:` line declares `image-roles` (see [Image roles](#image-roles)). Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) runs the batch and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
@@ -193,6 +194,19 @@ steps in order:
 The job environment sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
 and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.26.x`. Tentacle workflows use
 role images for release 20.2.4; the Squid workflows pass release 19.2.5.
+
+### Image roles
+
+A Ceph batch that needs fewer than the four role images declares them in its
+`//ci:` line. `supervised_command` declares `image-roles=control`: it starts
+one idle control-image container and no cluster. The planner accepts
+`control`, `osd`, `rgw` and `mds`, requires `control`, rejects the field on a
+batch that needs no Ceph, and puts the roles in the matrix as `image_roles`.
+Every other Ceph batch gets all four. The preparation step inspects and pulls
+only the listed roles, so an image that the batch does not use cannot fail
+it. With `SCENARIO_IMAGE_LAYOUT=roles`, `integrationImages` fails for a role
+that was not prepared instead of using the control image. The image
+compatibility matrix always uses all four roles.
 
 ### How a batch passes
 

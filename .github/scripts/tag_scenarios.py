@@ -29,6 +29,9 @@ CHECKERS = {
     "receivers": ("check_scenario_receivers", "TestMultiClusterRBDReceiverReadiness"),
 }
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
+# Published role images, in the order of their CEPH_TEST_* variables. A Ceph
+# batch that declares no image-roles gets all four.
+IMAGE_ROLES = ("control", "osd", "rgw", "mds")
 DURATION = re.compile(r"([1-9][0-9]*)(ms|s|m|h)\Z")
 SCHEMA = "ceph-tag-scenarios/v1"
 # Bounds of the two preparation phases. Module preparation is the only phase
@@ -79,7 +82,7 @@ def parse_metadata(file):
         if word.count("=") != 1:
             raise ValueError(file["path"] + ": malformed CI metadata")
         key, value = word.split("=", 1)
-        if key not in ("timeout", "job-timeout", "checker", "case") or key in values or not value:
+        if key not in ("timeout", "job-timeout", "checker", "case", "image-roles") or key in values or not value:
             raise ValueError(file["path"] + ": unknown, duplicate or empty CI metadata")
         values[key] = value
     if not {"timeout", "job-timeout"} <= values.keys():
@@ -109,8 +112,27 @@ def parse_metadata(file):
             raise ValueError(file["path"] + ": unknown completion checker case")
         if file["tests"] != [CHECKERS[checker][1]]:
             raise ValueError(file["path"] + ": isolated checker must own only its original parent")
+    image_roles = None
+    if "image-roles" in values:
+        roles = values["image-roles"].split(",")
+        if (any(role not in IMAGE_ROLES for role in roles) or len(roles) != len(set(roles))
+                or "control" not in roles):
+            raise ValueError(file["path"] + ": image-roles must list distinct roles of "
+                             + ",".join(IMAGE_ROLES) + ", control included")
+        image_roles = ",".join(role for role in IMAGE_ROLES if role in roles)
     return {"timeout": values["timeout"], "job_timeout": job_timeout,
-            "checker": checker, "case": case}
+            "checker": checker, "case": case, "image_roles": image_roles}
+
+
+def resolve_image_roles(profile):
+    """Give a Ceph profile its declared roles, or all four; others get none."""
+    declared = profile["image_roles"]
+    if not profile["requires_ceph"]:
+        if declared is not None:
+            raise ValueError(profile["profile"] + ": image-roles needs a Ceph runtime profile")
+        profile["image_roles"] = ""
+    elif declared is None:
+        profile["image_roles"] = ",".join(IMAGE_ROLES)
 
 
 def package_path(file):
@@ -199,7 +221,7 @@ def discover(catalog):
         profile = {"category": category, "batch": batch, "package": package,
                    "tags": native_tags(category, batch, capabilities), **metadata}
         if key in profiles and profiles[key] != profile:
-            raise ValueError(file["path"] + ": one batch has conflicting budgets or checker scope")
+            raise ValueError(file["path"] + ": one batch has conflicting budgets, checker scope or image roles")
         profiles[key] = profile
         for test in file["tests"]:
             owners[(package, test)].append((key, file, metadata))
@@ -245,6 +267,7 @@ def discover(catalog):
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = (profile["category"] + "-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = profile["package"] == "./internal/integration" and profile["category"] != "code"
+        resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "required", "include": result,
             "required_parents": {package: sorted(names) for package, names in sorted(all_parents.items())},
             "required_executions": sum(len(assignments) for assignments in owners.values()),
@@ -309,6 +332,7 @@ def discover_optional(catalog):
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = ("optional-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = profile["package"] == "./internal/integration"
+        resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "optional",
             "include": [profiles[key] for key in sorted(profiles)]}
 

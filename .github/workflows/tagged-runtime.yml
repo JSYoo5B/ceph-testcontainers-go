@@ -144,6 +144,7 @@ jobs:
         with:
           artifact_name: scenario-images-${{ matrix.id }}
           release: ${{ inputs.release }}
+          roles: ${{ matrix.image_roles }}
       - name: Native assertions and completion proof
         id: native
         env:
