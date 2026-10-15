@@ -37,7 +37,8 @@ change the API.
   from backfill. A replica that missed writes rejoins with recovery held,
   and the primary's `pg query` shows which path it took. The test records
   that path, the objects recovered per PG, an independent readback and the
-  replica serving every object alone.
+  replica serving every object alone. It also runs on a K=2, M=1
+  erasure-coded pool, for the OSD of one shard.
 
 - The legacy placement recipe keeps `hashpspool` off every pool, the MGR's
   `.mgr` pool included: `osd_pool_default_flag_hashpspool = false` in a

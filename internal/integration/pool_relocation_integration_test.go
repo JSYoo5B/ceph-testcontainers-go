@@ -22,7 +22,8 @@ import (
 // PG log still covers its last entry, and by backfill once the log is trimmed
 // past it; the primary's own report tells the two apart.
 func TestOSDRecoveryAndBackfillReceipts(t *testing.T) {
-	testOSDRecoveryAndBackfill(t)
+	t.Run("replicated", func(t *testing.T) { testOSDRecoveryAndBackfill(t, false) })
+	t.Run("erasure", func(t *testing.T) { testOSDRecoveryAndBackfill(t, true) })
 }
 
 // Two single-replica OSD classes make every relocation observable: a PG is
