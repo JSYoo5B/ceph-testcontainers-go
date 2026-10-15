@@ -24,8 +24,7 @@ import (
 func testSupervisedCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	image, _ := integrationImages(t)
-	ctr, err := testcontainers.Run(ctx, image, ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, controlImage(t), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

@@ -124,6 +124,35 @@ class TagPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting"):
             engine.discover([fixture(), second])
 
+    def test_image_roles_are_declared_per_batch_and_default_to_all_four(self):
+        declared = fixture(path="internal/integration/control_test.go", tests=("TestControl",), batch="control")
+        declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=mds,control"]
+        plan = engine.discover([fixture(), declared])
+        roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
+        self.assertEqual(roles, {"basic": "control,osd,rgw,mds", "control": "control,mds"})
+        self.assertEqual(engine.IMAGE_ROLES, ("control", "osd", "rgw", "mds"))
+        for value in ("osd", "control,control", "control,client", "control,", "Control"):
+            with self.subTest(roles=value), self.assertRaisesRegex(ValueError, "image-roles must list"):
+                declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=" + value]
+                engine.discover([declared])
+        # One batch declares one set, like its budget.
+        declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=control"]
+        same_batch = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
+        declared_batch = fixture(path="internal/integration/control_test.go", tests=("TestControl",))
+        declared_batch["metadata"] = declared["metadata"]
+        with self.assertRaisesRegex(ValueError, "conflicting budgets, checker scope or image roles"):
+            engine.discover([same_batch, declared_batch])
+
+    def test_image_roles_need_a_ceph_profile(self):
+        code = fixture(path="internal/integration/code_test.go", category="code", batch="pure", tests=("TestCode",))
+        sdk = fixture(path="internal/dockerbridge/runtime_test.go", tests=("TestSDKBridge",),
+                      category="environment", batch="sdk")
+        self.assertEqual([profile["image_roles"] for profile in engine.discover([code, sdk])["include"]], ["", ""])
+        for file in (code, sdk):
+            file["metadata"] = ["timeout=20m job-timeout=35 image-roles=control"]
+            with self.subTest(path=file["path"]), self.assertRaisesRegex(ValueError, "needs a Ceph runtime profile"):
+                engine.discover([file])
+
     def test_malformed_input_cannot_spawn_native_test_or_allocate_artifacts(self):
         file = fixture()
         file["metadata"] = ["timeout=20m job-timeout=35 checker=shell case=x"]
@@ -167,6 +196,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertIn("native_regression", profile["tags"].split(","))
         self.assertEqual(profile["timeout"], "20m")
         self.assertEqual(profile["job_timeout"], 35)
+        self.assertEqual(profile["image_roles"], "control,osd,rgw,mds")
         self.assertEqual(engine.discover([fixture(), file])["required_executions"], 1)
 
     def test_optional_unknown_batch_never_executes(self):
@@ -307,6 +337,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(len(matrix["include"]), 1)
         self.assertEqual(matrix["include"][0]["category"], "short")
         self.assertEqual(matrix["include"][0]["timeout"], "20m")
+        self.assertEqual(matrix["include"][0]["image_roles"], "control,osd,rgw,mds")
 
 
 class CompletionTests(unittest.TestCase):

@@ -4,7 +4,8 @@
 An absent image is explicitly pulled for the Docker engine's native platform.
 Existing references are resolved once to local image IDs before invoking make.
 This is module compatibility evidence, not the separate image contract checker.
-Preparation mode resolves those same images without executing compatibility tests.
+Preparation mode resolves those same images without executing compatibility tests,
+or, with --roles, only the role images that a batch declares.
 """
 
 import argparse
@@ -66,21 +67,43 @@ def parse_arguments(argv=None):
     parser.add_argument("--prepare-only", action="store_true",
                         help="Resolve supplied images without running Go or compatibility tests")
     parser.add_argument("--github-env", type=Path,
-                        help="Append the four resolved role IDs to this file; requires --prepare-only")
+                        help="Append the resolved role IDs to this file; requires --prepare-only")
+    parser.add_argument("--roles",
+                        help="Comma-separated roles to prepare, control included; default all four. "
+                             "Requires --prepare-only and --layout roles")
     args = parser.parse_args(argv)
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
+    if args.roles is None:
+        args.roles = tuple(ROLE_ENV)
+    else:
+        if not args.prepare_only or args.layout != "roles":
+            parser.error("--roles requires --prepare-only and --layout roles")
+        try:
+            args.roles = parse_roles(args.roles)
+        except ValueError as error:
+            parser.error(str(error))
     return args
 
 
-def image_references(variant, layout, release):
+def parse_roles(text):
+    """Return the declared roles in ROLE_ENV order; control is required."""
+    roles = text.split(",")
+    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "control" not in roles:
+        raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV) + ", control included")
+    return tuple(role for role in ROLE_ENV if role in roles)
+
+
+def image_references(variant, layout, release, roles=tuple(ROLE_ENV)):
     if release not in RELEASES or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
         raise ValueError("unsupported image matrix cell")
     if layout == "all":
+        if tuple(roles) != tuple(ROLE_ENV):
+            raise ValueError("the all layout serves all four roles")
         reference = RELEASES[release] if variant == "official" else REGISTRY + ":" + variant + "-" + release + "-all"
         return {"all": reference}
     return {role: REGISTRY + ":" + variant + "-" + release + "-" + role
-            for role in ("control", "osd", "rgw", "mds")}
+            for role in ROLE_ENV if role in roles}
 
 
 def native_platform(info):
@@ -160,12 +183,13 @@ def completed_tests(path, module):
             "package_failure": package_failure, "passed": passed}
 
 
-def append_role_environment(path, environment):
-    if set(environment) != set(ROLE_ENV.values()) or any(
+def append_role_environment(path, environment, roles=tuple(ROLE_ENV)):
+    names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
+    if "control" not in roles or set(environment) != set(names) or any(
             not isinstance(value, str) or IMAGE_ID.fullmatch(value) is None
             for value in environment.values()):
-        raise RuntimeError("prepared environment must contain exactly four immutable role image IDs")
-    content = "".join(name + "=" + environment[name] + "\n" for name in ROLE_ENV.values()).encode("utf-8")
+        raise RuntimeError("prepared environment must contain exactly the immutable image IDs of the declared roles")
+    content = "".join(name + "=" + environment[name] + "\n" for name in names).encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0), 0o600)
     try:
         original = os.fstat(descriptor)
@@ -194,6 +218,7 @@ def main(argv=None):
         return 2
     summary = {"schema": 1, "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                "variant": args.variant, "layout": args.layout, "release": args.release,
+               "roles": list(args.roles),
                "requested_platform": args.platform, "image_builds": 0,
                "cleanup_owner": "Go test fixtures (this runner never prunes Docker resources)",
                "commands": [], "images": {}, "test_command": ["make", "image-compatibility"],
@@ -256,7 +281,7 @@ def main(argv=None):
         summary["platform"] = platform
         if args.platform and args.platform != platform:
             raise RuntimeError("requested platform differs from Docker engine native platform; emulation is not validation")
-        for role, reference in image_references(args.variant, args.layout, args.release).items():
+        for role, reference in image_references(args.variant, args.layout, args.release, args.roles).items():
             # Ordinary inspection keeps this native-only runner compatible
             # with engines predating the inspect --platform API (1.49).
             inspect = ["docker", "image", "inspect", "--", reference]
@@ -292,13 +317,13 @@ def main(argv=None):
         images = summary["images"]
         summary["image_preparation_seconds"] = round(time.monotonic() - preparation_started, 3)
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]
-                    for role in ROLE_ENV}
+                    for role in args.roles}
         environment = {ROLE_ENV[role]: image for role, image in selected.items()}
         if args.prepare_only:
             summary["prepared_environment"] = environment
             if args.github_env is not None:
-                append_role_environment(args.github_env, environment)
-                summary["github_env"] = {"path": str(args.github_env), "appended_keys": list(ROLE_ENV.values())}
+                append_role_environment(args.github_env, environment, args.roles)
+                summary["github_env"] = {"path": str(args.github_env), "appended_keys": list(environment)}
             summary["preparation_passed"] = True
             code = 0
         else:

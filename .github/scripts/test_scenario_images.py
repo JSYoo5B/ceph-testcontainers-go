@@ -341,6 +341,8 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(after, "if"),
                          "${{ always() && steps.docker_baseline.outcome == 'success' }}")
         self.assertEqual(scalar(job_steps[prep_index], "if"), "matrix.requires_ceph")
+        # The planner gives every Ceph profile its declared roles, or all four.
+        self.assertEqual(scalar(job_steps[prep_index], "roles"), "${{ matrix.image_roles }}")
         self.assertNotIn("continue-on-error", job_steps[prep_index])
 
     def test_generated_profiles_use_fresh_runner_resources_and_distinct_artifact_namespaces(self):
@@ -435,9 +437,13 @@ class ScenarioImageTests(unittest.TestCase):
         action_steps = steps(self.action, indent=4)
         self.assertEqual(len(action_steps), 2)
         self.assertEqual(scalar(action_steps[0], "shell"), "bash")
-        # The release input reaches the script only through the environment.
+        # The release and roles inputs reach the script only through the
+        # environment. Without a roles input the action prepares all four.
         self.assertEqual(scalar(action_steps[0], "SCENARIO_RELEASE"), "${{ inputs.release }}")
-        self.assertEqual(scalar(self.action, "default"), "'" + runner.RELEASE + "'")
+        self.assertEqual(scalar(action_steps[0], "SCENARIO_ROLES"), "${{ inputs.roles }}")
+        inputs = dict(blocks(self.action.split("\nruns:\n", 1)[0], r"^  ([\w-]+):$"))
+        self.assertEqual(scalar(inputs["release"], "default"), "'" + runner.RELEASE + "'")
+        self.assertEqual(scalar(inputs["roles"], "default"), "'" + ",".join(runner.ROLE_ENV) + "'")
         script = action_steps[0].split("      run: |\n", 1)[1]
         script = "\n".join(line[8:] for line in script.splitlines()) + "\n"
         logical_lines = script.replace("\\\n", "").splitlines()
@@ -447,9 +453,10 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
              "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
+             "--roles", "$SCENARIO_ROLES",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
-            ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", ">>", "$GITHUB_ENV"],
+            ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES", ">>", "$GITHUB_ENV"],
         ])
         upload = action_steps[1]
         self.assertEqual(scalar(upload, "if"), "always()")
@@ -460,7 +467,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(upload, "if-no-files-found"), "error")
         return script
 
-    def run_composite(self, code):
+    def run_composite(self, code, roles="control,osd,rgw,mds"):
         script = self.composite_script()
         with tempfile.TemporaryDirectory(prefix="scenario images ") as directory:
             root = Path(directory)
@@ -485,8 +492,10 @@ class ScenarioImageTests(unittest.TestCase):
                 "PATH": str(root) + os.pathsep + os.environ.get("PATH", ""),
                 "GITHUB_ACTION_PATH": str(ROOT / ".github/actions/scenario-images"),
                 "GITHUB_ENV": str(environment_file), "SCENARIO_TEST_CALLS": str(calls),
-                "SCENARIO_TEST_EXIT": str(code), "SCENARIO_TEST_IMAGES": json.dumps(IMAGES),
-                "SCENARIO_RELEASE": "19.2.5",
+                "SCENARIO_TEST_EXIT": str(code),
+                "SCENARIO_TEST_IMAGES": json.dumps({runner.ROLE_ENV[role]: IMAGES[runner.ROLE_ENV[role]]
+                                                    for role in roles.split(",")}),
+                "SCENARIO_RELEASE": "19.2.5", "SCENARIO_ROLES": roles,
             })
             result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail",
                                      "-c", script], cwd=root, env=env,
@@ -495,17 +504,21 @@ class ScenarioImageTests(unittest.TestCase):
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
                 "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
+                "--roles", roles,
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
             ])
             return result, existing, environment_file.read_text()
 
     def test_composite_selects_layout_only_after_successful_preparation(self):
-        result, existing, actual = self.run_composite(0)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        role_lines = "".join(name + "=" + IMAGES[name] + "\n" for name in ROLES)
-        self.assertEqual(actual, existing + role_lines + "SCENARIO_IMAGE_LAYOUT=roles\n")
-        self.assertEqual(actual.count("SCENARIO_IMAGE_LAYOUT=roles\n"), 1)
+        for roles, names in (("control,osd,rgw,mds", ROLES), ("control", ROLES[:1])):
+            with self.subTest(roles=roles):
+                result, existing, actual = self.run_composite(0, roles)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                role_lines = "".join(name + "=" + IMAGES[name] + "\n" for name in names)
+                self.assertEqual(actual, existing + role_lines + "SCENARIO_IMAGE_LAYOUT=roles\n"
+                                 + "SCENARIO_IMAGE_ROLES=" + roles + "\n")
+                self.assertEqual(actual.count("SCENARIO_IMAGE_LAYOUT=roles\n"), 1)
 
     def test_composite_failed_preparation_never_selects_roles(self):
         for code in (1, 17):
@@ -514,6 +527,7 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(actual, existing)
                 self.assertNotIn("SCENARIO_IMAGE_LAYOUT=", actual)
+                self.assertNotIn("SCENARIO_IMAGE_ROLES=", actual)
 
 
 if __name__ == "__main__":

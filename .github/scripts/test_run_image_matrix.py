@@ -238,6 +238,79 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(set(self.summary()["prepared_environment"]), set(runner.ROLE_ENV.values()))
         self.assertFalse((self.output / "integration.log").exists())
 
+    def test_declared_control_role_never_touches_other_roles(self):
+        # #29: an RGW pull that the registry refuses fails a four-role
+        # preparation, but a batch that declares only the control role never
+        # asks for that image.
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        rgw = runner.REGISTRY + ":official-20.2.4-rgw"
+        self.runtime.missing.add(rgw)
+        self.runtime.pull_code = 1
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--github-env", str(env_file)]), 1)
+        self.assertEqual(self.summary()["error"], "rgw image pull failed (exit 1)")
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+
+        self.output = self.root / "artifacts" / "control-only"
+        self.runtime.capture_commands.clear()
+        self.runtime.stream_commands.clear()
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "control",
+                                      "--github-env", str(env_file)]), 0)
+        report = self.summary()
+        control = runner.REGISTRY + ":official-20.2.4-control"
+        self.assertEqual(report["roles"], ["control"])
+        self.assertEqual(set(report["images"]), {"control"})
+        self.assertEqual([command[-1] for command in self.runtime.capture_commands
+                          if command[1:3] == ["image", "inspect"]], [control])
+        self.assertFalse(self.runtime.stream_commands)
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\nCEPH_TEST_IMAGE=" + report["images"]["control"]["image_id"] + "\n")
+        self.assertEqual(report["github_env"]["appended_keys"], ["CEPH_TEST_IMAGE"])
+
+    def test_declared_roles_keep_their_order_and_fail_on_a_required_image(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "mds,control"]), 0)
+        self.assertEqual(self.summary()["roles"], ["control", "mds"])
+        self.assertEqual(list(self.summary()["prepared_environment"]), ["CEPH_TEST_IMAGE", "CEPH_TEST_MDS_IMAGE"])
+        control = runner.REGISTRY + ":official-20.2.4-control"
+        for name, change in (("absent", lambda: (self.runtime.missing.add(control), setattr(self.runtime, "pull_code", 1))),
+                             ("wrong platform", lambda: self.runtime.inspect_overrides.update({control: {"Architecture": "amd64"}}))):
+            with self.subTest(control=name):
+                self.runtime = Runtime()
+                change()
+                self.output = self.root / "artifacts" / name.replace(" ", "-")
+                self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "control",
+                                              "--github-env", str(env_file)]), 1)
+                self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+                self.assertFalse(self.summary()["preparation_passed"])
+                self.assertEqual(self.summary()["images"], {})
+
+    def test_roles_are_validated_before_tools_or_output(self):
+        for arguments in (["--prepare-only", "--layout", "roles", "--roles", "osd"],
+                          ["--prepare-only", "--layout", "roles", "--roles", "control,control"],
+                          ["--prepare-only", "--layout", "roles", "--roles", "control,client"],
+                          ["--prepare-only", "--layout", "roles", "--roles", ""],
+                          ["--prepare-only", "--layout", "all", "--roles", "control"],
+                          ["--layout", "roles", "--roles", "control"]):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit) as error:
+                self.invoke(arguments)
+            self.assertEqual(error.exception.code, 2)
+            self.assertFalse(self.output.exists())
+            self.assertFalse(self.runtime.capture_commands)
+        with self.assertRaises(ValueError):
+            runner.image_references("official", "all", "20.2.4", ("control",))
+
+    def test_export_requires_exactly_the_declared_roles(self):
+        env_file = self.write("github-env", "EXISTING=keep\n")
+        image = "sha256:" + "a" * 64
+        four = {name: image for name in runner.ROLE_ENV.values()}
+        for environment, roles in ((four, ("control",)), ({}, ("control",)),
+                                   ({"CEPH_TEST_OSD_IMAGE": image}, ("osd",)),
+                                   ({"CEPH_TEST_IMAGE": image}, ("control", "mds"))):
+            with self.subTest(environment=environment, roles=roles), self.assertRaises(RuntimeError):
+                runner.append_role_environment(env_file, environment, roles)
+            self.assertEqual(env_file.read_text(), "EXISTING=keep\n")
+        runner.append_role_environment(env_file, {"CEPH_TEST_IMAGE": image}, ("control",))
+        self.assertEqual(env_file.read_text(), "EXISTING=keep\nCEPH_TEST_IMAGE=" + image + "\n")
+
     def test_prepare_platform_mismatch_never_exports_or_inspects(self):
         env_file = self.write("github-env", "EXISTING=keep\n")
         self.assertEqual(self.invoke(["--prepare-only", "--platform", "linux/amd64",
