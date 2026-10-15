@@ -134,7 +134,9 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 //
 // The exec runs through the target's Attacher, or the Docker engine. When the
 // run ends before the supervisor does, RunInput closes the connection and
-// Cancel stops the invocation inside the container, as in Run.
+// Cancel stops the invocation inside the container, as in Run. A supervisor
+// that a signal killed, or whose cleanup failed, leaves its invocation
+// unconfirmed (see Unconfirmed) also when the run ended meanwhile.
 func RunInput(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, input Input, argv ...string) (Report, error) {
 	var finish sync.Once
 	finished := func() { finish.Do(func() { close(input.Finished) }) }
@@ -237,16 +239,17 @@ func RunInput(ctx context.Context, ctr testcontainers.Container, label string, p
 		return Report{}, err
 	}
 	<-pumped
-	if err := attempt.Err(); err != nil && readErr == nil {
-		// The output ended with the supervisor, and the run ended after
-		// that. As Run does once its exec returned, the call reports the
-		// context's error and has nothing to stop.
-		return Report{}, err
-	}
+	// The output ends with the supervisor, also when a signal killed it
+	// before its cleanup; only its exit code tells. It is inspected under a
+	// bounded context of its own, because the run may have ended as the
+	// output did.
+	inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), CancelTimeout)
+	defer inspectCancel()
+	code, inspectErr := attachment.ExitCode(inspectCtx)
 	if readErr != nil {
 		// A container that could not run python3 answers with its own
 		// message instead of the multiplexed stream.
-		if code, err := attachment.ExitCode(attempt); err == nil && (code == 126 || code == 127) {
+		if inspectErr == nil && (code == 126 || code == 127) {
 			return Report{}, &ExitError{Label: label, Code: code, Marker: marker}
 		}
 		var err error = &BackendError{Op: "read " + label + " supervisor", Err: readErr}
@@ -258,12 +261,25 @@ func RunInput(ctx context.Context, ctr testcontainers.Container, label string, p
 		}
 		return Report{}, err
 	}
-	code, err := attachment.ExitCode(attempt)
-	if err != nil {
-		return Report{}, &BackendError{Op: "inspect " + label + " supervisor", Err: err}
+	if inspectErr != nil {
+		// Without the exit code the supervisor may have left its command
+		// running, so it is stopped like a run that ended first.
+		err := &BackendError{Op: "inspect " + label + " supervisor", Err: inspectErr}
+		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {
+			return Report{}, errors.Join(err, &NotStoppedError{Marker: marker, Err: cancelErr}, attempt.Err())
+		}
+		return Report{}, errors.Join(err, attempt.Err())
 	}
+	// A signal killed the supervisor, or its cleanup failed, so its command
+	// may still run, whatever happened to attempt meanwhile.
 	if code < 0 || code > 128 || code == CleanupFailedExit {
 		return Report{}, errors.Join(&ExitError{Label: label, Code: code, Marker: marker}, attempt.Err())
+	}
+	if err := attempt.Err(); err != nil {
+		// The supervisor exited on its own, after its cleanup, and the run
+		// ended after that. As Run does, the call reports the context's
+		// error and has nothing to stop.
+		return Report{}, err
 	}
 	return parseReport(attempt, label, marker, code, output.data, stdoutLimit, stderrLimit, outcome)
 }

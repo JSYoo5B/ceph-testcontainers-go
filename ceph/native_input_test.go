@@ -426,6 +426,40 @@ func TestNativeCommandInputSupervisorKilledBySignal(t *testing.T) {
 	}
 }
 
+// A supervisor killed by a signal just as cancellation arrives leaves its
+// command unconfirmed all the same: the call keeps the registration and a
+// Stop handle until the container restarted.
+func TestNativeCommandInputCancellationAtSupervisorDeath(t *testing.T) {
+	target := newNativeTarget(t, "client", "tc-public")
+	cluster := nativeCluster()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	target.attachClosed = cancel
+	input := NewNativeInput()
+	command := waiterCommand(target, "orphaned", time.Minute)
+	command.Input, command.MaxInput = input, 8
+	done := startNative(ctx, cluster, target, command)
+	pid := target.published(t, "orphaned", "command")
+	target.set(func(f *nativeTarget) {
+		for _, proc := range f.procs {
+			_ = proc.Kill()
+		}
+	})
+	run := <-done
+	var unstopped *NativeCommandUnstoppedError
+	var exit *supervised.ExitError
+	if !errors.As(run.err, &unstopped) || !errors.As(run.err, &exit) || exit.Code != 128+int(syscall.SIGKILL) || !errors.Is(run.err, context.Canceled) {
+		t.Fatalf("a killed supervisor under cancellation returned %v", run.err)
+	}
+	if !processAlive(pid) || registered(cluster) != 1 {
+		t.Fatal("the model lost the orphaned command or its registration")
+	}
+	target.restart()
+	if err := unstopped.Stop(t.Context()); err != nil || registered(cluster) != 0 {
+		t.Fatalf("Stop after the restart returned %v", err)
+	}
+}
+
 // A cancellation that arrives just as the command's output ended returns the
 // call, which keeps no registration and claims no marker, and Terminate
 // finds nothing left to wait for.
