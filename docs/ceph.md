@@ -1157,6 +1157,7 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 | `Timeout` | Up to `MaxNativeCommandTimeout` (one hour); `ctx`'s deadline shortens it |
 | `MaxStdout`, `MaxStderr` | Up to `MaxNativeCommandOutput` (64 MiB) each |
 | `Label` | Names the command in errors; at most 128 bytes |
+| `Input`, `MaxInput` | Optional standard input from `NewNativeInput`, and the bytes it may carry in all, up to `MaxNativeCommandInput` (64 MiB) |
 
 - The result keeps stdout and stderr as separate raw bytes, and the exit code;
   a nonzero exit is not an error.
@@ -1171,6 +1172,10 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   still holds. `Terminate` also cancels and stops these commands.
 - Stopping a command does not undo what it did, and a command is never run
   again.
+- With `Input`, the command reads what `Input.Write` sends, in order, and the
+  end of input after `Input.Close`. `InputWritten`, `InputDelivered` and
+  `InputEOF` in the result say how much of it the command could read. Writes
+  fail with `ErrNativeInputClosed` once the command ended.
 - Errors contain the label but never the arguments or the output. A Docker
   or container failure appears only by its kind; `errors.Unwrap` returns the
   original error.
@@ -1187,8 +1192,24 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   [Classified errors](guides/errors.md).
 
 See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
-for cancellation details and an oracle recipe with `rados_stat2` and
-`ceph-dencoder`.
+for cancellation details, [standard input](guides/native-commands.md#standard-input),
+and an oracle recipe with `rados_stat2` and `ceph-dencoder`.
+
+#### NativeInput
+
+```golang
+func NewNativeInput() *ceph.NativeInput
+func (in *NativeInput) Write(ctx context.Context, data []byte) error
+func (in *NativeInput) Close() error
+```
+
+The standard input of one `NativeCommand`. `Write` sends binary data after
+the data of earlier writes and returns once the input stream to the
+container took it; before the command starts it waits, within `ctx`. A write
+that would pass `MaxInput` is refused whole with `ErrInvalidRequest`, and the
+input stays open. `Close` ends the input. Written data never appears in
+arguments, the environment, files, errors or diagnostics. An input serves one
+command.
 
 #### RedactSecrets
 

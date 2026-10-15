@@ -8,6 +8,15 @@ change the API.
 
 ### Added
 
+- `RunNativeCommand` can give a command a bounded, binary-safe standard input:
+  `NativeCommand.Input` takes a `NativeInput` from `NewNativeInput`, whose
+  `Write` sends data in order while the command runs and whose `Close` ends
+  it, and `MaxInput` bounds the bytes in all. The supervisor keeps the
+  command's deadline, cancellation and confirmed stop. The result reports the
+  bytes written and delivered and whether the end of input reached the
+  command. Written data never appears in arguments, files, errors or
+  diagnostics.
+
 - The Messenger fixture guide explains how to tell which MON session belongs
   to a registered MGR. A MGR authenticates its beacon client, whose global
   ID is the MgrMap GID, and a client for each of its modules. A refusal in
