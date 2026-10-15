@@ -94,13 +94,21 @@ func (q pgQuery) backfillTargets() []string {
 	return nil
 }
 
+// pgShardOSD returns the OSD of a PG shard as "pg query" names it: "1" in a
+// replicated pool, "1(2)" for shard 2 in an erasure-coded one.
+func pgShardOSD(name string) (int, error) {
+	osd, _, _ := strings.Cut(name, "(")
+	return strconv.Atoi(osd)
+}
+
 // pgRecoveryPath tells, from one query of the primary while recovery is held,
 // how it brings replica up to date. stoppedAt is the primary's last_update
 // when replica stopped, the last entry replica has. Log recovery keeps
 // replica in the acting set and replays the log, which still reaches back to
 // stoppedAt; backfill takes replica out of the acting set as a backfill
 // target, from the beginning of the PG (last_backfill MIN), because the
-// trimmed log starts after stoppedAt. Anything else is an error.
+// trimmed log starts after stoppedAt. In an erasure-coded pool the replica is
+// the OSD of one shard. Anything else is an error.
 func pgRecoveryPath(q pgQuery, replica int, stoppedAt eversion) (string, error) {
 	tail, err := parseEversion(q.Info.LogTail)
 	if err != nil {
@@ -113,14 +121,17 @@ func pgRecoveryPath(q pgQuery, replica int, stoppedAt eversion) (string, error) 
 	if !stoppedAt.less(last) {
 		return "", fmt.Errorf("the primary's last_update %s is not past %v: nothing to recover", q.Info.LastUpdate, stoppedAt)
 	}
-	name := strconv.Itoa(replica)
+	isReplica := func(name string) bool {
+		osd, err := pgShardOSD(name)
+		return err == nil && osd == replica
+	}
 	index := slices.IndexFunc(q.PeerInfo, func(peer struct {
 		Peer         string `json:"peer"`
 		LastUpdate   string `json:"last_update"`
 		LastComplete string `json:"last_complete"`
 		LastBackfill string `json:"last_backfill"`
 	}) bool {
-		return peer.Peer == name
+		return isReplica(peer.Peer)
 	})
 	if index < 0 {
 		return "", fmt.Errorf("osd.%d is not a peer: %+v", replica, q.PeerInfo)
@@ -139,7 +150,7 @@ func pgRecoveryPath(q pgQuery, replica int, stoppedAt eversion) (string, error) 
 			return "", fmt.Errorf("osd.%d is complete at %s, the primary at %s", replica, peer.LastComplete, q.Info.LastUpdate)
 		}
 		return "log", nil
-	case inUp && !inActing && slices.Equal(targets, []string{name}) && peer.LastBackfill == "MIN" && stoppedAt.less(tail) &&
+	case inUp && !inActing && len(targets) == 1 && isReplica(targets[0]) && peer.LastBackfill == "MIN" && stoppedAt.less(tail) &&
 		(strings.Contains(q.State, "backfilling") || strings.Contains(q.State, "backfill_wait")):
 		return "backfill", nil
 	}
@@ -264,28 +275,39 @@ type recoveryPhase struct {
 	Recovered       int64    `json:"recovered"`
 }
 
-// testOSDRecoveryAndBackfill brings one replica of a one-PG, two-replica pool
-// up to date twice and records which native path the primary took. The
-// replica stops while writes continue; with recovery held by a flag, the
+// testOSDRecoveryAndBackfill brings one replica of a one-PG pool up to date
+// twice and records which native path the primary took: a two-replica pool,
+// or with erasure a K=2, M=1 pool whose "replica" is the OSD of one shard.
+// The replica stops while writes continue; with recovery held by a flag, the
 // primary's own report decides the path: log recovery while its PG log still
 // reaches back to the replica's last entry, backfill once a short log has
 // been trimmed past it. The hold must stop progress, the per-PG
 // num_objects_recovered count must grow by exactly the objects written while
 // the replica was down, and an independent client reads every object. At the
-// end the primary stops, and the recovered replica serves every object alone.
-func testOSDRecoveryAndBackfill(t *testing.T) {
+// end the primary stops, and the PG serves every object from the remaining
+// OSDs: the replica alone, or the recovered shard with the third one, which
+// cannot rebuild an object without it.
+func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t)
-	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-paths", PGNum: 1, Replicas: 2, MinSize: 1, Application: "rados"}); err != nil {
+	width := 2
+	pool := ceph.PoolConfig{Name: "tc-paths", PGNum: 1, Replicas: 2, MinSize: 1, Application: "rados"}
+	var opts []testcontainers.ContainerCustomizer
+	if erasure {
+		width = 3
+		pool = ceph.PoolConfig{Name: "tc-paths", PGNum: 1, MinSize: 2, Application: "rados", ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1}}
+		opts = append(opts, ceph.WithOSDCount(3))
+	}
+	cluster, client := newServiceCluster(t, opts...)
+	if _, err := cluster.CreatePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	recoveryRun(t, ctx, cluster, client, "write", "seed:20")
-	clean := waitPG(t, ctx, cluster, "clean on both OSDs", func(pg ceph.PGState) bool {
-		return pg.State == "active+clean" && len(pg.Acting) == 2
+	clean := waitPG(t, ctx, cluster, "clean on every OSD", func(pg ceph.PGState) bool {
+		return pg.State == "active+clean" && len(pg.Acting) == width && !slices.Contains(pg.Acting, 2147483647)
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var victim *ceph.OSDContainer
@@ -405,14 +427,14 @@ func testOSDRecoveryAndBackfill(t *testing.T) {
 			Recovered: recovered,
 		})
 		for _, peer := range held.PeerInfo {
-			if peer.Peer == strconv.Itoa(victim.ID) {
+			if osd, err := pgShardOSD(peer.Peer); err == nil && osd == victim.ID {
 				phases[len(phases)-1].PeerBackfill = peer.LastBackfill
 			}
 		}
 	}
 
-	// The replica now holds every object: with the primary stopped, it serves
-	// them alone.
+	// The replica now holds every object: with the primary stopped, the PG
+	// serves them without it.
 	var first *ceph.OSDContainer
 	for _, osd := range cluster.OSDs() {
 		if osd.ID == primary {
@@ -422,17 +444,21 @@ func testOSDRecoveryAndBackfill(t *testing.T) {
 	if err := first.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)
 	}
-	waitPG(t, ctx, cluster, "active on the replica alone", func(pg ceph.PGState) bool {
-		return strings.HasPrefix(pg.State, "active") && slices.Equal(pg.Acting, []int{victim.ID})
+	waitPG(t, ctx, cluster, "active without the primary", func(pg ceph.PGState) bool {
+		return strings.HasPrefix(pg.State, "active") && slices.Contains(pg.Acting, victim.ID) && !slices.Contains(pg.Acting, primary)
 	})
 	readRecoveryObjects(t, ctx, cluster, prefixes...)
 	if err := first.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	waitPG(t, ctx, cluster, "clean on both OSDs again", func(pg ceph.PGState) bool {
-		return pg.State == "active+clean" && len(pg.Acting) == 2
+	waitPG(t, ctx, cluster, "clean on every OSD again", func(pg ceph.PGState) bool {
+		return pg.State == "active+clean" && len(pg.Acting) == width && !slices.Contains(pg.Acting, 2147483647)
 	})
-	receipt, err := json.Marshal(map[string]any{"pg": pgid, "primary": primary, "replica": victim.ID, "phases": phases})
+	kind := "replicated size 2"
+	if erasure {
+		kind = "erasure k=2 m=1"
+	}
+	receipt, err := json.Marshal(map[string]any{"pool": kind, "pg": pgid, "primary": primary, "replica": victim.ID, "phases": phases})
 	if err != nil {
 		t.Fatal(err)
 	}
