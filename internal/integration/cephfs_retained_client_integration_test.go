@@ -39,3 +39,9 @@ func TestCephFSCapabilityHandoff(t *testing.T) {
 func TestCephFSLateReconnect(t *testing.T) {
 	testCephFSLateReconnect(t)
 }
+
+// With two active ranks, a directory moves from rank 0 to rank 1 and back
+// while a client streams fsynced records into a file in it.
+func TestCephFSLiveRankMigration(t *testing.T) {
+	testCephFSLiveRankMigration(t)
+}

@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -144,6 +146,8 @@ type cephFSActorReceipt struct {
 	Errno  int    `json:"errno"`
 	Error  string `json:"error"`
 	Closed bool   `json:"closed"`
+	// Count is the number of records that the stream actor wrote.
+	Count int64 `json:"count"`
 	// CloseErrno is the errno of a failed close or unmount.
 	CloseErrno int `json:"close_errno"`
 }
@@ -631,6 +635,35 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	t.Logf("CEPHFS_RETAINED %s capacity restored: mds.%s rejoined with GID %d", failover, old.Name, rejoined[0].GID)
 }
 
+// mdsSubtree is one entry of an MDS's "get subtrees".
+type mdsSubtree struct {
+	IsAuth    bool `json:"is_auth"`
+	AuthFirst int  `json:"auth_first"`
+	// AuthSecond is -2 unless an export or import has made the authority
+	// ambiguous.
+	AuthSecond int `json:"auth_second"`
+	ExportPin  int `json:"export_pin"`
+	Dir        struct {
+		Path string `json:"path"`
+	} `json:"dir"`
+}
+
+// parseMDSSubtrees decodes "get subtrees", a list or a list wrapped in an
+// object.
+func parseMDSSubtrees(data []byte) ([]mdsSubtree, error) {
+	var subtrees []mdsSubtree
+	if err := json.Unmarshal(data, &subtrees); err != nil {
+		var wrapped struct {
+			Subtrees []mdsSubtree `json:"subtrees"`
+		}
+		if err := json.Unmarshal(data, &wrapped); err != nil {
+			return nil, err
+		}
+		subtrees = wrapped.Subtrees
+	}
+	return subtrees, nil
+}
+
 // cephFSWaitForPinnedSubtree waits until the owned active MDS of rank reports
 // path as an authoritative subtree pinned to that rank.
 func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, path string, rank int) {
@@ -650,23 +683,9 @@ func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *c
 				if err != nil {
 					continue
 				}
-				type subtree struct {
-					IsAuth    bool `json:"is_auth"`
-					AuthFirst int  `json:"auth_first"`
-					ExportPin int  `json:"export_pin"`
-					Dir       struct {
-						Path string `json:"path"`
-					} `json:"dir"`
-				}
-				var subtrees []subtree
-				if err := json.Unmarshal(data, &subtrees); err != nil {
-					var wrapped struct {
-						Subtrees []subtree `json:"subtrees"`
-					}
-					if err := json.Unmarshal(data, &wrapped); err != nil {
-						continue
-					}
-					subtrees = wrapped.Subtrees
+				subtrees, err := parseMDSSubtrees(data)
+				if err != nil {
+					continue
 				}
 				for _, subtree := range subtrees {
 					if subtree.Dir.Path == path && subtree.IsAuth && subtree.AuthFirst == rank && subtree.ExportPin == rank {
@@ -1092,4 +1111,390 @@ func testCephFSLateReconnect(t *testing.T) {
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// cephFSStreamActor keeps one libcephfs mount and one O_RDWR fd open, like
+// cephFSRetainedActor, and appends a stream of records through it. It writes
+// and fsyncs the base bytes and publishes receipt 1. After the "stream" gate,
+// it appends 16-byte records, each the big-endian sequence number from 1 and
+// its complement. A record counts only after a full-length write and a
+// successful fsync; then the actor renames a progress receipt with the count
+// into place and waits 50 ms. When the "stop" gate opens, it finishes the
+// record in hand, sets a binary xattr, reads the whole file back through the
+// fd and publishes receipt 2 with the count. After the "finish" gate it closes
+// everything and publishes receipt 3. Arguments: filesystem, work directory,
+// token, path, the hex of the base bytes and of the xattr value.
+const cephFSStreamActor cephFSActorScript = cephFSActorHelpers + `
+import struct
+path = sys.argv[4].encode()
+base, xattr = bytes.fromhex(sys.argv[5]), bytes.fromhex(sys.argv[6])
+def opened(name):
+    try:
+        with open(workdir + "/" + name) as gate_file:
+            return gate_file.read() == token
+    except FileNotFoundError:
+        return False
+def progress(**fields):
+    fields.update(token=token, pid=os.getpid())
+    target = workdir + "/progress"
+    with open(target + ".tmp", "w") as out:
+        json.dump(fields, out)
+    os.rename(target + ".tmp", target)
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.mount(filesystem_name=name.encode())
+fd = fs.open(path, os.O_CREAT | os.O_RDWR | os.O_TRUNC, 0o644)
+fs.write(fd, base, 0)
+fs.fsync(fd, 0)
+client, inode = fs.get_instance_id(), fs.fstat(fd).st_ino
+publish(1, client=client, inode=inode, size=fs.fstat(fd).st_size)
+gate("stream")
+count, result = 0, {}
+try:
+    while not opened("stop"):
+        if count == 4000:
+            sys.exit("the stream was not stopped")
+        record = struct.pack(">QQ", count + 1, (count + 1) ^ 0xFFFFFFFFFFFFFFFF)
+        written = fs.write(fd, record, len(base) + 16 * count)
+        if written != len(record):
+            sys.exit("record %d: wrote %d bytes" % (count + 1, written))
+        fs.fsync(fd, 0)
+        count += 1
+        progress(client=client, inode=inode, count=count)
+        time.sleep(0.05)
+    fs.setxattr(path, "user.receipt", xattr, 0)
+    stat = fs.fstat(fd)
+    result.update(inode=stat.st_ino, size=stat.st_size, full=fs.read(fd, 0, stat.st_size + 1).hex())
+except cephfs.Error as error:
+    result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
+publish(2, count=count, **result)
+gate("finish")
+closing = {}
+try:
+    fs.close(fd)
+    fs.unmount()
+except cephfs.Error as error:
+    closing.update(close_errno=getattr(error, "errno", None) or -1)
+fs.shutdown()
+publish(3, closed=True, **closing)
+`
+
+// streamRecords returns base followed by the first count records of
+// cephFSStreamActor.
+func streamRecords(base []byte, count int64) []byte {
+	records := append([]byte{}, base...)
+	for sequence := uint64(1); sequence <= uint64(count); sequence++ {
+		records = binary.BigEndian.AppendUint64(records, sequence)
+		records = binary.BigEndian.AppendUint64(records, ^sequence)
+	}
+	return records
+}
+
+// cephFSStreamProgress is the stream actor's progress receipt: how many
+// records one client has written and fsynced to one inode.
+type cephFSStreamProgress struct {
+	Token  string `json:"token"`
+	PID    int    `json:"pid"`
+	Client uint64 `json:"client"`
+	Inode  uint64 `json:"inode"`
+	Count  int64  `json:"count"`
+}
+
+// checkStreamProgress accepts next only from the run of token, with the
+// process, client and inode of baseline, and with no fewer records than last.
+func checkStreamProgress(token string, baseline cephFSActorReceipt, last, next cephFSStreamProgress) error {
+	if next.Token != token || next.PID != baseline.PID || next.Client != baseline.Client || next.Inode != baseline.Inode {
+		return fmt.Errorf("progress %+v does not belong to the actor of %+v", next, baseline)
+	}
+	if next.Count < last.Count {
+		return fmt.Errorf("progress went back from %d to %d records", last.Count, next.Count)
+	}
+	return nil
+}
+
+// progress waits until the stream actor reports at least count records and
+// returns that receipt. Every receipt it reads must pass checkStreamProgress
+// against last, which it updates.
+func (run *cephFSActorRun) progress(t *testing.T, ctx context.Context, baseline cephFSActorReceipt, last *cephFSStreamProgress, count int64) cephFSStreamProgress {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		code, out, err := sessionExec(ctx, run.client, "cat", run.workdir+"/progress")
+		if err == nil && code == 0 {
+			decoder := json.NewDecoder(strings.NewReader(out))
+			decoder.DisallowUnknownFields()
+			var next cephFSStreamProgress
+			if err := decoder.Decode(&next); err != nil {
+				t.Fatalf("progress: %v: %q", err, out)
+			}
+			if err := checkStreamProgress(run.token, baseline, *last, next); err != nil {
+				t.Fatal(err)
+			}
+			*last = next
+			if next.Count >= count {
+				return next
+			}
+		}
+		select {
+		case <-run.done:
+			t.Fatalf("actor ended at %d records, before %d: %s", last.Count, count, run.exited(ctx))
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the stream stayed at %d records, want %d", last.Count, count)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("progress: %v", ctx.Err())
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// soleSubtreeAuthority returns nil when, of the subtree lists that each rank's
+// MDS reported, only rank's claims path as an authoritative subtree, pinned
+// to rank, with no second authority. While an export is under way, both ranks
+// or neither may claim it, or the claim names the other rank as well.
+func soleSubtreeAuthority(views map[int][]mdsSubtree, path string, rank int) error {
+	var owners []string
+	sole := false
+	for _, viewer := range slices.Sorted(maps.Keys(views)) {
+		for _, subtree := range views[viewer] {
+			if subtree.Dir.Path != path || !subtree.IsAuth {
+				continue
+			}
+			owners = append(owners, fmt.Sprintf("rank%d(auth=%d,%d export_pin=%d)", viewer, subtree.AuthFirst, subtree.AuthSecond, subtree.ExportPin))
+			sole = viewer == rank && subtree.AuthFirst == rank && subtree.AuthSecond == -2 && subtree.ExportPin == rank
+		}
+	}
+	if len(owners) != 1 || !sole {
+		return fmt.Errorf("%s is claimed by %v, want rank%d alone", path, owners, rank)
+	}
+	return nil
+}
+
+// cephFSWaitForSoleAuthority waits until the MDS of rank is the only one that
+// reports path as an authoritative subtree pinned to rank. It reads every
+// active rank's subtrees between two MDSStatus reads, and each read must show
+// the daemons of gids, by rank: a changed daemon fails the test.
+func cephFSWaitForSoleAuthority(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, path string, rank int, gids map[int]uint64) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	defer cancel()
+	same := func() (*cephfs.FilesystemStatus, bool) {
+		status, err := fs.MDSStatus(ctx)
+		if err != nil {
+			return nil, false
+		}
+		if len(status.Active) != len(gids) {
+			t.Fatalf("active ranks changed from %v: %+v", gids, status)
+		}
+		for _, active := range status.Active {
+			if gids[active.Rank] != active.GID {
+				t.Fatalf("rank %d changed from GID %d: %+v", active.Rank, gids[active.Rank], status)
+			}
+		}
+		return status, true
+	}
+	var last string
+	for {
+		if status, ok := same(); ok {
+			views := map[int][]mdsSubtree{}
+			for _, active := range status.Active {
+				data, err := cluster.Ceph(ctx, "tell", "mds."+active.Name, "get", "subtrees", "--format", "json")
+				if err != nil {
+					last = fmt.Sprintf("mds.%s: %v", active.Name, err)
+					break
+				}
+				subtrees, err := parseMDSSubtrees(data)
+				if err != nil {
+					last = fmt.Sprintf("mds.%s: %v: %.512s", active.Name, err, data)
+					break
+				}
+				views[active.Rank] = subtrees
+			}
+			if len(views) == len(gids) {
+				err := soleSubtreeAuthority(views, path, rank)
+				if _, ok := same(); ok && err == nil {
+					return
+				}
+				last = fmt.Sprint(err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("rank%d did not become the only authority of %s: %s", rank, path, last)
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// cephFSDirPin mounts once and, with "create", makes a directory and sets its
+// ceph.dir.pin; with "set", sets the pin; with "get", prints it. A mount of
+// its own has no cached inode, so "get" prints the policy that the MDS holds.
+const cephFSDirPin = `
+import cephfs, sys
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.mount(filesystem_name=sys.argv[1].encode())
+try:
+    path, action = sys.argv[2].encode(), sys.argv[3]
+    if action == "create":
+        fs.mkdir(path, 0o755)
+    if action == "get":
+        print(fs.getxattr(path, "ceph.dir.pin", 64).decode())
+    else:
+        fs.setxattr(path, "ceph.dir.pin", sys.argv[4].encode(), 0)
+finally:
+    fs.unmount()
+    fs.shutdown()
+`
+
+// cephFSDirectoryPin runs cephFSDirPin in the control container and returns
+// what it printed.
+func cephFSDirectoryPin(t *testing.T, ctx context.Context, cluster *ceph.Container, filesystem, path, action string, value ...string) string {
+	t.Helper()
+	runCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	defer stop()
+	result, err := cluster.RunNativeCommand(runCtx, cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: append([]string{"python3", "-c", cephFSDirPin, filesystem, path, action}, value...), Timeout: 2 * time.Minute,
+		MaxStdout: 4 << 10, MaxStderr: 64 << 10, Label: "CephFS directory pin",
+	})
+	if err != nil || result.ExitCode != 0 || !result.Complete() {
+		t.Fatalf("%s pin of %s: exit=%d err=%v stderr=%.2048s", action, path, result.ExitCode, err, result.Stderr)
+	}
+	return strings.TrimSpace(string(result.Stdout))
+}
+
+// testCephFSLiveRankMigration moves a directory between two live active ranks
+// while a native client streams fsynced records into a file in it, through
+// one mount and one fd. The directory starts pinned to rank 0. Once the
+// client has written a few records, the pin changes to 1, set by another
+// client, and the stream goes on while rank 1 becomes the directory's only
+// authority. Each daemon's counters record the export and the import, both
+// daemons keep their GIDs, and the client keeps the address and PID of its
+// sessions and is not blocklisted. After the stream stops, the client reads
+// every record through its fd and a reader in another container reads the
+// same bytes and xattr. The pin then goes back to 0, a fresh mount reads that
+// policy, and rank 0 becomes the only authority again before the client
+// closes. This proves fsynced I/O through one fd across a live export; it does
+// not show the export messages or a request that was in flight at the freeze.
+func testCephFSLiveRankMigration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	image, imageOpts := integrationImages(t)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure),
+		cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 2}))...)
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, err := fs.MDSStatus(ctx)
+	if err != nil || status.MaxMDS != 2 || len(status.Active) != 2 || len(status.Standby) != 0 {
+		t.Fatalf("want two active ranks and no standby: %+v, %v", status, err)
+	}
+	zero, zeroOK := activeRank(status, 0)
+	one, oneOK := activeRank(status, 1)
+	if !zeroOK || !oneOK || !zero.Owned || !one.Owned {
+		t.Fatalf("ranks 0 and 1 are not owned: %+v", status)
+	}
+	gids := map[int]uint64{0: zero.GID, 1: one.GID}
+
+	const directory, path = "/stream", "/stream/records"
+	cephFSDirectoryPin(t, ctx, cluster, fs.FilesystemName, directory, "create", "0")
+	cephFSWaitForSoleAuthority(t, ctx, cluster, fs, directory, 0, gids)
+
+	base := make([]byte, 0, 266)
+	for value := range 256 {
+		base = append(base, byte(value))
+	}
+	base = append(base, 0x00, 0xff, 0x7f, 0x80, '\r', '\n', 0x1b, 0x00, 'c', 'f')
+	xattr := []byte{0x00, 0xff}
+	actor := startCephFSActor(t, ctx, cluster, client, cephFSStreamActor, fs.FilesystemName, "/tmp/stream-actor",
+		path, hex.EncodeToString(base), hex.EncodeToString(xattr))
+	baseline := actor.receipt(t, ctx, 1)
+	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len(base)) {
+		t.Fatalf("baseline receipt = %+v", baseline)
+	}
+	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
+	if session.PID != strconv.Itoa(baseline.PID) || session.Address == "" {
+		t.Fatalf("actor session = %+v, want PID %d", session, baseline.PID)
+	}
+	zeroBefore, oneBefore := cephFSMigrationCounters(t, ctx, cluster, zero.Name), cephFSMigrationCounters(t, ctx, cluster, one.Name)
+
+	actor.open(t, ctx, "stream")
+	var seen cephFSStreamProgress
+	requested := actor.progress(t, ctx, baseline, &seen, 3)
+	cephFSDirectoryPin(t, ctx, cluster, fs.FilesystemName, directory, "set", "1")
+	cephFSWaitForSoleAuthority(t, ctx, cluster, fs, directory, 1, gids)
+	moved := actor.progress(t, ctx, baseline, &seen, 0)
+	zeroAfter, oneAfter := cephFSMigrationCounters(t, ctx, cluster, zero.Name), cephFSMigrationCounters(t, ctx, cluster, one.Name)
+	if zeroAfter.Exported <= zeroBefore.Exported || zeroAfter.ExportedInodes <= zeroBefore.ExportedInodes ||
+		oneAfter.Imported <= oneBefore.Imported || oneAfter.ImportedInodes <= oneBefore.ImportedInodes {
+		t.Fatalf("export counters of mds.%s %+v -> %+v, import counters of mds.%s %+v -> %+v", zero.Name, zeroBefore, zeroAfter, one.Name, oneBefore, oneAfter)
+	}
+	// The stream goes on under rank 1, through the same fd.
+	continued := actor.progress(t, ctx, baseline, &seen, moved.Count+3)
+	// The client keeps its rank 0 session and has one on rank 1, of the same
+	// instance.
+	for rank := range 2 {
+		retained := cephFSRetainedSession(t, ctx, fs, baseline.Client, rank)
+		if retained.PID != session.PID || retained.Address != session.Address || retained.EntityID != session.EntityID {
+			t.Fatalf("rank %d session = %+v, want the address and PID of %+v", rank, retained, session)
+		}
+	}
+	entries, err := cluster.BlocklistEntries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
+		t.Fatalf("the streaming client %s was blocklisted: %+v", session.Address, entries)
+	}
+
+	actor.open(t, ctx, "stop")
+	stopped := actor.receipt(t, ctx, 2)
+	if stopped.PID != baseline.PID || stopped.Errno != 0 || stopped.Error != "" || stopped.Count < continued.Count {
+		t.Fatalf("stream receipt %+v after %d acknowledged records", stopped, continued.Count)
+	}
+	want := streamRecords(base, stopped.Count)
+	if stopped.Inode != baseline.Inode || stopped.Size != int64(len(want)) || stopped.Full != hex.EncodeToString(want) {
+		t.Fatalf("the fd read inode %d, %d bytes %s, want inode %d and %d records", stopped.Inode, stopped.Size, stopped.Full, baseline.Inode, stopped.Count)
+	}
+	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, path}, Timeout: 2 * time.Minute,
+		MaxStdout: 256 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
+	})
+	stop()
+	var independent struct {
+		Client uint64 `json:"client"`
+		Inode  uint64 `json:"inode"`
+		Size   int64  `json:"size"`
+		Data   string `json:"data"`
+		XAttr  string `json:"xattr"`
+	}
+	if err != nil || read.ExitCode != 0 || !read.Complete() || json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &independent) != nil ||
+		independent.Data != hex.EncodeToString(want) || independent.Inode != baseline.Inode || independent.XAttr != hex.EncodeToString(xattr) || independent.Client == baseline.Client {
+		t.Fatalf("independent reader: exit=%d err=%v out=%.1024s", read.ExitCode, err, read.Stdout)
+	}
+
+	// The pin policy and the placement are separate conditions: the policy is
+	// read through a fresh mount, then rank 0 must become the authority.
+	cephFSDirectoryPin(t, ctx, cluster, fs.FilesystemName, directory, "set", "0")
+	if policy := cephFSDirectoryPin(t, ctx, cluster, fs.FilesystemName, directory, "get"); policy != "0" {
+		t.Fatalf("a fresh mount reads pin %q, want 0", policy)
+	}
+	cephFSWaitForSoleAuthority(t, ctx, cluster, fs, directory, 0, gids)
+	zeroBack, oneBack := cephFSMigrationCounters(t, ctx, cluster, zero.Name), cephFSMigrationCounters(t, ctx, cluster, one.Name)
+	actor.open(t, ctx, "finish")
+	if closed := actor.receipt(t, ctx, 3); !closed.Closed || closed.CloseErrno != 0 {
+		t.Fatalf("closing receipt = %+v", closed)
+	}
+	actor.wait(t, ctx)
+	sum := sha256.Sum256(want)
+	t.Logf("CEPHFS_MIGRATION fscid=%d %s: rank0 mds.%s/%d exported %d subtrees with %d inodes and rank1 mds.%s/%d imported %d with %d; client.%d pid=%d address=%s inode=%d records %d when pin 1 was requested, %d when rank1 alone was the authority, %d after, %d in all (sha256=%x); reader client.%d; back to rank0: mds.%s exported %d, mds.%s imported %d",
+		status.FilesystemID, directory, zero.Name, zero.GID, zeroAfter.Exported-zeroBefore.Exported, zeroAfter.ExportedInodes-zeroBefore.ExportedInodes,
+		one.Name, one.GID, oneAfter.Imported-oneBefore.Imported, oneAfter.ImportedInodes-oneBefore.ImportedInodes,
+		baseline.Client, baseline.PID, session.Address, baseline.Inode, requested.Count, moved.Count, continued.Count, stopped.Count, sum, independent.Client,
+		one.Name, oneBack.Exported-oneAfter.Exported, zero.Name, zeroBack.Imported-zeroAfter.Imported)
 }

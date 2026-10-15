@@ -142,7 +142,7 @@ described in [Fault injection](fault-injection.md).
 A client that implements CephFS sessions needs to know what the native client
 keeps when its MDS fails. These tests keep a native libcephfs client mounted
 in a client container under `RunNativeCommand`, with a file descriptor that it
-opened before the failure, and publish its client ID, PID and inode in
+opened before the failure or the move, and publish its client ID, PID and inode in
 receipts tied to one run. `Sessions` reports the session; `ceph tell
 mds.<name> session ls` adds counters that `Session` leaves out, such as
 `num_leases` and `num_completed_requests`.
@@ -154,6 +154,7 @@ mds.<name> session ls` adds counters that `Session` leaves out, such as
 | Two active ranks with a standby; the client's file lives in a directory pinned to rank 1 with `ceph.dir.pin`, and rank 1's MDS is killed and its GID failed | before the failure, rank 0's export and rank 1's import counters record the move, rank 1 reports the pinned directory as an authoritative subtree, and it holds an open session with the client; the standby takes rank 1 under its GID and reports the subtree in turn; rank 0 keeps its daemon and its session with the client; the descriptor and independent-reader receipts are the same as above | `TestCephFSRetainedClientAcrossRankOneTakeover`, with `MessengerV2Secure` |
 | A second client opens, writes and fsyncs a file that a live client holds open with exclusive, buffered file capabilities, and keeps it open | the MDS's `ceph tell mds.<name> dump inode <ino>` shows the holder as the loner with `Fsxcrwb` before; the second client finishes at once, far below `session_timeout`, and reads the holder's fsynced bytes; while both clients hold the file, 10 s later, both have the shared `pAsLsXsFrw` and the holder's `last_sent` has grown; the holder keeps its session and is not blocklisted, and through its open descriptor it reads the second client's write; a third client checks the final file | `TestCephFSCapabilityHandoff`, with `MessengerV2Secure` |
 | A client is frozen with `PauseContainer` while the only active MDS is killed and a standby takes rank 0, with `mds_reconnect_timeout` set to 10 s through `TemporaryConfig` | the FSMap shows the standby in `up:reconnect` for the window (about 15 s), then `up:rejoin` and `up:active`; the frozen client's session is gone and its address is in the blocklist; after `Resume`, its open descriptor fails, with `ESHUTDOWN` (108) on Tentacle and `EPERM` (1) on Squid, and it shuts down cleanly; a fresh client reads the bytes the frozen one had fsynced | `TestCephFSLateReconnect`, with `MessengerV2Secure` |
+| Two active ranks; the client appends 16-byte records through one descriptor to a file in a directory pinned to rank 0, fsyncing each before the next; after a few records, another client sets the directory's `ceph.dir.pin` to 1, and after the stream to 0 again | rank 1 becomes the only rank that reports the directory as an authoritative subtree, in `get subtrees` of both ranks read between two `MDSStatus` reads with unchanged GIDs; rank 0's `exported` and `exported_inodes` and rank 1's `imported` and `imported_inodes` grow; more records are acknowledged under rank 1; the client has sessions on both ranks with one address and PID and is not blocklisted; after the stream, the client reads every record in order through its descriptor, and a client in another container reads the same bytes and xattr; a fresh mount reads the restored pin, and rank 0 is again the only authority before the client closes | `TestCephFSLiveRankMigration`, with `MessengerV2Secure` |
 
 The client fsynced its data before the failure, so these receipts show a
 session reconnect, not the replay of a request that was in flight. The
@@ -161,8 +162,12 @@ capability receipt shows the revocation in the MDS's state, not the messages
 that carried it, and it reads that state while both clients hold the file:
 once the second client closes it, the MDS may make the holder the loner again
 and give the capabilities back. `MDSStatus` lists only active ranks; the
-late-reconnect test reads the recovery states from `fs dump`. Metadata moving
-between live ranks during client I/O is a separate profile.
+late-reconnect test reads the recovery states from `fs dump`. The live
+migration test sets the pin through one mount, reads it back through a fresh
+one and only then waits for the authority: the pin is a policy, and the
+subtree follows it later. Each of its records was fsynced before the next one
+started, so it does not cover a request that was in flight when the export
+froze the directory.
 
 ## Daemon-to-daemon paths
 
@@ -179,8 +184,8 @@ these paths.
 | MON to MON | Cutting two of five MONs off the public network leaves a quorum of three; restoring them brings back five. | Native state (quorum membership). Which daemon received which map is not observed. | `TestFiveMonitorQuorumAndNetworkRecovery` |
 | OSD to OSD when a replica missed writes | One replica of a one-PG, two-replica pool stops while writes continue, then starts again with recovery held by `norecover` or `nobackfill`. The primary's `pg query` tells the two paths apart. In log recovery the replica stays in the acting set, has no backfill target and `last_backfill` `MAX`, and the PG log still reaches back to the replica's last entry. In backfill the PG log has been trimmed past that entry, and the replica is only in the up set, as the backfill target with `last_backfill` `MIN`. While the flag is set, `num_objects_recovered` does not move; afterwards it grows by exactly the objects written while the replica was down. A client of its own reads every object, and with the primary stopped the replica serves them alone. The same receipt runs on a K=2, M=1 erasure-coded pool, where the replica is the OSD of one shard: `pg query` names it like `2(1)`, backfill leaves its acting slot empty (`2147483647`), and with the primary stopped no object can be rebuilt without the recovered shard. The test logs `OSD_RECOVERY_RECEIPT`. | Native state | `TestOSDRecoveryAndBackfillReceipts/replicated` and `/erasure` |
 | OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
-| MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. With `ceph.dir.pin` on a directory that a client has open, rank 0's `exported` and `exported_inodes` perf counters and rank 1's `imported` and `imported_inodes` grow, read with `ceph tell mds.<name> perf dump mds` before and after. | Native state (per-daemon counters) for the pinned directory; outcome for subvolume pins | `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSPins` |
-| MDS to client after an MDS restart or a standby takeover | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover`, `TestCephFSRetainedClientAcrossRankOneTakeover` |
+| MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. With `ceph.dir.pin` on a directory that a client has open, rank 0's `exported` and `exported_inodes` perf counters and rank 1's `imported` and `imported_inodes` grow, read with `ceph tell mds.<name> perf dump mds` before and after. In the live migration the client keeps writing during the move, and both ranks must agree on the single authority. | Native state (per-daemon counters) for the pinned directory; outcome for subvolume pins | `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration`, `TestCephFSPins` |
+| MDS to client after an MDS restart, a standby takeover or a live export | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover`, `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration` |
 
 A short log for the backfill case comes from `TemporaryConfig` on
 `osd_min_pg_log_entries`, `osd_max_pg_log_entries` and `osd_pg_log_trim_min`;
