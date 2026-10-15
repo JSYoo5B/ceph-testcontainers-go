@@ -8,6 +8,13 @@ change the API.
 
 ### Added
 
+- The Messenger fixture guide explains how to tell which MON session belongs
+  to a registered MGR. A MGR authenticates its beacon client, whose global
+  ID is the MgrMap GID, and a client for each of its modules. A refusal in
+  the MGR's own log therefore does not show that the registered slot lost
+  its session; the global ID in the MON's refusal has to match the MgrMap
+  GID. A test checks the sessions on every owned MON.
+
 - The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
   has an MDS session section. Its first receipt keeps a native libcephfs
   client mounted while the only MDS is killed, failed and started again:

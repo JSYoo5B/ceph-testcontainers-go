@@ -54,6 +54,13 @@ func TestMessengerClientProfileUnreachableMonitor(t *testing.T) {
 	testMessengerClientUnreachableMonitor(t)
 }
 
+// A MGR authenticates several MonClients; only its beacon client's global ID
+// is the MgrMap GID.
+func TestMessengerClientProfileManagerMonClients(t *testing.T) {
+	parallelWhenEnabled(t)
+	testManagerMonClients(t)
+}
+
 // A network interruption of a MON outlasts a restart of the MON until its
 // owner restores it; then the MON gets its addresses back.
 func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
