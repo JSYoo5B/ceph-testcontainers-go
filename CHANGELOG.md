@@ -31,11 +31,14 @@ change the API.
   revoked without an eviction. Another freezes a client across an MDS
   failover: it misses the shortened reconnect window, is evicted and
   blocklisted, and its open file then fails (`ESHUTDOWN` on Tentacle, `EPERM`
-  on Squid). A last one moves a directory from rank 0 to rank 1 and back while a
+  on Squid). Another moves a directory from rank 0 to rank 1 and back while a
   client streams fsynced records into a file in it through one descriptor:
   rank 1 becomes the directory's only authority, the daemons' export and
   import counters grow, and the client keeps its sessions and reads every
-  record.
+  record. A last one holds one rename between its early, unsafe reply and its
+  journal commit with `mds_log_pause`: the MDS's ops in flight and the
+  client's own pending requests show the same TID, unsafe, until the pause is
+  restored and the request commits.
 
 - The same guide has a table of daemon-to-daemon paths, with what each test
   observes and how directly. The held replication write of the separate

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strconv"
@@ -146,6 +147,8 @@ type cephFSActorReceipt struct {
 	Errno  int    `json:"errno"`
 	Error  string `json:"error"`
 	Closed bool   `json:"closed"`
+	// ElapsedMS is how long the unsafe-window actor's operation took.
+	ElapsedMS int64 `json:"elapsed_ms"`
 	// Count is the number of records that the stream actor wrote.
 	Count int64 `json:"count"`
 	// CloseErrno is the errno of a failed close or unmount.
@@ -1497,4 +1500,433 @@ func testCephFSLiveRankMigration(t *testing.T) {
 		one.Name, one.GID, oneAfter.Imported-oneBefore.Imported, oneAfter.ImportedInodes-oneBefore.ImportedInodes,
 		baseline.Client, baseline.PID, session.Address, baseline.Inode, requested.Count, moved.Count, continued.Count, stopped.Count, sum, independent.Client,
 		one.Name, oneBack.Exported-oneAfter.Exported, zero.Name, zeroBack.Imported-zeroAfter.Imported)
+}
+
+// cephFSUnsafeActor mounts once with a client admin socket at a given path,
+// creates a file in a new directory, fsyncs it and syncs the filesystem, and
+// publishes receipt 1. At the "rename" gate it renames the file within the
+// directory once, without a retry, and publishes receipt 2 with the result
+// and the time the call took. At the "finish" gate it stats the new name
+// through its own mount, unmounts and publishes receipt 3. Arguments after the
+// common ones: directory, source path, target path, admin socket path.
+const cephFSUnsafeActor cephFSActorScript = cephFSActorHelpers + `
+directory, source, target, asok = sys.argv[4].encode(), sys.argv[5].encode(), sys.argv[6].encode(), sys.argv[7]
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.conf_set("admin_socket", asok)
+fs.mount(filesystem_name=name.encode())
+fs.mkdir(directory, 0o755)
+fd = fs.open(source, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+fs.write(fd, b"unsafe-window", 0)
+fs.fsync(fd, 0)
+fs.close(fd)
+fs.sync_fs()
+stat = fs.stat(source)
+publish(1, client=fs.get_instance_id(), inode=stat.st_ino, size=stat.st_size)
+gate("rename")
+started = time.monotonic()
+result = {}
+try:
+    fs.rename(source, target)
+except cephfs.Error as error:
+    result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
+result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+publish(2, **result)
+gate("finish")
+closing = {}
+try:
+    closing.update(inode=fs.stat(target).st_ino)
+    fs.unmount()
+except cephfs.Error as error:
+    closing.update(close_errno=getattr(error, "errno", None) or -1)
+fs.shutdown()
+publish(3, closed=True, **closing)
+`
+
+// mdsRequestOp is one client request in an MDS's dump_ops_in_flight or
+// dump_historic_ops.
+type mdsRequestOp struct {
+	Description string  `json:"description"`
+	Duration    float64 `json:"duration"`
+	TypeData    struct {
+		FlagPoint string `json:"flag_point"`
+		ReqID     struct {
+			Entity struct {
+				Type string `json:"type"`
+				Num  uint64 `json:"num"`
+			} `json:"entity"`
+			TID uint64 `json:"tid"`
+		} `json:"reqid"`
+		Events []struct {
+			Event string `json:"event"`
+		} `json:"events"`
+	} `json:"type_data"`
+}
+
+func parseMDSRequestOps(data []byte) ([]mdsRequestOp, error) {
+	var dump struct {
+		Ops *[]mdsRequestOp `json:"ops"`
+	}
+	if err := json.Unmarshal(data, &dump); err != nil {
+		return nil, err
+	}
+	if dump.Ops == nil {
+		return nil, errors.New("the dump has no ops")
+	}
+	return *dump.Ops, nil
+}
+
+// findMDSRequest returns the request of client whose operation is op, such
+// as "rename", from its description "client_request(client.N:TID op ...",
+// and whose TID is tid, or any TID for 0.
+func findMDSRequest(ops []mdsRequestOp, client uint64, op string, tid uint64) (mdsRequestOp, bool) {
+	for _, candidate := range ops {
+		reqid := candidate.TypeData.ReqID
+		prefix := fmt.Sprintf("client_request(client.%d:%d %s ", client, reqid.TID, op)
+		if reqid.Entity.Type == "client" && reqid.Entity.Num == client && (tid == 0 || reqid.TID == tid) && strings.HasPrefix(candidate.Description, prefix) {
+			return candidate, true
+		}
+	}
+	return mdsRequestOp{}, false
+}
+
+func (op mdsRequestOp) events() []string {
+	events := make([]string, 0, len(op.TypeData.Events))
+	for _, event := range op.TypeData.Events {
+		events = append(events, event.Event)
+	}
+	return events
+}
+
+// requestSafety classifies a request from its MDS events: "unsafe" after an
+// early reply and before its journal commit, "safe" when the commit and the
+// final reply followed the early reply, and "no-early-reply" when the MDS
+// replied only once, after the commit.
+func requestSafety(op mdsRequestOp) string {
+	early, committed, replied := -1, -1, -1
+	for index, event := range op.events() {
+		switch {
+		case event == "early_replied":
+			early = index
+		case strings.HasPrefix(event, "journal_committed"):
+			committed = index
+		case event == "replying":
+			replied = index
+		}
+	}
+	switch {
+	case early < 0:
+		return "no-early-reply"
+	case committed < 0 && replied < 0:
+		return "unsafe"
+	case committed > early && replied > committed:
+		return "safe"
+	}
+	return "inconsistent"
+}
+
+// unsafeFlag reads a client's got_unsafe, a number or a boolean.
+type unsafeFlag bool
+
+func (f *unsafeFlag) UnmarshalJSON(data []byte) error {
+	switch string(data) {
+	case "1", "true":
+		*f = true
+	case "0", "false":
+		*f = false
+	default:
+		return fmt.Errorf("got_unsafe %s", data)
+	}
+	return nil
+}
+
+// clientMDSRequest is one request in a libcephfs client's mds_requests.
+type clientMDSRequest struct {
+	TID       uint64     `json:"tid"`
+	Op        string     `json:"op"`
+	MDS       int        `json:"mds"`
+	TargetIno string     `json:"target_ino"`
+	GotUnsafe unsafeFlag `json:"got_unsafe"`
+}
+
+// parseClientMDSRequests reads mds_requests in either shape that clients
+// print: a "requests" array, or one "request" object per request, the key
+// repeated, in an object that is empty when nothing is pending.
+func parseClientMDSRequests(data []byte) ([]clientMDSRequest, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, fmt.Errorf("mds_requests is not an object: %v", err)
+	}
+	requests := []clientMDSRequest{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		switch key {
+		case "requests":
+			var list []clientMDSRequest
+			if err := decoder.Decode(&list); err != nil {
+				return nil, err
+			}
+			requests = append(requests, list...)
+		case "request":
+			var request clientMDSRequest
+			if err := decoder.Decode(&request); err != nil {
+				return nil, err
+			}
+			requests = append(requests, request)
+		default:
+			return nil, fmt.Errorf("mds_requests has an unknown field %v", key)
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, fmt.Errorf("mds_requests does not end: %v", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, errors.New("mds_requests has data after its object")
+	}
+	return requests, nil
+}
+
+// unsafeRenameState is one look at a client's rename from both sides: the
+// MDS's ops in flight and the client's own pending requests.
+type unsafeRenameState struct {
+	tid      uint64
+	op       mdsRequestOp
+	inFlight bool
+	request  clientMDSRequest
+	pending  bool
+}
+
+// joinUnsafeRename finds a client's rename in parsed observations of both
+// sides. With tid 0 the MDS's rename in flight names the TID. Otherwise each
+// side is searched for that TID on its own, so a request that only one side
+// still holds counts as held there.
+func joinUnsafeRename(ops []mdsRequestOp, requests []clientMDSRequest, client, tid uint64) unsafeRenameState {
+	state := unsafeRenameState{tid: tid}
+	state.op, state.inFlight = findMDSRequest(ops, client, "rename", tid)
+	if state.inFlight && tid == 0 {
+		state.tid = state.op.TypeData.ReqID.TID
+	}
+	for _, request := range requests {
+		if state.tid != 0 && request.TID == state.tid {
+			state.request, state.pending = request, true
+		}
+	}
+	return state
+}
+
+// renameSafe is the completion condition of a held rename: neither side
+// holds its TID any more, and the MDS's history has that request committed
+// and replied.
+func renameSafe(state unsafeRenameState, historic []mdsRequestOp, client uint64) bool {
+	op, found := findMDSRequest(historic, client, "rename", state.tid)
+	return state.tid != 0 && !state.inFlight && !state.pending && found && requestSafety(op) == "safe"
+}
+
+// cephFSUnsafeObservation is one look with its bounded raw form.
+type cephFSUnsafeObservation struct {
+	unsafeRenameState
+	raw string
+}
+
+// observeUnsafeRename reads the MDS's ops in flight and, through the actor's
+// admin socket, the client's pending requests, each bounded, and joins them
+// for the client's rename with tid, or the TID that the MDS names for 0. A
+// query that fails or prints what does not parse fails the test; an empty
+// pending set is an answer.
+func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, mds, asok string, clientID, tid uint64) cephFSUnsafeObservation {
+	t.Helper()
+	data, err := cluster.Ceph(ctx, "tell", "mds."+mds, "dump_ops_in_flight")
+	if err != nil {
+		t.Fatalf("dump_ops_in_flight of mds.%s: %v", mds, err)
+	}
+	ops, err := parseMDSRequestOps(data)
+	if err != nil {
+		t.Fatalf("dump_ops_in_flight of mds.%s: %v: %.1024s", mds, err, data)
+	}
+	queryCtx, stop := context.WithTimeout(ctx, time.Minute)
+	defer stop()
+	result, err := cluster.RunNativeCommand(queryCtx, client, ceph.NativeCommand{
+		Argv: []string{"ceph", "--admin-daemon", asok, "mds_requests"}, Timeout: 30 * time.Second,
+		MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "client mds_requests",
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("client mds_requests: exit=%d err=%v stderr=%.512s", result.ExitCode, err, result.Stderr)
+	}
+	requests, err := parseClientMDSRequests(result.Stdout)
+	if err != nil {
+		t.Fatalf("client mds_requests: %v: %.1024s", err, result.Stdout)
+	}
+	observed := cephFSUnsafeObservation{unsafeRenameState: joinUnsafeRename(ops, requests, clientID, tid)}
+	observed.raw = fmt.Sprintf("tid %d: mds op %q flag_point=%q events=%v; client requests %+v", observed.tid, observed.op.Description, observed.op.TypeData.FlagPoint, observed.op.events(), requests)
+	return observed
+}
+
+// testCephFSUnsafeRequestWindow holds one rename between its early, unsafe
+// reply and its journal commit, and observes that window from both sides.
+// The MDS's own mds_log_pause, set through TemporaryConfig and read back from
+// the running daemon, holds journal submission. The actor's rename returns
+// with the early reply. While the pause holds, the MDS lists the client's
+// request in flight after "early_replied", without "journal_committed", and
+// the client's admin socket lists the same TID as got_unsafe. After the pause
+// is restored, the client no longer holds the request, the MDS's historic ops
+// show it committed and replied, and an independent client finds the new name
+// with the original inode. One active MDS keeps its GID throughout.
+func testCephFSUnsafeRequestWindow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	image, imageOpts := integrationImages(t)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, err := fs.MDSStatus(ctx)
+	if err != nil || len(status.Active) != 1 {
+		t.Fatalf("want one active MDS: %+v, %v", status, err)
+	}
+	mds := status.Active[0]
+	daemonConfig := func(name string) string {
+		t.Helper()
+		out, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "config", "get", name)
+		var values map[string]string
+		if err != nil || json.Unmarshal(out, &values) != nil {
+			t.Fatalf("config get %s on mds.%s: %v: %.256s", name, mds.Name, err, out)
+		}
+		return values[name]
+	}
+	waitDaemonConfig := func(name, want string) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for daemonConfig(name) != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("mds.%s did not apply %s=%s", mds.Name, name, want)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	if early, paused := daemonConfig("mds_early_reply"), daemonConfig("mds_log_pause"); early != "true" || paused != "false" {
+		t.Fatalf("mds.%s runs with mds_early_reply=%s mds_log_pause=%s", mds.Name, early, paused)
+	}
+	version, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workdir = "/tmp/unsafe-actor"
+	asok := workdir + "/client.asok"
+	actor := startCephFSActor(t, ctx, cluster, client, cephFSUnsafeActor, fs.FilesystemName, workdir, "/unsafe", "/unsafe/source", "/unsafe/target", asok)
+	baseline := actor.receipt(t, ctx, 1)
+	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len("unsafe-window")) {
+		t.Fatalf("baseline receipt = %+v", baseline)
+	}
+	// The pause's restoration is registered before the rename is admitted;
+	// the actor's cancellation and join were registered when it started.
+	pause, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
+	if pause != nil {
+		t.Cleanup(func() {
+			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := pause.Restore(restoreCtx); err != nil {
+				t.Errorf("restore mds_log_pause: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDaemonConfig("mds_log_pause", "true")
+
+	actor.open(t, ctx, "rename")
+	renamed := actor.receipt(t, ctx, 2)
+	if renamed.Errno != 0 || renamed.Error != "" || renamed.PID != baseline.PID {
+		t.Fatalf("rename receipt = %+v", renamed)
+	}
+	// The window is shown by native state, not by the call's return: both
+	// sides must hold the same request, twice, 3 s apart. The first look
+	// takes the TID from the MDS; it is fixed from then on.
+	var held cephFSUnsafeObservation
+	for look := range 2 {
+		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, held.tid)
+		inode := fmt.Sprintf("0x%x", baseline.Inode)
+		if !observed.inFlight || requestSafety(observed.op) != "unsafe" || !observed.pending || !bool(observed.request.GotUnsafe) ||
+			observed.request.Op != "rename" || observed.request.MDS != 0 || observed.request.TargetIno != inode {
+			t.Fatalf("look %d: the rename is not held between its unsafe and safe replies: %s", look, observed.raw)
+		}
+		held = observed
+		if look == 0 {
+			time.Sleep(3 * time.Second)
+		}
+	}
+	tid := held.tid
+	t.Logf("CEPHFS_UNSAFE held: %s", held.raw)
+
+	if err := pause.Restore(ctx); err != nil {
+		t.Fatal("restore mds_log_pause:", err)
+	}
+	waitDaemonConfig("mds_log_pause", "false")
+	var committed mdsRequestOp
+	deadline := time.Now().Add(time.Minute)
+	for {
+		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, tid)
+		historic, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "dump_historic_ops")
+		if err != nil {
+			t.Fatal("dump_historic_ops:", err)
+		}
+		ops, err := parseMDSRequestOps(historic)
+		if err != nil {
+			t.Fatalf("dump_historic_ops: %v: %.1024s", err, historic)
+		}
+		op, _ := findMDSRequest(ops, baseline.Client, "rename", tid)
+		if renameSafe(observed.unsafeRenameState, ops, baseline.Client) {
+			committed = op
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the rename did not become safe: %s; historic %q %v", observed.raw, op.Description, op.events())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	after, err := fs.MDSStatus(ctx)
+	if err != nil || len(after.Active) != 1 || after.Active[0].GID != mds.GID {
+		t.Fatalf("mds.%s changed during the window: %+v, %v", mds.Name, after, err)
+	}
+
+	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: []string{"python3", "-c", `import cephfs,json,sys
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.mount(filesystem_name=sys.argv[1].encode())
+try:
+    target = fs.stat(b"/unsafe/target").st_ino
+    try:
+        fs.stat(b"/unsafe/source")
+        source = 0
+    except cephfs.ObjectNotFound:
+        source = 2
+    print(json.dumps({"client": fs.get_instance_id(), "target": target, "source_errno": source}))
+finally:
+    fs.unmount()
+    fs.shutdown()`, fs.FilesystemName}, Timeout: 2 * time.Minute, MaxStdout: 4096, MaxStderr: 64 << 10, Label: "independent namespace reader",
+	})
+	stop()
+	var namespace struct {
+		Client      uint64 `json:"client"`
+		Target      uint64 `json:"target"`
+		SourceErrno int    `json:"source_errno"`
+	}
+	if err != nil || read.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &namespace) != nil ||
+		namespace.Target != baseline.Inode || namespace.SourceErrno != 2 || namespace.Client == baseline.Client {
+		t.Fatalf("independent reader: exit=%d err=%v out=%.512s stderr=%.512s", read.ExitCode, err, read.Stdout, read.Stderr)
+	}
+	actor.open(t, ctx, "finish")
+	if closed := actor.receipt(t, ctx, 3); !closed.Closed || closed.Inode != baseline.Inode || closed.CloseErrno != 0 {
+		t.Fatalf("closing receipt = %+v", closed)
+	}
+	actor.wait(t, ctx)
+	t.Logf("CEPHFS_UNSAFE %s mds.%s gid=%d client.%d tid=%d inode=%d: rename returned in %d ms with mds_log_pause applied; held unsafe on both sides for two looks 3 s apart; after the restore committed and replied (events %v, %.1f s in the MDS); reader client.%d found the target and ENOENT for the source",
+		strings.Join(strings.Fields(string(version)), " "), mds.Name, mds.GID, baseline.Client, tid, baseline.Inode, renamed.ElapsedMS, committed.events(), committed.Duration, namespace.Client)
 }
