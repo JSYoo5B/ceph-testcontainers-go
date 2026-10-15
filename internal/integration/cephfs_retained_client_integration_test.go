@@ -33,3 +33,9 @@ func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
 func TestCephFSCapabilityHandoff(t *testing.T) {
 	testCephFSCapabilityHandoff(t)
 }
+
+// A client that is frozen while its MDS fails over misses the reconnect window
+// and is evicted.
+func TestCephFSLateReconnect(t *testing.T) {
+	testCephFSLateReconnect(t)
+}

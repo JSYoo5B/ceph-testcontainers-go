@@ -153,14 +153,16 @@ mds.<name> session ls` adds counters that `Session` leaves out, such as
 | The active MDS is killed and its GID failed; an idle standby, or the journal follower of rank 0 (`StandbyReplay`), takes the rank | the same receipts, with rank 0 served by the standby under the GID it had before; afterwards the killed daemon starts again and rejoins as a standby or follower with a new GID, which `WaitReady` waits for | `TestCephFSRetainedClientAcrossStandbyTakeover/standby` and `/standby-replay`, with `MessengerV2Secure` |
 | Two active ranks with a standby; the client's file lives in a directory pinned to rank 1 with `ceph.dir.pin`, and rank 1's MDS is killed and its GID failed | before the failure, rank 0's export and rank 1's import counters record the move, rank 1 reports the pinned directory as an authoritative subtree, and it holds an open session with the client; the standby takes rank 1 under its GID and reports the subtree in turn; rank 0 keeps its daemon and its session with the client; the descriptor and independent-reader receipts are the same as above | `TestCephFSRetainedClientAcrossRankOneTakeover`, with `MessengerV2Secure` |
 | A second client opens, writes and fsyncs a file that a live client holds open with exclusive, buffered file capabilities, and keeps it open | the MDS's `ceph tell mds.<name> dump inode <ino>` shows the holder as the loner with `Fsxcrwb` before; the second client finishes at once, far below `session_timeout`, and reads the holder's fsynced bytes; while both clients hold the file, 10 s later, both have the shared `pAsLsXsFrw` and the holder's `last_sent` has grown; the holder keeps its session and is not blocklisted, and through its open descriptor it reads the second client's write; a third client checks the final file | `TestCephFSCapabilityHandoff`, with `MessengerV2Secure` |
+| A client is frozen with `PauseContainer` while the only active MDS is killed and a standby takes rank 0, with `mds_reconnect_timeout` set to 10 s through `TemporaryConfig` | the FSMap shows the standby in `up:reconnect` for the window (about 15 s), then `up:rejoin` and `up:active`; the frozen client's session is gone and its address is in the blocklist; after `Resume`, its open descriptor fails, with `ESHUTDOWN` (108) on Tentacle and `EPERM` (1) on Squid, and it shuts down cleanly; a fresh client reads the bytes the frozen one had fsynced | `TestCephFSLateReconnect`, with `MessengerV2Secure` |
 
 The client fsynced its data before the failure, so these receipts show a
 session reconnect, not the replay of a request that was in flight. The
 capability receipt shows the revocation in the MDS's state, not the messages
 that carried it, and it reads that state while both clients hold the file:
 once the second client closes it, the MDS may make the holder the loner again
-and give the capabilities back. Metadata moving between live ranks during client I/O and a
-client that reconnects too late are separate profiles.
+and give the capabilities back. `MDSStatus` lists only active ranks; the
+late-reconnect test reads the recovery states from `fs dump`. Metadata moving
+between live ranks during client I/O is a separate profile.
 
 ## Daemon-to-daemon paths
 
