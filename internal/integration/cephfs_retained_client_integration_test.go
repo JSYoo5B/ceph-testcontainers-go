@@ -45,3 +45,9 @@ func TestCephFSLateReconnect(t *testing.T) {
 func TestCephFSLiveRankMigration(t *testing.T) {
 	testCephFSLiveRankMigration(t)
 }
+
+// One rename is held between its unsafe and safe replies, and observed from
+// the MDS and from the client.
+func TestCephFSUnsafeRequestWindow(t *testing.T) {
+	testCephFSUnsafeRequestWindow(t)
+}
