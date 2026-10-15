@@ -4,7 +4,10 @@
 
 package integration_test
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // MDS and client dumps saved from TestCephFSUnsafeRequestWindow runs on
 // quay.io/ceph/ceph:v20.2.4, and the client dump on v19.2.5. Only the fields
@@ -32,15 +35,15 @@ func TestRequestSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, found := findMDSRequest(inFlight, 4239, "rename")
+	held, found := findMDSRequest(inFlight, 4239, "rename", 0)
 	if !found || held.TypeData.ReqID.TID != 4 || requestSafety(held) != "unsafe" {
 		t.Fatalf("held rename %+v found=%t safety=%s", held, found, requestSafety(held))
 	}
-	committed, found := findMDSRequest(historic, 4239, "rename")
+	committed, found := findMDSRequest(historic, 4239, "rename", 4)
 	if !found || committed.TypeData.ReqID.TID != 4 || requestSafety(committed) != "safe" || committed.Duration != 7.2515 {
 		t.Fatalf("committed rename %+v found=%t safety=%s", committed, found, requestSafety(committed))
 	}
-	if mkdir, found := findMDSRequest(historic, 4239, "mkdir"); !found || requestSafety(mkdir) != "no-early-reply" {
+	if mkdir, found := findMDSRequest(historic, 4239, "mkdir", 0); !found || requestSafety(mkdir) != "no-early-reply" {
 		t.Fatalf("mkdir %+v found=%t safety=%s", mkdir, found, requestSafety(mkdir))
 	}
 	// Another client, or a description that only starts like the operation,
@@ -49,7 +52,7 @@ func TestRequestSafety(t *testing.T) {
 		client uint64
 		op     string
 	}{{4240, "rename"}, {4239, "renam"}, {4239, "create"}} {
-		if op, found := findMDSRequest(inFlight, miss.client, miss.op); found {
+		if op, found := findMDSRequest(inFlight, miss.client, miss.op, 0); found {
 			t.Errorf("client.%d %s matched %q", miss.client, miss.op, op.Description)
 		}
 	}
@@ -92,6 +95,57 @@ func TestParseClientMDSRequests(t *testing.T) {
 	for _, malformed := range []string{`[]`, `{"other": 1}`, `{"request": {"got_unsafe": 2}}`, `{"requests": []} {}`, `{"request": {}`} {
 		if _, err := parseClientMDSRequests([]byte(malformed)); err == nil {
 			t.Errorf("%s parsed", malformed)
+		}
+	}
+}
+
+// The completion of a held rename is judged per TID on each side: a client
+// that still holds the TID, or an MDS that still has it in flight, keeps it
+// unfinished, whatever the other side shows.
+func TestRenameSafe(t *testing.T) {
+	parseOps := func(data string) []mdsRequestOp {
+		t.Helper()
+		ops, err := parseMDSRequestOps([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ops
+	}
+	parseRequests := func(data string) []clientMDSRequest {
+		t.Helper()
+		requests, err := parseClientMDSRequests([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return requests
+	}
+	inFlight, historic, cleared := parseOps(unsafeInFlightSample), parseOps(unsafeHistoricSample), parseOps(`{"ops": [], "num_ops": 0}`)
+	held, otherPending, none := parseRequests(tentacleClientRequestsSample),
+		parseRequests(strings.Replace(tentacleClientRequestsSample, `"tid": 4`, `"tid": 5`, 1)), parseRequests(`{"requests": []}`)
+	// The first look names the TID from the MDS and finds it on both sides.
+	if state := joinUnsafeRename(inFlight, held, 4239, 0); state.tid != 4 || !state.inFlight || !state.pending || !bool(state.request.GotUnsafe) {
+		t.Fatalf("held: %+v", state)
+	}
+	if state := joinUnsafeRename(cleared, held, 4239, 0); state.tid != 0 || state.pending {
+		t.Fatalf("no MDS request names no TID: %+v", state)
+	}
+	for name, test := range map[string]struct {
+		ops      []mdsRequestOp
+		requests []clientMDSRequest
+		history  []mdsRequestOp
+		safe     bool
+	}{
+		// The MDS finished, but the client still holds TID 4 as unsafe.
+		"client still pending": {cleared, held, historic, false},
+		"MDS still in flight":  {inFlight, none, historic, false},
+		"only another TID":     {cleared, otherPending, historic, true},
+		"both cleared":         {cleared, none, historic, true},
+		"not in the history":   {cleared, none, parseOps(`{"ops": []}`), false},
+		"history unsafe":       {cleared, none, inFlight, false},
+	} {
+		state := joinUnsafeRename(test.ops, test.requests, 4239, 4)
+		if got := renameSafe(state, test.history, 4239); got != test.safe {
+			t.Errorf("%s: safe %t, want %t (%+v)", name, got, test.safe, state)
 		}
 	}
 }

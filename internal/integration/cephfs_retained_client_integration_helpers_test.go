@@ -1577,12 +1577,13 @@ func parseMDSRequestOps(data []byte) ([]mdsRequestOp, error) {
 }
 
 // findMDSRequest returns the request of client whose operation is op, such
-// as "rename", from its description "client_request(client.N:TID op ...".
-func findMDSRequest(ops []mdsRequestOp, client uint64, op string) (mdsRequestOp, bool) {
+// as "rename", from its description "client_request(client.N:TID op ...",
+// and whose TID is tid, or any TID for 0.
+func findMDSRequest(ops []mdsRequestOp, client uint64, op string, tid uint64) (mdsRequestOp, bool) {
 	for _, candidate := range ops {
 		reqid := candidate.TypeData.ReqID
 		prefix := fmt.Sprintf("client_request(client.%d:%d %s ", client, reqid.TID, op)
-		if reqid.Entity.Type == "client" && reqid.Entity.Num == client && strings.HasPrefix(candidate.Description, prefix) {
+		if reqid.Entity.Type == "client" && reqid.Entity.Num == client && (tid == 0 || reqid.TID == tid) && strings.HasPrefix(candidate.Description, prefix) {
 			return candidate, true
 		}
 	}
@@ -1688,20 +1689,54 @@ func parseClientMDSRequests(data []byte) ([]clientMDSRequest, error) {
 	return requests, nil
 }
 
-// cephFSUnsafeObservation is one look at the request from both sides: the
+// unsafeRenameState is one look at a client's rename from both sides: the
 // MDS's ops in flight and the client's own pending requests.
-type cephFSUnsafeObservation struct {
+type unsafeRenameState struct {
+	tid      uint64
 	op       mdsRequestOp
 	inFlight bool
 	request  clientMDSRequest
 	pending  bool
-	raw      string
+}
+
+// joinUnsafeRename finds a client's rename in parsed observations of both
+// sides. With tid 0 the MDS's rename in flight names the TID. Otherwise each
+// side is searched for that TID on its own, so a request that only one side
+// still holds counts as held there.
+func joinUnsafeRename(ops []mdsRequestOp, requests []clientMDSRequest, client, tid uint64) unsafeRenameState {
+	state := unsafeRenameState{tid: tid}
+	state.op, state.inFlight = findMDSRequest(ops, client, "rename", tid)
+	if state.inFlight && tid == 0 {
+		state.tid = state.op.TypeData.ReqID.TID
+	}
+	for _, request := range requests {
+		if state.tid != 0 && request.TID == state.tid {
+			state.request, state.pending = request, true
+		}
+	}
+	return state
+}
+
+// renameSafe is the completion condition of a held rename: neither side
+// holds its TID any more, and the MDS's history has that request committed
+// and replied.
+func renameSafe(state unsafeRenameState, historic []mdsRequestOp, client uint64) bool {
+	op, found := findMDSRequest(historic, client, "rename", state.tid)
+	return state.tid != 0 && !state.inFlight && !state.pending && found && requestSafety(op) == "safe"
+}
+
+// cephFSUnsafeObservation is one look with its bounded raw form.
+type cephFSUnsafeObservation struct {
+	unsafeRenameState
+	raw string
 }
 
 // observeUnsafeRename reads the MDS's ops in flight and, through the actor's
-// admin socket, the client's pending requests, each bounded, and finds the
-// client's rename in both.
-func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, mds, asok string, clientID uint64) cephFSUnsafeObservation {
+// admin socket, the client's pending requests, each bounded, and joins them
+// for the client's rename with tid, or the TID that the MDS names for 0. A
+// query that fails or prints what does not parse fails the test; an empty
+// pending set is an answer.
+func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, mds, asok string, clientID, tid uint64) cephFSUnsafeObservation {
 	t.Helper()
 	data, err := cluster.Ceph(ctx, "tell", "mds."+mds, "dump_ops_in_flight")
 	if err != nil {
@@ -1711,8 +1746,6 @@ func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if err != nil {
 		t.Fatalf("dump_ops_in_flight of mds.%s: %v: %.1024s", mds, err, data)
 	}
-	var observed cephFSUnsafeObservation
-	observed.op, observed.inFlight = findMDSRequest(ops, clientID, "rename")
 	queryCtx, stop := context.WithTimeout(ctx, time.Minute)
 	defer stop()
 	result, err := cluster.RunNativeCommand(queryCtx, client, ceph.NativeCommand{
@@ -1726,12 +1759,8 @@ func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if err != nil {
 		t.Fatalf("client mds_requests: %v: %.1024s", err, result.Stdout)
 	}
-	for _, request := range requests {
-		if observed.inFlight && request.TID == observed.op.TypeData.ReqID.TID {
-			observed.request, observed.pending = request, true
-		}
-	}
-	observed.raw = fmt.Sprintf("mds op %q flag_point=%q events=%v; client requests %+v", observed.op.Description, observed.op.TypeData.FlagPoint, observed.op.events(), requests)
+	observed := cephFSUnsafeObservation{unsafeRenameState: joinUnsafeRename(ops, requests, clientID, tid)}
+	observed.raw = fmt.Sprintf("tid %d: mds op %q flag_point=%q events=%v; client requests %+v", observed.tid, observed.op.Description, observed.op.TypeData.FlagPoint, observed.op.events(), requests)
 	return observed
 }
 
@@ -1816,24 +1845,22 @@ func testCephFSUnsafeRequestWindow(t *testing.T) {
 		t.Fatalf("rename receipt = %+v", renamed)
 	}
 	// The window is shown by native state, not by the call's return: both
-	// sides must hold the same request, twice, 3 s apart.
+	// sides must hold the same request, twice, 3 s apart. The first look
+	// takes the TID from the MDS; it is fixed from then on.
 	var held cephFSUnsafeObservation
 	for look := range 2 {
-		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client)
+		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, held.tid)
 		inode := fmt.Sprintf("0x%x", baseline.Inode)
 		if !observed.inFlight || requestSafety(observed.op) != "unsafe" || !observed.pending || !bool(observed.request.GotUnsafe) ||
 			observed.request.Op != "rename" || observed.request.MDS != 0 || observed.request.TargetIno != inode {
 			t.Fatalf("look %d: the rename is not held between its unsafe and safe replies: %s", look, observed.raw)
-		}
-		if look == 1 && observed.op.TypeData.ReqID.TID != held.op.TypeData.ReqID.TID {
-			t.Fatalf("the held request changed: %s, before %s", observed.raw, held.raw)
 		}
 		held = observed
 		if look == 0 {
 			time.Sleep(3 * time.Second)
 		}
 	}
-	tid := held.op.TypeData.ReqID.TID
+	tid := held.tid
 	t.Logf("CEPHFS_UNSAFE held: %s", held.raw)
 
 	if err := pause.Restore(ctx); err != nil {
@@ -1843,7 +1870,7 @@ func testCephFSUnsafeRequestWindow(t *testing.T) {
 	var committed mdsRequestOp
 	deadline := time.Now().Add(time.Minute)
 	for {
-		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client)
+		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, tid)
 		historic, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "dump_historic_ops")
 		if err != nil {
 			t.Fatal("dump_historic_ops:", err)
@@ -1852,8 +1879,8 @@ func testCephFSUnsafeRequestWindow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dump_historic_ops: %v: %.1024s", err, historic)
 		}
-		op, found := findMDSRequest(ops, baseline.Client, "rename")
-		if !observed.inFlight && !observed.pending && found && op.TypeData.ReqID.TID == tid && requestSafety(op) == "safe" {
+		op, _ := findMDSRequest(ops, baseline.Client, "rename", tid)
+		if renameSafe(observed.unsafeRenameState, ops, baseline.Client) {
 			committed = op
 			break
 		}
