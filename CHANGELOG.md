@@ -25,7 +25,10 @@ change the API.
   `StandbyReplay`, takes over rank 0; the killed daemon then rejoins as a
   standby with a new GID. A third keeps the client's file in a directory
   pinned to rank 1 of two active ranks while a standby takes over rank 1, and
-  rank 0 keeps its daemon and its session with the client.
+  rank 0 keeps its daemon and its session with the client. Another shows a
+  capability handoff: a second client writes a file that a live client holds
+  with exclusive, buffered capabilities, and the MDS's `dump inode` shows them
+  revoked without an eviction.
 
 - The same guide has a table of daemon-to-daemon paths, with what each test
   observes and how directly. The held replication write of the separate

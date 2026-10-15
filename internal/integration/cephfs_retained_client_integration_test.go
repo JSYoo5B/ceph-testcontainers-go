@@ -27,3 +27,9 @@ func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
 func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
 	testCephFSRetainedClient(t, cephFSRankOneTakeover)
 }
+
+// A second client writes a file that a live client holds; the MDS revokes the
+// holder's capabilities without evicting it.
+func TestCephFSCapabilityHandoff(t *testing.T) {
+	testCephFSCapabilityHandoff(t)
+}

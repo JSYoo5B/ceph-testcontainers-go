@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,23 +22,13 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// cephFSRetainedActor keeps one libcephfs mount and one O_RDWR fd open for
-// its whole run. It writes and fsyncs the base bytes, publishes receipt 1 and
-// waits at the "act" gate. Behind it, through the same fd and without
-// mounting or opening again, it reads the base bytes, appends the tail,
-// fsyncs, renames the file and sets a binary xattr, then publishes receipt 2.
-// It closes everything after the "finish" gate and publishes receipt 3.
-// Every receipt and gate carries the run's token; receipts are renamed into
-// place, so a reader never sees half of one. Arguments: filesystem, work
-// directory, token, path, new path, the hex of the base bytes, the tail and
-// the xattr value, and a rank to pin the file's directory to, or "-". The
-// directory is created and pinned before the file is opened.
-const cephFSRetainedActor = `
+// cephFSActorHelpers starts every actor script: it reads the filesystem, the
+// work directory and the run's token from argv and defines publish, which
+// renames a receipt for one phase into place, and gate, which waits until the
+// test writes the token into a named gate file.
+const cephFSActorHelpers = `
 import cephfs, json, os, sys, time
 name, workdir, token = sys.argv[1], sys.argv[2], sys.argv[3]
-path, renamed = sys.argv[4].encode(), sys.argv[5].encode()
-base, tail, xattr = (bytes.fromhex(arg) for arg in sys.argv[6:9])
-pin = sys.argv[9]
 def publish(phase, **fields):
     fields.update(token=token, phase=phase, pid=os.getpid())
     target = "%s/receipt-%d" % (workdir, phase)
@@ -55,6 +46,24 @@ def gate(name):
             pass
         time.sleep(0.2)
     sys.exit("gate %s did not open" % name)
+`
+
+// cephFSRetainedActor keeps one libcephfs mount and one O_RDWR fd open for
+// its whole run. It writes and fsyncs the base bytes, publishes receipt 1 and
+// waits at the "act" gate. Behind it, through the same fd and without
+// mounting or opening again, it reads the base bytes, appends the tail,
+// fsyncs, renames the file and sets a binary xattr, reads the whole file back
+// through the fd, and publishes receipt 2.
+// It closes everything after the "finish" gate and publishes receipt 3.
+// Every receipt and gate carries the run's token; receipts are renamed into
+// place, so a reader never sees half of one. Arguments: filesystem, work
+// directory, token, path, new path, the hex of the base bytes, the tail and
+// the xattr value, and a rank to pin the file's directory to, or "-". The
+// directory is created and pinned before the file is opened.
+const cephFSRetainedActor = cephFSActorHelpers + `
+path, renamed = sys.argv[4].encode(), sys.argv[5].encode()
+base, tail, xattr = (bytes.fromhex(arg) for arg in sys.argv[6:9])
+pin = sys.argv[9]
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
 fs.mount(filesystem_name=name.encode())
@@ -76,7 +85,7 @@ try:
     fs.rename(path, renamed)
     fs.setxattr(renamed, "user.receipt", xattr, 0)
     stat = fs.fstat(fd)
-    result.update(inode=stat.st_ino, size=stat.st_size)
+    result.update(inode=stat.st_ino, size=stat.st_size, full=fs.read(fd, 0, stat.st_size).hex())
 except cephfs.Error as error:
     result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
 publish(2, **result)
@@ -118,9 +127,12 @@ type cephFSActorReceipt struct {
 	Inode  uint64 `json:"inode"`
 	Size   int64  `json:"size"`
 	Read   string `json:"read"`
+	Full   string `json:"full"`
 	Errno  int    `json:"errno"`
 	Error  string `json:"error"`
 	Closed bool   `json:"closed"`
+	// CloseErrno is the errno of a failed close or unmount.
+	CloseErrno int `json:"close_errno"`
 }
 
 // cephFSActorRun is a supervised actor and its receipts.
@@ -137,7 +149,7 @@ type cephFSActorRun struct {
 
 // startCephFSActor starts the actor in client under RunNativeCommand and
 // registers its cancellation and confirmed stop before anything can fail.
-func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, filesystem, workdir string, args ...string) *cephFSActorRun {
+func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, script, filesystem, workdir string, args ...string) *cephFSActorRun {
 	t.Helper()
 	nonce := make([]byte, 8)
 	if _, err := rand.Read(nonce); err != nil {
@@ -146,11 +158,11 @@ func startCephFSActor(t *testing.T, ctx context.Context, cluster *ceph.Container
 	execOutput(t, ctx, client, "mkdir", "-p", workdir)
 	actorCtx, cancel := context.WithCancel(ctx)
 	run := &cephFSActorRun{cluster: cluster, client: client, workdir: workdir, token: hex.EncodeToString(nonce), cancel: cancel, done: make(chan struct{})}
-	argv := append([]string{"python3", "-c", cephFSRetainedActor, filesystem, workdir, run.token}, args...)
+	argv := append([]string{"python3", "-c", script, filesystem, workdir, run.token}, args...)
 	go func() {
 		defer close(run.done)
 		run.result, run.err = cluster.RunNativeCommand(actorCtx, client, ceph.NativeCommand{
-			Argv: argv, Timeout: 6 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "retained CephFS actor",
+			Argv: argv, Timeout: 6 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "CephFS actor",
 		})
 	}()
 	t.Cleanup(func() {
@@ -442,7 +454,7 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	if pin != "-" {
 		zeroBefore, oneBefore = cephFSMigrationCounters(t, ctx, cluster, untouched.Name), cephFSMigrationCounters(t, ctx, cluster, old.Name)
 	}
-	actor := startCephFSActor(t, ctx, cluster, client, fs.FilesystemName, "/tmp/retained-actor",
+	actor := startCephFSActor(t, ctx, cluster, client, cephFSRetainedActor, fs.FilesystemName, "/tmp/retained-actor",
 		path, renamed, hex.EncodeToString(base), hex.EncodeToString(tail), hex.EncodeToString(xattr), pin)
 
 	baseline := actor.receipt(t, ctx, 1)
@@ -659,4 +671,210 @@ func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *c
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// cephFSContender is an actor that opens a file that another client holds,
+// writes a payload at an offset past its end, fsyncs and reads the whole file
+// back through a mount of its own. It publishes receipt 1 with its client ID
+// and what it read, keeps its mount and fd open until the "release" gate, and
+// publishes receipt 2 once it has closed and shut down. Arguments after the
+// common ones: path, offset, hex payload.
+const cephFSContender = cephFSActorHelpers + `
+path, offset, payload = sys.argv[4].encode(), int(sys.argv[5]), bytes.fromhex(sys.argv[6])
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.mount(filesystem_name=name.encode())
+fd = fs.open(path, os.O_RDWR, 0)
+fs.write(fd, payload, offset)
+fs.fsync(fd, 0)
+stat = fs.fstat(fd)
+publish(1, client=fs.get_instance_id(), inode=stat.st_ino, size=stat.st_size, full=fs.read(fd, 0, stat.st_size).hex())
+gate("release")
+closing = {}
+try:
+    fs.close(fd)
+    fs.unmount()
+except cephfs.Error as error:
+    closing.update(close_errno=getattr(error, "errno", None) or -1)
+fs.shutdown()
+publish(2, closed=True, **closing)
+`
+
+// mdsClientCaps is one client's capabilities on an inode, from the MDS's
+// "dump inode". The strings use Ceph's notation, such as "pAsxLsXsxFsxcrwb".
+type mdsClientCaps struct {
+	ClientID uint64 `json:"client_id"`
+	Pending  string `json:"pending"`
+	Issued   string `json:"issued"`
+	Wanted   string `json:"wanted"`
+	LastSent uint64 `json:"last_sent"`
+}
+
+// cephFSInodeCaps returns the capabilities that mds has issued on inode, and
+// the client it treats as the inode's only user (loner), or -1.
+func cephFSInodeCaps(t *testing.T, ctx context.Context, cluster *ceph.Container, mds string, inode uint64) ([]mdsClientCaps, int64) {
+	t.Helper()
+	out, err := cluster.Ceph(ctx, "tell", "mds."+mds, "dump", "inode", strconv.FormatUint(inode, 10))
+	if err != nil {
+		t.Fatalf("dump inode %d on mds.%s: %v", inode, mds, err)
+	}
+	var dump struct {
+		Caps  []mdsClientCaps `json:"client_caps"`
+		Loner int64           `json:"loner"`
+	}
+	if err := json.Unmarshal(out, &dump); err != nil {
+		t.Fatalf("dump inode %d: %v: %.512s", inode, err, out)
+	}
+	return dump.Caps, dump.Loner
+}
+
+// capsOf returns the lowercase capability bits that a cap string grants for
+// one class, such as "sxcrwb" for 'F' in "pAsxLsXsxFsxcrwb".
+func capsOf(caps string, class byte) string {
+	index := strings.IndexByte(caps, class)
+	if index < 0 {
+		return ""
+	}
+	end := index + 1
+	for end < len(caps) && caps[end] >= 'a' && caps[end] <= 'z' {
+		end++
+	}
+	return caps[index+1 : end]
+}
+
+// testCephFSCapabilityHandoff lets a second client write a file that a live
+// first client holds with exclusive, buffered file capabilities. The MDS
+// revokes those capabilities from the holder, which answers, so the second
+// client finishes long before a session timeout and nobody is evicted. The
+// MDS's own "dump inode" shows the holder's capabilities before, and after
+// while both clients still hold the file, and both clients see each other's
+// bytes: the second client reads the holder's fsynced data, and the holder
+// reads the second client's write through the fd it kept open. A third
+// client checks the final file.
+func testCephFSCapabilityHandoff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	image, imageOpts := integrationImages(t)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, err := fs.MDSStatus(ctx)
+	if err != nil || len(status.Active) != 1 {
+		t.Fatalf("want one active MDS: %+v, %v", status, err)
+	}
+	mds := status.Active[0].Name
+
+	base := make([]byte, 0, 266)
+	for value := range 256 {
+		base = append(base, byte(value))
+	}
+	base = append(base, 0x00, 0xff, 0x7f, 0x80, '\r', '\n', 0x1b, 0x00, 'c', 'f')
+	tail := []byte{0xfe, 0x00, 't', 'a', 'i', 'l', 0x01, 0x02, 0x03, 0xff, '\n', 0x00, 0x7f, 0x80}
+	xattr := []byte{0x00, 'r', 'e', 'c', 'e', 'i', 'p', 't', 0xff, '\n'}
+	payload := []byte{0xc0, 'n', 't', 'e', 'n', 'd', 0x00, 0xff, '\n', 0x7f}
+	const offset = 300
+	const path, renamed = "/contended", "/contended-renamed"
+	holder := startCephFSActor(t, ctx, cluster, client, cephFSRetainedActor, fs.FilesystemName, "/tmp/holder-actor",
+		path, renamed, hex.EncodeToString(base), hex.EncodeToString(tail), hex.EncodeToString(xattr), "-")
+	baseline := holder.receipt(t, ctx, 1)
+	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
+	holderCaps := func(caps []mdsClientCaps) mdsClientCaps {
+		t.Helper()
+		for _, entry := range caps {
+			if entry.ClientID == baseline.Client {
+				return entry
+			}
+		}
+		t.Fatalf("client.%d holds no capabilities on inode %d: %+v", baseline.Client, baseline.Inode, caps)
+		return mdsClientCaps{}
+	}
+	caps, loner := cephFSInodeCaps(t, ctx, cluster, mds, baseline.Inode)
+	before := holderCaps(caps)
+	if file := capsOf(before.Issued, 'F'); loner != int64(baseline.Client) || !strings.ContainsAny(file, "x") || !strings.Contains(file, "w") || !strings.Contains(file, "b") {
+		t.Fatalf("holder client.%d is not the loner with exclusive buffered writes: loner %d, caps %+v", baseline.Client, loner, before)
+	}
+
+	// The contender needs the file capabilities that the holder has; a
+	// holder that did not answer would keep it waiting for session_timeout
+	// (60 s) and then be evicted. The contender keeps its mount and fd open
+	// until the state below is observed: once it closes, the MDS may make the
+	// holder the loner again and give the capabilities back.
+	started := time.Now()
+	contender := startCephFSActor(t, ctx, cluster, cluster.ControlContainer(), cephFSContender, fs.FilesystemName, "/tmp/contender-actor",
+		path, strconv.Itoa(offset), hex.EncodeToString(payload))
+	wrote := contender.receipt(t, ctx, 1)
+	took := time.Since(started)
+	seen := append(append(append([]byte{}, base...), make([]byte, offset-len(base))...), payload...)
+	if wrote.Client == baseline.Client || wrote.Inode != baseline.Inode || wrote.Size != int64(len(seen)) || wrote.Full != hex.EncodeToString(seen) {
+		t.Fatalf("contender %+v, want the holder's fsynced bytes and its own write", wrote)
+	}
+	if took > 30*time.Second {
+		t.Fatalf("contender took %s: the holder did not give up its capabilities", took)
+	}
+	// With both clients holding the inode the state is steady; observing it
+	// 10 s later shows that the result does not depend on catching the
+	// revocation in progress.
+	time.Sleep(10 * time.Second)
+	caps, _ = cephFSInodeCaps(t, ctx, cluster, mds, baseline.Inode)
+	after := holderCaps(caps)
+	if file := capsOf(after.Issued, 'F'); strings.Contains(file, "b") || strings.Contains(file, "x") || after.LastSent <= before.LastSent {
+		t.Fatalf("holder capabilities were not revoked: before %+v, after %+v", before, after)
+	}
+	var contenderCaps *mdsClientCaps
+	for _, entry := range caps {
+		if entry.ClientID == wrote.Client {
+			contenderCaps = &entry
+		}
+	}
+	if contenderCaps == nil || strings.Contains(capsOf(contenderCaps.Issued, 'F'), "x") {
+		t.Fatalf("contender client.%d does not share the inode: %+v", wrote.Client, caps)
+	}
+	if retained := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0); retained.Address != session.Address || retained.PID != session.PID {
+		t.Fatalf("holder session %+v, before %+v", retained, session)
+	}
+	entries, err := cluster.BlocklistEntries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(entries, func(entry ceph.BlocklistEntry) bool { return entry.Address == session.Address }) {
+		t.Fatalf("holder %s was blocklisted: %+v", session.Address, entries)
+	}
+	contender.open(t, ctx, "release")
+	if closed := contender.receipt(t, ctx, 2); !closed.Closed {
+		t.Fatalf("contender closing receipt = %+v", closed)
+	}
+	contender.wait(t, ctx)
+
+	// The holder, through the fd it kept open, sees the contender's write.
+	holder.open(t, ctx, "act")
+	acted := holder.receipt(t, ctx, 2)
+	want := append(append(append(append([]byte{}, base...), tail...), make([]byte, offset-len(base)-len(tail))...), payload...)
+	if acted.Errno != 0 || acted.Read != hex.EncodeToString(base) || acted.Full != hex.EncodeToString(want) || acted.Inode != baseline.Inode {
+		t.Fatalf("holder saw %+v, want %x", acted, want)
+	}
+	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, renamed}, Timeout: 2 * time.Minute,
+		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
+	})
+	stop()
+	var independent struct {
+		Client uint64 `json:"client"`
+		Inode  uint64 `json:"inode"`
+		Data   string `json:"data"`
+		XAttr  string `json:"xattr"`
+	}
+	if err != nil || read.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &independent) != nil ||
+		independent.Data != hex.EncodeToString(want) || independent.Inode != baseline.Inode || independent.XAttr != hex.EncodeToString(xattr) {
+		t.Fatalf("independent reader: exit=%d err=%v out=%.1024s", read.ExitCode, err, read.Stdout)
+	}
+	holder.open(t, ctx, "finish")
+	if closed := holder.receipt(t, ctx, 3); !closed.Closed {
+		t.Fatalf("closing receipt = %+v", closed)
+	}
+	holder.wait(t, ctx)
+	t.Logf("CEPHFS_CAPS inode=%d holder client.%d issued %s (loner) -> %s, last_sent %d -> %d; contender client.%d (%s) wrote %d bytes at %d in %s; holder kept session %s and read the write; reader client.%d",
+		baseline.Inode, baseline.Client, before.Issued, after.Issued, before.LastSent, after.LastSent, wrote.Client, contenderCaps.Issued, len(payload), offset, took.Round(100*time.Millisecond), session.Address, independent.Client)
 }
