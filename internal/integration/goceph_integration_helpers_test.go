@@ -22,7 +22,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-func goCephLinuxClusterPair(t *testing.T, mode, clientImage string) {
+func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
@@ -132,11 +132,12 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage string) {
 	probe := func(index int, phase string) {
 		args := []string{"--fsid", fsids[index], "--pool", pool, "--filesystem", filesystems[index],
 			"--token", fmt.Sprintf("%s-cluster-%d", mode, index), "--phase", phase}
-		goCephContainerProbe(t, ctx, clients[index], args, fsids[index], phase)
+		want := goCephIdentity{GoCeph: goCeph, FSID: fsids[index], Phase: phase, CephX: true}
+		goCephContainerProbe(t, ctx, clients[index], args, want)
 		if mode == "host" && phase == "verify" {
 			// This Linux process shares the Docker host namespace. It exercises
 			// ConnectionConfig without WithClient or a separate app container.
-			goCephNativeProbe(t, ctx, append(append([]string(nil), nativeArgs[index]...), args...), fsids[index], phase)
+			goCephNativeProbe(t, ctx, append(append([]string(nil), nativeArgs[index]...), args...), want)
 		}
 	}
 	for i := range clients {
@@ -158,7 +159,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage string) {
 	t.Logf("Linux go-ceph %s: distinct FSIDs=%v, CephX, RADOS, RBD snapshot, userspace CephFS, fresh sessions and cleanup passed", mode, fsids)
 }
 
-func goCephContainerProbe(t *testing.T, parent context.Context, client testcontainers.Container, args []string, fsid, phase string) {
+func goCephContainerProbe(t *testing.T, parent context.Context, client testcontainers.Container, args []string, want goCephIdentity) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
@@ -172,12 +173,12 @@ func goCephContainerProbe(t *testing.T, parent context.Context, client testconta
 		t.Fatal(err)
 	}
 	if code != 0 {
-		t.Fatalf("go-ceph container probe %s exited %d: %s", phase, code, output)
+		t.Fatalf("go-ceph container probe %s exited %d: %s", want.Phase, code, output)
 	}
-	goCephProbeResult(t, output, fsid, phase, "WithClient container")
+	goCephProbeResult(t, output, want, "WithClient container")
 }
 
-func goCephNativeProbe(t *testing.T, parent context.Context, args []string, fsid, phase string) {
+func goCephNativeProbe(t *testing.T, parent context.Context, args []string, want goCephIdentity) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
@@ -185,10 +186,10 @@ func goCephNativeProbe(t *testing.T, parent context.Context, args []string, fsid
 	if err != nil {
 		t.Fatalf("Linux native go-ceph probe: %v: %s", err, output)
 	}
-	goCephProbeResult(t, output, fsid, phase, "Linux native process")
+	goCephProbeResult(t, output, want, "Linux native process")
 }
 
-func goCephProbeResult(t *testing.T, output []byte, fsid, phase, location string) {
+func goCephProbeResult(t *testing.T, output []byte, want goCephIdentity, location string) {
 	t.Helper()
 	type proof struct {
 		Verified         bool   `json:"verified"`
@@ -201,20 +202,18 @@ func goCephProbeResult(t *testing.T, output []byte, fsid, phase, location string
 		HeadRestored     bool   `json:"head_restored"`
 	}
 	var result struct {
-		GoCeph string `json:"go_ceph"`
-		CephX  bool   `json:"cephx"`
-		FSID   string `json:"fsid"`
-		Phase  string `json:"phase"`
-		RADOS  proof  `json:"rados"`
-		RBD    proof  `json:"rbd"`
-		CephFS proof  `json:"cephfs"`
+		goCephIdentity
+		RADOS  proof `json:"rados"`
+		RBD    proof `json:"rbd"`
+		CephFS proof `json:"cephfs"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		t.Fatalf("decode go-ceph probe: %v: %s", err, output)
 	}
-	if result.FSID != fsid || result.Phase != phase || result.GoCeph != "v0.41.0" || !result.CephX {
-		t.Fatalf("unexpected go-ceph probe identity: %s", output)
+	if err := checkGoCephIdentity(result.goCephIdentity, want); err != nil {
+		t.Fatalf("unexpected go-ceph probe identity: %v: %s", err, output)
 	}
+	phase := want.Phase
 	for _, storage := range []proof{result.RADOS, result.RBD, result.CephFS} {
 		if !storage.Verified || storage.Bytes == 0 || (phase == "cleanup" && !storage.Deleted) ||
 			(phase != "cleanup" && len(storage.RetainedSHA256) != 64) ||

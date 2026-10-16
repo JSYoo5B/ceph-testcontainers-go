@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -109,6 +110,10 @@ func run(opts options) (probeResult, error) {
 	if opts.phase != "seed" && opts.phase != "verify" && opts.phase != "cleanup" {
 		return probeResult{}, errors.New("--phase must be seed, verify, or cleanup")
 	}
+	goCeph, err := goCephVersion()
+	if err != nil {
+		return probeResult{}, err
+	}
 	conn, err := connect(opts)
 	if err != nil {
 		return probeResult{}, err
@@ -119,7 +124,7 @@ func run(opts options) (probeResult, error) {
 		return probeResult{}, fmt.Errorf("open pool: %w", err)
 	}
 	defer ioctx.Destroy()
-	result := probeResult{GoCeph: "v0.41.0", FSID: opts.fsid, CephX: true, Pool: opts.pool,
+	result := probeResult{GoCeph: goCeph, FSID: opts.fsid, CephX: true, Pool: opts.pool,
 		Filesystem: opts.filesystem, Token: opts.token, Phase: opts.phase}
 	if result.RADOS, err = probeRADOS(ioctx, opts); err != nil {
 		return probeResult{}, fmt.Errorf("RADOS: %w", err)
@@ -464,4 +469,27 @@ func readCephFS(mount *cephfs.MountInfo, name string, expected []byte) (retErr e
 		return fmt.Errorf("file %s changed bytes: got %d bytes SHA256 %s, expected %s", name, len(actual), digest(actual), digest(expected))
 	}
 	return nil
+}
+
+// goCephVersion is the go-ceph module version that this binary was linked
+// with, read from its own build information. A replaced or unversioned module
+// has no version that a test could compare.
+func goCephVersion() (string, error) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", errors.New("the probe has no build information")
+	}
+	for _, dependency := range info.Deps {
+		if dependency.Path != "github.com/ceph/go-ceph" {
+			continue
+		}
+		if dependency.Replace != nil {
+			return "", fmt.Errorf("go-ceph is replaced by %s %s", dependency.Replace.Path, dependency.Replace.Version)
+		}
+		if dependency.Version == "" || dependency.Version == "(devel)" {
+			return "", fmt.Errorf("go-ceph has no module version: %q", dependency.Version)
+		}
+		return dependency.Version, nil
+	}
+	return "", errors.New("the probe's build information has no go-ceph dependency")
 }
