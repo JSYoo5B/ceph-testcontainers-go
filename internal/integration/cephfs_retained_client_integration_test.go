@@ -57,3 +57,9 @@ func TestCephFSUnsafeRequestWindow(t *testing.T) {
 func TestCephFSUnsafeRequestReplay(t *testing.T) {
 	testCephFSUnsafeRequestReplay(t)
 }
+
+// The MDS is killed while one cap flush waits for its ack; after its restart
+// the client's flush is acknowledged and its size and bytes survive.
+func TestCephFSFlushingCapReplay(t *testing.T) {
+	testCephFSFlushingCapReplay(t)
+}
