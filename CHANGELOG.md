@@ -8,6 +8,11 @@ change the API.
 
 ### Added
 
+- `ceph.Container.ManagerMetrics` scrapes the active manager's `prometheus`
+  module and returns its samples parsed from the text exposition format, with
+  `Select` and `Value` to pick samples by name and labels. It never enables
+  the module ([#100](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/100)).
+
 - `TestMapPropagationReceipt` records which map each daemon holds, from its
   own admin socket: every OSD's `status` after a new OSDMap epoch, and every
   MON's `mon_status` with the MonMap epoch, members, quorum and election epoch
