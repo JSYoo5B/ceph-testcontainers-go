@@ -2934,14 +2934,17 @@ The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
   so nothing else is delayed. They are added root first and filter last, so
   no packet is delayed before the hierarchy is complete. `Status` reports
   `Applied` only when the root, the child and exactly that filter, with the
-  requested address and port keys, are all present; `Filters` has tc's filter
+  requested address and port keys, are all present and nothing else is under
+  the root; `Filters` has tc's filter
   dump with each u32 filter's keys under `matches`. The counters are the
   child's, so they count only selected packets.
 - `Restore(ctx)` removes the lease's qdisc and the helper. With a `Peer`,
   removing the lease's root removes its child and filter with it, also when
   an apply stopped half way. A filter or qdisc that the apply did not add,
   under the lease's root, is refused with `ErrInvalidRequest` instead of
-  removed with the root; the lease stays retryable, and `Restore` succeeds
+  removed with the root, with or without a `Peer` and also while the delay
+  itself is intact (`Status` then reports it not `Applied`). Qdiscs outside
+  the root, such as an ingress qdisc, are not removed and do not count; the lease stays retryable, and `Restore` succeeds
   once its owner removed it. A gone interface
   needs no removal, and `Restore` never touches a new namespace. A root qdisc
   that someone replaced is refused with an error, and the lease stays

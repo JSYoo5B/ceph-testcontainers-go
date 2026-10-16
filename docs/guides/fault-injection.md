@@ -350,7 +350,8 @@ What to expect:
   and `Status` reports `Gone`; `Restore` then only removes the helper and never
   touches the new namespace.
 - `Restore` removes only the lease's own qdisc. A root qdisc that someone
-  replaced is refused with an error, and the lease stays retryable. A helper
+  replaced, or a qdisc or filter that someone added under the lease's root, is
+  refused with an error, and the lease stays retryable. A helper
   that exited or was removed is replaced first, because removing a helper does
   not remove its qdisc from a live namespace. The replacement runs the image
   that was checked, by its ID.
