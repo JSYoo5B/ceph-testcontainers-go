@@ -434,16 +434,18 @@ The parts of the constraint have these roles:
 | Category | Tag | Runs in workflow | Use it for |
 | --- | --- | --- | --- |
 | `code` | `ci_code` | Code checks | Docker-free helper tests in a Docker test package (for example the SigV4 signer) |
-| `environment` | `ci_environment` | Docker checks | Docker behaviour without Ceph |
-| `short` | `ci_short` | Ceph short and Ceph squid | Basic bootstrap, services and client fixtures |
-| `topology` | `ci_topology` | Ceph topology | Cluster composition, node lifecycle, diagnostics |
-| `multicluster` | `ci_multicluster` | Ceph multicluster | Independent clusters, zones and peers |
-| `recovery` | `ci_recovery` | Ceph recovery | Faults, partitions, removal and later recovery |
+| `environment` | `ci_environment` | Docker checks, and Ceph periodic | Docker behaviour without Ceph |
+| `short` | `ci_short` | Ceph short, and Ceph periodic on both releases | Basic bootstrap, services and client fixtures |
+| `topology` | `ci_topology` | Ceph topology (changed batches on a pull request), and Ceph periodic on both releases | Cluster composition, node lifecycle, diagnostics |
+| `multicluster` | `ci_multicluster` | Ceph multicluster (changed batches on a pull request), and Ceph periodic on both releases | Independent clusters, zones and peers |
+| `recovery` | `ci_recovery` | Ceph recovery (changed batches on a pull request), and Ceph periodic on both releases | Faults, partitions, removal and later recovery |
 
 `short` names a selection, not a time limit, and has nothing to do with Go's
-`-short` flag. It runs on every push for both Tentacle and Squid, so a test
-placed there must pass on both releases. Topology, multicluster and recovery
-batches run on Squid weekly (see [ci.md](ci.md#squid-workflows)).
+`-short` flag. `short` runs on Tentacle for every pull request and push to
+`main`. A pull request runs a batch of the other categories when it changes
+that batch's own test files. Every category runs on both Tentacle and Squid
+in Ceph periodic, so a test must pass on both releases (see
+[ci.md](ci.md#pull-request-scope)).
 
 ### Batches and the `//ci:` line
 

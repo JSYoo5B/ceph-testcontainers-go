@@ -23,6 +23,10 @@ on:
         description: Ceph release of the published role images
         default: '20.2.4'
         type: string
+      changed_since:
+        description: Base commit of a pull request; run only the batches whose own test files changed since it. Empty runs every batch
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -43,10 +47,15 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # A changed-file selection needs the base commit's history. The
+          # order matters: 0 is false in an expression, so "cond && 0 || 1"
+          # would always give 1.
+          fetch-depth: ${{ inputs.changed_since == '' && 1 || 0 }}
       # setup-go's own cache is keyed by go.sum and saved by whichever job
       # finishes first. Once that was this job, which needs almost no modules,
       # every later job restored an 11 MB cache and downloaded its modules
@@ -68,11 +77,12 @@ jobs:
         env:
           SCENARIO_CATEGORY: ${{ inputs.category }}
           SCENARIO_OPTIONAL_BATCH: ${{ inputs.optional_batch }}
+          SCENARIO_CHANGED_SINCE: ${{ inputs.changed_since }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
             python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
@@ -87,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: plan-${{ inputs.category }}
+          name: plan-${{ inputs.category }}-${{ inputs.release }}
           path: |
             artifacts/tag-plan.json
             artifacts/modules/
@@ -96,6 +106,8 @@ jobs:
   runtime:
     name: ${{ matrix.batch }}
     needs: plan
+    # A changed-file selection can be empty; the plan artifact records why.
+    if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.job_timeout }}
     strategy:
@@ -136,13 +148,13 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-${{ matrix.id }}
+          artifact_name: runtime-cleanup-${{ matrix.id }}-${{ inputs.release }}
       - name: Resolve native published Ceph roles
         id: role_images
         if: matrix.requires_ceph
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-${{ matrix.id }}
+          artifact_name: scenario-images-${{ matrix.id }}-${{ inputs.release }}
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
       - name: Native assertions and completion proof
@@ -164,7 +176,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-${{ matrix.id }}
+          artifact_name: runtime-cleanup-${{ matrix.id }}-${{ inputs.release }}
       - name: Show actual failure phases in PR check annotations and summary
         if: always()
         env:
@@ -182,7 +194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: tag-scenario-${{ matrix.id }}
+          name: tag-scenario-${{ matrix.id }}-${{ inputs.release }}
           path: artifacts/scenario/
           if-no-files-found: warn
       - name: Identify completed failing tests
