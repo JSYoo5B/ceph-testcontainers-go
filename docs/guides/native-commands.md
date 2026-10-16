@@ -168,6 +168,7 @@ if result.ExitCode != 0 {
 | `Timeout` | Run time, at most `ceph.MaxNativeCommandTimeout` (one hour). The deadline of `ctx` shortens it. |
 | `MaxStdout`, `MaxStderr` | Bytes kept of each stream, at most `ceph.MaxNativeCommandOutput` (64 MiB). The limit applies inside the container, before Docker buffers anything. |
 | `Label` | Names the command in errors: at most 128 bytes without control characters. Defaults to `native command`. |
+| `Input`, `MaxInput` | Optional standard input, and the bytes that it may carry in all, at most `ceph.MaxNativeCommandInput` (64 MiB). See [Standard input](#standard-input). Without `Input` the command's standard input is empty. |
 
 A malformed command, or a context that has already ended, fails before
 anything runs.
@@ -291,6 +292,80 @@ if errors.As(err, &unstopped) {
   command that it had sent may have applied, and the call never runs a
   command again. Typed helpers such as `ReplaceClientKey` settle their own
   changes; a raw command's outcome is yours to read back.
+
+### Standard input
+
+A worker that starts before the data it needs exists can read that data from
+its standard input. Create a `NativeInput`, pass it with `MaxInput`, run the
+command in a goroutine, and write when the worker is ready, for example after
+it published a receipt:
+
+```golang
+input := ceph.NewNativeInput()
+done := make(chan error, 1)
+go func() {
+	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv:      []string{"python3", "-c", worker, workdir, token},
+		Timeout:   2 * time.Minute,
+		MaxStdout: 4096,
+		MaxStderr: 64 << 10,
+		Label:     "comparison worker",
+		Input:     input,
+		MaxInput:  1 << 20,
+	})
+	if err == nil && (!result.InputEOF || result.ExitCode != 0) {
+		err = fmt.Errorf("worker exited %d after %d of %d input bytes", result.ExitCode, result.InputDelivered, result.InputWritten)
+	}
+	done <- err
+}()
+// Wait for the worker's ready receipt, then:
+if err := input.Write(ctx, record); err != nil {
+	t.Fatal(err)
+}
+// Later records, then the end of input:
+_ = input.Close()
+if err := <-done; err != nil {
+	t.Fatal(err)
+}
+```
+
+- The command reads exactly the bytes written, in order, with NUL and
+  non-UTF-8 bytes intact, and the end of input after `Close`. Writes may come
+  at any time while it runs: before the command starts, `Write` waits for it,
+  within its `ctx`.
+- `MaxInput` bounds all writes together. A write that would pass it is
+  refused whole with `ceph.ErrInvalidRequest`, and the input stays open.
+  An invalid limit fails the call before anything runs.
+- The supervisor reads what arrives at once and passes it on as the command
+  reads. A command that reads slowly or not at all does not hold up `Write`;
+  it holds up at most `MaxInput` bytes inside the container.
+- `Write` returns once the input stream to the container took the data. When
+  its `ctx` ends after that, it returns the context's error, and the command
+  may still get the data.
+- Once the command ended, closed its standard input, or was canceled or
+  stopped, writes fail with `ceph.ErrNativeInputClosed`. The result says what
+  the command could read: `InputWritten` bytes reached the container,
+  `InputDelivered` of them went into the command's standard input, and
+  `InputEOF` means that the end of input followed all of them.
+- The call stops taking writes when the command ends, and returns only after
+  its input and output work ended. A deadline, a canceled `ctx` or
+  `Terminate` stops the command as in
+  [Cancellation and cleanup](#cancellation-and-cleanup); a write in progress
+  then fails.
+- An input serves one command. Pass a new one to the next call.
+- Written data never appears in arguments, the environment, files, errors,
+  labels or diagnostics. The command's output is returned as the command wrote
+  it, and no redaction applies to it automatically: a worker that handles
+  secrets must not echo them, and should print only what the test compares,
+  such as counts and equality.
+- The supervisor's exec has its standard input attached through the Docker
+  engine's attach API, so a target with `Input` must be a container of the
+  Docker engine that the cluster uses.
+
+`TestNativeCommandInput` sends two binary records in separate phases to such
+a worker and checks its receipts and the result;
+`TestNativeCommandInputCancellation` cancels a call while it writes to a
+command that does not read.
 
 ### Oracle recipe: stat2, read and ceph-dencoder
 
