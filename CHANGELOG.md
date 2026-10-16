@@ -24,6 +24,15 @@ change the API.
   its session; the global ID in the MON's refusal has to match the MgrMap
   GID. A test checks the sessions on every owned MON.
 
+- The Messenger fixture guide has a MGR transition receipt. The active
+  MGR's process stops and the captured standby takes over with the same GID,
+  container and start time; the old process starts again and returns as a
+  standby with a new GID. A phase is accepted only on a sample whose MgrMap
+  did not move while it was taken, whose registrations each have their MON
+  beacon session, and whose fresh quorum and `rbd_support` module command
+  succeed. A query that did not complete keeps its status and is never read
+  as an absence.
+
 - The Messenger fixture guide has a recipe for a refused first MGR
   authentication: a test helper that keeps the rejection and the identities
   frozen after it as recorded and, within one budget, collects each MON's own
