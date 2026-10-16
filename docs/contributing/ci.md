@@ -9,19 +9,42 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
 | Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
-| Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
-| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
-| Ceph topology | `ceph-topology.yml` | push to `main`, pull request, manual | The `topology` category on Tentacle 20.2.4 |
-| Ceph multicluster | `ceph-multicluster.yml` | push to `main`, pull request, manual | The `multicluster` category on Tentacle 20.2.4 |
-| Ceph recovery | `ceph-recovery.yml` | push to `main`, pull request, manual | The `recovery` category on Tentacle 20.2.4 |
-| Ceph squid | `ceph-squid.yml` | push to `main`, pull request, manual | The `short` category on Squid 19.2.5 |
-| Ceph squid extended | `ceph-squid-extended.yml` | weekly (Tuesday 04:41 UTC), manual | The `topology`, `multicluster` and `recovery` categories on Squid 19.2.5 |
+| Docker checks | `docker.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `environment` category: Docker bridge behaviour without Ceph |
+| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `short` category on Tentacle 20.2.4 |
+| Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `topology` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `multicluster` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `recovery` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); manual | Every runtime category on Tentacle 20.2.4 and Squid 19.2.5, on `main` |
+| Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on Squid 19.2.5 |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, with an optional RGW image override |
 
 Every runtime workflow calls the reusable template `tagged-runtime.yml`
 (`workflow_call` only; it has no triggers of its own). The workflows are
 independent: none waits for another, and each can be re-run on its own. A
 failed check name therefore tells you the kind of failure before you open it.
+
+### Pull request scope
+
+A pull request runs, on Tentacle 20.2.4 role images:
+- Code checks, for every change;
+- Docker checks and every `short` batch, which includes the netem helper's
+  `network_delay` batch;
+- of the `topology`, `multicluster` and `recovery` categories, only the
+  batches whose own test files (the files that declare the batch's tests) the
+  pull request changes. A change to a shared helper or a public package
+  selects none of them; [Ceph periodic](#periodic-runs) runs them on `main`.
+
+Two things run every batch of those categories on the pull request instead:
+the `ci:full` label (adding it starts the run), and a release phase. A change
+that touches nothing but `docs/`, Markdown files, `LICENSE` or the go-ceph
+probe under `internal/integration/goceph/` runs only Code checks: no runtime
+batch reads those paths, and Code checks still runs the API inventory test
+against `docs/`. Each `Plan` job's `tag-plan.json` artifact lists the changed
+files and the selected batches.
+
+Pushes to `main` run Code checks, Docker checks and Ceph short. Every other
+batch, and every batch on Squid 19.2.5, runs in Ceph periodic within 3 hours
+of a new commit on `main`.
 
 Pushes to branches other than `main` trigger nothing. Pull requests are
 checked through the `pull_request` event (`opened`, `synchronize`,
@@ -47,15 +70,16 @@ modules again.
 Displayed names are layered as `<workflow> / <caller job> / <batch>`. For
 example, `Ceph multicluster / Scenarios / mirror_initial_daemons` is the
 `mirror_initial_daemons` batch of the multicluster category, and
-`Ceph squid extended / Topology / empty_bootstrap` is a Squid topology batch.
+`Ceph periodic / Squid topology / empty_bootstrap` is a Squid topology batch.
 Each runtime workflow also has a `Plan` job.
 
 ## Concurrency and cancellation
 
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
-| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph squid | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run of the same workflow. Manual runs are never cancelled and cancel nothing. |
-| Ceph squid extended | workflow name and ref | A manual run on `main` cancels a running scheduled run on `main`, and the other way round. |
+| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run of the same workflow. Manual runs are never cancelled and cancel nothing. |
+| Ceph periodic | workflow name and ref | A new run waits for the run in progress on the same ref and never cancels it, so every started run finishes. GitHub keeps one waiting run per group. |
+| Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | Adding an unrelated label starts a run that skips its jobs; its own group keeps it from cancelling the pull request's run. |
 | Native regressions | none | Runs are independent. |
 
 Practical consequences:
@@ -249,25 +273,59 @@ sequentially and share the process timeout. Splitting a long test into its own
 batch shortens the critical path when runners are free, but repeats checkout,
 image preparation and the cleanup check, so total runner time grows.
 
-## Squid workflows
+## Periodic runs
 
-`Ceph squid` runs the same `short` batches as `Ceph short`, on Squid 19.2.5
-role images, for every push to `main` and every pull request. A test added to
-the `short` category is therefore verified on both releases.
+`Ceph periodic` runs every runtime category on Tentacle 20.2.4 and Squid
+19.2.5 role images, on `main`. Its schedule fires every 3 hours, and its
+`Gate` job (`.github/scripts/periodic_gate.py`) decides whether the matrix
+runs:
 
-`Ceph squid extended` runs the `topology`, `multicluster` and `recovery`
-categories on Squid. Running them on every push would add a large amount of
-CI time, so they run weekly and on demand. Dispatch a run after changing
-release-dependent behaviour:
+| Situation | Matrix runs |
+| --- | --- |
+| `main` has a commit that no earlier periodic run executed | yes |
+| The last execution of the current commit is 7 days old or older | yes, as a repeat |
+| The repository variable `CI_RELEASE_PHASE` is `true` | yes, on every firing |
+| A manual dispatch | yes |
+| Otherwise | no; the run ends after `Gate` |
+
+While development is active, a run therefore checks the commits merged since
+the previous one, and a failure points at those commits. When `main` stays
+still, as in a release phase, the same commit runs again and again.
+
+### Release phase
+
+Set the repository variable for the days before a release:
 
 ```sh
-gh workflow run "Ceph squid extended" --ref main
-gh run list --workflow "Ceph squid extended" --limit 3
+gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
+gh variable delete CI_RELEASE_PHASE              # after the release
+```
+
+While it is `true`:
+- Ceph periodic runs the full matrix every 3 hours, even on an unchanged
+  commit;
+- every pull request and push to `main` runs every batch of every category
+  on Tentacle, and Ceph release matrix runs every category on Squid.
+
+### Flaky profiles
+
+Runs of an unchanged commit are how flaky profiles are found. A profile that
+fails in one periodic run and passes in another on the same commit is a flaky
+candidate: keep its first failure, with the run link, the commit and the image
+IDs, in an issue, and fix the cause. Do not re-run the job to get a pass. The
+gate never repeats a failed execution of a commit on its own; a repeat comes
+from a release phase, the weekly repeat or a dispatch.
+
+Dispatch a run to check a branch on both releases before it merges:
+
+```sh
+gh workflow run "Ceph periodic" --ref <branch>
+gh run list --workflow "Ceph periodic" --limit 3
 gh run watch <run-id>
 ```
 
-`--ref` may name any branch on GitHub that contains the workflow. A manual run
-cancels a scheduled run in progress on the same ref.
+`--ref` may name any branch on GitHub that contains the workflow. A dispatch
+always runs the matrix.
 
 ## Native regressions
 

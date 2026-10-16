@@ -42,6 +42,10 @@ def native_log(names=("TestNewFeature",), package="example/internal/integration"
         lines += ["=== RUN   " + name, "--- PASS: " + name + " (1.00s)"]
     return "\n".join([*lines, "PASS", "ok\t" + package + "\t1.002s", ""])
 
+def github_outputs(path):
+    """The key=value lines that a step appended to GITHUB_OUTPUT."""
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
 
 class TagPlannerTests(unittest.TestCase):
     def test_new_test_and_new_file_join_existing_batch_without_ci_edit(self):
@@ -260,7 +264,7 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(engine.main(["plan", "--category", "environment", "--verify", "--output", str(output),
                                           "--github-output", str(github_output)]), 0)
             report = json.loads(output.read_text())
-            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(github_output)["matrix"])
         verified_plan = verifier.call_args.args[1]
         self.assertEqual(len(verified_plan["include"]), 2)
         self.assertEqual(report["required_profiles"], 2)
@@ -281,7 +285,7 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(engine.main(["plan", "--optional", "--batch", "native_rgw_translation",
                                           "--output", str(output), "--github-output", str(github_output)]), 0)
             report = json.loads(output.read_text())
-            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(github_output)["matrix"])
         self.assertEqual(report["coverage_scope"], "optional")
         self.assertEqual(report["selected_batch"], "native_rgw_translation")
         self.assertEqual(matrix["include"], report["include"])
@@ -328,12 +332,50 @@ class TagPlannerTests(unittest.TestCase):
         with patch.object(engine, "compile_inventory", return_value=["TestDifferent"]), self.assertRaisesRegex(ValueError, "all-tag"):
             engine.verify([file], plan)
 
+    def test_changed_scope_keeps_only_batches_whose_own_test_files_changed(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="topology", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/one_more_test.go", category="topology", batch="one", tests=("TestOneMore",)),
+                   fixture(path="internal/integration/two_test.go", category="topology", batch="two", tests=("TestTwo",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "topology")
+        self.assertEqual([profile["sources"] for profile in plan["include"]],
+                         [["internal/integration/one_more_test.go", "internal/integration/one_test.go"],
+                          ["internal/integration/two_test.go"]])
+        for changed, batches in {
+                ("internal/integration/one_more_test.go",): ["one"],
+                ("internal/integration/one_test.go", "internal/integration/two_test.go"): ["one", "two"],
+                # A shared helper, a public package or docs select nothing:
+                # the periodic matrix runs those batches on main.
+                ("internal/integration/one_integration_helpers_test.go", "ceph/ceph.go", "docs/ceph.md"): [],
+                (): []}.items():
+            with self.subTest(changed=changed):
+                selected = engine.select_changed_plan(plan, [*changed, ""])
+                self.assertEqual([profile["batch"] for profile in selected["include"]], batches)
+                self.assertEqual(selected["selected_scope"], "changed")
+                self.assertEqual(selected["changed_files"], sorted(changed))
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            changed, output = Path(temporary) / "changed", Path(temporary) / "github-output"
+            changed.write_text("internal/integration/two_test.go\nREADME.md\n")
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-files", str(changed),
+                                          "--github-output", str(output)]), 0)
+            outputs = github_outputs(output)
+            self.assertEqual([profile["batch"] for profile in json.loads(outputs["matrix"])["include"]], ["two"])
+            self.assertEqual(outputs["count"], "1")
+            output.unlink()
+            changed.write_text("docs/ceph.md\n")
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-files", str(changed),
+                                          "--github-output", str(output)]), 0)
+            self.assertEqual(github_outputs(output), {"matrix": '{"include":[]}', "count": "0"})
+            for arguments in (["--changed-files", str(changed)],
+                              ["--category", "topology", "--verify", "--changed-files", str(changed)]):
+                self.assertEqual(engine.main(["plan", *arguments]), 1)
+
     def test_plan_github_matrix_excludes_code_and_records_source_metadata(self):
         catalog = [fixture(), fixture(path="internal/integration/code_test.go", category="code", batch="pure", tests=("TestCode",))]
         with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), patch("sys.stdout", new=io.StringIO()):
             output = Path(temporary) / "github-output"
             self.assertEqual(engine.main(["plan", "--github-output", str(output)]), 0)
-            matrix = json.loads(output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(output)["matrix"])
         self.assertEqual(len(matrix["include"]), 1)
         self.assertEqual(matrix["include"][0]["category"], "short")
         self.assertEqual(matrix["include"][0]["timeout"], "20m")

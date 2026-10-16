@@ -81,20 +81,18 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         "ceph-multicluster.yml": ("Ceph multicluster", "multicluster"),
         "ceph-recovery.yml": ("Ceph recovery", "recovery"),
     }
-    # Earlier releases rerun a category with role images that
-    # ceph-testcontainers-images checked and published for that release.
-    RELEASE_ENTRY_POINTS = {
-        "ceph-squid.yml": ("Ceph squid", "short", "19.2.5"),
-    }
-    # The longer categories rerun on an earlier release on a schedule, not on
-    # every push.
-    SCHEDULED_RELEASE_ENTRY_POINTS = {
-        "ceph-squid-extended.yml": ("Ceph squid extended", "19.2.5", {
-            "topology": "Ceph squid topology",
-            "multicluster": "Ceph squid multicluster",
-            "recovery": "Ceph squid recovery",
-        }),
-    }
+    # Runtime batches never read these paths, so a change to them alone runs
+    # only Code checks, on pull requests and on pushes to main alike.
+    RUNTIME_PATHS_IGNORE = ("'docs/**'", "'**/*.md'", "'LICENSE'", "'internal/integration/goceph/**'")
+    # These categories gate every merge on the current release.
+    GATING = {"docker.yml", "ceph-short.yml"}
+    # The other categories run on a pull request only for the batches whose
+    # own test files changed, unless labelled ci:full or in a release phase,
+    # and on pushes to main only in a release phase.
+    SCOPED = {"ceph-topology.yml", "ceph-multicluster.yml", "ceph-recovery.yml"}
+    RELEASES = {"20.2.4": "tentacle", "19.2.5": "squid"}
+    PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
+    PERIODIC_SCHEDULE = "41 */3 * * *"
 
     @classmethod
     def setUpClass(cls):
@@ -108,22 +106,34 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         cls.plan = engine.discover(cls.catalog)
         cls.optional = engine.discover_optional(cls.catalog)
 
+    def matrix_jobs(self, prefix):
+        """The expected caller jobs of a matrix workflow: every runtime
+        category on each release, with Docker checks once in Ceph periodic."""
+        jobs = {}
+        for release, codename in self.RELEASES.items():
+            for category in engine.RUNTIME_CATEGORIES:
+                if category != "environment":
+                    jobs[codename + "-" + category] = (category, release, prefix + " " + codename + " " + category)
+        return jobs
+
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
-        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", *self.ENTRY_POINTS,
-                    *self.RELEASE_ENTRY_POINTS, *self.SCHEDULED_RELEASE_ENTRY_POINTS}
+        expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
+                    self.RELEASE_MATRIX, *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
+        self.assertEqual(set(self.ENTRY_POINTS), self.GATING | self.SCOPED)
         self.assertNotIn("test.yml", self.workflows)
-        entries = {filename: (name, category, None) for filename, (name, category) in self.ENTRY_POINTS.items()}
-        entries.update(self.RELEASE_ENTRY_POINTS)
-        for filename, (name, category, release) in entries.items():
+        ignored = "".join("      - " + path + "\n" for path in self.RUNTIME_PATHS_IGNORE)
+        for filename, (name, category) in self.ENTRY_POINTS.items():
             with self.subTest(workflow=filename):
                 workflow = self.workflows[filename]
                 self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
-                for event in ("push", "pull_request", "workflow_dispatch"):
-                    self.assertRegex(workflow, r"(?m)^  " + event + r":")
-                self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
-                self.assertEqual(scalar(workflow, "group"),
-                                 "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}")
+                types = "    types: [opened, synchronize, reopened, labeled]\n" if filename in self.SCOPED else ""
+                self.assertIn("\non:\n  push:\n    branches: [main]\n    paths-ignore:\n" + ignored +
+                              "  pull_request:\n" + types + "    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
+                group = "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}"
+                if filename in self.SCOPED:
+                    group += "${{ github.event.action == 'labeled' && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}"
+                self.assertEqual(scalar(workflow, "group"), group)
                 self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
                 self.assertNotRegex(workflow, r"(?m)^    needs:")
                 callers = [job for job in self.jobs[filename].values()
@@ -132,31 +142,65 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertEqual(scalar(callers[0].split("    with:", 1)[0], "name"), "Scenarios")
                 self.assertEqual(scalar(callers[0], "category"), category)
                 self.assertEqual(scalar(callers[0], "check_name"), name)
-                if release is None:
-                    self.assertNotRegex(callers[0], r"(?m)^      release:")
+                # Pull requests and pushes to main run the current release.
+                self.assertNotRegex(callers[0], r"(?m)^      release:")
+                if filename in self.SCOPED:
+                    self.assertIn("    if: >-\n      (github.event_name != 'push' || vars.CI_RELEASE_PHASE == 'true') &&\n"
+                                  "      (github.event.action != 'labeled' || github.event.label.name == 'ci:full')\n", callers[0])
+                    self.assertIn("      changed_since: >-\n        ${{ github.event_name == 'pull_request' &&\n"
+                                  "        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&\n"
+                                  "        vars.CI_RELEASE_PHASE != 'true' &&\n"
+                                  "        github.event.pull_request.base.sha || '' }}\n", callers[0])
                 else:
-                    self.assertEqual(scalar(callers[0], "release").strip("'"), release)
-                    self.assertIn(release, runner.RELEASES)
+                    self.assertNotRegex(callers[0], r"(?m)^    if:")
+                    self.assertNotIn("changed_since", callers[0])
                 self.assertNotIn("steps:", callers[0])
                 self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
-        for filename, (name, release, categories) in self.SCHEDULED_RELEASE_ENTRY_POINTS.items():
-            with self.subTest(workflow=filename):
-                workflow = self.workflows[filename]
-                self.assertRegex(workflow, r"(?m)^name: " + re.escape(name) + r"$")
-                self.assertRegex(workflow, r"(?m)^  schedule:")
-                self.assertRegex(workflow, r"(?m)^  workflow_dispatch:")
-                self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request):")
-                self.assertNotRegex(workflow, r"(?m)^    needs:")
-                callers = [job for job in self.jobs[filename].values()
-                           if "uses: ./.github/workflows/tagged-runtime.yml" in job]
-                self.assertEqual(len(callers), len(self.jobs[filename]))
-                found = {scalar(job, "category"): scalar(job, "check_name") for job in callers}
-                self.assertEqual(found, categories)
-                for job in callers:
+        with self.subTest(workflow=self.PERIODIC):
+            workflow = self.workflows[self.PERIODIC]
+            self.assertRegex(workflow, r"(?m)^name: Ceph periodic$")
+            self.assertIn("\non:\n  schedule:\n    - cron: '" + self.PERIODIC_SCHEDULE + "'\n  workflow_dispatch:\n", workflow)
+            self.assertNotRegex(workflow, r"(?m)^  (?:push|pull_request):")
+            self.assertEqual(scalar(workflow, "group"), "${{ github.workflow }}-${{ github.ref }}")
+            self.assertEqual(scalar(workflow, "cancel-in-progress"), "false")
+            jobs = self.jobs[self.PERIODIC]
+            gate = jobs.pop("gate")
+            self.assertIn("python3 .github/scripts/periodic_gate.py --workflow " + self.PERIODIC, gate)
+            self.assertEqual(scalar(gate, "CI_RELEASE_PHASE"), "${{ vars.CI_RELEASE_PHASE }}")
+            expected_jobs = {"environment": ("environment", None, "Ceph periodic environment"),
+                             **self.matrix_jobs("Ceph periodic")}
+            self.assertEqual(set(jobs), set(expected_jobs))
+            for job_id, (category, release, check_name) in expected_jobs.items():
+                job = jobs[job_id]
+                self.assertIn("uses: ./.github/workflows/tagged-runtime.yml", job)
+                self.assertEqual(scalar(job, "needs"), "gate")
+                self.assertEqual(scalar(job, "if"), "needs.gate.outputs.run == 'true'")
+                self.assertEqual(scalar(job, "category"), category)
+                self.assertEqual(scalar(job, "check_name"), check_name)
+                if release is None:
+                    self.assertNotRegex(job, r"(?m)^      release:")
+                else:
                     self.assertEqual(scalar(job, "release").strip("'"), release)
-                    self.assertNotIn("steps:", job)
-                self.assertIn(release, runner.RELEASES)
-                self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
+                self.assertNotIn("changed_since", job)
+            self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
+        with self.subTest(workflow=self.RELEASE_MATRIX):
+            workflow = self.workflows[self.RELEASE_MATRIX]
+            self.assertRegex(workflow, r"(?m)^name: Ceph release matrix$")
+            self.assertIn("\non:\n  push:\n    branches: [main]\n    paths-ignore:\n" + ignored +
+                          "  pull_request:\n    paths-ignore:\n" + ignored + "  workflow_dispatch:\n", workflow)
+            self.assertEqual(scalar(workflow, "cancel-in-progress"), "true")
+            jobs = self.jobs[self.RELEASE_MATRIX]
+            # The current release already runs in the entry points above.
+            expected_jobs = {job_id: value for job_id, value in self.matrix_jobs("Ceph release matrix").items()
+                             if value[1] != "20.2.4"}
+            self.assertEqual(set(jobs), set(expected_jobs))
+            for job_id, (category, release, check_name) in expected_jobs.items():
+                job = jobs[job_id]
+                self.assertEqual(scalar(job, "if"), "vars.CI_RELEASE_PHASE == 'true' || github.event_name == 'workflow_dispatch'")
+                self.assertEqual(scalar(job, "category"), category)
+                self.assertEqual(scalar(job, "check_name"), check_name)
+                self.assertEqual(scalar(job, "release").strip("'"), release)
+        self.assertEqual(set(self.RELEASES), set(runner.RELEASES))
         reusable = self.workflows["tagged-runtime.yml"]
         self.assertRegex(reusable, r"(?m)^  workflow_call:")
         self.assertNotRegex(reusable, r"(?m)^  (?:push|pull_request|workflow_dispatch):")

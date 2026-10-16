@@ -398,7 +398,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertLess(prepare_index, run_index)
         self.assertLess(run_index, cleanup[1][0])
         prepare, run = job_steps[prepare_index], job_steps[run_index]
-        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-${{ matrix.id }}")
+        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-${{ matrix.id }}-${{ inputs.release }}")
         self.assertEqual(scalar(prepare, "if"), "matrix.requires_ceph")
         self.assertNotIn("continue-on-error", prepare)
         self.assertEqual(scalar(self.optional_entry, "category"), "optional")

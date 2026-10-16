@@ -1,9 +1,21 @@
 name: Docker checks
 
+# Runtime batches never read documentation or the separately built go-ceph
+# probe module, so a change to those alone runs only Code checks.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   workflow_dispatch:
 
 permissions:

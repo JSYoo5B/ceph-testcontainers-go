@@ -169,6 +169,7 @@ def native_tags(category, batch, capabilities=LEGACY_TAGS):
 def discover(catalog):
     """Build profiles and reject missing/overlapping ownership before execution."""
     profiles, owners, aggregates, all_parents = {}, defaultdict(list), {}, defaultdict(set)
+    sources = defaultdict(set)
     capabilities = legacy_tags(catalog)
     for file in catalog:
         if not file["tests"]:
@@ -223,6 +224,7 @@ def discover(catalog):
         if key in profiles and profiles[key] != profile:
             raise ValueError(file["path"] + ": one batch has conflicting budgets, checker scope or image roles")
         profiles[key] = profile
+        sources[key].add(file["path"])
         for test in file["tests"]:
             owners[(package, test)].append((key, file, metadata))
             if evaluate(file["constraint"], {"all"}):
@@ -262,6 +264,10 @@ def discover(catalog):
                                for assignment in owners[(profile["package"], test)]) for test in file["tests"]):
                     raise ValueError(file["path"] + ": test tags overlap another runtime profile")
     result = [profiles[key] for key in sorted(profiles)]
+    for key in sorted(profiles):
+        # The files that declare the batch's tests; shared helpers are not
+        # listed because every batch compiles them.
+        profiles[key]["sources"] = sorted(sources[key])
     for profile in result:
         profile["profile"] = profile["category"] + "/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
@@ -285,6 +291,28 @@ def select_required_plan(plan, category=None):
         raise ValueError("requested required runtime category is empty")
     return {**plan, "include": selected, "required_include": plan["include"],
             "selected_category": category, "selected_profiles": len(selected)}
+
+
+def select_changed_plan(plan, changed):
+    """Keep only the batches whose own test files a change touched.
+
+    This is the pull request scope of the categories that do not gate every
+    merge. A change to a shared helper, a public package or anything else
+    selects nothing here; the periodic matrix runs those batches on main.
+    """
+    changed = {path.strip() for path in changed if path.strip()}
+    selected = [profile for profile in plan["include"] if changed & set(profile["sources"])]
+    return {**plan, "include": selected, "selected_scope": "changed",
+            "changed_files": sorted(changed), "selected_profiles": len(selected)}
+
+
+def changed_paths(base, root=ROOT):
+    """Paths that the checked-out commit changed since its merge base with base."""
+    result = subprocess.run(["git", "diff", "--name-only", "--no-renames", base + "...HEAD"], cwd=root,
+                            text=True, capture_output=True, timeout=60)
+    if result.returncode:
+        raise ValueError("git diff since " + base + " failed: " + result.stderr.strip())
+    return result.stdout.splitlines()
 
 
 def load_catalog(root=ROOT):
@@ -575,6 +603,10 @@ def main(argv=None):
             command.add_argument("--category", choices=RUNTIME_CATEGORIES)
             command.add_argument("--optional", action="store_true")
             command.add_argument("--batch")
+            command.add_argument("--changed-files", type=Path,
+                                 help="File with one changed path per line; keep only batches whose test files changed")
+            command.add_argument("--changed-since", default="",
+                                 help="Base commit; keep only batches whose test files changed since it. Empty keeps all")
     for name in ("compile", "run"):
         command = commands.add_parser(name)
         command.add_argument("--category", required=True,
@@ -597,6 +629,10 @@ def main(argv=None):
                 raise ValueError("optional plan requires --batch and excludes --category and --verify")
             if args.batch is not None and not args.optional:
                 raise ValueError("plan --batch requires explicit --optional")
+            if args.changed_files is not None and args.changed_since:
+                raise ValueError("plan takes --changed-files or --changed-since, not both")
+            if (args.changed_files is not None or args.changed_since) and (args.optional or args.verify or args.category is None):
+                raise ValueError("plan --changed-files requires --category and excludes --optional and --verify")
         if args.command == "modules":
             report = prepare_modules(args.directory)
             print(json.dumps(report, indent=2, sort_keys=True))
@@ -626,6 +662,10 @@ def main(argv=None):
                     report = select_optional_plan(discover_optional(catalog), args.batch)
                 else:
                     report = select_required_plan(plan, args.category)
+                    if args.changed_files is not None:
+                        report = select_changed_plan(report, args.changed_files.read_text().splitlines())
+                    elif args.changed_since:
+                        report = select_changed_plan(report, changed_paths(args.changed_since))
                     if args.verify:
                         # The source filter affects workflow execution only;
                         # verification always proves the whole required suite.
@@ -636,8 +676,10 @@ def main(argv=None):
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
             if args.command == "plan" and args.github_output is not None:
+                runtime = [profile for profile in report["include"] if profile["category"] != "code"]
                 with args.github_output.open("a", encoding="utf-8") as output:
-                    output.write("matrix=" + json.dumps({"include": [profile for profile in report["include"] if profile["category"] != "code"]}, separators=(",", ":")) + "\n")
+                    output.write("matrix=" + json.dumps({"include": runtime}, separators=(",", ":")) + "\n")
+                    output.write("count=" + str(len(runtime)) + "\n")
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0 if report.get("passed", True) else 1
     except (ValueError, OSError, subprocess.SubprocessError) as error:
