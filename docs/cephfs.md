@@ -922,6 +922,57 @@ refused by the fixture and by Ceph. The source data and completed clones are
 kept. Copies of the handle share the removal state, and a retry reconciles an
 uncertain deletion.
 
+#### TemporarySnapshotSchedule
+
+```golang
+func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule cephfs.SnapshotSchedule) (*cephfs.SnapshotScheduleLease, error)
+```
+
+Adds a snapshot schedule, and its retention, to one directory through the MGR
+`snap_schedule` module, which then takes `scheduled-…` snapshots in that
+directory's `.snap`.
+
+| `cephfs.SnapshotSchedule` field | Meaning |
+| --- | --- |
+| `Path` | A clean absolute path in the filesystem, such as `/` or `/data`. |
+| `Repeat` | A positive number and one of `m` (minutes), `h`, `d`, `w`, `M` (months) or `y`, such as `6h`. |
+| `Start` | Optional first time slot; the zero time leaves the module's default, midnight UTC of the day it is added. |
+| `Retention` | Optional counts per period (`m`, `h`, `d`, `w`, `M`, `y`), or `n` for the newest snapshots of any period. |
+
+The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
+- while the `snap_schedule` module is disabled. Enable it with
+  [TemporaryMGRModule](ceph.md#temporarymgrmodule), and wait until the active
+  MGR, which restarts to load the module, answers again;
+- a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
+  `true`. The module refuses minutes otherwise; set it with
+  [TemporaryConfig](ceph.md#temporaryconfig) for a test;
+- a directory that already has a schedule, which the lease would not own.
+
+The lease's `Status(ctx)` returns a `cephfs.SnapshotScheduleStatus`, the module's state: `Schedule`, `Active`,
+`Retention`, the `Created` and `Pruned` counts, the `First` and `Last`
+snapshot times (zero before the first) and the module's JSON (`Raw`).
+`Snapshots(ctx)` lists the directory's `scheduled-…` snapshots through
+libcephfs, oldest first. `Restore(ctx)` removes the lease's retention and
+schedule; the snapshots stay. A non-nil lease returned with an error must be
+restored.
+
+```golang
+module, err := cluster.TemporaryMGRModule(ctx, "snap_schedule", true)
+// … wait for the active MGR, and set allow_m_granularity for minutes …
+schedule, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{
+	Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2},
+})
+if schedule != nil {
+	defer schedule.Restore(context.Background())
+}
+```
+
+`TestCephFSSnapshotSchedule` runs a 1-minute schedule with `n: 2`. Within
+about three minutes the module had taken three snapshots and pruned one, two
+`scheduled-…` snapshots were left, and after `Restore` the directory had no
+schedule and kept both snapshots. After a removal, `fs snap-schedule list`
+prints nothing instead of `{}`.
+
 ### Filesystem Methods: authorization
 
 These methods create Cephx principals that can reach exactly one subvolume,

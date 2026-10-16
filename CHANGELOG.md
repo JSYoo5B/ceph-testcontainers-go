@@ -32,6 +32,12 @@ change the API.
   one direction of one path, and `NetworkDelayStatus.Loss` reads the kernel's
   value ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
 
+- `cephfs.Filesystem.TemporarySnapshotSchedule` adds a snapshot schedule and
+  retention to a directory through the MGR `snap_schedule` module, with
+  `Status`, `Snapshots` and `Restore` on the returned lease. It never enables
+  the module or minute granularity
+  ([#102](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/102)).
+
 - `TestMapPropagationReceipt` records which map each daemon holds, from its
   own admin socket: every OSD's `status` after a new OSDMap epoch, and every
   MON's `mon_status` with the MonMap epoch, members, quorum and election epoch
