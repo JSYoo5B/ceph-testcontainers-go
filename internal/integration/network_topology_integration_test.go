@@ -310,3 +310,9 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	topologyRados(t, ctx, client, "five-monitor-network-recovery")
 	t.Log("five MONs: network-isolated two running members, 3/5 quorum retained, restored original endpoint IPs and 5/5 membership")
 }
+
+// One OSD's cluster network is cut in a cluster of three OSDs; its peers'
+// heartbeat reports get it marked down, it exits, and it starts again.
+func TestOSDHeartbeatFailure(t *testing.T) {
+	testOSDHeartbeatFailure(t)
+}

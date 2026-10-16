@@ -14,6 +14,12 @@ change the API.
   the old one; after the restart the client's flush is acknowledged without
   a second fsync, the MDS has the new size and an independent client reads
   every byte ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+- `TestOSDHeartbeatFailure` records OSD heartbeat failure detection: with one
+  OSD's cluster network cut in a cluster of three, the MON marks it down after
+  `osd_heartbeat_grace` on two reports from different hosts, while its peers
+  stay up and clients keep working; the marked OSD fails to rebind its cluster
+  messenger and exits, and starts again after `Restore`
+  ([#49](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/49)).
 - `TestCephFSUnsafeRequestReplay` follows one rename that got an early,
   unsafe reply across a SIGKILL and restart of the only MDS: the client keeps
   the request while no MDS runs, the restarted MDS executes the client's
@@ -24,6 +30,10 @@ change the API.
 
 ### Documentation
 
+- `InterruptNetwork` with `ceph.ClusterNetworkPlane` no longer promises that
+  the OSD keeps running: with three or more OSDs on separate hosts it is
+  marked down after `osd_heartbeat_grace` and exits, and needs `Start` after
+  `Restore`.
 - The Messenger client fixtures guide explains why a MON can issue tickets
   from replaced service keys right after `auth wipe-rotating-service-keys`,
   why native clients are not affected, and how a client of your own avoids
