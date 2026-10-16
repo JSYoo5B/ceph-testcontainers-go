@@ -72,12 +72,15 @@ class SuppliedImagesTests(unittest.TestCase):
             self.assertEqual(command[:3], ["docker", "run", "--pull=never"])
             self.assertIn(RUNNER_ID, command)
             self.assertIn("CEPH_TEST_GOCEPH_CLIENT_IMAGE=" + CLIENT_ID, command)
+            pinned = runner.pinned_go_ceph(Path(runner.__file__).with_name("probe") / "go.mod")
+            self.assertIn("CEPH_TEST_GOCEPH_VERSION=" + pinned, command)
             for invocation in [*capture.call_args_list, *launch.call_args_list]:
                 self.assertNotIn(invocation.args[0][1], ("build", "pull"))
             report = json.loads((output / "summary.json").read_text())
             self.assertEqual(result, 0)
             self.assertTrue(report["passed"])
             self.assertEqual(report["image_builds"], 0)
+            self.assertEqual(report["expected_go_ceph"], pinned)
             self.assertEqual(report["client_image"]["Id"], CLIENT_ID)
             self.assertEqual(report["runner_image"]["Id"], RUNNER_ID)
 
@@ -104,3 +107,30 @@ class SuppliedImagesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PinnedGoCephTests(unittest.TestCase):
+    def pinned(self, text):
+        with tempfile.TemporaryDirectory() as temporary:
+            go_mod = Path(temporary) / "go.mod"
+            go_mod.write_text(text)
+            return runner.pinned_go_ceph(go_mod)
+
+    def test_the_probe_module_pins_one_released_version(self):
+        go_mod = Path(runner.__file__).with_name("probe") / "go.mod"
+        self.assertRegex(runner.pinned_go_ceph(go_mod), r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+
+    def test_single_line_and_block_requirements(self):
+        module = "module probe\n\ngo 1.26.0\n\n"
+        self.assertEqual(self.pinned(module + "require github.com/ceph/go-ceph v0.42.0\n"), "v0.42.0")
+        self.assertEqual(self.pinned(module + "require (\n\tgithub.com/ceph/go-ceph v0.43.1\n\tgolang.org/x/sys v0.48.0 // indirect\n)\n"),
+                         "v0.43.1")
+
+    def test_missing_replaced_or_unreleased_go_ceph_is_refused(self):
+        module = "module probe\n\ngo 1.26.0\n\n"
+        for text in (module,
+                     module + "require github.com/ceph/go-ceph v0.42.0\nreplace github.com/ceph/go-ceph => ../go-ceph\n",
+                     module + "require github.com/ceph/go-ceph v0.42.1-0.20261001000000-abcdefabcdef\n",
+                     module + "require github.com/ceph/go-ceph v0.42.0\nrequire github.com/ceph/go-ceph v0.41.0\n"):
+            with self.subTest(text=text), self.assertRaises(RuntimeError):
+                self.pinned(text)

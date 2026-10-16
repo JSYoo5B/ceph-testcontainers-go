@@ -20,6 +20,21 @@ import uuid
 SOURCE_IMAGE = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
 
 
+GO_CEPH = re.compile(r"^(?:require\s+|\s+)github\.com/ceph/go-ceph\s+(v[0-9]+\.[0-9]+\.[0-9]+)\s*$", re.M)
+
+
+def pinned_go_ceph(go_mod):
+    """The go-ceph version that the probe module requires: the one place
+    that pins it. The test compares each probe receipt with it."""
+    text = go_mod.read_text()
+    if re.search(r"^\s*replace\b.*github\.com/ceph/go-ceph", text, re.M):
+        raise RuntimeError(str(go_mod) + " replaces go-ceph; a replaced module has no comparable version")
+    versions = GO_CEPH.findall(text)
+    if len(versions) != 1:
+        raise RuntimeError(str(go_mod) + " must require go-ceph exactly once with a released version")
+    return versions[0]
+
+
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", default="docker")
@@ -40,6 +55,7 @@ def parse_arguments(argv=None):
 def main(argv=None):
     args = parse_arguments(argv)
     fixture = Path(__file__).resolve().parent
+    go_ceph = pinned_go_ceph(fixture / "probe" / "go.mod")
     root = fixture.parents[2]
     output = args.output_dir or root / "artifacts" / (
         "go-ceph-linux-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -49,7 +65,7 @@ def main(argv=None):
     summary = {"started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                "source_image": os.environ.get("CEPH_TEST_IMAGE") or SOURCE_IMAGE,
                "client_image_reference": args.client_image, "runner_image_reference": args.runner_image,
-               "expected_go_ceph": "v0.41.0", "expected_native_build_tag": "tentacle",
+               "expected_go_ceph": go_ceph, "expected_native_build_tag": "tentacle",
                "image_builds": 0, "commands": [], "passed": False}
 
     def capture(arguments):
@@ -91,7 +107,7 @@ def main(argv=None):
         env = {"DOCKER_HOST": "unix:///var/run/docker.sock",
                "TESTCONTAINERS_HOST_OVERRIDE": "127.0.0.1",
                "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
-               "CEPH_TEST_GOCEPH_CLIENT_IMAGE": images["client"]}
+               "CEPH_TEST_GOCEPH_CLIENT_IMAGE": images["client"], "CEPH_TEST_GOCEPH_VERSION": go_ceph}
         for name in ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE", "CEPH_TEST_MDS_IMAGE"):
             if os.environ.get(name):
                 env[name] = os.environ[name]

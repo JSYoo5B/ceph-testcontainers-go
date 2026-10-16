@@ -219,6 +219,7 @@ The integration tests read these variables:
 | `CEPH_TEST_HOST_HTTP_REQUIRED` | unset | `1` makes `TestHostNetworkRGWEndpoints` fail, instead of logging, when the test process cannot reach the host-network RGW over HTTP. |
 | `CEPH_TEST_GOCEPH_CLIENT_IMAGE` | none | Prepared Linux image with the go-ceph probe, for `TestGoCephLinux`. |
 | `CEPH_TEST_GOCEPH_RUNNER_IMAGE` | none | Prepared runner image for `make goceph-linux` (read by the harness, not by Go). |
+| `CEPH_TEST_GOCEPH_VERSION` | set by the harness | The go-ceph version that `internal/integration/goceph/probe/go.mod` requires. `TestGoCephLinux` fails without a released version, and fails every probe receipt that names another one. |
 
 Because the control image also runs the client container, it must provide the
 Python `rados`, `rbd` and `cephfs` bindings and the `rbd`/`rados` CLIs. A
@@ -367,6 +368,12 @@ CEPH_TEST_GOCEPH_CLIENT_IMAGE=ceph-testcontainers-goceph:20.2.4-client \
 CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
 ```
+
+The probe reports the go-ceph version that it was linked with, from its own
+build information, and the harness reads the expected version from the probe
+module's `go.mod`. A client image with a probe built from an older pin
+therefore fails the identity check: rebuild the client image after a go-ceph
+update.
 
 ## Writing a new integration test
 

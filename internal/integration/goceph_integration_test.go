@@ -20,9 +20,15 @@ func TestGoCephLinux(t *testing.T) {
 	if clientImage == "" {
 		t.Fatal("CEPH_TEST_GOCEPH_CLIENT_IMAGE must contain the compiled Linux go-ceph probe")
 	}
+	// The harness reads the version from the probe module's go.mod, the one
+	// place that pins it; the probe reports the version it was linked with.
+	goCeph := os.Getenv("CEPH_TEST_GOCEPH_VERSION")
+	if !goCephVersionPattern.MatchString(goCeph) {
+		t.Fatalf("CEPH_TEST_GOCEPH_VERSION=%q must name the go-ceph version that the probe module pins", goCeph)
+	}
 	for _, mode := range []string{"bridge", "host"} {
 		t.Run(mode, func(t *testing.T) {
-			goCephLinuxClusterPair(t, mode, clientImage)
+			goCephLinuxClusterPair(t, mode, clientImage, goCeph)
 		})
 	}
 }
