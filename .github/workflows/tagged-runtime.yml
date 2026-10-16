@@ -52,8 +52,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          # A changed-file selection needs the base commit's history.
-          fetch-depth: ${{ inputs.changed_since != '' && 0 || 1 }}
+          # A changed-file selection needs the base commit's history. The
+          # order matters: 0 is false in an expression, so "cond && 0 || 1"
+          # would always give 1.
+          fetch-depth: ${{ inputs.changed_since == '' && 1 || 0 }}
       # setup-go's own cache is keyed by go.sum and saved by whichever job
       # finishes first. Once that was this job, which needs almost no modules,
       # every later job restored an 11 MB cache and downloaded its modules

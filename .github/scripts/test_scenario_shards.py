@@ -240,6 +240,12 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(command[command.index("--github-output") + 1], "$GITHUB_OUTPUT")
         self.assertIn("--output", command)
         self.assertIn("matrix: ${{ steps.plan.outputs.matrix }}", plan)
+        # A changed-file selection diffs against the pull request base, so the
+        # plan job needs full history then. "x && 0 || 1" would always be 1.
+        self.assertEqual(scalar(plan, "fetch-depth"), "${{ inputs.changed_since == '' && 1 || 0 }}")
+        self.assertIn("--changed-since", command)
+        self.assertEqual(command[command.index("--changed-since") + 1], "$SCENARIO_CHANGED_SINCE")
+        self.assertIn("\n    if: needs.plan.outputs.count != '0'\n", runtime)
         self.assertEqual(scalar(runtime, "needs"), "plan")
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.plan.outputs.matrix) }}")
         self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
