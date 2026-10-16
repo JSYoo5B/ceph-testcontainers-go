@@ -3,6 +3,7 @@ package ceph
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	dockercontainer "github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -48,6 +50,10 @@ type nativeTarget struct {
 	startDelay time.Duration
 	// refuseCancel fails every canceler exec, as an unreachable engine does.
 	refuseCancel bool
+	// refuseAttach fails every exec with its input attached.
+	refuseAttach bool
+	// attachClosed runs when an attached exec's connection closes.
+	attachClosed func()
 	// stateHook and networksHook run before State and Networks answer, and
 	// an error that they return is the answer.
 	stateHook, networksHook func() error
@@ -219,6 +225,129 @@ func (f *nativeTarget) Exec(ctx context.Context, args []string, opts ...tcexec.P
 	case <-ctx.Done():
 		return 0, nil, ctx.Err()
 	}
+}
+
+// nativeAttached is the attached standard input of a command of a
+// nativeTarget, whose output arrives multiplexed as Docker sends it.
+type nativeAttached struct {
+	stdin  io.WriteCloser
+	output *io.PipeReader
+	closed func()
+	once   sync.Once
+}
+
+func (a *nativeAttached) Write(p []byte) (int, error) { return a.stdin.Write(p) }
+
+func (a *nativeAttached) CloseWrite() error { return a.stdin.Close() }
+
+func (a *nativeAttached) Close() error {
+	_ = a.stdin.Close()
+	err := a.output.Close()
+	if a.closed != nil {
+		a.once.Do(a.closed)
+	}
+	return err
+}
+
+// dockerFrames frames each write to one stream as Docker does.
+type dockerFrames struct {
+	w      io.Writer
+	stream stdcopy.StdType
+}
+
+func (m dockerFrames) Write(p []byte) (int, error) {
+	frame := binary.BigEndian.AppendUint32([]byte{byte(m.stream), 0, 0, 0}, uint32(len(p)))
+	if _, err := m.w.Write(append(frame, p...)); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// AttachExec starts a command with its standard input attached, refused and
+// delayed like Exec. Its output ends when the command has ended.
+func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supervised.Attachment, error) {
+	f.mu.Lock()
+	f.execs++
+	var refused error
+	switch {
+	case f.removed:
+		refused = fmt.Errorf("container %s: %w", f.id, errdefs.ErrNotFound)
+	case f.stopped:
+		refused = fmt.Errorf("container %s is not running", f.id)
+	case f.paused:
+		refused = fmt.Errorf("container %s is paused, unpause the container before exec", f.id)
+	case f.refuseAttach:
+		refused = errors.New("engine unreachable")
+	}
+	delay, closed := f.startDelay, f.attachClosed
+	f.mu.Unlock()
+	if refused != nil {
+		return supervised.Attachment{}, refused
+	}
+	rewrite := func(value string) string {
+		return strings.ReplaceAll(strings.ReplaceAll(value, supervised.MarkerDir, f.markers()), "/proc/", f.root+"/proc/")
+	}
+	argv := make([]string, len(args))
+	for i, arg := range args {
+		argv[i] = rewrite(arg)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = os.Environ()
+	for _, variable := range env {
+		cmd.Env = append(cmd.Env, rewrite(variable))
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return supervised.Attachment{}, err
+	}
+	reader, writer := io.Pipe()
+	cmd.Stdout, cmd.Stderr = dockerFrames{writer, stdcopy.Stdout}, dockerFrames{writer, stdcopy.Stderr}
+	exited := make(chan int, 1)
+	f.wg.Add(1)
+	go func() {
+		defer f.wg.Done()
+		time.Sleep(delay)
+		f.mu.Lock()
+		if f.stopped || f.removed {
+			f.mu.Unlock()
+			_ = stdin.Close()
+			writer.CloseWithError(errors.New("exec instance dropped with its container"))
+			exited <- -1
+			return
+		}
+		err := cmd.Start()
+		if err == nil {
+			f.procs = append(f.procs, cmd.Process)
+		}
+		f.mu.Unlock()
+		code := 126
+		if err == nil {
+			code = 0
+			var exitErr *exec.ExitError
+			if errors.As(cmd.Wait(), &exitErr) {
+				code = exitErr.ExitCode()
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+					code = 128 + int(status.Signal())
+				}
+			}
+		}
+		_ = writer.Close()
+		exited <- code
+	}()
+	return supervised.Attachment{
+		Input:  &nativeAttached{stdin: stdin, output: reader, closed: closed},
+		Output: reader,
+		ExitCode: func(ctx context.Context) (int, error) {
+			select {
+			case code := <-exited:
+				exited <- code
+				return code, nil
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		},
+		Release: func() {},
+	}, nil
 }
 
 // Terminate removes the container with its processes.

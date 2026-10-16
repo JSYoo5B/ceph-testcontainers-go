@@ -7,6 +7,9 @@ inputs:
   release:
     description: Ceph release published by ceph-testcontainers-images
     default: '20.2.4'
+  roles:
+    description: Comma-separated role images that the batch declares, control included
+    default: 'control,osd,rgw,mds'
 runs:
   using: composite
   steps:
@@ -14,12 +17,14 @@ runs:
       shell: bash
       env:
         SCENARIO_RELEASE: ${{ inputs.release }}
+        SCENARIO_ROLES: ${{ inputs.roles }}
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
           --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
+          --roles "$SCENARIO_ROLES" \
           --platform linux/amd64 --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images
-        printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' >> "$GITHUB_ENV"
+        printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES" >> "$GITHUB_ENV"
     - name: Save selected image identities
       if: always()
       uses: actions/upload-artifact@v7

@@ -17,9 +17,10 @@ and memory-backed BlueStore are also available for faster disposable fixtures.
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
 
-Documentation for a published release is available at its Git tag. See
-[Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md) for compatibility
-changes from v0.1.0 and checks when adopting the release.
+Documentation for a published release is available at its Git tag.
+See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for the new native
+input API, compatibility and the limits of the protocol receipts. For changes
+from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 
 ## Modules
 
@@ -138,6 +139,8 @@ Guides for tasks that span packages:
   releases, role images and image requirements.
 - [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md): Go requirements,
   API and error compatibility, Messenger policies and release limitations.
+- [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md): bounded native
+  input, new fixture receipts and what remains unverified.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything

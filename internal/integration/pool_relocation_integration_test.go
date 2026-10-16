@@ -18,6 +18,14 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
+// A replica that missed writes is brought up to date by log recovery while the
+// PG log still covers its last entry, and by backfill once the log is trimmed
+// past it; the primary's own report tells the two apart.
+func TestOSDRecoveryAndBackfillReceipts(t *testing.T) {
+	t.Run("replicated", func(t *testing.T) { testOSDRecoveryAndBackfill(t, false) })
+	t.Run("erasure", func(t *testing.T) { testOSDRecoveryAndBackfill(t, true) })
+}
+
 // Two single-replica OSD classes make every relocation observable: a PG is
 // either on the fast OSD or on the slow one, never already in place.
 func TestPoolPGRelocation(t *testing.T) {

@@ -27,7 +27,7 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 | | none at bootstrap, two started later | `WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
 | OSD | none | `WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
 | | one MemStore OSD | `WithOSDCount(1)`, `WithOSDObjectStore(OSDMemStore)`, `WithPoolDefaults(1, 1)` | `TestMessengerClientProfileCRC` |
-| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG, size 1 and no `hashpspool` | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../ceph.md#reproduce-a-minimal-legacy-placement-setup)); `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement` |
+| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, the MGR's `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../ceph.md#reproduce-a-minimal-legacy-placement-setup)); `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts`, which check the flags of every pool |
 | Key type / service cipher | `aes256k`/`aes256k` | `WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})` | `TestMessengerClientProfileSecure` |
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
 | | `aes`/`aes256k` | `AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K}` | `TestMessengerClientProfileCRC/bridge` |
@@ -51,6 +51,15 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 `MessengerConnectionMode` values are `ceph.MessengerSecure` and
 `ceph.MessengerCRC`; the table abbreviates them.
 
+The MON requires the `OSDHASHPSPOOL` feature (`0x40000000`) of every client
+while any pool has `hashpspool`, so a client without it is refused when it
+opens its MON session. `NoHashPSPool` clears the flag only on the pool that
+`CreatePool` creates. Ceph creates the MGR's `.mgr` pool on its own, with the
+MON's default flags, so the default has to be off before that:
+`osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` file does
+that at bootstrap. Check every pool's flags with `cluster.Pools`, not only
+the pool under test.
+
 An image without `ceph-authtool --key-type`, such as Tentacle 20.2.3 or Squid,
 makes only AES keys. `Run` refuses a profile that needs `aes256k` with
 `ceph.ErrUnsupported` before any daemon starts. It does not fall back to AES.
@@ -67,15 +76,185 @@ until it reports an active MGR and one standby.
 | Control | Fixture | Proven by |
 | --- | --- | --- |
 | Pause a MON or a MGR and resume it | `PauseContainer` and `ContainerPause.Resume`. The paused daemon's socket still accepts TCP connections, but the daemon sends nothing. A paused MON leaves the quorum to the other two. A MON paused for longer than the MON ticket lifetime can strand a daemon whose MON session was on it: the daemon's reconnect is refused with `EACCES`, and its MON client stops authenticating. With 12 s tickets and a 25 s pause, this happened to the active MGR in two of four runs. Check MGR-dependent behaviour before such a pause, or restart the stranded daemon. | `TestMessengerClientProfileSecure` |
-| Fail over the active MGR | `cluster.Ceph(ctx, "mgr", "fail", name)` | `TestMessengerClientProfileSecure` |
-| Stop one MGR and start it again | `Managers()`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket. | `TestMessengerClientProfileSecure` |
+| Fail over the active MGR | `cluster.Ceph(ctx, "mgr", "fail", name)`. The failed MGR restarts its process and registers as a standby again, about 1.5 s later on 20.2.4; wait until `ManagerStatus` lists it before the next control, such as a monmap change. A daemon that must authenticate again after the MONs have rotated away the secret of its ticket, for example after an election that outlasted the ticket lifetime, is refused with `EACCES` and can stay unregistered while its process runs (see the pause row); `Stop` and `Start` on its `Managers()` handle bring it back. See [MGR MonClients](#mgr-monclients) before treating a refusal as that case. | `TestMessengerClientProfileSecure`, which waits for the standby before its next control |
+| Tell which MON session belongs to a registered MGR | the owned MONs' `sessions` admin socket command, through `cluster.AdminSocket(ctx, "mon.<name>", "sessions")`; see [MGR MonClients](#mgr-monclients) | `TestMessengerClientProfileManagerMonClients` |
+| Stop one MGR and start it again | `Managers()`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket; see [MGR transition receipt](#mgr-transition-receipt) for when the MGR is registered again. | `TestMessengerClientProfileSecure`, `TestMessengerClientProfileManagerTransition` |
 | Restart one MON | `Monitors()`, then `Stop` and `Start` | `TestMessengerClientProfileSecure` |
 | Stop every MON and start them again | `Stop` each MON; start `b` and `c` before `a`. MON a's container checks `ceph status` when it starts, which needs a quorum. Each MON comes back at its monmap address. | `TestMessengerClientProfileSecure`, with the MONs down longer than a MON ticket lives |
 | Stop MON a for good | `Stop` on its handle. With three MONs, the fixture's own CLI runs in a separate control container and keeps working. | `TestMessengerClientProfileSecure` |
 | Start MGRs later | `AddManager` | `TestMessengerClientProfileDelayedManagers` |
+| Add a MON that never answers, then remove it | `cluster.Ceph(ctx, "mon", "add", name, addr)` with an address nothing listens on, later `mon remove`. Each monmap change starts an election, and with a member missing the MONs wait for its election timeout: MON commands and new client sessions waited 6 to 11 s after the add. On Tentacle 20.2.4 the remove also took three election rounds and about 7 s; on Squid 19.2.5 one short round. Wait until `quorum_status` reports the new monmap and the same election epoch twice before starting new native clients, and give them more than that time. While the member is in the monmap, `RefreshClientMonitorConfig` would write its address into a client's `mon_host`. | `TestMessengerClientProfileUnreachableMonitor` |
 | Make the MGRs accept only secure, then restart them | `TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: secure})`, then `Stop` and `Start` each MGR. The MGRs keep the mode across the restart; `Restore` returns them to CRC. | `TestMessengerClientProfileModeRejection/managers` |
 | Revoke a client key and restore it | the suite's own client, or `TemporaryClientRevocation` and `ReplaceClientKey` | `TestClientRevocation`, `TestClientKeyReplacement` |
 | Run native oracles | `python3-rados`, the `ceph` CLI, `crushtool` and `ceph-dencoder` in a `WithClient` container, or `RunNativeCommand` | `TestNativeCommands` (`ceph-dencoder`), `TestRADOSMutationOutcomes` (`python3-rados`), `TestMessengerClientProfileCRC` and `TestOSDMemStoreLegacyPlacement` (`crushtool`) |
+
+### MGR MonClients
+
+A MGR process authenticates more than one MonClient. Its beacon client opens
+the MON session of type `mgr`, and its global ID is the GID that the MgrMap
+registers. The active MGR's modules open clients of their own, sessions of
+type `client` under the same entity name with other global IDs; a standby
+runs no modules. In `TestMessengerClientProfileManagerMonClients` the active
+mgr.a had its beacon session with global ID 4161, the MgrMap GID, and three
+more with 4179, 4185 and 4191.
+
+So a `(13) Permission denied` line in a MGR's own log does not say which of
+its clients was refused, and a module client can be refused while the
+registered slot stays healthy. The registered MGR has lost its MON session
+only when an owned MON logs `attempt to reclaim global_id <N> using bad
+ticket` (or another refusal that names the global ID) for N equal to the
+GID that the MgrMap last registered for it, and the MGR then drops out of
+the MgrMap. The MON logs are each MON container's output, of which
+`CollectDiagnostics` keeps a bounded tail. Compare the global IDs; the entity
+name alone is the same for every client of the daemon.
+
+### MGR transition receipt
+
+A client test that follows a MGR failover needs to know which daemon took
+over and which registration belongs to which process at each step.
+`testManagerTransitionReceipt` in
+`internal/integration/manager_transition_integration_helpers_test.go` is the
+recipe as a test helper; copy it into your tests. It runs with three MONs,
+two MGRs and no OSDs, at the image's default Messenger policy, in three
+phases:
+
+1. Baseline: one available active and one standby, both owned. The test
+   freezes the FSID, the MON names, both MgrMap registrations (name and GID)
+   and both containers' IDs and start times.
+2. Promotion: `Stop` on the active's `Managers()` handle. The phase waits
+   until the captured standby is active with the same GID, container ID and
+   start time, and the stopped MGR has left the MgrMap.
+3. Restoration: `Start` on the same handle. `Start` waits only for the admin
+   socket, so the phase waits until the old MGR is the only standby, with a
+   new GID, the same container ID and a new start time, while the promoted
+   MGR stays active with its identity. The old MGR need not become active
+   again.
+
+Each phase has a deadline of its own and takes samples until one is
+accepted. A sample reads the MgrMap, the `sessions` of every frozen MON,
+each MGR container's inspection, a fresh `quorum_status`, `ceph rbd task list`
+(a command of the `rbd_support` MGR module, not RBD I/O) and the MgrMap again,
+each query within its own bound. `classifyMgrSample` then judges it:
+
+- `incomplete`: a query did not complete. Its status stays as observed:
+  `missing`, `timeout`, `parse_failure`, `truncated`, `native_rejection` or
+  `failed`. None of them is an observed absence, and truncated JSON never
+  decodes to an empty map.
+- `transitional`: the two MgrMaps differ, so the sample may mix the
+  registrations of two maps. The phase keeps it and takes another sample.
+- `violated`: the captured standby's container or start time changed, or it
+  registered with another GID; an unowned MGR is active; the FSID changed;
+  the old MGR's container was replaced, or after its restart it holds its old
+  GID. The phase fails at once.
+- `pending`: a condition is not met yet, for example a MON out of the quorum
+  or a registration without its beacon session.
+- `accepted`: every registration that the phase requires has its beacon
+  session on some MON: type `mgr`, under the MGR's entity, with the MgrMap GID
+  as its global ID (see [MGR MonClients](#mgr-monclients)). Module clients of
+  the same entity do not count, and a MGR need not have a beacon session on
+  every MON.
+
+The test logs the receipt as `MGR_TRANSITION_RECEIPT`. For each phase it
+keeps the window, the count of samples by state and the last four samples,
+with selected fields only: `mgr dump` prints a few hundred KB of module
+option descriptions, of which the receipt keeps the epoch, the availability
+and the registrations. A failed `Stop` or `Start`, or a phase that ends
+without an accepted sample, fails the test with the receipt so far.
+
+On 20.2.4 and 19.2.5, with the official image and with the CI role images,
+the MgrMap epochs went 4, 6, 7. The MgrMap moved to the standby 23 to 35 s
+after the stop, and the promotion was accepted 35 to 39 s after it. Before the
+move, a sample timed out on `rbd task list`, which waited for the stopped
+active, and the sample during the move was transitional. The restarted MGR
+was a standby with a new GID within 5 s of `Start`.
+
+The receipt does not show which Messenger mode a connection used, and it
+does not follow OSD, MDS or RGW daemons across the transition.
+
+### Authentication first-failure bundle
+
+When a client's first authentication to a MGR is refused, for example after
+a rotating-key wipe, keep that rejection and collect what the stock images can
+observe around it. Do not retry the authentication, wipe again, restart a
+daemon or wait a fixed time to get a pass: each would replace the first
+failure with a different run.
+
+`collectAuthFirstFailureBundle` in
+`internal/integration/auth_first_failure_integration_helpers_test.go` is the
+recipe as a test helper; copy it into your tests. Right after the rejection,
+before any diagnostic, freeze what you expect: the FSID, the MON names, and
+the target MGR's name, GID, container ID and start time. Pass them with the
+rejection as you recorded it, your declared provenance (producer and subject
+sources, run, report), a held session if you kept one, and your installed
+tickets with opaque, run-scoped labels and the epochs that their issuer
+connection showed. Those epochs are not carried by the ticket. The helper
+collects:
+
+| Field | Source | Meaning |
+| --- | --- | --- |
+| `monitors` | `AdminSocket(ctx, "mon.<name>", "mon_status")` for each expected MON | each MON's own rank, state, election epoch, quorum, MonMap epoch, `auth_epoch` (Tentacle; absent on Squid) and FSID, without a MON session |
+| `quorum_names` | `QuorumStatus` | the quorum as a MON session reports it, a different observation from each MON's own state |
+| `managers`, `managers_after` | `mgr dump`, `ManagersContext` and each MGR container's start time, and every expected MON's `sessions` | each MGR's GID and container instance, before and after the collection, and its MON sessions split as in [MGR MonClients](#mgr-monclients): the beacon session's global ID and the module clients' |
+| `native_controls` | `RunNativeCommand` of `ceph tell mgr.<name> version` for the tested target and the active MGR | behavioral controls, with their phase: a new client authenticated with its own ticket |
+| `queries` | every query above | name, kind, start and end, and a status: `complete`, `unsupported`, `timed_out`, `truncated`, `failed` or `unavailable`, with a redacted error and output excerpt of at most 1 KiB otherwise |
+| `first_failure`, `held_session`, `consumer_tickets`, `provenance`, `expected_target` | your records | stored as given |
+| `generation_equality` | | always `unavailable/unverified` |
+
+The collection has one total budget, here a minute, and a bound per query.
+It runs from a context of its own, so a test context that ended with the
+failure does not stop it, and it keeps going after a query fails. Every wait
+ends with the budget: the MONs come from your frozen list, the MGR
+containers from `ManagersContext`, and errors are redacted within what is
+left of the budget. An error that could not be redacted in time is replaced
+by a fixed "text withheld" marker. The one exception is a control that
+`RunNativeCommand` could not confirm as stopped: its `Stop` has a separate
+cleanup allowance of a minute, outside the budget. A query that
+fails is recorded with its status, not retried. Empty or non-JSON output, or a
+status without its name, FSID or MonMap epoch, is a failed query, not an
+observation; an empty session list is an answer. A command that the daemon
+does not know, such as `quorum_status` on a MON's admin socket, is
+`unsupported`. A native command whose stop cannot be confirmed is stopped
+again and, if that fails, recorded under `cleanup_errors`. The rejection stays
+as you recorded it, also when every query fails.
+
+`classifyAuthBundle` then reports:
+- whether the bundle is complete, and the problems if not: a query that did
+  not complete, an expected MON without an observation or with another FSID,
+  a MGR whose GID or container instance changed during the collection, a
+  failed cleanup, a missing rejection, or a claimed generation equality;
+- whether the target MGR still had the GID and container instance that you
+  froze (`registered`), had another (`changed`), was missing from a MgrMap
+  that was read (`absent`), or could not be observed (`unavailable`);
+- which client a MON's refusal named, when you recorded its global ID: the
+  registered MGR, one of its module clients, or unknown;
+- secret IDs that tickets of different runs or cycles share. A wipe
+  recreates the MGR key set, and its secret IDs start again, so an equal ID is
+  not the same key;
+- whether every control succeeded, and the rejection's result, unchanged.
+
+It never reports generation equality. No stock command shows the rotating
+key that the issuing MON used, or the one that the MGR selected to verify a
+ticket, without the keys themselves. A successful control, before or after
+the failure, or a later passing run does not show it either. Proving
+equality needs a native observer outside the stock images; see
+[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71).
+
+`checkAuthBundleSecrecy` refuses a bundle that contains a secret you pass or a
+field beyond its schema. The bundle holds no key, ticket, proof or auth
+dump. Do not add `debug_auth` output, which prints keys (see
+[Observing Cephx keys from the daemon side](native-commands.md#observing-cephx-keys-from-the-daemon-side)).
+
+`TestAuthFirstFailureBundle` runs the recipe with three MONs and two MGRs
+after one `auth wipe-rotating-service-keys`. Squid's MONs do not know that
+command, and the test then collects without a wipe. Its tested
+authentication is a native client with a wrong key, which the MONs refuse with
+errno 13. Besides the complete bundle, it collects one with a budget that
+ends at once (every query `timed_out`) and one whose control may keep 8 bytes
+(`truncated`); both are incomplete and keep the rejection.
+`TestAuthBundleRetainedFailure` replays a consumer's retained failure as a
+bundle, with synthetic labels that keep their equality: complete, target
+registered, controls successful, -13 preserved and generation equality still
+unverified. `TestAuthBundleClassification` changes one fact at a time.
 
 ## Mutation oracles
 
@@ -105,6 +284,80 @@ MemStore OSD with the legacy CRUSH map and a pool without `hashpspool`. A
 MemStore OSD loses its data when it is killed, so durability across a crash
 needs BlueStore, as in `TestRADOSMutationOutcomes`. Delays inside the OSD are
 described in [Fault injection](fault-injection.md).
+
+## MDS sessions
+
+A client that implements CephFS sessions needs to know what the native client
+keeps when its MDS fails. These tests keep a native libcephfs client mounted
+in a client container under `RunNativeCommand`, with a file descriptor that it
+opened before the failure or the move, and publish its client ID, PID and inode in
+receipts tied to one run. `Sessions` reports the session; `ceph tell
+mds.<name> session ls` adds counters that `Session` leaves out, such as
+`num_leases` and `num_completed_requests`.
+
+| Profile | Native receipt | Proven by |
+| --- | --- | --- |
+| The only MDS is killed, its GID failed with `mds fail`, and its container started again | rank 0 returns with a new GID in the same container; the client's session is `open` again with the same client ID, PID and address and nonce; through the descriptor opened before the failure the client reads its bytes, appends and fsyncs, renames the file and sets a binary xattr; a client in another container reads the same inode, the exact bytes and the xattr | `TestCephFSRetainedClientAcrossMDSRestart`, with `MessengerV2Secure` on bridge and host networks |
+| The active MDS is killed and its GID failed; an idle standby, or the journal follower of rank 0 (`StandbyReplay`), takes the rank | the same receipts, with rank 0 served by the standby under the GID it had before; afterwards the killed daemon starts again and rejoins as a standby or follower with a new GID, which `WaitReady` waits for | `TestCephFSRetainedClientAcrossStandbyTakeover/standby` and `/standby-replay`, with `MessengerV2Secure` |
+| Two active ranks with a standby; the client's file lives in a directory pinned to rank 1 with `ceph.dir.pin`, and rank 1's MDS is killed and its GID failed | before the failure, rank 0's export and rank 1's import counters record the move, rank 1 reports the pinned directory as an authoritative subtree, and it holds an open session with the client; the standby takes rank 1 under its GID and reports the subtree in turn; rank 0 keeps its daemon and its session with the client; the descriptor and independent-reader receipts are the same as above | `TestCephFSRetainedClientAcrossRankOneTakeover`, with `MessengerV2Secure` |
+| A second client opens, writes and fsyncs a file that a live client holds open with exclusive, buffered file capabilities, and keeps it open | the MDS's `ceph tell mds.<name> dump inode <ino>` shows the holder as the loner with `Fsxcrwb` before; the second client finishes at once, far below `session_timeout`, and reads the holder's fsynced bytes; while both clients hold the file, 10 s later, both have the shared `pAsLsXsFrw` and the holder's `last_sent` has grown; the holder keeps its session and is not blocklisted, and through its open descriptor it reads the second client's write; a third client checks the final file | `TestCephFSCapabilityHandoff`, with `MessengerV2Secure` |
+| A client is frozen with `PauseContainer` while the only active MDS is killed and a standby takes rank 0, with `mds_reconnect_timeout` set to 10 s through `TemporaryConfig` | the FSMap shows the standby in `up:reconnect` for the window (about 15 s), then `up:rejoin` and `up:active`; the frozen client's session is gone and its address is in the blocklist; after `Resume`, its open descriptor fails, with `ESHUTDOWN` (108) on Tentacle and `EPERM` (1) on Squid, and it shuts down cleanly; a fresh client reads the bytes the frozen one had fsynced | `TestCephFSLateReconnect`, with `MessengerV2Secure` |
+| Two active ranks; the client appends 16-byte records through one descriptor to a file in a directory pinned to rank 0, fsyncing each before the next; after a few records, another client sets the directory's `ceph.dir.pin` to 1, and after the stream to 0 again | rank 1 becomes the only rank that reports the directory as an authoritative subtree, in `get subtrees` of both ranks read between two `MDSStatus` reads with unchanged GIDs; rank 0's `exported` and `exported_inodes` and rank 1's `imported` and `imported_inodes` grow; more records are acknowledged under rank 1; the client has sessions on both ranks with one address and PID and is not blocklisted; after the stream, the client reads every record in order through its descriptor, and a client in another container reads the same bytes and xattr; a fresh mount reads the restored pin, and rank 0 is again the only authority before the client closes | `TestCephFSLiveRankMigration`, with `MessengerV2Secure` |
+| One active MDS; the client renames a fsynced file within its directory once while `mds_log_pause`, set through `TemporaryConfig`, holds the MDS's journal | the running daemon's own `config get` shows `mds_early_reply` true and the pause applied; the rename call returns with the early reply; twice, 3 s apart, the MDS's `dump_ops_in_flight` holds the client's request (`client.<id>:<tid> rename`) after `early_replied` and without `journal_committed`, and the client's admin socket (`mds_requests`) holds the same TID with `got_unsafe` and the file's inode; after the pause is restored, the client no longer holds it, and the MDS's `dump_historic_ops` shows it `journal_committed` and `replying`; the MDS keeps its GID; a client in another container finds the new name with the original inode and no old name | `TestCephFSUnsafeRequestWindow`, with `MessengerV2Secure` |
+
+The client fsynced its data before the failure, so these receipts show a
+session reconnect, not the replay of a request that was in flight. The
+capability receipt shows the revocation in the MDS's state, not the messages
+that carried it, and it reads that state while both clients hold the file:
+once the second client closes it, the MDS may make the holder the loner again
+and give the capabilities back. `MDSStatus` lists only active ranks; the
+late-reconnect test reads the recovery states from `fs dump`. The live
+migration test sets the pin through one mount, reads it back through a fresh
+one and only then waits for the authority: the pin is a policy, and the
+subtree follows it later. Each of its records was fsynced before the next one
+started, so it does not cover a request that was in flight when the export
+froze the directory.
+
+The unsafe-window receipt is the one profile with a request in flight: the
+client got an early, unsafe reply to its rename and holds the request until
+the MDS journals it. The test asks the client for its pending requests
+through an admin socket that the actor sets with
+`conf_set("admin_socket", path)` before it mounts. The client prints them as a
+`requests` array on Tentacle and as one `request` object per request on
+Squid. The MDS replies early only when it can, so a request that allocates an
+inode, such as the actor's `mkdir`, has no unsafe reply (`TestRequestSafety`
+keeps that native sample). The receipt holds the request while the MDS keeps
+running; replaying it after an MDS failure is not covered.
+
+## Daemon-to-daemon paths
+
+A client test that follows a request past its first daemon needs to know which
+internal paths a fixture has actually exercised, and how directly. In the
+table, *native state* means that the daemons themselves reported the
+intermediate condition, such as a write waiting for its replica; *outcome*
+means that only the result was checked. No test inspects the messages on
+these paths.
+
+| Path | What the test observes | Evidence | Proven by |
+| --- | --- | --- | --- |
+| OSD primary to replica, cluster network | The pool has one PG on both OSDs, with two replicas and `min_size` 2. While one OSD's cluster endpoint is cut, the primary reports the client's write `waiting for sub ops`, with no replica commit, for 10 seconds. Meanwhile a MON command answers, both OSDs stay up with the same acting set, and the cut OSD's public listener accepts TCP. After the restore the writer completes, and a client of its own in another container reads the same bytes and object version. The test logs the whole receipt as `HELD_REPLICATION_RECEIPT`. | Native state | `TestSeparateClusterNetworksAndInterruptions`, `TestSeparateIPv6ClusterNetworksAndInterruptions` |
+| MON to MON | Cutting two of five MONs off the public network leaves a quorum of three; restoring them brings back five. | Native state (quorum membership). Which daemon received which map is not observed. | `TestFiveMonitorQuorumAndNetworkRecovery` |
+| OSD to OSD when a replica missed writes | One replica of a one-PG, two-replica pool stops while writes continue, then starts again with recovery held by `norecover` or `nobackfill`. The primary's `pg query` tells the two paths apart. In log recovery the replica stays in the acting set, has no backfill target and `last_backfill` `MAX`, and the PG log still reaches back to the replica's last entry. In backfill the PG log has been trimmed past that entry, and the replica is only in the up set, as the backfill target with `last_backfill` `MIN`. While the flag is set, `num_objects_recovered` does not move; afterwards it grows by exactly the objects written while the replica was down. A client of its own reads every object, and with the primary stopped the replica serves them alone. The same receipt runs on a K=2, M=1 erasure-coded pool, where the replica is the OSD of one shard: `pg query` names it like `2(1)`, backfill leaves its acting slot empty (`2147483647`), and with the primary stopped no object can be rebuilt without the recovered shard. The test logs `OSD_RECOVERY_RECEIPT`. | Native state | `TestOSDRecoveryAndBackfillReceipts/replicated` and `/erasure` |
+| OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
+| MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. With `ceph.dir.pin` on a directory that a client has open, rank 0's `exported` and `exported_inodes` perf counters and rank 1's `imported` and `imported_inodes` grow, read with `ceph tell mds.<name> perf dump mds` before and after. In the live migration the client keeps writing during the move, and both ranks must agree on the single authority. | Native state (per-daemon counters) for the pinned directory; outcome for subvolume pins | `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration`, `TestCephFSPins` |
+| MGR to MON, registration and failover | The MONs drop the active MGR whose process stopped and promote the captured standby, which keeps its GID and process. The restarted MGR registers again as a standby with a new GID. Each registration has its beacon session on a MON, and the MON quorum and a MGR module command answer in every phase. The test logs `MGR_TRANSITION_RECEIPT`; see [MGR transition receipt](#mgr-transition-receipt). | Native state (MgrMap and MON sessions) | `TestMessengerClientProfileManagerTransition` |
+| MDS to client after an MDS restart, a standby takeover or a live export | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover`, `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration` |
+
+A short log for the backfill case comes from `TemporaryConfig` on
+`osd_min_pg_log_entries`, `osd_max_pg_log_entries` and `osd_pg_log_trim_min`;
+with the default `osd_pg_log_trim_min` of 100, a log of a few dozen entries is
+not trimmed at all.
+
+No receipt exists yet for OSD heartbeat failure detection, RGW to RADOS, or the RBD and CephFS mirror peers with one path
+cut. A fault on one peer or in one direction
+needs a peer-selective fault, which the fixture does not provide:
+`InterruptNetwork` cuts a whole endpoint, and `TemporaryNetworkDelay` delays
+everything that leaves an interface.
 
 ## Differences from a single-container bootstrap
 

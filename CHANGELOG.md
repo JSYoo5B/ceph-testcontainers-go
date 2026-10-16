@@ -4,6 +4,106 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## v0.3.0 (2026-10-16)
+
+The v0.3.0 release adds bounded native input and protocol observation
+recipes. See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for
+compatibility and the limits of the completed
+[milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2).
+The receipts below are test helpers and native evidence, not new public
+observer APIs or certification of a downstream Messenger implementation.
+
+### Added
+
+- `RunNativeCommand` can give a command a bounded, binary-safe standard input:
+  `NativeCommand.Input` takes a `NativeInput` from `NewNativeInput`, whose
+  `Write` sends data in order while the command runs and whose `Close` ends
+  it, and `MaxInput` bounds the bytes in all. The supervisor keeps the
+  command's deadline, cancellation and confirmed stop. The result reports the
+  bytes written and delivered and whether the end of input reached the
+  command. The transport does not put input in arguments, files, errors or
+  diagnostics; command output remains raw, so a worker handling secrets must
+  not echo them. `Complete()` still covers time and output limits; assert
+  input delivery and the worker's receipt separately.
+
+- The Messenger fixture guide explains how to tell which MON session belongs
+  to a registered MGR. A MGR authenticates its beacon client, whose global
+  ID is the MgrMap GID, and a client for each of its modules. A refusal in
+  the MGR's own log therefore does not show that the registered slot lost
+  its session; the global ID in the MON's refusal has to match the MgrMap
+  GID. A test checks the sessions on every owned MON.
+
+- The Messenger fixture guide has a MGR transition receipt. The active
+  MGR's process stops and the captured standby takes over with the same GID,
+  container and start time; the old process starts again and returns as a
+  standby with a new GID. A phase is accepted only on a sample whose MgrMap
+  did not move while it was taken, whose registrations each have their MON
+  beacon session, and whose fresh quorum and `rbd_support` module command
+  succeed. A query that did not complete keeps its status and is never read
+  as an absence.
+
+- The Messenger fixture guide has a recipe for a refused first MGR
+  authentication: a test helper that keeps the rejection and the identities
+  frozen after it as recorded and, within one budget, collects each MON's own
+  `mon_status`, the quorum, each MGR's GID, container instance and MON
+  sessions, and fresh native controls, with each query's status (complete,
+  unsupported, timed out, truncated, failed or unavailable). Its classifier
+  reports completeness, whether the target MGR kept its GID and container
+  instance, which client a MON's refusal named, and reused secret IDs, and
+  always reports generation equality as `unavailable/unverified`. The bundle
+  holds no keys.
+
+- The guide [Fixtures for Messenger client tests](docs/guides/messenger-client-fixtures.md)
+  has an MDS session section. Its first receipt keeps a native libcephfs
+  client mounted while the only MDS is killed, failed and started again:
+  the session returns with the same client ID, PID and address, and the file
+  descriptor opened before the failure keeps reading, writing, renaming and
+  setting xattrs, as a client in another container confirms. A second
+  receipt does the same while an idle standby, or the journal follower of
+  `StandbyReplay`, takes over rank 0; the killed daemon then rejoins as a
+  standby with a new GID. A third keeps the client's file in a directory
+  pinned to rank 1 of two active ranks while a standby takes over rank 1, and
+  rank 0 keeps its daemon and its session with the client. Another shows a
+  capability handoff: a second client writes a file that a live client holds
+  with exclusive, buffered capabilities, and the MDS's `dump inode` shows them
+  revoked without an eviction. Another freezes a client across an MDS
+  failover: it misses the shortened reconnect window, is evicted and
+  blocklisted, and its open file then fails (`ESHUTDOWN` on Tentacle, `EPERM`
+  on Squid). Another moves a directory from rank 0 to rank 1 and back while a
+  client streams fsynced records into a file in it through one descriptor:
+  rank 1 becomes the directory's only authority, the daemons' export and
+  import counters grow, and the client keeps its sessions and reads every
+  record. A last one holds one rename between its early, unsafe reply and its
+  journal commit with `mds_log_pause`: the MDS's ops in flight and the
+  client's own pending requests show the same TID, unsafe, until the pause is
+  restored and the request commits.
+
+- The same guide has a table of daemon-to-daemon paths, with what each test
+  observes and how directly. The held replication write of the separate
+  network tests now records a receipt: its PG and acting set, the request the
+  primary held, controls that kept working during the cut, and the bytes and
+  object version that an independent client reads afterwards.
+
+- The daemon-to-daemon path table has a receipt that tells log recovery
+  from backfill. A replica that missed writes rejoins with recovery held,
+  and the primary's `pg query` shows which path it took. The test records
+  that path, the objects recovered per PG, an independent readback and the
+  replica serving every object alone. It also runs on a K=2, M=1
+  erasure-coded pool, for the OSD of one shard.
+
+- The legacy placement recipe keeps `hashpspool` off every pool, the MGR's
+  `.mgr` pool included: `osd_pool_default_flag_hashpspool = false` in a
+  `WithConfigFile` file applies before the MGR creates `.mgr`. While any pool
+  has the flag, the MON requires the `OSDHASHPSPOOL` feature of every client,
+  so `NoHashPSPool` on the test's own pool was not enough for a client
+  without it. The tests of the recipe check the flags of every pool.
+
+- The Messenger fixture guide has a recipe for a monmap-only membership
+  change: `mon add` of a MON that never answers, then `mon remove`. Each
+  change starts an election that holds MON commands and new client sessions
+  for several seconds, the remove too on Tentacle; the recipe waits until `quorum_status` reports the
+  same election epoch twice before starting new native clients.
+
 ## v0.2.0 (2026-10-14)
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)

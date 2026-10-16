@@ -47,9 +47,38 @@ func TestMessengerClientProfileDelayedManagers(t *testing.T) {
 	testMessengerClientDelayedManagers(t)
 }
 
+// A MON that never answers joins the monmap and leaves it again; new clients
+// connect once the election that each change starts has settled.
+func TestMessengerClientProfileUnreachableMonitor(t *testing.T) {
+	parallelWhenEnabled(t)
+	testMessengerClientUnreachableMonitor(t)
+}
+
+// A MGR authenticates several MonClients; only its beacon client's global ID
+// is the MgrMap GID.
+func TestMessengerClientProfileManagerMonClients(t *testing.T) {
+	parallelWhenEnabled(t)
+	testManagerMonClients(t)
+}
+
+// The active MGR's process stops and the captured standby takes over with the
+// same process; the old process starts again and returns as a standby with a
+// new GID.
+func TestMessengerClientProfileManagerTransition(t *testing.T) {
+	parallelWhenEnabled(t)
+	testManagerTransitionReceipt(t)
+}
+
 // A network interruption of a MON outlasts a restart of the MON until its
 // owner restores it; then the MON gets its addresses back.
 func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 	parallelWhenEnabled(t)
 	testMonitorAddressAcrossNetworkInterruption(t)
+}
+
+// After one rotating-key wipe, a tested authentication that the MONs refuse
+// is kept as recorded while a bounded bundle of MON, MGR and control
+// observations is collected around it.
+func TestAuthFirstFailureBundle(t *testing.T) {
+	testAuthFirstFailureBundle(t)
 }

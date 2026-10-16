@@ -395,7 +395,7 @@ all options have been applied. `Run` does not wait for the pools to become clean
 | `CRUSHRoot` | the cluster's default root | Root of the placement hierarchy. |
 | `DeviceClass` | none | Restricts placement to OSDs configured with this class. |
 | `ErasureCode` | nil (replicated) | `*ceph.ErasureCodeConfig`. |
-| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. |
+| `NoHashPSPool` | false | Clears the pool's `hashpspool` flag right after creation. The placement seed of each PG is then the legacy sum of PG number and pool ID instead of a hash of the two, as for pools that predate the flag. Other pools, such as the MGR's `.mgr`, keep the flag unless `osd_pool_default_flag_hashpspool` is off (see [Reproduce a minimal legacy placement setup](#reproduce-a-minimal-legacy-placement-setup)). |
 
 `ceph.ErasureCodeConfig` selects `K` data and `M` parity shards (`K >= 2`,
 `M >= 1`, `K+M <= 128`) with the portable Jerasure `reed_sol_van` plugin. An
@@ -1157,6 +1157,7 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 | `Timeout` | Up to `MaxNativeCommandTimeout` (one hour); `ctx`'s deadline shortens it |
 | `MaxStdout`, `MaxStderr` | Up to `MaxNativeCommandOutput` (64 MiB) each |
 | `Label` | Names the command in errors; at most 128 bytes |
+| `Input`, `MaxInput` | Optional standard input from `NewNativeInput`, and the bytes it may carry in all, up to `MaxNativeCommandInput` (64 MiB) |
 
 - The result keeps stdout and stderr as separate raw bytes, and the exit code;
   a nonzero exit is not an error.
@@ -1171,6 +1172,13 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   still holds. `Terminate` also cancels and stops these commands.
 - Stopping a command does not undo what it did, and a command is never run
   again.
+- With `Input`, the command reads what `Input.Write` sends, in order, and the
+  end of input after `Input.Close`. `InputWritten`, `InputDelivered` and
+  `InputEOF` in the result say how much of it the command could read. Writes
+  fail with `ErrNativeInputClosed` once the command ended.
+- `Complete()` checks time and output limits, not input delivery. Assert the
+  byte counts, EOF and the worker's receipt separately; bytes delivered into
+  its pipe do not prove application execution or durability.
 - Errors contain the label but never the arguments or the output. A Docker
   or container failure appears only by its kind; `errors.Unwrap` returns the
   original error.
@@ -1182,13 +1190,30 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   because a security policy refused it, and another Docker failure are
   `ErrEnvironmentUnavailable`. A container that disappears or stops after
   the command was sent matches no category, since the command may have run.
-  Context errors, `ErrNativeCommandIncomplete` and
+  Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
   `*NativeCommandUnstoppedError` belong to no category. See
   [Classified errors](guides/errors.md).
 
 See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
-for cancellation details and an oracle recipe with `rados_stat2` and
-`ceph-dencoder`.
+for cancellation details, [standard input](guides/native-commands.md#standard-input),
+and an oracle recipe with `rados_stat2` and `ceph-dencoder`.
+
+#### NativeInput
+
+```golang
+func NewNativeInput() *ceph.NativeInput
+func (in *NativeInput) Write(ctx context.Context, data []byte) error
+func (in *NativeInput) Close() error
+```
+
+The standard input of one `NativeCommand`. `Write` sends binary data after
+the data of earlier writes and returns once the input stream to the
+container took it; before the command starts it waits, within `ctx`. A write
+that would pass `MaxInput` is refused whole with `ErrInvalidRequest`, and the
+input stays open. `Close` ends the input. The transport does not put input in
+arguments, the environment, files, errors or diagnostics; the command's own
+output remains raw, so a worker handling secrets must not echo them. An
+input serves one command and must be created with `NewNativeInput`.
 
 #### RedactSecrets
 
@@ -3282,7 +3307,7 @@ engine capability, and from a native command that failed. Match them with
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
 
-Context errors, `ErrNativeCommandIncomplete` and
+Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
 category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
@@ -3670,16 +3695,23 @@ manager before or after the first OSD.
 
 A client that implements only the oldest CRUSH and placement features can be
 tested against one MemStore OSD, a legacy CRUSH map and a pool with one PG, one
-replica and no `hashpspool` flag. The fixture has no option for a hand-written
-CRUSH map; install it with the native tools, as below. `crushtool` is in the
-official image and the published control images.
+replica and no `hashpspool` flag on any pool. The fixture has no option for a
+hand-written CRUSH map; install it with the native tools, as below. `crushtool`
+is in the official image and the published control images.
 
 ```golang
+// Ceph creates the MGR's .mgr pool with the MON's default flags, so turn
+// the hashpspool default off before any pool exists.
+legacyPools := filepath.Join(t.TempDir(), "legacy-pools.conf")
+if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hashpspool = false\n"), 0o644); err != nil {
+	t.Fatal(err)
+}
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
 	ceph.WithOSDObjectStore(ceph.OSDMemStore),
 	ceph.WithOSDBlockSize(256<<20),
+	ceph.WithConfigFile(legacyPools),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -3733,6 +3765,11 @@ pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 })
 ```
 
+- While any pool has `hashpspool`, the MON requires the `OSDHASHPSPOOL`
+  feature of every client and refuses a client without it when it opens its
+  MON session. `NoHashPSPool` clears the flag only on the pool it creates;
+  the configuration file keeps it off `.mgr` and every later pool. Check
+  every pool with `cluster.Pools` once `.mgr` exists.
 - `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
   default `osd` failure domain also chooses OSDs directly. To use the map's
   `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",

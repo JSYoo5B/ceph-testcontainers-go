@@ -5,22 +5,32 @@ fixture implementation, checking a candidate, publishing a tag and adopting
 that tag in a consumer are separate steps. Do not treat a closed milestone
 or a successful retry as evidence for all four.
 
-## v0.2.0 scope
+## v0.3.0 scope
 
-The [v0.2.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/1)
-is complete. Its producer-owned result is the public Messenger fixture
-profiles, daemon controls and P0 replicated mutation oracles described in
-[Fixtures for Messenger client tests](../guides/messenger-client-fixtures.md).
-The release is identified by the root module tag `v0.2.0`. Its release notes
-record the final commit and CI evidence. A later candidate needs its own
-check disposition; a successful run for another SHA is not its CI result.
+The [v0.3.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2)
+has no open items. The three bounded deliverables are:
 
-It does not certify ceph-msgr-go's wire implementation or complete that
-project's adapter migration. Full daemon-path/MDS coverage, selective network
-fault extensions and unresolved native investigations are separate work.
-The [upgrade guide](../guides/upgrading-to-v0.2.md) records compatibility and
-the remaining native limits. Image production and the authoritative image
-contracts remain in ceph-testcontainers-images.
+| Item | Implementation | Maintained evidence |
+| --- | --- | --- |
+| [#82](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/82): supervised bounded binary input | [#85](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/85), public `NativeInput` and result fields | `TestNativeCommandInput`, `TestNativeCommandInputCancellation`, input/supervisor unit tests; `native_input` batch |
+| [#83](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/83): MDS unsafe-to-safe observation | [#86](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/86), test-only receipt | `TestCephFSUnsafeRequestWindow`, saved native parser/classifier fixtures; `cephfs_fixtures_sessions` batch |
+| [#84](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/84): stock-image first-failure diagnostics | [#87](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/87), test-only collector and classifier | `TestAuthFirstFailureBundle`, retained-failure and partial-observation fixtures; `messenger_client_profiles` batch |
+
+Other changes since v0.2.0 include the MDS session, daemon-path and MGR
+transition receipts listed in [CHANGELOG.md](../../CHANGELOG.md). The
+[v0.3.0 guide](../guides/upgrading-to-v0.3.md) records compatibility and the
+limits of each claim. MDS replay across a crash (#48), selected auth-key
+generation equality and the intermittent rejection (#71), and the remaining
+daemon-path/mode matrix (#49) stay separate. No downstream wire
+implementation or adapter migration is certified. Image production and the
+authoritative image contracts remain in ceph-testcontainers-images.
+
+The previous release's scope remains in
+[Upgrading to v0.2.0](../guides/upgrading-to-v0.2.md). A later candidate needs
+its own check disposition; a successful run for another SHA is not its CI
+result. The root tag `v0.3.0` identifies this release; its
+[release notes](https://github.com/JSYoo5B/ceph-testcontainers-go/releases/tag/v0.3.0)
+record the final source and checks.
 
 ## Candidate checklist
 
@@ -59,9 +69,10 @@ prepared, and do not cancel existing main CI as part of documentation work.
 
 ## Publication handoff
 
-All four packages belong to one root Go module. Publish one repository tag
-(`v0.2.0`), not per-package `ceph/v0.2.0`, `rbd/v0.2.0` or other nested tags.
-There is currently no workflow that publishes a release automatically.
+All four packages belong to one root Go module. Publish one repository tag,
+such as `v0.3.0`, not per-package `ceph/v0.3.0`, `rbd/v0.3.0`
+or other nested tags. There is currently no workflow that publishes a
+release automatically.
 
 Before a separately authorized publication:
 
@@ -70,8 +81,8 @@ Before a separately authorized publication:
 - When publishing, replace `Unreleased` with the version and actual release
   date, and update the README's development-version notice so it does not
   tell release users to install an older tag.
-- Rewrite the pre-release wording of the [upgrade guide](../guides/upgrading-to-v0.2.md)
-  for the published tag, including its introduction, version table and
+- Rewrite the pre-release wording of the [upgrade guide](../guides/upgrading-to-v0.3.md)
+  for the published tag, including its introduction, compatibility table and
   installation instructions. Identify the release by its tag and keep the
   final SHA's validation evidence in the release notes.
 - Point the tag and GitHub Release at the reviewed commit, then verify that

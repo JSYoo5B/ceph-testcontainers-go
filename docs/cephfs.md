@@ -2259,6 +2259,12 @@ t.Logf("rank 0 is now mds.%s", replacement.ID)
 The old daemon's Cephx key stays in the cluster. Files written before the
 failure are readable through the new daemon.
 
+Instead of a replacement, the same container can be started again with
+`old.Start(ctx)` after `mds fail`. The restarted daemon takes rank 0 with a
+new GID, and a client that stayed mounted reconnects: its session keeps the
+same client ID, PID and address, and a file it opened before the failure keeps
+working. See [MDS sessions](guides/messenger-client-fixtures.md#mds-sessions).
+
 ### Evict a frozen client
 
 A client that stops responding keeps its session and capabilities until the MDS

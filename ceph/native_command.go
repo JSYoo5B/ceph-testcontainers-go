@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -20,6 +22,7 @@ import (
 const (
 	MaxNativeCommandTimeout = time.Hour
 	MaxNativeCommandOutput  = 64 << 20
+	MaxNativeCommandInput   = 64 << 20
 	// NativeCommandStopTimeout bounds one attempt to stop a command inside its
 	// container: the canceler and, when it fails, one inspection of the
 	// container. The attempt has this budget of its own, independent of the
@@ -53,6 +56,96 @@ type NativeCommand struct {
 	// Label names the command in errors, which never contain its arguments
 	// or output. It defaults to "native command".
 	Label string
+	// Input, when set, is the command's standard input, and MaxInput, at
+	// most MaxNativeCommandInput, bounds the bytes written to it in all.
+	// Without Input the command's standard input is empty, and MaxInput must
+	// be 0. An Input serves one command.
+	Input    *NativeInput
+	MaxInput int
+}
+
+// ErrNativeInputClosed reports a write to a NativeInput that was closed, or
+// whose command no longer takes input.
+var ErrNativeInputClosed = errors.New("native command input is closed")
+
+// NativeInput is the standard input of one NativeCommand while it runs.
+// Write sends data in order, and Close ends the input. The command gets
+// exactly the bytes written, without a shell, an encoding or a terminal in
+// between. Nothing that is written appears in arguments, the environment,
+// files, errors, labels or diagnostics; the command's own output is returned
+// as it wrote it, so a command that must not reveal its input must not echo
+// it.
+//
+// Inside the container the supervisor reads what arrives at once, up to
+// MaxInput, and passes it on as the command reads, so a command that reads
+// slowly or not at all does not hold up Write. Its methods are safe for
+// concurrent use.
+type NativeInput struct {
+	writes   chan supervised.InputWrite
+	closed   chan struct{}
+	finished chan struct{}
+	close    sync.Once
+	claimed  atomic.Bool
+}
+
+// NewNativeInput returns an open input for one NativeCommand.
+func NewNativeInput() *NativeInput {
+	return &NativeInput{writes: make(chan supervised.InputWrite), closed: make(chan struct{}), finished: make(chan struct{})}
+}
+
+// Write sends data to the command's standard input after the data of earlier
+// writes, and returns once the input stream to the container took all of it.
+// A write before RunNativeCommand starts the command waits for it. ctx bounds
+// that wait; when ctx ends after the stream took the data, Write returns ctx's
+// error, and the command may still get the data, as
+// NativeCommandResult.InputWritten tells. Write copies data before it returns.
+//
+// A write that would take the input past MaxInput is refused whole with an
+// error that matches ErrInvalidRequest, and the input stays open. Once the
+// input is closed, or the command ended or its input stream failed, Write
+// returns an error that matches ErrNativeInputClosed. An empty write sends
+// nothing.
+func (in *NativeInput) Write(ctx context.Context, data []byte) error {
+	select {
+	case <-in.closed:
+		return ErrNativeInputClosed
+	case <-in.finished:
+		return ErrNativeInputClosed
+	default:
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	done := make(chan error, 1)
+	select {
+	case in.writes <- supervised.InputWrite{Data: bytes.Clone(data), Done: done}:
+	case <-in.closed:
+		return ErrNativeInputClosed
+	case <-in.finished:
+		return ErrNativeInputClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-done:
+		switch {
+		case errors.Is(err, supervised.ErrInputLimit):
+			return invalidRequest("native command input: the write would exceed MaxInput")
+		case err != nil:
+			return fmt.Errorf("%w: %w", ErrNativeInputClosed, err)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close ends the input: the command gets the end of input after every byte
+// written before. Close is idempotent and never fails; a command that ended
+// before is not affected.
+func (in *NativeInput) Close() error {
+	in.close.Do(func() { close(in.closed) })
+	return nil
 }
 
 // NativeCommandResult is the outcome of a supervised native command. Stdout
@@ -67,6 +160,14 @@ type NativeCommandResult struct {
 	// StdoutTruncated and StderrTruncated mean that a stream exceeded its
 	// limit; the result holds its first bytes.
 	StdoutTruncated, StderrTruncated bool
+	// InputWritten counts the bytes of Input that the input stream to the
+	// container took, and InputDelivered those that the supervisor wrote into
+	// the command's standard input; the command may not have read all of
+	// them. They differ when the command ended, or closed its standard input,
+	// before it took everything. InputEOF means that the command's standard
+	// input ended after all InputWritten bytes, because Input was closed.
+	InputWritten, InputDelivered int64
+	InputEOF                     bool
 }
 
 // Complete reports whether the command finished within its time and output
@@ -230,6 +331,12 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 		return "", fmt.Errorf("%s timeout must be positive and at most %v", label, MaxNativeCommandTimeout)
 	case command.MaxStdout <= 0 || command.MaxStdout > MaxNativeCommandOutput || command.MaxStderr <= 0 || command.MaxStderr > MaxNativeCommandOutput:
 		return "", fmt.Errorf("%s output limits must be positive and at most %d bytes", label, MaxNativeCommandOutput)
+	case command.Input == nil && command.MaxInput != 0:
+		return "", fmt.Errorf("%s input limit needs an Input", label)
+	case command.Input != nil && (command.MaxInput <= 0 || command.MaxInput > MaxNativeCommandInput):
+		return "", fmt.Errorf("%s input limit must be positive and at most %d bytes", label, MaxNativeCommandInput)
+	case command.Input != nil && (command.Input.writes == nil || command.Input.claimed.Load()):
+		return "", fmt.Errorf("%s input must come from NewNativeInput and serve no other command", label)
 	}
 	return label, nil
 }
@@ -260,6 +367,14 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // target's implementation appears only by its kind, and errors.Unwrap returns
 // the original error, whose text may quote anything. RedactSecrets redacts
 // output that a test logs.
+//
+// With Input, the supervisor runs in an exec of the Docker engine with its
+// standard input attached, and passes what Input writes to the command; see
+// NativeInput. The call stops taking writes when the command ends, and
+// returns only after its input and output work ended. Its deadline and
+// cancellation stop the command as without Input, and a write in progress
+// then fails. A malformed limit or an Input that served another command fails
+// before anything runs or any input is taken.
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {
@@ -298,13 +413,23 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 		c.nativeMu.Unlock()
 		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
+	if command.Input != nil && !command.Input.claimed.CompareAndSwap(false, true) {
+		c.nativeMu.Unlock()
+		return NativeCommandResult{}, invalidRequest("%s input serves another command", label)
+	}
 	if c.nativeInvocations == nil {
 		c.nativeInvocations = make(map[*nativeInvocation]bool)
 	}
 	c.nativeInvocations[inv] = true
 	c.nativeMu.Unlock()
 
-	report, err := supervised.Run(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr, command.Argv...)
+	var report supervised.Report
+	if in := command.Input; in != nil {
+		report, err = supervised.RunInput(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr,
+			supervised.Input{Limit: int64(command.MaxInput), Writes: in.writes, Closed: in.closed, Finished: in.finished}, command.Argv...)
+	} else {
+		report, err = supervised.Run(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr, command.Argv...)
+	}
 	unstopped, _ := supervised.Unconfirmed(err)
 	var notStopped *supervised.NotStoppedError
 	if unstopped != "" && !errors.As(err, &notStopped) {
@@ -350,7 +475,8 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 		return NativeCommandResult{}, err
 	}
 	result := NativeCommandResult{Stdout: report.Stdout, Stderr: report.Stderr, ExitCode: report.ExitCode,
-		TimedOut: report.TimedOut, StdoutTruncated: report.StdoutTruncated, StderrTruncated: report.StderrTruncated}
+		TimedOut: report.TimedOut, StdoutTruncated: report.StdoutTruncated, StderrTruncated: report.StderrTruncated,
+		InputWritten: report.InputWritten, InputDelivered: report.InputDelivered, InputEOF: report.InputEOF}
 	if !result.Complete() {
 		return result, fmt.Errorf("%s: %w (timed out %t, stdout truncated %t, stderr truncated %t)", label, ErrNativeCommandIncomplete,
 			result.TimedOut, result.StdoutTruncated, result.StderrTruncated)

@@ -205,6 +205,11 @@ Some errors keep their own contracts and match no category:
   truncated; the partial result is returned.
 - `*ceph.NativeCommandUnstoppedError`: a command may still run; call its
   `Stop`.
+- `ceph.ErrNativeInputClosed`: the input was closed, or its command ended or
+  stopped taking input. A write beyond `MaxInput`, in contrast, matches
+  `ceph.ErrInvalidRequest` and leaves the input open. A write ended by its
+  context keeps the context error; some bytes may already have been sent.
+  See [Standard input](native-commands.md#standard-input).
 - Failed checks of the fixture's own, such as native output that it could
   not parse, or a readback that differs from the requested change.
 - A failure whose outcome is unknown, such as a container that disappeared

@@ -4,8 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -97,59 +95,6 @@ func cephFSWaitForReplacement(t *testing.T, parent context.Context, fs *cephfs.F
 		select {
 		case <-ctx.Done():
 			t.Fatalf("owned standby never replaced failed rank: error=%v status=%+v", lastErr, last)
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func cephFSWaitForPinnedSubtree(t *testing.T, parent context.Context, cluster *ceph.Container, fs *cephfs.Filesystem, path string, rank int) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
-	defer cancel()
-	var last string
-	for {
-		status, err := fs.MDSStatus(ctx)
-		if err == nil {
-			for _, active := range status.Active {
-				if active.Rank != rank || !active.Owned {
-					continue
-				}
-				data, err := cluster.Ceph(ctx, "tell", "mds."+active.Name, "get", "subtrees", "--format", "json")
-				last = fmt.Sprintf("error=%v output=%s", err, data)
-				if err != nil {
-					continue
-				}
-				type subtree struct {
-					IsAuth    bool `json:"is_auth"`
-					AuthFirst int  `json:"auth_first"`
-					ExportPin int  `json:"export_pin"`
-					Dir       struct {
-						Path string `json:"path"`
-					} `json:"dir"`
-				}
-				var subtrees []subtree
-				if err := json.Unmarshal(data, &subtrees); err != nil {
-					var wrapped struct {
-						Subtrees []subtree `json:"subtrees"`
-					}
-					if err := json.Unmarshal(data, &wrapped); err != nil {
-						continue
-					}
-					subtrees = wrapped.Subtrees
-				}
-				for _, subtree := range subtrees {
-					if subtree.Dir.Path == path && subtree.IsAuth && subtree.AuthFirst == rank && subtree.ExportPin == rank {
-						t.Logf("native MDS subtree: %s is owned by rank%d mds.%s; export pin=%d", path, rank, active.Name, subtree.ExportPin)
-						return
-					}
-				}
-			}
-		} else {
-			last = err.Error()
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("export pin never moved actual subtree authority to rank%d: %s", rank, last)
 		case <-time.After(time.Second):
 		}
 	}

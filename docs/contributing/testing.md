@@ -289,7 +289,8 @@ missing, never builds one, and refuses an existing `--output-dir`. Its
 `summary.json` lists the four `CEPH_TEST_*` values under
 `prepared_environment` as immutable local image IDs; export them and run a
 test, the tag runner, or a `scenario-*` target with
-`SCENARIO_IMAGE_LAYOUT=roles`.
+`SCENARIO_IMAGE_LAYOUT=roles`. `--roles control`, as for a batch with
+`image-roles=control`, resolves only the listed roles.
 
 ### Image compatibility checks
 
@@ -456,6 +457,14 @@ batches run on Squid weekly (see [ci.md](ci.md#squid-workflows)).
   cleanup.
 - `checker=` and `case=` are reserved for the strict completion checkers of the
   CephFS process quiescence/recovery and RBD receiver leaf batches.
+- `image-roles=` lists the published role images that a Ceph batch needs,
+  such as `image-roles=control` for a batch that only starts control-image
+  containers. Roles are `control`, `osd`, `rgw` and `mds`, comma-separated,
+  and `control` is required. Without it CI prepares all four. CI then
+  prepares only the listed roles, and a test that asks for another role fails
+  with an error instead of falling back to the control image. Use
+  `controlImage(t)` in such a batch rather than `integrationImages(t)`, which
+  needs all four.
 - The process timeout covers every test in the batch, each with its own
   cluster bootstrap and cleanup. When a batch approaches its budget, move a
   long, independent test into a batch of its own instead of raising the limit.
