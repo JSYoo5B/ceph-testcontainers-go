@@ -220,7 +220,13 @@ Typical uses:
   the client loses the whole cluster.
 - `ceph.ClusterNetworkPlane` with `WithSeparateClusterNetwork`: the OSD keeps
   serving its public listener while replication and heartbeats on the backend
-  fail. With a single bridge, both planes select the same endpoint.
+  fail. With two OSDs that lasts, because one reporter is not enough to mark an
+  OSD down (`mon_osd_min_down_reporters` is 2). With three or more OSDs on
+  separate hosts, both peers report it after `osd_heartbeat_grace` (20 s) and
+  the MON marks it down; the OSD then fails to rebind its cluster messenger to
+  the missing address, logs `rebind cluster_messenger failed` and exits. Call
+  `Restore`, then `Start` on its handle; it comes up from a later epoch. See
+  `TestOSDHeartbeatFailure`. With a single bridge, both planes select the same endpoint.
 
 Contract:
 

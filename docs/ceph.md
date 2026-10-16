@@ -2817,6 +2817,14 @@ if err := cut.Restore(ctx); err != nil {
 }
 ```
 
+A cut cluster endpoint can end the OSD process. With three or more OSDs on
+separate CRUSH hosts, the OSD's peers report its failed heartbeats, and after
+`osd_heartbeat_grace` (20 s) the MON marks it down. The OSD then tries to
+rebind its cluster messenger to an address that no longer exists, logs
+`rebind cluster_messenger failed` and exits. `Restore` does not restart it:
+call `Start` on its handle afterwards. With two OSDs one reporter is not
+enough (`mon_osd_min_down_reporters` is 2), so the OSD stays up.
+
 #### TemporaryNetworkDelay
 
 ```golang
