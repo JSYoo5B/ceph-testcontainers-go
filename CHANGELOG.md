@@ -8,6 +8,12 @@ change the API.
 
 ### Added
 
+- `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
+  restart of the only MDS: while `mds_log_pause` holds the journal, the
+  client keeps an unacknowledged `Fw` flush with the new size and the MDS keeps
+  the old one; after the restart the client's flush is acknowledged without
+  a second fsync, the MDS has the new size and an independent client reads
+  every byte ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 - `TestCephFSUnsafeRequestReplay` follows one rename that got an early,
   unsafe reply across a SIGKILL and restart of the only MDS: the client keeps
   the request while no MDS runs, the restarted MDS executes the client's

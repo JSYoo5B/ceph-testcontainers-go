@@ -345,6 +345,7 @@ mds.<name> session ls` adds counters that `Session` leaves out, such as
 | Two active ranks; the client appends 16-byte records through one descriptor to a file in a directory pinned to rank 0, fsyncing each before the next; after a few records, another client sets the directory's `ceph.dir.pin` to 1, and after the stream to 0 again | rank 1 becomes the only rank that reports the directory as an authoritative subtree, in `get subtrees` of both ranks read between two `MDSStatus` reads with unchanged GIDs; rank 0's `exported` and `exported_inodes` and rank 1's `imported` and `imported_inodes` grow; more records are acknowledged under rank 1; the client has sessions on both ranks with one address and PID and is not blocklisted; after the stream, the client reads every record in order through its descriptor, and a client in another container reads the same bytes and xattr; a fresh mount reads the restored pin, and rank 0 is again the only authority before the client closes | `TestCephFSLiveRankMigration`, with `MessengerV2Secure` |
 | One active MDS; the client renames a fsynced file within its directory once while `mds_log_pause`, set through `TemporaryConfig`, holds the MDS's journal | the running daemon's own `config get` shows `mds_early_reply` true and the pause applied; the rename call returns with the early reply; twice, 3 s apart, the MDS's `dump_ops_in_flight` holds the client's request (`client.<id>:<tid> rename`) after `early_replied` and without `journal_committed`, and the client's admin socket (`mds_requests`) holds the same TID with `got_unsafe` and the file's inode; after the pause is restored, the client no longer holds it, and the MDS's `dump_historic_ops` shows it `journal_committed` and `replying`; the MDS keeps its GID; a client in another container finds the new name with the original inode and no old name | `TestCephFSUnsafeRequestWindow`, with `MessengerV2Secure` |
 | The same held rename; the only MDS is then killed with SIGKILL, so the paused journal entry is lost, and its GID is failed. The pause is restored while no MDS runs, and the MDS container starts again | while no MDS runs, the client's `mds_requests` still holds the TID with `got_unsafe`; rank 0 returns with a new GID in the same container, and the restarted daemon's own `config get` shows `mds_log_pause` false; its `dump_historic_ops` shows the same `client.<id>:<tid> rename` with the `REPLAY` flag (Tentacle 20.2.4 and Squid 19.2.5 both print `RETRY=1 REPLAY QUEUED_FOR_REPLAY`), without `early_replied`, `journal_committed` before `replying`; then the client no longer holds the TID; a client in another container finds the new name with the original inode and no old name. The test issues no second rename | `TestCephFSUnsafeRequestReplay`, with `MessengerV2Secure` |
+| One active MDS; the client fsyncs a file, then, while `mds_log_pause` holds the MDS's journal, appends through the same descriptor and fsyncs again; the only MDS is then killed with SIGKILL and its GID failed, the pause is restored while no MDS runs, and the MDS container starts again | twice, 3 s apart, the client's `dump_cache` holds the inode with a flushing `Fw` cap, a flush TID and the full size, the MDS's own `dump inode` has the base size, and the fsync has not returned; with no MDS running the client still holds the flush; rank 0 returns with a new GID in the same container without the pause; then the client holds no flushing cap, the MDS has the full size and the original fsync returns 0, with no second fsync; a client in another container reads every byte | `TestCephFSFlushingCapReplay`, with `MessengerV2Secure` |
 
 In the failover profiles above the unsafe-request ones, the client fsynced its
 data before the failure, so those receipts show a session reconnect, not the
@@ -381,6 +382,20 @@ Two things stay outside it: a crash after the entry reached the journal, where
 the MDS replays its own journal rather than the client's request, and dirty
 file data, capability flushes and lease recalls that were in flight with the
 request.
+
+The cap flush receipt holds the other kind of unacknowledged change: file
+metadata that a client sends with its capabilities instead of a request. The
+fsync writes the appended bytes to the OSDs, which the pause does not hold,
+and then sends the new size in a cap flush. The MDS cannot journal it, so it
+sends no ack, and the client keeps the flush with its TID (Ceph prints the
+field as `flushings_caps`). After the crash the restarted MDS knows only the
+base size; the client sends its flushing caps again when it reconnects, and
+the MDS journals the size and acknowledges them. Without that, a reader would
+see only the base bytes, because the size bounds every read.
+`TestParseClientCache` keeps the client's native `dump_cache` samples; a
+dentry there also names the inode it links, so only the entry with the head
+snapshot ID is the inode. The receipt does not cover a cap flush that reached
+the journal before the crash, or a lease recall.
 
 ## Daemon-to-daemon paths
 

@@ -203,3 +203,51 @@ func TestReplayedRequest(t *testing.T) {
 		}
 	}
 }
+
+// A client's dump_cache from TestCephFSFlushingCapReplay runs on
+// quay.io/ceph/ceph:v20.2.4, with the fields that parseClientCache reads;
+// v19.2.5 printed the same shape and values. In the first the fsync's cap
+// flush of inode 0x10000000001 waits for its ack, behind a dentry that also
+// names the inode; in the second the MDS has acknowledged it.
+const (
+	clientCacheFlushingSample = `{"cache": [{"name": "flush", "dir": "0x1", "ino": "0x10000000000"}, {"ino": "0x10000000000", "snapid": "head", "size": 0, "dirty_caps": "-"}, {"name": "file", "dir": "0x10000000000", "ino": "0x10000000001"}, {"ino": "0x10000000001", "snapid": "head", "size": 20497, "dirty_caps": "-", "flushings_caps": "Fw", "flushing_cap_tid": {"Fw": 3}}]}`
+	clientCacheFlushedSample  = `{"cache": [{"ino": "0x10000000001", "snapid": "head", "size": 20497, "dirty_caps": "-"}]}`
+)
+
+func TestParseClientCache(t *testing.T) {
+	const inode = 0x10000000001
+	held, found, err := parseClientCache([]byte(clientCacheFlushingSample), inode)
+	if err != nil || !found || !held.flushing() || held.Size != 20497 || held.FlushingCaps != "Fw" || held.FlushingTIDs["Fw"] != 3 {
+		t.Fatalf("held flush: %+v found=%t err=%v", held, found, err)
+	}
+	acked, found, err := parseClientCache([]byte(clientCacheFlushedSample), inode)
+	if err != nil || !found || acked.flushing() || acked.Size != 20497 {
+		t.Fatalf("acknowledged flush: %+v found=%t err=%v", acked, found, err)
+	}
+	// The same entries as a bare array.
+	bare := strings.TrimSuffix(strings.TrimPrefix(clientCacheFlushingSample, `{"cache": `), `}`)
+	if caps, found, err := parseClientCache([]byte(bare), inode); err != nil || !found || !caps.flushing() {
+		t.Fatalf("bare array: %+v found=%t err=%v", caps, found, err)
+	}
+	// Only a dentry names the inode, the head is another snapshot, or the
+	// inode is not cached: not found.
+	for name, sample := range map[string]string{
+		"dentry only":   `{"cache": [{"name": "file", "dir": "0x10000000000", "ino": "0x10000000001"}]}`,
+		"snapshot only": `{"cache": [{"ino": "0x10000000001", "snapid": "2", "size": 20497, "dirty_caps": "-"}]}`,
+		"another inode": `{"cache": [{"ino": "0x10000000000", "snapid": "head", "size": 0, "dirty_caps": "-"}]}`,
+		"empty":         `{"cache": []}`,
+	} {
+		if caps, found, err := parseClientCache([]byte(sample), inode); err != nil || found {
+			t.Errorf("%s: %+v found=%t err=%v", name, caps, found, err)
+		}
+	}
+	// A flushing cap without a flush TID is no pending flush.
+	if caps, _, _ := parseClientCache([]byte(`{"cache": [{"ino": "0x10000000001", "snapid": "head", "flushings_caps": "Fw"}]}`), inode); caps.flushing() {
+		t.Errorf("flushing caps without a TID: %+v", caps)
+	}
+	for _, malformed := range []string{`{}`, `{"other": []}`, `"cache"`, `{"cache": [1]}`, `{"cache": [{"ino": 1}]}`} {
+		if _, _, err := parseClientCache([]byte(malformed), inode); err == nil {
+			t.Errorf("%s parsed", malformed)
+		}
+	}
+}

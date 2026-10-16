@@ -1777,11 +1777,7 @@ func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Contai
 // answered early and unsafely while its own mds_log_pause held journal
 // submission, observed as held on both sides.
 type cephFSUnsafeHold struct {
-	cluster  *ceph.Container
-	client   testcontainers.Container
-	fs       *cephfs.Filesystem
-	mds      cephfs.MDSStatus
-	version  string
+	*cephFSSingleMDS
 	asok     string
 	actor    *cephFSActorRun
 	baseline cephFSActorReceipt
@@ -1790,9 +1786,124 @@ type cephFSUnsafeHold struct {
 	held     cephFSUnsafeObservation
 }
 
+// cephFSSingleMDS is a cluster with one filesystem served by one active,
+// owned MDS, and a client container.
+type cephFSSingleMDS struct {
+	cluster *ceph.Container
+	client  testcontainers.Container
+	fs      *cephfs.Filesystem
+	mds     cephfs.MDSStatus
+	version string
+}
+
+// startCephFSSingleMDS starts the cluster with secure Messenger v2 and checks
+// that its one MDS runs without mds_log_pause.
+func startCephFSSingleMDS(t *testing.T, ctx context.Context) *cephFSSingleMDS {
+	t.Helper()
+	image, imageOpts := integrationImages(t)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
+	fs := cephfs.Filesystems(cluster)[0]
+	if err := fs.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status, err := fs.MDSStatus(ctx)
+	if err != nil || len(status.Active) != 1 {
+		t.Fatalf("want one active MDS: %+v, %v", status, err)
+	}
+	m := &cephFSSingleMDS{cluster: cluster, client: client, fs: fs, mds: status.Active[0]}
+	if paused := m.daemonConfig(t, ctx, "mds_log_pause"); paused != "false" {
+		t.Fatalf("mds.%s runs with mds_log_pause=%s", m.mds.Name, paused)
+	}
+	version, err := cluster.Ceph(ctx, "tell", "mds."+m.mds.Name, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.version = strings.Join(strings.Fields(string(version)), " ")
+	return m
+}
+
+// pauseJournal sets mds_log_pause through TemporaryConfig and waits until the
+// running MDS applies it. The restoration is registered before it returns, so
+// it is in place before the caller admits an operation.
+func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverride {
+	t.Helper()
+	pause, err := m.cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
+	if pause != nil {
+		t.Cleanup(func() {
+			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := pause.Restore(restoreCtx); err != nil {
+				t.Errorf("restore mds_log_pause: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.waitDaemonConfig(t, ctx, "mds_log_pause", "true")
+	return pause
+}
+
+// killMDS SIGKILLs the MDS, which drops anything that its paused journal
+// held, and fails its GID so that the restarted daemon takes the rank at
+// once. It returns the daemon and its container ID.
+func (m *cephFSSingleMDS) killMDS(t *testing.T, ctx context.Context) (*cephfs.MDS, string) {
+	t.Helper()
+	var daemon *cephfs.MDS
+	for _, member := range m.fs.MDSs() {
+		if member.ID == m.mds.Name {
+			daemon = member
+		}
+	}
+	if daemon == nil || len(m.fs.MDSs()) != 1 || !m.mds.Owned {
+		t.Fatalf("active mds.%s is not the one owned MDS: %+v", m.mds.Name, m.fs.MDSs())
+	}
+	cid := daemon.GetContainerID()
+	kill := time.Duration(0)
+	if err := daemon.Stop(ctx, &kill); err != nil {
+		t.Fatal("kill MDS:", err)
+	}
+	if state, err := daemon.State(ctx); err != nil || state.Running {
+		t.Fatalf("killed MDS still runs: %+v, %v", state, err)
+	}
+	if _, err := m.cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(m.mds.GID, 10)); err != nil {
+		t.Fatal("fail MDS GID:", err)
+	}
+	return daemon, cid
+}
+
+// restartMDS starts the killed daemon again and waits until rank 0 is active
+// under a new GID, in the same container, without mds_log_pause.
+func (m *cephFSSingleMDS) restartMDS(t *testing.T, ctx context.Context, daemon *cephfs.MDS, cid string) cephfs.MDSStatus {
+	t.Helper()
+	if err := daemon.Start(ctx); err != nil {
+		t.Fatal("restart MDS:", err)
+	}
+	var current cephfs.MDSStatus
+	for {
+		after, err := m.fs.MDSStatus(ctx)
+		if err == nil && len(after.Active) == 1 && after.Active[0].State == "up:active" && after.Active[0].GID != m.mds.GID {
+			current = after.Active[0]
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("rank 0 did not come back: %+v, %v", after, err)
+		case <-time.After(time.Second):
+		}
+	}
+	if current.Name != m.mds.Name || !current.Owned || daemon.GetContainerID() != cid || len(m.fs.MDSs()) != 1 {
+		t.Fatalf("rank 0 is not served by the restarted mds.%s in container %s: %+v", m.mds.Name, cid, current)
+	}
+	if paused := m.daemonConfig(t, ctx, "mds_log_pause"); paused != "false" {
+		t.Fatalf("restarted mds.%s runs with mds_log_pause=%s", m.mds.Name, paused)
+	}
+	return current
+}
+
 // daemonConfig reads a setting from the running MDS itself, not from the
 // central configuration.
-func (h *cephFSUnsafeHold) daemonConfig(t *testing.T, ctx context.Context, name string) string {
+func (h *cephFSSingleMDS) daemonConfig(t *testing.T, ctx context.Context, name string) string {
 	t.Helper()
 	out, err := h.cluster.Ceph(ctx, "tell", "mds."+h.mds.Name, "config", "get", name)
 	var values map[string]string
@@ -1802,7 +1913,7 @@ func (h *cephFSUnsafeHold) daemonConfig(t *testing.T, ctx context.Context, name 
 	return values[name]
 }
 
-func (h *cephFSUnsafeHold) waitDaemonConfig(t *testing.T, ctx context.Context, name, want string) {
+func (h *cephFSSingleMDS) waitDaemonConfig(t *testing.T, ctx context.Context, name, want string) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for h.daemonConfig(t, ctx, name) != want {
@@ -1839,25 +1950,11 @@ func (h *cephFSUnsafeHold) historicRename(t *testing.T, ctx context.Context, mds
 // actor's cancellation and join are registered before the rename is admitted.
 func holdCephFSUnsafeRename(t *testing.T, ctx context.Context) *cephFSUnsafeHold {
 	t.Helper()
-	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
-	fs := cephfs.Filesystems(cluster)[0]
-	if err := fs.WaitReady(ctx); err != nil {
-		t.Fatal(err)
+	h := &cephFSUnsafeHold{cephFSSingleMDS: startCephFSSingleMDS(t, ctx)}
+	cluster, client, fs := h.cluster, h.client, h.fs
+	if early := h.daemonConfig(t, ctx, "mds_early_reply"); early != "true" {
+		t.Fatalf("mds.%s runs with mds_early_reply=%s", h.mds.Name, early)
 	}
-	status, err := fs.MDSStatus(ctx)
-	if err != nil || len(status.Active) != 1 {
-		t.Fatalf("want one active MDS: %+v, %v", status, err)
-	}
-	h := &cephFSUnsafeHold{cluster: cluster, client: client, fs: fs, mds: status.Active[0]}
-	if early, paused := h.daemonConfig(t, ctx, "mds_early_reply"), h.daemonConfig(t, ctx, "mds_log_pause"); early != "true" || paused != "false" {
-		t.Fatalf("mds.%s runs with mds_early_reply=%s mds_log_pause=%s", h.mds.Name, early, paused)
-	}
-	version, err := cluster.Ceph(ctx, "tell", "mds."+h.mds.Name, "version")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.version = strings.Join(strings.Fields(string(version)), " ")
 
 	const workdir = "/tmp/unsafe-actor"
 	h.asok = workdir + "/client.asok"
@@ -1868,21 +1965,7 @@ func holdCephFSUnsafeRename(t *testing.T, ctx context.Context) *cephFSUnsafeHold
 	}
 	// The pause's restoration is registered before the rename is admitted;
 	// the actor's cancellation and join were registered when it started.
-	pause, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
-	if pause != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := pause.Restore(restoreCtx); err != nil {
-				t.Errorf("restore mds_log_pause: %v", err)
-			}
-		})
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.pause = pause
-	h.waitDaemonConfig(t, ctx, "mds_log_pause", "true")
+	h.pause = h.pauseJournal(t, ctx)
 
 	h.actor.open(t, ctx, "rename")
 	h.renamed = h.actor.receipt(t, ctx, 2)
@@ -2030,29 +2113,8 @@ func testCephFSUnsafeRequestReplay(t *testing.T) {
 	defer cancel()
 	h := holdCephFSUnsafeRename(t, ctx)
 	tid := h.held.tid
-	var daemon *cephfs.MDS
-	for _, member := range h.fs.MDSs() {
-		if member.ID == h.mds.Name {
-			daemon = member
-		}
-	}
-	if daemon == nil || len(h.fs.MDSs()) != 1 || !h.mds.Owned {
-		t.Fatalf("active mds.%s is not the one owned MDS: %+v", h.mds.Name, h.fs.MDSs())
-	}
-	cid := daemon.GetContainerID()
-
-	// SIGKILL drops the paused journal entry with the process. Failing its
-	// GID lets the restarted daemon take the rank at once.
-	kill := time.Duration(0)
-	if err := daemon.Stop(ctx, &kill); err != nil {
-		t.Fatal("kill MDS:", err)
-	}
-	if state, err := daemon.State(ctx); err != nil || state.Running {
-		t.Fatalf("killed MDS still runs: %+v, %v", state, err)
-	}
-	if _, err := h.cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(h.mds.GID, 10)); err != nil {
-		t.Fatal("fail MDS GID:", err)
-	}
+	// SIGKILL drops the paused journal entry with the process.
+	daemon, cid := h.killMDS(t, ctx)
 	killed := time.Now()
 	// The pause goes before the daemon starts again, so the restarted
 	// process never reads it.
@@ -2063,29 +2125,8 @@ func testCephFSUnsafeRequestReplay(t *testing.T) {
 	if !pending.found || !bool(pending.request.GotUnsafe) || pending.request.Op != "rename" {
 		t.Fatalf("with no MDS the client does not hold rename %d as unsafe: %s", tid, pending.raw)
 	}
-	if err := daemon.Start(ctx); err != nil {
-		t.Fatal("restart MDS:", err)
-	}
-	var current cephfs.MDSStatus
-	for {
-		after, err := h.fs.MDSStatus(ctx)
-		if err == nil && len(after.Active) == 1 && after.Active[0].State == "up:active" && after.Active[0].GID != h.mds.GID {
-			current = after.Active[0]
-			break
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("rank 0 did not come back: %+v, %v", after, err)
-		case <-time.After(time.Second):
-		}
-	}
+	current := h.restartMDS(t, ctx, daemon, cid)
 	recovered := time.Since(killed)
-	if current.Name != h.mds.Name || !current.Owned || daemon.GetContainerID() != cid || len(h.fs.MDSs()) != 1 {
-		t.Fatalf("rank 0 is not served by the restarted mds.%s in container %s: %+v", h.mds.Name, cid, current)
-	}
-	if paused := h.daemonConfig(t, ctx, "mds_log_pause"); paused != "false" {
-		t.Fatalf("restarted mds.%s runs with mds_log_pause=%s", h.mds.Name, paused)
-	}
 
 	var replayed mdsRequestOp
 	deadline := time.Now().Add(2 * time.Minute)
@@ -2125,4 +2166,275 @@ func observeClientRequest(t *testing.T, ctx context.Context, h *cephFSUnsafeHold
 		}
 	}
 	return observed
+}
+
+// cephFSFlushActor mounts once with a client admin socket at a given path,
+// creates a file in a new directory, writes and fsyncs the base bytes and
+// publishes receipt 1. At the "append" gate it writes the tail behind them
+// through the same fd, publishes receipt 2 with the size that its own mount
+// sees, and fsyncs, once, without a retry; receipt 3 has the result and the
+// time the fsync took. At the "finish" gate it reads the whole file through
+// the fd, closes, unmounts and publishes receipt 4. Arguments after the
+// common ones: directory, path, the hex of the base bytes and of the tail,
+// admin socket path.
+const cephFSFlushActor cephFSActorScript = cephFSActorHelpers + `
+directory, path = sys.argv[4].encode(), sys.argv[5].encode()
+base, tail = bytes.fromhex(sys.argv[6]), bytes.fromhex(sys.argv[7])
+asok = sys.argv[8]
+fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
+fs.conf_set("client_mount_timeout", "30")
+fs.conf_set("admin_socket", asok)
+fs.mount(filesystem_name=name.encode())
+fs.mkdir(directory, 0o755)
+fd = fs.open(path, os.O_CREAT | os.O_RDWR | os.O_TRUNC, 0o644)
+fs.write(fd, base, 0)
+fs.fsync(fd, 0)
+stat = fs.fstat(fd)
+publish(1, client=fs.get_instance_id(), inode=stat.st_ino, size=stat.st_size)
+gate("append")
+fs.write(fd, tail, len(base))
+publish(2, size=fs.fstat(fd).st_size)
+started = time.monotonic()
+result = {}
+try:
+    fs.fsync(fd, 0)
+except cephfs.Error as error:
+    result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
+result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+publish(3, **result)
+gate("finish")
+closing = {}
+try:
+    stat = fs.fstat(fd)
+    closing.update(inode=stat.st_ino, size=stat.st_size, full=fs.read(fd, 0, stat.st_size).hex())
+    fs.close(fd)
+    fs.unmount()
+except cephfs.Error as error:
+    closing.update(close_errno=getattr(error, "errno", None) or -1)
+fs.shutdown()
+publish(4, closed=True, **closing)
+`
+
+// clientInodeCaps is one inode in a libcephfs client's dump_cache: its size
+// as the client sees it, the capabilities it changed and has not sent, and
+// the ones it sent in a cap flush that the MDS has not acknowledged, with the
+// flush TIDs. Ceph spells the flushing field "flushings_caps".
+type clientInodeCaps struct {
+	Ino          string            `json:"ino"`
+	SnapID       *string           `json:"snapid"`
+	Size         uint64            `json:"size"`
+	DirtyCaps    string            `json:"dirty_caps"`
+	FlushingCaps string            `json:"flushings_caps"`
+	FlushingTIDs map[string]uint64 `json:"flushing_cap_tid"`
+}
+
+// flushing reports whether a cap flush of the inode waits for its ack.
+func (c clientInodeCaps) flushing() bool {
+	return c.FlushingCaps != "" && len(c.FlushingTIDs) > 0
+}
+
+// parseClientCache finds inode in dump_cache, which lists inode and dentry
+// objects in one array, bare or under "cache". A dentry also names the inode
+// it links ("ino") but has no "snapid"; the inode itself is the entry with
+// the head snapshot ID. found is false when the client does not cache it.
+func parseClientCache(data []byte, inode uint64) (clientInodeCaps, bool, error) {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		var wrapped struct {
+			Cache *[]json.RawMessage `json:"cache"`
+		}
+		if json.Unmarshal(data, &wrapped) != nil || wrapped.Cache == nil {
+			return clientInodeCaps{}, false, fmt.Errorf("dump_cache is neither an array nor a cache object: %v", err)
+		}
+		entries = *wrapped.Cache
+	}
+	want := fmt.Sprintf("0x%x", inode)
+	for _, entry := range entries {
+		var caps clientInodeCaps
+		if err := json.Unmarshal(entry, &caps); err != nil {
+			return clientInodeCaps{}, false, fmt.Errorf("dump_cache entry: %v: %.256s", err, entry)
+		}
+		if caps.Ino == want && caps.SnapID != nil && *caps.SnapID == "head" {
+			return caps, true, nil
+		}
+	}
+	return clientInodeCaps{}, false, nil
+}
+
+// clientInode reads inode from the actor's dump_cache, bounded. A client that
+// does not cache the inode fails the test.
+func (m *cephFSSingleMDS) clientInode(t *testing.T, ctx context.Context, asok string, inode uint64) (clientInodeCaps, string) {
+	t.Helper()
+	queryCtx, stop := context.WithTimeout(ctx, time.Minute)
+	defer stop()
+	result, err := m.cluster.RunNativeCommand(queryCtx, m.client, ceph.NativeCommand{
+		Argv: []string{"ceph", "--admin-daemon", asok, "dump_cache"}, Timeout: 30 * time.Second,
+		MaxStdout: 1 << 20, MaxStderr: 16 << 10, Label: "client dump_cache",
+	})
+	if err != nil || result.ExitCode != 0 || !result.Complete() {
+		t.Fatalf("client dump_cache: exit=%d err=%v stderr=%.512s", result.ExitCode, err, result.Stderr)
+	}
+	caps, found, err := parseClientCache(result.Stdout, inode)
+	if err != nil || !found {
+		t.Fatalf("client dump_cache has no inode 0x%x (%v): %.1024s", inode, err, result.Stdout)
+	}
+	return caps, fmt.Sprintf("client size=%d dirty=%q flushing=%q tids=%v", caps.Size, caps.DirtyCaps, caps.FlushingCaps, caps.FlushingTIDs)
+}
+
+// mdsInodeSize reads an inode's size from the MDS's own "dump inode": the
+// size that the MDS applied, not one a client holds in a flush.
+func (m *cephFSSingleMDS) mdsInodeSize(t *testing.T, ctx context.Context, mds string, inode uint64) uint64 {
+	t.Helper()
+	out, err := m.cluster.Ceph(ctx, "tell", "mds."+mds, "dump", "inode", strconv.FormatUint(inode, 10))
+	if err != nil {
+		t.Fatalf("dump inode %d on mds.%s: %v", inode, mds, err)
+	}
+	var dump struct {
+		Size *uint64 `json:"size"`
+	}
+	if err := json.Unmarshal(out, &dump); err != nil || dump.Size == nil {
+		t.Fatalf("dump inode %d on mds.%s has no size: %v: %.512s", inode, mds, err, out)
+	}
+	return *dump.Size
+}
+
+// published reports whether the actor has published receipt phase, without
+// waiting for it.
+func (run *cephFSActorRun) published(ctx context.Context, phase int) bool {
+	code, _, err := sessionExec(ctx, run.client, "test", "-e", run.workdir+"/receipt-"+strconv.Itoa(phase))
+	return err == nil && code == 0
+}
+
+// testCephFSFlushingCapReplay follows one cap flush across an MDS crash. The
+// actor fsyncs a file's base bytes, then, with mds_log_pause applied on the
+// running MDS, appends a tail through the same fd and fsyncs again. Its data
+// reaches the OSDs, but the MDS cannot journal the cap flush that carries the
+// new size, so it sends no ack: twice, 3 s apart, the client's dump_cache
+// holds a flushing cap with a flush TID and the full size, the MDS's own
+// dump inode still has the base size, and the fsync has not returned. The MDS
+// is then SIGKILLed, so the flush never reaches the journal, and the pause is
+// restored while no MDS runs; the client still holds the flush. After the
+// daemon restarts in its container with a new GID, the client's flush is
+// acknowledged without a second fsync: the client holds no flushing cap, the
+// MDS has the full size, the original fsync returns 0, and a client in
+// another container reads every byte.
+func testCephFSFlushingCapReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	m := startCephFSSingleMDS(t, ctx)
+	// The bytes travel as hex arguments; Linux limits one argument to
+	// 128 KiB, so the file stays well below 64 KiB.
+	base := make([]byte, 16<<10)
+	for i := range base {
+		base[i] = byte(i*7 + i>>8)
+	}
+	tail := []byte("\x00flushing-cap\xff\r\n\x1b")
+	tail = append(tail, bytes.Repeat([]byte{0xa5, 0x5a}, 2048)...)
+	whole := append(append([]byte{}, base...), tail...)
+
+	const workdir = "/tmp/flush-actor"
+	asok := workdir + "/client.asok"
+	actor := startCephFSActor(t, ctx, m.cluster, m.client, cephFSFlushActor, m.fs.FilesystemName, workdir,
+		"/flush", "/flush/file", hex.EncodeToString(base), hex.EncodeToString(tail), asok)
+	baseline := actor.receipt(t, ctx, 1)
+	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len(base)) {
+		t.Fatalf("baseline receipt = %+v", baseline)
+	}
+	if size := m.mdsInodeSize(t, ctx, m.mds.Name, baseline.Inode); size != uint64(len(base)) {
+		t.Fatalf("mds.%s has size %d for the fsynced base of %d bytes", m.mds.Name, size, len(base))
+	}
+	// The pause's restoration is registered before the append is admitted;
+	// the actor's cancellation and join were registered when it started.
+	pause := m.pauseJournal(t, ctx)
+
+	actor.open(t, ctx, "append")
+	if appended := actor.receipt(t, ctx, 2); appended.Size != int64(len(whole)) || appended.PID != baseline.PID {
+		t.Fatalf("append receipt = %+v", appended)
+	}
+	// The window is shown by native state on both sides, not by a blocked
+	// call: twice, 3 s apart.
+	var held string
+	for look := range 2 {
+		var caps clientInodeCaps
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			caps, held = m.clientInode(t, ctx, asok, baseline.Inode)
+			if caps.flushing() || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		size := m.mdsInodeSize(t, ctx, m.mds.Name, baseline.Inode)
+		if !caps.flushing() || caps.Size != uint64(len(whole)) || size != uint64(len(base)) || actor.published(ctx, 3) {
+			t.Fatalf("look %d: the cap flush is not held: %s; mds size=%d; fsync returned=%t", look, held, size, actor.published(ctx, 3))
+		}
+		held += fmt.Sprintf("; mds size=%d", size)
+		if look == 0 {
+			time.Sleep(3 * time.Second)
+		}
+	}
+	t.Logf("CEPHFS_FLUSH held: %s", held)
+
+	daemon, cid := m.killMDS(t, ctx)
+	killed := time.Now()
+	// The pause goes before the daemon starts again, so the restarted
+	// process never reads it.
+	if err := pause.Restore(ctx); err != nil {
+		t.Fatal("restore mds_log_pause:", err)
+	}
+	down, downRaw := m.clientInode(t, ctx, asok, baseline.Inode)
+	if !down.flushing() || actor.published(ctx, 3) {
+		t.Fatalf("with no MDS the client does not hold the cap flush: %s; fsync returned=%t", downRaw, actor.published(ctx, 3))
+	}
+	current := m.restartMDS(t, ctx, daemon, cid)
+	recovered := time.Since(killed)
+
+	var flushed string
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		caps, raw := m.clientInode(t, ctx, asok, baseline.Inode)
+		size := m.mdsInodeSize(t, ctx, current.Name, baseline.Inode)
+		if !caps.flushing() && size == uint64(len(whole)) {
+			flushed = raw + fmt.Sprintf("; mds size=%d", size)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the cap flush was not acknowledged: %s; mds size=%d", raw, size)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	synced := actor.receipt(t, ctx, 3)
+	if synced.Errno != 0 || synced.Error != "" || synced.PID != baseline.PID {
+		t.Fatalf("fsync receipt = %+v", synced)
+	}
+
+	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+	read, err := m.cluster.RunNativeCommand(readCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+		Argv: []string{"python3", "-c", cephFSIndependentReader, m.fs.FilesystemName, "/flush/file"}, Timeout: 2 * time.Minute,
+		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
+	})
+	stop()
+	if err != nil || read.ExitCode != 0 || !read.Complete() {
+		t.Fatalf("independent reader: exit=%d err=%v stderr=%.2048s", read.ExitCode, err, read.Stderr)
+	}
+	var independent struct {
+		Client uint64 `json:"client"`
+		Inode  uint64 `json:"inode"`
+		Size   int64  `json:"size"`
+		Data   string `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &independent); err != nil {
+		t.Fatalf("independent reader output: %v: %.512s", err, read.Stdout)
+	}
+	if independent.Inode != baseline.Inode || independent.Size != int64(len(whole)) || independent.Data != hex.EncodeToString(whole) || independent.Client == baseline.Client {
+		t.Fatalf("independent reader saw client=%d inode=%d size=%d, want inode %d with %d bytes", independent.Client, independent.Inode, independent.Size, baseline.Inode, len(whole))
+	}
+	actor.open(t, ctx, "finish")
+	if closed := actor.receipt(t, ctx, 4); !closed.Closed || closed.CloseErrno != 0 || closed.Full != hex.EncodeToString(whole) || closed.Inode != baseline.Inode {
+		t.Fatalf("closing receipt: closed=%t errno=%d inode=%d size=%d", closed.Closed, closed.CloseErrno, closed.Inode, closed.Size)
+	}
+	actor.wait(t, ctx)
+	sum := sha256.Sum256(whole)
+	t.Logf("CEPHFS_FLUSH_REPLAY %s client.%d inode=%d: %d base bytes fsynced, %d appended; with mds_log_pause the fsync held a cap flush on both sides for two looks 3 s apart; mds.%s killed (gid %d, cid %s); with no MDS: %s; restarted as gid %d after %s with mds_log_pause=false; acknowledged: %s; fsync returned 0 after %d ms; reader client.%d read %d bytes (sha256=%x)",
+		m.version, baseline.Client, baseline.Inode, len(base), len(tail), m.mds.Name, m.mds.GID, cid, downRaw, current.GID, recovered.Round(time.Second), flushed, synced.ElapsedMS, independent.Client, len(whole), sum)
 }
