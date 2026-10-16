@@ -180,3 +180,29 @@ func TestBootstrapFailureCleanup(t *testing.T) {
 		t.Fatalf("repeated cleanup: %v", err)
 	}
 }
+
+// An image that cannot be pulled fails Run with the engine's error before a
+// MON container exists; the partial cluster still cleans up its networks.
+func TestRunMissingImage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	_, opts := integrationImages(t)
+	const missing = "ceph-testcontainers-go.invalid/missing:0"
+	cluster, err := ceph.Run(ctx, missing, opts...)
+	if cluster != nil {
+		testcontainers.CleanupContainer(t, cluster)
+	}
+	if err == nil || !strings.Contains(err.Error(), "run ceph monitor") {
+		t.Fatalf("Run with %s: %v", missing, err)
+	}
+	if cluster == nil {
+		t.Fatal("Run returned no partial cluster to clean up")
+	}
+	if err := cluster.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.Terminate(ctx); err != nil {
+		t.Fatalf("repeated cleanup: %v", err)
+	}
+	t.Logf("Run with %s failed without a MON container: %v", missing, err)
+}

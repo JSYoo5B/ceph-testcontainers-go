@@ -43,6 +43,14 @@ change the API.
   guide lists the receipt and what it leaves out
   ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 
+### Fixed
+
+- `ceph.Run` returns the engine's error when it cannot create the MON
+  container, for example for an image that cannot be pulled, instead of
+  panicking while it read the logs of a container that did not exist. Adding
+  a MON or MGR to a running cluster had the same typed-nil handle on that
+  failure ([#104](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/104)).
+
 ### Documentation
 
 - `InterruptNetwork` with `ceph.ClusterNetworkPlane` no longer promises that

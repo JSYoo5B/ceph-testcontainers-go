@@ -229,7 +229,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			return mon, err
 		}
 		opts = append(opts, c.runMount()...)
-		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
+		mon.Container, err = runContainer(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -753,7 +753,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
+	mgr.Container, err = runContainer(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
