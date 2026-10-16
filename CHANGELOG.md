@@ -6,6 +6,16 @@ change the API.
 
 ## Unreleased
 
+### Added
+
+- `TestCephFSUnsafeRequestReplay` follows one rename that got an early,
+  unsafe reply across a SIGKILL and restart of the only MDS: the client keeps
+  the request while no MDS runs, the restarted MDS executes the client's
+  `REPLAY` of the same client ID and TID, and an independent client reads the
+  result. The [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
+  guide lists the receipt and what it leaves out
+  ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+
 ### Documentation
 
 - The Messenger client fixtures guide explains why a MON can issue tickets

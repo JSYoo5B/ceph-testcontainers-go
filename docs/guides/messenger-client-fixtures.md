@@ -344,9 +344,11 @@ mds.<name> session ls` adds counters that `Session` leaves out, such as
 | A client is frozen with `PauseContainer` while the only active MDS is killed and a standby takes rank 0, with `mds_reconnect_timeout` set to 10 s through `TemporaryConfig` | the FSMap shows the standby in `up:reconnect` for the window (about 15 s), then `up:rejoin` and `up:active`; the frozen client's session is gone and its address is in the blocklist; after `Resume`, its open descriptor fails, with `ESHUTDOWN` (108) on Tentacle and `EPERM` (1) on Squid, and it shuts down cleanly; a fresh client reads the bytes the frozen one had fsynced | `TestCephFSLateReconnect`, with `MessengerV2Secure` |
 | Two active ranks; the client appends 16-byte records through one descriptor to a file in a directory pinned to rank 0, fsyncing each before the next; after a few records, another client sets the directory's `ceph.dir.pin` to 1, and after the stream to 0 again | rank 1 becomes the only rank that reports the directory as an authoritative subtree, in `get subtrees` of both ranks read between two `MDSStatus` reads with unchanged GIDs; rank 0's `exported` and `exported_inodes` and rank 1's `imported` and `imported_inodes` grow; more records are acknowledged under rank 1; the client has sessions on both ranks with one address and PID and is not blocklisted; after the stream, the client reads every record in order through its descriptor, and a client in another container reads the same bytes and xattr; a fresh mount reads the restored pin, and rank 0 is again the only authority before the client closes | `TestCephFSLiveRankMigration`, with `MessengerV2Secure` |
 | One active MDS; the client renames a fsynced file within its directory once while `mds_log_pause`, set through `TemporaryConfig`, holds the MDS's journal | the running daemon's own `config get` shows `mds_early_reply` true and the pause applied; the rename call returns with the early reply; twice, 3 s apart, the MDS's `dump_ops_in_flight` holds the client's request (`client.<id>:<tid> rename`) after `early_replied` and without `journal_committed`, and the client's admin socket (`mds_requests`) holds the same TID with `got_unsafe` and the file's inode; after the pause is restored, the client no longer holds it, and the MDS's `dump_historic_ops` shows it `journal_committed` and `replying`; the MDS keeps its GID; a client in another container finds the new name with the original inode and no old name | `TestCephFSUnsafeRequestWindow`, with `MessengerV2Secure` |
+| The same held rename; the only MDS is then killed with SIGKILL, so the paused journal entry is lost, and its GID is failed. The pause is restored while no MDS runs, and the MDS container starts again | while no MDS runs, the client's `mds_requests` still holds the TID with `got_unsafe`; rank 0 returns with a new GID in the same container, and the restarted daemon's own `config get` shows `mds_log_pause` false; its `dump_historic_ops` shows the same `client.<id>:<tid> rename` with the `REPLAY` flag (Tentacle 20.2.4 and Squid 19.2.5 both print `RETRY=1 REPLAY QUEUED_FOR_REPLAY`), without `early_replied`, `journal_committed` before `replying`; then the client no longer holds the TID; a client in another container finds the new name with the original inode and no old name. The test issues no second rename | `TestCephFSUnsafeRequestReplay`, with `MessengerV2Secure` |
 
-The client fsynced its data before the failure, so these receipts show a
-session reconnect, not the replay of a request that was in flight. The
+In the failover profiles above the unsafe-request ones, the client fsynced its
+data before the failure, so those receipts show a session reconnect, not the
+replay of a request that was in flight. The
 capability receipt shows the revocation in the MDS's state, not the messages
 that carried it, and it reads that state while both clients hold the file:
 once the second client closes it, the MDS may make the holder the loner again
@@ -366,8 +368,19 @@ through an admin socket that the actor sets with
 `requests` array on Tentacle and as one `request` object per request on
 Squid. The MDS replies early only when it can, so a request that allocates an
 inode, such as the actor's `mkdir`, has no unsafe reply (`TestRequestSafety`
-keeps that native sample). The receipt holds the request while the MDS keeps
-running; replaying it after an MDS failure is not covered.
+keeps that native sample).
+
+The replay receipt follows the same request across an MDS crash. SIGKILL
+drops the paused journal entry with the process, so the restarted MDS has no
+record of the rename. During reconnect the client resends each request that
+got an unsafe reply, flagged as a replay, and the MDS executes it again,
+journals it and replies once, without an early reply. The test checks this in
+the MDS's history with the client ID and TID of the original call
+(`TestReplayedRequest` keeps the native sample), and it never renames twice.
+Two things stay outside it: a crash after the entry reached the journal, where
+the MDS replays its own journal rather than the client's request, and dirty
+file data, capability flushes and lease recalls that were in flight with the
+request.
 
 ## Daemon-to-daemon paths
 
