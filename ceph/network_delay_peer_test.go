@@ -347,3 +347,44 @@ func TestPeerNetworkDelayBlackhole(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A loss without a delay keeps every selection check: an invalid Peer or a
+// PeerPort without one is refused before any helper or tc command.
+func TestNetworkDelayLossKeepsSelectionChecks(t *testing.T) {
+	loss := NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Loss: 100}
+	for name, edit := range map[string]func(*NetworkDelay){
+		"port without peer": func(d *NetworkDelay) { d.PeerPort = 6800 },
+		"mapped peer":       func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
+		"zoned peer":        func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
+		"unspecified peer":  func(d *NetworkDelay) { d.Peer = netip.IPv4Unspecified() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			delay := loss
+			edit(&delay)
+			netem := newFakeNetem()
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			if !errors.Is(err, ErrInvalidRequest) || lease != nil {
+				t.Fatalf("%+v: %v, %v", delay, lease, err)
+			}
+			if len(netem.commands) != 0 || len(netem.helpers) != 0 {
+				t.Fatalf("a refused request ran %v with %d helpers", netem.commands, len(netem.helpers))
+			}
+		})
+	}
+	// The valid loss-only requests still apply, whole-interface and to a peer.
+	for _, delay := range []NetworkDelay{loss, {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Loss: 100, Peer: peerDelay.Peer, PeerPort: 6800}} {
+		netem := newFakeNetem()
+		cluster, osd := delayCluster(netem)
+		lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+		if err != nil {
+			t.Fatalf("%+v: %v", delay, err)
+		}
+		if status, err := lease.Status(t.Context()); err != nil || !status.Applied || status.Loss != 100 {
+			t.Fatalf("%+v: status %+v %v", delay, status, err)
+		}
+		if err := lease.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

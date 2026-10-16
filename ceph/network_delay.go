@@ -303,18 +303,20 @@ func seconds(value float64) time.Duration {
 
 // validateNetworkDelay checks a NetworkDelay before anything runs.
 func validateNetworkDelay(delay NetworkDelay) error {
-	switch {
-	case strings.TrimSpace(delay.HelperImage) == "":
+	if strings.TrimSpace(delay.HelperImage) == "" {
 		// The extension is not selected.
 		return &OperationError{Kind: ErrImageCapability, Capability: "netem extension",
 			Err: errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")}
+	}
+	// Every check runs: allowing a zero delay with a Loss must not skip the
+	// selection's checks.
+	lossOnly := delay.Loss > 0 && delay.Delay == 0
+	switch {
 	case delay.Plane != PublicNetworkPlane && delay.Plane != ClusterNetworkPlane:
 		return invalidRequest("invalid Ceph network plane")
 	case math.IsNaN(delay.Loss) || delay.Loss < 0 || delay.Loss > 100:
 		return invalidRequest("network delay Loss must be a percentage from 0 to 100")
-	case delay.Loss > 0 && delay.Delay == 0 && delay.Jitter == 0:
-		// A loss alone needs no delay.
-	case delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay:
+	case !lossOnly && (delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay):
 		return invalidRequest("network delay must be between 1ms and %v, or zero with a Loss", MaxNetworkDelay)
 	case delay.Jitter < 0 || delay.Jitter > delay.Delay:
 		return invalidRequest("network delay jitter must be between 0 and the delay")
