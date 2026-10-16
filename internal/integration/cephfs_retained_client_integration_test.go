@@ -51,3 +51,9 @@ func TestCephFSLiveRankMigration(t *testing.T) {
 func TestCephFSUnsafeRequestWindow(t *testing.T) {
 	testCephFSUnsafeRequestWindow(t)
 }
+
+// The MDS is killed while one rename is held unsafe; after its restart the
+// client replays the request and it becomes safe.
+func TestCephFSUnsafeRequestReplay(t *testing.T) {
+	testCephFSUnsafeRequestReplay(t)
+}
