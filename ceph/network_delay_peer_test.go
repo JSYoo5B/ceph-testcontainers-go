@@ -182,3 +182,58 @@ func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
 		}
 	}
 }
+
+// A filter or qdisc that someone else attached under the lease's root is not
+// the lease's: Restore refuses rather than remove it with the root, keeps the
+// lease, and succeeds once the owner removed it.
+func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
+	for name, attach := range map[string]func(link *fakeLink, root string) func(){
+		"filter": func(link *fakeLink, root string) func() {
+			foreign := map[string]any{"parent": root, "protocol": "ip", "pref": 20, "kind": "u32", "chain": 0,
+				"options": map[string]any{"fh": "801::1", "flowid": root + "1", "matches": fakeU32Keys([]string{"match", "ip", "dst", "192.0.2.1/32"})}}
+			link.filters = append(link.filters, foreign)
+			return func() { link.filters = link.filters[:len(link.filters)-1] }
+		},
+		"qdisc": func(link *fakeLink, root string) func() {
+			// A second child, in the first band, stands for any qdisc that the
+			// apply did not add.
+			saved := link.child
+			link.child, link.parent = &fakeQdisc{kind: "tbf", handle: "9999:"}, root+"1"
+			return func() { link.child, link.parent = saved, root+"3" }
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			netem := newFakeNetem()
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, peerDelay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			link := netem.eth0("osd-0")
+			netem.mu.Lock()
+			detach := attach(link, lease.handle)
+			netem.mu.Unlock()
+			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
+				t.Fatalf("status with foreign %s: %+v %v", name, status, err)
+			}
+			if err := lease.Restore(t.Context()); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("Restore with foreign %s: %v", name, err)
+			}
+			if link.root == nil || link.root.handle != lease.handle || netem.liveHelpers() != 1 {
+				t.Fatalf("Restore removed the root %+v or the helper (%d)", link.root, netem.liveHelpers())
+			}
+			if _, err := lease.Status(t.Context()); err != nil {
+				t.Fatalf("the refused lease is not retryable: %v", err)
+			}
+			netem.mu.Lock()
+			detach()
+			netem.mu.Unlock()
+			if err := lease.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if link.root != nil || len(link.filters) != 0 || netem.liveHelpers() != 0 {
+				t.Fatalf("after Restore: root %+v, filters %v, %d helpers", link.root, link.filters, netem.liveHelpers())
+			}
+		})
+	}
+}

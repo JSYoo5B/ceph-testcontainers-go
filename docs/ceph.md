@@ -2939,7 +2939,10 @@ The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
   child's, so they count only selected packets.
 - `Restore(ctx)` removes the lease's qdisc and the helper. With a `Peer`,
   removing the lease's root removes its child and filter with it, also when
-  an apply stopped half way. A gone interface
+  an apply stopped half way. A filter or qdisc that the apply did not add,
+  under the lease's root, is refused with `ErrInvalidRequest` instead of
+  removed with the root; the lease stays retryable, and `Restore` succeeds
+  once its owner removed it. A gone interface
   needs no removal, and `Restore` never touches a new namespace. A root qdisc
   that someone replaced is refused with an error, and the lease stays
   retryable. A helper that exited or was removed is replaced first, from the
