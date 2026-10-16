@@ -12,6 +12,10 @@ change the API.
   own admin socket: every OSD's `status` after a new OSDMap epoch, and every
   MON's `mon_status` with the MonMap epoch, members, quorum and election epoch
   after a MON is added and removed
+- `TestRGWRadosReceipt` follows S3 requests to the RADOS objects that the
+  gateway writes: a small object's head object and bucket index key, a
+  6 MiB object's head and tail stripe, and the tail left to the garbage
+  collector after a delete
   ([#49](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/49)).
 
 - `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
