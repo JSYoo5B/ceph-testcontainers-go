@@ -2427,6 +2427,52 @@ in host mode. They are not mapped Docker host ports. An empty map means no modul
 advertises a service. See
 [Scrape the MGR Prometheus exporter](#scrape-the-mgr-prometheus-exporter).
 
+#### ManagerMetrics
+
+```golang
+func (c *Container) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
+```
+
+Scrapes the active manager's `prometheus` module once and returns its
+samples parsed from the Prometheus text exposition format. It never enables
+the module: enable it with [TemporaryMGRModule](#temporarymgrmodule) and wait
+until [ManagerServices](#managerservices) lists `prometheus`; until then the
+call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
+control container, at the address that `ManagerServices` advertises, and is
+bounded to 30 seconds and 32 MiB. `TestManagerMetrics` checks it in bridge
+mode; in host mode the module first needs its own address and port per
+manager, as the recipe below shows. A failed fetch is a `*NativeFailure`, and a
+standby's empty page or text that does not parse is an error.
+
+| `ceph.ManagerMetrics` field or method | Meaning |
+| --- | --- |
+| `URL` | The scraped endpoint, the active manager's `…/metrics`. |
+| `Types`, `Help` | Each metric family's `# TYPE` and `# HELP` text. |
+| `Samples` | Every `ceph.MetricSample` (`Name`, `Labels`, `Value`, `Timestamp` in milliseconds or 0), in the module's order. `Value` may be `NaN` or ±Inf. |
+| `Select(name, labels)` | The samples of `name` whose labels include all of `labels`; nil `labels` selects every sample of `name`. |
+| `Value(name, labels)` | The value of the one sample that `Select` finds; none or several is an error. |
+
+The module reports cluster-level metrics: pools (`ceph_pool_wr`,
+`ceph_pool_objects`, `ceph_pool_stored`), OSD state (`ceph_osd_up`,
+`ceph_osd_in`, `ceph_osd_metadata`), health and the MGRs. Since Reef it leaves
+out each daemon's perf counters, such as `ceph_osd_op_w`, by default; the
+module's `mgr/prometheus/exclude_perf_counters` option set to `false` adds
+them back (see the
+[Ceph documentation](https://docs.ceph.com/en/tentacle/mgr/prometheus/#ceph-daemon-performance-counters-metrics);
+the module's tests do not cover that setting). Each daemon's own counters are
+also in `cluster.AdminSocket(ctx, "osd.0", "perf", "dump")`.
+
+```golang
+metrics, err := cluster.ManagerMetrics(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+writes, err := metrics.Value("ceph_pool_wr", map[string]string{"pool_id": "2"})
+```
+
+The pool counters come from the MGR's PG statistics, which OSDs report every
+few seconds: poll until the expected value appears.
+
 ### Container Methods: Health and status
 
 #### Status
@@ -4125,8 +4171,7 @@ for url == "" {
 		time.Sleep(time.Second) // bound this loop with ctx in real tests
 	}
 }
-// Scrape from a WithClient container, for example:
-// python3 -c 'import sys,urllib.request; print(urllib.request.urlopen(sys.argv[1]+"metrics").read().decode())' <url>
+metrics, err := cluster.ManagerMetrics(ctx) // parsed samples; see ManagerMetrics
 ```
 
 In bridge mode each manager listens on its own container address on port 9283,

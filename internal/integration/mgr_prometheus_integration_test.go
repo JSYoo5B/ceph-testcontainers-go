@@ -6,6 +6,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -171,4 +174,122 @@ print(len(body))`, metrics)
 	if _, err := strconv.Atoi(output); err != nil {
 		t.Fatalf("unexpected scrape output %q", output)
 	}
+}
+
+// ManagerMetrics returns the active manager's samples: a pool's write counter
+// grows with the writes to it and its object count matches, every OSD is up,
+// and after a failover the new active manager answers. It never enables the
+// module.
+func TestManagerMetrics(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	cluster, client := newServiceCluster(t, ceph.WithManagerCount(2), ceph.WithPoolDefaults(1, 1))
+	if _, err := cluster.ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("metrics without the module: %v", err)
+	}
+	modules, err := cluster.MGRModules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, module := range modules {
+		if module.Name == "prometheus" && module.Enabled {
+			t.Fatal("ManagerMetrics enabled the prometheus module")
+		}
+	}
+	module, err := cluster.TemporaryMGRModule(ctx, "prometheus", true)
+	if module != nil {
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := module.Restore(cleanup); err != nil {
+				t.Errorf("restore prometheus: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := waitPrometheusService(t, ctx, cluster, "")
+	before, err := cluster.ManagerMetrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Types["ceph_pool_wr"] != "counter" || before.Types["ceph_pool_objects"] != "gauge" || len(before.Samples) < 100 {
+		t.Fatalf("first scrape of %s: types %q and %q, %d samples", before.URL, before.Types["ceph_pool_wr"], before.Types["ceph_pool_objects"], len(before.Samples))
+	}
+	for _, osd := range cluster.OSDs() {
+		if up, err := before.Value("ceph_osd_up", map[string]string{"ceph_daemon": fmt.Sprintf("osd.%d", osd.ID)}); err != nil || up != 1 {
+			t.Fatalf("osd.%d up = %v, %v", osd.ID, up, err)
+		}
+	}
+	lines := []string{}
+	for _, name := range []string{"ceph_osd_up", "ceph_pool_objects", "ceph_health_status", "ceph_mgr_status"} {
+		lines = append(lines, fmt.Sprintf("%s %s %v", name, before.Types[name], before.Select(name, nil)))
+	}
+	t.Logf("MGR_METRICS first scrape %s: %d samples; %s", before.URL, len(before.Samples), strings.Join(lines, "; "))
+
+	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-metrics", PGNum: 1, Replicas: 1, Application: "rados"}); err != nil {
+		t.Fatal(err)
+	}
+	out := mustCeph(t, ctx, cluster, "osd", "pool", "stats", "tc-metrics", "--format", "json")
+	var stats []struct {
+		PoolID int `json:"pool_id"`
+	}
+	if err := json.Unmarshal(out, &stats); err != nil || len(stats) != 1 {
+		t.Fatalf("pool stats: %v: %s", err, out)
+	}
+	pool := map[string]string{"pool_id": strconv.Itoa(stats[0].PoolID)}
+	// The new pool appears in a later scrape, with no writes yet.
+	var start float64
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		current, err := cluster.ManagerMetrics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if start, err = current.Value("ceph_pool_wr", pool); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pool %v never appeared: %v", pool, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	const objects = 20
+	execOutput(t, ctx, client, "sh", "-c", fmt.Sprintf(`head -c 4096 /dev/urandom > /tmp/m && for i in $(seq 1 %d); do rados -p tc-metrics put object-$i /tmp/m || exit 1; done`, objects))
+	var writes, stored float64
+	deadline = time.Now().Add(2 * time.Minute)
+	for {
+		after, err := cluster.ManagerMetrics(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writes, _ = after.Value("ceph_pool_wr", pool)
+		stored, _ = after.Value("ceph_pool_objects", pool)
+		if writes-start >= objects && stored == objects {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pool %v writes %v -> %v, objects %v", pool, start, writes, stored)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	active := activeManager(t, ctx, cluster)
+	mustCeph(t, ctx, cluster, "mgr", "fail")
+	second := waitPrometheusService(t, ctx, cluster, first.Host)
+	var failover ceph.ManagerMetrics
+	deadline = time.Now().Add(2 * time.Minute)
+	for {
+		failover, err = cluster.ManagerMetrics(ctx)
+		if err == nil && strings.Contains(failover.URL, second.Host) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no scrape of the new active manager at %s: %+v %v", second.Host, failover.URL, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Logf("MGR_METRICS pool %v writes %v -> %v after %d writes, objects %v; failover from %s to %s, %d samples",
+		pool, start, writes, objects, stored, active, failover.URL, len(failover.Samples))
 }
