@@ -165,3 +165,9 @@ func TestMonitorManagerTopology(t *testing.T) {
 		})
 	}
 }
+
+// Each daemon's own admin socket shows which OSDMap and MonMap epoch it holds
+// after a pool creation and a MON addition and removal.
+func TestMapPropagationReceipt(t *testing.T) {
+	testMapPropagationReceipt(t)
+}
