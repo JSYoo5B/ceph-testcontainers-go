@@ -149,3 +149,57 @@ func TestRenameSafe(t *testing.T) {
 		}
 	}
 }
+
+// The rename of client 4245, TID 4, in dump_historic_ops of the MDS that
+// restarted after a SIGKILL while the request was held unsafe, from a
+// TestCephFSUnsafeRequestReplay run on quay.io/ceph/ceph:v20.2.4. The run
+// logged the description and events, the fields that replayedRequest reads.
+const replayedHistoricSample = `{"ops": [{"description": "client_request(client.4245:4 rename #0x10000000000/target #0x10000000000/source 2026-10-16T07:54:30.497182+0000 RETRY=1 REPLAY QUEUED_FOR_REPLAY caller_uid=0, caller_gid=0{})", "type_data": {"reqid": {"entity": {"type": "client", "num": 4245}, "tid": 4}, "events": [{"event": "initiated"}, {"event": "header_read"}, {"event": "throttled"}, {"event": "all_read"}, {"event": "dispatched"}, {"event": "acquired locks"}, {"event": "failed to xlock, waiting"}, {"event": "acquired locks"}, {"event": "submit entry: journal_and_reply"}, {"event": "journal_committed: "}, {"event": "replying"}, {"event": "finishing request"}, {"event": "cleaned up request"}, {"event": "done"}]}}]}`
+
+// A replay is the client's own resend of an unsafe request to a later MDS
+// generation: the REPLAY flag, no early reply, and a journal commit before
+// the reply.
+func TestReplayedRequest(t *testing.T) {
+	ops, err := parseMDSRequestOps([]byte(replayedHistoricSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, found := findMDSRequest(ops, 4245, "rename", 4)
+	if !found || !replayedRequest(replayed) {
+		t.Fatalf("native replay %q %v found=%t", replayed.Description, replayed.events(), found)
+	}
+	// The first generation's own commit after its early reply is no replay.
+	historic, err := parseMDSRequestOps([]byte(unsafeHistoricSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed, _ := findMDSRequest(historic, 4239, "rename", 4); replayedRequest(committed) {
+		t.Errorf("an early-replied commit counts as a replay: %q", committed.Description)
+	}
+	withEvents := func(op mdsRequestOp, drop string, add ...string) mdsRequestOp {
+		op.TypeData.Events = op.TypeData.Events[:0:0]
+		for _, event := range append(replayed.events(), add...) {
+			if event != drop {
+				op.TypeData.Events = append(op.TypeData.Events, struct {
+					Event string `json:"event"`
+				}{event})
+			}
+		}
+		return op
+	}
+	for name, op := range map[string]mdsRequestOp{
+		"queued only": func() mdsRequestOp {
+			op := replayed
+			op.Description = strings.Replace(op.Description, " REPLAY ", " ", 1)
+			return op
+		}(),
+		"not committed":       withEvents(replayed, "journal_committed: "),
+		"not replied":         withEvents(replayed, "replying"),
+		"early reply":         withEvents(replayed, "", "early_replied"),
+		"reply before commit": withEvents(replayed, "journal_committed: ", "journal_committed: "),
+	} {
+		if replayedRequest(op) {
+			t.Errorf("%s: counted as a replay: %q %v", name, op.Description, op.events())
+		}
+	}
+}

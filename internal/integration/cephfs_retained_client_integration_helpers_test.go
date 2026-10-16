@@ -1725,6 +1725,27 @@ func renameSafe(state unsafeRenameState, historic []mdsRequestOp, client uint64)
 	return state.tid != 0 && !state.inFlight && !state.pending && found && requestSafety(op) == "safe"
 }
 
+// clientMDSRequests reads a libcephfs client's pending requests through its
+// admin socket, bounded. A query that fails or prints what does not parse
+// fails the test; an empty pending set is an answer.
+func clientMDSRequests(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, asok string) []clientMDSRequest {
+	t.Helper()
+	queryCtx, stop := context.WithTimeout(ctx, time.Minute)
+	defer stop()
+	result, err := cluster.RunNativeCommand(queryCtx, client, ceph.NativeCommand{
+		Argv: []string{"ceph", "--admin-daemon", asok, "mds_requests"}, Timeout: 30 * time.Second,
+		MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "client mds_requests",
+	})
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("client mds_requests: exit=%d err=%v stderr=%.512s", result.ExitCode, err, result.Stderr)
+	}
+	requests, err := parseClientMDSRequests(result.Stdout)
+	if err != nil {
+		t.Fatalf("client mds_requests: %v: %.1024s", err, result.Stdout)
+	}
+	return requests
+}
+
 // cephFSUnsafeObservation is one look with its bounded raw form.
 type cephFSUnsafeObservation struct {
 	unsafeRenameState
@@ -1746,37 +1767,78 @@ func observeUnsafeRename(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if err != nil {
 		t.Fatalf("dump_ops_in_flight of mds.%s: %v: %.1024s", mds, err, data)
 	}
-	queryCtx, stop := context.WithTimeout(ctx, time.Minute)
-	defer stop()
-	result, err := cluster.RunNativeCommand(queryCtx, client, ceph.NativeCommand{
-		Argv: []string{"ceph", "--admin-daemon", asok, "mds_requests"}, Timeout: 30 * time.Second,
-		MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "client mds_requests",
-	})
-	if err != nil || result.ExitCode != 0 {
-		t.Fatalf("client mds_requests: exit=%d err=%v stderr=%.512s", result.ExitCode, err, result.Stderr)
-	}
-	requests, err := parseClientMDSRequests(result.Stdout)
-	if err != nil {
-		t.Fatalf("client mds_requests: %v: %.1024s", err, result.Stdout)
-	}
+	requests := clientMDSRequests(t, ctx, cluster, client, asok)
 	observed := cephFSUnsafeObservation{unsafeRenameState: joinUnsafeRename(ops, requests, clientID, tid)}
 	observed.raw = fmt.Sprintf("tid %d: mds op %q flag_point=%q events=%v; client requests %+v", observed.tid, observed.op.Description, observed.op.TypeData.FlagPoint, observed.op.events(), requests)
 	return observed
 }
 
-// testCephFSUnsafeRequestWindow holds one rename between its early, unsafe
-// reply and its journal commit, and observes that window from both sides.
-// The MDS's own mds_log_pause, set through TemporaryConfig and read back from
-// the running daemon, holds journal submission. The actor's rename returns
-// with the early reply. While the pause holds, the MDS lists the client's
-// request in flight after "early_replied", without "journal_committed", and
-// the client's admin socket lists the same TID as got_unsafe. After the pause
-// is restored, the client no longer holds the request, the MDS's historic ops
-// show it committed and replied, and an independent client finds the new name
-// with the original inode. One active MDS keeps its GID throughout.
-func testCephFSUnsafeRequestWindow(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
-	defer cancel()
+// cephFSUnsafeHold is one rename that the filesystem's single active MDS
+// answered early and unsafely while its own mds_log_pause held journal
+// submission, observed as held on both sides.
+type cephFSUnsafeHold struct {
+	cluster  *ceph.Container
+	client   testcontainers.Container
+	fs       *cephfs.Filesystem
+	mds      cephfs.MDSStatus
+	version  string
+	asok     string
+	actor    *cephFSActorRun
+	baseline cephFSActorReceipt
+	renamed  cephFSActorReceipt
+	pause    *ceph.ConfigOverride
+	held     cephFSUnsafeObservation
+}
+
+// daemonConfig reads a setting from the running MDS itself, not from the
+// central configuration.
+func (h *cephFSUnsafeHold) daemonConfig(t *testing.T, ctx context.Context, name string) string {
+	t.Helper()
+	out, err := h.cluster.Ceph(ctx, "tell", "mds."+h.mds.Name, "config", "get", name)
+	var values map[string]string
+	if err != nil || json.Unmarshal(out, &values) != nil {
+		t.Fatalf("config get %s on mds.%s: %v: %.256s", name, h.mds.Name, err, out)
+	}
+	return values[name]
+}
+
+func (h *cephFSUnsafeHold) waitDaemonConfig(t *testing.T, ctx context.Context, name, want string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for h.daemonConfig(t, ctx, name) != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("mds.%s did not apply %s=%s", h.mds.Name, name, want)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// historicRename reads an MDS's dump_historic_ops and finds the client's
+// rename with tid in it.
+func (h *cephFSUnsafeHold) historicRename(t *testing.T, ctx context.Context, mds string, tid uint64) ([]mdsRequestOp, mdsRequestOp, bool) {
+	t.Helper()
+	historic, err := h.cluster.Ceph(ctx, "tell", "mds."+mds, "dump_historic_ops")
+	if err != nil {
+		t.Fatal("dump_historic_ops:", err)
+	}
+	ops, err := parseMDSRequestOps(historic)
+	if err != nil {
+		t.Fatalf("dump_historic_ops: %v: %.1024s", err, historic)
+	}
+	op, found := findMDSRequest(ops, h.baseline.Client, "rename", tid)
+	return ops, op, found
+}
+
+// holdCephFSUnsafeRename starts a cluster with one filesystem and one active
+// MDS, and an actor with a fsynced file. It sets mds_log_pause through
+// TemporaryConfig, reads it back from the running daemon, and lets the actor
+// rename the file once. The rename must return with the early reply, and
+// twice, 3 s apart, the MDS must list the client's request in flight after
+// "early_replied" and without "journal_committed" while the client's admin
+// socket lists the same TID as got_unsafe. The pause's restoration and the
+// actor's cancellation and join are registered before the rename is admitted.
+func holdCephFSUnsafeRename(t *testing.T, ctx context.Context) *cephFSUnsafeHold {
+	t.Helper()
 	image, imageOpts := integrationImages(t)
 	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
 	fs := cephfs.Filesystems(cluster)[0]
@@ -1787,40 +1849,22 @@ func testCephFSUnsafeRequestWindow(t *testing.T) {
 	if err != nil || len(status.Active) != 1 {
 		t.Fatalf("want one active MDS: %+v, %v", status, err)
 	}
-	mds := status.Active[0]
-	daemonConfig := func(name string) string {
-		t.Helper()
-		out, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "config", "get", name)
-		var values map[string]string
-		if err != nil || json.Unmarshal(out, &values) != nil {
-			t.Fatalf("config get %s on mds.%s: %v: %.256s", name, mds.Name, err, out)
-		}
-		return values[name]
+	h := &cephFSUnsafeHold{cluster: cluster, client: client, fs: fs, mds: status.Active[0]}
+	if early, paused := h.daemonConfig(t, ctx, "mds_early_reply"), h.daemonConfig(t, ctx, "mds_log_pause"); early != "true" || paused != "false" {
+		t.Fatalf("mds.%s runs with mds_early_reply=%s mds_log_pause=%s", h.mds.Name, early, paused)
 	}
-	waitDaemonConfig := func(name, want string) {
-		t.Helper()
-		deadline := time.Now().Add(30 * time.Second)
-		for daemonConfig(name) != want {
-			if time.Now().After(deadline) {
-				t.Fatalf("mds.%s did not apply %s=%s", mds.Name, name, want)
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
-	if early, paused := daemonConfig("mds_early_reply"), daemonConfig("mds_log_pause"); early != "true" || paused != "false" {
-		t.Fatalf("mds.%s runs with mds_early_reply=%s mds_log_pause=%s", mds.Name, early, paused)
-	}
-	version, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "version")
+	version, err := cluster.Ceph(ctx, "tell", "mds."+h.mds.Name, "version")
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.version = strings.Join(strings.Fields(string(version)), " ")
 
 	const workdir = "/tmp/unsafe-actor"
-	asok := workdir + "/client.asok"
-	actor := startCephFSActor(t, ctx, cluster, client, cephFSUnsafeActor, fs.FilesystemName, workdir, "/unsafe", "/unsafe/source", "/unsafe/target", asok)
-	baseline := actor.receipt(t, ctx, 1)
-	if baseline.Client == 0 || baseline.Inode == 0 || baseline.Size != int64(len("unsafe-window")) {
-		t.Fatalf("baseline receipt = %+v", baseline)
+	h.asok = workdir + "/client.asok"
+	h.actor = startCephFSActor(t, ctx, cluster, client, cephFSUnsafeActor, fs.FilesystemName, workdir, "/unsafe", "/unsafe/source", "/unsafe/target", h.asok)
+	h.baseline = h.actor.receipt(t, ctx, 1)
+	if h.baseline.Client == 0 || h.baseline.Inode == 0 || h.baseline.Size != int64(len("unsafe-window")) {
+		t.Fatalf("baseline receipt = %+v", h.baseline)
 	}
 	// The pause's restoration is registered before the rename is admitted;
 	// the actor's cancellation and join were registered when it started.
@@ -1837,65 +1881,40 @@ func testCephFSUnsafeRequestWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitDaemonConfig("mds_log_pause", "true")
+	h.pause = pause
+	h.waitDaemonConfig(t, ctx, "mds_log_pause", "true")
 
-	actor.open(t, ctx, "rename")
-	renamed := actor.receipt(t, ctx, 2)
-	if renamed.Errno != 0 || renamed.Error != "" || renamed.PID != baseline.PID {
-		t.Fatalf("rename receipt = %+v", renamed)
+	h.actor.open(t, ctx, "rename")
+	h.renamed = h.actor.receipt(t, ctx, 2)
+	if h.renamed.Errno != 0 || h.renamed.Error != "" || h.renamed.PID != h.baseline.PID {
+		t.Fatalf("rename receipt = %+v", h.renamed)
 	}
 	// The window is shown by native state, not by the call's return: both
 	// sides must hold the same request, twice, 3 s apart. The first look
 	// takes the TID from the MDS; it is fixed from then on.
-	var held cephFSUnsafeObservation
 	for look := range 2 {
-		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, held.tid)
-		inode := fmt.Sprintf("0x%x", baseline.Inode)
+		observed := observeUnsafeRename(t, ctx, cluster, client, h.mds.Name, h.asok, h.baseline.Client, h.held.tid)
+		inode := fmt.Sprintf("0x%x", h.baseline.Inode)
 		if !observed.inFlight || requestSafety(observed.op) != "unsafe" || !observed.pending || !bool(observed.request.GotUnsafe) ||
 			observed.request.Op != "rename" || observed.request.MDS != 0 || observed.request.TargetIno != inode {
 			t.Fatalf("look %d: the rename is not held between its unsafe and safe replies: %s", look, observed.raw)
 		}
-		held = observed
+		h.held = observed
 		if look == 0 {
 			time.Sleep(3 * time.Second)
 		}
 	}
-	tid := held.tid
-	t.Logf("CEPHFS_UNSAFE held: %s", held.raw)
+	t.Logf("CEPHFS_UNSAFE held: %s", h.held.raw)
+	return h
+}
 
-	if err := pause.Restore(ctx); err != nil {
-		t.Fatal("restore mds_log_pause:", err)
-	}
-	waitDaemonConfig("mds_log_pause", "false")
-	var committed mdsRequestOp
-	deadline := time.Now().Add(time.Minute)
-	for {
-		observed := observeUnsafeRename(t, ctx, cluster, client, mds.Name, asok, baseline.Client, tid)
-		historic, err := cluster.Ceph(ctx, "tell", "mds."+mds.Name, "dump_historic_ops")
-		if err != nil {
-			t.Fatal("dump_historic_ops:", err)
-		}
-		ops, err := parseMDSRequestOps(historic)
-		if err != nil {
-			t.Fatalf("dump_historic_ops: %v: %.1024s", err, historic)
-		}
-		op, _ := findMDSRequest(ops, baseline.Client, "rename", tid)
-		if renameSafe(observed.unsafeRenameState, ops, baseline.Client) {
-			committed = op
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the rename did not become safe: %s; historic %q %v", observed.raw, op.Description, op.events())
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	after, err := fs.MDSStatus(ctx)
-	if err != nil || len(after.Active) != 1 || after.Active[0].GID != mds.GID {
-		t.Fatalf("mds.%s changed during the window: %+v, %v", mds.Name, after, err)
-	}
-
+// readNamespace checks the result with a client in another container: the
+// new name has the file's original inode and the old name is gone. It returns
+// the reader's client ID.
+func (h *cephFSUnsafeHold) readNamespace(t *testing.T, ctx context.Context) uint64 {
+	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := h.cluster.RunNativeCommand(readCtx, h.cluster.ControlContainer(), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", `import cephfs,json,sys
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
@@ -1910,7 +1929,7 @@ try:
     print(json.dumps({"client": fs.get_instance_id(), "target": target, "source_errno": source}))
 finally:
     fs.unmount()
-    fs.shutdown()`, fs.FilesystemName}, Timeout: 2 * time.Minute, MaxStdout: 4096, MaxStderr: 64 << 10, Label: "independent namespace reader",
+    fs.shutdown()`, h.fs.FilesystemName}, Timeout: 2 * time.Minute, MaxStdout: 4096, MaxStderr: 64 << 10, Label: "independent namespace reader",
 	})
 	stop()
 	var namespace struct {
@@ -1919,14 +1938,191 @@ finally:
 		SourceErrno int    `json:"source_errno"`
 	}
 	if err != nil || read.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(read.Stdout))), &namespace) != nil ||
-		namespace.Target != baseline.Inode || namespace.SourceErrno != 2 || namespace.Client == baseline.Client {
+		namespace.Target != h.baseline.Inode || namespace.SourceErrno != 2 || namespace.Client == h.baseline.Client {
 		t.Fatalf("independent reader: exit=%d err=%v out=%.512s stderr=%.512s", read.ExitCode, err, read.Stdout, read.Stderr)
 	}
-	actor.open(t, ctx, "finish")
-	if closed := actor.receipt(t, ctx, 3); !closed.Closed || closed.Inode != baseline.Inode || closed.CloseErrno != 0 {
+	return namespace.Client
+}
+
+// finish lets the actor stat the new name through its own mount and unmount.
+func (h *cephFSUnsafeHold) finish(t *testing.T, ctx context.Context) {
+	t.Helper()
+	h.actor.open(t, ctx, "finish")
+	if closed := h.actor.receipt(t, ctx, 3); !closed.Closed || closed.Inode != h.baseline.Inode || closed.CloseErrno != 0 {
 		t.Fatalf("closing receipt = %+v", closed)
 	}
-	actor.wait(t, ctx)
+	h.actor.wait(t, ctx)
+}
+
+// testCephFSUnsafeRequestWindow holds one rename between its early, unsafe
+// reply and its journal commit, and observes that window from both sides
+// (holdCephFSUnsafeRename). After the pause is restored, the client no longer
+// holds the request, the MDS's historic ops show it committed and replied,
+// and an independent client finds the new name with the original inode. One
+// active MDS keeps its GID throughout.
+func testCephFSUnsafeRequestWindow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	h := holdCephFSUnsafeRename(t, ctx)
+	tid := h.held.tid
+	if err := h.pause.Restore(ctx); err != nil {
+		t.Fatal("restore mds_log_pause:", err)
+	}
+	h.waitDaemonConfig(t, ctx, "mds_log_pause", "false")
+	var committed mdsRequestOp
+	deadline := time.Now().Add(time.Minute)
+	for {
+		observed := observeUnsafeRename(t, ctx, h.cluster, h.client, h.mds.Name, h.asok, h.baseline.Client, tid)
+		ops, op, _ := h.historicRename(t, ctx, h.mds.Name, tid)
+		if renameSafe(observed.unsafeRenameState, ops, h.baseline.Client) {
+			committed = op
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the rename did not become safe: %s; historic %q %v", observed.raw, op.Description, op.events())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	after, err := h.fs.MDSStatus(ctx)
+	if err != nil || len(after.Active) != 1 || after.Active[0].GID != h.mds.GID {
+		t.Fatalf("mds.%s changed during the window: %+v, %v", h.mds.Name, after, err)
+	}
+	reader := h.readNamespace(t, ctx)
+	h.finish(t, ctx)
 	t.Logf("CEPHFS_UNSAFE %s mds.%s gid=%d client.%d tid=%d inode=%d: rename returned in %d ms with mds_log_pause applied; held unsafe on both sides for two looks 3 s apart; after the restore committed and replied (events %v, %.1f s in the MDS); reader client.%d found the target and ENOENT for the source",
-		strings.Join(strings.Fields(string(version)), " "), mds.Name, mds.GID, baseline.Client, tid, baseline.Inode, renamed.ElapsedMS, committed.events(), committed.Duration, namespace.Client)
+		h.version, h.mds.Name, h.mds.GID, h.baseline.Client, tid, h.baseline.Inode, h.renamed.ElapsedMS, committed.events(), committed.Duration, reader)
+}
+
+// replayedRequest reports whether an MDS op is a client's replay of a request
+// that got an unsafe reply from an earlier MDS generation: its description
+// carries the REPLAY flag, the MDS sent no early reply, and it journaled the
+// request before replying.
+func replayedRequest(op mdsRequestOp) bool {
+	if !slices.Contains(strings.Fields(op.Description), "REPLAY") {
+		return false
+	}
+	committed, replied := -1, -1
+	for index, event := range op.events() {
+		switch {
+		case event == "early_replied":
+			return false
+		case strings.HasPrefix(event, "journal_committed") && committed < 0:
+			committed = index
+		case event == "replying" && replied < 0:
+			replied = index
+		}
+	}
+	return committed >= 0 && replied > committed
+}
+
+// testCephFSUnsafeRequestReplay holds one rename unsafe
+// (holdCephFSUnsafeRename), then SIGKILLs the MDS, so the request never
+// reaches the journal. The pause is restored while no MDS runs, and the same
+// daemon starts again in its container with a new GID. Meanwhile, and after
+// the restart until the replay, the same client keeps the TID as got_unsafe.
+// The restarted daemon must have mds_log_pause false, and its historic ops
+// must show the client's request with that TID, flagged REPLAY, journaled and
+// replied without an early reply. The client then no longer holds it, and an
+// independent client finds the new name with the original inode. The test
+// issues no second rename; the replay is the client library's own.
+func testCephFSUnsafeRequestReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
+	defer cancel()
+	h := holdCephFSUnsafeRename(t, ctx)
+	tid := h.held.tid
+	var daemon *cephfs.MDS
+	for _, member := range h.fs.MDSs() {
+		if member.ID == h.mds.Name {
+			daemon = member
+		}
+	}
+	if daemon == nil || len(h.fs.MDSs()) != 1 || !h.mds.Owned {
+		t.Fatalf("active mds.%s is not the one owned MDS: %+v", h.mds.Name, h.fs.MDSs())
+	}
+	cid := daemon.GetContainerID()
+
+	// SIGKILL drops the paused journal entry with the process. Failing its
+	// GID lets the restarted daemon take the rank at once.
+	kill := time.Duration(0)
+	if err := daemon.Stop(ctx, &kill); err != nil {
+		t.Fatal("kill MDS:", err)
+	}
+	if state, err := daemon.State(ctx); err != nil || state.Running {
+		t.Fatalf("killed MDS still runs: %+v, %v", state, err)
+	}
+	if _, err := h.cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(h.mds.GID, 10)); err != nil {
+		t.Fatal("fail MDS GID:", err)
+	}
+	killed := time.Now()
+	// The pause goes before the daemon starts again, so the restarted
+	// process never reads it.
+	if err := h.pause.Restore(ctx); err != nil {
+		t.Fatal("restore mds_log_pause:", err)
+	}
+	pending := observeClientRequest(t, ctx, h, tid)
+	if !pending.found || !bool(pending.request.GotUnsafe) || pending.request.Op != "rename" {
+		t.Fatalf("with no MDS the client does not hold rename %d as unsafe: %s", tid, pending.raw)
+	}
+	if err := daemon.Start(ctx); err != nil {
+		t.Fatal("restart MDS:", err)
+	}
+	var current cephfs.MDSStatus
+	for {
+		after, err := h.fs.MDSStatus(ctx)
+		if err == nil && len(after.Active) == 1 && after.Active[0].State == "up:active" && after.Active[0].GID != h.mds.GID {
+			current = after.Active[0]
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("rank 0 did not come back: %+v, %v", after, err)
+		case <-time.After(time.Second):
+		}
+	}
+	recovered := time.Since(killed)
+	if current.Name != h.mds.Name || !current.Owned || daemon.GetContainerID() != cid || len(h.fs.MDSs()) != 1 {
+		t.Fatalf("rank 0 is not served by the restarted mds.%s in container %s: %+v", h.mds.Name, cid, current)
+	}
+	if paused := h.daemonConfig(t, ctx, "mds_log_pause"); paused != "false" {
+		t.Fatalf("restarted mds.%s runs with mds_log_pause=%s", h.mds.Name, paused)
+	}
+
+	var replayed mdsRequestOp
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		request := observeClientRequest(t, ctx, h, tid)
+		_, op, found := h.historicRename(t, ctx, current.Name, tid)
+		if found && replayedRequest(op) && !request.found {
+			replayed = op
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rename %d was not replayed: client %s; historic found=%t %q %v", tid, request.raw, found, op.Description, op.events())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	reader := h.readNamespace(t, ctx)
+	h.finish(t, ctx)
+	t.Logf("CEPHFS_UNSAFE_REPLAY %s client.%d tid=%d inode=%d: rename returned in %d ms and was held unsafe on both sides; mds.%s killed (gid %d, cid %s) with the request unjournaled; with no MDS the client held it as unsafe (%s); restarted as gid %d after %s with mds_log_pause=false; replayed as %q, events %v; reader client.%d found the target and ENOENT for the source",
+		h.version, h.baseline.Client, tid, h.baseline.Inode, h.renamed.ElapsedMS, h.mds.Name, h.mds.GID, cid, pending.raw, current.GID, recovered.Round(time.Second), replayed.Description, replayed.events(), reader)
+}
+
+// cephFSClientRequest is the client's own view of one request, read from its
+// admin socket alone, for when no MDS can be asked.
+type cephFSClientRequest struct {
+	request clientMDSRequest
+	found   bool
+	raw     string
+}
+
+func observeClientRequest(t *testing.T, ctx context.Context, h *cephFSUnsafeHold, tid uint64) cephFSClientRequest {
+	t.Helper()
+	requests := clientMDSRequests(t, ctx, h.cluster, h.client, h.asok)
+	observed := cephFSClientRequest{raw: fmt.Sprintf("client requests %+v", requests)}
+	for _, request := range requests {
+		if request.TID == tid {
+			observed.request, observed.found = request, true
+		}
+	}
+	return observed
 }
