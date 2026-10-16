@@ -13,6 +13,14 @@ change the API.
   `Select` and `Value` to pick samples by name and labels. It never enables
   the module ([#100](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/100)).
 
+- `ceph.NetworkDelay.Peer` and `PeerPort` limit `TemporaryNetworkDelay` to
+  the packets that the target sends to one address, and optionally one TCP
+  port, over IPv4 or IPv6. The lease owns a `prio` root, a netem child and one
+  u32 filter, reports `Applied` only for that whole hierarchy with the
+  requested keys, exposes tc's filter dump in `NetworkDelayStatus.Filters`,
+  and restores an incomplete hierarchy too
+  ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
+
 - `TestMapPropagationReceipt` records which map each daemon holds, from its
   own admin socket: every OSD's `status` after a new OSDMap epoch, and every
   MON's `mon_status` with the MonMap epoch, members, quorum and election epoch

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -307,6 +308,62 @@ func testNetworkDelay(t *testing.T) {
 			slow, heldSlow[0], fast, heldFast[len(heldFast)-1], slow, heldAfter[len(heldAfter)/2], counted.Packets)
 	})
 
+	t.Run("peer", func(t *testing.T) {
+		// Only the packets that osd.N sends to the client container are
+		// delayed: the client's reads from that OSD wait for a delayed answer,
+		// while its reads from the other OSD and another client's reads from
+		// the delayed OSD do not.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer := netip.MustParseAddr(address)
+		other := cluster.ControlContainer()
+		otherAddress, err := other.ContainerIP(ctx)
+		if err != nil || otherAddress == address {
+			t.Fatalf("the control container's address %q: %v", otherAddress, err)
+		}
+		selective := request
+		selective.Peer = peer
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, selective)
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied || status.RootKind != "prio" || status.Delay != delayAmount || status.Jitter != delayJitter {
+			t.Fatalf("status of the peer delay: %+v, %v", status, err)
+		}
+		during := readDelayObjects(t, ctx, client, slow, fast)
+		elsewhere := readDelayObjects(t, ctx, other, slow)
+		counted, err := lease.Status(ctx)
+		if err != nil || counted.Packets == 0 {
+			t.Fatalf("netem counted %d selected packets: %v", counted.Packets, err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		after := readDelayObjects(t, ctx, client, slow)
+		if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+			t.Fatalf("root qdisc after Restore: %s", root)
+		}
+		if helpers := netemHelpers(t, ctx); helpers != 0 {
+			t.Fatalf("%d netem helpers after Restore", helpers)
+		}
+		limit := float64(delayAmount.Milliseconds())
+		lowest := float64((delayAmount - delayJitter).Milliseconds())
+		if during[slow].Min < lowest || during[fast].Median >= limit/2 || elsewhere[slow].Median >= limit/2 || after[slow].Median >= limit/2 {
+			t.Fatalf("peer delay to %s: %s %+v and %s %+v from it, %s %+v from %s, %s %+v after Restore",
+				peer, slow, during[slow], fast, during[fast], slow, elsewhere[slow], otherAddress, slow, after[slow])
+		}
+		filters, _ := json.Marshal(status.Filters)
+		t.Logf("osd.%d delayed by %v±%v to %s only: from it %s median %.1f ms (min %.1f), %s median %.1f ms; from %s %s median %.1f ms; after Restore %.1f ms; netem counted %d selected packets; filters %s",
+			delayed.ID, delayAmount, delayJitter, peer, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median,
+			otherAddress, slow, elsewhere[slow].Median, after[slow].Median, counted.Packets, filters)
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
 		if lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: cluster.ControlImage(),
@@ -424,4 +481,67 @@ func testNetworkDelay(t *testing.T) {
 			t.Fatalf("%d netem helpers after Terminate", helpers)
 		}
 	})
+}
+
+// testNetworkDelayPeerIPv6 delays only the packets that an OSD of an IPv6
+// cluster sends to the client container's IPv6 address, through the IPv6 u32
+// filter: the client's reads from that OSD wait, its reads from the other OSD
+// and the control container's reads do not.
+func testNetworkDelayPeerIPv6(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
+	defer cancel()
+	image := netemImage(t)
+	cluster, client := newServiceCluster(t, ceph.WithPoolDefaults(1, 1), ceph.WithAddressFamily(ceph.AddressIPv6))
+	objects := placeDelayObjects(t, ctx, cluster, client)
+	osds := cluster.OSDs()
+	delayed, other := osds[0], osds[1]
+	slow, fast := objects[delayed.ID], objects[other.ID]
+	ipv6 := func(ctr testcontainers.Container) netip.Addr {
+		t.Helper()
+		inspection, err := ctr.Inspect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+		if endpoint == nil || !endpoint.GlobalIPv6Address.IsValid() {
+			t.Fatalf("no IPv6 address on %s", cluster.NetworkName())
+		}
+		return endpoint.GlobalIPv6Address
+	}
+	peer, control := ipv6(client), ipv6(cluster.ControlContainer())
+	lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: image,
+		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peer: peer})
+	if lease != nil {
+		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := lease.Status(ctx)
+	if err != nil || !status.Applied || status.RootKind != "prio" {
+		t.Fatalf("status of the IPv6 peer delay: %+v, %v", status, err)
+	}
+	during := readDelayObjects(t, ctx, client, slow, fast)
+	elsewhere := readDelayObjects(t, ctx, cluster.ControlContainer(), slow)
+	counted, err := lease.Status(ctx)
+	if err != nil || counted.Packets == 0 {
+		t.Fatalf("netem counted %d selected packets: %v", counted.Packets, err)
+	}
+	if err := lease.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after := readDelayObjects(t, ctx, client, slow)
+	if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+		t.Fatalf("root qdisc after Restore: %s", root)
+	}
+	limit := float64(delayAmount.Milliseconds())
+	lowest := float64((delayAmount - delayJitter).Milliseconds())
+	if during[slow].Min < lowest || during[fast].Median >= limit/2 || elsewhere[slow].Median >= limit/2 || after[slow].Median >= limit/2 {
+		t.Fatalf("IPv6 peer delay to %s: %s %+v and %s %+v from it, %s %+v from %s, %s %+v after Restore",
+			peer, slow, during[slow], fast, during[fast], slow, elsewhere[slow], control, slow, after[slow])
+	}
+	filters, _ := json.Marshal(status.Filters)
+	t.Logf("osd.%d delayed by %v±%v to %s only: from it %s median %.1f ms (min %.1f), %s median %.1f ms; from %s %s median %.1f ms; after Restore %.1f ms; netem counted %d selected packets; filters %s",
+		delayed.ID, delayAmount, delayJitter, peer, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median,
+		control, slow, elsewhere[slow].Median, after[slow].Median, counted.Packets, filters)
 }

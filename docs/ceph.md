@@ -2892,10 +2892,12 @@ The module starts the helper in `ctr`'s network namespace as root and grants
 | `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
 | `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. |
 | `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
+| `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (a dual-stack bridge of `WithAddressFamily(ceph.AddressIPv6)`). Mapped, zoned or unspecified addresses are refused. |
+| `PeerPort` | Optional, with `Peer`: only TCP packets to this destination port, such as one of the peer's Messenger ports. An IPv6 packet with extension headers before its TCP header is not selected. |
 
 `ctr` can be an owned daemon or a caller-owned container attached to the
 plane's bridge; it must be running, not paused, with its own network
-namespace and an IPv4 endpoint. Host-network clusters are refused. Before it
+namespace and an IPv4 endpoint, and an IPv6 address for an IPv6 `Peer`. Host-network clusters are refused. Before it
 changes anything, the call checks the helper image, `NET_ADMIN` and the
 kernel's netem in a separate helper container without a network, and fails
 with an error that wraps `ceph.ErrNetemImageUnsupported`,
@@ -2915,18 +2917,29 @@ second delay of the same endpoint.
 The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
 `NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
 `MACAddress`, `Address`), the helper's `HelperImageID` and the requested
-`Delay` and `Jitter`.
+`Delay`, `Jitter`, `Peer` and `PeerPort`.
 
 - `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
   through the helper: `Applied`, the interface's current name (`Interface`)
   and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter` and
   `Packets`, `Bytes` and `Drops` counters while `Applied`, and tc's JSON output
-  (`Qdiscs`). After the first lookup by address and MAC, the lease follows
+  (`Qdiscs`, and `Filters` for the egress filters). After the first lookup by address and MAC, the lease follows
   the interface by its index, so a changed address, MAC or name does not lose
   it. `Gone` means that the delayed
   interface no longer exists, because `ctr` stopped, restarted, was removed or
   left the bridge.
-- `Restore(ctx)` removes the lease's qdisc and the helper. A gone interface
+- With a `Peer`, the lease owns a `prio` root qdisc whose third band leads to
+  a netem child, and one u32 filter (preference 10, handle `800::1`) that
+  sends the selected packets there; every priority maps to the first band,
+  so nothing else is delayed. They are added root first and filter last, so
+  no packet is delayed before the hierarchy is complete. `Status` reports
+  `Applied` only when the root, the child and exactly that filter, with the
+  requested address and port keys, are all present; `Filters` has tc's filter
+  dump with each u32 filter's keys under `matches`. The counters are the
+  child's, so they count only selected packets.
+- `Restore(ctx)` removes the lease's qdisc and the helper. With a `Peer`,
+  removing the lease's root removes its child and filter with it, also when
+  an apply stopped half way. A gone interface
   needs no removal, and `Restore` never touches a new namespace. A root qdisc
   that someone replaced is refused with an error, and the lease stays
   retryable. A helper that exited or was removed is replaced first, from the
@@ -2951,6 +2964,27 @@ if err != nil {
 	t.Fatal(err)
 }
 // Answers from osd.0 arrive at least 200 ms late until Restore.
+```
+
+To delay only one peer, set `Peer` to its address on the same plane, for
+example a client container's address or one from
+[DaemonAddresses](#daemonaddresses). The delay applies to packets that leave
+`ctr` toward that peer; for the other direction, delay the peer's endpoint
+with `ctr`'s address.
+
+```golang
+clientAddress, err := client.ContainerIP(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Delay:       200 * time.Millisecond,
+	Peer:        netip.MustParseAddr(clientAddress),
+})
+// Answers from osd.0 reach this client late; other clients and the other
+// OSDs see no delay.
 ```
 
 See [Fault injection](guides/fault-injection.md#delaying-packets-below-ceph)

@@ -12,3 +12,8 @@ import "testing"
 func TestNetworkDelay(t *testing.T) {
 	testNetworkDelay(t)
 }
+
+// The IPv6 filter of a peer delay, on an IPv6 cluster.
+func TestNetworkDelayPeerIPv6(t *testing.T) {
+	testNetworkDelayPeerIPv6(t)
+}

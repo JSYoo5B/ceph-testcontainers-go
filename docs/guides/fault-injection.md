@@ -303,7 +303,7 @@ Before it changes anything, the call checks:
 
 - the target: an owned daemon, or a caller-owned container attached to the
   plane's bridge, running and not paused, with its own network namespace and
-  an IPv4 endpoint. Host-network clusters are refused, because a delay there
+  an IPv4 endpoint, and an IPv6 address for an IPv6 `Peer`. Host-network clusters are refused, because a delay there
   would delay the host;
 - the helper, in a separate helper container without a network: the
   contract's executables, `tc` with JSON output and netem, `python3`,
@@ -318,6 +318,20 @@ Before it changes anything, the call checks:
 - the interface, found by the endpoint's address and MAC address and then
   followed by its index: its root qdisc must be the kernel's default. A qdisc that someone else installed is
   refused, not replaced, and only one delay per endpoint is held.
+
+### One peer only
+
+With `NetworkDelay.Peer`, only the packets that the target sends to that
+address are delayed, and with `PeerPort` only TCP packets to that destination
+port. The lease owns a `prio` root qdisc, a netem qdisc in its third band and
+one u32 filter that selects the peer's packets; everything else uses the first
+band without delay. `TestNetworkDelay/peer` delays osd.0's packets to a client
+container by 200 ms ± 20 ms: that client's reads from osd.0 took a median of
+220 ms, its reads from osd.1 0.4 ms, and the control container's reads from
+osd.0 0.1 ms; netem counted only the selected packets. `TestNetworkDelayPeerIPv6`
+does the same through the IPv6 filter on an IPv6 cluster. The filter matches
+the IP header without options or extension headers, which Ceph's TCP traffic
+does not use.
 
 What to expect:
 
