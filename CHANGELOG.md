@@ -20,6 +20,10 @@ change the API.
   requested keys, exposes tc's filter dump in `NetworkDelayStatus.Filters`,
   and restores an incomplete hierarchy too
   ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
+- `ceph.NetworkDelay.Loss` drops a percentage of the delayed or selected
+  packets, with or without a `Delay`. With `Loss: 100` and a `Peer` it cuts
+  one direction of one path, and `NetworkDelayStatus.Loss` reads the kernel's
+  value ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
 
 - `TestMapPropagationReceipt` records which map each daemon holds, from its
   own admin socket: every OSD's `status` after a new OSDMap epoch, and every

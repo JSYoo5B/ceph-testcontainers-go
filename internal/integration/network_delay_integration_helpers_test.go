@@ -411,6 +411,47 @@ func testNetworkDelay(t *testing.T) {
 		t.Logf("a foreign pref 20 filter under %s kept the peer delay: Restore refused, the root and filter stayed, and Restore succeeded after the owner removed it", root)
 	})
 
+	t.Run("peer blackhole", func(t *testing.T) {
+		// Every packet that osd.N sends to the client container is dropped:
+		// the client's read from that OSD times out, while its read from the
+		// other OSD and the control container's read from the dropped OSD
+		// answer. After Restore the client reads it again.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := cluster.ControlContainer()
+		blackhole := ceph.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peer: netip.MustParseAddr(address), Loss: 100}
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, blackhole)
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied || status.Loss != 100 || status.Delay != 0 {
+			t.Fatalf("status of the blackhole: %+v, %v", status, err)
+		}
+		dropped := timedRead(t, ctx, client, slow)
+		served := timedRead(t, ctx, client, fast)
+		elsewhere := timedRead(t, ctx, other, slow)
+		counted, err := lease.Status(ctx)
+		if err != nil || counted.Drops == 0 {
+			t.Fatalf("netem dropped %d selected packets: %v", counted.Drops, err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		after := timedRead(t, ctx, client, slow)
+		if dropped.Errno != 110 || served.Errno != 0 || elsewhere.Errno != 0 || after.Errno != 0 {
+			t.Fatalf("blackhole to %s: %s %+v and %s %+v from it, %s %+v from the control container, %s %+v after Restore",
+				address, slow, dropped, fast, served, slow, elsewhere, slow, after)
+		}
+		t.Logf("osd.%d drops every packet to %s: its read of %s failed with errno %d after %.1f s, of %s took %.1f ms; the control container read %s in %.1f ms; after Restore %.1f ms; netem dropped %d packets",
+			delayed.ID, address, slow, dropped.Errno, dropped.Ms/1000, fast, served.Ms, slow, elsewhere.Ms, after.Ms, counted.Drops)
+	})
+
 	t.Run("foreign qdisc", func(t *testing.T) {
 		// A qdisc that another owner adds under the lease's root, while the
 		// delay itself stays intact, is not the lease's either: Restore
@@ -643,4 +684,35 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 	t.Logf("osd.%d delayed by %v±%v to %s only: from it %s median %.1f ms (min %.1f), %s median %.1f ms; from %s %s median %.1f ms; after Restore %.1f ms; netem counted %d selected packets; filters %s",
 		delayed.ID, delayAmount, delayJitter, peer, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median,
 		control, slow, elsewhere[slow].Median, after[slow].Median, counted.Packets, filters)
+}
+
+// timedReadScript reads one object once with a 5-second OSD operation timeout
+// and prints the errno (0 on success) and the time it took.
+const timedReadScript = `import json,rados,sys,time
+c=rados.Rados(conffile="/etc/ceph/ceph.conf",conf={"rados_osd_op_timeout":"5"})
+c.connect(timeout=30)
+try:
+ io=c.open_ioctx(sys.argv[1])
+ start=time.monotonic(); errno=0
+ try: io.read(sys.argv[2],1<<20)
+ except rados.Error as e: errno=getattr(e,"errno",None) or -1
+ print(json.dumps({"errno":abs(errno),"ms":(time.monotonic()-start)*1000}))
+ io.close()
+finally:
+ c.shutdown()
+`
+
+type timedReadResult struct {
+	Errno int     `json:"errno"`
+	Ms    float64 `json:"ms"`
+}
+
+func timedRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, name string) timedReadResult {
+	t.Helper()
+	out := delayExec(t, ctx, ctr, "python3", "-c", timedReadScript, delayPool, name)
+	var result timedReadResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("parse timed read %q: %v", out, err)
+	}
+	return result
 }
