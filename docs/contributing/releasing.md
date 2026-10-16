@@ -5,7 +5,7 @@ fixture implementation, checking a candidate, publishing a tag and adopting
 that tag in a consumer are separate steps. Do not treat a closed milestone
 or a successful retry as evidence for all four.
 
-## v0.3.0 candidate scope
+## v0.3.0 scope
 
 The [v0.3.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2)
 has no open items. The three bounded deliverables are:
@@ -28,7 +28,9 @@ authoritative image contracts remain in ceph-testcontainers-images.
 The previous release's scope remains in
 [Upgrading to v0.2.0](../guides/upgrading-to-v0.2.md). A later candidate needs
 its own check disposition; a successful run for another SHA is not its CI
-result.
+result. The root tag `v0.3.0` identifies this release; its
+[release notes](https://github.com/JSYoo5B/ceph-testcontainers-go/releases/tag/v0.3.0)
+record the final source and checks.
 
 ## Candidate checklist
 
@@ -67,8 +69,8 @@ prepared, and do not cancel existing main CI as part of documentation work.
 
 ## Publication handoff
 
-All four packages belong to one root Go module. For this candidate publish
-one repository tag, `v0.3.0`, not per-package `ceph/v0.3.0`, `rbd/v0.3.0`
+All four packages belong to one root Go module. Publish one repository tag,
+such as `v0.3.0`, not per-package `ceph/v0.3.0`, `rbd/v0.3.0`
 or other nested tags. There is currently no workflow that publishes a
 release automatically.
 

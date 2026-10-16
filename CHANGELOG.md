@@ -4,10 +4,10 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
-## Unreleased
+## v0.3.0 (2026-10-16)
 
-The v0.3.0 candidate adds bounded native input and protocol observation
-recipes. See [Preparing for v0.3.0](docs/guides/upgrading-to-v0.3.md) for
+The v0.3.0 release adds bounded native input and protocol observation
+recipes. See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for
 compatibility and the limits of the completed
 [milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2).
 The receipts below are test helpers and native evidence, not new public

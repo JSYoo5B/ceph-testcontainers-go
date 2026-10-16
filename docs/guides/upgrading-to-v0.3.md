@@ -1,14 +1,11 @@
-# Preparing for v0.3.0
+# Upgrading to v0.3.0
 
-This guide describes the v0.3.0 candidate relative to v0.2.0. The release has
-not been published; `@latest` still selects v0.2.0. For candidate testing,
-pin a reviewed commit instead of assuming that `@latest` includes these
-changes. All four packages share one root module version.
-
-For example, after setting `CEPH_CANDIDATE_SHA` to the reviewed full commit:
+This guide describes v0.3.0 relative to v0.2.0. Select the release tag
+explicitly when upgrading an integration module. All four packages share
+one root module version:
 
 ```sh
-go get "github.com/JSYoo5B/ceph-testcontainers-go/ceph@${CEPH_CANDIDATE_SHA}"
+go get github.com/JSYoo5B/ceph-testcontainers-go/ceph@v0.3.0
 ```
 
 The [v0.3.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2)
@@ -103,10 +100,11 @@ membership changes also require waiting for the election to settle before
 starting fresh clients; see the same guide's
 [daemon controls](messenger-client-fixtures.md#daemon-controls).
 
-Before publication, record required CI at the exact final source, its
-attempts and any unresolved failures as described in
-[Preparing a release](../contributing/releasing.md). A closed milestone,
-focused native run or successful retry does not replace that gate. Selective
+The [release notes](https://github.com/JSYoo5B/ceph-testcontainers-go/releases/tag/v0.3.0)
+record release-source CI and publication evidence. The required checks use
+the exact final source, including attempts and unresolved failure dispositions,
+as described in [Preparing a release](../contributing/releasing.md). A closed
+milestone, focused native run or successful retry does not replace that gate. Selective
 peer faults and the remaining parent investigations are not silently covered
 by this release. No new image capability is required by the three milestone
 items, and image policy remains owned by ceph-testcontainers-images.
