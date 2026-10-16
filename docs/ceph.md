@@ -1176,6 +1176,9 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   end of input after `Input.Close`. `InputWritten`, `InputDelivered` and
   `InputEOF` in the result say how much of it the command could read. Writes
   fail with `ErrNativeInputClosed` once the command ended.
+- `Complete()` checks time and output limits, not input delivery. Assert the
+  byte counts, EOF and the worker's receipt separately; bytes delivered into
+  its pipe do not prove application execution or durability.
 - Errors contain the label but never the arguments or the output. A Docker
   or container failure appears only by its kind; `errors.Unwrap` returns the
   original error.
@@ -1187,7 +1190,7 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   because a security policy refused it, and another Docker failure are
   `ErrEnvironmentUnavailable`. A container that disappears or stops after
   the command was sent matches no category, since the command may have run.
-  Context errors, `ErrNativeCommandIncomplete` and
+  Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
   `*NativeCommandUnstoppedError` belong to no category. See
   [Classified errors](guides/errors.md).
 
@@ -1207,9 +1210,10 @@ The standard input of one `NativeCommand`. `Write` sends binary data after
 the data of earlier writes and returns once the input stream to the
 container took it; before the command starts it waits, within `ctx`. A write
 that would pass `MaxInput` is refused whole with `ErrInvalidRequest`, and the
-input stays open. `Close` ends the input. Written data never appears in
-arguments, the environment, files, errors or diagnostics. An input serves one
-command.
+input stays open. `Close` ends the input. The transport does not put input in
+arguments, the environment, files, errors or diagnostics; the command's own
+output remains raw, so a worker handling secrets must not echo them. An
+input serves one command and must be created with `NewNativeInput`.
 
 #### RedactSecrets
 
@@ -3303,7 +3307,7 @@ engine capability, and from a native command that failed. Match them with
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
 
-Context errors, `ErrNativeCommandIncomplete` and
+Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
 category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's

@@ -302,9 +302,17 @@ it published a receipt:
 
 ```golang
 input := ceph.NewNativeInput()
+runCtx, cancel := context.WithCancel(ctx)
 done := make(chan error, 1)
+finished := make(chan struct{})
+t.Cleanup(func() {
+	cancel()
+	_ = input.Close()
+	<-finished // Also join the call when an assertion below fails.
+})
 go func() {
-	result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+	defer close(finished)
+	result, err := cluster.RunNativeCommand(runCtx, client, ceph.NativeCommand{
 		Argv:      []string{"python3", "-c", worker, workdir, token},
 		Timeout:   2 * time.Minute,
 		MaxStdout: 4096,
@@ -313,8 +321,17 @@ go func() {
 		Input:     input,
 		MaxInput:  1 << 20,
 	})
-	if err == nil && (!result.InputEOF || result.ExitCode != 0) {
+	var unstopped *ceph.NativeCommandUnstoppedError
+	if errors.As(err, &unstopped) {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), time.Minute)
+		defer stopCancel()
+		err = errors.Join(err, unstopped.Stop(stopCtx))
+	}
+	if err == nil && (!result.InputEOF || result.InputDelivered != result.InputWritten || result.ExitCode != 0) {
 		err = fmt.Errorf("worker exited %d after %d of %d input bytes", result.ExitCode, result.InputDelivered, result.InputWritten)
+	}
+	if err != nil {
+		t.Error(err) // Preserve cleanup failures even if another assertion failed.
 	}
 	done <- err
 }()
@@ -329,8 +346,8 @@ if err := <-done; err != nil {
 }
 ```
 
-- The command reads exactly the bytes written, in order, with NUL and
-  non-UTF-8 bytes intact, and the end of input after `Close`. Writes may come
+- Input is transported byte for byte, in order, with NUL and non-UTF-8 bytes
+  intact, and the end of input after `Close`. Writes may come
   at any time while it runs: before the command starts, `Write` waits for it,
   within its `ctx`.
 - `MaxInput` bounds all writes together. A write that would pass it is
@@ -347,6 +364,11 @@ if err := <-done; err != nil {
   the command could read: `InputWritten` bytes reached the container,
   `InputDelivered` of them went into the command's standard input, and
   `InputEOF` means that the end of input followed all of them.
+- `Complete()` checks time and output limits only. It does not require all
+  input to be delivered or EOF to be sent. Even equal byte counts and
+  `InputEOF` show delivery into a pipe, not that the application consumed or
+  applied the records: check the worker's own receipt as well. Do not repeat
+  a write after an uncertain context error without settling its outcome.
 - The call stops taking writes when the command ends, and returns only after
   its input and output work ended. A deadline, a canceled `ctx` or
   `Terminate` stops the command as in

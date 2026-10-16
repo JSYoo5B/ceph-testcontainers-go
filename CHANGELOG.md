@@ -6,6 +6,13 @@ change the API.
 
 ## Unreleased
 
+The v0.3.0 candidate adds bounded native input and protocol observation
+recipes. See [Preparing for v0.3.0](docs/guides/upgrading-to-v0.3.md) for
+compatibility and the limits of the completed
+[milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2).
+The receipts below are test helpers and native evidence, not new public
+observer APIs or certification of a downstream Messenger implementation.
+
 ### Added
 
 - `RunNativeCommand` can give a command a bounded, binary-safe standard input:
@@ -14,8 +21,10 @@ change the API.
   it, and `MaxInput` bounds the bytes in all. The supervisor keeps the
   command's deadline, cancellation and confirmed stop. The result reports the
   bytes written and delivered and whether the end of input reached the
-  command. Written data never appears in arguments, files, errors or
-  diagnostics.
+  command. The transport does not put input in arguments, files, errors or
+  diagnostics; command output remains raw, so a worker handling secrets must
+  not echo them. `Complete()` still covers time and output limits; assert
+  input delivery and the worker's receipt separately.
 
 - The Messenger fixture guide explains how to tell which MON session belongs
   to a registered MGR. A MGR authenticates its beacon client, whose global
