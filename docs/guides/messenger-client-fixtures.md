@@ -78,7 +78,7 @@ until it reports an active MGR and one standby.
 | Pause a MON or a MGR and resume it | `PauseContainer` and `ContainerPause.Resume`. The paused daemon's socket still accepts TCP connections, but the daemon sends nothing. A paused MON leaves the quorum to the other two. A MON paused for longer than the MON ticket lifetime can strand a daemon whose MON session was on it: the daemon's reconnect is refused with `EACCES`, and its MON client stops authenticating. With 12 s tickets and a 25 s pause, this happened to the active MGR in two of four runs. Check MGR-dependent behaviour before such a pause, or restart the stranded daemon. | `TestMessengerClientProfileSecure` |
 | Fail over the active MGR | `cluster.Ceph(ctx, "mgr", "fail", name)`. The failed MGR restarts its process and registers as a standby again, about 1.5 s later on 20.2.4; wait until `ManagerStatus` lists it before the next control, such as a monmap change. A daemon that must authenticate again after the MONs have rotated away the secret of its ticket, for example after an election that outlasted the ticket lifetime, is refused with `EACCES` and can stay unregistered while its process runs (see the pause row); `Stop` and `Start` on its `Managers()` handle bring it back. See [MGR MonClients](#mgr-monclients) before treating a refusal as that case. | `TestMessengerClientProfileSecure`, which waits for the standby before its next control |
 | Tell which MON session belongs to a registered MGR | the owned MONs' `sessions` admin socket command, through `cluster.AdminSocket(ctx, "mon.<name>", "sessions")`; see [MGR MonClients](#mgr-monclients) | `TestMessengerClientProfileManagerMonClients` |
-| Stop one MGR and start it again | `Managers()`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket. | `TestMessengerClientProfileSecure` |
+| Stop one MGR and start it again | `Managers()`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket; see [MGR transition receipt](#mgr-transition-receipt) for when the MGR is registered again. | `TestMessengerClientProfileSecure`, `TestMessengerClientProfileManagerTransition` |
 | Restart one MON | `Monitors()`, then `Stop` and `Start` | `TestMessengerClientProfileSecure` |
 | Stop every MON and start them again | `Stop` each MON; start `b` and `c` before `a`. MON a's container checks `ceph status` when it starts, which needs a quorum. Each MON comes back at its monmap address. | `TestMessengerClientProfileSecure`, with the MONs down longer than a MON ticket lives |
 | Stop MON a for good | `Stop` on its handle. With three MONs, the fixture's own CLI runs in a separate control container and keeps working. | `TestMessengerClientProfileSecure` |
@@ -107,6 +107,69 @@ GID that the MgrMap last registered for it, and the MGR then drops out of
 the MgrMap. The MON logs are each MON container's output, of which
 `CollectDiagnostics` keeps a bounded tail. Compare the global IDs; the entity
 name alone is the same for every client of the daemon.
+
+### MGR transition receipt
+
+A client test that follows a MGR failover needs to know which daemon took
+over and which registration belongs to which process at each step.
+`testManagerTransitionReceipt` in
+`internal/integration/manager_transition_integration_helpers_test.go` is the
+recipe as a test helper; copy it into your tests. It runs with three MONs,
+two MGRs and no OSDs, at the image's default Messenger policy, in three
+phases:
+
+1. Baseline: one available active and one standby, both owned. The test
+   freezes the FSID, the MON names, both MgrMap registrations (name and GID)
+   and both containers' IDs and start times.
+2. Promotion: `Stop` on the active's `Managers()` handle. The phase waits
+   until the captured standby is active with the same GID, container ID and
+   start time, and the stopped MGR has left the MgrMap.
+3. Restoration: `Start` on the same handle. `Start` waits only for the admin
+   socket, so the phase waits until the old MGR is the only standby, with a
+   new GID, the same container ID and a new start time, while the promoted
+   MGR stays active with its identity. The old MGR need not become active
+   again.
+
+Each phase has a deadline of its own and takes samples until one is
+accepted. A sample reads the MgrMap, the `sessions` of every frozen MON,
+each MGR container's inspection, a fresh `quorum_status`, `ceph rbd task list`
+(a command of the `rbd_support` MGR module, not RBD I/O) and the MgrMap again,
+each query within its own bound. `classifyMgrSample` then judges it:
+
+- `incomplete`: a query did not complete. Its status stays as observed:
+  `missing`, `timeout`, `parse_failure`, `truncated`, `native_rejection` or
+  `failed`. None of them is an observed absence, and truncated JSON never
+  decodes to an empty map.
+- `transitional`: the two MgrMaps differ, so the sample may mix the
+  registrations of two maps. The phase keeps it and takes another sample.
+- `violated`: the captured standby's container or start time changed, or it
+  registered with another GID; an unowned MGR is active; the FSID changed;
+  the old MGR's container was replaced, or after its restart it holds its old
+  GID. The phase fails at once.
+- `pending`: a condition is not met yet, for example a MON out of the quorum
+  or a registration without its beacon session.
+- `accepted`: every registration that the phase requires has its beacon
+  session on some MON: type `mgr`, under the MGR's entity, with the MgrMap GID
+  as its global ID (see [MGR MonClients](#mgr-monclients)). Module clients of
+  the same entity do not count, and a MGR need not have a beacon session on
+  every MON.
+
+The test logs the receipt as `MGR_TRANSITION_RECEIPT`. For each phase it
+keeps the window, the count of samples by state and the last four samples,
+with selected fields only: `mgr dump` prints a few hundred KB of module
+option descriptions, of which the receipt keeps the epoch, the availability
+and the registrations. A failed `Stop` or `Start`, or a phase that ends
+without an accepted sample, fails the test with the receipt so far.
+
+On 20.2.4 and 19.2.5, with the official image and with the CI role images,
+the MgrMap epochs went 4, 6, 7. The MgrMap moved to the standby 23 to 35 s
+after the stop, and the promotion was accepted 35 to 39 s after it. Before the
+move, a sample timed out on `rbd task list`, which waited for the stopped
+active, and the sample during the move was transitional. The restarted MGR
+was a standby with a new GID within 5 s of `Start`.
+
+The receipt does not show which Messenger mode a connection used, and it
+does not follow OSD, MDS or RGW daemons across the transition.
 
 ### Authentication first-failure bundle
 
@@ -282,6 +345,7 @@ these paths.
 | OSD to OSD when a replica missed writes | One replica of a one-PG, two-replica pool stops while writes continue, then starts again with recovery held by `norecover` or `nobackfill`. The primary's `pg query` tells the two paths apart. In log recovery the replica stays in the acting set, has no backfill target and `last_backfill` `MAX`, and the PG log still reaches back to the replica's last entry. In backfill the PG log has been trimmed past that entry, and the replica is only in the up set, as the backfill target with `last_backfill` `MIN`. While the flag is set, `num_objects_recovered` does not move; afterwards it grows by exactly the objects written while the replica was down. A client of its own reads every object, and with the primary stopped the replica serves them alone. The same receipt runs on a K=2, M=1 erasure-coded pool, where the replica is the OSD of one shard: `pg query` names it like `2(1)`, backfill leaves its acting slot empty (`2147483647`), and with the primary stopped no object can be rebuilt without the recovered shard. The test logs `OSD_RECOVERY_RECEIPT`. | Native state | `TestOSDRecoveryAndBackfillReceipts/replicated` and `/erasure` |
 | OSD to OSD after a placement change | With `nobackfill` and `norecover` held, a one-replica pool's PGs map to another OSD and report `recovery_wait` or `backfill_wait` while the objects stay on the old one. After the flags are restored, the PGs are clean on the new OSD and the data reads back. | Native state. Client reads recover objects on demand, so the test does not tell log recovery from backfill. | `TestPoolPGRelocation` |
 | MDS to MDS subtree export | An export pin moves a directory's authority to the pinned rank, as `get subtrees` on the owned ranks reports. With `ceph.dir.pin` on a directory that a client has open, rank 0's `exported` and `exported_inodes` perf counters and rank 1's `imported` and `imported_inodes` grow, read with `ceph tell mds.<name> perf dump mds` before and after. In the live migration the client keeps writing during the move, and both ranks must agree on the single authority. | Native state (per-daemon counters) for the pinned directory; outcome for subvolume pins | `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration`, `TestCephFSPins` |
+| MGR to MON, registration and failover | The MONs drop the active MGR whose process stopped and promote the captured standby, which keeps its GID and process. The restarted MGR registers again as a standby with a new GID. Each registration has its beacon session on a MON, and the MON quorum and a MGR module command answer in every phase. The test logs `MGR_TRANSITION_RECEIPT`; see [MGR transition receipt](#mgr-transition-receipt). | Native state (MgrMap and MON sessions) | `TestMessengerClientProfileManagerTransition` |
 | MDS to client after an MDS restart, a standby takeover or a live export | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover`, `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration` |
 
 A short log for the backfill case comes from `TemporaryConfig` on
@@ -289,8 +353,7 @@ A short log for the backfill case comes from `TemporaryConfig` on
 with the default `osd_pg_log_trim_min` of 100, a log of a few dozen entries is
 not trimmed at all.
 
-No receipt exists yet for MGR registration and control, heartbeat failure
-detection, RGW to RADOS, or the RBD and CephFS mirror peers with one path
+No receipt exists yet for OSD heartbeat failure detection, RGW to RADOS, or the RBD and CephFS mirror peers with one path
 cut. A fault on one peer or in one direction
 needs a peer-selective fault, which the fixture does not provide:
 `InterruptNetwork` cuts a whole endpoint, and `TemporaryNetworkDelay` delays
