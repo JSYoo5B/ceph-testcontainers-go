@@ -4,6 +4,17 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## Unreleased
+
+### Documentation
+
+- The Messenger client fixtures guide explains why a MON can issue tickets
+  from replaced service keys right after `auth wipe-rotating-service-keys`,
+  why native clients are not affected, and how a client of your own avoids
+  it ([#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71)).
+- The native command guide warns that a Tentacle MON at `debug_auth` 10 logs
+  session keys and service secrets.
+
 ## v0.3.0 (2026-10-16)
 
 The v0.3.0 release adds bounded native input and protocol observation

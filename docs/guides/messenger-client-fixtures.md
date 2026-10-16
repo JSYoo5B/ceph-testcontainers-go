@@ -237,7 +237,9 @@ key that the issuing MON used, or the one that the MGR selected to verify a
 ticket, without the keys themselves. A successful control, before or after
 the failure, or a later passing run does not show it either. Proving
 equality needs a native observer outside the stock images; see
-[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71).
+[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71). For the
+cause of the failure in #71, see
+[Authenticating right after a rotating-key wipe](#authenticating-right-after-a-rotating-key-wipe).
 
 `checkAuthBundleSecrecy` refuses a bundle that contains a secret you pass or a
 field beyond its schema. The bundle holds no key, ticket, proof or auth
@@ -255,6 +257,39 @@ ends at once (every query `timed_out`) and one whose control may keep 8 bytes
 bundle, with synthetic labels that keep their equality: complete, target
 registered, controls successful, -13 preserved and generation equality still
 unverified. `TestAuthBundleClassification` changes one fact at a time.
+
+### Authenticating right after a rotating-key wipe
+
+Right after a wipe, a MON can briefly still issue tickets sealed
+with the service keys that the wipe replaced. A MGR that already holds the new
+keys refuses such a ticket with -13 (`could not decrypt ticket info`).
+
+On Tentacle 20.2.4, `auth wipe-rotating-service-keys` commits the new rotating
+keys and a new auth epoch together. A MON applies the commit under its main
+lock and refreshes the MonMap before the auth state. The MonMap refresh
+already sends the new MonMap to the MON's subscribers. The authentication of a
+new connection takes only the MON's auth lock, so until the auth state
+follows, it issues tickets from the old keys.
+
+A client that renews its tickets on a new MON connection as soon as it sees
+the new MonMap can land in that window. Native clients do not: a MonClient
+renews inside its open session with an `MAuth` message, which the MON
+handles under its main lock, after the whole commit.
+
+For a client of your own:
+- Record, for each MON, the auth epoch of the first MonMap of each new
+  session. The MON sends that MonMap under its main lock, so the MON had
+  applied the auth state of that epoch by then.
+- Discard renewal tickets from a handshake that started before the MON
+  showed the epoch you expect, and authenticate to it once more.
+- Do not wait a fixed time instead. The window has no bound.
+
+This was the cause of the -13 in
+[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71); the
+consumer fixed it in its client
+([JSYoo5B/ceph-msgr-go@3d2645e](https://github.com/JSYoo5B/ceph-msgr-go/commit/3d2645e)).
+The first-failure bundle above still does not show which key a MON or MGR
+used, and a later passing run does not either.
 
 ## Mutation oracles
 

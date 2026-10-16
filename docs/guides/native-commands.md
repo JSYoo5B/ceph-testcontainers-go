@@ -871,6 +871,11 @@ logs, err := cluster.OSDs()[0].Logs(ctx)
   current and the next one.
 - The log contains the secrets themselves. Keep it to disposable test
   clusters, and set `debug_auth` back to `1/5` when you are done.
+- On Tentacle 20.2.4, a MON at `debug_auth` 10 also logs the session key and
+  the service secret of every ticket that it builds (`session_key=` and
+  `service_secret=` after `build_service_ticket`). Do not raise a MON's
+  `debug_auth` in a run whose logs you keep or upload. Squid 19.2.5 has no
+  such lines.
 - On Tentacle, `ceph auth dump-keys --format json` on the MONs lists the same
   secret IDs and expirations under `rotating_secrets`. Squid has no such
   command.
