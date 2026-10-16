@@ -39,6 +39,13 @@ type fakeLink struct {
 	child   *fakeQdisc
 	parent  string
 	filters []map[string]any
+	// extra are qdiscs that someone else added, by parent; removing the
+	// root removes those under it.
+	extra []fakeExtraQdisc
+}
+
+type fakeExtraQdisc struct {
+	kind, handle, parent string
 }
 
 // fakeNamespace is a network namespace with its interfaces.
@@ -230,7 +237,11 @@ func (n *fakeNetem) cancel(context.Context, testcontainers.Container, string, st
 
 func qdiscJSON(link *fakeLink) []map[string]any {
 	if link.root == nil {
-		return []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		qdiscs := []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		for _, extra := range link.extra {
+			qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": map[string]any{}})
+		}
+		return qdiscs
 	}
 	qdiscs := []map[string]any{{"kind": link.root.kind, "handle": link.root.handle, "root": true,
 		"options": map[string]any{"delay": map[string]any{"delay": link.root.delay.Seconds(), "jitter": link.root.jitter.Seconds()}},
@@ -239,6 +250,9 @@ func qdiscJSON(link *fakeLink) []map[string]any {
 		qdiscs = append(qdiscs, map[string]any{"kind": link.child.kind, "handle": link.child.handle, "parent": link.parent,
 			"options": map[string]any{"delay": map[string]any{"delay": link.child.delay.Seconds(), "jitter": link.child.jitter.Seconds()}},
 			"packets": link.child.packets, "bytes": link.child.packets * 100, "drops": 0})
+	}
+	for _, extra := range link.extra {
+		qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": map[string]any{}})
 	}
 	return qdiscs
 }
@@ -384,6 +398,8 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 			return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Invalid handle.")}, nil
 		}
 		// Removing a root removes its children and filters with it.
+		major, _, _ := strings.Cut(link.root.handle, ":")
+		link.extra = slices.DeleteFunc(link.extra, func(extra fakeExtraQdisc) bool { return strings.HasPrefix(extra.parent, major+":") })
 		link.root, link.child, link.parent, link.filters = nil, nil, "", nil
 		return supervised.Report{}, nil
 	}

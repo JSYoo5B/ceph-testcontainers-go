@@ -82,7 +82,8 @@ type NetworkDelay struct {
 // read through the helper. It is native state, not the requested NetworkDelay.
 type NetworkDelayStatus struct {
 	// Applied means that the delay's own netem qdisc is the root qdisc of the
-	// interface it was applied to.
+	// interface it was applied to (with a Peer, that its own hierarchy is),
+	// and that nothing the lease did not add is under that root.
 	Applied bool
 	// Gone means that the delayed interface no longer exists: the target
 	// stopped, restarted, was removed or was disconnected from the network,
@@ -103,8 +104,8 @@ type NetworkDelayStatus struct {
 	// of each u32 filter under "matches".
 	Filters json.RawMessage
 
-	// mismatch says why a selective delay's own root does not hold the
-	// requested hierarchy.
+	// mismatch says why the lease's own root does not hold exactly the
+	// requested hierarchy, with nothing foreign under it.
 	mismatch error
 }
 
@@ -912,7 +913,10 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 	netem := root
 	switch {
 	case !l.Peer.IsValid():
-		status.Applied = root.Kind == "netem" && root.Handle == l.handle
+		if root.Kind == "netem" && root.Handle == l.handle {
+			status.mismatch = l.ownedPrefix(status)
+			status.Applied = status.mismatch == nil
+		}
 	case root.Kind == "prio" && root.Handle == l.handle:
 		// The delay is applied only as the whole hierarchy: the root, its
 		// netem child in the selected band, and the one filter to it.
@@ -929,6 +933,8 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 		status.mismatch = checkPeerFilter(report.Filters, l.handle, l.Peer, l.PeerPort)
 		if children != 1 {
 			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
+		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
+			status.mismatch = errors.Join(status.mismatch, err)
 		}
 		status.Applied = status.mismatch == nil
 	}
@@ -940,25 +946,56 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 }
 
 // ownedPrefix checks that the qdiscs and filters under the lease's root are
-// a prefix of what applying a selective delay adds: the prio root, then its
-// netem child in the selected band, then the one filter.
+// a prefix of what applying the delay adds: the root, and for a selective
+// delay its netem child in the selected band and then the one filter.
+// Removing the root removes everything under it, so anything else there is
+// foreign; qdiscs outside the root, such as an ingress qdisc, are not.
 func (l *NetworkDelayLease) ownedPrefix(status NetworkDelayStatus) error {
-	if !l.Peer.IsValid() {
-		return fmt.Errorf("the root is %s, not the delay's netem", status.RootKind)
-	}
 	var qdiscs []netemQdisc
 	if err := json.Unmarshal(status.Qdiscs, &qdiscs); err != nil {
 		return fmt.Errorf("parse tc qdisc output: %w", err)
 	}
+	rootKind := "netem"
+	if l.Peer.IsValid() {
+		rootKind = "prio"
+	}
+	// A qdisc is under the root when its parent is the root or a qdisc under
+	// it; tc does not promise to list a parent first.
+	under := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for _, qdisc := range qdiscs {
+			major, _, _ := strings.Cut(qdisc.Handle, ":")
+			parent, _, _ := strings.Cut(qdisc.Parent, ":")
+			if !under[major] && (qdisc.Root || under[parent]) {
+				under[major], changed = true, true
+			}
+		}
+	}
 	for _, qdisc := range qdiscs {
+		if major, _, _ := strings.Cut(qdisc.Handle, ":"); !under[major] {
+			continue
+		}
 		switch {
-		case qdisc.Root && qdisc.Kind == "prio" && qdisc.Handle == l.handle:
-		case !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
+		case qdisc.Root && qdisc.Kind == rootKind && qdisc.Handle == l.handle:
+		case l.Peer.IsValid() && !qdisc.Root && qdisc.Kind == "netem" && qdisc.Handle == l.child && qdisc.Parent == l.handle+peerBand:
+		case qdisc.Root:
+			return fmt.Errorf("the root is %s %s, not the delay's %s", qdisc.Kind, qdisc.Handle, rootKind)
 		default:
 			return fmt.Errorf("a %s qdisc %s under %s", qdisc.Kind, qdisc.Handle, qdisc.Parent)
 		}
 	}
-	return checkPeerFilters(status.Filters, l.handle, l.Peer, l.PeerPort, false)
+	if l.Peer.IsValid() {
+		return checkPeerFilters(status.Filters, l.handle, l.Peer, l.PeerPort, false)
+	}
+	var filters []netemFilter
+	if err := json.Unmarshal(status.Filters, &filters); err != nil {
+		return fmt.Errorf("parse tc filter output: %w", err)
+	}
+	if len(filters) > 0 {
+		return fmt.Errorf("%d filters under the root", len(filters))
+	}
+	return nil
 }
 
 // Restore removes the delay's qdisc and then the helper. A delay whose
@@ -984,17 +1021,14 @@ func (l *NetworkDelayLease) Restore(ctx context.Context) error {
 		return err
 	}
 	if !status.Gone {
-		// The lease's root goes also when a selective delay is incomplete,
-		// as long as everything under it is what the apply added: removing
-		// the root removes all of it, so foreign state there is refused.
-		owned := status.Applied
-		if !owned && status.RootHandle == l.handle {
+		// The lease's root goes, also when a selective delay is incomplete,
+		// only while everything under it is what the apply added: removing
+		// the root removes all of it, so foreign state there is refused even
+		// when the delay itself is still applied.
+		if status.RootHandle == l.handle {
 			if err := l.ownedPrefix(status); err != nil {
 				return invalidRequest("the delayed interface's root %s carries state that the lease did not add (%v); remove it, then Restore again", l.handle, err)
 			}
-			owned = true
-		}
-		if owned {
 			result, err := l.backend.run(ctx, l.helper, "remove the netem delay", "tc", "qdisc", "del", "dev", status.Interface, "root", "handle", l.handle)
 			if err != nil {
 				if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {

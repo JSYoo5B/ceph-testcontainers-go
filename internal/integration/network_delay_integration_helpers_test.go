@@ -411,6 +411,58 @@ func testNetworkDelay(t *testing.T) {
 		t.Logf("a foreign pref 20 filter under %s kept the peer delay: Restore refused, the root and filter stayed, and Restore succeeded after the owner removed it", root)
 	})
 
+	t.Run("foreign qdisc", func(t *testing.T) {
+		// A qdisc that another owner adds under the lease's root, while the
+		// delay itself stays intact, is not the lease's either: Restore
+		// refuses, keeps every qdisc, and succeeds after the owner removed it.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selective := request
+		selective.Peer = netip.MustParseAddr(address)
+		for name, delay := range map[string]ceph.NetworkDelay{"peer": selective, "interface": request} {
+			lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, delay)
+			if lease != nil {
+				defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, err := lease.Status(ctx)
+			if err != nil || !status.Applied {
+				t.Fatalf("status of the %s delay: %+v, %v", name, status, err)
+			}
+			root := status.RootHandle
+			owner := startNetemObserver(t, ctx, image, delayed.Container, true)
+			delayExec(t, ctx, owner, "tc", "qdisc", "add", "dev", lease.Interface, "parent", root+"1", "handle", "9999:",
+				"tbf", "rate", "1gbit", "burst", "64kb", "latency", "50ms")
+			if changed, err := lease.Status(ctx); err != nil || changed.Applied {
+				t.Fatalf("status of the %s delay with a foreign qdisc: %+v, %v", name, changed, err)
+			}
+			if err := lease.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Fatalf("Restore of the %s delay with a foreign qdisc: %v", name, err)
+			}
+			qdiscs := delayExec(t, ctx, owner, "tc", "-j", "qdisc", "show", "dev", lease.Interface)
+			for _, handle := range []string{root, "9999:"} {
+				if !strings.Contains(qdiscs, `"handle":"`+handle+`"`) {
+					t.Fatalf("the refused Restore of the %s delay removed %s: %s", name, handle, qdiscs)
+				}
+			}
+			if name == "peer" && strings.Count(qdiscs, `"kind":"netem"`) != 1 {
+				t.Fatalf("the refused Restore removed the delay's netem child: %s", qdiscs)
+			}
+			delayExec(t, ctx, owner, "tc", "qdisc", "del", "dev", lease.Interface, "parent", root+"1", "handle", "9999:")
+			if err := lease.Restore(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if after := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); after != "noqueue 0:" {
+				t.Fatalf("root qdisc after Restore of the %s delay: %s", name, after)
+			}
+			t.Logf("a foreign tbf 9999: under %s's band 1 kept the %s delay: Restore refused, every qdisc stayed, and Restore succeeded after the owner removed it", root, name)
+		}
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
 		if lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: cluster.ControlImage(),

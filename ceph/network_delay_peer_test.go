@@ -187,31 +187,47 @@ func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
 // the lease's: Restore refuses rather than remove it with the root, keeps the
 // lease, and succeeds once the owner removed it.
 func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
-	for name, attach := range map[string]func(link *fakeLink, root string) func(){
-		"filter": func(link *fakeLink, root string) func() {
+	for name, tc := range map[string]struct {
+		delay  NetworkDelay
+		attach func(link *fakeLink, root string) func()
+	}{
+		"filter": {peerDelay, func(link *fakeLink, root string) func() {
 			foreign := map[string]any{"parent": root, "protocol": "ip", "pref": 20, "kind": "u32", "chain": 0,
 				"options": map[string]any{"fh": "801::1", "flowid": root + "1", "matches": fakeU32Keys([]string{"match", "ip", "dst", "192.0.2.1/32"})}}
 			link.filters = append(link.filters, foreign)
 			return func() { link.filters = link.filters[:len(link.filters)-1] }
-		},
-		"qdisc": func(link *fakeLink, root string) func() {
-			// A second child, in the first band, stands for any qdisc that the
-			// apply did not add.
+		}},
+		"replaced child": {peerDelay, func(link *fakeLink, root string) func() {
 			saved := link.child
 			link.child, link.parent = &fakeQdisc{kind: "tbf", handle: "9999:"}, root+"1"
 			return func() { link.child, link.parent = saved, root+"3" }
-		},
+		}},
+		// The delay's own child and filter stay intact: the hierarchy is
+		// complete, and still not all the lease's.
+		"added qdisc": {peerDelay, func(link *fakeLink, root string) func() {
+			link.extra = append(link.extra, fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: root + "1"})
+			return func() { link.extra = nil }
+		}},
+		"added qdisc under a nested one": {peerDelay, func(link *fakeLink, root string) func() {
+			link.extra = append(link.extra, fakeExtraQdisc{kind: "pfifo", handle: "9998:", parent: link.child.handle + "1"})
+			return func() { link.extra = nil }
+		}},
+		"qdisc under a whole-interface delay": {testDelay, func(link *fakeLink, root string) func() {
+			link.extra = append(link.extra, fakeExtraQdisc{kind: "tbf", handle: "9999:", parent: root + "1"})
+			return func() { link.extra = nil }
+		}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, peerDelay)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, tc.delay)
 			if err != nil {
 				t.Fatal(err)
 			}
 			link := netem.eth0("osd-0")
 			netem.mu.Lock()
-			detach := attach(link, lease.handle)
+			child := link.child
+			detach := tc.attach(link, lease.handle)
 			netem.mu.Unlock()
 			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
 				t.Fatalf("status with foreign %s: %+v %v", name, status, err)
@@ -222,17 +238,51 @@ func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 			if link.root == nil || link.root.handle != lease.handle || netem.liveHelpers() != 1 {
 				t.Fatalf("Restore removed the root %+v or the helper (%d)", link.root, netem.liveHelpers())
 			}
+			if link.child == nil && child != nil || len(link.extra) == 0 && strings.HasPrefix(name, "added") {
+				t.Fatalf("Restore removed the delay's child %+v or the foreign qdisc %v", link.child, link.extra)
+			}
 			if _, err := lease.Status(t.Context()); err != nil {
 				t.Fatalf("the refused lease is not retryable: %v", err)
 			}
 			netem.mu.Lock()
 			detach()
 			netem.mu.Unlock()
+			if status, err := lease.Status(t.Context()); err != nil || !status.Applied {
+				t.Fatalf("status after the owner removed its %s: %+v %v", name, status, err)
+			}
 			if err := lease.Restore(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if link.root != nil || len(link.filters) != 0 || netem.liveHelpers() != 0 {
 				t.Fatalf("after Restore: root %+v, filters %v, %d helpers", link.root, link.filters, netem.liveHelpers())
+			}
+		})
+	}
+}
+
+// TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot keeps the ownership
+// check to what removing the root removes: an ingress qdisc is not under it.
+func TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot(t *testing.T) {
+	for name, delay := range map[string]NetworkDelay{"peer": peerDelay, "interface": testDelay} {
+		t.Run(name, func(t *testing.T) {
+			netem := newFakeNetem()
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			if err != nil {
+				t.Fatal(err)
+			}
+			link := netem.eth0("osd-0")
+			netem.mu.Lock()
+			link.extra = append(link.extra, fakeExtraQdisc{kind: "ingress", handle: "ffff:", parent: "ffff:fff1"})
+			netem.mu.Unlock()
+			if status, err := lease.Status(t.Context()); err != nil || !status.Applied {
+				t.Fatalf("status with an ingress qdisc: %+v %v", status, err)
+			}
+			if err := lease.Restore(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if link.root != nil || len(link.extra) != 1 || netem.liveHelpers() != 0 {
+				t.Fatalf("after Restore: root %+v, other qdiscs %v, %d helpers", link.root, link.extra, netem.liveHelpers())
 			}
 		})
 	}
