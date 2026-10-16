@@ -2455,8 +2455,12 @@ standby's empty page or text that does not parse is an error.
 The module reports cluster-level metrics: pools (`ceph_pool_wr`,
 `ceph_pool_objects`, `ceph_pool_stored`), OSD state (`ceph_osd_up`,
 `ceph_osd_in`, `ceph_osd_metadata`), health and the MGRs. Since Reef it leaves
-out each daemon's perf counters, such as `ceph_osd_op_w`; read those with
-`cluster.AdminSocket(ctx, "osd.0", "perf", "dump")`.
+out each daemon's perf counters, such as `ceph_osd_op_w`, by default; the
+module's `mgr/prometheus/exclude_perf_counters` option set to `false` adds
+them back (see the
+[Ceph documentation](https://docs.ceph.com/en/tentacle/mgr/prometheus/#ceph-daemon-performance-counters-metrics);
+the module's tests do not cover that setting). Each daemon's own counters are
+also in `cluster.AdminSocket(ctx, "osd.0", "perf", "dump")`.
 
 ```golang
 metrics, err := cluster.ManagerMetrics(ctx)
