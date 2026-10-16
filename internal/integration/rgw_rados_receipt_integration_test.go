@@ -23,16 +23,20 @@ import (
 
 // rgwRadosReceipt is what TestRGWRadosReceipt logs.
 type rgwRadosReceipt struct {
-	DataPool   string         `json:"data_pool"`
-	IndexPool  string         `json:"index_pool"`
-	Bucket     rgwBucketStats `json:"bucket"`
-	SmallHead  string         `json:"small_head"`
-	SmallSHA   string         `json:"small_sha256"`
-	IndexOID   string         `json:"index_oid"`
-	LargeHead  string         `json:"large_head"`
-	LargeTails []string       `json:"large_tails"`
-	LargeSizes []int64        `json:"large_sizes"`
-	GCAfterDel []string       `json:"gc_after_delete"`
+	DataPool  string         `json:"data_pool"`
+	IndexPool string         `json:"index_pool"`
+	Bucket    rgwBucketStats `json:"bucket"`
+	SmallHead string         `json:"small_head"`
+	SmallSHA  string         `json:"small_sha256"`
+	IndexOID  string         `json:"index_oid"`
+	// LargeIndexOID is the shard that held the large key before DELETE;
+	// LargeKeyAfter lists the shards that still held it afterwards.
+	LargeIndexOID string   `json:"large_index_oid"`
+	LargeKeyAfter []string `json:"large_key_after_delete"`
+	LargeHead     string   `json:"large_head"`
+	LargeTails    []string `json:"large_tails"`
+	LargeSizes    []int64  `json:"large_sizes"`
+	GCAfterDel    []string `json:"gc_after_delete"`
 }
 
 // TestRGWRadosReceipt follows S3 requests to the RADOS objects that the
@@ -42,8 +46,9 @@ type rgwRadosReceipt struct {
 // omap of the bucket's index object. A 6 MiB object is a head object and tail
 // stripes ("<marker>__shadow_.<prefix>_<n>") whose sizes add up to the
 // object; it is the bucket's only object with tails.
-// Deleting it removes the head and the index key at once and leaves the tails
-// to the garbage collector, which lists them until "gc process" removes them.
+// Its key is located in exactly one index shard before DELETE; deleting it
+// removes the head and that key at once and leaves the tails to the garbage
+// collector, which lists them until "gc process" removes them.
 func TestRGWRadosReceipt(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
@@ -77,6 +82,18 @@ func TestRGWRadosReceipt(t *testing.T) {
 		return result
 	}
 	var receipt rgwRadosReceipt
+	// indexShards reads every index object's omap keys, so a key's shard is
+	// located, not assumed.
+	indexShards := func() map[string][]string {
+		t.Helper()
+		shards := map[string][]string{}
+		for _, oid := range lines(rados("-p", receipt.IndexPool, "ls")) {
+			if strings.HasPrefix(oid, ".dir."+receipt.Bucket.ID+".") {
+				shards[oid] = lines(rados("-p", receipt.IndexPool, "listomapkeys", oid))
+			}
+		}
+		return shards
+	}
 
 	client.request(t, ctx, http.MethodPut, "/tc-rados", nil, http.StatusOK)
 	small := make([]byte, 1031)
@@ -120,17 +137,9 @@ func TestRGWRadosReceipt(t *testing.T) {
 		t.Fatalf("head object %s has sha256 %v, want %x", head, sum, want)
 	}
 	receipt.SmallSHA = sum[0]
-	// The key is in the omap of one of the bucket's index shard objects.
-	for _, oid := range lines(rados("-p", receipt.IndexPool, "ls")) {
-		if !strings.HasPrefix(oid, ".dir."+receipt.Bucket.ID) {
-			continue
-		}
-		if slices.Contains(lines(rados("-p", receipt.IndexPool, "listomapkeys", oid)), "small") {
-			receipt.IndexOID = oid
-		}
-	}
-	if receipt.IndexOID == "" {
-		t.Fatalf("no index object of bucket %s holds the key small", receipt.Bucket.ID)
+	// The key is in the omap of exactly one of the bucket's index shards.
+	if receipt.IndexOID, err = rgwIndexShardOf(indexShards(), receipt.Bucket.ID, "small"); err != nil {
+		t.Fatal(err)
 	}
 
 	// A 6 MiB object is a head object and tail stripes.
@@ -158,6 +167,12 @@ func TestRGWRadosReceipt(t *testing.T) {
 		t.Fatal("the large object reads back different bytes")
 	}
 
+	// Its key is located before DELETE, so the deletion below is a change
+	// from present to absent, not a check of a key that was never there.
+	if receipt.LargeIndexOID, err = rgwIndexShardOf(indexShards(), receipt.Bucket.ID, "large"); err != nil {
+		t.Fatal(err)
+	}
+
 	// Deleting it removes the head and the key at once; the tails wait for
 	// the garbage collector.
 	client.request(t, ctx, http.MethodDelete, "/tc-rados/large", nil, http.StatusNoContent)
@@ -165,10 +180,19 @@ func TestRGWRadosReceipt(t *testing.T) {
 	if head != "" {
 		t.Fatalf("head %s outlived the delete", head)
 	}
-	for _, oid := range lines(rados("-p", receipt.IndexPool, "ls")) {
-		if strings.HasPrefix(oid, ".dir."+receipt.Bucket.ID) && slices.Contains(lines(rados("-p", receipt.IndexPool, "listomapkeys", oid)), "large") {
-			t.Fatalf("index object %s still holds the deleted key", oid)
+	after := indexShards()
+	if _, present := after[receipt.LargeIndexOID]; !present {
+		t.Fatalf("index shard %s that held the key is gone", receipt.LargeIndexOID)
+	}
+	receipt.LargeKeyAfter = []string{}
+	for oid, keys := range after {
+		if slices.Contains(keys, "large") {
+			receipt.LargeKeyAfter = append(receipt.LargeKeyAfter, oid)
 		}
+	}
+	if len(receipt.LargeKeyAfter) != 0 || !slices.Contains(after[receipt.IndexOID], "small") {
+		t.Fatalf("after DELETE the key large is in %v (it was in %s), and small in %s holds %v",
+			receipt.LargeKeyAfter, receipt.LargeIndexOID, receipt.IndexOID, after[receipt.IndexOID])
 	}
 	out, err = gateway.Admin(ctx, "gc", "list", "--include-all")
 	if err != nil {

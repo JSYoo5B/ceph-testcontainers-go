@@ -61,3 +61,28 @@ func TestRGWRadosParsers(t *testing.T) {
 		t.Error("an object parsed as a gc list")
 	}
 }
+
+// The review's case: a key that is not in any shard before DELETE must stop
+// the receipt, so its absence afterwards cannot pass for a removal.
+func TestRGWIndexShardOf(t *testing.T) {
+	shard0, shard1 := ".dir."+rgwMarkerSample+".0", ".dir."+rgwMarkerSample+".1"
+	shards := map[string][]string{shard0: {"large"}, shard1: {"small"}, ".dir.other.1.0": {"large"}}
+	for key, want := range map[string]string{"large": shard0, "small": shard1} {
+		if got, err := rgwIndexShardOf(shards, rgwMarkerSample, key); err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", key, got, err, want)
+		}
+	}
+	missing := map[string][]string{shard0: {}, shard1: {"small"}, ".dir.other.1.0": {"large"}}
+	if got, err := rgwIndexShardOf(missing, rgwMarkerSample, "large"); err == nil {
+		t.Errorf("a key in no shard of the bucket was found in %q", got)
+	}
+	twice := map[string][]string{shard0: {"large"}, shard1: {"large", "small"}}
+	if got, err := rgwIndexShardOf(twice, rgwMarkerSample, "large"); err == nil {
+		t.Errorf("a key in two shards was placed in %q", got)
+	}
+	// A bucket whose ID extends this one's is not this bucket.
+	longer := map[string][]string{".dir." + rgwMarkerSample + "1.0": {"large"}}
+	if got, err := rgwIndexShardOf(longer, rgwMarkerSample, "large"); err == nil {
+		t.Errorf("another bucket's shard %q matched", got)
+	}
+}
