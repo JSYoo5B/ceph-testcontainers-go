@@ -238,7 +238,7 @@ ticket, without the keys themselves. A successful control, before or after
 the failure, or a later passing run does not show it either. Proving
 equality needs a native observer outside the stock images; see
 [#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71). For the
-cause of the failure in #71, see
+cause of four analyzed failures in #71, see
 [Authenticating right after a rotating-key wipe](#authenticating-right-after-a-rotating-key-wipe).
 
 `checkAuthBundleSecrecy` refuses a bundle that contains a secret you pass or a
@@ -284,12 +284,17 @@ For a client of your own:
   showed the epoch you expect, and authenticate to it once more.
 - Do not wait a fixed time instead. The window has no bound.
 
-This was the cause of the -13 in
-[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71); the
-consumer fixed it in its client
+The consumer in
+[#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71) found
+this window as the common cause of four analyzed auth-epoch failures, at
+consumer commits `b01a3cf`, `37d7a4d`, `494071b` and `af2c4e9`
+([root cause](https://github.com/JSYoo5B/ceph-msgr-go/blob/96e7531fff9827723a7e06c2d13a323c7a56584f/integration/fixture/SERVICE_KEY_EPOCH_FAILURE_20261015.md#root-cause-ci-triage-2026-10-16)),
+and fixed those in its client
 ([JSYoo5B/ceph-msgr-go@3d2645e](https://github.com/JSYoo5B/ceph-msgr-go/commit/3d2645e)).
-The first-failure bundle above still does not show which key a MON or MGR
-used, and a later passing run does not either.
+Earlier rejections reported in #71, such as the one at consumer `2d1cc46`,
+were not part of that analysis. They keep their original status: their
+cause is not determined. The first-failure bundle above still does not show
+which key a MON or MGR used, and a later passing run does not either.
 
 ## Mutation oracles
 
