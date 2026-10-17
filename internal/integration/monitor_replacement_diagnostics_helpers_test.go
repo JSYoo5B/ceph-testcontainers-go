@@ -1,0 +1,750 @@
+//go:build all || integration
+
+package integration_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/google/uuid"
+	"github.com/testcontainers/testcontainers-go"
+)
+
+// monReplacementCluster is the part of *ceph.Container that a recorded MON
+// replacement uses: the membership operations and read-only observations
+// through public APIs.
+type monReplacementCluster interface {
+	AddMonitor(context.Context, string) (*ceph.MonitorContainer, error)
+	RemoveMonitor(context.Context, string) error
+	QuorumStatus(context.Context) (ceph.QuorumStatus, error)
+	AdminSocket(context.Context, string, ...string) ([]byte, error)
+	CollectDiagnostics(context.Context, ceph.DiagnosticsConfig) (*ceph.DiagnosticsReport, error)
+	Monitors() []*ceph.MonitorContainer
+	Managers() []*ceph.ManagerContainer
+	OSDs() []*ceph.OSDContainer
+}
+
+// monReplacementBounds bounds every step. Operation guards AddMonitor and
+// RemoveMonitor, which apply the cluster's own startup timeout inside it;
+// Quorum is the wait for the expected quorum afterwards, the 90 seconds that
+// topologyWait allowed before. Query bounds one admin socket or quorum read,
+// Snapshot one set of them, and Bundle the whole failure collection.
+type monReplacementBounds struct {
+	Operation, Quorum, QuorumInterval, Query, Snapshot, Bundle time.Duration
+}
+
+var monReplacementDefaultBounds = monReplacementBounds{
+	Operation: 4 * time.Minute, Quorum: 90 * time.Second, QuorumInterval: 500 * time.Millisecond,
+	Query: 10 * time.Second, Snapshot: 45 * time.Second, Bundle: 3 * time.Minute,
+}
+
+// monReplacementDebugLevel is the debug_monc level of the diagnostic window:
+// MonClient hunting, authentication and session changes reach the warm
+// daemons' container output while the MON membership changes.
+const monReplacementDebugLevel = "10/10"
+
+// monReplacementSettings are the effective settings that decide how a warm
+// daemon's MON client reacts to a lost session. They are read once, at the
+// baseline, from each warm MGR and OSD.
+var monReplacementSettings = []string{"debug_monc", "auth_exit_on_failure", "auth_mon_ticket_ttl", "auth_service_ticket_ttl", "mon_client_hunt_interval"}
+
+// monLocalStatus is what one MON reports about itself on its admin socket.
+type monLocalStatus struct {
+	Name          string   `json:"name"`
+	State         string   `json:"state,omitempty"`
+	Rank          int      `json:"rank"`
+	ElectionEpoch int      `json:"election_epoch,omitempty"`
+	MonMapEpoch   int      `json:"monmap_epoch,omitempty"`
+	Members       []string `json:"members,omitempty"`
+	Quorum        []string `json:"quorum,omitempty"`
+	OutsideQuorum []string `json:"outside_quorum,omitempty"`
+	Error         string   `json:"error,omitempty"`
+}
+
+// monReplacementSession is one MON session of a warm daemon, as that MON lists it.
+type monReplacementSession struct {
+	Mon           string `json:"mon"`
+	Name          string `json:"name"`
+	GlobalID      uint64 `json:"global_id"`
+	ConType       string `json:"con_type,omitempty"`
+	Open          bool   `json:"open"`
+	Authenticated bool   `json:"authenticated"`
+}
+
+// warmDaemonStatus identifies a daemon that stays up through the
+// replacement: its container generation and what it reports on its own
+// admin socket.
+type warmDaemonStatus struct {
+	Daemon      string            `json:"daemon"`
+	ContainerID string            `json:"container_id,omitempty"`
+	StartedAt   string            `json:"started_at,omitempty"`
+	Running     bool              `json:"running"`
+	Native      map[string]any    `json:"native,omitempty"`
+	Config      map[string]string `json:"config,omitempty"`
+	Errors      []string          `json:"errors,omitempty"`
+}
+
+type monReplacementSnapshot struct {
+	At          time.Time               `json:"at"`
+	Quorum      []string                `json:"quorum,omitempty"`
+	MonMap      []string                `json:"monmap,omitempty"`
+	QuorumError string                  `json:"quorum_error,omitempty"`
+	Monitors    []monLocalStatus        `json:"monitors"`
+	Sessions    []monReplacementSession `json:"sessions"`
+	Warm        []warmDaemonStatus      `json:"warm"`
+	Incomplete  []string                `json:"incomplete,omitempty"`
+}
+
+type monReplacementPhase struct {
+	Seq            int                     `json:"seq"`
+	Name           string                  `json:"name"`
+	Started        time.Time               `json:"started"`
+	OperationEnded time.Time               `json:"operation_ended"`
+	Ended          time.Time               `json:"ended"`
+	QuorumProbes   int                     `json:"quorum_probes,omitempty"`
+	Handle         string                  `json:"handle,omitempty"`
+	Error          string                  `json:"error,omitempty"`
+	After          *monReplacementSnapshot `json:"after,omitempty"`
+}
+
+// monReplacementDebug is one daemon's debug_monc window. Restored records
+// the outcome: the exact prior value, or why it was not written back.
+type monReplacementDebug struct {
+	Daemon    string `json:"daemon"`
+	StartedAt string `json:"started_at,omitempty"`
+	Prior     string `json:"prior,omitempty"`
+	Set       bool   `json:"set"`
+	Restored  string `json:"restored,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// monReplacementBundle is what a failed phase leaves behind, collected after
+// the failed operation returned and before the test fails.
+type monReplacementBundle struct {
+	Token            string                  `json:"token"`
+	Cluster          string                  `json:"cluster"`
+	Failed           monReplacementPhase     `json:"failed"`
+	Phases           []monReplacementPhase   `json:"phases"`
+	Baseline         *monReplacementSnapshot `json:"baseline,omitempty"`
+	Failure          *monReplacementSnapshot `json:"failure,omitempty"`
+	Debug            []monReplacementDebug   `json:"debug"`
+	Diagnostics      *ceph.DiagnosticsReport `json:"diagnostics,omitempty"`
+	DiagnosticsError string                  `json:"diagnostics_error,omitempty"`
+}
+
+// monReplacementRecorder runs a full MON replacement as named phases and
+// observes, without changing membership itself, what each MON and each warm
+// daemon reports between them. Observation failures are recorded as
+// incomplete; they never fail or retry the replacement.
+type monReplacementRecorder struct {
+	Token, Cluster string
+	cluster        monReplacementCluster
+	bounds         monReplacementBounds
+	additional     []ceph.DiagnosticsContainer
+	Phases         []monReplacementPhase
+	Baseline       *monReplacementSnapshot
+	debugMu        sync.Mutex
+	Debug          []monReplacementDebug
+	helpMu         sync.Mutex
+	help           map[string]map[string]bool
+}
+
+func newMonReplacementRecorder(label string, cluster monReplacementCluster, bounds monReplacementBounds, additional ...ceph.DiagnosticsContainer) *monReplacementRecorder {
+	return &monReplacementRecorder{Token: uuid.NewString()[:8], Cluster: label, cluster: cluster, bounds: bounds, additional: additional, help: make(map[string]map[string]bool)}
+}
+
+// monReplacementReporter is the part of *testing.T that reports a run.
+type monReplacementReporter interface {
+	Helper()
+	Logf(format string, args ...any)
+	Fatalf(format string, args ...any)
+}
+
+// runMonReplacement replaces each pair's old MON with its new one, first
+// adding the new MON, then removing the old one, and waits for the expected
+// quorum after each. A failed phase is not repeated: its bundle is logged and
+// then the test fails with the phase's own error.
+func runMonReplacement(t monReplacementReporter, ctx context.Context, r *monReplacementRecorder, pairs [][2]string) {
+	t.Helper()
+	r.begin(ctx)
+	if err := r.replace(ctx, pairs); err != nil {
+		bundle := r.collect(ctx)
+		raw, marshalErr := json.Marshal(bundle)
+		if marshalErr != nil {
+			raw = []byte(strconv.Quote(marshalErr.Error()))
+		}
+		t.Logf("MON_REPLACEMENT_BUNDLE %s", raw)
+		t.Fatalf("MON replacement token=%s cluster=%s phase %d %q: %v", r.Token, r.Cluster, bundle.Failed.Seq, bundle.Failed.Name, err)
+		return
+	}
+	t.Logf("%s", r.receipt(r.restoreDebug(ctx)))
+}
+
+// begin records the baseline and opens the debug_monc window on every warm
+// MGR and OSD that offers config get/set on its admin socket.
+func (r *monReplacementRecorder) begin(ctx context.Context) {
+	r.Baseline = r.snapshot(ctx, true)
+	r.debugMu.Lock()
+	defer r.debugMu.Unlock()
+	for _, warm := range r.Baseline.Warm {
+		window := monReplacementDebug{Daemon: warm.Daemon, StartedAt: warm.StartedAt}
+		if err := r.require(ctx, warm.Daemon, "config set"); err != nil {
+			window.Error = err.Error()
+			r.Debug = append(r.Debug, window)
+			continue
+		}
+		prior, err := r.configGet(ctx, warm.Daemon, "debug_monc")
+		if err != nil {
+			window.Error = "read: " + err.Error()
+			r.Debug = append(r.Debug, window)
+			continue
+		}
+		window.Prior = prior
+		queryCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+		_, err = r.cluster.AdminSocket(queryCtx, warm.Daemon, "config", "set", "debug_monc", monReplacementDebugLevel)
+		cancel()
+		// A failed or unconfirmed set may still have applied, so the window
+		// is restored either way.
+		window.Set = true
+		if err != nil {
+			window.Error = "set: " + err.Error()
+		}
+		r.Debug = append(r.Debug, window)
+	}
+}
+
+func (r *monReplacementRecorder) replace(ctx context.Context, pairs [][2]string) error {
+	members := slices.Clone(r.Baseline.MonMap)
+	if len(members) == 0 {
+		for _, mon := range r.cluster.Monitors() {
+			members = append(members, mon.DaemonName)
+		}
+	}
+	for _, pair := range pairs {
+		old, added := pair[0], pair[1]
+		members = append(members, added)
+		if err := r.phase(ctx, "add "+added, members, func(opCtx context.Context) (string, error) {
+			mon, err := r.cluster.AddMonitor(opCtx, added)
+			return monReplacementHandle(mon), err
+		}); err != nil {
+			return err
+		}
+		members = slices.DeleteFunc(members, func(name string) bool { return name == old })
+		if err := r.phase(ctx, "remove "+old, members, func(opCtx context.Context) (string, error) {
+			return "", r.cluster.RemoveMonitor(opCtx, old)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func monReplacementHandle(mon *ceph.MonitorContainer) string {
+	if mon == nil {
+		return ""
+	}
+	handle := "mon." + mon.DaemonName
+	if mon.Container != nil {
+		if id := mon.GetContainerID(); id != "" {
+			handle += " container=" + id[:min(12, len(id))]
+		}
+	}
+	return handle
+}
+
+// phase runs one membership operation under its bound, then waits for the
+// quorum to be exactly want. The snapshot after it is taken whether or not it
+// succeeded; a failure keeps the operation's partial handle.
+func (r *monReplacementRecorder) phase(ctx context.Context, name string, want []string, operation func(context.Context) (string, error)) error {
+	p := monReplacementPhase{Seq: len(r.Phases) + 1, Name: name, Started: time.Now()}
+	opCtx, cancel := context.WithTimeout(ctx, r.bounds.Operation)
+	handle, err := operation(opCtx)
+	cancel()
+	p.OperationEnded, p.Handle = time.Now(), handle
+	if err == nil {
+		var seen observation[ceph.QuorumStatus]
+		seen, err = observe(ctx, r.bounds.Quorum, r.bounds.Query, r.bounds.QuorumInterval, func(probeCtx context.Context) (ceph.QuorumStatus, bool, error) {
+			status, err := r.cluster.QuorumStatus(probeCtx)
+			if err != nil {
+				// A read that fails while membership changes is not final.
+				return status, false, nil
+			}
+			return status, monReplacementQuorumIs(status, want) && len(r.cluster.Monitors()) == len(want), nil
+		})
+		p.QuorumProbes = seen.Attempts
+		if err != nil {
+			err = fmt.Errorf("quorum %v after %s: %w (last quorum %v)", want, name, err, seen.Value.QuorumNames)
+		}
+	}
+	p.Ended = time.Now()
+	if err != nil {
+		p.Error = err.Error()
+		r.Phases = append(r.Phases, p)
+		return err
+	}
+	p.After = r.snapshot(ctx, false)
+	r.Phases = append(r.Phases, p)
+	return nil
+}
+
+func monReplacementQuorumIs(status ceph.QuorumStatus, want []string) bool {
+	quorum, members := slices.Clone(status.QuorumNames), make([]string, 0, len(status.MonMap.Mons))
+	for _, mon := range status.MonMap.Mons {
+		members = append(members, mon.Name)
+	}
+	want = slices.Clone(want)
+	slices.Sort(quorum)
+	slices.Sort(members)
+	slices.Sort(want)
+	return slices.Equal(quorum, want) && slices.Equal(members, want)
+}
+
+// collect builds the bundle of the first failed phase under a fresh bound:
+// the operation's context may already have ended, and the failed operation
+// has returned, so the topology lock is free again.
+func (r *monReplacementRecorder) collect(parent context.Context) *monReplacementBundle {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.bounds.Bundle)
+	defer cancel()
+	bundle := &monReplacementBundle{Token: r.Token, Cluster: r.Cluster, Phases: r.Phases, Baseline: r.Baseline}
+	if len(r.Phases) > 0 {
+		bundle.Failed = r.Phases[len(r.Phases)-1]
+	}
+	bundle.Failure = r.snapshot(ctx, true)
+	report, err := r.cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{
+		Timeout: r.bounds.Bundle / 2, OperationTimeout: r.bounds.Query, MaxOutputBytes: 32 << 10, LogTail: 400,
+		AdditionalContainers: r.additional,
+	})
+	bundle.Diagnostics = report
+	if err != nil {
+		bundle.DiagnosticsError = err.Error()
+	}
+	bundle.Debug = r.restoreDebug(ctx)
+	return bundle
+}
+
+// restoreDebug writes each window's exact prior debug_monc back, once, and
+// only to the same container generation that it was read from.
+func (r *monReplacementRecorder) restoreDebug(parent context.Context) []monReplacementDebug {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.bounds.Snapshot)
+	defer cancel()
+	r.debugMu.Lock()
+	defer r.debugMu.Unlock()
+	warm := make(map[string]warmDaemonStatus)
+	for _, status := range r.warmIdentities(ctx) {
+		warm[status.Daemon] = status
+	}
+	for i := range r.Debug {
+		window := &r.Debug[i]
+		if !window.Set || window.Restored != "" {
+			continue
+		}
+		current, ok := warm[window.Daemon]
+		switch {
+		case !ok || !current.Running:
+			window.Restored = "skipped: daemon is not running"
+			continue
+		case current.StartedAt != window.StartedAt:
+			window.Restored = "skipped: container generation changed"
+			continue
+		}
+		queryCtx, cancelQuery := context.WithTimeout(ctx, r.bounds.Query)
+		_, err := r.cluster.AdminSocket(queryCtx, window.Daemon, "config", "set", "debug_monc", window.Prior)
+		cancelQuery()
+		if err != nil {
+			window.Restored = "failed: " + err.Error()
+			continue
+		}
+		value, err := r.configGet(ctx, window.Daemon, "debug_monc")
+		switch {
+		case err != nil:
+			window.Restored = "unconfirmed: " + err.Error()
+		case value != window.Prior:
+			window.Restored = fmt.Sprintf("mismatch: %q", value)
+		default:
+			window.Restored = "ok"
+		}
+	}
+	return slices.Clone(r.Debug)
+}
+
+// snapshot reads, within the snapshot bound, the control quorum, each MON's
+// own mon_status and sessions, and each warm daemon's identity. full adds the
+// warm daemons' effective MON client settings.
+func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *monReplacementSnapshot {
+	ctx, cancel := context.WithTimeout(parent, r.bounds.Snapshot)
+	defer cancel()
+	s := &monReplacementSnapshot{At: time.Now(), Monitors: []monLocalStatus{}, Sessions: []monReplacementSession{}, Warm: []warmDaemonStatus{}}
+	var mu sync.Mutex
+	incomplete := func(format string, args ...any) {
+		mu.Lock()
+		s.Incomplete = append(s.Incomplete, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	queryCtx, cancelQuery := context.WithTimeout(ctx, r.bounds.Query)
+	status, err := r.cluster.QuorumStatus(queryCtx)
+	cancelQuery()
+	if err != nil {
+		s.QuorumError = err.Error()
+		incomplete("quorum: %v", err)
+	} else {
+		s.Quorum = slices.Clone(status.QuorumNames)
+		for _, mon := range status.MonMap.Mons {
+			s.MonMap = append(s.MonMap, mon.Name)
+		}
+	}
+	var wg sync.WaitGroup
+	limit := make(chan struct{}, 4)
+	run := func(work func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			work()
+		}()
+	}
+	monitors := r.cluster.Monitors()
+	s.Monitors = make([]monLocalStatus, len(monitors))
+	sessions := make([][]monReplacementSession, len(monitors))
+	for i, mon := range monitors {
+		daemon := "mon." + mon.DaemonName
+		run(func() {
+			local := monLocalStatus{Name: mon.DaemonName, Rank: -1}
+			if raw, err := r.query(ctx, daemon, "mon_status"); err != nil {
+				local.Error = err.Error()
+				incomplete("%s mon_status: %v", daemon, err)
+			} else if err := parseMonLocalStatus(raw, &local); err != nil {
+				local.Error = err.Error()
+				incomplete("%s mon_status: %v", daemon, err)
+			}
+			s.Monitors[i] = local
+			if raw, err := r.query(ctx, daemon, "sessions"); err != nil {
+				incomplete("%s sessions: %v", daemon, err)
+			} else if sessions[i], err = parseWarmSessions(mon.DaemonName, raw); err != nil {
+				incomplete("%s sessions: %v", daemon, err)
+			}
+		})
+	}
+	warm := r.warmIdentities(ctx)
+	for i := range warm {
+		w := &warm[i]
+		run(func() {
+			if !w.Running {
+				w.Errors = append(w.Errors, "container is not running")
+				incomplete("%s: container is not running", w.Daemon)
+				return
+			}
+			command := "status"
+			if strings.HasPrefix(w.Daemon, "mgr.") {
+				command = "mgr_status"
+			}
+			if raw, err := r.query(ctx, w.Daemon, command); err != nil {
+				w.Errors = append(w.Errors, command+": "+err.Error())
+				incomplete("%s %s: %v", w.Daemon, command, err)
+			} else {
+				w.Native = monReplacementNative(raw)
+			}
+			settings := []string{"mon_host"}
+			if full {
+				settings = append(settings, monReplacementSettings...)
+			}
+			w.Config = make(map[string]string)
+			for _, name := range settings {
+				value, err := r.configGet(ctx, w.Daemon, name)
+				if err != nil {
+					w.Errors = append(w.Errors, name+": "+err.Error())
+					incomplete("%s config get %s: %v", w.Daemon, name, err)
+					continue
+				}
+				w.Config[name] = value
+			}
+		})
+	}
+	wg.Wait()
+	for _, list := range sessions {
+		s.Sessions = append(s.Sessions, list...)
+	}
+	s.Warm = warm
+	slices.Sort(s.Incomplete)
+	return s
+}
+
+// warmIdentities lists the owned MGRs and OSDs with their container
+// generation. MDS daemons have no owned admin socket; their MON sessions
+// appear in each MON's session list instead.
+func (r *monReplacementRecorder) warmIdentities(ctx context.Context) []warmDaemonStatus {
+	var result []warmDaemonStatus
+	identify := func(daemon string, ctr testcontainers.Container) {
+		status := warmDaemonStatus{Daemon: daemon}
+		if ctr == nil {
+			status.Errors = append(status.Errors, "no container")
+			result = append(result, status)
+			return
+		}
+		id := ctr.GetContainerID()
+		status.ContainerID = id[:min(12, len(id))]
+		stateCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+		state, err := ctr.State(stateCtx)
+		cancel()
+		if err != nil || state == nil {
+			status.Errors = append(status.Errors, fmt.Sprintf("state: %v", err))
+		} else {
+			status.StartedAt, status.Running = state.StartedAt, state.Running
+		}
+		result = append(result, status)
+	}
+	for _, mgr := range r.cluster.Managers() {
+		identify("mgr."+mgr.DaemonName, mgr.Container)
+	}
+	for _, osd := range r.cluster.OSDs() {
+		identify("osd."+strconv.Itoa(osd.ID), osd.Container)
+	}
+	return result
+}
+
+// offers reports whether daemon lists command in its own help, read once per
+// daemon name. A help that cannot be read is an error, retried on the next
+// query rather than cached.
+func (r *monReplacementRecorder) offers(ctx context.Context, daemon, command string) (bool, error) {
+	r.helpMu.Lock()
+	commands, ok := r.help[daemon]
+	r.helpMu.Unlock()
+	if !ok {
+		queryCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+		raw, err := r.cluster.AdminSocket(queryCtx, daemon, "help")
+		cancel()
+		if err != nil {
+			return false, fmt.Errorf("help: %w", err)
+		}
+		var help map[string]string
+		if err := json.Unmarshal(raw, &help); err != nil {
+			return false, fmt.Errorf("help: %w", err)
+		}
+		commands = make(map[string]bool, len(help))
+		for name := range help {
+			commands[name] = true
+		}
+		r.helpMu.Lock()
+		r.help[daemon] = commands
+		r.helpMu.Unlock()
+	}
+	return commands[command], nil
+}
+
+func (r *monReplacementRecorder) require(ctx context.Context, daemon, command string) error {
+	ok, err := r.offers(ctx, daemon, command)
+	if err == nil && !ok {
+		err = fmt.Errorf("%q is not in the daemon's help", command)
+	}
+	return err
+}
+
+func (r *monReplacementRecorder) query(ctx context.Context, daemon string, args ...string) ([]byte, error) {
+	if err := r.require(ctx, daemon, strings.Join(args, " ")); err != nil {
+		return nil, err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+	defer cancel()
+	return r.cluster.AdminSocket(queryCtx, daemon, args...)
+}
+
+func (r *monReplacementRecorder) configGet(ctx context.Context, daemon, name string) (string, error) {
+	if err := r.require(ctx, daemon, "config get"); err != nil {
+		return "", err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+	defer cancel()
+	raw, err := r.cluster.AdminSocket(queryCtx, daemon, "config", "get", name)
+	if err != nil {
+		return "", err
+	}
+	var value map[string]string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("config get %s: %w", name, err)
+	}
+	result, ok := value[name]
+	if !ok {
+		return "", fmt.Errorf("config get %s: no value", name)
+	}
+	return result, nil
+}
+
+func parseMonLocalStatus(raw []byte, local *monLocalStatus) error {
+	var status struct {
+		State         string   `json:"state"`
+		Rank          int      `json:"rank"`
+		ElectionEpoch int      `json:"election_epoch"`
+		Quorum        []int    `json:"quorum"`
+		OutsideQuorum []string `json:"outside_quorum"`
+		MonMap        struct {
+			Epoch int `json:"epoch"`
+			Mons  []struct {
+				Rank int    `json:"rank"`
+				Name string `json:"name"`
+			} `json:"mons"`
+		} `json:"monmap"`
+	}
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return fmt.Errorf("decode mon_status: %w", err)
+	}
+	local.State, local.Rank, local.ElectionEpoch, local.MonMapEpoch = status.State, status.Rank, status.ElectionEpoch, status.MonMap.Epoch
+	local.OutsideQuorum = status.OutsideQuorum
+	names := make(map[int]string)
+	for _, mon := range status.MonMap.Mons {
+		names[mon.Rank] = mon.Name
+		local.Members = append(local.Members, mon.Name)
+	}
+	for _, rank := range status.Quorum {
+		name, ok := names[rank]
+		if !ok {
+			name = "rank" + strconv.Itoa(rank)
+		}
+		local.Quorum = append(local.Quorum, name)
+	}
+	return nil
+}
+
+// parseWarmSessions keeps the sessions of MGR, OSD and MDS entities, the
+// daemons that stay up. MON peers and clients are dropped, and so are caps
+// and addresses.
+func parseWarmSessions(mon string, raw []byte) ([]monReplacementSession, error) {
+	var list []struct {
+		Name          string `json:"name"`
+		EntityName    string `json:"entity_name"`
+		GlobalID      uint64 `json:"global_id"`
+		ConType       string `json:"con_type"`
+		Open          bool   `json:"open"`
+		Authenticated bool   `json:"authenticated"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("decode sessions: %w", err)
+	}
+	var result []monReplacementSession
+	for _, session := range list {
+		name := session.EntityName
+		if name == "" {
+			name = session.Name
+		}
+		if !strings.HasPrefix(name, "mgr.") && !strings.HasPrefix(name, "osd.") && !strings.HasPrefix(name, "mds.") {
+			continue
+		}
+		result = append(result, monReplacementSession{Mon: mon, Name: name, GlobalID: session.GlobalID, ConType: session.ConType, Open: session.Open, Authenticated: session.Authenticated})
+	}
+	return result, nil
+}
+
+// monReplacementNative keeps the identity and map fields of an OSD status or
+// MGR mgr_status.
+func monReplacementNative(raw []byte) map[string]any {
+	var value map[string]any
+	if json.Unmarshal(raw, &value) != nil {
+		return map[string]any{"raw_bytes": len(raw)}
+	}
+	result := make(map[string]any)
+	for _, key := range []string{"cluster_fsid", "whoami", "state", "newest_map", "mgrmap_epoch", "initialized"} {
+		if v, ok := value[key]; ok {
+			result[key] = v
+		}
+	}
+	return result
+}
+
+// monSessionPath lists, for each warm entity, the MONs that held its daemon
+// session (con_type mgr/osd/mds) across the baseline and every phase, as
+// "a>d". A "-" marks a snapshot in which no MON listed one.
+func (r *monReplacementRecorder) monSessionPath() string {
+	snapshots := []*monReplacementSnapshot{r.Baseline}
+	for _, p := range r.Phases {
+		snapshots = append(snapshots, p.After)
+	}
+	entities := make(map[string][]string)
+	var names []string
+	for _, s := range snapshots {
+		if s == nil {
+			continue
+		}
+		for _, session := range s.Sessions {
+			if _, ok := entities[session.Name]; !ok {
+				entities[session.Name] = nil
+				names = append(names, session.Name)
+			}
+		}
+	}
+	slices.Sort(names)
+	var parts []string
+	for _, name := range names {
+		var path []string
+		for _, s := range snapshots {
+			if s == nil {
+				continue
+			}
+			var mons []string
+			for _, session := range s.Sessions {
+				kind, _, _ := strings.Cut(name, ".")
+				if session.Name == name && session.ConType == kind && !slices.Contains(mons, session.Mon) {
+					mons = append(mons, session.Mon)
+				}
+			}
+			step := "-"
+			if len(mons) > 0 {
+				step = strings.Join(mons, "+")
+			}
+			if len(path) == 0 || path[len(path)-1] != step {
+				path = append(path, step)
+			}
+		}
+		parts = append(parts, name+":"+strings.Join(path, ">"))
+	}
+	return strings.Join(parts, ",")
+}
+
+// monMapEpoch is the highest monmap epoch any MON reported in s.
+func (s *monReplacementSnapshot) monMapEpoch() int {
+	epoch := 0
+	for _, mon := range s.Monitors {
+		epoch = max(epoch, mon.MonMapEpoch)
+	}
+	return epoch
+}
+
+func (r *monReplacementRecorder) receipt(debug []monReplacementDebug) string {
+	var phases []string
+	incomplete := len(r.Baseline.Incomplete)
+	var total time.Duration
+	for _, p := range r.Phases {
+		total += p.Ended.Sub(p.Started)
+		epoch := 0
+		if p.After != nil {
+			epoch = p.After.monMapEpoch()
+			incomplete += len(p.After.Incomplete)
+		}
+		phases = append(phases, fmt.Sprintf("%s=%s/%s@e%d", strings.ReplaceAll(p.Name, " ", "-"),
+			p.OperationEnded.Sub(p.Started).Round(100*time.Millisecond), p.Ended.Sub(p.Started).Round(100*time.Millisecond), epoch))
+	}
+	restored := 0
+	var debugIssues []string
+	for _, window := range debug {
+		if window.Restored == "ok" {
+			restored++
+		} else {
+			debugIssues = append(debugIssues, window.Daemon+":"+window.Restored+window.Error)
+		}
+	}
+	return fmt.Sprintf("MON_REPLACEMENT_RECEIPT token=%s cluster=%s phases=%d total=%s baseline_epoch=%d %s sessions=%s debug_monc_restored=%d/%d%s incomplete=%d",
+		r.Token, r.Cluster, len(r.Phases), total.Round(100*time.Millisecond), r.Baseline.monMapEpoch(), strings.Join(phases, " "),
+		r.monSessionPath(), restored, len(debug), monReplacementIssues(debugIssues), incomplete)
+}
+
+func monReplacementIssues(issues []string) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	return " debug_issues=" + strings.Join(issues, ";")
+}

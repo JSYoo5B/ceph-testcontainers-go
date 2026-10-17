@@ -143,17 +143,19 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, cluster := range []*ceph.Container{source, destination} {
-				for _, pair := range [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}} {
-					if _, err := cluster.AddMonitor(ctx, pair[1]); err != nil {
-						t.Fatal(err)
-					}
-					monitorRollingQuorum(t, ctx, cluster, 4)
-					if err := cluster.RemoveMonitor(ctx, pair[0]); err != nil {
-						t.Fatal(err)
-					}
-					monitorRollingQuorum(t, ctx, cluster, 3)
-				}
+			// The MGR, OSD and MDS daemons stay up through the replacement.
+			// Each phase records what every MON and warm daemon reports on
+			// its own admin socket; a failed phase logs its bundle first.
+			stopped := []ceph.DiagnosticsContainer{
+				{Role: "client", Name: "source-client", Container: sourceClient},
+				{Role: "client", Name: "destination-client", Container: destinationClient},
+				{Role: "rbd-mirror", Name: "rbd-mirror", Container: rbdMirror.Container},
+				{Role: "cephfs-mirror", Name: "cephfs-mirror", Container: mirror.Container},
+			}
+			for i, cluster := range []*ceph.Container{source, destination} {
+				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], cluster, monReplacementDefaultBounds, stopped...)
+				t.Cleanup(func() { recorder.restoreDebug(context.Background()) })
+				runMonReplacement(t, ctx, recorder, [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
 				quorum, err := cluster.QuorumStatus(ctx)
 				if err != nil {
 					t.Fatal(err)
