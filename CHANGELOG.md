@@ -58,6 +58,12 @@ change the API.
   [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
   guide lists the receipt
   ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+- `TestRBDMirrorPeerPathCut` cuts one path of an RBD snapshot mirror, the
+  source OSD's packets to the destination's rbd-mirror daemon, with a
+  peer-selective `TemporaryNetworkDelay` blackhole. The daemon stays up but
+  does not see or copy a new mirror snapshot while the source client keeps
+  writing through the same OSD; after `Restore` only the changed bytes are
+  copied ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
 - `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
   restart of the only MDS: while `mds_log_pause` holds the journal, the
   client keeps an unacknowledged `Fw` flush with the new size and the MDS keeps

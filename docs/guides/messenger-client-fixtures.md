@@ -464,6 +464,7 @@ these paths.
 | MGR to MON, registration and failover | The MONs drop the active MGR whose process stopped and promote the captured standby, which keeps its GID and process. The restarted MGR registers again as a standby with a new GID. Each registration has its beacon session on a MON, and the MON quorum and a MGR module command answer in every phase. The test logs `MGR_TRANSITION_RECEIPT`; see [MGR transition receipt](#mgr-transition-receipt). | Native state (MgrMap and MON sessions) | `TestMessengerClientProfileManagerTransition` |
 | OSD to OSD heartbeats, cluster network | Three OSDs on separate CRUSH hosts; one OSD's cluster endpoint is cut. Its back-interface heartbeats with both peers fail, and after `osd_heartbeat_grace` (20 s) the MON's cluster log records it `failed` with 2 reporters from different hosts, `mon_osd_min_down_reporters` and `mon_osd_reporter_subtree_level` being 2 and `host`. `osd dump` marks it down while both peers stay up from the same epoch, and a client keeps reading and writing a pool with 3 replicas and `min_size` 2. The marked OSD logs `Monitor daemon marked osd.N down, but it is still running`, cannot rebind its cluster messenger (`rebind cluster_messenger failed`), tells the MONs it is dead as of that epoch or the next map it is handling, and exits. After `Restore` and `Start` it comes up with the same UUID from a later epoch. The test logs `OSD_HEARTBEAT_RECEIPT`. | Native state (MON failure record, OSD map, the OSD's own log) | `TestOSDHeartbeatFailure` |
 | RGW to RADOS | A gateway with one OSD. The test reads what the gateway wrote with `rados` and `radosgw-admin`, not through the gateway. A 1031-byte S3 object is one head object `<marker>_<key>` in the bucket data pool with the same bytes, and its key is in the omap of one of the bucket's index shard objects (`.dir.<id>.<shard>`). A 6 MiB object is a 4 MiB head object and a 2 MiB tail stripe `<marker>__shadow_.<prefix>_1`; the tail name has a random upload prefix, not the key. Deleting it removes the head and the index key at once, and the garbage collector lists the tail until `gc process --include-all` removes it. The test logs `RGW_RADOS_RECEIPT`. | Native state (RADOS objects, index omap, GC queue) | `TestRGWRadosReceipt` |
+| Source OSD to the destination's rbd-mirror daemon | Two clusters with one OSD each and a snapshot-mode RBD mirror. On the source network, the source OSD drops every packet it sends to the rbd-mirror daemon's address (`TemporaryNetworkDelay` with that `Peer` and `Loss` 100), and only those. The source client writes 1 MiB and creates a mirror snapshot through the same OSD. For 30 s the daemon stays `up+replaying`, but its status keeps the old remote and local snapshot timestamps: it does not even see the new snapshot. The destination keeps the old bytes. netem counts the dropped packets. After `Restore`, the new snapshot is reported in sync and the destination has the new bytes; only the changed 1 MiB was copied. The test logs `RBD_MIRROR_PATH_RECEIPT`. | Native state (the mirror's snapshot progress, netem counters) | `TestRBDMirrorPeerPathCut` (bridge) |
 | MDS to client after an MDS restart, a standby takeover or a live export | See [MDS sessions](#mds-sessions). | Native state (session identity) | `TestCephFSRetainedClientAcrossMDSRestart`, `TestCephFSRetainedClientAcrossStandbyTakeover`, `TestCephFSRetainedClientAcrossRankOneTakeover`, `TestCephFSLiveRankMigration` |
 
 A short log for the backfill case comes from `TemporaryConfig` on
@@ -471,11 +472,10 @@ A short log for the backfill case comes from `TemporaryConfig` on
 with the default `osd_pg_log_trim_min` of 100, a log of a few dozen entries is
 not trimmed at all.
 
-No receipt exists yet for the RBD and CephFS mirror peers with one path
-cut. A fault on one peer or in one direction
-needs a peer-selective fault, which the fixture does not provide:
-`InterruptNetwork` cuts a whole endpoint, and `TemporaryNetworkDelay` delays
-everything that leaves an interface.
+No receipt exists yet for the CephFS mirror peer with one path cut. A fault
+on one peer and in one direction uses `TemporaryNetworkDelay` with a `Peer`,
+and `Loss` 100 for a blackhole, as the RBD mirror row does; `InterruptNetwork`
+cuts a whole endpoint.
 
 ## Differences from a single-container bootstrap
 
