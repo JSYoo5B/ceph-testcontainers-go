@@ -76,3 +76,10 @@ func TestCephFSUnsafeRequestReplay(t *testing.T) {
 func TestCephFSFlushingCapReplay(t *testing.T) {
 	testCephFSFlushingCapReplay(t)
 }
+
+// The client is killed while one rename is held unsafe; after the journal is
+// released the MDS commits the request, evicts and blocklists the dead
+// session, and another client finds the new name.
+func TestCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
+	testCephFSClientKilledDuringUnsafeRequest(t)
+}
