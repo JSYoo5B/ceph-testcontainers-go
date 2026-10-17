@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,18 @@ type fakeLink struct {
 	mac     string
 	address netip.Addr
 	root    *fakeQdisc
+	// child is a netem qdisc under a prio root, parent its band; filters
+	// are the egress filter dump, u32 keys under "matches".
+	child   *fakeQdisc
+	parent  string
+	filters []map[string]any
+	// extra are qdiscs that someone else added, by parent; removing the
+	// root removes those under it.
+	extra []fakeExtraQdisc
+}
+
+type fakeExtraQdisc struct {
+	kind, handle, parent string
 }
 
 // fakeNamespace is a network namespace with its interfaces.
@@ -42,6 +55,8 @@ type fakeNamespace struct {
 }
 
 type fakeNetemTarget struct {
+	// address6 is the endpoint's IPv6 address on a dual-stack bridge.
+	address6        netip.Addr
 	running, paused bool
 	mode            container.NetworkMode
 	sandbox         int
@@ -92,6 +107,8 @@ type fakeNetem struct {
 	editPreflight func(map[string]any)
 	// slowPreflight makes the preflight run into its deadline.
 	slowPreflight bool
+	// onSelective may refuse a command of a selective delay before it runs.
+	onSelective func(argv []string) (supervised.Report, bool)
 }
 
 func newFakeNetem() *fakeNetem {
@@ -158,7 +175,7 @@ func (n *fakeNetem) target(_ context.Context, id, network string) (netemTarget, 
 	state := netemTarget{running: target.running, paused: target.paused, networkMode: target.mode,
 		sandboxID: strconv.Itoa(target.sandbox)}
 	if network == "tc-public" && len(target.namespace.links) > 1 {
-		state.address, state.mac = target.namespace.links[1].address, target.namespace.links[1].mac
+		state.address, state.address6, state.mac = target.namespace.links[1].address, target.address6, target.namespace.links[1].mac
 	}
 	return state, nil
 }
@@ -220,11 +237,65 @@ func (n *fakeNetem) cancel(context.Context, testcontainers.Container, string, st
 
 func qdiscJSON(link *fakeLink) []map[string]any {
 	if link.root == nil {
-		return []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		qdiscs := []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		for _, extra := range link.extra {
+			qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": map[string]any{}})
+		}
+		return qdiscs
 	}
-	return []map[string]any{{"kind": link.root.kind, "handle": link.root.handle, "root": true,
+	qdiscs := []map[string]any{{"kind": link.root.kind, "handle": link.root.handle, "root": true,
 		"options": map[string]any{"delay": map[string]any{"delay": link.root.delay.Seconds(), "jitter": link.root.jitter.Seconds()}},
 		"packets": link.root.packets, "bytes": link.root.packets * 100, "drops": 0}}
+	if link.child != nil {
+		qdiscs = append(qdiscs, map[string]any{"kind": link.child.kind, "handle": link.child.handle, "parent": link.parent,
+			"options": map[string]any{"delay": map[string]any{"delay": link.child.delay.Seconds(), "jitter": link.child.jitter.Seconds()}},
+			"packets": link.child.packets, "bytes": link.child.packets * 100, "drops": 0})
+	}
+	for _, extra := range link.extra {
+		qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": map[string]any{}})
+	}
+	return qdiscs
+}
+
+// fakeU32Keys encodes tc's u32 match arguments as tc prints them: one
+// 32-bit word per key, in hex without leading zeros.
+func fakeU32Keys(args []string) []map[string]any {
+	key := func(off int, value, mask uint32) map[string]any {
+		return map[string]any{"value": strconv.FormatUint(uint64(value), 16), "mask": strconv.FormatUint(uint64(mask), 16), "offmask": "", "off": off}
+	}
+	var keys []map[string]any
+	for i := 0; i < len(args); i++ {
+		if args[i] != "match" {
+			continue
+		}
+		family, field := args[i+1], args[i+2]
+		switch field {
+		case "dst":
+			prefix := netip.MustParsePrefix(args[i+3])
+			address := prefix.Addr().AsSlice()
+			if family == "ip" {
+				keys = append(keys, key(16, binary.BigEndian.Uint32(address), 0xffffffff))
+			} else {
+				for word := range 4 {
+					keys = append(keys, key(24+4*word, binary.BigEndian.Uint32(address[4*word:]), 0xffffffff))
+				}
+			}
+		case "protocol":
+			if family == "ip" {
+				keys = append(keys, key(8, 6<<16, 0xff<<16))
+			} else {
+				keys = append(keys, key(4, 6<<8, 0xff<<8))
+			}
+		case "dport":
+			port, _ := strconv.Atoi(args[i+3])
+			if family == "ip" {
+				keys = append(keys, key(20, uint32(port), 0xffff))
+			} else {
+				keys = append(keys, key(40, uint32(port), 0xffff))
+			}
+		}
+	}
+	return keys
 }
 
 func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label string, argv ...string) (supervised.Report, error) {
@@ -253,6 +324,44 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 	if link == nil {
 		n.mu.Unlock()
 		return supervised.Report{ExitCode: 1, Stderr: []byte(`Cannot find device "` + argv[4] + `"`)}, nil
+	}
+	if argv[1] == "filter" || argv[5] == "parent" || len(argv) > 8 && argv[8] == "prio" {
+		defer n.mu.Unlock()
+		if n.onSelective != nil {
+			if report, refused := n.onSelective(argv); refused {
+				return report, nil
+			}
+		}
+		switch {
+		case argv[1] == "filter":
+			// tc filter add dev IF parent H protocol P pref 10 handle 800::1 u32 ... flowid F
+			if link.root == nil || link.root.kind != "prio" || link.root.handle != argv[6] {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Parent Qdisc doesn't exists.")}, nil
+			}
+			head := map[string]any{"parent": argv[6], "protocol": argv[8], "pref": 10, "kind": "u32", "chain": 0}
+			table := map[string]any{"parent": argv[6], "protocol": argv[8], "pref": 10, "kind": "u32", "chain": 0, "options": map[string]any{"fh": "800:", "ht_divisor": 1}}
+			leaf := map[string]any{"parent": argv[6], "protocol": argv[8], "pref": 10, "kind": "u32", "chain": 0,
+				"options": map[string]any{"fh": argv[12], "order": 1, "key_ht": "800", "bkt": "0", "flowid": argv[len(argv)-1], "matches": fakeU32Keys(argv[13:])}}
+			link.filters = append(link.filters, head, table, leaf)
+		case argv[5] == "parent":
+			// tc qdisc add dev IF parent H:3 handle C netem delay X [J]
+			if link.root == nil || link.root.kind != "prio" || argv[6] != link.root.handle+"3" {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Failed to find specified qdisc.")}, nil
+			}
+			child := &fakeQdisc{kind: "netem", handle: argv[8]}
+			child.delay, _ = time.ParseDuration(argv[11])
+			if len(argv) > 12 {
+				child.jitter, _ = time.ParseDuration(argv[12])
+			}
+			link.child, link.parent = child, argv[6]
+		default:
+			// tc qdisc add dev IF root handle H prio bands 3 priomap ...
+			if link.root != nil {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Exclusivity flag on, cannot modify.")}, nil
+			}
+			link.root = &fakeQdisc{kind: "prio", handle: argv[7]}
+		}
+		return supervised.Report{}, nil
 	}
 	switch argv[2] {
 	case "add":
@@ -288,7 +397,10 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 		if link.root == nil || link.root.handle != argv[7] {
 			return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Invalid handle.")}, nil
 		}
-		link.root = nil
+		// Removing a root removes its children and filters with it.
+		major, _, _ := strings.Cut(link.root.handle, ":")
+		link.extra = slices.DeleteFunc(link.extra, func(extra fakeExtraQdisc) bool { return strings.HasPrefix(extra.parent, major+":") })
+		link.root, link.child, link.parent, link.filters = nil, nil, "", nil
 		return supervised.Report{}, nil
 	}
 	n.mu.Unlock()
@@ -347,7 +459,11 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 			if matches[0].root != nil {
 				matches[0].root.packets += 10
 			}
+			if matches[0].child != nil {
+				matches[0].child.packets += 3
+			}
 			out["qdiscs"] = qdiscJSON(matches[0])
+			out["filters"] = append([]map[string]any{}, matches[0].filters...)
 		}
 	}
 	stdout, err := json.Marshal(out)
