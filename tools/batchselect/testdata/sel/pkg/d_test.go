@@ -10,8 +10,11 @@ import (
 //go:embed data.txt
 var data string
 
+//go:embed notes.md
+var notes string
+
 func TestD(t *testing.T) {
-	if data == "" || helperB() != 2 || shared != 3 {
+	if data == "" || notes == "" || helperB() != 2 || shared != 3 {
 		t.Fatal("data")
 	}
 }

@@ -128,6 +128,14 @@ func TestSelectBatches(t *testing.T) {
 		"embedded file": {change: func(t *testing.T, dir string) {
 			edit(t, dir, "pkg/data.txt", "embedded", "changed")
 		}, selected: every, fallback: "pkg/data.txt"},
+		// Markdown inside the analysed package is an input, not
+		// documentation: one file embedded, one read at run time.
+		"embedded Markdown": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "pkg/notes.md", "embedded notes", "")
+		}, selected: every, fallback: "pkg/notes.md"},
+		"runtime-read Markdown": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "pkg/testdata/expected.md", "expected output", "")
+		}, selected: every, fallback: "pkg/testdata/expected.md"},
 		"go.mod": {change: func(t *testing.T, dir string) {
 			edit(t, dir, "go.mod", "go 1.26", "go 1.26.0")
 		}, selected: every, fallback: "go.mod changed"},

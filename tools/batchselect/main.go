@@ -76,16 +76,13 @@ func git(root string, args ...string) (string, error) {
 }
 
 // classify sorts a changed path: ignored (no batch reads it), analysed (a
-// Go file of the package), or a reason to select every batch.
+// Go file of the package), or a reason to select every batch. Every file
+// under the package directory is classified before the documentation
+// exemption: a test can embed or read a Markdown file there, and go:embed
+// cannot reach outside the package directory.
 func classify(pkgDir string, file fileDiff) (ignored, analysed bool, reason string) {
 	p := file.path
 	switch {
-	case strings.HasSuffix(p, ".md") || strings.HasPrefix(p, "docs/") || p == "LICENSE":
-		return true, false, ""
-	case p == "go.mod" || p == "go.sum":
-		return false, false, p + " changed"
-	case strings.HasPrefix(p, ".github/"):
-		return false, false, p + ": CI scripts, workflows and actions are read at run time"
 	case path.Dir(p) == pkgDir && strings.HasSuffix(p, ".go"):
 		if file.status != 'M' {
 			return false, false, p + ": added or deleted file"
@@ -93,6 +90,12 @@ func classify(pkgDir string, file fileDiff) (ignored, analysed bool, reason stri
 		return false, true, ""
 	case strings.HasPrefix(p, pkgDir+"/"):
 		return false, false, p + ": non-Go or nested file of the package, read at run time or embedded"
+	case strings.HasSuffix(p, ".md") || strings.HasPrefix(p, "docs/") || p == "LICENSE":
+		return true, false, ""
+	case p == "go.mod" || p == "go.sum":
+		return false, false, p + " changed"
+	case strings.HasPrefix(p, ".github/"):
+		return false, false, p + ": CI scripts, workflows and actions are read at run time"
 	}
 	return false, false, p + ": outside " + pkgDir + ", which this stage does not analyse"
 }

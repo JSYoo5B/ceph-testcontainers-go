@@ -263,6 +263,8 @@ Every batch is selected, with the reason, when the change touches any of:
 - a removed `init` function or package-level var initializer;
 - a diff, base file or package that cannot be parsed or type-checked.
 
+Every file under the analysed package's directory is classified first, so
+a Markdown file that a test embeds or reads there selects every batch. Other
 Markdown files, `docs/` and `LICENSE` are ignored. A profile of another
 package, such as the `environment` batch, is always selected. If the tool
 fails, every profile is recorded as selected, with the error.
