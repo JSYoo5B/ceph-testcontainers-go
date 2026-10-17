@@ -48,7 +48,8 @@ func TestAddressFamilyOptions(t *testing.T) {
 		t.Fatal("defaults or names changed")
 	}
 	for name, opts := range map[string][]Option{
-		"host network":             {WithAddressFamily(AddressIPv6), WithHostNetwork()},
+		"host network":                    {WithAddressFamily(AddressIPv6), WithHostNetwork()},
+		"dual-stack host network":         {WithAddressFamily(AddressDualStack), WithHostNetwork()},
 		"mapped separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
 	} {
 		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])

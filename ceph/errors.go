@@ -33,8 +33,10 @@ var (
 	// ErrUnsupported reports a native feature that the Ceph of the relevant
 	// target lacks, established before any change from that target's own
 	// capability, such as an option that its tool does not list, or from a
-	// documented limit of the release it runs. *OperationError names the
-	// feature, the target and its version.
+	// documented limit of the release it runs. AddressDualStack establishes
+	// it after startup instead, from the addresses that the daemons
+	// advertise. *OperationError names the feature, the target and its
+	// version.
 	ErrUnsupported = errors.New("unsupported by the target's Ceph")
 	// ErrImageCapability reports an image that lacks what the operation
 	// needs: an executable or runtime, such as the python3 of the

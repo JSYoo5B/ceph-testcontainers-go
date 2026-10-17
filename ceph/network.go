@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 
 	dockernetwork "github.com/moby/moby/api/types/network"
@@ -34,37 +35,61 @@ func (c *Container) ClusterNetworkName() string {
 func (c *Container) HasSeparateClusterNetwork() bool { return c.clusterNetwork != nil }
 
 // inspectNetworkSubnets returns the subnets of the public and cluster bridges
-// that Ceph's public and cluster networks select: the IPv6 subnets of the
-// dual-stack bridges for AddressIPv6, the IPv4 subnets otherwise.
+// that Ceph's public and cluster networks select, as Ceph network lists: the
+// IPv6 subnets of the dual-stack bridges for AddressIPv6, both the IPv4 and
+// the IPv6 subnet for AddressDualStack, the IPv4 subnets otherwise. With one
+// bridge, public and cluster name the same network and both lists are equal.
 func inspectNetworkSubnets(ctx context.Context, public, cluster string, family AddressFamily) (string, string, error) {
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
 		return "", "", err
 	}
-	subnets := make([]netip.Prefix, 2)
+	subnets := make([][]netip.Prefix, 2)
 	for i, name := range []string{public, cluster} {
 		inspection, inspectErr := docker.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{})
 		if inspectErr != nil {
 			err = fmt.Errorf("inspect Ceph network %s: %w", name, inspectErr)
 			break
 		}
-		if subnets[i], err = familySubnet(inspection.Network.IPAM.Config, family); err != nil {
+		if subnets[i], err = familySubnets(inspection.Network.IPAM.Config, family); err != nil {
 			err = fmt.Errorf("Ceph network %s: %w", name, err)
 			break
 		}
 	}
-	if err == nil && subnets[0].Overlaps(subnets[1]) {
+	if err == nil && public != cluster && subnetsOverlap(subnets[0], subnets[1]) {
 		err = errors.New("Ceph public and cluster subnets overlap")
 	}
 	err = errors.Join(err, docker.Close())
 	if err != nil {
 		return "", "", err
 	}
-	return subnets[0].String(), subnets[1].String(), nil
+	return networkList(subnets[0]), networkList(subnets[1]), nil
+}
+
+// familySubnets returns the subnets of a bridge's IPAM configuration that
+// have the addresses Ceph binds for family: one subnet, or for
+// AddressDualStack the IPv4 subnet followed by the IPv6 subnet.
+func familySubnets(configs []dockernetwork.IPAMConfig, family AddressFamily) ([]netip.Prefix, error) {
+	if family != AddressDualStack {
+		subnet, err := familySubnet(configs, family)
+		if err != nil {
+			return nil, err
+		}
+		return []netip.Prefix{subnet}, nil
+	}
+	v4, err := familySubnet(configs, AddressIPv4)
+	if err != nil {
+		return nil, err
+	}
+	v6, err := familySubnet(configs, AddressIPv6)
+	if err != nil {
+		return nil, err
+	}
+	return []netip.Prefix{v4, v6}, nil
 }
 
 // familySubnet returns the first subnet of a bridge's IPAM configuration
-// that has the addresses Ceph binds for family.
+// that has the addresses Ceph binds for a single-family family.
 func familySubnet(configs []dockernetwork.IPAMConfig, family AddressFamily) (netip.Prefix, error) {
 	ipv6 := family == AddressIPv6
 	for _, config := range configs {
@@ -76,6 +101,29 @@ func familySubnet(configs []dockernetwork.IPAMConfig, family AddressFamily) (net
 		return netip.Prefix{}, errors.New("no IPv6 subnet")
 	}
 	return netip.Prefix{}, errors.New("no IPv4 subnet")
+}
+
+// subnetsOverlap reports whether a subnet of one plane overlaps a subnet of
+// the other. Subnets of different families never overlap.
+func subnetsOverlap(public, cluster []netip.Prefix) bool {
+	for _, a := range public {
+		for _, b := range cluster {
+			if a.Overlaps(b) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// networkList formats subnets as a Ceph public_network or cluster_network
+// value.
+func networkList(subnets []netip.Prefix) string {
+	values := make([]string, len(subnets))
+	for i, subnet := range subnets {
+		values[i] = subnet.String()
+	}
+	return strings.Join(values, ",")
 }
 
 type networkLinkClient interface {

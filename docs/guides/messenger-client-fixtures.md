@@ -44,6 +44,7 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 | Address family | IPv4 | the default | every other profile |
 | | IPv6 | `WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
 | | IPv4-mapped IPv6 | `WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
+| | IPv4 and IPv6 on every daemon | `WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](../ceph.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
 | Where the tests run | a container on the cluster network | a container with `WithClient` or `WithClientIdentity` | every profile |
 | | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host`, where the test process reads each daemon's Messenger v2 banner |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |

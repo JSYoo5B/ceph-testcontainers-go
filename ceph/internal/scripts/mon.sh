@@ -2,12 +2,13 @@
 set -eu
 
 mkdir -p /etc/ceph /var/lib/ceph/mon/ceph-a /var/run/ceph
-# messenger_address prints this container's address of the address family:
-# IPv4, global IPv6, or IPv4 as an IPv4-mapped IPv6 address in the
-# hexadecimal form that Ceph parses.
+# messenger_address prints this container's address of the address family,
+# $1 or CEPH_ADDRESS_FAMILY: IPv4, global IPv6, or IPv4 as an IPv4-mapped
+# IPv6 address in the hexadecimal form that Ceph parses.
 messenger_address() {
+    family=${1:-${CEPH_ADDRESS_FAMILY:-ipv4}}
     for address in $(hostname -i); do
-        case "${CEPH_ADDRESS_FAMILY:-ipv4}:$address" in
+        case "$family:$address" in
         ipv6:fe80:* | ipv6:FE80:*) ;;
         ipv6:*:*)
             echo "$address"
@@ -29,28 +30,56 @@ messenger_address() {
             ;;
         esac
     done
-    echo "tc-ceph: environment: this container has no ${CEPH_ADDRESS_FAMILY:-ipv4} address" >&2
+    echo "tc-ceph: environment: this container has no $family address" >&2
     exit 2
 }
-mon_ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
-mon_host=$mon_ip
+mon_v2=${CEPH_MON_PORT_V2:-3300}
+mon_v1=${CEPH_MON_PORT_V1:-6789}
+msgr2_only=false
+if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
+    msgr2_only=true
+fi
+# mon_entries prints the address vector entries of host $1: v2, and v1
+# unless the Messenger mode has no v1 listener.
+mon_entries() {
+    if [ "$msgr2_only" = true ]; then
+        echo "v2:$1:${mon_v2}"
+    else
+        echo "v2:$1:${mon_v2},v1:$1:${mon_v1}"
+    fi
+}
 bind_ipv4=true
 bind_ipv6=false
+bind_prefer_config=
 case "${CEPH_ADDRESS_FAMILY:-ipv4}" in
+dual-stack)
+    # The MGR seeds its address vector from one scalar address of the first
+    # interface family and turns its other entry into a wildcard, unless the
+    # family of its MON session differs. List the IPv6 address first so that
+    # the MGR connects to the MON over IPv6 and advertises both concrete
+    # addresses, and prefer IPv4 so that its IPv4 address is advertised first.
+    mon_ip=$(messenger_address ipv4)
+    mon_ip6=$(messenger_address ipv6)
+    mon_addrs="[$(mon_entries "[$mon_ip6]"),$(mon_entries "$mon_ip")]"
+    bind_ipv6=true
+    bind_prefer_config='ms bind prefer ipv4 = true
+'
+    ;;
 ipv6 | ipv4-mapped)
-    mon_host="[$mon_ip]"
+    mon_ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
+    mon_addrs="[$(mon_entries "[$mon_ip]")]"
     bind_ipv4=false
     bind_ipv6=true
     ;;
+*)
+    mon_ip=${CEPH_PUBLIC_ADDRESS:-$(messenger_address)}
+    mon_addrs="[$(mon_entries "$mon_ip")]"
+    ;;
 esac
-mon_v2=${CEPH_MON_PORT_V2:-3300}
-mon_v1=${CEPH_MON_PORT_V1:-6789}
-mon_addrs="[v2:${mon_host}:${mon_v2},v1:${mon_host}:${mon_v1}]"
 messenger_config=
 # MessengerV2Only and MessengerV2Secure have no v1 listener or address;
 # MessengerV2Secure also fixes every connection mode to secure.
-if [ "${CEPH_MSGR2_ONLY:-false}" = true ] || [ "${CEPH_MSGR2_SECURE_ONLY:-false}" = true ]; then
-    mon_addrs="[v2:${mon_host}:${mon_v2}]"
+if [ "$msgr2_only" = true ]; then
     messenger_config='ms bind msgr1 = false
 ms bind msgr2 = true
 '
@@ -193,7 +222,7 @@ osd pool default pg autoscale mode = off
 mon allow pool size one = true
 ms bind ipv4 = ${bind_ipv4}
 ms bind ipv6 = ${bind_ipv6}
-# Report daemon and PG statistics every second instead of five, so readiness
+${bind_prefer_config}# Report daemon and PG statistics every second instead of five, so readiness
 # waits observe new PG states sooner in this small disposable cluster.
 mgr stats period = 1
 ${messenger_config}[mon]
