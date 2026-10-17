@@ -865,9 +865,15 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // It also works on a partially initialized cluster returned by Run. The whole
 // cluster is discarded, so each container gets terminationStopTimeout instead
 // of Docker's 10 seconds to stop before it is killed; a StopTimeout option
-// passed by the caller still takes precedence.
+// passed by the caller still takes precedence. From its start, also when it
+// then fails, Terminate refuses new native commands and cancels the running
+// ones, including the command of an rgw.Gateway.Admin call.
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	opts = append([]testcontainers.TerminateOption{testcontainers.StopTimeout(terminationStopTimeout)}, opts...)
+	// Refuse and cancel native commands before waiting for the mutex: an
+	// rgw.Gateway.Admin call holds it while its command runs, and returns
+	// once that command is stopped.
+	c.cancelNativeInvocations()
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}

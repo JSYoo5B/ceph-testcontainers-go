@@ -1169,7 +1169,9 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   When that cannot be confirmed, the error is a
   `*NativeCommandUnstoppedError`; keep it and call its `Stop` with a fresh
   context. Its `Unwrap` returns the cause, so `errors.Is(err, context.Canceled)`
-  still holds. `Terminate` also cancels and stops these commands.
+  still holds. `Terminate` also cancels and stops these commands. It does so
+  first, before it waits for any running cluster operation, and from then on
+  refuses new ones, also when it then fails.
 - Stopping a command does not undo what it did, and a command is never run
   again.
 - With `Input`, the command reads what `Input.Write` sends, in order, and the

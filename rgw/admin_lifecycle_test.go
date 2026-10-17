@@ -257,3 +257,29 @@ func TestRGWAdminStopsACommandAtItsLimit(t *testing.T) {
 		t.Fatal("Admin returned while its radosgw-admin still ran")
 	}
 }
+
+func (ctr *hostGateway) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+	return nil
+}
+
+func TestRGWAdminStopsItsCommandWhenTheClusterTerminates(t *testing.T) {
+	gateway, ctr := newHostGateway(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	terminated := make(chan error, 1)
+	// Admin's own caller stays alive: only Terminate can end the call.
+	pid, err := adminAfterStart(t, gateway, ctr, ctx, func() {
+		terminateCtx, stop := context.WithTimeout(t.Context(), 20*time.Second)
+		defer stop()
+		terminated <- gateway.owner.Terminate(terminateCtx)
+	})
+	if err == nil || !strings.Contains(err.Error(), "terminated") {
+		t.Fatalf("an Admin call that Terminate ended: %v", err)
+	}
+	if running(pid) {
+		t.Fatal("Terminate left Admin's radosgw-admin running")
+	}
+	if err := <-terminated; err != nil {
+		t.Fatalf("Terminate: %v", err)
+	}
+}

@@ -394,7 +394,9 @@ output. It is the escape hatch for anything without a typed method.
     stops the command under its own budget of about 10 s, which is not
     limited by the expired `ctx`, and returns `ctx`'s error only after the
     command is gone. A call that ends before Docker started the command
-    makes sure that it never starts.
+    makes sure that it never starts;
+  - when the cluster's `Terminate` starts. The call then returns an error
+    that says the cluster is terminated.
 - When Admin cannot confirm that stop, for example because the gateway is
   paused or the engine is unreachable, it returns a
   `*ceph.NativeCommandUnstoppedError`. Its `Stop(ctx)` retries the stop, and

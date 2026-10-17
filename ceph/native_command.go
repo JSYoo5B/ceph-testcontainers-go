@@ -624,11 +624,11 @@ func (c *Container) ownsNativeTarget(id string) bool {
 	return false
 }
 
-// stopNativeInvocations refuses new native commands, cancels the running
-// ones, waits until their calls have returned and stops the commands that
-// they could not confirm as stopped. It keeps those it cannot stop and returns
-// their errors.
-func (c *Container) stopNativeInvocations(ctx context.Context) []error {
+// cancelNativeInvocations refuses new native commands, cancels the running
+// ones and returns every tracked invocation. It takes only nativeMu, so
+// Terminate calls it before it waits for the cluster mutex, which an
+// invocation's caller may hold.
+func (c *Container) cancelNativeInvocations() []*nativeInvocation {
 	c.nativeMu.Lock()
 	c.nativeClosed = true
 	pending := slices.Collect(maps.Keys(c.nativeInvocations))
@@ -636,6 +636,15 @@ func (c *Container) stopNativeInvocations(ctx context.Context) []error {
 	for _, inv := range pending {
 		inv.cancel(errNativeTerminated)
 	}
+	return pending
+}
+
+// stopNativeInvocations refuses new native commands, cancels the running
+// ones, waits until their calls have returned and stops the commands that
+// they could not confirm as stopped. It keeps those it cannot stop and returns
+// their errors.
+func (c *Container) stopNativeInvocations(ctx context.Context) []error {
+	pending := c.cancelNativeInvocations()
 	var errs []error
 	for _, inv := range pending {
 		// A canceled call returns within its own stop budget.

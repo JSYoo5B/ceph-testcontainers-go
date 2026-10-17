@@ -143,4 +143,37 @@ func TestRGWAdminCommandLifetime(t *testing.T) {
 	if _, err := gateway.Admin(ctx, "user", "list"); err != nil {
 		t.Fatalf("real radosgw-admin after the shim: %v", err)
 	}
+
+	// Terminate reaches a running Admin whose own caller stays alive: the
+	// call returns, its command stopped, before the teardown removes the
+	// gateway.
+	if err := gateway.CopyToContainer(ctx, []byte(rgwAdminShim), "/usr/local/sbin/radosgw-admin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setMode("ignore-term")
+	terminated := make(chan error, 1)
+	pid, took, err = call(ctx, func() {
+		go func() {
+			terminateCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+			defer stop()
+			terminated <- cluster.Terminate(terminateCtx)
+		}()
+	})
+	if err == nil || !strings.Contains(err.Error(), "terminated") {
+		t.Fatalf("an Admin call that Terminate ended returned %v after %s", err, took)
+	}
+	// Terminate stops the command before it waits for the cluster mutex
+	// that Admin held, so the gateway still runs when Admin returns.
+	select {
+	case err := <-terminated:
+		t.Fatalf("Terminate returned before the gateway was checked: %v", err)
+	default:
+	}
+	if !gone(pid) {
+		t.Fatal("Admin returned while its radosgw-admin still ran")
+	}
+	t.Logf("Terminate ended a running Admin after %s with its radosgw-admin gone", took)
+	// The test's client container still uses the cluster network, so this
+	// Terminate may leave the network to the cleanup's.
+	t.Logf("Terminate: %v", <-terminated)
 }
