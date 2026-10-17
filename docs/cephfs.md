@@ -966,12 +966,21 @@ libcephfs, oldest first.
 
 `Restore(ctx)` removes the retention rules that the lease added, then its
 schedule; the snapshots stay. It reads the directory back on every call, so a
-retry continues where an earlier call stopped: a rule that is already gone is
-skipped, and so is a schedule. It refuses with `ErrInvalidRequest`, changing
-nothing and staying retryable, when the lease's schedule was replaced by
-another one with its repeat, or when one of its rules has another count.
-Removing a rule changes the retention of every schedule of the directory. A
-non-nil lease returned with an error must be restored: after an add whose
+retry continues where an earlier call stopped, and the lease is restored only
+once its rules and its schedule are both confirmed gone:
+
+- A rule that the directory no longer lists is skipped. When no schedule of
+  the directory is left to show its retention, `Restore` removes each rule
+  anyway; the module's "was not set" or "No schedule found" answer is what
+  confirms that a rule is gone. So a rule that outlived the lease's schedule,
+  for example after another client removed that schedule, is still removed.
+- It refuses with `ErrInvalidRequest`, changing nothing and staying
+  retryable, while another schedule of the directory, of any repeat, shares a
+  rule that the lease still has to remove; when the lease's schedule was
+  replaced by another one with its repeat; and when one of its rules has
+  another count. Retry after the other schedule's owner removed it.
+
+A non-nil lease returned with an error must be restored: after an add whose
 reply was lost, `Restore` takes the only schedule with the requested repeat
 and start as the lease's.
 
@@ -989,9 +998,10 @@ if schedule != nil {
 `TestCephFSSnapshotSchedule` runs a 1-minute schedule with `n: 2`. Within
 about three minutes the module had taken three snapshots and pruned one, two
 `scheduled-…` snapshots were left, and after `Restore` the directory had no
-schedule and kept both snapshots. It then replaces a lease's schedule and
-removes one of another lease's rules natively, and checks that `Restore`
-refuses the replacement and skips the removed rule.
+schedule and kept both snapshots. It then changes leases' schedules and
+rules natively, and checks that `Restore` refuses a replaced schedule and a
+rule shared with another repeat's schedule, skips a removed rule, and still
+removes a rule that outlived its schedule.
 
 ### Filesystem Methods: authorization
 

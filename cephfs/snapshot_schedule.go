@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -85,7 +86,9 @@ type SnapshotScheduleLease struct {
 	start, added string
 	// rules are the retention rules that the lease sent, confirmed or not;
 	// Restore removes each one that the module still lists with that count.
-	rules    map[string]int
+	rules map[string]int
+	// cleared are the rules whose removal Restore confirmed.
+	cleared  map[string]bool
 	restored bool
 }
 
@@ -143,7 +146,7 @@ func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule Sn
 		}
 	}
 	lease := &SnapshotScheduleLease{Path: schedule.Path, Repeat: schedule.Repeat, Start: schedule.Start.UTC(), Retention: maps.Clone(schedule.Retention),
-		filesystem: fs, rules: map[string]int{}}
+		filesystem: fs, rules: map[string]int{}, cleared: map[string]bool{}}
 	// Two leases of one directory would each take the other's schedule for
 	// their own.
 	fs.snapshotScheduleMu.Lock()
@@ -287,6 +290,11 @@ func (l *SnapshotScheduleLease) find(ctx context.Context) (*SnapshotScheduleStat
 	if err != nil {
 		return nil, err
 	}
+	return l.match(statuses)
+}
+
+// match returns the lease's schedule among the directory's, as find does.
+func (l *SnapshotScheduleLease) match(statuses []SnapshotScheduleStatus) (*SnapshotScheduleStatus, error) {
 	var candidates []SnapshotScheduleStatus
 	for _, status := range statuses {
 		if status.Schedule != l.Repeat {
@@ -375,13 +383,18 @@ finally:
 `
 
 // Restore removes the retention rules that the lease added, then its
-// schedule; the snapshots stay. It reads the directory back on every call, so
-// a retry continues where an earlier call stopped: a rule that is already
-// gone is skipped, and a schedule that is already gone needs no removal. A
-// rule whose count changed, or a schedule with the lease's repeat that is not
-// the lease's, is refused with ceph.ErrInvalidRequest without a change, and
-// the lease stays retryable. Removing a rule changes the retention of every
-// schedule of the directory, which the module shares.
+// schedule; the snapshots stay. The module keeps retention per directory:
+// every schedule of the directory shares it, and it stays after the last
+// schedule is removed. Restore reads the directory back on every call, so a
+// retry continues where an earlier call stopped, and it completes only once
+// both the lease's rules and its schedule are confirmed gone:
+//   - a rule that the directory no longer lists, or that the module reports
+//     as not set when no schedule shows the retention, is done;
+//   - while another schedule of the directory, of any repeat, would lose a
+//     rule of the lease, Restore refuses with ceph.ErrInvalidRequest without
+//     a change, and so it does for a rule whose count changed or a schedule
+//     with the lease's repeat that is not the lease's. The lease stays
+//     retryable, for example after the other schedule's owner removed it.
 func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
@@ -391,40 +404,89 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l.restored {
 		return nil
 	}
-	status, err := l.find(ctx)
+	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
 	if err != nil {
 		return err
 	}
-	if status != nil {
-		for period, count := range l.rules {
-			if current, ok := status.Retention[period]; ok && current != count {
-				return invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, count))
-			}
-		}
-		for _, period := range slices.Sorted(maps.Keys(l.rules)) {
-			if status.Retention[period] != l.rules[period] {
-				continue
-			}
-			if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
-				strconv.Itoa(l.rules[period]), "--fs", l.filesystem.config.Name); err != nil {
-				return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
-			}
-		}
+	owned, err := l.match(statuses)
+	if err != nil {
+		return err
+	}
+	if err := l.removeRules(ctx, statuses, owned); err != nil {
+		return err
+	}
+	if owned != nil {
 		// The start selects this schedule among those with its repeat.
-		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, status.start,
+		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, owned.start,
 			"--fs", l.filesystem.config.Name); err != nil {
 			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.Path, err)
 		}
 		// Bind an unconfirmed add, so the read back looks for this schedule.
-		l.start, l.added = status.start, status.added
-		if status, err = l.find(ctx); err != nil {
+		l.start, l.added = owned.start, owned.added
+		if owned, err = l.find(ctx); err != nil {
 			return err
 		}
-		if status != nil {
+		if owned != nil {
 			return fmt.Errorf("the snapshot schedule %s of %s is still listed", l.Repeat, l.Path)
 		}
 	}
 	l.restored = true
 	l.release()
 	return nil
+}
+
+// removeRules removes the lease's retention rules that remain. statuses are
+// the directory's schedules and owned is the lease's among them, or nil.
+func (l *SnapshotScheduleLease) removeRules(ctx context.Context, statuses []SnapshotScheduleStatus, owned *SnapshotScheduleStatus) error {
+	var pending []string
+	for _, period := range slices.Sorted(maps.Keys(l.rules)) {
+		if !l.cleared[period] {
+			pending = append(pending, period)
+		}
+	}
+	if len(statuses) > 0 {
+		// Every schedule shows the directory's retention.
+		retention := statuses[0].Retention
+		var remaining []string
+		for _, period := range pending {
+			switch current, ok := retention[period]; {
+			case !ok:
+				l.cleared[period] = true
+			case current != l.rules[period]:
+				return invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, l.rules[period]))
+			default:
+				remaining = append(remaining, period)
+			}
+		}
+		if len(remaining) > 0 {
+			for _, status := range statuses {
+				if owned == nil || status.start != owned.start || status.added != owned.added || status.Schedule != owned.Schedule {
+					return invalid(fmt.Errorf("removing the lease's snapshot retention %v of %s would change the retention of the schedule %s starting %s, which the lease did not add: remove that schedule first",
+						remaining, l.Path, status.Schedule, status.start))
+				}
+			}
+		}
+		pending = remaining
+	}
+	for _, period := range pending {
+		_, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
+			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.config.Name)
+		if err != nil && (len(statuses) > 0 || !snapshotRetentionAbsent(err)) {
+			return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
+		}
+		l.cleared[period] = true
+	}
+	return nil
+}
+
+// snapshotRetentionAbsent reports a retention removal that the module refused
+// because the rule is not set: with no schedule to show the directory's
+// retention, that is the only observation of its absence. The module says
+// "Retention for <period>: <count> was not set for <path>" while it keeps the
+// directory's retention, and "No schedule found for <path>" when it keeps
+// nothing for the directory, which then has no retention either.
+func snapshotRetentionAbsent(err error) bool {
+	var failure *ceph.NativeFailure
+	return errors.As(err, &failure) && failure.Errno == "ENOENT" &&
+		(strings.Contains(failure.Reason, " was not set for ") || strings.Contains(failure.Reason, "No schedule found for "))
 }

@@ -184,6 +184,33 @@ func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *c
 		t.Fatalf("retention left after Restore: %s", status)
 	}
 
+	// Another repeat's schedule shares the lease's rule: refused, both kept,
+	// then restored once that schedule is gone.
+	native("fs", "snap-schedule", "remove", "/", "3h")
+	shared := lease(cephfs.SnapshotSchedule{Path: "/", Repeat: "5h", Start: time.Date(2030, 5, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}})
+	native("fs", "snap-schedule", "add", "/", "6h", "2030-06-01T00:00:00")
+	if err := shared.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("Restore beside another repeat's schedule: %v", err)
+	}
+	if status := statusJSON(); !strings.Contains(status, `"schedule": "5h"`) || !strings.Contains(status, `"schedule": "6h"`) || !strings.Contains(status, `"retention": {"n": 2}`) {
+		t.Fatalf("the refused Restore changed the directory: %s", status)
+	}
+	native("fs", "snap-schedule", "remove", "/", "6h")
+	if err := shared.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A schedule removed by another client leaves the lease's rule in the
+	// directory; Restore still removes it.
+	orphan := lease(cephfs.SnapshotSchedule{Path: "/", Repeat: "4h", Start: time.Date(2030, 7, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}})
+	native("fs", "snap-schedule", "remove", "/", "4h")
+	if err := orphan.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	native("fs", "snap-schedule", "add", "/", "3h", "2030-04-01T00:00:00")
+	if status := statusJSON(); !strings.Contains(status, `"retention": {}`) {
+		t.Fatalf("retention left after the schedule was removed natively: %s", status)
+	}
+
 	// An existing schedule, and retention that a new schedule would inherit.
 	if refused, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"}); !errors.Is(err, ceph.ErrInvalidRequest) || refused != nil {
 		t.Fatalf("a lease of a directory with a schedule: %v, %v", refused, err)
@@ -203,5 +230,5 @@ func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *c
 	}
 	native("fs", "snap-schedule", "retention", "remove", "/", "n", "3")
 	native("fs", "snap-schedule", "remove", "/", "3h")
-	t.Log("CEPHFS_SNAP_SCHEDULE_OWNERSHIP a replaced schedule was refused and kept; a rule removed by another client was skipped; retention left in the directory was refused on add and kept by Restore")
+	t.Log("CEPHFS_SNAP_SCHEDULE_OWNERSHIP a replaced schedule was refused and kept; a rule removed by another client was skipped; a rule shared with another repeat's schedule was refused, then removed; a rule outliving its schedule was removed; retention left in the directory was refused on add and kept by Restore")
 }

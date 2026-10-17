@@ -29,20 +29,23 @@ type fakeSchedule struct {
 // showed it: schedules are identified by path, repeat and start, several may
 // share a repeat, retention is kept per directory, shared by its schedules
 // and kept after the last one is removed, and removing a rule that is not
-// set fails with ENOENT.
+// set fails with ENOENT. A directory that never had a schedule has no
+// retention, and its retention commands fail with "No schedule found".
 type fakeSnapSchedule struct {
 	testcontainers.Container
 	mu        sync.Mutex
 	schedules []fakeSchedule
 	retention map[string]map[string]int
-	clock     time.Time
+	// known are the directories that had a schedule.
+	known map[string]bool
+	clock time.Time
 	// lost applies the command whose words start with the key and then
 	// fails its reply; refused fails it without applying. Each fires once.
 	lost, refused map[string]bool
 }
 
 func newFakeSnapSchedule() *fakeSnapSchedule {
-	return &fakeSnapSchedule{retention: map[string]map[string]int{}, clock: time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC),
+	return &fakeSnapSchedule{retention: map[string]map[string]int{}, known: map[string]bool{}, clock: time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC),
 		lost: map[string]bool{}, refused: map[string]bool{}}
 }
 
@@ -110,6 +113,7 @@ func (f *fakeSnapSchedule) apply(args []string) (int, string) {
 			start = args[5]
 		}
 		f.clock = f.clock.Add(time.Second)
+		f.known[args[3]] = true
 		f.schedules = append(f.schedules, fakeSchedule{args[3], args[4], start, f.clock.Format(snapshotScheduleTime)})
 		return 0, "Schedule set for path " + args[3]
 	case strings.HasPrefix(command, "fs snap-schedule remove "):
@@ -121,6 +125,8 @@ func (f *fakeSnapSchedule) apply(args []string) (int, string) {
 			return 2, "Error ENOENT: no such schedule"
 		}
 		return 0, "Schedule removed for path " + args[3]
+	case strings.HasPrefix(command, "fs snap-schedule retention ") && !f.known[args[4]]:
+		return 2, "Error ENOENT: No schedule found for " + args[4]
 	case strings.HasPrefix(command, "fs snap-schedule retention add "):
 		count, _ := strconv.Atoi(args[6])
 		if f.retention[args[4]] == nil {
@@ -302,6 +308,79 @@ func TestSnapshotScheduleLeaseAfterAFailedAdd(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Retention belongs to the directory: a rule of the lease that another
+// schedule shares is refused, and a rule that outlived the lease's schedule
+// is still removed.
+func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
+	schedule := SnapshotSchedule{Path: "/", Repeat: "3h", Start: time.Date(2030, 4, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}}
+	t.Run("schedule of another repeat", func(t *testing.T) {
+		fake := newFakeSnapSchedule()
+		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.native(t, "fs snap-schedule add / 6h 2030-06-01T00:00:00")
+		before := fake.state()
+		if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before {
+			t.Fatalf("Restore beside another schedule: %v, %s", err, fake.state())
+		}
+		fake.native(t, "fs snap-schedule remove / 6h")
+		if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+			t.Fatalf("Restore after the other schedule was removed: %v, %s", err, fake.state())
+		}
+	})
+	t.Run("schedule removed natively", func(t *testing.T) {
+		fake := newFakeSnapSchedule()
+		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.native(t, "fs snap-schedule remove / 3h")
+		if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+			t.Fatalf("Restore after the schedule was removed: %v, %s", err, fake.state())
+		}
+	})
+	t.Run("schedule removed, another one added", func(t *testing.T) {
+		fake := newFakeSnapSchedule()
+		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.native(t, "fs snap-schedule remove / 3h")
+		fake.native(t, "fs snap-schedule add / 8h 2030-08-01T00:00:00")
+		before := fake.state()
+		if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) || fake.state() != before {
+			t.Fatalf("Restore with the rule shared by another schedule: %v, %s", err, fake.state())
+		}
+		fake.native(t, "fs snap-schedule remove / 8h")
+		if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+			t.Fatalf("Restore after the other schedule was removed: %v, %s", err, fake.state())
+		}
+	})
+	t.Run("rule removal interrupted without schedules", func(t *testing.T) {
+		for name, fault := range map[string]func(*fakeSnapSchedule){
+			"reply lost": func(f *fakeSnapSchedule) { f.lost["fs snap-schedule retention remove"] = true },
+			"refused":    func(f *fakeSnapSchedule) { f.refused["fs snap-schedule retention remove"] = true },
+		} {
+			t.Run(name, func(t *testing.T) {
+				fake := newFakeSnapSchedule()
+				lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fake.native(t, "fs snap-schedule remove / 3h")
+				fault(fake)
+				if err := lease.Restore(t.Context()); err == nil {
+					t.Fatal("the interrupted rule removal completed the lease")
+				}
+				if err := lease.Restore(t.Context()); err != nil || fake.state() != "" {
+					t.Fatalf("retry: %v, %s", err, fake.state())
+				}
+			})
+		}
+	})
 }
 
 func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
