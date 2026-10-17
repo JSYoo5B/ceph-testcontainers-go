@@ -56,6 +56,12 @@ change the API.
   the old one; after the restart the client's flush is acknowledged without
   a second fsync, the MDS has the new size and an independent client reads
   every byte ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+- `TestCephFSDentryLeaseRecall` records a dentry lease recall between two
+  live clients: a client without the root's `Fs` capability gets a lease on a
+  directory it looks up, and another client's rename and `rmdir` of it each
+  recall the lease at once (`num_leases` 1 to 0) without evicting the holder,
+  which then sees the new namespace
+  ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 - `TestOSDHeartbeatFailure` records OSD heartbeat failure detection: with one
   OSD's cluster network cut in a cluster of three, the MON marks it down after
   `osd_heartbeat_grace` on two reports from different hosts, while its peers

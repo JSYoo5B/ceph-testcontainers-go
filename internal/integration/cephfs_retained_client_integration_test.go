@@ -40,6 +40,13 @@ func TestCephFSCapabilityHandoff(t *testing.T) {
 	testCephFSCapabilityHandoff(t)
 }
 
+// A client looks up a directory that a second, mounted client created; the
+// MDS leases the dentry to it and recalls the lease when the second client
+// renames and then removes the directory.
+func TestCephFSDentryLeaseRecall(t *testing.T) {
+	testCephFSDentryLeaseRecall(t)
+}
+
 // A client that is frozen while its MDS fails over misses the reconnect window
 // and is evicted.
 func TestCephFSLateReconnect(t *testing.T) {
