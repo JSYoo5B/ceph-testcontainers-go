@@ -210,8 +210,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
-		monEnv := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
-		maps.Copy(monEnv, c.settings.messengerEnvironment())
+		monEnv := c.monitorJoinEnvironment(name)
 		opts := []testcontainers.ContainerCustomizer{c.WithClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),
@@ -701,6 +700,8 @@ func monitorConfigComment(line string) (int, error) {
 // AddManager creates a named active/standby candidate and waits for its mgrmap
 // registration. Existing daemon identities are rejected; it does not force
 // active ownership away from an existing MGR.
+// With AddressDualStack it then checks the active MGR's advertised addresses
+// and fails with ErrUnsupported when one family has no concrete address.
 func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
@@ -778,6 +779,9 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 		return false, err
 	}); err != nil {
 		return mgr, fmt.Errorf("register manager %s: %w", name, err)
+	}
+	if err := c.checkDualStackAddresses(ctx); err != nil {
+		return mgr, err
 	}
 	return mgr, nil
 }
@@ -862,7 +866,9 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	if name == "a" {
 		c.manager = nil
 	}
-	return nil
+	// The removal is complete; a replacement that advertises an unreachable
+	// address is reported, not undone.
+	return c.checkDualStackAddresses(ctx)
 }
 
 func managerMapGID(status ManagerStatus, name string) (uint64, bool) {

@@ -177,7 +177,7 @@ var reservedConfigKeys = map[string]string{
 	"mon_host":                    "is managed by the fixture",
 	"mon_initial_members":         "is managed by the fixture; use WithMonitorCount",
 	"mon_addr":                    "is managed by the fixture",
-	"public_network":              "is managed by the fixture; use WithHostNetwork or WithSeparateClusterNetwork",
+	"public_network":              "is managed by the fixture; use WithHostNetwork, WithSeparateClusterNetwork or WithAddressFamily",
 	"cluster_network":             "is managed by the fixture; use WithSeparateClusterNetwork",
 	"public_addr":                 "is managed by the fixture; use WithHostAddress",
 	"cluster_addr":                "is managed by the fixture; use WithHostAddress",
@@ -231,7 +231,7 @@ func reservedConfigKey(key string) string {
 	case reservedMessengerMode.MatchString(key):
 		return "is managed by the fixture; use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"
 	case strings.HasPrefix(key, "ms_bind_"):
-		return "is managed by the fixture; use WithMessengerMode or WithHostNetwork"
+		return "is managed by the fixture; use WithMessengerMode, WithAddressFamily or WithHostNetwork"
 	}
 	return ""
 }

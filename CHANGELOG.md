@@ -8,6 +8,14 @@ change the API.
 
 ### Added
 
+- `ceph.AddressDualStack` (`"dual-stack"`) runs the cluster on a dual-stack
+  bridge where every MON, MGR, OSD and service daemon binds and advertises
+  both its IPv4 and IPv6 address, also with `WithSeparateClusterNetwork`. MON
+  vectors list IPv6 first so that the MGR advertises a concrete IPv6 address
+  instead of `[::]`, and `Run`, `AddManager` and `RemoveManager` fail with
+  `ErrUnsupported` when a daemon advertises a wildcard or lacks a family
+  (part of [#42](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/42)).
+
 - `rbd.TemporaryImmutableObjectCache` starts the RBD immutable object cache
   daemon in a client container and returns a lease with `ClientOptions`,
   `Status` (cached objects and bytes, the daemon's RADOS reads), `Stop` (clients

@@ -184,7 +184,7 @@ of option order:
 | `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
 | `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
-| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
+| `WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
 | `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
@@ -880,6 +880,11 @@ addresses, err := cluster.DaemonAddresses(ctx)
 // addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
 ```
 
+With `WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
+as well, and `public network` and `cluster network` each list both subnets of
+their bridge. Every daemon then advertises one address of each family from
+the matching bridge.
+
 #### WithAddressFamily
 
 ```golang
@@ -894,9 +899,11 @@ and advertises. `cluster.AddressFamily()` returns the selected value.
 | `ceph.AddressIPv4` (default) | IPv4 | the container's IPv4 address, such as `172.19.0.2:3300` |
 | `ceph.AddressIPv6` | dual-stack: one IPv4 and one IPv6 subnet | the container's IPv6 address, such as `[fd62:93fe:2c9e::2]:3300`; no IPv4 listener |
 | `ceph.AddressIPv4MappedIPv6` | IPv4 | the container's IPv4 address as an IPv4-mapped IPv6 address on an IPv6 socket, such as `[::ffff:172.19.0.2]:3300` |
+| `ceph.AddressDualStack` | dual-stack: one IPv4 and one IPv6 subnet | both the container's IPv4 and IPv6 address, such as `[v2:[fd62:93fe:2c9e::2]:3300,v2:172.19.0.2:3300]`; clients of either family connect |
 
-The MONs get these addresses in the monmap and bind them. The generated
-`ceph.conf` sets `ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
+The MONs get these addresses in the monmap and bind them. For `AddressIPv6`
+and `AddressIPv4MappedIPv6`, the generated `ceph.conf` sets
+`ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
 OSDs and MDSs bind the IPv6 wildcard address, `[::]`, and advertise the address
 from which the MONs see them. No daemon has an IPv4 Messenger socket; with
 `AddressIPv4MappedIPv6` the IPv6 sockets accept the IPv4 connections that the
@@ -911,10 +918,10 @@ addresses, err := cluster.DaemonAddresses(ctx)
 // addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
 ```
 
-- Bridge mode only. `AddressIPv6` works with
+- Bridge mode only. `AddressIPv6` and `AddressDualStack` work with
   [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
   both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
-- `AddressIPv6` needs a Docker Engine that allocates an IPv6 subnet for a new
+- `AddressIPv6` and `AddressDualStack` need a Docker Engine that allocates an IPv6 subnet for a new
   IPv6 bridge without an explicit subnet, from its default pool of unique local
   addresses. `Run` fails with the Engine's error otherwise.
 - With `AddressIPv6`, Docker forwards an IPv4 connection to a published MON
@@ -929,6 +936,70 @@ addresses, err := cluster.DaemonAddresses(ctx)
   pass it to a Ceph tool, for example with `-m`. Go's `net/netip` parses both.
 - HTTP endpoints, such as RGW's, are not Messenger listeners and keep their
   addresses.
+
+##### Dual-stack clusters
+
+`AddressDualStack` makes every Messenger bind and advertise both families.
+The generated `ceph.conf` sets `ms_bind_ipv4`, `ms_bind_ipv6` and
+`ms_bind_prefer_ipv4` to `true` and `public network` to both subnets of the
+bridge, such as `172.19.0.0/16,fd62:93fe:2c9e::/64`. Every address vector
+then has one entry of each family for each enabled Messenger protocol: v2,
+and v1 unless [WithMessengerMode](#withmessengermode) removes it.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressDualStack))
+addresses, err := cluster.DaemonAddresses(ctx)
+// addresses.Monitors[0].Addrs:
+//   v2 [fd62:93fe:2c9e::2]:3300, v1 [fd62:93fe:2c9e::2]:6789,
+//   v2 172.19.0.2:3300, v1 172.19.0.2:6789
+// addresses.ActiveManager.Addrs:
+//   v2 172.19.0.3:6800, v1 172.19.0.3:6801,
+//   v2 [fd62:93fe:2c9e::3]:6802, v1 [fd62:93fe:2c9e::3]:6803
+```
+
+The MON vectors in the monmap and in `mon_host` list the IPv6 address first;
+MGR, OSD and MDS vectors list the IPv4 address first. The order is deliberate.
+A MGR fills its vector from one scalar address that it picks first, which is
+the IPv4 one, and turns its IPv6 entry into the wildcard `[::]` unless its
+own MON session runs over IPv6. A client cannot connect to `[::]`, so with an
+IPv4-first MON vector `mgr_command` and `ceph tell mgr` time out from any
+other container. Listing the MON's IPv6 address first gives the MGR an IPv6
+MON session and a concrete IPv6 entry. The upstream fix would be in
+`ceph_mgr.cc`, which seeds that scalar address.
+
+`Run`, [AddManager](#addmanager) and [RemoveManager](#removemanager) then read
+[DaemonAddresses](#daemonaddresses) and check that every MON, the active MGR
+and every up OSD advertise exactly one concrete IPv4 and one concrete IPv6
+address for each protocol. An unspecified, IPv4-mapped or link-local address,
+or a missing family, fails the call with `ErrUnsupported` (see
+[Error categories](#error-categories)), naming the daemon and its vector. A
+MGR that a caller restarts directly, such as with `Stop` and `Start` on its
+container, is not checked; call `DaemonAddresses` after it.
+
+A native client follows the first entry of each vector it learns. Bootstrapped
+from IPv4 MON addresses, librados still moves its MON session to the monmap's
+first, IPv6, entry unless `mon_host_override` pins it, and it reaches MGRs and
+OSDs over IPv4 whatever its own `ms_bind_*` settings are. The other entries
+accept connections; select them only with a client that dials an explicit
+address. `TestDualStackAddressFamily` checks on Tentacle 20.2.4 and Squid
+19.2.5:
+
+- every MON, the active MGR before and after a failover, and the public,
+  cluster and heartbeat vectors of every OSD advertise a concrete IPv4 and
+  IPv6 address;
+- a Python librados client in another container, pinned to the IPv4 and then
+  to the IPv6 MON addresses with `mon_host_override`, completes a MON command,
+  a `pg stat` `mgr_command` and an object write and read, and its open sockets
+  show the MON session in that family and the MGR and OSD sessions over IPv4;
+- every advertised v2 address of both families, MON, MGR and OSD, answers with
+  the Messenger v2 banner.
+
+`TestDualStackSeparateClusterNetwork` checks the same with
+`WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
+both families from the replication bridge. MDS and RGW daemons use the same
+generated configuration; their dual-stack operation is not part of these
+tests.
 
 #### WithStartupTimeout
 
@@ -1476,7 +1547,9 @@ if no manager is active, otherwise as standby. Existing daemon names are rejecte
 and it never forces the active role away from a running manager. Success does
 not mean that every MGR module is ready; use
 [WaitMGRModuleReady](#waitmgrmoduleready) or [WaitForClean](#waitforclean)
-afterwards. A non-nil descriptor returned with an error stays owned.
+afterwards. A non-nil descriptor returned with an error stays owned. On an
+`AddressDualStack` cluster it then checks the advertised addresses of the
+active MGR; see [Dual-stack clusters](#dual-stack-clusters).
 
 #### RemoveManager
 
@@ -1486,8 +1559,10 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error
 
 Deletes an owned manager after confirming that another running, registered
 candidate is available. Removing the last candidate is refused; add a replacement
-first. Removing the active manager makes a standby take over. On failure the
-handle stays owned for a retry or for cluster cleanup.
+first. Removing the active manager makes a standby take over; on an
+`AddressDualStack` cluster the new active manager's addresses are checked as in
+[Dual-stack clusters](#dual-stack-clusters). On failure the handle stays owned
+for a retry or for cluster cleanup.
 
 #### ManagerStatus
 
@@ -3400,7 +3475,7 @@ engine capability, and from a native command that failed. Match them with
 | Category | Meaning |
 | --- | --- |
 | `ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids, such as a terminated cluster, an unowned container or an override that is already held. |
-| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release. `*OperationError` names the target, its version and the feature. |
+| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release, or, for `AddressDualStack`, from the addresses its daemons advertise after startup. `*OperationError` names the target, its version and the feature. |
 | `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |

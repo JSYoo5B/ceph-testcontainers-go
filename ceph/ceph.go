@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -196,6 +197,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name, settings.addressFamily); err != nil {
 			return c, err
 		}
+	} else if settings.addressFamily == AddressDualStack {
+		// Without public_network, a dual-stack daemon cannot pick an address
+		// of each family. The single bridge serves both planes.
+		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, nw.Name, settings.addressFamily); err != nil {
+			return c, err
+		}
 	}
 	// Publish before creation: an interrupted create may have committed, and the
 	// generated volume name stays owned for removal by Terminate.
@@ -249,6 +256,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		}
 	}
 	if err := c.waitForInitialDaemons(ctx); err != nil {
+		return c, err
+	}
+	if err := c.checkDualStackAddresses(ctx); err != nil {
 		return c, err
 	}
 	for _, pool := range settings.pools {
@@ -339,14 +349,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		moduleOpts := []testcontainers.ContainerCustomizer{
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
 			testcontainers.WithCmd(),
-			testcontainers.WithEnv(map[string]string{
-				"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
-				"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
-				"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
-				"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
-				addressFamilyEnvironment: c.settings.addressFamily.String(),
-			}),
-			testcontainers.WithEnv(c.settings.auth.environment()),
+			testcontainers.WithEnv(c.monitorEnvironment(fsid)),
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
@@ -405,6 +408,28 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 	}
 	return nil, classify(ErrEnvironmentUnavailable, errors.New("monitor port attempts exhausted"))
+}
+
+// monitorEnvironment returns the mon.sh variables of the first MON:
+// bootstrap settings, address family, networks and Cephx. Run adds the
+// Messenger mode's variables after the caller's options.
+func (c *Container) monitorEnvironment(fsid string) map[string]string {
+	env := map[string]string{
+		"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
+		"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
+		"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
+		"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
+		addressFamilyEnvironment: c.settings.addressFamily.String(),
+	}
+	maps.Copy(env, c.settings.auth.environment())
+	return env
+}
+
+// monitorJoinEnvironment returns the mon-join.sh variables of a later MON.
+func (c *Container) monitorJoinEnvironment(name string) map[string]string {
+	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
+	maps.Copy(env, c.settings.messengerEnvironment())
+	return env
 }
 
 // NetworkName returns the cluster's bridge name, or "host" in host mode.
