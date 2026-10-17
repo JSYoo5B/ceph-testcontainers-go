@@ -14,30 +14,42 @@ import (
 // v20.2.4 printed it.
 const nativeSnapshotScheduleStatus = `[{"fs": "tc-cephfs", "subvol": null, "group": null, "path": "/", "rel_path": "/", "schedule": "1m", "retention": {"m": 3}, "start": "2026-10-16T00:00:00", "created": "2026-10-16T22:21:31", "first": "2026-10-16T22:22:00", "last": "2026-10-16T22:24:00", "last_pruned": null, "created_count": 3, "pruned_count": 0, "active": true}]`
 
-func TestParseSnapshotScheduleStatus(t *testing.T) {
-	status, err := parseSnapshotScheduleStatus([]byte(nativeSnapshotScheduleStatus), "/", "1m")
-	if err != nil {
-		t.Fatal(err)
+func TestParseSnapshotScheduleStatuses(t *testing.T) {
+	statuses, err := parseSnapshotScheduleStatuses([]byte(nativeSnapshotScheduleStatus), "/")
+	if err != nil || len(statuses) != 1 {
+		t.Fatal(statuses, err)
 	}
+	status := statuses[0]
 	if status.Path != "/" || status.Schedule != "1m" || !status.Active || status.Created != 3 || status.Pruned != 0 ||
 		status.Retention["m"] != 3 || !status.First.Equal(time.Date(2026, 10, 16, 22, 22, 0, 0, time.UTC)) ||
-		!status.Last.Equal(time.Date(2026, 10, 16, 22, 24, 0, 0, time.UTC)) || len(status.Raw) == 0 {
+		!status.Last.Equal(time.Date(2026, 10, 16, 22, 24, 0, 0, time.UTC)) || len(status.Raw) == 0 ||
+		!status.Start.Equal(time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)) || !status.Added.Equal(time.Date(2026, 10, 16, 22, 21, 31, 0, time.UTC)) ||
+		status.start != "2026-10-16T00:00:00" || status.added != "2026-10-16T22:21:31" {
 		t.Fatalf("%+v", status)
 	}
 	// Before the first snapshot, first and last are null.
 	fresh := strings.NewReplacer(`"first": "2026-10-16T22:22:00"`, `"first": null`, `"last": "2026-10-16T22:24:00"`, `"last": null`).Replace(nativeSnapshotScheduleStatus)
-	if status, err := parseSnapshotScheduleStatus([]byte(fresh), "/", "1m"); err != nil || !status.First.IsZero() || !status.Last.IsZero() {
-		t.Fatalf("fresh: %+v %v", status, err)
+	if statuses, err := parseSnapshotScheduleStatuses([]byte(fresh), "/"); err != nil || !statuses[0].First.IsZero() || !statuses[0].Last.IsZero() {
+		t.Fatalf("fresh: %+v %v", statuses, err)
 	}
-	for name, test := range map[string]struct{ data, dir, repeat string }{
-		"another directory": {nativeSnapshotScheduleStatus, "/data", "1m"},
-		"another repeat":    {nativeSnapshotScheduleStatus, "/", "1h"},
-		"no counts":         {strings.Replace(nativeSnapshotScheduleStatus, `"created_count": 3, `, ``, 1), "/", "1m"},
-		"a bad time":        {strings.Replace(nativeSnapshotScheduleStatus, `"2026-10-16T22:24:00"`, `"yesterday"`, 1), "/", "1m"},
-		"not a list":        {`{}`, "/", "1m"},
+	// A directory without schedules prints an empty list.
+	for _, empty := range []string{"\n[]\n", ""} {
+		if statuses, err := parseSnapshotScheduleStatuses([]byte(empty), "/"); err != nil || len(statuses) != 0 {
+			t.Fatalf("empty %q: %+v %v", empty, statuses, err)
+		}
+	}
+	if statuses, err := parseSnapshotScheduleStatuses([]byte(nativeSnapshotScheduleStatus), "/data"); err != nil || len(statuses) != 0 {
+		t.Fatalf("another directory: %+v %v", statuses, err)
+	}
+	for name, data := range map[string]string{
+		"no counts":   strings.Replace(nativeSnapshotScheduleStatus, `"created_count": 3, `, ``, 1),
+		"no start":    strings.Replace(nativeSnapshotScheduleStatus, `"start": "2026-10-16T00:00:00", `, ``, 1),
+		"no creation": strings.Replace(nativeSnapshotScheduleStatus, `"created": "2026-10-16T22:21:31", `, ``, 1),
+		"a bad time":  strings.Replace(nativeSnapshotScheduleStatus, `"2026-10-16T22:24:00"`, `"yesterday"`, 1),
+		"not a list":  `{}`,
 	} {
-		if status, err := parseSnapshotScheduleStatus([]byte(test.data), test.dir, test.repeat); err == nil {
-			t.Errorf("%s: %+v", name, status)
+		if statuses, err := parseSnapshotScheduleStatuses([]byte(data), "/"); err == nil {
+			t.Errorf("%s: %+v", name, statuses)
 		}
 	}
 }

@@ -34,8 +34,10 @@ change the API.
 
 - `cephfs.Filesystem.TemporarySnapshotSchedule` adds a snapshot schedule and
   retention to a directory through the MGR `snap_schedule` module, with
-  `Status`, `Snapshots` and `Restore` on the returned lease. It never enables
-  the module or minute granularity
+  `Status`, `Snapshots` and `Restore` on the returned lease. The lease binds
+  the schedule by its native start and creation time, and `Restore` resumes
+  from the directory's current state. It never enables the module or minute
+  granularity
   ([#102](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/102)).
 
 - `TestMapPropagationReceipt` records which map each daemon holds, from its

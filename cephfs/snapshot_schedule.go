@@ -48,7 +48,13 @@ type SnapshotScheduleStatus struct {
 	// module deactivated it.
 	Path, Schedule string
 	Active         bool
-	// Retention is the module's retention specification.
+	// Start is the schedule's first time slot and Added the time the module
+	// added it, both in UTC; with Path and Schedule they identify one
+	// schedule, since a directory can have several with the same repeat.
+	Start, Added time.Time
+	// Retention is the module's retention specification. The module keeps it
+	// per directory: every schedule of the directory shares it, and it stays
+	// after the directory's last schedule is removed.
 	Retention map[string]int
 	// Created and Pruned count the snapshots that the module took and
 	// removed; First and Last are its first and last snapshot times, zero
@@ -57,19 +63,30 @@ type SnapshotScheduleStatus struct {
 	First, Last     time.Time
 	// Raw is the module's JSON for the schedule.
 	Raw json.RawMessage
+
+	// start and added are the module's own texts, compared exactly.
+	start, added string
 }
 
-// SnapshotScheduleLease owns one snapshot schedule of a directory. Restore
-// removes the schedule and its retention; the snapshots it took stay. Retain
-// a non-nil lease returned with an error: the schedule may have been added.
+// SnapshotScheduleLease owns one snapshot schedule of a directory and the
+// retention rules that it added. Restore removes them; the snapshots stay.
+// Retain a non-nil lease returned with an error: the schedule may have been
+// added.
 type SnapshotScheduleLease struct {
-	// Path, Repeat and Retention are the requested schedule.
+	// Path, Repeat, Start and Retention are the requested schedule.
 	Path, Repeat string
+	Start        time.Time
 	Retention    map[string]int
 
 	filesystem *Filesystem
 	mu         sync.Mutex
-	restored   bool
+	// start and added identify the native schedule once the lease read it
+	// back after adding it; both are empty while the add is unconfirmed.
+	start, added string
+	// rules are the retention rules that the lease sent, confirmed or not;
+	// Restore removes each one that the module still lists with that count.
+	rules    map[string]int
+	restored bool
 }
 
 func validateSnapshotSchedule(schedule SnapshotSchedule) error {
@@ -87,13 +104,18 @@ func validateSnapshotSchedule(schedule SnapshotSchedule) error {
 	return nil
 }
 
+const snapshotScheduleTime = "2006-01-02T15:04:05"
+
 // TemporarySnapshotSchedule adds a snapshot schedule, and its retention, to a
 // directory of the filesystem through the MGR snap_schedule module, which
 // takes "scheduled-…" snapshots in the directory's .snap. It never enables the
 // module: enable it with ceph.Container.TemporaryMGRModule first, and wait
 // until the active MGR, which restarts to load it, answers again. A disabled
 // module is ceph.ErrInvalidRequest, and so is a directory that already has a
-// schedule, which the lease would not own.
+// schedule or another lease. The module keeps retention per directory, and a
+// directory keeps retention rules after its last schedule is removed: rules
+// that the new schedule inherits are refused with ceph.ErrInvalidRequest
+// after the schedule was added, with a lease that removes it.
 func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error) {
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err
@@ -120,23 +142,49 @@ func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule Sn
 			return nil, invalid(fmt.Errorf("snapshot schedule repeat %s is in minutes, which the module refuses while mgr/snap_schedule/allow_m_granularity is %s", schedule.Repeat, strings.TrimSpace(string(data))))
 		}
 	}
-	existing, err := fs.snapshotSchedules(ctx, schedule.Path)
-	if err != nil {
-		return nil, err
+	lease := &SnapshotScheduleLease{Path: schedule.Path, Repeat: schedule.Repeat, Start: schedule.Start.UTC(), Retention: maps.Clone(schedule.Retention),
+		filesystem: fs, rules: map[string]int{}}
+	// Two leases of one directory would each take the other's schedule for
+	// their own.
+	fs.snapshotScheduleMu.Lock()
+	if fs.scheduledPaths[schedule.Path] != nil {
+		fs.snapshotScheduleMu.Unlock()
+		return nil, invalid(fmt.Errorf("directory %s already has a snapshot schedule lease", schedule.Path))
 	}
-	if len(existing) > 0 {
-		return nil, invalid(fmt.Errorf("directory %s already has snapshot schedules %v", schedule.Path, existing))
+	if fs.scheduledPaths == nil {
+		fs.scheduledPaths = map[string]*SnapshotScheduleLease{}
+	}
+	fs.scheduledPaths[schedule.Path] = lease
+	fs.snapshotScheduleMu.Unlock()
+	existing, err := fs.snapshotScheduleStatuses(ctx, schedule.Path)
+	if err == nil && len(existing) > 0 {
+		err = invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
+	}
+	if err != nil {
+		lease.release()
+		return nil, err
 	}
 	args := []string{"fs", "snap-schedule", "add", schedule.Path, schedule.Repeat}
 	if !schedule.Start.IsZero() {
-		args = append(args, schedule.Start.UTC().Format("2006-01-02T15:04:05"))
+		args = append(args, lease.Start.Format(snapshotScheduleTime))
 	}
-	lease := &SnapshotScheduleLease{Path: schedule.Path, Repeat: schedule.Repeat, Retention: maps.Clone(schedule.Retention), filesystem: fs}
 	if _, err := fs.cluster.Ceph(ctx, append(args, "--fs", fs.config.Name)...); err != nil {
-		// A lost reply may have added it; Restore removes it either way.
+		// A lost reply may have added it; Restore reads the directory back.
 		return lease, fmt.Errorf("add the snapshot schedule of %s: %w", schedule.Path, err)
 	}
+	added, err := lease.find(ctx)
+	if err != nil {
+		return lease, err
+	}
+	if added == nil {
+		return lease, fmt.Errorf("the module does not list the added snapshot schedule %s of %s", schedule.Repeat, schedule.Path)
+	}
+	lease.start, lease.added = added.start, added.added
+	if len(added.Retention) > 0 {
+		return lease, invalid(fmt.Errorf("directory %s keeps retention rules %v from earlier schedules, which the new schedule inherits: remove them first", schedule.Path, added.Retention))
+	}
 	for _, period := range slices.Sorted(maps.Keys(schedule.Retention)) {
+		lease.rules[period] = schedule.Retention[period]
 		if _, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "add", schedule.Path, period,
 			strconv.Itoa(schedule.Retention[period]), "--fs", fs.config.Name); err != nil {
 			return lease, fmt.Errorf("add the snapshot retention %s of %s: %w", period, schedule.Path, err)
@@ -146,7 +194,7 @@ func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule Sn
 	if err != nil {
 		return lease, err
 	}
-	if status.Schedule != schedule.Repeat || !status.Active || !maps.Equal(status.Retention, nonNil(schedule.Retention)) {
+	if !status.Active || !maps.Equal(status.Retention, nonNil(schedule.Retention)) {
 		return lease, fmt.Errorf("the module reports schedule %q active=%t retention %v instead of the request", status.Schedule, status.Active, status.Retention)
 	}
 	return lease, nil
@@ -159,38 +207,41 @@ func nonNil(m map[string]int) map[string]int {
 	return m
 }
 
-// snapshotSchedules lists the repeats of the schedules of one directory.
-func (fs *Filesystem) snapshotSchedules(ctx context.Context, dir string) ([]string, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "list", dir, "--fs", fs.config.Name, "--format", "json")
-	if err != nil {
-		return nil, fmt.Errorf("list the snapshot schedules of %s: %w", dir, err)
+// release lets another lease schedule the directory.
+func (l *SnapshotScheduleLease) release() {
+	l.filesystem.snapshotScheduleMu.Lock()
+	defer l.filesystem.snapshotScheduleMu.Unlock()
+	if l.filesystem.scheduledPaths[l.Path] == l {
+		delete(l.filesystem.scheduledPaths, l.Path)
 	}
-	var list struct {
-		Path     string   `json:"path"`
-		Schedule []string `json:"schedule"`
-	}
-	// A directory without schedules prints {} or, after a removal, nothing.
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return nil, nil
-	}
-	if err := json.Unmarshal(data, &list); err != nil {
-		return nil, fmt.Errorf("decode the snapshot schedules of %s: %w", dir, err)
-	}
-	return list.Schedule, nil
 }
 
-// parseSnapshotScheduleStatus reads "fs snap-schedule status" for one
-// directory: a list with one entry per schedule.
-func parseSnapshotScheduleStatus(data []byte, dir, repeat string) (SnapshotScheduleStatus, error) {
-	var entries []json.RawMessage
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return SnapshotScheduleStatus{}, fmt.Errorf("decode the snapshot schedule status: %w", err)
+// snapshotScheduleStatuses reads every schedule of one directory.
+func (fs *Filesystem) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
+	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", fs.config.Name, "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("read the snapshot schedules of %s: %w", dir, err)
 	}
+	return parseSnapshotScheduleStatuses(data, dir)
+}
+
+// parseSnapshotScheduleStatuses reads "fs snap-schedule status" for one
+// directory: a list with one entry per schedule, empty without schedules.
+func parseSnapshotScheduleStatuses(data []byte, dir string) ([]SnapshotScheduleStatus, error) {
+	var entries []json.RawMessage
+	if len(strings.TrimSpace(string(data))) > 0 {
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, fmt.Errorf("decode the snapshot schedule status: %w", err)
+		}
+	}
+	var statuses []SnapshotScheduleStatus
 	for _, raw := range entries {
 		var entry struct {
 			Path      string         `json:"path"`
 			Schedule  string         `json:"schedule"`
 			Retention map[string]int `json:"retention"`
+			Start     string         `json:"start"`
+			Added     string         `json:"created"`
 			First     *string        `json:"first"`
 			Last      *string        `json:"last"`
 			Created   *int           `json:"created_count"`
@@ -198,41 +249,78 @@ func parseSnapshotScheduleStatus(data []byte, dir, repeat string) (SnapshotSched
 			Active    *bool          `json:"active"`
 		}
 		if err := json.Unmarshal(raw, &entry); err != nil {
-			return SnapshotScheduleStatus{}, fmt.Errorf("decode a snapshot schedule: %w", err)
+			return nil, fmt.Errorf("decode a snapshot schedule: %w", err)
 		}
-		if entry.Path != dir || entry.Schedule != repeat {
+		if entry.Path != dir {
 			continue
 		}
-		if entry.Created == nil || entry.Pruned == nil || entry.Active == nil {
-			return SnapshotScheduleStatus{}, errors.New("the snapshot schedule status lacks its counts or active flag")
+		if entry.Created == nil || entry.Pruned == nil || entry.Active == nil || entry.Start == "" || entry.Added == "" {
+			return nil, errors.New("the snapshot schedule status lacks its counts, active flag, start or creation time")
 		}
 		status := SnapshotScheduleStatus{Path: entry.Path, Schedule: entry.Schedule, Active: *entry.Active, Retention: nonNil(entry.Retention),
-			Created: *entry.Created, Pruned: *entry.Pruned, Raw: raw}
+			Created: *entry.Created, Pruned: *entry.Pruned, Raw: raw, start: entry.Start, added: entry.Added}
 		for _, field := range []struct {
 			text *string
 			into *time.Time
-		}{{entry.First, &status.First}, {entry.Last, &status.Last}} {
+		}{{&entry.Start, &status.Start}, {&entry.Added, &status.Added}, {entry.First, &status.First}, {entry.Last, &status.Last}} {
 			if field.text == nil {
 				continue
 			}
-			parsed, err := time.Parse("2006-01-02T15:04:05", *field.text)
+			parsed, err := time.Parse(snapshotScheduleTime, *field.text)
 			if err != nil {
-				return SnapshotScheduleStatus{}, fmt.Errorf("snapshot schedule time %q: %w", *field.text, err)
+				return nil, fmt.Errorf("snapshot schedule time %q: %w", *field.text, err)
 			}
 			*field.into = parsed
 		}
-		return status, nil
+		statuses = append(statuses, status)
 	}
-	return SnapshotScheduleStatus{}, fmt.Errorf("no snapshot schedule %s of %s", repeat, dir)
+	return statuses, nil
+}
+
+// find reads the directory's schedules and returns the lease's: the one with
+// its native start and creation time once bound. Before that, it is the only
+// schedule with the requested repeat and start, a requested start being
+// compared only when one was given. A schedule with the lease's repeat that is
+// not the lease's is ceph.ErrInvalidRequest; none is nil.
+func (l *SnapshotScheduleLease) find(ctx context.Context) (*SnapshotScheduleStatus, error) {
+	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []SnapshotScheduleStatus
+	for _, status := range statuses {
+		if status.Schedule != l.Repeat {
+			continue
+		}
+		if l.added != "" {
+			if status.start == l.start && status.added == l.added {
+				return &status, nil
+			}
+		} else if l.Start.IsZero() || status.Start.Equal(l.Start.Truncate(time.Second)) {
+			candidates = append(candidates, status)
+			continue
+		}
+		return nil, invalid(fmt.Errorf("the snapshot schedule %s of %s starting %s, added %s, is not the lease's", status.Schedule, l.Path, status.start, status.added))
+	}
+	switch len(candidates) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &candidates[0], nil
+	}
+	return nil, invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.Path, len(candidates), l.Repeat))
 }
 
 // Status reads the schedule's state from the snap_schedule module.
 func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleStatus, error) {
-	data, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "status", l.Path, "--fs", l.filesystem.config.Name, "--format", "json")
+	status, err := l.find(ctx)
 	if err != nil {
-		return SnapshotScheduleStatus{}, fmt.Errorf("read the snapshot schedule of %s: %w", l.Path, err)
+		return SnapshotScheduleStatus{}, err
 	}
-	return parseSnapshotScheduleStatus(data, l.Path, l.Repeat)
+	if status == nil {
+		return SnapshotScheduleStatus{}, fmt.Errorf("no snapshot schedule %s of %s", l.Repeat, l.Path)
+	}
+	return *status, nil
 }
 
 // Snapshots lists the snapshots in the directory's .snap that the module
@@ -286,9 +374,14 @@ finally:
     fs.shutdown()
 `
 
-// Restore removes the schedule and its retention from the directory; the
-// snapshots it took stay. It is retryable, and a schedule that is already
-// gone needs no removal.
+// Restore removes the retention rules that the lease added, then its
+// schedule; the snapshots stay. It reads the directory back on every call, so
+// a retry continues where an earlier call stopped: a rule that is already
+// gone is skipped, and a schedule that is already gone needs no removal. A
+// rule whose count changed, or a schedule with the lease's repeat that is not
+// the lease's, is refused with ceph.ErrInvalidRequest without a change, and
+// the lease stays retryable. Removing a rule changes the retention of every
+// schedule of the directory, which the module shares.
 func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
@@ -298,29 +391,40 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l.restored {
 		return nil
 	}
-	schedules, err := l.filesystem.snapshotSchedules(ctx, l.Path)
+	status, err := l.find(ctx)
 	if err != nil {
 		return err
 	}
-	if slices.Contains(schedules, l.Repeat) {
-		// The retention belongs to the directory, not to the schedule: remove
-		// what the lease added first.
-		for _, period := range slices.Sorted(maps.Keys(l.Retention)) {
+	if status != nil {
+		for period, count := range l.rules {
+			if current, ok := status.Retention[period]; ok && current != count {
+				return invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, count))
+			}
+		}
+		for _, period := range slices.Sorted(maps.Keys(l.rules)) {
+			if status.Retention[period] != l.rules[period] {
+				continue
+			}
 			if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
-				strconv.Itoa(l.Retention[period]), "--fs", l.filesystem.config.Name); err != nil {
+				strconv.Itoa(l.rules[period]), "--fs", l.filesystem.config.Name); err != nil {
 				return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
 			}
 		}
-		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, "--fs", l.filesystem.config.Name); err != nil {
+		// The start selects this schedule among those with its repeat.
+		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, status.start,
+			"--fs", l.filesystem.config.Name); err != nil {
 			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.Path, err)
 		}
-	}
-	if schedules, err = l.filesystem.snapshotSchedules(ctx, l.Path); err != nil {
-		return err
-	}
-	if slices.Contains(schedules, l.Repeat) {
-		return fmt.Errorf("the snapshot schedule %s of %s is still listed", l.Repeat, l.Path)
+		// Bind an unconfirmed add, so the read back looks for this schedule.
+		l.start, l.added = status.start, status.added
+		if status, err = l.find(ctx); err != nil {
+			return err
+		}
+		if status != nil {
+			return fmt.Errorf("the snapshot schedule %s of %s is still listed", l.Repeat, l.Path)
+		}
 	}
 	l.restored = true
+	l.release()
 	return nil
 }

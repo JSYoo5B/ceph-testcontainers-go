@@ -129,4 +129,79 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	}
 	t.Logf("CEPHFS_SNAP_SCHEDULE %s every 1m keeping 2: created %d, pruned %d, first %s, last %s; snapshots %v; after Restore no schedule and %d snapshots kept",
 		status.Path, status.Created, status.Pruned, status.First.Format(time.RFC3339), status.Last.Format(time.RFC3339), snapshots, len(after))
+	testSnapshotScheduleOwnership(t, ctx, cluster, fs)
+}
+
+// testSnapshotScheduleOwnership changes a lease's schedule and retention as
+// another client would, with hourly schedules that start in the future.
+func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *ceph.Container, fs *cephfs.Filesystem) {
+	native := func(args ...string) string {
+		t.Helper()
+		out, err := cluster.Ceph(ctx, append(args, "--fs", fs.FilesystemName)...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return string(out)
+	}
+	statusJSON := func() string { return strings.TrimSpace(native("fs", "snap-schedule", "status", "/", "--format", "json")) }
+	lease := func(schedule cephfs.SnapshotSchedule) *cephfs.SnapshotScheduleLease {
+		t.Helper()
+		lease, err := fs.TemporarySnapshotSchedule(ctx, schedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lease
+	}
+
+	// A schedule with the lease's path and repeat that replaced the lease's.
+	replaced := lease(cephfs.SnapshotSchedule{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+	native("fs", "snap-schedule", "remove", "/", "1h", "2030-01-01T00:00:00")
+	native("fs", "snap-schedule", "add", "/", "1h", "2030-02-01T00:00:00")
+	if err := replaced.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("Restore of a replaced schedule: %v", err)
+	}
+	if status := statusJSON(); !strings.Contains(status, `"start": "2030-02-01T00:00:00"`) {
+		t.Fatalf("the refused Restore changed the replacement: %s", status)
+	}
+	native("fs", "snap-schedule", "remove", "/", "1h", "2030-02-01T00:00:00")
+	if err := replaced.Restore(ctx); err != nil {
+		t.Fatalf("Restore after the replacement was removed: %v", err)
+	}
+
+	// A retention rule that is already gone.
+	partial := lease(cephfs.SnapshotSchedule{Path: "/", Repeat: "2h", Start: time.Date(2030, 3, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"d": 1, "n": 2}})
+	native("fs", "snap-schedule", "retention", "remove", "/", "d", "1")
+	if err := partial.Restore(ctx); err != nil {
+		t.Fatalf("Restore after a rule was removed: %v", err)
+	}
+	if status := statusJSON(); status != "[]" {
+		t.Fatalf("schedules after Restore: %s", status)
+	}
+	// The module keeps retention per directory, also without schedules: a new
+	// schedule shows what is left.
+	native("fs", "snap-schedule", "add", "/", "3h", "2030-04-01T00:00:00")
+	if status := statusJSON(); !strings.Contains(status, `"retention": {}`) {
+		t.Fatalf("retention left after Restore: %s", status)
+	}
+
+	// An existing schedule, and retention that a new schedule would inherit.
+	if refused, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"}); !errors.Is(err, ceph.ErrInvalidRequest) || refused != nil {
+		t.Fatalf("a lease of a directory with a schedule: %v, %v", refused, err)
+	}
+	native("fs", "snap-schedule", "retention", "add", "/", "n", "3")
+	native("fs", "snap-schedule", "remove", "/", "3h")
+	inherited, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"})
+	if !errors.Is(err, ceph.ErrInvalidRequest) || inherited == nil {
+		t.Fatalf("a lease of a directory with retention left: %v, %v", inherited, err)
+	}
+	if err := inherited.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	native("fs", "snap-schedule", "add", "/", "3h", "2030-04-01T00:00:00")
+	if status := statusJSON(); !strings.Contains(status, `"retention": {"n": 3}`) {
+		t.Fatalf("Restore changed the retention it did not add: %s", status)
+	}
+	native("fs", "snap-schedule", "retention", "remove", "/", "n", "3")
+	native("fs", "snap-schedule", "remove", "/", "3h")
+	t.Log("CEPHFS_SNAP_SCHEDULE_OWNERSHIP a replaced schedule was refused and kept; a rule removed by another client was skipped; retention left in the directory was refused on add and kept by Restore")
 }

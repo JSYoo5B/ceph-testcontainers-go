@@ -946,15 +946,34 @@ The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
 - a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
   `true`. The module refuses minutes otherwise; set it with
   [TemporaryConfig](ceph.md#temporaryconfig) for a test;
-- a directory that already has a schedule, which the lease would not own.
+- a directory that already has a schedule, which the lease would not own,
+  or another lease from this filesystem value.
+
+The module keeps retention per directory, not per schedule: every schedule of
+a directory shares it, and it stays after the directory's last schedule is
+removed. A new schedule inherits what is left, so a directory with retention
+rules is refused with `ErrInvalidRequest` after the schedule was added; the
+returned lease removes the schedule and leaves those rules.
 
 The lease's `Status(ctx)` returns a `cephfs.SnapshotScheduleStatus`, the module's state: `Schedule`, `Active`,
-`Retention`, the `Created` and `Pruned` counts, the `First` and `Last`
-snapshot times (zero before the first) and the module's JSON (`Raw`).
+`Start`, `Added` (when the module added it), `Retention`, the `Created` and
+`Pruned` counts, the `First` and `Last` snapshot times (zero before the
+first) and the module's JSON (`Raw`). A directory can have several schedules
+with one repeat; the lease identifies its own by the start and the time the
+module added it, read back after the add.
 `Snapshots(ctx)` lists the directory's `scheduled-…` snapshots through
-libcephfs, oldest first. `Restore(ctx)` removes the lease's retention and
-schedule; the snapshots stay. A non-nil lease returned with an error must be
-restored.
+libcephfs, oldest first.
+
+`Restore(ctx)` removes the retention rules that the lease added, then its
+schedule; the snapshots stay. It reads the directory back on every call, so a
+retry continues where an earlier call stopped: a rule that is already gone is
+skipped, and so is a schedule. It refuses with `ErrInvalidRequest`, changing
+nothing and staying retryable, when the lease's schedule was replaced by
+another one with its repeat, or when one of its rules has another count.
+Removing a rule changes the retention of every schedule of the directory. A
+non-nil lease returned with an error must be restored: after an add whose
+reply was lost, `Restore` takes the only schedule with the requested repeat
+and start as the lease's.
 
 ```golang
 module, err := cluster.TemporaryMGRModule(ctx, "snap_schedule", true)
@@ -970,8 +989,9 @@ if schedule != nil {
 `TestCephFSSnapshotSchedule` runs a 1-minute schedule with `n: 2`. Within
 about three minutes the module had taken three snapshots and pruned one, two
 `scheduled-…` snapshots were left, and after `Restore` the directory had no
-schedule and kept both snapshots. After a removal, `fs snap-schedule list`
-prints nothing instead of `{}`.
+schedule and kept both snapshots. It then replaces a lease's schedule and
+removes one of another lease's rules natively, and checks that `Restore`
+refuses the replacement and skips the removed rule.
 
 ### Filesystem Methods: authorization
 
