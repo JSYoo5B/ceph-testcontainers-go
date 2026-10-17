@@ -64,6 +64,13 @@ change the API.
   does not see or copy a new mirror snapshot while the source client keeps
   writing through the same OSD; after `Restore` only the changed bytes are
   copied ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
+- `TestCephFSMirrorPeerPathCut` cuts one path of a CephFS snapshot mirror,
+  the source OSD's packets to the cephfs-mirror daemon, with a peer-selective
+  `TemporaryNetworkDelay` blackhole. The daemon sees a new snapshot through
+  the MDS but stays `syncing` it without finishing while the source client
+  writes, snapshots and reads through the same OSD and MDS; after `Restore`
+  the snapshot arrives with only the new bytes copied
+  ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
 - `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
   restart of the only MDS: while `mds_log_pause` holds the journal, the
   client keeps an unacknowledged `Fw` flush with the new size and the MDS keeps
