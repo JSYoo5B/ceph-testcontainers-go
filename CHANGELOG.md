@@ -8,6 +8,13 @@ change the API.
 
 ### Added
 
+- `rbd.TemporaryImmutableObjectCache` starts the RBD immutable object cache
+  daemon in a client container and returns a lease with `ClientOptions`,
+  `Status` (cached objects and bytes, the daemon's RADOS reads), `Stop` (clients
+  fall back to RADOS) and `Restore`. It needs the daemon and the librbd
+  `parent_cache` plugin in that container's image
+  ([#106](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/106)).
+
 - `ceph.Container.ManagerMetrics` scrapes the active manager's `prometheus`
   module and returns its samples parsed from the text exposition format, with
   `Select` and `Value` to pick samples by name and labels. It never enables
