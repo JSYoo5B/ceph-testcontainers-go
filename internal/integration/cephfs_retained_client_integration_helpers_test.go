@@ -153,6 +153,8 @@ type cephFSActorReceipt struct {
 	Count int64 `json:"count"`
 	// CloseErrno is the errno of a failed close or unmount.
 	CloseErrno int `json:"close_errno"`
+	// Ops is the metadata recipe actor's per-operation table.
+	Ops json.RawMessage `json:"ops"`
 }
 
 // cephFSActorRun is a supervised actor and its receipts.
