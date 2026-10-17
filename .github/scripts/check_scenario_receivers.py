@@ -22,16 +22,24 @@ def required_leaves(network):
     return tuple(PARENT + "/" + network + "/" + scope for scope in SCOPES)
 
 
-def validate(log, network):
-    """Validate one own job; the same parent may run in the other network job."""
+def validate(log, network, execution="go-test"):
+    """Validate one own job; the same parent may run in the other network job.
+
+    execution is "go-test" for go test output, or "test-binary" for the
+    output of the compiled test binary run directly: one PASS as its last
+    line and no ok line."""
+    if execution not in ("go-test", "test-binary"):
+        raise ValueError("unknown native execution format")
     leaves = required_leaves(network)
     expected_runs = (PARENT, PARENT + "/" + network, *leaves)
     # Go buffers subtest results and reports their completed tree in preorder:
     # parent, network, then scopes. Completion still precedes package PASS.
     expected_passes = expected_runs
     runs, passes, failures, skipped, package_passes, package_success = [], [], [], [], [], []
+    package_other = []
     run_positions, pass_positions = {}, {}
-    for index, line in enumerate(log.splitlines()):
+    lines = log.splitlines()
+    for index, line in enumerate(lines):
         run = re.fullmatch(r"=== RUN\s+(\S+)", line)
         if run:
             runs.append(run[1])
@@ -47,6 +55,8 @@ def validate(log, network):
             package_passes.append(index)
         if re.fullmatch(r"ok\s+(?:" + re.escape(PACKAGE) + "|" + re.escape(FORMER_PACKAGE) + r")\s+[0-9.]+s", line):
             package_success.append(index)
+        elif re.match(r"^ok(?:\s|$)", line):
+            package_other.append(index)
     errors = []
     if tuple(runs) != expected_runs:
         errors.append("receiver RUN inventory/order differs from the selected network and five scopes")
@@ -56,7 +66,13 @@ def validate(log, network):
         errors.append("receiver log contains failed tests or a package failure")
     if skipped:
         errors.append("receiver log contains skipped tests")
-    if len(package_passes) != 1 or len(package_success) != 1 or package_passes[0] >= package_success[0]:
+    if execution == "test-binary":
+        last = max((index for index, line in enumerate(lines) if line.strip()), default=-1)
+        completed = (len(package_passes) == 1 and not package_success and not package_other
+                     and package_passes[0] == last)
+    else:
+        completed = len(package_passes) == 1 and len(package_success) == 1 and package_passes[0] < package_success[0]
+    if not completed:
         errors.append("receiver log lacks exactly one completed successful Go package")
     if tuple(runs) == expected_runs and tuple(passes) == expected_passes:
         if any(run_positions[name] >= pass_positions[name] for name in expected_runs) or (
@@ -77,7 +93,7 @@ def validate(log, network):
                    for name in sorted(set(expected_runs) | set(runs) | set(passes))},
         "failed_tests": failures,
         "skipped_tests": skipped,
-        "package_success": len(package_passes) == len(package_success) == 1,
+        "package_success": completed,
         "passed": not errors,
         "errors": errors,
     }

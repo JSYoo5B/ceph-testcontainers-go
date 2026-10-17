@@ -72,14 +72,26 @@ def valid_started_at(value):
         return False
 
 
-def validate(log, case):
+def binary_completed(lines, package_passes, packages):
+    """A test binary run directly ends with one PASS line and prints no ok
+    line; its runner proves the exit status and the package binding."""
+    last = max((index for index, line in enumerate(lines) if line.strip()), default=-1)
+    return len(package_passes) == 1 and not packages and package_passes[0] == last
+
+
+def validate(log, case, execution="go-test"):
     """Validate exact own-leaf completion and its retained three-stage history.
+
+    execution is "go-test" for go test output, or "test-binary" for the
+    output of the compiled test binary run directly.
 
     The original unchanged Go assertions still prove full native FSID/pool/peer,
     Docker/watchers and gate state. These log records corroborate that executed
     history; they do not independently reconstruct every native status field.
     """
     leaf = required_leaf(case)
+    if execution not in ("go-test", "test-binary"):
+        raise ValueError("unknown native execution format")
     network, kind = CASES[case]
     expected_tests = (PARENT, PARENT + "/" + network, leaf)
     # Go's verbose reporter emits a parent before its buffered child results.
@@ -93,7 +105,8 @@ def validate(log, case):
     run_positions, pass_positions, events, event_positions = {}, {}, [], []
     bytes_proofs, absence_proofs, evidence_proofs, errors = [], [], [], []
     filesystems = {}
-    for index, line in enumerate(log.splitlines()):
+    lines = log.splitlines()
+    for index, line in enumerate(lines):
         run = re.fullmatch(r"=== RUN\s+(\S+)", line)
         if run:
             runs.append(run[1])
@@ -167,9 +180,12 @@ def validate(log, case):
         errors.append("quiescence log contains a failed test or package failure")
     if skipped:
         errors.append("quiescence log contains a skipped test")
-    package_success = (len(package_passes) == len(packages) == 1
-                       and package_passes[0] < packages[0][0]
-                       and re.fullmatch(r"ok\s+" + PACKAGE_PATTERN + r"\s+[0-9.]+s", packages[0][1]) is not None)
+    if execution == "test-binary":
+        package_success = binary_completed(lines, package_passes, packages)
+    else:
+        package_success = (len(package_passes) == len(packages) == 1
+                           and package_passes[0] < packages[0][0]
+                           and re.fullmatch(r"ok\s+" + PACKAGE_PATTERN + r"\s+[0-9.]+s", packages[0][1]) is not None)
     if not package_success:
         errors.append("quiescence log lacks exactly one completed successful Go package")
     if tuple(runs) == expected_tests and tuple(passes) == expected_passes:

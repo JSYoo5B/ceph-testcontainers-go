@@ -297,6 +297,17 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotEqual(compiled[compiled.index("--directory") + 1],
                             native[native.index("--directory") + 1])
 
+    def test_native_step_runs_the_binary_of_this_jobs_compile_step(self):
+        runtime = self.jobs["tagged-runtime.yml"]["runtime"]
+        runtime_steps = steps(runtime)
+        compiled = engine_command(runtime_steps, "compile")
+        directory = compiled[compiled.index("--directory") + 1]
+        for operation in ("run", "optional"):
+            command = engine_command(runtime_steps, operation)
+            self.assertEqual(command[command.index("--binary") + 1], directory)
+        upload = next(step for step in runtime_steps if "uses: actions/upload-artifact" in step)
+        self.assertIn("!" + directory + "/*.test", upload)
+
     def test_go_modules_fall_back_to_their_origin(self):
         # With "|", the go command tries the origin after any proxy error; with
         # ",", only after a 404 or 410, so one reset stream failed a whole job.
@@ -501,6 +512,14 @@ FAIL example/internal/integration 1.23s
             self.assertIn("::notice ", output)
             self.assertNotIn("::error ", output)
             self.assertNotIn("secret", output)
+
+    def test_completed_go_test_or_test_binary_log_needs_no_notice(self):
+        for log in ("=== RUN   TestDone\n--- PASS: TestDone (1.00s)\nPASS\nok  \texample/internal/integration\t1.002s\n",
+                    "=== RUN   TestDone\n--- PASS: TestDone (1.00s)\nPASS\n"):
+            status, output = self.report(log)
+            self.assertEqual((status, output), (0, ""))
+        status, output = self.report("PASS\nlater output\n")
+        self.assertIn("::notice ", output)
 
     def test_malformed_failure_names_and_profile_arguments_are_not_exposed(self):
         bad_log = "--- FAIL: TestExample/::error-secret (1.00s)\n--- FAIL: TestExample (1.00s) secret\n"

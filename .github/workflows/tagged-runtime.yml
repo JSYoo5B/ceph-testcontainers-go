@@ -164,6 +164,9 @@ jobs:
           artifact_name: scenario-images-${{ matrix.id }}-${{ inputs.release }}
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
+      # Runs the binary that the compile step built and recorded, after
+      # verifying its sha256, build key, sources and inventory; it never
+      # builds again.
       - name: Native assertions and completion proof
         id: native
         env:
@@ -177,9 +180,9 @@ jobs:
           SCENARIO_TESTS: ${{ matrix.tests }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           else
-            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           fi
       - name: Verify owned Docker resource cleanup
         id: cleanup
@@ -206,7 +209,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tag-scenario-${{ matrix.id }}-${{ inputs.release }}
-          path: artifacts/scenario/
+          # The test binary is tens of megabytes; its sha256 stays in
+          # compile-report.json.
+          path: |
+            artifacts/scenario/
+            !artifacts/scenario/compile/*.test
           if-no-files-found: warn
       - name: Identify completed failing tests
         if: failure()

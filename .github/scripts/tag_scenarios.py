@@ -42,6 +42,15 @@ SCHEMA = "ceph-tag-scenarios/v1"
 MODULES_TIMEOUT_SECONDS = 300
 COMPILE_TIMEOUT_SECONDS = 180
 GO_EXECUTION_ENV = {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"}
+# Native execution formats: the go test driver, or the compile phase's test
+# binary run directly (run --binary).
+GO_TEST, TEST_BINARY = "go-test", "test-binary"
+EXECUTIONS = (GO_TEST, TEST_BINARY)
+# The files that a build reads from each package that go list -deps -test
+# reports. The test variants of the profile's package already carry its test
+# files; the Test* fields of a dependency are not part of this build.
+BUILD_FILE_FIELDS = ("GoFiles", "CgoFiles", "CFiles", "CXXFiles", "MFiles", "HFiles", "FFiles", "SFiles",
+                     "SwigFiles", "SwigCXXFiles", "SysoFiles", "EmbedFiles")
 GO_PLATFORMS = frozenset((
     "aix", "android", "darwin", "dragonfly", "freebsd", "illumos", "ios", "js", "linux", "netbsd",
     "openbsd", "plan9", "solaris", "wasip1", "windows", "386", "amd64", "arm", "arm64", "loong64",
@@ -489,11 +498,20 @@ def verify(catalog, plan, root=ROOT):
     return {"schema": SCHEMA, "passed": True, "profiles": observations}
 
 
-def completion(log, expected, package):
+def completion(log, expected, package, execution=GO_TEST):
+    """Check the RUN/PASS proof of one native log.
+
+    A go test log ends its package with PASS and then the driver's
+    "ok <package>" line. A test binary run directly prints the same results
+    and PASS, but no ok line: its PASS must be the last line, and the caller
+    proves the package binding and the process exit status separately."""
+    if execution not in EXECUTIONS:
+        raise ValueError("unknown native execution format")
     runs, passes, failures, skips = [], [], [], []
     package_passes, packages = [], []
     run_positions, pass_positions = {}, {}
-    for index, line in enumerate(log.splitlines()):
+    lines = log.splitlines()
+    for index, line in enumerate(lines):
         run = re.fullmatch(r"=== RUN\s+(Test\S+)", line)
         if run:
             runs.append(run[1])
@@ -520,20 +538,34 @@ def completion(log, expected, package):
         errors.append("native log contains failed tests or package failure")
     if skips:
         errors.append("native log contains skipped tests")
-    if len(package_passes) != 1 or len(packages) != 1 or package_passes[0] >= packages[0]:
+    if not package_completed(lines, package_passes, packages, execution):
         errors.append("native log lacks exactly one successful Go package completion")
     elif any(run_positions[name] >= pass_positions.get(name, -1)
              or pass_positions.get(name, package_passes[0]) >= package_passes[0] for name in runs):
         errors.append("native tests did not finish after RUN and before package completion")
-    return {"passed": not errors, "errors": errors, "observed_runs": runs,
+    return {"passed": not errors, "errors": errors, "execution": execution, "observed_runs": runs,
             "observed_passes": passes, "failed_tests": failures, "skipped_tests": skips}
 
 
-def strict_completion(log, profile, network):
+def package_completed(lines, package_passes, packages, execution):
+    """One PASS line, then exactly one ok line (go test), or one PASS line as
+    the last line and no ok line (test binary)."""
+    if len(package_passes) != 1:
+        return False
+    if execution == GO_TEST:
+        return len(packages) == 1 and package_passes[0] < packages[0]
+    last = max((index for index, line in enumerate(lines) if line.strip()), default=-1)
+    return not packages and package_passes[0] == last
+
+
+def strict_completion(log, profile, network, execution=GO_TEST):
     if profile["checker"] == "none":
         return None
     module = importlib.import_module(CHECKERS[profile["checker"]][0])
-    return module.validate(log, checker_case(profile["checker"], network, profile["case"]))
+    case = checker_case(profile["checker"], network, profile["case"])
+    if execution == GO_TEST:
+        return module.validate(log, case)
+    return module.validate(log, case, execution=execution)
 
 
 def failure_kind(exit_code, report, strict):
@@ -548,9 +580,115 @@ def failure_kind(exit_code, report, strict):
     return "incomplete-native-proof"
 
 
-def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests=""):
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def binary_name(package):
+    """The compiled binary's file name in a compile directory."""
+    return (package[2:].replace("/", "-") if package != "." else "root") + ".test"
+
+
+def build_key(profile, root=ROOT):
+    """What besides the sources decides the compiled binary."""
+    result = subprocess.run(["go", "env", "-json", "GOVERSION", "GOOS", "GOARCH"], cwd=root, text=True,
+                            capture_output=True, timeout=60, env=go_environment())
+    if result.returncode:
+        raise ValueError("go env failed: " + result.stderr.strip())
+    values = json.loads(result.stdout)
+    return {"package": profile["package"], "tags": profile["tags"], "go_environment": dict(GO_EXECUTION_ENV),
+            "go_version": values["GOVERSION"], "goos": values["GOOS"], "goarch": values["GOARCH"]}
+
+
+def build_sources(profile, root=ROOT):
+    """SHA-256 of every main-module file that the profile's test build reads,
+    with go.mod and go.sum, by path relative to root."""
+    command = ["go", "list", "-mod=readonly", "-tags=" + profile["tags"], "-deps", "-test", "-json", profile["package"]]
+    result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180, env=go_environment())
+    if result.returncode:
+        raise ValueError("go list of the build inputs failed: " + result.stderr.strip())
+    root = Path(root).resolve()
+    paths = {root / "go.mod", root / "go.sum"}
+    decoder, text, index = json.JSONDecoder(), result.stdout.strip(), 0
+    while index < len(text):
+        package, index = decoder.raw_decode(text, index)
+        index = len(text) - len(text[index:].lstrip())
+        if not (package.get("Module") or {}).get("Main"):
+            continue
+        for field in BUILD_FILE_FIELDS:
+            for name in package.get(field) or ():
+                path = (Path(package["Dir"]) / name).resolve()
+                # The generated test main lives in the build cache.
+                if path.is_relative_to(root):
+                    paths.add(path)
+    return {path.relative_to(root).as_posix(): file_sha256(path) for path in sorted(paths) if path.is_file()}
+
+
+def binary_inventory(binary, cwd):
+    """The top-level tests that a test binary lists; it runs none of them."""
+    result = subprocess.run([str(binary), "-test.list=."], cwd=cwd, text=True, capture_output=True, timeout=60,
+                            env=go_environment())
+    if result.returncode:
+        raise ValueError("compiled test binary could not list its tests\n" + result.stdout + result.stderr)
+    tests = re.findall(r"^Test[^\s/]+$", result.stdout, re.MULTILINE)
+    if not tests or len(tests) != len(set(tests)):
+        raise ValueError("compiled test binary is empty or lists duplicate tests")
+    return sorted(tests)
+
+
+def binary_receipt(profile, binary, root=ROOT):
+    """The record that lets a later phase run this binary instead of building."""
+    return {"binary": binary.name, "sha256": file_sha256(binary), "build_key": build_key(profile, root),
+            "sources": build_sources(profile, root),
+            "tests": binary_inventory(binary, Path(root) / profile["package"])}
+
+
+def verified_binary(directory, profile, expected, root=ROOT):
+    """The compile phase's binary for profile, after proving it still is.
+
+    Every check fails closed: a missing or failed receipt, another profile,
+    a changed binary, build key, source or inventory never falls back to a
+    new build."""
+    directory = Path(directory)
+    try:
+        report = json.loads((directory / "compile-report.json").read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError("compiled binary receipt is missing or unreadable: " + str(error)) from None
+    if not isinstance(report, dict):
+        report = {}
+    receipt = report.get("binary")
+    if report.get("schema") != SCHEMA or report.get("passed") is not True or not isinstance(receipt, dict):
+        raise ValueError("compile receipt did not record a successful binary")
+    compiled = report.get("profile") or {}
+    if compiled.get("id") != profile["id"] or compiled.get("tags") != profile["tags"]:
+        raise ValueError("compiled binary belongs to another profile")
+    name = receipt.get("binary")
+    if name != binary_name(profile["package"]):
+        raise ValueError("compile receipt names an unexpected binary")
+    binary = (directory / name).resolve()
+    if not binary.is_file() or file_sha256(binary) != receipt.get("sha256"):
+        raise ValueError("compiled binary is missing or its sha256 differs from its receipt")
+    if build_key(profile, root) != receipt.get("build_key"):
+        raise ValueError("compiled binary's build key differs from this toolchain, platform or profile")
+    if build_sources(profile, root) != receipt.get("sources"):
+        raise ValueError("compiled binary was built from different source files")
+    if receipt.get("tests") != expected:
+        raise ValueError("compiled binary's recorded inventory differs from its AST source")
+    if binary_inventory(binary, Path(root) / profile["package"]) != expected:
+        raise ValueError("compiled binary's own inventory differs from its AST source")
+    return binary, receipt
+
+
+def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None):
     """Run one profile, or with tests only those of its tests that declare
-    network modes, as a matrix entry of a non-default mode does."""
+    network modes, as a matrix entry of a non-default mode does.
+
+    With binary, a compile directory, run the test binary that the compile
+    phase built there instead of building with go test again."""
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
     if len(matches) != 1:
@@ -572,22 +710,33 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
             raise ValueError("CEPH_TEST_NETWORK names a network mode that the checker batch does not declare")
     # Reject malformed source metadata and empty profile before allocating an
     # artifact or starting Go. Reconfirm the actual compiled inventory next.
-    actual = compile_inventory(profile["package"], profile["tags"], root)
-    if actual != expected:
-        raise ValueError("compiled profile differs from its AST source")
+    if binary is None:
+        execution, receipt, cwd = GO_TEST, None, root
+        actual = compile_inventory(profile["package"], profile["tags"], root)
+        if actual != expected:
+            raise ValueError("compiled profile differs from its AST source")
+        command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-count=1", "-v",
+                   "-timeout=" + profile["timeout"], profile["package"]]
+    else:
+        # go test runs a test binary in its package directory.
+        execution, cwd = TEST_BINARY, Path(root) / profile["package"]
+        path, receipt = verified_binary(binary, profile, expected, root)
+        command = [str(path), "-test.v", "-test.count=1", "-test.timeout=" + profile["timeout"]]
     directory.mkdir(parents=True, exist_ok=False)
-    command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-count=1", "-v",
-               "-timeout=" + profile["timeout"], profile["package"]]
     if selection:
         expected = sorted(selection)
-        command[-1:-1] = ["-run", "^(" + "|".join(expected) + ")$"]
+        pattern = "^(" + "|".join(expected) + ")$"
+        if execution == GO_TEST:
+            command[-1:-1] = ["-run", pattern]
+        else:
+            command.append("-test.run=" + pattern)
     started = time.time()
     with (directory / "native.log").open("w", encoding="utf-8") as log:
         environment = go_environment()
         environment.pop("CEPH_TEST_RBD_CLIENT_IMAGE", None)
         if network:
             environment["CEPH_TEST_NETWORK"] = network
-        child = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        child = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, encoding="utf-8", errors="replace",
                                  env=environment)
         with child.stdout:
@@ -601,14 +750,17 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if module is None:
         raise ValueError("source go.mod has no module declaration")
     native_package = module[1] + ("/" + profile["package"][2:] if profile["package"] != "." else "")
-    completed = completion(text, expected, native_package)
-    strict = strict_completion(text, profile, network)
-    result = {"schema": SCHEMA, "profile": profile, "command": command,
+    completed = completion(text, expected, native_package, execution)
+    strict = strict_completion(text, profile, network, execution)
+    result = {"schema": SCHEMA, "profile": profile, "command": command, "execution": execution,
               "network": network, "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
               "go_environment": dict(GO_EXECUTION_ENV),
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
               "classification": failure_kind(exit_code, completed, strict),
               "source": [{"path": file["path"], "sha256": file["sha256"]} for file in catalog]}
+    if receipt is not None:
+        result["binary"] = {"directory": str(binary), "binary": receipt["binary"], "sha256": receipt["sha256"],
+                            "build_key": receipt["build_key"]}
     result["passed"] = result["classification"] == "passed"
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
@@ -660,15 +812,23 @@ def compile_profile(plan, category, batch, package, directory, root=ROOT):
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
     directory.mkdir(parents=True, exist_ok=False)
-    command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o",
-               str((directory / "test-binary").resolve()), profile["package"]]
+    binary = (directory / binary_name(profile["package"])).resolve()
+    command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o", str(binary), profile["package"]]
     outcome, output = bounded_go(command, root, COMPILE_TIMEOUT_SECONDS)
     (directory / "compile.log").write_text(output)
     passed = outcome["exit_code"] == 0
+    classification = "compiled" if passed else "compile-timeout" if outcome["timed_out"] else "compile-failure"
     report = {"schema": SCHEMA, "profile": profile, "command": command, **outcome,
-              "go_environment": dict(GO_EXECUTION_ENV),
-              "passed": passed,
-              "classification": "compiled" if passed else "compile-timeout" if outcome["timed_out"] else "compile-failure"}
+              "go_environment": dict(GO_EXECUTION_ENV)}
+    if passed:
+        # The receipt lets run --binary execute this binary instead of
+        # building again; without it the binary is not reusable.
+        try:
+            report["binary"] = binary_receipt(profile, binary, root)
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            passed, classification = False, "compile-receipt-failure"
+            report["errors"] = [str(error)]
+    report |= {"passed": passed, "classification": classification}
     (directory / "compile-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
@@ -701,6 +861,8 @@ def main(argv=None):
         if name == "run":
             command.add_argument("--tests", default="",
                                  help="Comma-separated tests that declare network modes; run only these")
+            command.add_argument("--binary", type=Path,
+                                 help="Compile directory; run its verified test binary instead of go test")
     command = commands.add_parser("code")
     command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("modules")
@@ -709,6 +871,8 @@ def main(argv=None):
     command.add_argument("--batch", required=True)
     command.add_argument("--package")
     command.add_argument("--directory", required=True, type=Path)
+    command.add_argument("--binary", type=Path,
+                         help="Compile directory; run its verified test binary instead of go test")
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
@@ -727,7 +891,8 @@ def main(argv=None):
         catalog = load_catalog()
         plan = discover(catalog)
         if args.command == "run":
-            report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory, tests=args.tests)
+            report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory,
+                                 tests=args.tests, binary=args.binary)
         elif args.command == "compile":
             selected_plan = discover_optional(catalog) if args.category == "optional" else plan
             report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory)
@@ -742,7 +907,8 @@ def main(argv=None):
             (args.directory / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         elif args.command == "optional":
             optional = discover_optional(catalog)
-            report = run_profile(catalog, optional, "optional", args.batch, args.package, args.directory)
+            report = run_profile(catalog, optional, "optional", args.batch, args.package, args.directory,
+                                 binary=args.binary)
         else:
             if args.command == "plan":
                 if args.optional:
