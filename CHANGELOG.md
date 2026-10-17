@@ -50,6 +50,14 @@ change the API.
   collector after a delete
   ([#49](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/49)).
 
+- `TestCephFSClientKilledDuringUnsafeRequest` SIGKILLs the client while one
+  rename is held between its unsafe and safe replies: after the journal is
+  released the MDS commits and replies to the dead session, keeps the session
+  `open` until `session_autoclose`, then evicts and blocklists it, and an
+  independent client finds the new name. The
+  [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
+  guide lists the receipt
+  ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 - `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
   restart of the only MDS: while `mds_log_pause` holds the journal, the
   client keeps an unacknowledged `Fw` flush with the new size and the MDS keeps
