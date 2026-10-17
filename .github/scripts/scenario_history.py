@@ -221,6 +221,8 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
                                 .hexdigest() if isinstance(sources, dict) else MISSING),
              "tests": binary.get("tests") if binary else MISSING,
              "tags": profile.get("tags", MISSING), "package": profile.get("package", MISSING)}
+    # The executable that the native phase ran is kept in its own fields, so
+    # that a row never binds a native result to an executable it did not run.
     ran = receipts["native"].get("binary")
     if not native or native == "invalid":
         build["native_binary"] = MISSING
@@ -228,6 +230,8 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
         build["native_binary"] = "not_used"
     else:
         build["native_binary"] = "matches_compile" if binary and ran.get("sha256") == binary.get("sha256") else "differs"
+        build["native_binary_sha256"] = ran.get("sha256") or MISSING
+        build["native_build_key"] = ran.get("build_key", MISSING)
 
     requires_ceph = profile.get("requires_ceph")
     workflow = {}
@@ -308,6 +312,8 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
         reasons.append("missing_checkout_identity")
     if build["build_key"] == MISSING:
         reasons.append("missing_build_identity")
+    if build["native_binary"] == "differs":
+        reasons.append("native_binary_identity_mismatch")
     if runtime["status"] not in ("recorded", "not_applicable"):
         reasons.append("missing_image_identity")
     elif runtime["status"] == "recorded" and any(role["image_id"] == MISSING for role in runtime["roles"].values()):

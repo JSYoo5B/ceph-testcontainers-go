@@ -531,8 +531,14 @@ A row holds:
   error, and for the native phase the first failed test.
 - `tests`: every RUN, PASS, FAIL and SKIP line of `native.log` with its
   duration. A test without a result line stays `RUN`.
+- `build`: the compile receipt's binary sha256 and build key, and, for a
+  native phase that ran a compiled binary, that binary's own sha256 and build
+  key (`native_binary_sha256`, `native_build_key`). `native_binary` says
+  whether the two match.
 - `comparability`: `complete`, or `incomplete` with the missing checkout,
-  build or image identity.
+  build or image identity, or `native_binary_identity_mismatch` when the
+  native phase ran another binary than the compile receipt records. The
+  phase outcomes stay as they were.
 - `evidence`: the sha256 of every file read, and `row_sha256` over the row.
 
 Append rows to a history file, and count it:

@@ -121,6 +121,28 @@ class NormalizeTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.job = Job(self.directory.name)
 
+    def test_a_native_receipt_of_another_binary_is_not_comparable(self):
+        # The same profile's native receipt ran an executable that the
+        # compile receipt did not build: the row keeps both identities and
+        # does not claim comparability, without inventing a failure.
+        self.job.passing()
+        report = json.loads((self.job.scenario / "native/report.json").read_text())
+        report["binary"] = {"sha256": "9" * 64, "build_key": {"go_version": "go1.26.3"}}
+        write(self.job.scenario / "native/report.json", report)
+        row = self.job.row()
+        self.assertEqual(row["build"]["native_binary"], "differs")
+        self.assertEqual(row["build"]["binary_sha256"], "d" * 64)
+        self.assertEqual(row["build"]["native_binary_sha256"], "9" * 64)
+        self.assertEqual(row["build"]["native_build_key"], {"go_version": "go1.26.3"})
+        self.assertEqual(row["comparability"], {"status": "incomplete", "reasons": ["native_binary_identity_mismatch"]})
+        self.assertEqual(row["outcome"]["status"], "passed")
+        self.assertEqual(phase(row, "native")["status"], "passed")
+        # The matching case keeps the native identity too.
+        self.job.native()
+        matching = self.job.row()
+        self.assertEqual(matching["build"]["native_binary_sha256"], "d" * 64)
+        self.assertEqual(matching["comparability"], {"status": "complete", "reasons": []})
+
     def test_passing_job(self):
         row = self.job.passing().row()
         self.assertEqual(row["schema"], history.SCHEMA)
