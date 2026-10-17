@@ -204,6 +204,26 @@ jobs:
           SCENARIO_NATIVE_OUTCOME: ${{ steps.native.outcome }}
           SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: python3 .github/scripts/report_workflow_phases.py
+      # One offline history row that joins the receipts above. It reads
+      # files only, and its own failure never changes the job's result.
+      - name: Normalize the scenario history row
+        if: always()
+        continue-on-error: true
+        env:
+          SCENARIO_PROFILE: ${{ matrix.id }}
+          SCENARIO_NETWORK: ${{ matrix.network }}
+          SCENARIO_RELEASE: ${{ inputs.release }}
+          SCENARIO_JOB_ID: ${{ job.check_run_id }}
+          SCENARIO_REQUESTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -d artifacts/scenario ]; then
+            python3 .github/scripts/scenario_history.py normalize \
+              --scenario artifacts/scenario --cleanup artifacts/runtime-cleanup --images artifacts/scenario-images \
+              --profile "$SCENARIO_PROFILE" --network "$SCENARIO_NETWORK" --release "$SCENARIO_RELEASE" \
+              --job-id "$SCENARIO_JOB_ID" --repetition-id 1 --requested-head "$SCENARIO_REQUESTED_HEAD" \
+              --checkout-commit "$(git rev-parse HEAD)" --checkout-tree "$(git rev-parse 'HEAD^{tree}')" \
+              --output artifacts/scenario/history-row.json
+          fi
       - name: Save compile, native and phase results
         if: always()
         uses: actions/upload-artifact@v7
