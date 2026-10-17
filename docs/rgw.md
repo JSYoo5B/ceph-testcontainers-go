@@ -383,13 +383,24 @@ output. It is the escape hatch for anything without a typed method.
 - Arguments are passed individually and never parsed by a shell. Arguments
   must not contain control characters, so pass JSON documents (policies,
   trust documents) as single-line strings.
-- The call is bounded by `ctx` and by the cluster's startup timeout. Inside
-  the gateway container, a small `sh` wrapper stops `radosgw-admin` (SIGTERM,
-  then SIGKILL after 5 s) 15 s before that bound, so no `radosgw-admin`
-  outlives its call. Such a stop is `ceph.ErrNativeFailure` with
-  "radosgw-admin still ran after Ns and was stopped". An error that says the
-  command "did not return within its bound" means the exec itself did not
-  return, and `radosgw-admin` may still run.
+- The call is bounded by `ctx` and by the cluster's startup timeout, and no
+  `radosgw-admin` outlives it. A small `sh` supervisor in the gateway
+  container (it needs no Python, which the RGW role image does not have)
+  runs `radosgw-admin` and stops it with SIGTERM, then SIGKILL after 2 s:
+  - 15 s before the bound (at half the bound for a short one), which returns
+    `ceph.ErrNativeFailure` with "radosgw-admin still ran after Ns and was
+    stopped";
+  - when `ctx` ends first, for example when the caller cancels. Admin then
+    stops the command under its own budget of about 10 s, which is not
+    limited by the expired `ctx`, and returns `ctx`'s error only after the
+    command is gone. A call that ends before Docker started the command
+    makes sure that it never starts.
+- When Admin cannot confirm that stop, for example because the gateway is
+  paused or the engine is unreachable, it returns a
+  `*ceph.NativeCommandUnstoppedError`. Its `Stop(ctx)` retries the stop, and
+  `Terminate` retries it too. Stopping `radosgw-admin` does not undo a
+  request that it already sent to the cluster: the outcome of a stopped or
+  canceled mutation is unknown, and Admin never repeats it.
 - Arguments that would change the scope or connection are rejected:
   `--rgw-realm`, `--rgw-zonegroup`, `--rgw-zone` and their ID and name
   variants, `--conf`/`-c`, `--keyring`/`-k`, `--name`/`-n`, `--id`,

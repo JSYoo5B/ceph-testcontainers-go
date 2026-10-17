@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -38,6 +39,7 @@ type hooks interface {
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
 	Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error)
+	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error)
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
 	LockTopology(ctx context.Context, c *ceph.Container) error
 	Service(c *ceph.Container, name string) testcontainers.Container
@@ -108,6 +110,15 @@ func Closed(c *ceph.Container) bool { return get().Closed(c) }
 // Command runs a CLI command in ctr and returns its standard output.
 func Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	return get().Command(ctx, ctr, args...)
+}
+
+// RunOwnedShell runs argv in target, a container of c that the caller holds
+// the cluster mutex for, under the shell supervisor with limit seconds (0
+// for none), and tracks it until it is known to have ended: when ctx ends
+// first the command is stopped before RunOwnedShell returns, and a stop that
+// cannot be confirmed returns a *ceph.NativeCommandUnstoppedError.
+func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+	return get().RunOwnedShell(ctx, c, target, label, limit, argv...)
 }
 
 // WithBootstrap returns the Run option that records the bootstrap build

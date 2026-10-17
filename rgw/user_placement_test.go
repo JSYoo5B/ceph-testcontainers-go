@@ -25,6 +25,7 @@ type rgwUserPlacementTestContainer struct {
 }
 
 func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	original := args
 	args = rgwAdminArgv(args)
 	flag := func(name string) string {
 		for i, arg := range args {
@@ -35,7 +36,7 @@ func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string,
 		return ""
 	}
 	if args[0] != "radosgw-admin" || !slices.Contains(args, "user") {
-		code, stream, err := f.rgwPlacementTestContainer.Exec(ctx, args, opts...)
+		code, stream, err := f.rgwPlacementTestContainer.Exec(ctx, original, opts...)
 		if err == nil && code == 0 && slices.Contains(args, "zonegroup") && slices.Contains(args, "add") && flag("--tags") != "" {
 			target := rgwPlacementTarget(f.group, flag("--placement-id"))
 			tags := strings.Split(flag("--tags"), ",")
@@ -85,7 +86,7 @@ func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string,
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.Write(data)
-	return code, &stream, nil
+	return rgwAdminReply(original, code, &stream)
 }
 
 func newRGWUserPlacementFixture(t *testing.T) (*Gateway, *rgwUserPlacementTestContainer, *Placement, *User) {

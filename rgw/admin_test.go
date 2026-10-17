@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -33,6 +35,10 @@ type rgwAdminTestContainer struct {
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
 
 func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if rgwAdminCancel(args) {
+		return 0, nil, nil
+	}
+	original := args
 	args = rgwAdminArgv(args)
 	ctr.calls = append(ctr.calls, slices.Clone(args))
 	if len(ctr.responses) == 0 {
@@ -52,7 +58,7 @@ func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tc
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(response.data)
-	return response.code, &stream, nil
+	return rgwAdminReply(original, response.code, &stream)
 }
 
 func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gateway, *rgwAdminTestContainer) {
@@ -295,11 +301,31 @@ func TestRGWNativePolicyDecoderAcceptsModernAndLegacyLimits(t *testing.T) {
 	}
 }
 
-// rgwAdminArgv strips the deadline wrapper of a radosgw-admin call, so a fake
+// rgwAdminArgv strips the shell supervisor of a radosgw-admin call, so a fake
 // sees the radosgw-admin command line.
 func rgwAdminArgv(args []string) []string {
-	if len(args) > 5 && args[0] == "sh" && args[2] == rgwAdminDeadlineScript {
-		return args[5:]
+	if len(args) > 7 && args[0] == "sh" && args[2] == supervised.ShellScript {
+		return args[7:]
 	}
 	return args
+}
+
+// rgwAdminCancel reports the canceler of a supervised call, which a fake
+// confirms: its supervisor never ran.
+func rgwAdminCancel(args []string) bool {
+	return len(args) > 2 && args[0] == "sh" && args[2] == supervised.ShellCancelScript
+}
+
+// rgwAdminReply answers a call as the gateway's supervisor does: it ends the
+// standard error of a call that original wrapped with the supervisor's end
+// line.
+func rgwAdminReply(original []string, code int, stream *bytes.Buffer) (int, io.Reader, error) {
+	if len(original) > 2 && original[2] == supervised.ShellScript {
+		end := []byte(supervised.ShellEndPrefix + strconv.Itoa(code) + "\n")
+		header := [8]byte{byte(stdcopy.Stderr)}
+		binary.BigEndian.PutUint32(header[4:], uint32(len(end)))
+		stream.Write(header[:])
+		stream.Write(end)
+	}
+	return code, stream, nil
 }
