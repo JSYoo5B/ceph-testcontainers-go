@@ -226,7 +226,10 @@ func main() {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if path != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "artifacts" || entry.Name() == "vendor") {
+			// The go command ignores testdata too: its test files are
+			// fixtures of other tests, never built as packages.
+			if path != root && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "artifacts" || entry.Name() == "vendor" ||
+				entry.Name() == "testdata") {
 				return filepath.SkipDir
 			}
 			return nil

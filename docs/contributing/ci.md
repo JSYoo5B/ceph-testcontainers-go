@@ -156,9 +156,10 @@ tests tell you if the edit breaks those rules.
 Nothing in the workflows names a test.
 
 1. **Catalog.** `tools/tagcatalog` parses every `*_test.go` file in the
-   module (skipping hidden directories, `artifacts` and `vendor`) without
-   importing or running it. For each file it records the `//go:build`
-   expression, its tags, the `Test...` functions and the `//ci:` metadata.
+   module (skipping hidden directories, `artifacts`, `vendor` and
+   `testdata`) without importing or running it. For each file it records the
+   `//go:build` expression, its tags, the `Test...` functions and the `//ci:`
+   metadata.
 2. **Discovery.** Every file that declares tests and has a constraint must
    belong to exactly one category (`ci_<category>`) and one batch
    (`ci_batch_<name>`), compile under `all`, and carry one valid `//ci:` line.
@@ -202,6 +203,84 @@ default mode when no entry selects one, and after the run a dedicated checker
 the log. The planner rejects these batches unless together they cover every
 mode and kind of the checker. Locally, the `all` build still runs the original
 parent test with every leaf.
+
+### Advisory declaration selection
+
+File-level selection cannot narrow `internal/integration`: its
+`*_helpers_test.go` files compile into every batch. `tools/batchselect`
+selects at the level of declarations instead. It is advisory for now. It
+records which batches a change would need, but every workflow still runs the
+batches described above.
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --category topology \
+  --select-declarations origin/main --output artifacts/tag-plan.json
+```
+
+The plan then has a `declaration_selection` object. `selected` and
+`excluded` map each profile ID to a reason, such as
+`func TestX reaches func helperY (file)` or
+`none of 25 roots reaches a changed declaration`. `fallback` lists why every
+batch was selected, and `changed_declarations` lists what the diff touched.
+The matrix and the `include` list are unchanged.
+
+The tool works as follows:
+1. It diffs the checkout against its merge base with the given base, with
+   `git diff -U0 --no-renames`.
+2. It type-checks the `all` build of the package with `go/types`, for
+   `linux/amd64` and with `CGO_ENABLED=0`, from the export data of
+   `go list -export`. A batch whose files are not all in that build gets its
+   own type check with its own tags.
+3. It builds a graph over the package's top-level declarations: functions,
+   methods, and each type, var and const spec. An identifier that `go/types`
+   resolves to another declaration of the package is an edge, so
+   `cluster.Ceph(...)` reaches `(*ceph.Container).Ceph` and never a fake's
+   method of the same name. Two further kinds of edge are added:
+   - a call through an interface method reaches that method of every type in
+     the package that implements the interface (class hierarchy analysis);
+   - a type reaches all of its methods, because code in other packages, such
+     as `fmt` or testcontainers, can call any of them.
+4. It maps each hunk to the declarations whose lines, doc comment included,
+   it touches. A deleted line is mapped through the base version to the
+   declaration of the same name in the head.
+5. It selects a batch when one of its roots reaches a changed declaration.
+   The roots are the batch's `Test`, `Fuzz` and `Example` functions, and
+   every `init` function and package-level var initializer that the batch
+   compiles.
+
+Every batch is selected, with the reason, when the change touches any of:
+- a line outside every declaration: the file header (build constraint,
+  `//ci:` line, package clause), the import block, a directive comment
+  (`//go:`), or any other code. Blank lines and plain comments between
+  declarations are ignored;
+- an added, deleted or untracked file in the package;
+- a non-Go file in the package directory or below it, such as an embedded
+  file or the go-ceph probe in `internal/integration/goceph/`;
+- `.github/`, whose scripts, workflows and actions are read at run time;
+- `go.mod` or `go.sum`;
+- any other path outside `internal/integration`. The public packages are not
+  analysed yet;
+- a removed `init` function or package-level var initializer;
+- a diff, base file or package that cannot be parsed or type-checked.
+
+Every file under the analysed package's directory is classified first, so
+a Markdown file that a test embeds or reads there selects every batch. Other
+Markdown files, `docs/` and `LICENSE` are ignored. A profile of another
+package, such as the `environment` batch, is always selected. If the tool
+fails, every profile is recorded as selected, with the error.
+
+`replay_declaration_selection.py` replays the selection over merged pull
+requests without the GitHub API. For each of the last merges on
+`origin/main` it takes the first parent as the base and the second parent as
+the head, exports the head's tree, plans it with the head's own planner, and
+prints a table of selected batches per merge:
+
+```sh
+python3 .github/scripts/replay_declaration_selection.py --merges 15
+```
+
+Compare that table with each pull request's full run before the selection
+skips jobs: every batch that failed must be in the selected set.
 
 ## How a batch runs
 
