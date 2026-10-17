@@ -3,9 +3,11 @@ package ceph
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
@@ -285,5 +287,104 @@ func TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot(t *testing.T) {
 				t.Fatalf("after Restore: root %+v, other qdiscs %v, %d helpers", link.root, link.extra, netem.liveHelpers())
 			}
 		})
+	}
+}
+
+func TestNetworkDelayLossValidation(t *testing.T) {
+	for name, test := range map[string]struct {
+		delay NetworkDelay
+		ok    bool
+	}{
+		"loss alone":           {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Loss: 100}, true},
+		"loss with a delay":    {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Millisecond, Loss: 12.5}, true},
+		"no delay and no loss": {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane}, false},
+		"loss over 100":        {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Loss: 100.5}, false},
+		"negative loss":        {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Millisecond, Loss: -1}, false},
+		"NaN loss":             {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Loss: math.NaN()}, false},
+		"jitter without delay": {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Jitter: time.Millisecond, Loss: 50}, false},
+		"a delay below 1ms":    {NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Microsecond, Loss: 50}, false},
+	} {
+		if err := validateNetworkDelay(test.delay); (err == nil) != test.ok {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestPeerNetworkDelayBlackhole(t *testing.T) {
+	netem := newFakeNetem()
+	cluster, osd := delayCluster(netem)
+	blackhole := NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Peer: peerDelay.Peer, Loss: 100}
+	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, blackhole)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child string
+	for _, command := range netem.commands {
+		if strings.Contains(command, " parent ") && strings.Contains(command, " netem") {
+			child = command
+		}
+	}
+	if !strings.HasSuffix(child, " handle "+lease.child+" netem loss 100%") {
+		t.Fatalf("netem child command %q", child)
+	}
+	status, err := lease.Status(t.Context())
+	if err != nil || !status.Applied || status.Loss != 100 || status.Delay != 0 || lease.Loss != 100 {
+		t.Fatalf("status %+v, %v", status, err)
+	}
+	if err := lease.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// A whole-interface loss with a delay.
+	partial := NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Delay: 5 * time.Millisecond, Loss: 25}
+	lease, err = cluster.TemporaryNetworkDelay(t.Context(), osd, partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, err := lease.Status(t.Context()); err != nil || !status.Applied || status.Loss != 25 || status.Delay != 5*time.Millisecond {
+		t.Fatalf("status %+v, %v", status, err)
+	}
+	if err := lease.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A loss without a delay keeps every selection check: an invalid Peer or a
+// PeerPort without one is refused before any helper or tc command.
+func TestNetworkDelayLossKeepsSelectionChecks(t *testing.T) {
+	loss := NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Loss: 100}
+	for name, edit := range map[string]func(*NetworkDelay){
+		"port without peer": func(d *NetworkDelay) { d.PeerPort = 6800 },
+		"mapped peer":       func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
+		"zoned peer":        func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
+		"unspecified peer":  func(d *NetworkDelay) { d.Peer = netip.IPv4Unspecified() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			delay := loss
+			edit(&delay)
+			netem := newFakeNetem()
+			cluster, osd := delayCluster(netem)
+			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			if !errors.Is(err, ErrInvalidRequest) || lease != nil {
+				t.Fatalf("%+v: %v, %v", delay, lease, err)
+			}
+			if len(netem.commands) != 0 || len(netem.helpers) != 0 {
+				t.Fatalf("a refused request ran %v with %d helpers", netem.commands, len(netem.helpers))
+			}
+		})
+	}
+	// The valid loss-only requests still apply, whole-interface and to a peer.
+	for _, delay := range []NetworkDelay{loss, {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Loss: 100, Peer: peerDelay.Peer, PeerPort: 6800}} {
+		netem := newFakeNetem()
+		cluster, osd := delayCluster(netem)
+		lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+		if err != nil {
+			t.Fatalf("%+v: %v", delay, err)
+		}
+		if status, err := lease.Status(t.Context()); err != nil || !status.Applied || status.Loss != 100 {
+			t.Fatalf("%+v: status %+v %v", delay, status, err)
+		}
+		if err := lease.Restore(t.Context()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

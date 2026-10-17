@@ -333,6 +333,17 @@ does the same through the IPv6 filter on an IPv6 cluster. The filter matches
 the IP header without options or extension headers, which Ceph's TCP traffic
 does not use.
 
+`Loss` drops a percentage of the selected packets; with `Loss: 100` and a
+`Peer`, and no `Delay`, nothing that the target sends to that peer arrives.
+`TestNetworkDelay/peer_blackhole` drops osd.0's packets to a client container:
+that client's read from osd.0 failed with `ETIMEDOUT` after its 5-second
+`rados_osd_op_timeout`, while its read from osd.1 and the control
+container's read from osd.0 took under a millisecond, and after `Restore`
+the client read the object again. Only one direction is dropped: the
+client's requests still reach osd.0, so an operation that changes data may
+have run although its reply was lost. Read the outcome back with a client
+of its own before treating it as failed.
+
 What to expect:
 
 - The delay applies to packets that leave the target. A request to the target

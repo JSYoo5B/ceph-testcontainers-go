@@ -25,7 +25,39 @@ import (
 type fakeQdisc struct {
 	kind, handle  string
 	delay, jitter time.Duration
+	loss          float64 // fraction
 	packets       uint64
+}
+
+// fakeNetemQdisc reads tc's netem arguments: [delay D [J]] [loss P%].
+func fakeNetemQdisc(handle string, args []string) *fakeQdisc {
+	qdisc := &fakeQdisc{kind: "netem", handle: handle}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "delay":
+			qdisc.delay, _ = time.ParseDuration(args[i+1])
+			if i+2 < len(args) && strings.HasSuffix(args[i+2], "us") {
+				qdisc.jitter, _ = time.ParseDuration(args[i+2])
+			}
+		case "loss":
+			percent, _ := strconv.ParseFloat(strings.TrimSuffix(args[i+1], "%"), 64)
+			qdisc.loss = percent / 100
+		}
+	}
+	return qdisc
+}
+
+// fakeNetemOptions prints a netem qdisc's options as tc does: no delay
+// member for a zero delay, the loss as a fraction.
+func fakeNetemOptions(q *fakeQdisc) map[string]any {
+	options := map[string]any{"limit": 1000}
+	if q.delay > 0 {
+		options["delay"] = map[string]any{"delay": q.delay.Seconds(), "jitter": q.jitter.Seconds(), "correlation": 0}
+	}
+	if q.loss > 0 {
+		options["loss-random"] = map[string]any{"loss": q.loss, "correlation": 0}
+	}
+	return options
 }
 
 type fakeLink struct {
@@ -244,12 +276,10 @@ func qdiscJSON(link *fakeLink) []map[string]any {
 		return qdiscs
 	}
 	qdiscs := []map[string]any{{"kind": link.root.kind, "handle": link.root.handle, "root": true,
-		"options": map[string]any{"delay": map[string]any{"delay": link.root.delay.Seconds(), "jitter": link.root.jitter.Seconds()}},
-		"packets": link.root.packets, "bytes": link.root.packets * 100, "drops": 0}}
+		"options": fakeNetemOptions(link.root), "packets": link.root.packets, "bytes": link.root.packets * 100, "drops": 0}}
 	if link.child != nil {
 		qdiscs = append(qdiscs, map[string]any{"kind": link.child.kind, "handle": link.child.handle, "parent": link.parent,
-			"options": map[string]any{"delay": map[string]any{"delay": link.child.delay.Seconds(), "jitter": link.child.jitter.Seconds()}},
-			"packets": link.child.packets, "bytes": link.child.packets * 100, "drops": 0})
+			"options": fakeNetemOptions(link.child), "packets": link.child.packets, "bytes": link.child.packets * 100, "drops": 0})
 	}
 	for _, extra := range link.extra {
 		qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": map[string]any{}})
@@ -348,12 +378,7 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 			if link.root == nil || link.root.kind != "prio" || argv[6] != link.root.handle+"3" {
 				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Failed to find specified qdisc.")}, nil
 			}
-			child := &fakeQdisc{kind: "netem", handle: argv[8]}
-			child.delay, _ = time.ParseDuration(argv[11])
-			if len(argv) > 12 {
-				child.jitter, _ = time.ParseDuration(argv[12])
-			}
-			link.child, link.parent = child, argv[6]
+			link.child, link.parent = fakeNetemQdisc(argv[8], argv[10:]), argv[6]
 		default:
 			// tc qdisc add dev IF root handle H prio bands 3 priomap ...
 			if link.root != nil {
@@ -376,12 +401,7 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 			case link.root != nil:
 				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Exclusivity flag on, cannot modify.")}
 			}
-			root := &fakeQdisc{kind: "netem", handle: argv[7]}
-			root.delay, _ = time.ParseDuration(argv[10])
-			if len(argv) > 11 {
-				root.jitter, _ = time.ParseDuration(argv[11])
-			}
-			link.root = root
+			link.root = fakeNetemQdisc(argv[7], argv[9:])
 			return supervised.Report{}
 		}
 		n.mu.Unlock()

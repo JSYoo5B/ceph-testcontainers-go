@@ -2890,9 +2890,10 @@ The module starts the helper in `ctr`'s network namespace as root and grants
 | --- | --- |
 | `HelperImage` | The helper image. Required; nothing selects it implicitly. |
 | `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
-| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. |
+| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. With a `Loss` it may be zero. |
 | `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
 | `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (a dual-stack bridge of `WithAddressFamily(ceph.AddressIPv6)`). Mapped, zoned or unspecified addresses are refused. |
+| `Loss` | Optional. Drops this percentage of the selected packets at random, from more than 0 to 100. With 100 and a `Peer`, the packets to that peer never arrive: a blackhole of one direction of one path. |
 | `PeerPort` | Optional, with `Peer`: only TCP packets to this destination port, such as one of the peer's Messenger ports. An IPv6 packet with extension headers before its TCP header is not selected. |
 
 `ctr` can be an owned daemon or a caller-owned container attached to the
@@ -2917,13 +2918,14 @@ second delay of the same endpoint.
 The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
 `NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
 `MACAddress`, `Address`), the helper's `HelperImageID` and the requested
-`Delay`, `Jitter`, `Peer` and `PeerPort`.
+`Delay`, `Jitter`, `Peer`, `PeerPort` and `Loss`.
 
 - `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
   through the helper: `Applied`, the interface's current name (`Interface`)
   and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter` and
-  `Packets`, `Bytes` and `Drops` counters while `Applied`, and tc's JSON output
-  (`Qdiscs`, and `Filters` for the egress filters). After the first lookup by address and MAC, the lease follows
+  `Loss` percentage and `Packets`, `Bytes` and `Drops` counters while
+  `Applied`, and tc's JSON output (`Qdiscs`, and `Filters` for the egress
+  filters). After the first lookup by address and MAC, the lease follows
   the interface by its index, so a changed address, MAC or name does not lose
   it. `Gone` means that the delayed
   interface no longer exists, because `ctr` stopped, restarted, was removed or

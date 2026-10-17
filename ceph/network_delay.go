@@ -58,7 +58,7 @@ type NetworkDelay struct {
 	Plane NetworkPlane
 	// Delay is added to every packet that leaves the target through that
 	// endpoint: at least 1ms and at most MaxNetworkDelay, in whole
-	// microseconds.
+	// microseconds. With a Loss it may be zero.
 	Delay time.Duration
 	// Jitter varies each packet's delay uniformly within ±Jitter. It is at
 	// most Delay, in whole microseconds.
@@ -76,6 +76,11 @@ type NetworkDelay struct {
 	// selects every packet to Peer. An IPv6 packet with extension headers
 	// before its TCP header is not selected.
 	PeerPort uint16
+	// Loss drops this percentage of the packets that the delay applies to,
+	// at random and independently, from more than 0 to 100. With 100 every
+	// selected packet is dropped: with a Peer, the target's packets to that
+	// peer, and only those, never arrive. Zero drops nothing.
+	Loss float64
 }
 
 // NetworkDelayStatus is what the kernel reports for a delay's interface,
@@ -95,6 +100,8 @@ type NetworkDelayStatus struct {
 	RootKind, RootHandle string
 	// Delay and Jitter are the kernel's values while Applied.
 	Delay, Jitter time.Duration
+	// Loss is the kernel's loss percentage while Applied.
+	Loss float64
 	// Packets, Bytes and Drops are the netem qdisc's counters while Applied.
 	// With a Peer they count only the selected packets.
 	Packets, Bytes, Drops uint64
@@ -134,6 +141,8 @@ type NetworkDelayLease struct {
 	// the whole interface.
 	Peer     netip.Addr
 	PeerPort uint16
+	// Loss is the requested loss percentage.
+	Loss float64
 
 	mu      sync.Mutex
 	backend netemBackend
@@ -247,6 +256,10 @@ type netemQdisc struct {
 			Delay  float64 `json:"delay"`
 			Jitter float64 `json:"jitter"`
 		} `json:"delay"`
+		// Loss is a fraction; tc prints no delay member for a zero delay.
+		Loss struct {
+			Loss float64 `json:"loss"`
+		} `json:"loss-random"`
 	} `json:"options"`
 	Bytes   uint64 `json:"bytes"`
 	Packets uint64 `json:"packets"`
@@ -290,15 +303,21 @@ func seconds(value float64) time.Duration {
 
 // validateNetworkDelay checks a NetworkDelay before anything runs.
 func validateNetworkDelay(delay NetworkDelay) error {
-	switch {
-	case strings.TrimSpace(delay.HelperImage) == "":
+	if strings.TrimSpace(delay.HelperImage) == "" {
 		// The extension is not selected.
 		return &OperationError{Kind: ErrImageCapability, Capability: "netem extension",
 			Err: errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")}
+	}
+	// Every check runs: allowing a zero delay with a Loss must not skip the
+	// selection's checks.
+	lossOnly := delay.Loss > 0 && delay.Delay == 0
+	switch {
 	case delay.Plane != PublicNetworkPlane && delay.Plane != ClusterNetworkPlane:
 		return invalidRequest("invalid Ceph network plane")
-	case delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay:
-		return invalidRequest("network delay must be between 1ms and %v", MaxNetworkDelay)
+	case math.IsNaN(delay.Loss) || delay.Loss < 0 || delay.Loss > 100:
+		return invalidRequest("network delay Loss must be a percentage from 0 to 100")
+	case !lossOnly && (delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay):
+		return invalidRequest("network delay must be between 1ms and %v, or zero with a Loss", MaxNetworkDelay)
 	case delay.Jitter < 0 || delay.Jitter > delay.Delay:
 		return invalidRequest("network delay jitter must be between 0 and the delay")
 	case delay.Delay%time.Microsecond != 0 || delay.Jitter%time.Microsecond != 0:
@@ -584,7 +603,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 	}
 	lease := &NetworkDelayLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
 		MACAddress: state.mac, Address: state.address, HelperImageID: imageID, Delay: delay.Delay,
-		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, backend: backend, helper: helper}
+		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Loss: delay.Loss, backend: backend, helper: helper}
 	discard := func(err error) (*NetworkDelayLease, error) {
 		return nil, errors.Join(err, removeNetemHelper(ctx, backend, helper))
 	}
@@ -609,9 +628,15 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		return discard(errors.Join(errors.New("the network delay target restarted while it was being checked"), err))
 	}
 	lease.handle = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-	netem := []string{"netem", "delay", fmt.Sprintf("%dus", delay.Delay.Microseconds())}
-	if delay.Jitter > 0 {
-		netem = append(netem, fmt.Sprintf("%dus", delay.Jitter.Microseconds()))
+	netem := []string{"netem"}
+	if delay.Delay > 0 {
+		netem = append(netem, "delay", fmt.Sprintf("%dus", delay.Delay.Microseconds()))
+		if delay.Jitter > 0 {
+			netem = append(netem, fmt.Sprintf("%dus", delay.Jitter.Microseconds()))
+		}
+	}
+	if delay.Loss > 0 {
+		netem = append(netem, "loss", strconv.FormatFloat(delay.Loss, 'f', -1, 64)+"%")
 	}
 	steps := []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", lease.Interface, "root", "handle", lease.handle}, netem...)}}
 	if delay.Peer.IsValid() {
@@ -655,9 +680,10 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 	if err != nil {
 		return lease, fmt.Errorf("read the netem delay: %w", err)
 	}
-	if !status.Applied || status.Delay != delay.Delay || status.Jitter != delay.Jitter {
-		return lease, errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v and jitter %v instead of the requested delay",
-			status.RootKind, status.RootHandle, status.Delay, status.Jitter), status.mismatch)
+	// The kernel keeps the loss as a 32-bit probability.
+	if !status.Applied || status.Delay != delay.Delay || status.Jitter != delay.Jitter || math.Abs(status.Loss-delay.Loss) > 1e-4 {
+		return lease, errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v, jitter %v and loss %v%% instead of the requested delay",
+			status.RootKind, status.RootHandle, status.Delay, status.Jitter, status.Loss), status.mismatch)
 	}
 	return lease, nil
 }
@@ -940,6 +966,7 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 	}
 	if status.Applied {
 		status.Delay, status.Jitter = seconds(netem.Options.Delay.Delay), seconds(netem.Options.Delay.Jitter)
+		status.Loss = math.Round(netem.Options.Loss.Loss*100*1e6) / 1e6
 		status.Packets, status.Bytes, status.Drops = netem.Packets, netem.Bytes, netem.Drops
 	}
 	return status, nil
