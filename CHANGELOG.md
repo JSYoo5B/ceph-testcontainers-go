@@ -80,6 +80,13 @@ change the API.
   and `flock` contention (`EWOULDBLOCK`); a client in another container
   checks the final namespace
   ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+- `TestOSDReplicationPeerPathCut` cuts one direction of one OSD pair on the
+  cluster network, the primary's packets to its replica, with a peer-selected
+  `Loss: 100`: the primary holds a client write `waiting for sub ops` past
+  `osd_heartbeat_grace`, both OSDs report each other failed but stay up with
+  one reporter each, the replica's packets still reach the primary, and after
+  `Restore` the write completes and both copies read back
+  ([#17](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/17)).
 - `TestOSDHeartbeatFailure` records OSD heartbeat failure detection: with one
   OSD's cluster network cut in a cluster of three, the MON marks it down after
   `osd_heartbeat_grace` on two reports from different hosts, while its peers
