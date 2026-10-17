@@ -37,10 +37,13 @@ default [network mode](#network-modes):
 
 Two things run every batch of those categories on the pull request instead:
 the `ci:full` label (adding it starts the run), and a release phase. A change
-that touches nothing but `docs/`, Markdown files, `LICENSE` or the go-ceph
-probe under `internal/integration/goceph/` runs only Code checks: no runtime
-batch reads those paths, and Code checks still runs the API inventory test
-against `docs/`. Each `Plan` job's `tag-plan.json` artifact lists the changed
+that touches nothing but `docs/`, the top-level Markdown files (`README.md`,
+`CHANGELOG.md`), `LICENSE` or the go-ceph probe under
+`internal/integration/goceph/` runs only Code checks: no runtime batch reads
+those paths, and Code checks still runs the API inventory test against
+`docs/`. A Markdown file anywhere else, for example under a package's
+`testdata/`, can be a test's embedded or run-time input, so changing it runs
+the batches as usual. Each `Plan` job's `tag-plan.json` artifact lists the changed
 files and the selected batches.
 
 Pushes to `main` run Code checks, Docker checks and Ceph short. Every other

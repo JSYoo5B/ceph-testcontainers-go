@@ -83,7 +83,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     }
     # Runtime batches never read these paths, so a change to them alone runs
     # only Code checks, on pull requests and on pushes to main alike.
-    RUNTIME_PATHS_IGNORE = ("'docs/**'", "'**/*.md'", "'LICENSE'", "'internal/integration/goceph/**'")
+    RUNTIME_PATHS_IGNORE = ("'docs/**'", "'*.md'", "'LICENSE'", "'internal/integration/goceph/**'")
     # These categories gate every merge on the current release.
     GATING = {"docker.yml", "ceph-short.yml"}
     # The other categories run on a pull request only for the batches whose
@@ -93,6 +93,38 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     RELEASES = {"20.2.4": "tentacle", "19.2.5": "squid"}
     PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
     PERIODIC_SCHEDULE = "41 */3 * * *"
+
+    @staticmethod
+    def github_glob(pattern):
+        """GitHub's path filter glob: * stays within one path segment, ** may
+        cross them."""
+        regex, index = "", 0
+        while index < len(pattern):
+            if pattern.startswith("**/", index):
+                regex, index = regex + "(?:.*/)?", index + 3
+            elif pattern.startswith("**", index):
+                regex, index = regex + ".*", index + 2
+            elif pattern[index] == "*":
+                regex, index = regex + "[^/]*", index + 1
+            else:
+                regex, index = regex + re.escape(pattern[index]), index + 1
+        return re.compile(regex + r"\Z")
+
+    def test_runtime_paths_ignore_only_documentation(self):
+        # A Markdown file in a code directory can be a test's embedded or
+        # run-time input, so changing it alone must still run the batches.
+        patterns = [self.github_glob(path.strip("'")) for path in self.RUNTIME_PATHS_IGNORE]
+        ignored = lambda path: any(pattern.match(path) for pattern in patterns)
+        for path in ("README.md", "CHANGELOG.md", "docs/ceph.md", "docs/guides/messenger-client-fixtures.md",
+                     "LICENSE", "internal/integration/goceph/README.md"):
+            with self.subTest(path=path):
+                self.assertTrue(ignored(path))
+        for path in ("internal/integration/testdata/expected.md", "internal/integration/notes.md",
+                     "ceph/notes.md", "rgw/testdata/policy.md", "tools/batchselect/testdata/sel/README.md",
+                     ".github/scripts/fixtures/receipt.md"):
+            with self.subTest(path=path):
+                self.assertFalse(ignored(path))
+
 
     @classmethod
     def setUpClass(cls):
