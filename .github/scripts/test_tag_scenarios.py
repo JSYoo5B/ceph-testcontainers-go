@@ -270,9 +270,98 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(report["required_profiles"], 2)
         self.assertEqual(report["selected_profiles"], 1)
         self.assertEqual(report["compiled_coverage"], {"passed": True})
-        self.assertEqual(matrix["include"], report["include"])
+        # A batch without network modes is one entry, as before the axis.
+        self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": ""} for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "environment")
         self.assertFalse(matrix["include"][0]["requires_ceph"])
+
+    def test_network_modes_make_one_entry_per_mode_of_the_scope(self):
+        host = fixture(tests=("TestHostFirst", "TestModeless"))
+        host["networks"], host["network_tests"] = ["host", "bridge"], ["TestHostFirst"]
+        same = fixture(path="internal/integration/same_test.go", tests=("TestSame",))
+        same["networks"], same["network_tests"] = ["host", "bridge"], ["TestSame"]
+        # A file without modes joins the batch and runs in its default mode.
+        modeless = fixture(path="internal/integration/modeless_test.go", tests=("TestOther",))
+        rgw = fixture(path="internal/integration/rgw_test.go", tests=("TestRGW",), batch="rgw")
+        rgw["networks"], rgw["network_tests"] = ["bridge"], ["TestRGW"]
+        plain = fixture(path="internal/integration/plain_test.go", tests=("TestPlain",), batch="plain")
+        plan = engine.discover([host, same, modeless, rgw, plain])
+        self.assertEqual({profile["batch"]: (profile["networks"], profile["network_tests"]) for profile in plan["include"]},
+                         {"basic": (["host", "bridge"], ["TestHostFirst", "TestSame"]), "rgw": (["bridge"], ["TestRGW"]),
+                          "plain": ([], [])})
+        default = engine.network_matrix(plan["include"], "default")
+        self.assertEqual([(entry["name"], entry["network"], entry["tests"]) for entry in default],
+                         [("basic", "host", ""), ("plain", "", ""), ("rgw", "bridge", "")])
+        everything = engine.network_matrix(plan["include"], "all")
+        self.assertEqual([(entry["name"], entry["network"], entry["tests"]) for entry in everything],
+                         [("basic", "host", ""), ("basic (bridge)", "bridge", "TestHostFirst,TestSame"),
+                          ("plain", "", ""), ("rgw", "bridge", "")])
+        # The default entry keeps the profile's ID; another mode's is distinct.
+        basic = [entry for entry in everything if entry["batch"] == "basic"]
+        self.assertEqual(basic[0]["id"], plan["include"][0]["id"])
+        self.assertEqual(basic[1]["id"], plan["include"][0]["id"] + "-bridge")
+        with self.assertRaisesRegex(ValueError, "network scope"):
+            engine.network_matrix(plan["include"], "some")
+
+    def test_network_modes_must_agree_within_a_batch(self):
+        for name, modes in {"other modes": (["bridge"], ["host", "bridge"]),
+                            "other default": (["bridge", "host"], ["host", "bridge"])}.items():
+            first = fixture(tests=("TestFirst",))
+            second = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
+            first["networks"], second["networks"] = modes
+            first["network_tests"], second["network_tests"] = ["TestFirst"], ["TestSecond"]
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "declare different networkModes"):
+                engine.discover([first, second])
+        for modes in (["overlay"], ["host", "host"]):
+            file = fixture()
+            file["networks"], file["network_tests"] = modes, ["TestNewFeature"]
+            with self.subTest(modes=modes), self.assertRaisesRegex(ValueError, "distinct modes"):
+                engine.discover([file])
+        helper = fixture(path="internal/integration/helpers_test.go", tests=())
+        helper["metadata"], helper["networks"] = [], ["host"]
+        with self.assertRaisesRegex(ValueError, "file that declares the test"):
+            engine.discover([fixture(), helper])
+
+    def test_plan_writes_the_network_scope_to_the_matrix(self):
+        file = fixture()
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNewFeature"]
+        for scope, networks in (("default", ["host"]), ("all", ["host", "bridge"])):
+            with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[file]), \
+                    patch("sys.stdout", new=io.StringIO()):
+                github_output = Path(temporary) / "github-output"
+                self.assertEqual(engine.main(["plan", "--category", "short", "--networks", scope,
+                                              "--github-output", str(github_output)]), 0)
+                outputs = github_outputs(github_output)
+            matrix = json.loads(outputs["matrix"])
+            self.assertEqual([entry["network"] for entry in matrix["include"]], networks, scope)
+            self.assertEqual(outputs["count"], str(len(networks)))
+
+    def test_run_selects_only_tests_that_declare_network_modes(self):
+        file = fixture(tests=("TestNetworked", "TestModeless"))
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNetworked"]
+        plan = engine.discover([file])
+        for selection in ("TestModeless", "TestNetworked,TestNetworked", "TestMissing"):
+            with self.subTest(selection), tempfile.TemporaryDirectory() as temporary, \
+                    self.assertRaisesRegex(ValueError, "test selection"):
+                engine.run_profile([file], plan, "short", "basic", None, Path(temporary) / "native", tests=selection)
+        commands = []
+
+        class Child:
+            def __init__(self, command, **_):
+                commands.append(command)
+                self.stdout = io.StringIO(native_log(("TestNetworked",)))
+
+            def wait(self):
+                return 0
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "compile_inventory", return_value=["TestModeless", "TestNetworked"]), \
+                patch.object(engine.subprocess, "Popen", Child), patch("sys.stdout", new=io.StringIO()):
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            report = engine.run_profile([file], plan, "short", "basic", None, root / "native", root=root, tests="TestNetworked")
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["compiled_tests"], ["TestNetworked"])
+        self.assertEqual(commands[0][commands[0].index("-run") + 1], "^(TestNetworked)$")
 
     def test_optional_plan_is_explicit_and_cannot_claim_required_coverage(self):
         optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
@@ -288,7 +377,8 @@ class TagPlannerTests(unittest.TestCase):
             matrix = json.loads(github_outputs(github_output)["matrix"])
         self.assertEqual(report["coverage_scope"], "optional")
         self.assertEqual(report["selected_batch"], "native_rgw_translation")
-        self.assertEqual(matrix["include"], report["include"])
+        # A batch without network modes is one entry, as before the axis.
+        self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": ""} for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "optional")
         self.assertFalse(any(key.startswith("required_") for key in report))
         self.assertNotIn("compiled_coverage", report)

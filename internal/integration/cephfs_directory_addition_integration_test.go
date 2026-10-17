@@ -11,11 +11,8 @@ import (
 // Two independent pairs cover explicit zero-daemon policy construction, actual
 // applied response loss, separate unapplied dispatch loss, and real client I/O.
 func TestMultiClusterCephFSDirectoryAdditionIntent(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		mode := "bridge"
-		if host {
-			mode = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, mode := mode.Host, mode.Name
 		t.Run(mode, func(t *testing.T) { testCephFSDirectoryAdditionIntent(t, host) })
 	}
 }

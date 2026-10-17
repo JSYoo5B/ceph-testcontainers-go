@@ -29,11 +29,8 @@ func TestOSDRecoveryAndBackfillReceipts(t *testing.T) {
 // Two single-replica OSD classes make every relocation observable: a PG is
 // either on the fast OSD or on the slow one, never already in place.
 func TestPoolPGRelocation(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()

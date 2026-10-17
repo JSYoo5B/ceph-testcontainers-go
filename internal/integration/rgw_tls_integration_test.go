@@ -22,11 +22,8 @@ import (
 
 func TestRGWNativeTLS(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "bridge", "host") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 7*time.Minute)
 			defer cancel()

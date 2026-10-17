@@ -19,11 +19,8 @@ import (
 // replica. An injected replica read error is invisible to clients until a deep
 // scrub reports it; repair rewrites the replica from the primary.
 func TestScrubInconsistency(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()

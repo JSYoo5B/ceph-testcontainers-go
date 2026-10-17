@@ -22,11 +22,8 @@ import (
 // identity before scoped Admin mutations; this is not a general adoption API.
 func TestRGWBucketMaintenance(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "bridge", "host") {
+		host, network := mode.Host, mode.Name
 		t.Run(network, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()

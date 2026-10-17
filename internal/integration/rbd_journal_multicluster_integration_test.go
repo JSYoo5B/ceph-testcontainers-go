@@ -15,11 +15,8 @@ import (
 // reads. It never creates mirror snapshots: journal replay carries changes,
 // including a receiver restart and planned primary ownership A -> B -> A.
 func TestMultiClusterRBDJournalMirrorFailback(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			var opts []testcontainers.ContainerCustomizer
 			if host {

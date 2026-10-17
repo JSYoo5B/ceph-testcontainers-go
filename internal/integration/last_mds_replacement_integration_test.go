@@ -11,11 +11,8 @@ import (
 // Docker task ownership and logical native name/GID authority stay separate.
 // This fixture never runs CLI/Python/socket/process observers in the MDS role.
 func TestLastMDSReplacementTopology(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		if !t.Run(network, func(t *testing.T) { testLastMDSReplacement(t, host) }) {
 			return
 		}

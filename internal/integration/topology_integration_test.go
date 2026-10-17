@@ -19,11 +19,8 @@ import (
 
 func TestMonitorManagerTopology(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()

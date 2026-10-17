@@ -12,11 +12,8 @@ import (
 // experimental stopped-process quiescence helper participates in this parent.
 // The wrapper runs real peer_remove to completion before losing one response.
 func TestMultiClusterCephFSPeerRemovalDrain(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testCephFSPeerRemovalDrain(t, host) })
 	}
 }
