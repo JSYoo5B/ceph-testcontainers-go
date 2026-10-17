@@ -489,31 +489,90 @@ class CompletionTests(unittest.TestCase):
         for invalid in (before, after):
             self.assertFalse(engine.completion(invalid, ["TestNewFeature"], "example/internal/integration")["passed"])
 
-    def test_strict_completion_uses_existing_checker_and_original_case(self):
-        for checker, case in (("quiescence", "process-quiescence-bridge-peer"),
-                              ("recovery", "process-recovery-host-directory"), ("receivers", "host")):
+    def test_strict_completion_composes_the_checker_case_from_mode_and_kind(self):
+        for checker, kind, network, case in (("quiescence", "peer", "bridge", "process-quiescence-bridge-peer"),
+                                             ("recovery", "directory", "host", "process-recovery-host-directory"),
+                                             ("receivers", "", "host", "host")):
             module = __import__(engine.CHECKERS[checker][0])
             with patch.object(module, "validate", return_value={"passed": True}) as validator:
-                self.assertTrue(engine.strict_completion("native log", {"checker": checker, "case": case})["passed"])
+                self.assertTrue(engine.strict_completion("native log", {"checker": checker, "case": kind}, network)["passed"])
             validator.assert_called_once_with("native log", case)
 
-    def test_isolated_scope_ownership_covers_exact_original_aggregate(self):
-        checker = "receivers"
+    def checker_files(self, checker, kinds, networks=("host", "bridge")):
+        """An all-tag aggregate and one CI file per receipt kind, each in
+        every network mode, as the split checker batches are declared."""
         parent = engine.CHECKERS[checker][1]
         aggregate = fixture(tests=(parent,), category="recovery", batch="unused")
         aggregate["constraint"] = combine("or", tag("all"), combine("and", tag("ci_recovery"), negate(tag("ci_batch"))))
         aggregate["tags"] = ["all", "ci_recovery", "ci_batch"]
         aggregate["metadata"] = []
-        profiles = []
-        for network in ("bridge", "host"):
-            file = fixture(path="internal/integration/" + network + "_test.go", tests=(parent,), category="recovery", batch=network)
-            file["constraint"] = combine("and", tag("ci"), tag("ci_recovery"), tag("ci_batch"), tag("ci_batch_" + network))
+        files = []
+        for kind in kinds:
+            batch = checker + ("_" + kind if kind else "")
+            file = fixture(path="internal/integration/" + batch + "_test.go", tests=(parent,), category="recovery", batch=batch)
+            file["constraint"] = combine("and", tag("ci"), tag("ci_recovery"), tag("ci_batch"), tag("ci_batch_" + batch))
             file["tags"].remove("all")
-            file["metadata"] = ["timeout=20m job-timeout=35 checker=receivers case=" + network]
-            profiles.append(file)
-        self.assertEqual(engine.discover([aggregate, *profiles])["required_executions"], 2)
-        with self.assertRaisesRegex(ValueError, "do not cover"):
-            engine.discover([aggregate, profiles[0]])
+            file["metadata"] = ["timeout=20m job-timeout=35 checker=" + checker + (" case=" + kind if kind else "")]
+            file["networks"], file["network_tests"] = list(networks), [parent]
+            files.append(file)
+        return aggregate, files
+
+    def test_checker_batches_cover_the_aggregate_in_every_network_mode(self):
+        for checker, kinds in (("receivers", ("",)), ("quiescence", ("peer", "directory")),
+                               ("recovery", ("peer", "directory"))):
+            with self.subTest(checker=checker):
+                aggregate, files = self.checker_files(checker, kinds)
+                plan = engine.discover([aggregate, *files])
+                self.assertEqual(plan["required_executions"], len(kinds))
+                self.assertEqual([profile["networks"] for profile in plan["include"]], [["host", "bridge"]] * len(kinds))
+                # A kind's file that leaves out a mode, or a missing kind,
+                # leaves a case of the checker unowned.
+                _, narrow = self.checker_files(checker, kinds, ("host",))
+                with self.assertRaisesRegex(ValueError, "do not cover"):
+                    engine.discover([aggregate, *narrow])
+                if len(files) > 1:
+                    with self.assertRaisesRegex(ValueError, "do not cover"):
+                        engine.discover([aggregate, files[0]])
+
+    def test_checker_metadata_names_a_kind_and_the_file_names_its_modes(self):
+        for checker, case in (("receivers", "host"), ("quiescence", ""), ("quiescence", "bridge-peer"),
+                              ("recovery", "process-recovery-host-peer"), ("quiescence", "other")):
+            aggregate, files = self.checker_files(checker, ("peer",) if checker != "receivers" else ("",))
+            files[0]["metadata"] = ["timeout=20m job-timeout=35 checker=" + checker + (" case=" + case if case else "")]
+            with self.subTest(checker=checker, case=case), self.assertRaisesRegex(ValueError, "checker case"):
+                engine.discover([aggregate, *files])
+        aggregate, files = self.checker_files("receivers", ("",))
+        del files[0]["networks"]
+        with self.assertRaisesRegex(ValueError, "networkModes"):
+            engine.discover([aggregate, *files])
+
+    def test_checker_run_selects_one_mode_and_checks_its_case(self):
+        aggregate, files = self.checker_files("quiescence", ("peer", "directory"))
+        plan = engine.discover([aggregate, *files])
+        parent = engine.CHECKERS["quiescence"][1]
+        module = __import__(engine.CHECKERS["quiescence"][0])
+        unset = {key: value for key, value in os.environ.items() if key != "CEPH_TEST_NETWORK"}
+        for environment, network, tests in ((unset, "host", ""), ({**unset, "CEPH_TEST_NETWORK": "bridge"}, "bridge", parent)):
+            process = unittest.mock.Mock()
+            process.stdout = io.StringIO(native_log((parent,)))
+            process.wait.return_value = 0
+            with self.subTest(network=network), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "go.mod").write_text("module example\n")
+                with patch.object(engine, "compile_inventory", return_value=[parent]), \
+                        patch.object(engine.subprocess, "Popen", return_value=process) as popen, \
+                        patch.object(module, "validate", return_value={"passed": True}) as validator, \
+                        patch("sys.stdout", new=io.StringIO()), patch.dict(os.environ, environment, clear=True):
+                    report = engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
+                                                root / "output", root, tests=tests)
+                self.assertTrue(report["passed"])
+                self.assertEqual(report["network"], network)
+                self.assertEqual(popen.call_args.kwargs["env"]["CEPH_TEST_NETWORK"], network)
+                validator.assert_called_once_with(unittest.mock.ANY, "process-quiescence-" + network + "-peer")
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"CEPH_TEST_NETWORK": "none"}), \
+                self.assertRaisesRegex(ValueError, "network mode"):
+            engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
+                               Path(temporary) / "output", Path(temporary))
 
     def test_native_command_has_tags_and_never_test_name_selector(self):
         file = fixture()

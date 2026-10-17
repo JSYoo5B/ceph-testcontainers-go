@@ -474,7 +474,9 @@ in Ceph periodic, so a test must pass on both releases (see
   checks out the code, sets up Go, compiles, pulls images and verifies
   cleanup.
 - `checker=` and `case=` are reserved for the strict completion checkers of the
-  CephFS process quiescence/recovery and RBD receiver leaf batches.
+  CephFS process quiescence/recovery and RBD receiver batches. `case=` names
+  the receipt kind (`peer` or `directory`); the receiver batch has none. The
+  network mode comes from the test's `networkModes`.
 - `image-roles=` lists the published role images that a Ceph batch needs,
   such as `image-roles=control` for a batch that only starts control-image
   containers. Roles are `control`, `osd`, `rgw` and `mds`, comma-separated,

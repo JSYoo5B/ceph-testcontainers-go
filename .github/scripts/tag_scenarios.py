@@ -109,10 +109,10 @@ def parse_metadata(file):
     else:
         if checker not in CHECKERS:
             raise ValueError(file["path"] + ": unknown completion checker")
-        module = importlib.import_module(CHECKERS[checker][0])
-        accepted = module.NETWORKS if checker == "receivers" else module.CASES
-        if case not in accepted:
-            raise ValueError(file["path"] + ": unknown completion checker case")
+        if not file.get("networks"):
+            raise ValueError(file["path"] + ": a checker test takes its network mode from networkModes")
+        for network in file["networks"]:
+            checker_case(checker, network, case, file["path"])
         if file["tests"] != [CHECKERS[checker][1]]:
             raise ValueError(file["path"] + ": isolated checker must own only its original parent")
     image_roles = None
@@ -125,6 +125,23 @@ def parse_metadata(file):
         image_roles = ",".join(role for role in IMAGE_ROLES if role in roles)
     return {"timeout": values["timeout"], "job_timeout": job_timeout,
             "checker": checker, "case": case, "image_roles": image_roles}
+
+
+def checker_case(checker, network, kind, path="checker"):
+    """The checker's case for one network mode and receipt kind of a batch.
+
+    A checker validates one mode's run of its parent. The batch declares the
+    receipt kind, if the checker has kinds, and its test declares the modes,
+    so each matrix entry of the batch checks its own mode.
+    """
+    module = importlib.import_module(CHECKERS[checker][0])
+    if checker == "receivers":
+        case = network if not kind else ""
+    else:
+        case = "process-" + checker + "-" + network + "-" + kind
+    if case not in (module.NETWORKS if checker == "receivers" else module.CASES):
+        raise ValueError(path + ": unknown completion checker case")
+    return case
 
 
 def resolve_image_roles(profile):
@@ -250,7 +267,8 @@ def discover(catalog):
         checker = next(iter(checker_names))
         module = importlib.import_module(CHECKERS[checker][0])
         expected = set(module.NETWORKS if checker == "receivers" else module.CASES)
-        actual = [assignment[2]["case"] for assignment in assignments]
+        actual = [checker_case(checker, network, assignment[2]["case"])
+                  for assignment in assignments for network in assignment[1]["networks"]]
         if len(actual) != len(set(actual)) or set(actual) != expected:
             raise ValueError("isolated checker scopes do not cover the original aggregate: " + str(key))
     if set(aggregates) - set(owners):
@@ -511,11 +529,11 @@ def completion(log, expected, package):
             "observed_passes": passes, "failed_tests": failures, "skipped_tests": skips}
 
 
-def strict_completion(log, profile):
+def strict_completion(log, profile, network):
     if profile["checker"] == "none":
         return None
     module = importlib.import_module(CHECKERS[profile["checker"]][0])
-    return module.validate(log, profile["case"])
+    return module.validate(log, checker_case(profile["checker"], network, profile["case"]))
 
 
 def failure_kind(exit_code, report, strict):
@@ -543,8 +561,15 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         raise ValueError("requested runtime profile is empty")
     selection = tests.split(",") if tests else []
     if selection and (len(selection) != len(set(selection)) or not set(selection) <= set(profile.get("network_tests", ()))
-                      or profile["checker"] != "none"):
+                      or (profile["checker"] != "none" and set(selection) != set(expected))):
         raise ValueError("a test selection names only tests of the profile that declare network modes")
+    # A checker validates one mode's run, so its batch runs in one mode: the
+    # matrix entry's, or the default when no entry selected one.
+    network = os.environ.get("CEPH_TEST_NETWORK", "")
+    if profile["checker"] != "none":
+        network = network or profile["networks"][0]
+        if network not in profile["networks"]:
+            raise ValueError("CEPH_TEST_NETWORK names a network mode that the checker batch does not declare")
     # Reject malformed source metadata and empty profile before allocating an
     # artifact or starting Go. Reconfirm the actual compiled inventory next.
     actual = compile_inventory(profile["package"], profile["tags"], root)
@@ -560,6 +585,8 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     with (directory / "native.log").open("w", encoding="utf-8") as log:
         environment = go_environment()
         environment.pop("CEPH_TEST_RBD_CLIENT_IMAGE", None)
+        if network:
+            environment["CEPH_TEST_NETWORK"] = network
         child = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, encoding="utf-8", errors="replace",
                                  env=environment)
@@ -575,9 +602,9 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         raise ValueError("source go.mod has no module declaration")
     native_package = module[1] + ("/" + profile["package"][2:] if profile["package"] != "." else "")
     completed = completion(text, expected, native_package)
-    strict = strict_completion(text, profile)
+    strict = strict_completion(text, profile, network)
     result = {"schema": SCHEMA, "profile": profile, "command": command,
-              "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
+              "network": network, "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,
               "go_environment": dict(GO_EXECUTION_ENV),
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
               "classification": failure_kind(exit_code, completed, strict),
