@@ -602,12 +602,34 @@ class BoundedPreparationTests(unittest.TestCase):
         return report, files, pid
 
     def assertGone(self, pid):
+        """pid no longer runs. A killed grandchild of the go command stays a
+        zombie until init reaps it, and kill(pid, 0) still succeeds on a
+        zombie, so its state decides."""
         self.assertIsNotNone(pid)
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return
-        self.fail("a process of the timed-out go command is still running")
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if state and not state.startswith("Z"):
+            self.fail("a process of the timed-out go command is still running (state " + state + ")")
+
+    def test_a_zombie_counts_as_gone(self):
+        # An exited child that nobody waited for yet is a zombie.
+        child = subprocess.Popen(["true"])
+        try:
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            os.kill(child.pid, 0)
+            self.assertGone(child.pid)
+        finally:
+            child.wait()
+        running = subprocess.Popen(["sleep", "30"])
+        try:
+            with self.assertRaisesRegex(AssertionError, "still running"):
+                self.assertGone(running.pid)
+        finally:
+            running.kill()
+            running.wait()
 
     def compile(self, directory):
         return engine.compile_profile(engine.discover([fixture()]), "short", "basic", None, directory)
