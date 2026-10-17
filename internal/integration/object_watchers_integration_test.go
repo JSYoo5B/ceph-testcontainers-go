@@ -122,11 +122,14 @@ func TestPausedObjectWatcher(t *testing.T) {
 			if errno, seconds := notify(); errno != 110 || seconds < 4 {
 				t.Fatalf("notify to a frozen watcher errno = %d after %.1fs, want 110 after its 5s timeout", errno, seconds)
 			}
-			for len(watchers()) != 0 {
-				if time.Since(paused) > 2*time.Minute {
-					t.Fatal("the OSD kept the frozen watcher's watch")
-				}
-				time.Sleep(2 * time.Second)
+			// Each listing is bounded within the two minutes after the pause.
+			listed, err := observe(ctx, 2*time.Minute-time.Since(paused), 30*time.Second, 2*time.Second,
+				func(probeCtx context.Context) ([]ceph.ObjectWatcher, bool, error) {
+					list, err := cluster.ObjectWatchers(probeCtx, pool, "", object)
+					return list, err == nil && len(list) == 0, err
+				})
+			if err != nil {
+				t.Fatalf("the OSD kept the frozen watcher's watch: %v; last listing %+v", err, listed.Value)
 			}
 			expired := time.Since(paused)
 			t.Logf("OBJECT_WATCHER watch expired after %s", expired.Round(time.Second))
