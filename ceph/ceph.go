@@ -309,6 +309,18 @@ func (c *Container) ControlImage() string {
 	return c.settings.controlImage
 }
 
+// runContainer is testcontainers.Run returning only a real handle. Run
+// returns a nil *DockerContainer when it fails before a container exists;
+// as a testcontainers.Container that would be a non-nil interface holding a
+// nil pointer, whose Logs and GetContainerID dereference it.
+func runContainer(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	created, err := testcontainers.Run(ctx, image, opts...)
+	if created == nil {
+		return nil, err
+	}
+	return created, err
+}
+
 func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 	attempts := 1
 	if c.settings.hostNetwork {
@@ -358,7 +370,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}
-		mon, err := testcontainers.Run(ctx, image, append(moduleOpts, c.ownedLabel())...)
+		mon, err := runContainer(ctx, image, append(moduleOpts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -839,13 +851,8 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.WithClient()}, opts...)
 	moduleOpts = append(moduleOpts, c.ownedLabel())
-	created, err := testcontainers.Run(ctx, image, moduleOpts...)
-	// Run returns a nil *DockerContainer when it fails before a container
-	// exists. Returned as testcontainers.Container, that would be a non-nil
-	// interface holding a nil pointer, so only a real handle is returned.
-	var ctr testcontainers.Container
-	if created != nil {
-		ctr = created
+	ctr, err := runContainer(ctx, image, moduleOpts...)
+	if ctr != nil {
 		c.services[name] = ctr
 	}
 	if err != nil {
