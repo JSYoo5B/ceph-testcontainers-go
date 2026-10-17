@@ -233,6 +233,11 @@ Requirements that apply to every role:
 | `mds` | `ceph-mds` | MDS shared libraries |
 | `all` | Union of the four roles | Union of the four roles |
 
+`rbd.TemporaryImmutableObjectCache` also needs `ceph-immutable-object-cache`
+and the librbd `parent_cache` plugin in the client container it runs in. The
+official image has both; an image without them is refused with
+`ceph.ErrImageCapability` for that function only.
+
 Python and the CLIs of other roles are not required in `osd`, `rgw` or `mds`
 images. Do not rely on `ceph` or `python3` inside OSD, MDS or RGW containers
 when you run your own commands; use the control container instead (see
