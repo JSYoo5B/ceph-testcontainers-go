@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +79,22 @@ func TestImmutableObjectCache(t *testing.T) {
 	if got := checksum("child", lease.ClientOptions()); got != want {
 		t.Fatalf("the clone read through the cache has checksum %s, the parent %s", got, want)
 	}
-	first, err := lease.Status(ctx)
-	if err != nil || !first.Running || first.CachedObjects != 16 || first.CachedBytes != 64<<20 || first.RADOSReads != 16 {
+	// The daemon reads each parent object from RADOS once and writes it into
+	// its cache directory after the client's read returned, so the last
+	// files can appear a moment later. More than 16 RADOS reads fails at
+	// once.
+	cached, err := observe(ctx, 30*time.Second, 10*time.Second, 200*time.Millisecond, func(probeCtx context.Context) (rbd.ImmutableObjectCacheStatus, bool, error) {
+		status, err := lease.Status(probeCtx)
+		switch {
+		case err != nil:
+			return status, false, err
+		case !status.Running || status.RADOSReads > 16 || status.CachedObjects > 16:
+			return status, false, fmt.Errorf("unexpected cache state %+v", status)
+		}
+		return status, status.CachedObjects == 16 && status.CachedBytes == 64<<20 && status.RADOSReads == 16, nil
+	})
+	first := cached.Value
+	if err != nil {
 		t.Fatalf("status after the first read: %+v, %v", first, err)
 	}
 	if got := checksum("child", lease.ClientOptions()); got != want {
@@ -104,6 +119,6 @@ func TestImmutableObjectCache(t *testing.T) {
 	}
 	execCommand(t, ctx, client, "sh", "-c", `test ! -e "$0" && test ! -e "$1" && test -z "$(ls /var/run/ceph | grep immutable-object-cache)"`,
 		lease.Config.Path, lease.Config.Socket)
-	t.Logf("pid %d cached %d objects (%d bytes) with %d RADOS reads; a second read added none; after Stop the client read the same data from RADOS; Restore removed the socket and cache",
-		first.PID, first.CachedObjects, first.CachedBytes, first.RADOSReads)
+	t.Logf("pid %d cached %d objects (%d bytes) with %d RADOS reads, %d status reads after the first client read; a second read added none; after Stop the client read the same data from RADOS; Restore removed the socket and cache",
+		first.PID, first.CachedObjects, first.CachedBytes, first.RADOSReads, cached.Attempts)
 }
