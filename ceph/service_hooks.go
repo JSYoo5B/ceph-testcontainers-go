@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -44,6 +45,12 @@ func (serviceHooks) Closed(c *Container) bool { return c.closed }
 // Command runs a CLI command in ctr and returns its standard output.
 func (serviceHooks) Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	return command(ctx, ctr, args...)
+}
+
+// RunOwnedShell runs argv in an admitted container of c under the shell
+// supervisor and tracks it until it is known to have ended.
+func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+	return c.runOwnedShell(ctx, target, label, limit, argv...)
 }
 
 // ServiceBootstrap returns the Run option that records a service bootstrap.
