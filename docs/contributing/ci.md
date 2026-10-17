@@ -29,7 +29,7 @@ A pull request runs, on Tentacle 20.2.4 role images and in each batch's
 default [network mode](#network-modes):
 - Code checks, for every change;
 - Docker checks and every `short` batch, which includes the netem helper's
-  `network_delay` batch;
+  `network_delay` and `osd_peer_path` batches;
 - of the `topology`, `multicluster` and `recovery` categories, only the
   batches whose own test files (the files that declare the batch's tests) the
   pull request changes. A change to a shared helper or a public package
