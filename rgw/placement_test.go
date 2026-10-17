@@ -41,6 +41,7 @@ func (f *rgwPlacementTestContainer) Stop(context.Context, *time.Duration) error 
 }
 func (f *rgwPlacementTestContainer) Start(context.Context) error { f.startCount++; return nil }
 func (f *rgwPlacementTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args = rgwAdminArgv(args)
 	f.calls = append(f.calls, slices.Clone(args))
 	var result any
 	var raw string

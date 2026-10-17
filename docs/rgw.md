@@ -380,9 +380,16 @@ zonegroup, zone, Ceph configuration and admin keyring, and returns standard
 output. It is the escape hatch for anything without a typed method.
 
 - `--format json` is always added, so output is JSON.
-- Arguments are passed individually without a shell. Arguments must not contain
-  control characters, so pass JSON documents (policies, trust documents) as
-  single-line strings.
+- Arguments are passed individually and never parsed by a shell. Arguments
+  must not contain control characters, so pass JSON documents (policies,
+  trust documents) as single-line strings.
+- The call is bounded by `ctx` and by the cluster's startup timeout. Inside
+  the gateway container, a small `sh` wrapper stops `radosgw-admin` (SIGTERM,
+  then SIGKILL after 5 s) 15 s before that bound, so no `radosgw-admin`
+  outlives its call. Such a stop is `ceph.ErrNativeFailure` with
+  "radosgw-admin still ran after Ns and was stopped". An error that says the
+  command "did not return within its bound" means the exec itself did not
+  return, and `radosgw-admin` may still run.
 - Arguments that would change the scope or connection are rejected:
   `--rgw-realm`, `--rgw-zonegroup`, `--rgw-zone` and their ID and name
   variants, `--conf`/`-c`, `--keyring`/`-k`, `--name`/`-n`, `--id`,

@@ -72,6 +72,12 @@ change the API.
 
 ### Fixed
 
+- `rgw.Gateway.Admin` stops a `radosgw-admin` that is still running shortly
+  before the call's bound, and reports it as `ceph.ErrNativeFailure`, instead
+  of leaving the process running in the gateway container after the call
+  returned `context deadline exceeded`
+  ([#113](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/113)).
+
 - `ceph.Run` returns the engine's error when it cannot create the MON
   container, for example for an image that cannot be pulled, instead of
   panicking while it read the logs of a container that did not exist. Adding

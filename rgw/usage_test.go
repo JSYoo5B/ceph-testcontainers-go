@@ -105,6 +105,7 @@ type rgwUsageAccountContainer struct {
 }
 
 func (f *rgwUsageAccountContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args = rgwAdminArgv(args)
 	if args[0] == "radosgw-admin" && slices.Contains(args, "user") && slices.Contains(args, "stats") {
 		f.calls = append(f.calls, slices.Clone(args))
 		if f.onStats != nil {

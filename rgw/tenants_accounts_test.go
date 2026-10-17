@@ -30,6 +30,7 @@ type rgwAccountTestContainer struct {
 }
 
 func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args = rgwAdminArgv(args)
 	if args[0] != "radosgw-admin" {
 		return f.rgwPlacementTestContainer.Exec(ctx, args, opts...)
 	}

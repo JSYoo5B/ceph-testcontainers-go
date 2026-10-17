@@ -25,6 +25,7 @@ type rgwUserPlacementTestContainer struct {
 }
 
 func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args = rgwAdminArgv(args)
 	flag := func(name string) string {
 		for i, arg := range args {
 			if arg == name && i+1 < len(args) {

@@ -33,6 +33,7 @@ type rgwAdminTestContainer struct {
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
 
 func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	args = rgwAdminArgv(args)
 	ctr.calls = append(ctr.calls, slices.Clone(args))
 	if len(ctr.responses) == 0 {
 		return 1, nil, errors.New("unexpected radosgw-admin invocation")
@@ -292,4 +293,13 @@ func TestRGWNativePolicyDecoderAcceptsModernAndLegacyLimits(t *testing.T) {
 			t.Fatalf("invalid user configuration accepted: %v", config)
 		}
 	}
+}
+
+// rgwAdminArgv strips the deadline wrapper of a radosgw-admin call, so a fake
+// sees the radosgw-admin command line.
+func rgwAdminArgv(args []string) []string {
+	if len(args) > 5 && args[0] == "sh" && args[2] == rgwAdminDeadlineScript {
+		return args[5:]
+	}
+	return args
 }

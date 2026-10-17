@@ -200,14 +200,84 @@ func (g *Gateway) adminCommand(ctx context.Context, args ...string) ([]byte, err
 	if g.config.Realm != "" {
 		argv = append(argv, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0")
 	}
-	data, err := servicehook.Command(ctx, g.Container, append(argv, args...)...)
+	limit := rgwAdminLimit(ctx)
+	data, err := servicehook.Command(ctx, g.Container, append([]string{"sh", "-c", rgwAdminDeadlineScript, "sh", strconv.Itoa(limit)}, append(argv, args...)...)...)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("radosgw-admin: %w", ctx.Err())
+			// The exec did not return; radosgw-admin may still run.
+			return nil, fmt.Errorf("radosgw-admin: the command did not return within its bound: %w", ctx.Err())
+		}
+		var failure *ceph.NativeFailure
+		if errors.As(err, &failure) && strings.Contains(failure.Reason, rgwAdminDeadlineMarker) {
+			return nil, &ceph.OperationError{Kind: ceph.ErrNativeFailure, Op: "radosgw-admin",
+				Err: fmt.Errorf("radosgw-admin still ran after %ds and was stopped", limit)}
 		}
 		return nil, clusterutil.Quiet(errors.New("radosgw-admin command failed; native output is redacted"), err)
 	}
 	return data, nil
+}
+
+// rgwAdminDeadlineMarker starts the line that rgwAdminDeadlineScript writes
+// before it stops radosgw-admin.
+const rgwAdminDeadlineMarker = "tc-rgw-admin-deadline"
+
+// rgwAdminDeadlineScript runs a command and stops it, with SIGTERM and then
+// SIGKILL, once it has run for limit seconds, so that no radosgw-admin outlives its call and a timeout tells a
+// radosgw-admin that ran too long from an exec that never returned. A limit
+// of 0 never stops it. radosgw-admin is one process, so the command's own
+// PID is stopped: dash, the sh of the Debian and Ubuntu images, gives a
+// background job no process group of its own without a terminal. The
+// watcher holds none of the exec's output streams,
+// so a command that ends returns at once; it leaves a flag file that the
+// script turns into the marker line. It uses only sh, sleep, kill and rm,
+// which every role image has, and /tmp, which every role image keeps
+// writable.
+const rgwAdminDeadlineScript = `limit=$1
+shift
+flag=/tmp/` + rgwAdminDeadlineMarker + `.$$
+rm -f "$flag"
+"$@" &
+pid=$!
+if [ "$limit" -gt 0 ]; then
+    (
+        waited=0
+        while [ "$waited" -lt "$limit" ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            : > "$flag"
+            kill -TERM "$pid" 2>/dev/null
+            sleep 5
+            kill -KILL "$pid" 2>/dev/null
+        fi
+    ) </dev/null >/dev/null 2>&1 &
+    watcher=$!
+fi
+wait "$pid"
+code=$?
+[ -n "${watcher:-}" ] && kill "$watcher" 2>/dev/null
+if [ -e "$flag" ]; then
+    rm -f "$flag"
+    echo "` + rgwAdminDeadlineMarker + `: still running after ${limit}s, stopped" >&2
+fi
+exit "$code"
+`
+
+// rgwAdminLimit is how long radosgw-admin may run: the call's bound less a
+// margin for stopping it and returning, so the stop happens inside the bound.
+// Without a bound, it is 0.
+func rgwAdminLimit(ctx context.Context) int {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	remaining := time.Until(deadline)
+	limit := remaining - 15*time.Second
+	if limit < remaining/2 {
+		limit = remaining / 2
+	}
+	return max(1, int(limit/time.Second))
 }
 
 var rgwCapTypePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
