@@ -460,6 +460,82 @@ class TagPlannerTests(unittest.TestCase):
                               ["--category", "topology", "--verify", "--changed-files", str(changed)]):
                 self.assertEqual(engine.main(["plan", *arguments]), 1)
 
+    def test_declaration_selection_is_recorded_without_changing_the_matrix(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="topology", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/two_test.go", category="topology", batch="two", tests=("TestTwo",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "topology")
+        one, two = (profile["id"] for profile in plan["include"])
+        calls = []
+
+        def tool(batches, base, root):
+            calls.append((batches, base))
+            return {"merge_base": "abc", "fallback": [], "changed_declarations": ["x_test.go: func helper"],
+                    "batches": [{"id": one, "selected": True, "reason": "func TestOne reaches func helper"},
+                                {"id": two, "selected": False, "reason": "none of 1 roots reaches a changed declaration"}]}
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch.object(engine, "run_batchselect", side_effect=tool), patch("sys.stdout", new=io.StringIO()):
+            output, github = Path(temporary) / "plan.json", Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--select-declarations", "origin/main",
+                                          "--output", str(output), "--github-output", str(github)]), 0)
+            report = json.loads(output.read_text())
+            matrix = json.loads(github_outputs(github)["matrix"])
+        self.assertEqual(calls, [([{"id": profile["id"], "tags": profile["tags"]} for profile in plan["include"]],
+                                  "origin/main")])
+        # Advisory: both batches still run.
+        self.assertEqual([entry["batch"] for entry in matrix["include"]], ["one", "two"])
+        self.assertEqual([profile["batch"] for profile in report["include"]], ["one", "two"])
+        selection = report["declaration_selection"]
+        self.assertTrue(selection["advisory"])
+        self.assertEqual(selection["selected"], {one: "func TestOne reaches func helper"})
+        self.assertEqual(selection["excluded"], {two: "none of 1 roots reaches a changed declaration"})
+        self.assertEqual((selection["selected_profiles"], selection["total_profiles"]), (1, 2))
+        self.assertEqual(selection["changed_declarations"], ["x_test.go: func helper"])
+        with patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(engine.main(["plan", "--optional", "--batch", "x", "--select-declarations", "main"]), 1)
+
+    def test_declaration_selection_falls_back_to_every_profile(self):
+        catalog = [fixture(path="internal/integration/one_test.go", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/dockerbridge/bridge_test.go", category="environment", batch="bridge",
+                           tests=("TestBridge",))]
+        profiles = engine.discover(catalog)["include"]
+        ids = {profile["batch"]: profile["id"] for profile in profiles}
+        for runner, reason in (
+                (lambda batches, base, root: {"fallback": ["go.mod changed"], "batches": [
+                    {"id": ids["one"], "selected": True, "reason": "every batch: go.mod changed"}]},
+                 "every batch: go.mod changed"),
+                (lambda batches, base, root: {"fallback": [], "batches": []}, "analysis unavailable"),
+                (lambda batches, base, root: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
+                (lambda batches, base, root: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
+                 "analysis unavailable")):
+            with self.subTest(reason=reason):
+                selection = engine.declaration_selection(profiles, "main", runner=runner)
+                self.assertEqual(selection["excluded"], {})
+                self.assertTrue(selection["selected"][ids["one"]].startswith(reason))
+                self.assertIn("is not analysed", selection["selected"][ids["bridge"]])
+                self.assertEqual(selection["selected_profiles"], 2)
+        # Nothing to analyse: the tool is not run.
+        selection = engine.declaration_selection([profile for profile in profiles if profile["batch"] == "bridge"],
+                                                 "main", runner=lambda *arguments: self.fail("ran the tool"))
+        self.assertEqual(list(selection["selected"].values()), ["package ./internal/dockerbridge is not analysed"])
+
+    def test_run_batchselect_passes_the_head_and_fails_closed(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='{"batches": []}', stderr="")
+        with patch.object(engine.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(engine.run_batchselect([{"id": "x", "tags": "a"}], "base", "/tree", head="abc"),
+                             {"batches": []})
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], ["go", "run", "-mod=readonly", "./tools/batchselect"])
+            self.assertEqual(command[command.index("-head") + 1], "abc")
+            self.assertEqual(command[command.index("-repo") + 1], str(engine.ROOT))
+            self.assertEqual(command[command.index("-package") + 1], "./internal/integration")
+            engine.run_batchselect([], "base", tool="/bin/tool")
+            self.assertEqual(run.call_args.args[0][0], "/bin/tool")
+            self.assertNotIn("-head", run.call_args.args[0])
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="boom")
+        with patch.object(engine.subprocess, "run", return_value=failed), self.assertRaisesRegex(ValueError, "boom"):
+            engine.run_batchselect([], "base")
+
     def test_plan_github_matrix_excludes_code_and_records_source_metadata(self):
         catalog = [fixture(), fixture(path="internal/integration/code_test.go", category="code", batch="pure", tests=("TestCode",))]
         with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), patch("sys.stdout", new=io.StringIO()):

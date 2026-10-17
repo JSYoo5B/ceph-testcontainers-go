@@ -16,6 +16,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -46,6 +47,10 @@ GO_EXECUTION_ENV = {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "o
 # binary run directly (run --binary).
 GO_TEST, TEST_BINARY = "go-test", "test-binary"
 EXECUTIONS = (GO_TEST, TEST_BINARY)
+# The package whose batches tools/batchselect analyses, and its bound: the
+# first run compiles the export data of every dependency.
+DECLARATION_PACKAGE = "./internal/integration"
+DECLARATION_TIMEOUT_SECONDS = 600
 # The files that a build reads from each package that go list -deps -test
 # reports. The test variants of the profile's package already carry its test
 # files; the Test* fields of a dependency are not part of this build.
@@ -386,6 +391,61 @@ def changed_paths(base, root=ROOT):
     if result.returncode:
         raise ValueError("git diff since " + base + " failed: " + result.stderr.strip())
     return result.stdout.splitlines()
+
+
+def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
+    """Run tools/batchselect for batches of the declaration package.
+
+    Without head, root is a checkout and the diff ends at its working tree;
+    with head, root holds that commit's exported tree and ROOT is the
+    repository."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "batches.json"
+        path.write_text(json.dumps(batches))
+        command = [str(tool)] if tool else ["go", "run", "-mod=readonly", "./tools/batchselect"]
+        command += ["-root", str(root), "-base", base, "-package", DECLARATION_PACKAGE, "-batches", str(path)]
+        if head:
+            command += ["-head", head, "-repo", str(ROOT)]
+        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
+                                timeout=DECLARATION_TIMEOUT_SECONDS, env=go_environment())
+    if result.returncode:
+        raise ValueError("declaration selection failed: " + result.stderr.strip())
+    return json.loads(result.stdout)
+
+
+def declaration_selection(profiles, base, root=ROOT, runner=None):
+    """Advisory selection of profiles by declaration reachability (#116).
+
+    It is recorded beside the plan and never changes which profiles run.
+    A profile outside the analysed package, or any failure of the analysis,
+    counts as selected with the reason."""
+    runner = runner or run_batchselect
+    analysed = [profile for profile in profiles if profile["package"] == DECLARATION_PACKAGE]
+    record = {"advisory": True, "base": base, "package": DECLARATION_PACKAGE, "fallback": [],
+              "changed_declarations": [], "selected": {}, "excluded": {}}
+    batches, unavailable = {}, ""
+    if analysed:
+        try:
+            result = runner([{"id": profile["id"], "tags": profile["tags"]} for profile in analysed], base, root)
+            batches = {batch["id"]: batch for batch in result.get("batches", [])}
+            if sorted(batches) != sorted(profile["id"] for profile in analysed):
+                raise ValueError("declaration selection does not report every analysed profile")
+            record.update(merge_base=result.get("merge_base", ""), fallback=result.get("fallback", []),
+                          changed_declarations=result.get("changed_declarations", []))
+        except (ValueError, OSError, subprocess.SubprocessError, KeyError, TypeError) as error:
+            batches, unavailable = {}, str(error)
+            record["error"] = unavailable
+    for profile in profiles:
+        if profile["package"] != DECLARATION_PACKAGE:
+            record["selected"][profile["id"]] = "package " + profile["package"] + " is not analysed"
+        elif unavailable:
+            record["selected"][profile["id"]] = "analysis unavailable: " + unavailable
+        elif batches[profile["id"]]["selected"]:
+            record["selected"][profile["id"]] = batches[profile["id"]]["reason"]
+        else:
+            record["excluded"][profile["id"]] = batches[profile["id"]]["reason"]
+    record["selected_profiles"], record["total_profiles"] = len(record["selected"]), len(profiles)
+    return record
 
 
 def load_catalog(root=ROOT):
@@ -849,6 +909,9 @@ def main(argv=None):
                                  help="File with one changed path per line; keep only batches whose test files changed")
             command.add_argument("--changed-since", default="",
                                  help="Base commit; keep only batches whose test files changed since it. Empty keeps all")
+            command.add_argument("--select-declarations", default="", metavar="BASE",
+                                 help="Base commit; record which batches reach a declaration changed since it. "
+                                      "Advisory: the matrix is unchanged")
             command.add_argument("--networks", choices=NETWORK_SCOPES, default="default",
                                  help="Run each batch in its default network mode, or in every mode it declares")
     for name in ("compile", "run"):
@@ -884,6 +947,8 @@ def main(argv=None):
                 raise ValueError("plan takes --changed-files or --changed-since, not both")
             if (args.changed_files is not None or args.changed_since) and (args.optional or args.verify or args.category is None):
                 raise ValueError("plan --changed-files requires --category and excludes --optional and --verify")
+            if args.select_declarations and args.optional:
+                raise ValueError("plan --select-declarations excludes --optional")
         if args.command == "modules":
             report = prepare_modules(args.directory)
             print(json.dumps(report, indent=2, sort_keys=True))
@@ -915,6 +980,10 @@ def main(argv=None):
                     report = select_optional_plan(discover_optional(catalog), args.batch)
                 else:
                     report = select_required_plan(plan, args.category)
+                    if args.select_declarations:
+                        # Advisory only: recorded, the matrix stays as is.
+                        report["declaration_selection"] = declaration_selection(report["include"],
+                                                                                args.select_declarations)
                     if args.changed_files is not None:
                         report = select_changed_plan(report, args.changed_files.read_text().splitlines())
                     elif args.changed_since:
