@@ -190,13 +190,18 @@ from the environment cannot change what runs. The runner passes only build
 tags and the batch timeout to `go test`: no `-run`, no `-short`, no name
 filters. To move a test between batches, change its build constraint.
 
-Multi-cluster CephFS process-quiescence and process-recovery scenarios, and
-RBD receiver readiness, are split into one leaf batch per network mode and
-case. Those batches declare `checker=` and `case=` in `//ci:`, and after the
-run a dedicated checker (`check_scenario_quiescence.py`,
-`check_scenario_recovery.py`, `check_scenario_receivers.py`) verifies the
-leaf-specific evidence in the log. Locally, the `all` build still runs the
-original parent test with every leaf.
+Multi-cluster CephFS process-quiescence and process-recovery scenarios are
+split into one batch per receipt kind (`peer`, `directory`), and RBD receiver
+readiness has a batch of its own. Those batches declare `checker=`, and the
+kind as `case=`, in `//ci:`; their test declares its network modes like any
+other (see [Network modes](#network-modes)). A checker validates one mode's
+run, so the runner runs such a batch in the matrix entry's mode, or in its
+default mode when no entry selects one, and after the run a dedicated checker
+(`check_scenario_quiescence.py`, `check_scenario_recovery.py`,
+`check_scenario_receivers.py`) verifies that mode's leaf-specific evidence in
+the log. The planner rejects these batches unless together they cover every
+mode and kind of the checker. Locally, the `all` build still runs the original
+parent test with every leaf.
 
 ## How a batch runs
 

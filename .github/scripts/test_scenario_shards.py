@@ -370,7 +370,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         for checker, (module_name, _) in engine.CHECKERS.items():
             module = __import__(module_name)
             expected = set(module.NETWORKS if checker == "receivers" else module.CASES)
-            actual = [profile["case"] for profile in profiles if profile["checker"] == checker]
+            actual = [engine.checker_case(checker, network, profile["case"])
+                      for profile in profiles if profile["checker"] == checker for network in profile["networks"]]
             self.assertEqual(set(actual), expected)
             self.assertEqual(len(actual), len(set(actual)))
 
