@@ -11,11 +11,8 @@ import (
 // A cold filesystem retains its original storage and first-start ownership;
 // the ordinary sibling is an independent live client/identity control.
 func TestNoInitialMDSTopology(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		if !t.Run(network, func(t *testing.T) { testNoInitialMDS(t, host) }) {
 			return
 		}

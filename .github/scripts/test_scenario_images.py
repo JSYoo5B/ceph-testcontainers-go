@@ -406,7 +406,10 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(self.optional_entry, "rgw_image"), "${{ inputs.rgw_image }}")
         self.assertEqual(scalar(run, "CEPH_TEST_RGW_IMAGE"),
                          "${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}")
-        self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE"])
+        # Role images come from the preparation step; the run step sets only
+        # the RGW override and the matrix entry's network mode.
+        self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE", "CEPH_TEST_NETWORK"])
+        self.assertEqual(scalar(run, "CEPH_TEST_NETWORK"), "${{ matrix.network }}")
         self.assertNotIn("run:", self.optional_entry)
         self.assertNotIn("quay.io/", block)
         for selected_rgw in ("", "registry.example/ceph-rgw@sha256:" + "a" * 64):

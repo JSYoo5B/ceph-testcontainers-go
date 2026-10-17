@@ -54,11 +54,8 @@ print(json.dumps({"errno": errno, "seconds": seconds}))
 // Until then every notify to the object waits for it and times out; once the
 // OSD drops the watch, notifies complete at once.
 func TestPausedObjectWatcher(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()

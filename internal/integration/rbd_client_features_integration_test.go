@@ -23,11 +23,8 @@ import (
 // Client operations remain in the consumer's native librbd. The public module
 // supplies only the replicated pool, isolated namespace, credentials and network.
 func TestRBDClientFeatures(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		t.Run(network, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 			defer cancel()

@@ -12,11 +12,8 @@ import (
 // followed by explicit storage provisioning. A separate partial first Add uses
 // a generated-host/root collision to exercise existing registered ownership.
 func TestNoInitialOSDTopology(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		if !t.Run(name, func(t *testing.T) {
 			if !t.Run("bootstrap-and-storage", func(t *testing.T) { testNoInitialOSDStorage(t, host) }) {
 				return

@@ -136,6 +136,15 @@ CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=90m \
 Optional tests also need their opt-in tag, for example
 `-tags=all,native_regression`.
 
+A test that declares network modes runs in each of them. `CEPH_TEST_NETWORK`
+selects one, as a CI matrix entry does (see
+[Network modes](ci.md#network-modes)):
+
+```sh
+CEPH_TEST_NETWORK=bridge CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=30m \
+  -run '^TestOSDFullRatios$' ./internal/integration
+```
+
 ### The whole suite
 
 ```sh

@@ -11,11 +11,8 @@ import (
 // Exercise actual public admission, native removal and original live sessions.
 // A real successful remove loses one reply; no private identity seam is used.
 func TestMultiClusterCephFSDirectoryRemovalRelease(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testCephFSDirectoryRemovalRelease(t, host) })
 	}
 }

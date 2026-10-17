@@ -19,11 +19,8 @@ import (
 // Pin readback is complemented by native MDS subtree-authority queries. The
 // client writes and rereads actual files in fresh Linux libcephfs sessions.
 func TestCephFSPins(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		t.Run(network, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 16*time.Minute)
 			defer cancel()

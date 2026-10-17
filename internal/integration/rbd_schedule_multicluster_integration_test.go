@@ -19,11 +19,8 @@ import (
 // This recipe exercises public cluster CLI composition instead of duplicating
 // the client/admin SDK's schedule methods. No manual checkpoint follows writes.
 func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()

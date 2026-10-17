@@ -15,14 +15,17 @@ import (
 // an AES256K service cipher, and on the host network with AES256K.
 func TestMessengerClientProfileCRC(t *testing.T) {
 	parallelWhenEnabled(t)
-	t.Run("bridge", func(t *testing.T) {
-		testMessengerClientCRCProfile(t, ceph.AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K,
-			MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	})
-	t.Run("host", func(t *testing.T) {
-		testMessengerClientCRCProfile(t, ceph.AuthConfig{KeyType: ceph.CipherAES256K,
-			MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}, ceph.WithHostNetwork())
-	})
+	for _, mode := range networkModes(t, "host", "bridge") {
+		t.Run(mode.Name, func(t *testing.T) {
+			if mode.Host {
+				testMessengerClientCRCProfile(t, ceph.AuthConfig{KeyType: ceph.CipherAES256K,
+					MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second}, ceph.WithHostNetwork())
+				return
+			}
+			testMessengerClientCRCProfile(t, ceph.AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K,
+				MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
+		})
+	}
 }
 
 // The secure profile on IPv6 and on IPv4-mapped IPv6 addresses.

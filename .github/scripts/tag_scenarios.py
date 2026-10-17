@@ -32,6 +32,9 @@ IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
 # Published role images, in the order of their CEPH_TEST_* variables. A Ceph
 # batch that declares no image-roles gets all four.
 IMAGE_ROLES = ("control", "osd", "rgw", "mds")
+# Docker network modes a test can declare with networkModes(t, ...).
+NETWORKS = ("host", "bridge")
+NETWORK_SCOPES = ("default", "all")
 DURATION = re.compile(r"([1-9][0-9]*)(ms|s|m|h)\Z")
 SCHEMA = "ceph-tag-scenarios/v1"
 # Bounds of the two preparation phases. Module preparation is the only phase
@@ -169,12 +172,14 @@ def native_tags(category, batch, capabilities=LEGACY_TAGS):
 def discover(catalog):
     """Build profiles and reject missing/overlapping ownership before execution."""
     profiles, owners, aggregates, all_parents = {}, defaultdict(list), {}, defaultdict(set)
-    sources = defaultdict(set)
+    sources, networks, network_tests = defaultdict(set), defaultdict(set), defaultdict(set)
     capabilities = legacy_tags(catalog)
     for file in catalog:
         if not file["tests"]:
             if file.get("metadata"):
                 raise ValueError(file["path"] + ": helper file must not declare CI test metadata")
+            if file.get("networks"):
+                raise ValueError(file["path"] + ": networkModes belongs in the file that declares the test")
             continue
         tags = set(file["tags"])
         package = package_path(file)
@@ -225,6 +230,9 @@ def discover(catalog):
             raise ValueError(file["path"] + ": one batch has conflicting budgets, checker scope or image roles")
         profiles[key] = profile
         sources[key].add(file["path"])
+        if file.get("networks"):
+            networks[key].add(tuple(file["networks"]))
+            network_tests[key].update(file.get("network_tests", ()))
         for test in file["tests"]:
             owners[(package, test)].append((key, file, metadata))
             if evaluate(file["constraint"], {"all"}):
@@ -268,6 +276,8 @@ def discover(catalog):
         # The files that declare the batch's tests; shared helpers are not
         # listed because every batch compiles them.
         profiles[key]["sources"] = sorted(sources[key])
+        profiles[key]["networks"] = batch_networks(key, networks[key])
+        profiles[key]["network_tests"] = sorted(network_tests[key])
     for profile in result:
         profile["profile"] = profile["category"] + "/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
@@ -278,6 +288,42 @@ def discover(catalog):
             "required_parents": {package: sorted(names) for package, names in sorted(all_parents.items())},
             "required_executions": sum(len(assignments) for assignments in owners.values()),
             "required_profiles": len(result), "capability_tags": list(capabilities)}
+
+
+def batch_networks(key, declared):
+    """The network modes of a batch: its test files that declare modes
+    declare the same ones, so the batch has one default mode."""
+    if not declared:
+        return []
+    if len(declared) != 1:
+        raise ValueError("/".join(key[:2]) + ": the test files of a batch declare different networkModes")
+    modes = list(next(iter(declared)))
+    if any(mode not in NETWORKS for mode in modes) or len(modes) != len(set(modes)):
+        raise ValueError("/".join(key[:2]) + ": networkModes takes distinct modes of " + ", ".join(NETWORKS))
+    return modes
+
+
+def network_matrix(profiles, scope):
+    """One matrix entry per profile and network mode of the scope.
+
+    The default scope runs a batch's first mode, as pull requests do; the all
+    scope also runs the others. The default entry runs the whole batch and
+    keeps the profile's name and ID, so its job and artifact names do not
+    change; another mode's entry runs only the tests that declare modes.
+    """
+    if scope not in NETWORK_SCOPES:
+        raise ValueError("unknown network scope")
+    entries = []
+    for profile in profiles:
+        modes = profile.get("networks") or [""]
+        for index, mode in enumerate(modes if scope == "all" else modes[:1]):
+            entry = {**profile, "network": mode, "name": profile["batch"], "tests": ""}
+            if index:
+                entry["name"] += " (" + mode + ")"
+                entry["id"] = profile["id"] + "-" + mode
+                entry["tests"] = ",".join(profile["network_tests"])
+            entries.append(entry)
+    return entries
 
 
 def select_required_plan(plan, category=None):
@@ -484,7 +530,9 @@ def failure_kind(exit_code, report, strict):
     return "incomplete-native-proof"
 
 
-def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
+def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests=""):
+    """Run one profile, or with tests only those of its tests that declare
+    network modes, as a matrix entry of a non-default mode does."""
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
     if len(matches) != 1:
@@ -493,6 +541,10 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
     expected = selected_tests(catalog, profile["package"], profile["tags"])
     if not expected:
         raise ValueError("requested runtime profile is empty")
+    selection = tests.split(",") if tests else []
+    if selection and (len(selection) != len(set(selection)) or not set(selection) <= set(profile.get("network_tests", ()))
+                      or profile["checker"] != "none"):
+        raise ValueError("a test selection names only tests of the profile that declare network modes")
     # Reject malformed source metadata and empty profile before allocating an
     # artifact or starting Go. Reconfirm the actual compiled inventory next.
     actual = compile_inventory(profile["package"], profile["tags"], root)
@@ -501,6 +553,9 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT):
     directory.mkdir(parents=True, exist_ok=False)
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-count=1", "-v",
                "-timeout=" + profile["timeout"], profile["package"]]
+    if selection:
+        expected = sorted(selection)
+        command[-1:-1] = ["-run", "^(" + "|".join(expected) + ")$"]
     started = time.time()
     with (directory / "native.log").open("w", encoding="utf-8") as log:
         environment = go_environment()
@@ -607,6 +662,8 @@ def main(argv=None):
                                  help="File with one changed path per line; keep only batches whose test files changed")
             command.add_argument("--changed-since", default="",
                                  help="Base commit; keep only batches whose test files changed since it. Empty keeps all")
+            command.add_argument("--networks", choices=NETWORK_SCOPES, default="default",
+                                 help="Run each batch in its default network mode, or in every mode it declares")
     for name in ("compile", "run"):
         command = commands.add_parser(name)
         command.add_argument("--category", required=True,
@@ -614,6 +671,9 @@ def main(argv=None):
         command.add_argument("--batch", required=True)
         command.add_argument("--package")
         command.add_argument("--directory", required=True, type=Path)
+        if name == "run":
+            command.add_argument("--tests", default="",
+                                 help="Comma-separated tests that declare network modes; run only these")
     command = commands.add_parser("code")
     command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("modules")
@@ -640,7 +700,7 @@ def main(argv=None):
         catalog = load_catalog()
         plan = discover(catalog)
         if args.command == "run":
-            report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory)
+            report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory, tests=args.tests)
         elif args.command == "compile":
             selected_plan = discover_optional(catalog) if args.category == "optional" else plan
             report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory)
@@ -676,7 +736,8 @@ def main(argv=None):
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
             if args.command == "plan" and args.github_output is not None:
-                runtime = [profile for profile in report["include"] if profile["category"] != "code"]
+                runtime = network_matrix([profile for profile in report["include"] if profile["category"] != "code"],
+                                         args.networks)
                 with args.github_output.open("a", encoding="utf-8") as output:
                     output.write("matrix=" + json.dumps({"include": runtime}, separators=(",", ":")) + "\n")
                     output.write("count=" + str(len(runtime)) + "\n")

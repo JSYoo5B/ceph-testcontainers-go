@@ -25,7 +25,8 @@ failed check name therefore tells you the kind of failure before you open it.
 
 ### Pull request scope
 
-A pull request runs, on Tentacle 20.2.4 role images:
+A pull request runs, on Tentacle 20.2.4 role images and in each batch's
+default [network mode](#network-modes):
 - Code checks, for every change;
 - Docker checks and every `short` batch, which includes the netem helper's
   `network_delay` batch;
@@ -232,6 +233,42 @@ it. With `SCENARIO_IMAGE_LAYOUT=roles`, `integrationImages` fails for a role
 that was not prepared instead of using the control image. The image
 compatibility matrix always uses all four roles.
 
+### Network modes
+
+A test that can run its cluster on the Docker bridge and on the host network
+declares the modes with `networkModes`, its default first, and runs one
+subtest per returned mode:
+
+```go
+for _, mode := range networkModes(t, "host", "bridge") {
+	host, name := mode.Host, mode.Name
+	t.Run(name, func(t *testing.T) { /* ceph.WithHostNetwork() when host */ })
+}
+```
+
+The default is `host` for the RADOS products (`ceph`, `rbd`, `cephfs`): their
+clients reach every daemon at the address that the maps advertise, which a
+native client in the test process can use only on the host network. It is
+`bridge` for RGW, whose one HTTP endpoint a port mapping serves. A test that
+uses a bridge-only feature (`WithSeparateClusterNetwork`, `InterruptNetwork`,
+`TemporaryNetworkDelay`) declares `bridge` alone, or keeps that part in the
+bridge subtest.
+
+The planner reads the modes from the call (`tools/tagcatalog`), so they are
+string literals, the call is in the `Test` function itself, and the test files
+of one batch that declare modes declare the same ones. A matrix entry sets
+`CEPH_TEST_NETWORK`:
+
+| Scope | Entries of a batch |
+| --- | --- |
+| Pull requests and `main` pushes (`networks: default`) | One, in the batch's default mode, with all its tests |
+| Ceph periodic and the release matrix (`networks: all`) | The default entry, and one more per other mode that runs only the tests that declare modes (`--tests`); its job is named `<batch> (<mode>)` |
+
+A test without `networkModes` runs once, in the default entry, and ignores
+`CEPH_TEST_NETWORK`. A mode that a test does not declare is never scheduled;
+run locally with such a `CEPH_TEST_NETWORK`, the test skips. Unset, a test runs
+in every mode it declares.
+
 ### How a batch passes
 
 The native phase succeeds only if all of these hold in `native.log`:
@@ -276,7 +313,8 @@ image preparation and the cleanup check, so total runner time grows.
 ## Periodic runs
 
 `Ceph periodic` runs every runtime category on Tentacle 20.2.4 and Squid
-19.2.5 role images, on `main`. Its schedule fires every 3 hours, and its
+19.2.5 role images, on `main`, in every [network mode](#network-modes) that a
+batch's tests declare. Its schedule fires every 3 hours, and its
 `Gate` job (`.github/scripts/periodic_gate.py`) decides whether the matrix
 runs:
 

@@ -251,7 +251,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
         self.assertEqual(scalar(runtime, "fail-fast"), "false")
         self.assertEqual(scalar(plan.split("    steps:", 1)[0], "name"), "Plan")
-        self.assertEqual(scalar(runtime.split("    steps:", 1)[0], "name"), "${{ matrix.batch }}")
+        # The batch name, with the network mode for a batch's non-default mode.
+        self.assertEqual(scalar(runtime.split("    steps:", 1)[0], "name"), "${{ matrix.name }}")
+        self.assertIn("--networks", command)
+        self.assertEqual(command[command.index("--networks") + 1], "$SCENARIO_NETWORKS")
         self.assertNotRegex(runtime, r"(?m)^        (?:case|group|include|exclude):")
 
     def test_runtime_compiles_before_environment_then_runs_and_cleans_on_same_runner(self):

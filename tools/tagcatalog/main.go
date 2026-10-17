@@ -14,7 +14,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -32,7 +34,12 @@ type file struct {
 	Tags       []string    `json:"tags"`
 	Tests      []string    `json:"tests"`
 	Metadata   []string    `json:"metadata"`
-	SHA256     string      `json:"sha256"`
+	// Networks are the literal arguments of the file's networkModes calls,
+	// the Docker network modes its tests run in, default first; NetworkTests
+	// are the tests that call it.
+	Networks     []string `json:"networks"`
+	NetworkTests []string `json:"network_tests"`
+	SHA256       string   `json:"sha256"`
 }
 
 func convert(e constraint.Expr, tags map[string]bool) *expression {
@@ -75,7 +82,7 @@ func inspect(root, path string) (file, error) {
 		return file{}, err
 	}
 	hash := sha256.Sum256(data)
-	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, SHA256: hex.EncodeToString(hash[:])}
+	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SHA256: hex.EncodeToString(hash[:])}
 	for _, group := range f.Comments {
 		if group.Pos() > f.Package {
 			continue
@@ -137,7 +144,70 @@ func inspect(root, path string) (file, error) {
 		out.Tests = append(out.Tests, fn.Name.Name)
 	}
 	sort.Strings(out.Tests)
+	networks, tests, err := readNetworkModes(f)
+	if err != nil {
+		return file{}, fmt.Errorf("%s: %w", rel, err)
+	}
+	out.Networks, out.NetworkTests = networks, tests
 	return out, nil
+}
+
+// readNetworkModes reads the modes of every networkModes(t, "mode", ...) call
+// in a file and the tests that make one. The planner builds the network axis
+// from them, so the modes are string literals, the same in every call of the
+// file, and each call is in a test function itself, which runs only the
+// declared modes; a test without one runs once, in a batch's default mode.
+func readNetworkModes(f *ast.File) ([]string, []string, error) {
+	modes, tests := []string{}, []string{}
+	seen := false
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		calls := 0
+		var failure error
+		ast.Inspect(decl, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || failure != nil {
+				return failure == nil
+			}
+			if name, ok := call.Fun.(*ast.Ident); !ok || name.Name != "networkModes" {
+				return true
+			}
+			calls++
+			var args []string
+			for _, arg := range call.Args[min(1, len(call.Args)):] {
+				literal, ok := arg.(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					failure = fmt.Errorf("networkModes takes string literal modes")
+					return false
+				}
+				value, err := strconv.Unquote(literal.Value)
+				if err != nil {
+					failure = err
+					return false
+				}
+				args = append(args, value)
+			}
+			if len(args) == 0 {
+				failure = fmt.Errorf("networkModes needs at least one mode")
+			} else if seen && !slices.Equal(args, modes) {
+				failure = fmt.Errorf("networkModes calls of one file declare different modes")
+			}
+			modes, seen = args, true
+			return true
+		})
+		if failure != nil {
+			return nil, nil, failure
+		}
+		if calls == 0 {
+			continue
+		}
+		if !ok || fn.Recv != nil || !testName(fn.Name.Name) {
+			return nil, nil, fmt.Errorf("networkModes is called outside a test function")
+		}
+		tests = append(tests, fn.Name.Name)
+	}
+	sort.Strings(tests)
+	return modes, tests, nil
 }
 
 func main() {

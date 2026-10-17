@@ -14,11 +14,8 @@ import (
 // client to verify the fixture. Raw commands must be fenced from outside users.
 // After a raw retention/recreation, old typed handles never adopt a new UUID.
 func TestCephFSRetainedSnapshotAndMetadataRecipe(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testCephFSRetainedSnapshotAndMetadataRecipe(t, host) })
 	}
 }

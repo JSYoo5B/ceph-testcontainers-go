@@ -8,11 +8,17 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
-	t.Run("bridge", func(t *testing.T) { testCephFSRetainedClient(t, cephFSRestart) })
-	t.Run("host", func(t *testing.T) { testCephFSRetainedClient(t, cephFSRestart, ceph.WithHostNetwork()) })
+	for _, mode := range networkModes(t, "host", "bridge") {
+		var opts []testcontainers.ContainerCustomizer
+		if mode.Host {
+			opts = append(opts, ceph.WithHostNetwork())
+		}
+		t.Run(mode.Name, func(t *testing.T) { testCephFSRetainedClient(t, cephFSRestart, opts...) })
+	}
 }
 
 // A standby or the journal follower takes rank 0 while the client keeps its

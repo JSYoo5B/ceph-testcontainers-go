@@ -22,11 +22,8 @@ import (
 // snapshot enrollment with distinct namespace mappings. Each comparison opens
 // a new librados/librbd session against the destination FSID, with no image cache.
 func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		t.Run(network, func(t *testing.T) {
 			var opts []testcontainers.ContainerCustomizer
 			if host {

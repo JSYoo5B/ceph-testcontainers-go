@@ -25,11 +25,8 @@ import (
 // receiver runs in the WithClient container so it shares the cluster network,
 // or the host network in host mode.
 func TestRGWBucketNotifications(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "bridge", "host") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			testRGWBucketNotifications(t, host)
 		})

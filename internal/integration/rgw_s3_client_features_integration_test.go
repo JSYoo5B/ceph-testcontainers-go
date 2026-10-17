@@ -10,11 +10,8 @@ import (
 
 func TestRGWS3ClientFeatures(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "bridge", "host") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testRGWS3ClientFeatures(t, host) })
 	}
 }

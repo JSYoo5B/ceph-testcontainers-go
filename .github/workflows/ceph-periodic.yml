@@ -48,6 +48,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: environment
       check_name: Ceph periodic environment
   tentacle-short:
@@ -56,6 +57,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: short
       check_name: Ceph periodic tentacle short
       release: '20.2.4'
@@ -65,6 +67,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: topology
       check_name: Ceph periodic tentacle topology
       release: '20.2.4'
@@ -74,6 +77,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: multicluster
       check_name: Ceph periodic tentacle multicluster
       release: '20.2.4'
@@ -83,6 +87,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: recovery
       check_name: Ceph periodic tentacle recovery
       release: '20.2.4'
@@ -92,6 +97,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: short
       check_name: Ceph periodic squid short
       release: '19.2.5'
@@ -101,6 +107,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: topology
       check_name: Ceph periodic squid topology
       release: '19.2.5'
@@ -110,6 +117,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: multicluster
       check_name: Ceph periodic squid multicluster
       release: '19.2.5'
@@ -119,6 +127,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
+      networks: all
       category: recovery
       check_name: Ceph periodic squid recovery
       release: '19.2.5'
