@@ -13,14 +13,14 @@ on:
     branches: [main]
     paths-ignore:
       - 'docs/**'
-      - '**/*.md'
+      - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths-ignore:
       - 'docs/**'
-      - '**/*.md'
+      - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   workflow_dispatch:

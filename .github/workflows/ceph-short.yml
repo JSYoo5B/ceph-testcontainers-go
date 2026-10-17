@@ -7,13 +7,13 @@ on:
     branches: [main]
     paths-ignore:
       - 'docs/**'
-      - '**/*.md'
+      - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   pull_request:
     paths-ignore:
       - 'docs/**'
-      - '**/*.md'
+      - '*.md'
       - 'LICENSE'
       - 'internal/integration/goceph/**'
   workflow_dispatch:
