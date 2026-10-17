@@ -588,6 +588,17 @@ It keeps strict assertions; there is no expected-failure mode. Run it with the
 
 - Read the `-v` output from the top. Tests log the phase they reached, and
   failed tests that use the shared cluster helpers print daemon log tails.
+- `TestMultiClusterMonitorBootstrapRefresh` replaces every MON as named
+  phases (`add d`, `remove a`, ...). A passing replacement logs one
+  `MON_REPLACEMENT_RECEIPT` line per cluster: each phase's operation and
+  quorum time, the monmap epoch the MONs report afterwards, and which MON held
+  each warm MGR, OSD and MDS session (`mgr.x:a>b>d`, with `-` when no MON
+  listed one). A failed phase is not retried. Before the test fails it logs a
+  `MON_REPLACEMENT_BUNDLE` JSON line: the phase and partial MON handle, every
+  MON's own `mon_status`, the warm daemons' MON sessions, status and MON client
+  settings, and `CollectDiagnostics` output. The warm MGRs and OSDs run with
+  `debug_monc 10/10` during the replacement, so their log tails include MON
+  client hunting; the exact prior level is restored afterwards.
 - A Go timeout prints `panic: test timed out after ...` followed by the tests
   that were still running and for how long. Raise the `-timeout` or the Make
   timeout variable only after checking that the test was making progress.
