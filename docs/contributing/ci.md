@@ -212,10 +212,10 @@ steps in order:
 | --- | --- | --- |
 | Restore the Go module cache | n/a | Restores the module cache that the `Plan` job saved. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. Nothing runs. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves the batch's roles of `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`, with `SCENARIO_IMAGE_LAYOUT=roles` and `SCENARIO_IMAGE_ROLES`. A batch gets all four roles unless its `//ci:` line declares `image-roles` (see [Image roles](#image-roles)). Pulls only, never builds. |
-| Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) runs the batch and applies the pass rules below. |
+| Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
 | Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
@@ -224,6 +224,38 @@ steps in order:
 The job environment sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
 and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.26.x`. Tentacle workflows use
 role images for release 20.2.4; the Squid workflows pass release 19.2.5.
+
+### Reusing the compiled binary
+
+`run --binary <compile-directory>` (and `optional --binary`) executes the
+binary that `compile` wrote to that directory. Before it creates the native
+directory or starts anything, it checks the receipt in `compile-report.json`
+and stops with an error when any check fails:
+
+- the receipt exists, records a successful compile and belongs to the same
+  profile and tags;
+- the binary's sha256 matches the receipt;
+- the build key computed now matches the recorded one, so a different Go
+  version or platform is rejected;
+- every source file that the build reads still has its recorded sha256;
+- the recorded inventory, and the binary's own `-test.list=.` output, equal
+  the tests that the source files declare for the batch.
+
+A failed check never falls back to `go test`. The binary runs in the package
+directory, as `go test` runs it, with `-test.v -test.count=1` and
+`-test.timeout` from the batch's `//ci:` line. A network-mode entry adds
+`-test.run` for the tests of `--tests`. The environment is the same as with
+`go test`. `native/report.json` records `execution: test-binary` and the
+binary's sha256 and build key.
+
+Without `--binary`, `run` builds and runs the batch with `go test`, which
+suits local use. To follow the CI path locally, compile first and pass the
+compile directory:
+
+```sh
+python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --directory /tmp/c/compile
+python3 .github/scripts/tag_scenarios.py run --category code --batch pure --directory /tmp/c/run --binary /tmp/c/compile
+```
 
 ### Image roles
 
@@ -284,7 +316,10 @@ The native phase succeeds only if all of these hold in `native.log`:
 - every started subtest has exactly one `--- PASS`;
 - there is no `--- FAIL`, `FAIL` or `panic:` line;
 - there is no `--- SKIP` line at any level;
-- exactly one `PASS` line and one `ok <package>` line follow all test results;
+- exactly one `PASS` line follows all test results. After `go test`, exactly
+  one `ok <package>` line follows it. A test binary run with `--binary` prints
+  no `ok` line, so its `PASS` must be the last line of the log, and its exit
+  status and verified receipt bind the run to the package;
 - for checker batches, the strict checker also passes.
 
 A skipped test therefore fails CI. Tests must assert release differences
@@ -417,7 +452,7 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output and outcome); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
@@ -430,8 +465,8 @@ workflow and is run locally with `tag_scenarios.py optional`.
   - `passed`;
   - `native-test-failure`: a test failed, panicked or hit the Go timeout;
   - `incomplete-skipped-fixture`: a test or subtest was skipped;
-  - `process-or-build-failure`: `go test` exited non-zero without any failure
-    line, for example because the process was killed;
+  - `process-or-build-failure`: `go test` or the test binary exited non-zero
+    without any failure line, for example because the process was killed;
   - `incomplete-native-proof`: the exit status was 0 but a pass rule failed,
     such as a missing `--- PASS` or a failed strict checker.
 - `completion.errors`: which pass rules failed.
@@ -444,8 +479,10 @@ workflow and is run locally with `tag_scenarios.py optional`.
 `timed_out`, `timeout_seconds` and `elapsed_seconds`. Their `classification`
 is `prepared` or `compiled`, `modules-failure` or `compile-failure` for a
 nonzero exit, and `modules-timeout` or `compile-timeout` when the bound
-expired. A timed-out command is killed with its whole process group, its
-`exit_code` is `null`, and its log keeps the output written until then.
+expired. `compile-receipt-failure` means the build succeeded but its receipt
+could not be recorded, so the binary is not reused. A timed-out command is
+killed with its whole process group, its `exit_code` is `null`, and its log
+keeps the output written until then.
 
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.

@@ -613,14 +613,235 @@ class CompletionTests(unittest.TestCase):
         plan = engine.discover([fixture()])
         outcome = {"exit_code": 0, "timed_out": False, "timeout_seconds": 180, "elapsed_seconds": 1.0}
         with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(engine, "bounded_go", return_value=(outcome, "")) as compiler:
+                patch.object(engine, "bounded_go", return_value=(outcome, "")) as compiler, \
+                patch.object(engine, "binary_receipt", return_value={"binary": "receipt"}) as receipt:
             report = engine.compile_profile(plan, "short", "basic", None, Path(temporary) / "compile")
         self.assertTrue(report["passed"])
+        self.assertEqual(report["binary"], {"binary": "receipt"})
+        self.assertEqual(receipt.call_args.args[1].name, "internal-integration.test")
         self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
         command = compiler.call_args.args[0]
         self.assertIn("-c", command)
         self.assertFalse(any(argument.startswith(("-run", "-short", "-list")) for argument in command))
         self.assertEqual(compiler.call_args.args[2], engine.COMPILE_TIMEOUT_SECONDS)
+
+
+def binary_log(names=("TestNewFeature",)):
+    """What the compiled test binary itself prints: PASS, but no ok line."""
+    return native_log(names).rsplit("ok\t", 1)[0]
+
+
+BUILD_KEY = {"package": "./internal/integration", "go_version": "go1.26.2", "goos": "linux", "goarch": "amd64"}
+SOURCES = {"go.mod": "b" * 64, "internal/integration/new_test.go": "c" * 64}
+
+
+class BinaryReuseTests(unittest.TestCase):
+    """run --binary executes the compile phase's binary, or nothing at all."""
+
+    def compiled(self, root, profile, tests, changes, content=b"binary"):
+        """A compile directory as compile_profile leaves it."""
+        directory = root / "compile"
+        directory.mkdir()
+        name = engine.binary_name(profile["package"])
+        (directory / name).write_bytes(content)
+        receipt = {"binary": name, "sha256": engine.hashlib.sha256(content).hexdigest(),
+                   "build_key": dict(BUILD_KEY), "sources": dict(SOURCES), "tests": sorted(tests)}
+        report = {"schema": engine.SCHEMA, "profile": profile, "passed": True, "classification": "compiled",
+                  "binary": receipt}
+        for key, value in changes.items():
+            (receipt if key in receipt else report)[key] = value
+        (directory / "compile-report.json").write_text(json.dumps(report))
+        return directory
+
+    def run_binary(self, file, compile_changes=None, tests="", log=None, inventory=None, key=None, sources=None,
+                   content=b"binary", environment=None):
+        plan = engine.discover([file])
+        commands = []
+
+        class Child:
+            def __init__(self, command, **kwargs):
+                commands.append((command, kwargs))
+                self.stdout = io.StringIO(log if log is not None else binary_log(tuple(file["tests"])))
+
+            def wait(self):
+                return 0
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            directory = self.compiled(root, plan["include"][0], file["tests"], compile_changes or {})
+            if content != b"binary":
+                (directory / engine.binary_name(plan["include"][0]["package"])).write_bytes(content)
+            output = root / "native"
+            with patch.object(engine, "build_key", return_value=dict(key or BUILD_KEY)), \
+                    patch.object(engine, "build_sources", return_value=dict(sources or SOURCES)), \
+                    patch.object(engine, "binary_inventory",
+                                 return_value=sorted(inventory if inventory is not None else file["tests"])), \
+                    patch.object(engine, "compile_inventory") as compiled, \
+                    patch.object(engine.subprocess, "Popen", Child), patch("sys.stdout", new=io.StringIO()), \
+                    patch.dict(os.environ, environment or {}):
+                try:
+                    report = engine.run_profile([file], plan, "short", "basic", None, output, root, tests=tests,
+                                                binary=directory)
+                finally:
+                    self.created = output.exists()
+            compiled.assert_not_called()
+        return report, commands, directory, root, self.created
+
+    def test_reuse_runs_the_verified_binary_from_its_package_directory(self):
+        report, commands, directory, root, _ = self.run_binary(
+            fixture(), environment={"CEPH_TEST_RBD_CLIENT_IMAGE": "override", "GOFLAGS": "-overlay=/x.json"})
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["execution"], "test-binary")
+        self.assertEqual(report["completion"]["execution"], "test-binary")
+        command, options = commands[0]
+        binary = str((directory / "internal-integration.test").resolve())
+        self.assertEqual(command, [binary, "-test.v", "-test.count=1", "-test.timeout=20m"])
+        self.assertEqual(options["cwd"], root / "internal/integration")
+        self.assertNotIn("CEPH_TEST_RBD_CLIENT_IMAGE", options["env"])
+        for name, value in engine.GO_EXECUTION_ENV.items():
+            self.assertEqual(options["env"][name], value)
+        self.assertEqual(report["binary"]["sha256"], engine.hashlib.sha256(b"binary").hexdigest())
+        self.assertEqual(report["binary"]["build_key"], BUILD_KEY)
+
+    def test_network_entry_selects_its_tests_with_the_binary_run_flag(self):
+        file = fixture(tests=("TestNetworked", "TestModeless"))
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNetworked"]
+        report, commands, *_ = self.run_binary(file, tests="TestNetworked", log=binary_log(("TestNetworked",)),
+                                               environment={"CEPH_TEST_NETWORK": "bridge"})
+        self.assertTrue(report["passed"], report)
+        command, options = commands[0]
+        self.assertEqual(command[1:], ["-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=^(TestNetworked)$"])
+        self.assertEqual(options["env"]["CEPH_TEST_NETWORK"], "bridge")
+
+    def test_each_receipt_mismatch_fails_closed_before_running_anything(self):
+        cases = {
+            "sha256 differs": {"content": b"tampered"},
+            "build key differs": {"key": BUILD_KEY | {"goarch": "arm64"}},
+            "different source files": {"sources": SOURCES | {"go.mod": "d" * 64}},
+            "recorded inventory differs": {"compile_changes": {"tests": ["TestOther"]}},
+            "own inventory differs": {"inventory": ["TestNewFeature", "TestInjected"]},
+            "another profile": {"compile_changes": {"profile": {"id": "short-other-00000000", "tags": "x"}}},
+            "did not record a successful binary": {"compile_changes": {"passed": False}},
+            "unexpected binary": {"compile_changes": {"binary": "../other.test"}},
+        }
+        for message, arguments in cases.items():
+            with self.subTest(message), patch.object(engine.subprocess, "Popen") as popen:
+                with self.assertRaisesRegex(ValueError, message):
+                    self.run_binary(fixture(), **arguments)
+                popen.assert_not_called()
+                self.assertFalse(self.created)
+
+    def test_missing_receipt_fails_closed_and_never_recompiles(self):
+        file = fixture()
+        plan = engine.discover([file])
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine.subprocess, "Popen") as popen, \
+                patch.object(engine, "compile_inventory") as compiled, \
+                patch.object(engine, "bounded_go") as compiler:
+            output = Path(temporary) / "native"
+            with self.assertRaisesRegex(ValueError, "receipt is missing"):
+                engine.run_profile([file], plan, "short", "basic", None, output, Path(temporary),
+                                   binary=Path(temporary) / "compile")
+            self.assertFalse(output.exists())
+        popen.assert_not_called()
+        compiled.assert_not_called()
+        compiler.assert_not_called()
+
+    def test_failed_verification_allocates_no_native_directory(self):
+        with self.assertRaises(ValueError):
+            self.run_binary(fixture(), content=b"tampered")
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch.object(engine.subprocess, "Popen") as popen, patch("sys.stderr", new=io.StringIO()):
+            output = Path(temporary) / "native"
+            code = engine.main(["run", "--category", "short", "--batch", "basic", "--directory", str(output),
+                                "--binary", str(Path(temporary) / "compile")])
+            self.assertEqual(code, 1)
+            self.assertFalse(output.exists())
+        popen.assert_not_called()
+
+    def test_without_binary_run_and_optional_keep_go_test(self):
+        optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
+        optional["constraint"] = combine("and", optional["constraint"], tag("native_regression"))
+        optional["tags"].append("native_regression")
+        for arguments, binary in ((["run", "--category", "short", "--batch", "basic"], None),
+                                  (["run", "--category", "short", "--batch", "basic", "--binary", "c"], Path("c")),
+                                  (["optional", "--batch", "native_rgw_translation"], None),
+                                  (["optional", "--batch", "native_rgw_translation", "--binary", "c"], Path("c"))):
+            with self.subTest(arguments=arguments), \
+                    patch.object(engine, "load_catalog", return_value=[fixture(), optional]), \
+                    patch.object(engine, "run_profile", return_value={"passed": True}) as runner, \
+                    patch("sys.stdout", new=io.StringIO()):
+                self.assertEqual(engine.main([*arguments, "--directory", "native"]), 0)
+                self.assertEqual(runner.call_args.kwargs["binary"], binary)
+        process = unittest.mock.Mock()
+        process.stdout = io.StringIO(native_log())
+        process.wait.return_value = 0
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "compile_inventory", return_value=["TestNewFeature"]), \
+                patch.object(engine, "verified_binary") as verifier, \
+                patch.object(engine.subprocess, "Popen", return_value=process) as popen, \
+                patch("sys.stdout", new=io.StringIO()):
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            report = engine.run_profile([fixture()], engine.discover([fixture()]), "short", "basic", None,
+                                        root / "native", root)
+        verifier.assert_not_called()
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["execution"], "go-test")
+        self.assertNotIn("binary", report)
+        self.assertEqual(popen.call_args.args[0][:2], ["go", "test"])
+        self.assertEqual(popen.call_args.kwargs["cwd"], root)
+
+    def test_binary_completion_needs_its_own_final_pass_and_exit_status(self):
+        package = "example/internal/integration"
+        good = binary_log(("TestNewFeature", "TestNewFeature/leaf"))
+        self.assertTrue(engine.completion(good, ["TestNewFeature"], package, "test-binary")["passed"])
+        # Each format rejects the other's package completion.
+        self.assertFalse(engine.completion(good, ["TestNewFeature"], package)["passed"])
+        self.assertFalse(engine.completion(native_log(), ["TestNewFeature"], package, "test-binary")["passed"])
+        for invalid in (good.replace("PASS\n", ""),
+                        good + "PASS\n",
+                        good + "=== RUN   TestNewFeature\n",
+                        good + "late output\n",
+                        good.replace("--- PASS: TestNewFeature/leaf (1.00s)\n", ""),
+                        good.replace("--- PASS: TestNewFeature/leaf", "--- SKIP: TestNewFeature/leaf"),
+                        "PASS\n"):
+            with self.subTest(log=invalid):
+                self.assertFalse(engine.completion(invalid, ["TestNewFeature"], package, "test-binary")["passed"])
+        with self.assertRaisesRegex(ValueError, "execution format"):
+            engine.completion(good, ["TestNewFeature"], package, "guess")
+        report = engine.completion(good, ["TestNewFeature"], package, "test-binary")
+        self.assertEqual(engine.failure_kind(1, report, None), "process-or-build-failure")
+        self.assertEqual(engine.failure_kind(0, report, None), "passed")
+
+    def test_strict_checkers_accept_only_the_declared_execution_format(self):
+        import check_scenario_quiescence as quiescence
+        import check_scenario_receivers as receivers
+        import check_scenario_recovery as recovery
+        import test_scenario_quiescence
+        import test_scenario_receivers
+        import test_scenario_recovery
+        cases = ((quiescence, test_scenario_quiescence.native_leaf_log, sorted(quiescence.CASES)[0]),
+                 (recovery, test_scenario_recovery.native_leaf_log, sorted(recovery.CASES)[0]),
+                 (receivers, test_scenario_receivers.successful_log, receivers.NETWORKS[0]))
+        for module, record, case in cases:
+            with self.subTest(checker=module.__name__):
+                driver = record(case)
+                self.assertTrue(module.validate(driver, case)["passed"])
+                self.assertFalse(module.validate(driver, case, execution="test-binary")["passed"])
+                lines = driver.rstrip("\n").splitlines()
+                self.assertRegex(lines[-1], r"^ok\s")
+                direct = "\n".join(lines[:-1]) + "\n"
+                self.assertTrue(module.validate(direct, case, execution="test-binary")["passed"])
+                self.assertFalse(module.validate(direct, case)["passed"])
+                self.assertFalse(module.validate(direct + "trailing\n", case, execution="test-binary")["passed"])
+                self.assertFalse(module.validate(direct.replace("\nPASS\n", "\n"), case, execution="test-binary")["passed"])
+                with self.assertRaisesRegex(ValueError, "execution format"):
+                    module.validate(direct, case, execution="guess")
+        profile = {"checker": "receivers", "case": ""}
+        with patch.object(receivers, "validate", return_value={"passed": True}) as validator:
+            engine.strict_completion("log", profile, "host", "test-binary")
+        validator.assert_called_once_with("log", "host", execution="test-binary")
 
 
 # A go command that writes to both streams, leaves a child process that keeps
@@ -704,7 +925,7 @@ class BoundedPreparationTests(unittest.TestCase):
         self.assertEqual(json.loads(files["compile-report.json"]), report)
         self.assertIn("go: downloading example.com/module v1.0.0", files["compile.log"])
         self.assertIn("stalled on purpose", files["compile.log"])
-        self.assertNotIn("test-binary", files)
+        self.assertNotIn("internal-integration.test", files)
         self.assertGone(pid)
 
     def test_compile_failure_keeps_the_compiler_error(self):
@@ -835,10 +1056,36 @@ func TestOriginal(t *testing.T) { ''' + body + " }\n")
                 compiled = engine.compile_profile(plan, "short", "basic", ".", directory / "compile", root)
             self.assertTrue(compiled["passed"])
             self.assertEqual(compiled["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
-            actual = subprocess.run([str(directory / "compile/test-binary"), "-test.v", "-test.timeout=20s"],
+            actual = subprocess.run([str(directory / "compile/root.test"), "-test.v", "-test.timeout=20s"],
                                     text=True, capture_output=True, timeout=30)
             self.assertNotEqual(actual.returncode, 0, actual.stdout + actual.stderr)
             self.assertIn("original assertion executed", actual.stdout)
+
+    def test_run_reuses_the_compiled_binary_and_rejects_a_changed_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            source = self.source(root, body='t.Log("original assertion executed")')
+            with patch.dict(os.environ, self.offline_environment(), clear=True), patch("sys.stdout", new=io.StringIO()):
+                catalog = engine.load_catalog(root)
+                plan = engine.discover(catalog)
+                compiled = engine.compile_profile(plan, "short", "basic", ".", directory / "compile", root)
+                self.assertTrue(compiled["passed"], compiled)
+                self.assertEqual(compiled["binary"]["tests"], ["TestOriginal"])
+                self.assertEqual(set(compiled["binary"]["sources"]), {"go.mod", "fixture_test.go"})
+                report = engine.run_profile(catalog, plan, "short", "basic", ".", directory / "native", root,
+                                            binary=directory / "compile")
+                self.assertTrue(report["passed"], report)
+                self.assertEqual(report["execution"], "test-binary")
+                self.assertEqual(report["command"][0], str(directory / "compile/root.test"))
+                log = (directory / "native/native.log").read_text()
+                self.assertIn("original assertion executed", log)
+                self.assertNotRegex(log, r"(?m)^ok\s")
+                source.write_text(source.read_text().replace("original assertion", "edited assertion"))
+                with self.assertRaisesRegex(ValueError, "different source files"):
+                    engine.run_profile(catalog, plan, "short", "basic", ".", directory / "edited", root,
+                                       binary=directory / "compile")
+                self.assertFalse((directory / "edited").exists())
 
     def test_external_workspace_cannot_replace_local_dependency(self):
         with tempfile.TemporaryDirectory() as temporary:

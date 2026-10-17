@@ -51,9 +51,12 @@ def completed_failures(path: Path) -> tuple[list[str], bool]:
     seen: set[str] = set()
     passed = False
     package_failed = False
+    last = ""
     with path.open(encoding="utf-8", errors="replace") as log:
         for raw in log:
             line = raw.rstrip("\r\n")
+            if line.strip():
+                last = line
             failure = FAILURE.fullmatch(line)
             if failure is not None:
                 name = failure.group(1)
@@ -64,7 +67,8 @@ def completed_failures(path: Path) -> tuple[list[str], bool]:
                 passed = True
             if PACKAGE_FAIL.fullmatch(line) is not None:
                 package_failed = True
-    return failures, passed and not package_failed
+    # A test binary run directly ends with PASS and prints no ok line.
+    return failures, (passed or last == "PASS") and not package_failed
 
 
 def main(argv: Sequence[str] | None = None) -> int:
