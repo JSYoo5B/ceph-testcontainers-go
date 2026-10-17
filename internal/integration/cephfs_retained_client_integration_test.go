@@ -53,6 +53,13 @@ func TestCephFSMetadataRecipe(t *testing.T) {
 	testCephFSMetadataRecipe(t)
 }
 
+// One client's discovery, session open, renewals and close, a path-restricted
+// identity admitted and refused, and a required client feature that evicts
+// and refuses a client without it.
+func TestCephFSSessionAdmission(t *testing.T) {
+	testCephFSSessionAdmission(t)
+}
+
 // A client that is frozen while its MDS fails over misses the reconnect window
 // and is evicted.
 func TestCephFSLateReconnect(t *testing.T) {
