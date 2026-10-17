@@ -47,6 +47,12 @@ func TestCephFSDentryLeaseRecall(t *testing.T) {
 	testCephFSDentryLeaseRecall(t)
 }
 
+// One native client runs a fixed sequence of metadata operations, with the
+// errno and native values of each, and a second client checks the result.
+func TestCephFSMetadataRecipe(t *testing.T) {
+	testCephFSMetadataRecipe(t)
+}
+
 // A client that is frozen while its MDS fails over misses the reconnect window
 // and is evicted.
 func TestCephFSLateReconnect(t *testing.T) {

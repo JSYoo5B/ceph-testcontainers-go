@@ -398,6 +398,38 @@ dentry there also names the inode it links, so only the entry with the head
 snapshot ID is the inode. The receipt does not cover a cap flush that reached
 the journal before the crash, or a lease recall.
 
+### Metadata operations
+
+`TestCephFSMetadataRecipe` gives a client implementation one native answer
+per metadata operation to compare with. A single libcephfs client (the
+Python `cephfs` binding, under `RunNativeCommand`) runs a fixed sequence on
+one active MDS with `MessengerV2Secure`, and its receipt records for each
+operation the errno (0 on success) and what the binding returned: inode,
+mode, link count, owner, size, `atime` and `mtime` (whole seconds, as the
+binding's `stat` reports them), bytes, names and xattr values. The test logs
+each row and a `CEPHFS_METADATA_RECIPE` line.
+
+| Operations | Native receipt |
+| --- | --- |
+| `mkdir`, then 1500 empty files in one directory; `opendir` and `readdir` | with `mds_bal_split_size` lowered to 1000 through `TemporaryConfig` and read back from the daemon, the MDS splits the directory into 8 fragments (`dirfrag ls`); the listing returns `.`, `..` and every name exactly once, and the MDS's `req_readdir_latency` count in `perf dump mds_server` grows by one request per fragment (8 on Tentacle 20.2.4) |
+| `open` with `O_CREAT`, `write` of 1000 random bytes, `fsync`, `fstat`, `close`, `stat`, `lstat`, `read` | one inode, mode `100644`, one link, the written size and bytes |
+| `chmod 0640`, `chown 4242:4343`, `truncate` to 600, `utime` | `stat` returns exactly those values on the same inode |
+| `link` | both names return the same inode with two links; the MDS's `dump inode` reports `nlink` 2 and size 600 |
+| `rename` over an existing file | the target name returns the source's inode and size, the source name `ENOENT`; the MDS holds the old target inode with no links under `~mds0/stray<N>` |
+| `symlink` to a relative target, `readlink`, `lstat`, `stat` | the target string, mode `120777` and the target's length as the link's size; `stat` follows to the file's inode |
+| `setxattr`, `getxattr`, `listxattr`, `removexattr` of `user.*` names with a binary value | the exact value bytes; `listxattr` returns only the `user.*` names that were set; a removed or missing name returns `ENODATA` (61) |
+| errors | `mkdir` of an existing directory `EEXIST` (17); `stat` of a missing name `ENOENT` (2); `rmdir` of a non-empty directory `ENOTEMPTY` (39); `open` of a directory for writing and `unlink` of a directory `EISDIR` (21); `mkdir` below a file and `rmdir` of a file `ENOTDIR` (20) |
+| `flock` with two owners on two descriptors of one client | the second owner's exclusive or shared non-blocking lock returns `EWOULDBLOCK` (11) while the first holds an exclusive lock, and succeeds after the first unlocks |
+
+A client in another container then lists the root and compares every name,
+inode, link count, mode, owner, size and time with the actor's last
+receipts, the bytes of both files, the symlink target and the xattrs.
+`cephfs.LibCephFS` exposes no `fcntl` (POSIX record) locking, so the recipe
+covers only `flock`, and libcephfs has no option for the size of a readdir
+reply: it asks the MDS for one fragment at a time, and a reply holds at most
+about 512 KiB of entries, so the test splits the directory to get several
+requests.
+
 ## Daemon-to-daemon paths
 
 A client test that follows a request past its first daemon needs to know which

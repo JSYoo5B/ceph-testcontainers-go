@@ -62,6 +62,16 @@ change the API.
   recall the lease at once (`num_leases` 1 to 0) without evicting the holder,
   which then sees the new namespace
   ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
+- `TestCephFSMetadataRecipe` records one native libcephfs client's metadata
+  operations with the errno and native values of each: a `readdir` of 1500
+  names over 8 directory fragments (one MDS readdir request each, every name
+  once), file create, write and read, `chmod`, `chown`, `truncate` and
+  `utime`, a hard link (the MDS's `dump inode` reports two links), a rename
+  over an existing file, a symlink, `user.*` xattrs with a binary value, the
+  expected `EEXIST`, `ENOENT`, `ENOTEMPTY`, `EISDIR`, `ENOTDIR` and `ENODATA`,
+  and `flock` contention (`EWOULDBLOCK`); a client in another container
+  checks the final namespace
+  ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 - `TestOSDHeartbeatFailure` records OSD heartbeat failure detection: with one
   OSD's cluster network cut in a cluster of three, the MON marks it down after
   `osd_heartbeat_grace` on two reports from different hosts, while its peers
