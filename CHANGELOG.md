@@ -57,6 +57,13 @@ change the API.
   independent client finds the new name. The
   [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
   guide lists the receipt
+- `TestCephFSSessionAdmission` records CephFS session admission: rank 0's
+  FSID, MDSMap epoch, daemon, GID and v2 address as the FSMap and the
+  client's admin socket report them; one native session's open, two
+  acknowledged renewals and close without a blocklist entry; a path-restricted
+  identity that mounts its path and is refused with `EPERM` elsewhere; and a
+  required client feature that evicts a client without it, refuses its next
+  mount with `EPERM` and still admits an ordinary client
   ([#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48)).
 - `TestRBDMirrorPeerPathCut` cuts one path of an RBD snapshot mirror, the
   source OSD's packets to the destination's rbd-mirror daemon, with a

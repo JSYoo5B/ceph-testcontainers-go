@@ -155,6 +155,10 @@ type cephFSActorReceipt struct {
 	CloseErrno int `json:"close_errno"`
 	// Ops is the metadata recipe actor's per-operation table.
 	Ops json.RawMessage `json:"ops"`
+	// FSID is the cluster FSID that the admission actor's client reports.
+	FSID string `json:"fsid"`
+	// Addrs is the admission actor's own client address vector.
+	Addrs string `json:"addrs"`
 }
 
 // cephFSActorRun is a supervised actor and its receipts.
