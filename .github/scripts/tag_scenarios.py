@@ -57,6 +57,10 @@ GO_PLATFORMS = frozenset((
     "mips", "mipsle", "mips64", "mips64le", "ppc64", "ppc64le", "riscv64", "s390x", "wasm",
 ))
 GO_TOOL_TAGS = frozenset(("cgo", "gc", "gccgo", "unix", "race", "msan", "asan", "boringcrypto"))
+# The verbose result lines of one test or subtest; scenario_history.py reads
+# the same lines for per-test durations.
+RUN_LINE = re.compile(r"=== RUN\s+(Test\S+)")
+RESULT_LINE = re.compile(r"\s*--- (PASS|FAIL|SKIP): (Test\S+) \(([0-9.]+)s\)")
 
 
 def go_environment():
@@ -512,11 +516,11 @@ def completion(log, expected, package, execution=GO_TEST):
     run_positions, pass_positions = {}, {}
     lines = log.splitlines()
     for index, line in enumerate(lines):
-        run = re.fullmatch(r"=== RUN\s+(Test\S+)", line)
+        run = RUN_LINE.fullmatch(line)
         if run:
             runs.append(run[1])
             run_positions[run[1]] = index
-        result = re.fullmatch(r"\s*--- (PASS|FAIL|SKIP): (Test\S+) \([0-9.]+s\)", line)
+        result = RESULT_LINE.fullmatch(line)
         if result:
             {"PASS": passes, "FAIL": failures, "SKIP": skips}[result[1]].append(result[2])
             if result[1] == "PASS":

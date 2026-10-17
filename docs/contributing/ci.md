@@ -218,6 +218,7 @@ steps in order:
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
+| Normalize the scenario history row | n/a | Writes `history-row.json` from the saved receipts (see [Scenario history](#scenario-history)). Its own failure never changes the job's result. |
 | Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
 | Identify completed failing tests | n/a | On failure, adds one annotation per failed test or subtest name found in `native.log`. |
 
@@ -452,7 +453,7 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `phases.json` (phase outcomes); `history-row.json` (the job's [history row](#scenario-history)) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
@@ -486,6 +487,77 @@ keeps the output written until then.
 
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.
+
+### Scenario history
+
+`scenario_history.py` turns one job's receipts into one JSON row with schema
+`ceph-scenario-history/v1`, and keeps such rows in a JSONL file. It reads
+files only: it never contacts Docker or GitHub and never infers a cause.
+
+The workflow writes the row as `history-row.json` in `tag-scenario-<id>`. To
+build one from downloaded artifacts:
+
+```sh
+gh run download <run-id> -n tag-scenario-<id> -D a/scenario
+gh run download <run-id> -n runtime-cleanup-<id> -D a/cleanup
+gh run download <run-id> -n scenario-images-<id> -D a/images
+python3 .github/scripts/scenario_history.py normalize \
+  --scenario a/scenario --cleanup a/cleanup --images a/images \
+  --repository <owner/repo> --run-id <run-id> --run-attempt <attempt> --job-id <job-id> \
+  --output row.json
+```
+
+A row holds:
+
+- `execution_key`: repository, workflow, run ID, run attempt, job ID,
+  repetition ID, profile ID (the matrix entry ID), checker, case and network
+  mode. Each attempt has its own key.
+- `source`: the requested pull request head and the commit and tree that the
+  job checked out.
+- `build`: the compile receipt's build key, binary sha256, a digest of its
+  source hashes, and whether the native step ran that binary.
+- `runtime`: the resolved release, layout, platform and every role's image
+  ID and registry digests, or `not_applicable` for a batch without Ceph.
+- `phases`: for each workflow phase, the step outcome (`workflow`), the
+  phase's own receipt (`evidence`) and their join (`status`). A failure on
+  either side is `failed`. A pass needs a successful step and a passing
+  receipt, so a cleanup failure after a native pass stays a failure, and a
+  missing receipt or `phases.json` is `missing`, never `passed`. The native
+  phase also records its classification and the completion and strict
+  checker results.
+- `outcome.status`: `failed` if any phase failed, else `cancelled`, else
+  `passed` when every phase passed or was not required, else `incomplete`.
+  `first_failure` names the first failed phase, its classification and first
+  error, and for the native phase the first failed test.
+- `tests`: every RUN, PASS, FAIL and SKIP line of `native.log` with its
+  duration. A test without a result line stays `RUN`.
+- `build`: the compile receipt's binary sha256 and build key, and, for a
+  native phase that ran a compiled binary, that binary's own sha256 and build
+  key (`native_binary_sha256`, `native_build_key`). `native_binary` says
+  whether the two match.
+- `comparability`: `complete`, or `incomplete` with the missing checkout,
+  build or image identity, or `native_binary_identity_mismatch` when the
+  native phase ran another binary than the compile receipt records. The
+  phase outcomes stay as they were.
+- `evidence`: the sha256 of every file read, and `row_sha256` over the row.
+
+Append rows to a history file, and count it:
+
+```sh
+python3 .github/scripts/scenario_history.py ingest --history history.jsonl row.json
+python3 .github/scripts/scenario_history.py summary --history history.jsonl
+```
+
+`ingest` skips a row identical to one already stored. A different row under
+the same execution key is an error that prints both rows' `row_sha256` and
+evidence hashes and leaves the file unchanged. A row without repository, run
+ID or run attempt, such as one built from a local run, is rejected.
+
+`summary` groups rows by profile ID and release. It reports the rows, the
+passed, failed, cancelled and incomplete counts, failures by first failed
+phase and classification, and the nearest-rank p50 and p90 of the native
+step's `elapsed_seconds` over rows with a native receipt. Cancelled rows are excluded from the failure
+denominator and from the durations; incomplete rows stay in the denominator.
 
 ### Typical causes by phase
 
