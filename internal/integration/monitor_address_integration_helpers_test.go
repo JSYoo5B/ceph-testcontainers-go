@@ -35,7 +35,7 @@ func monitorEndpoint(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 }
 
 // testMonitorAddressAcrossNetworkInterruption interrupts the public endpoint
-// of a MON, once with the cluster method and once with the package function,
+// of a MON, once with the cluster-bound function and once with the standalone function,
 // and stops and starts the MON. Start must refuse to run the MON while its
 // endpoint is interrupted and must not reattach it; after Restore the MON
 // starts at its original IPv4 and IPv6 addresses and aliases.
@@ -56,10 +56,10 @@ func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 		name, mon string
 		interrupt func(testcontainers.Container) (restorer, error)
 	}{
-		{"cluster method", "b", func(ctr testcontainers.Container) (restorer, error) {
+		{"cluster-bound function", "b", func(ctr testcontainers.Container) (restorer, error) {
 			return fault.InterruptNetwork(ctx, cluster, ctr, ceph.PublicNetworkPlane)
 		}},
-		{"package function", "c", func(ctr testcontainers.Container) (restorer, error) {
+		{"standalone function", "c", func(ctr testcontainers.Container) (restorer, error) {
 			return fault.InterruptLink(ctx, ctr, network)
 		}},
 	} {

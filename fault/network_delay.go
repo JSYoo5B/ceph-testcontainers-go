@@ -946,7 +946,7 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 // cluster's planes, for fixtures that own one, such as the private HTTP
 // bridge between the gateways of an RGW multisite: it delays or drops the
 // packets that ctr sends through its endpoint on the bridge named network.
-// Like InterruptNetwork, the caller owns ctr, the network and the returned
+// Like InterruptLink, the caller owns ctr, the network and the returned
 // lease, and restores the lease before it removes either: no cluster's
 // Terminate knows it. delay.Plane stays empty; every other field, check and
 // error is that of TemporaryNetworkDelay, and a network that is not a bridge
