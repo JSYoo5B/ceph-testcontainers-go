@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
@@ -13,7 +13,7 @@ import (
 // cluster's public bridge, retaining its destination/pool-election endpoint.
 // The daemon stays running; peer and image policies remain unchanged. Restore
 // the returned handle to resume reception. Host mode has no bridge endpoint.
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*ceph.NetworkInterruption, error) {
+func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror is unavailable")
 	}

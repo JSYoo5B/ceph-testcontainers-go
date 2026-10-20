@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -310,7 +311,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	if direction == clientToMDS {
 		target, peer = client, mdsIP
 	}
-	lease, err := cluster.TemporaryNetworkDelay(ctx, target, ceph.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
+	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, target, fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

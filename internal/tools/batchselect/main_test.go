@@ -139,6 +139,12 @@ func TestSelectBatches(t *testing.T) {
 			edit(t, dir, "pkg/a_test.go", "import \"testing\"", "import (\n\t\"strings\"\n\t\"testing\"\n)")
 			edit(t, dir, "pkg/a_test.go", "helperA() != \"A\"", "helperA() != strings.ToUpper(\"a\")")
 		}, selected: []string{"a"}},
+		"new fault package is outside integration": {change: func(t *testing.T, dir string) {
+			if err := os.MkdirAll(filepath.Join(dir, "fault"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			add(t, dir, "fault/network.go", "package fault\n")
+		}, selected: every, fallback: "fault/network.go: outside pkg"},
 		"import of a new package": {change: func(t *testing.T, dir string) {
 			edit(t, dir, "pkg/a_test.go", "import \"testing\"", "import (\n\t_ \"net/http/pprof\"\n\t\"testing\"\n)")
 		}, selected: every, fallback: "adds an import of net/http/pprof"},

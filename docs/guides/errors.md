@@ -50,9 +50,9 @@ category for a container that disappeared or stopped; neither says that the
 command did not run.
 
 The narrower errors of the module belong to a category:
-`ceph.ErrHostNetworkUnavailable`, `ceph.ErrNetemPermissionDenied` and
-`ceph.ErrNetemKernelUnsupported` to `ErrEnvironmentUnavailable`, and
-`ceph.ErrNetemImageUnsupported` to `ErrImageCapability`. Both forms match:
+`ceph.ErrHostNetworkUnavailable`, `fault.ErrNetemPermissionDenied` and
+`fault.ErrNetemKernelUnsupported` to `ErrEnvironmentUnavailable`, and
+`fault.ErrNetemImageUnsupported` to `ErrImageCapability`. Both forms match:
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithHostNetwork())

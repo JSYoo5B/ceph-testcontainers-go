@@ -330,7 +330,7 @@ _, _ = public, backend
   right address for each kind of traffic.
 - The option requires bridge mode. In host mode `ClusterNetworkName()` returns
   `"host"`; with a single bridge it returns the same name as `NetworkName()`.
-- `cluster.InterruptNetwork(ctx, osd, ceph.ClusterNetworkPlane)` cuts only the
+- `fault.InterruptNetwork(ctx, cluster, osd, ceph.ClusterNetworkPlane)` cuts only the
   backend of one OSD while its public listener keeps serving clients.
 
 ## Related APIs

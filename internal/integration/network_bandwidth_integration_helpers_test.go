@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 const (
@@ -23,7 +23,7 @@ const (
 	// several seconds, so that the session's setup and the first window of
 	// a TCP connection do not decide the measured throughput.
 	bandwidthObject = 16 << 20
-	bandwidthRate   = 16 * ceph.MegabitPerSecond
+	bandwidthRate   = 16 * fault.MegabitPerSecond
 	// A limited read must stay at or below the rate, with a margin for the
 	// clock, and keep at least this fraction of it: bounded, not stalled.
 	bandwidthCeiling = 1.1
@@ -83,7 +83,7 @@ func (r bandwidthRead) String() string {
 }
 
 // rateBytes is the limit in bytes per second.
-func rateBytes(rate ceph.NetworkRate) float64 {
+func rateBytes(rate fault.NetworkRate) float64 {
 	return float64(rate) / 8
 }
 
@@ -161,9 +161,9 @@ func (f bandwidthFixture) read(t *testing.T, ctx context.Context, ctr testcontai
 // the client while the kernel's counters of the lease's netem qdisc are read
 // before and after, restores the lease, and checks that the root qdisc and
 // the helpers are gone. It returns the read and the counters' difference.
-func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit ceph.NetworkDelay, during func()) (bandwidthRead, ceph.NetworkDelayStatus, ceph.NetworkDelayStatus) {
+func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit fault.NetworkDelay, during func()) (bandwidthRead, fault.NetworkDelayStatus, fault.NetworkDelayStatus) {
 	t.Helper()
-	lease, err := f.cluster.TemporaryNetworkDelay(ctx, f.limited.Container, limit)
+	lease, err := fault.TemporaryNetworkDelay(ctx, f.cluster, f.limited.Container, limit)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -172,7 +172,7 @@ func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit c
 	}
 	before, err := lease.Status(ctx)
 	if err != nil || !before.Applied || before.Rate != limit.Rate || before.Delay != limit.Delay || lease.Rate != limit.Rate ||
-		before.QueueLimit != ceph.DefaultNetworkQueueLimit || lease.QueueLimit != ceph.DefaultNetworkQueueLimit {
+		before.QueueLimit != fault.DefaultNetworkQueueLimit || lease.QueueLimit != fault.DefaultNetworkQueueLimit {
 		t.Fatalf("status of the rate limit: %+v, lease rate %v queue %d, %v", before, lease.Rate, lease.QueueLimit, err)
 	}
 	read := f.read(t, ctx, f.client, 1)
@@ -195,7 +195,7 @@ func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit c
 	return read, before, after
 }
 
-func checkBounded(t *testing.T, what string, read bandwidthRead, rate ceph.NetworkRate) {
+func checkBounded(t *testing.T, what string, read bandwidthRead, rate fault.NetworkRate) {
 	t.Helper()
 	throughput, limit := read.throughputs()[0], rateBytes(rate)
 	if throughput > bandwidthCeiling*limit || throughput < bandwidthFloor*limit {
@@ -203,7 +203,7 @@ func checkBounded(t *testing.T, what string, read bandwidthRead, rate ceph.Netwo
 	}
 }
 
-func checkUnlimited(t *testing.T, what string, read bandwidthRead, rate ceph.NetworkRate) {
+func checkUnlimited(t *testing.T, what string, read bandwidthRead, rate fault.NetworkRate) {
 	t.Helper()
 	if read.median() < bandwidthMargin*rateBytes(rate) {
 		t.Fatalf("%s: %s, not %.0f times the limit %v", what, read, bandwidthMargin, rate)
@@ -219,7 +219,7 @@ func testNetworkBandwidth(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := netip.MustParseAddr(address)
-	limit := ceph.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: bandwidthRate}
+	limit := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: bandwidthRate}
 
 	baseline := f.read(t, ctx, f.client, 3)
 	checkUnlimited(t, "baseline", baseline, bandwidthRate)
@@ -283,7 +283,7 @@ func testNetworkBandwidthIPv6(t *testing.T) {
 	baseline := f.read(t, ctx, f.client, 3)
 	checkUnlimited(t, "baseline", baseline, bandwidthRate)
 
-	limit := ceph.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: client6, Rate: bandwidthRate}
+	limit := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: client6, Rate: bandwidthRate}
 	var unselected bandwidthRead
 	limited, before, after := f.limitedRead(t, ctx, limit, func() { unselected = f.read(t, ctx, f.control, 3) })
 	checkBounded(t, "the client's read through the IPv6 peer limit", limited, bandwidthRate)

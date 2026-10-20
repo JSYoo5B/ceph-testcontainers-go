@@ -1,4 +1,4 @@
-package ceph
+package fault
 
 import (
 	"context"
@@ -10,21 +10,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
-
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/moby/moby/api/types/container"
 )
 
 // faultRequests are packet faults of each supported shape: a reorder with
 // its delay, a duplicate without a delay, a corrupt with a rate and a loss,
 // and all three through the selective hierarchy of peers of both families.
 var faultRequests = map[string]NetworkDelay{
-	"reorder": {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Delay: 10 * time.Millisecond,
+	"reorder": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond,
 		Reorder: NetworkPacketFault{Percent: 25, Correlation: 50}},
-	"duplicate": {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Duplicate: NetworkPacketFault{Percent: 10, Correlation: 30}},
-	"corrupt with rate and loss": {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Rate: 32 * MegabitPerSecond, Loss: 1,
+	"duplicate": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Duplicate: NetworkPacketFault{Percent: 10, Correlation: 30}},
+	"corrupt with rate and loss": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Rate: 32 * MegabitPerSecond, Loss: 1,
 		Corrupt: NetworkPacketFault{Percent: 5, Correlation: 20}},
-	"all on peers": {HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Delay: 10 * time.Millisecond,
+	"all on peers": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond,
 		Peers:   []NetworkPeer{{Addr: netip.MustParseAddr("10.88.0.7")}, {Addr: netip.MustParseAddr("fd00::7"), Port: 6800}},
 		Reorder: NetworkPacketFault{Percent: 25}, Duplicate: NetworkPacketFault{Percent: 5, Correlation: 10}, Corrupt: NetworkPacketFault{Percent: 0.5}},
 }
@@ -40,7 +41,7 @@ func requestedFault(request NetworkDelay, name string) NetworkPacketFault {
 }
 
 func TestNetworkPacketFaultValidation(t *testing.T) {
-	base := NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Delay: 10 * time.Millisecond}
+	base := NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond}
 	for name, change := range map[string]func(*NetworkDelay){
 		"reorder without a delay":     func(d *NetworkDelay) { d.Delay, d.Loss, d.Reorder.Percent = 0, 1, 25 },
 		"reorder with jitter":         func(d *NetworkDelay) { d.Jitter, d.Reorder.Percent = time.Millisecond, 25 },
@@ -60,11 +61,11 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 			cluster, osd := delayCluster(netem)
 			request := base
 			change(&request)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("accepted %+v: %v", request, err)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faultNetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid fault", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
 			}
 		})
 	}
@@ -74,8 +75,8 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 		}
 	}
 	for _, request := range []NetworkDelay{
-		{HelperImage: "x", Plane: PublicNetworkPlane, Corrupt: NetworkPacketFault{Percent: 100, Correlation: 100}},
-		{HelperImage: "x", Plane: PublicNetworkPlane, Delay: time.Millisecond, Jitter: time.Millisecond, Duplicate: NetworkPacketFault{Percent: 1}, Rate: MinNetworkRate},
+		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Corrupt: NetworkPacketFault{Percent: 100, Correlation: 100}},
+		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: time.Millisecond, Duplicate: NetworkPacketFault{Percent: 1}, Rate: MinNetworkRate},
 	} {
 		if err := validateNetworkDelay(request); err != nil {
 			t.Fatalf("%+v: %v", request, err)
@@ -160,25 +161,25 @@ func TestNetworkPacketFaultPreflight(t *testing.T) {
 		want, kind error
 	}
 	refusals := map[string]refusal{
-		"tc without the fault":       {func(n *fakeNetem, fault string) { n.faultUnparsed = fault }, ErrNetemImageUnsupported, ErrImageCapability},
-		"kernel without the fault":   {func(n *fakeNetem, fault string) { n.faultIgnored = map[string]bool{fault: true} }, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
-		"kernel without correlation": {func(n *fakeNetem, fault string) { n.faultChanged = map[string]bool{fault: true} }, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
+		"tc without the fault":       {func(n *fakeNetem, fault string) { n.faultUnparsed = fault }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
+		"kernel without the fault":   {func(n *fakeNetem, fault string) { n.faultIgnored = map[string]bool{fault: true} }, ErrNetemKernelUnsupported, ceph.ErrEnvironmentUnavailable},
+		"kernel without correlation": {func(n *fakeNetem, fault string) { n.faultChanged = map[string]bool{fault: true} }, ErrNetemKernelUnsupported, ceph.ErrEnvironmentUnavailable},
 		"no faults result": {func(n *fakeNetem, _ string) { n.editPreflight = func(out map[string]any) { delete(out, "faults") } },
-			ErrNetemImageUnsupported, ErrImageCapability},
+			ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"faults not shown": {func(n *fakeNetem, _ string) {
 			n.editPreflight = func(out map[string]any) { out["faults_shown"] = `[{"kind":"noqueue","handle":"0:","root":true}]` }
-		}, ErrNetemImageUnsupported, ErrImageCapability},
+		}, ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"faults unparsable": {func(n *fakeNetem, _ string) { n.editPreflight = func(out map[string]any) { out["faults_shown"] = "{" } },
-			ErrNetemImageUnsupported, ErrImageCapability},
+			ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"no delete result": {func(n *fakeNetem, _ string) {
 			n.editPreflight = func(out map[string]any) { delete(out, "faults_delete") }
 		},
-			ErrNetemImageUnsupported, ErrImageCapability},
+			ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"delete failed": {func(n *fakeNetem, _ string) {
 			n.editPreflight = func(out map[string]any) {
 				out["faults_delete"] = []any{2, "RTNETLINK answers: Operation not permitted"}
 			}
-		}, ErrNetemPermissionDenied, ErrEnvironmentUnavailable},
+		}, ErrNetemPermissionDenied, ceph.ErrEnvironmentUnavailable},
 	}
 	for name, tc := range refusals {
 		for shape, request := range faultRequests {
@@ -209,15 +210,15 @@ func TestNetworkPacketFaultPreflight(t *testing.T) {
 
 // checkNothingApplied checks that no tc command ran on the target and that
 // no root qdisc, helper or reservation remains.
-func checkNothingApplied(t *testing.T, netem *fakeNetem, cluster *Container) {
+func checkNothingApplied(t *testing.T, netem *fakeNetem, cluster *delayTestCluster) {
 	t.Helper()
 	for _, command := range netem.commands {
 		if strings.HasPrefix(command, "tc ") {
 			t.Fatalf("ran %q on the target", command)
 		}
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faultNetworkDelay))
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+		t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
 	}
 }
 
@@ -363,7 +364,7 @@ func TestNetworkPacketFaultRestoreKeepsForeignState(t *testing.T) {
 			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
 				t.Fatalf("status with a foreign qdisc %+v, %v", status, err)
 			}
-			if err := lease.Restore(t.Context()); !errors.Is(err, ErrInvalidRequest) {
+			if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("Restore with a foreign qdisc: %v", err)
 			}
 			if netem.root("osd-0") == nil || len(link.extra) != 1 || netem.liveHelpers() != 1 {

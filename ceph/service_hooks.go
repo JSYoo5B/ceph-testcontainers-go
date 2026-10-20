@@ -312,6 +312,7 @@ type testClusterConfig = struct {
 	HostNetwork    bool
 	PublicAddress  string
 	NetworkName    string
+	Shared         bool
 	// OSDs adds owned OSD descriptors 0..OSDs-1 whose container is control
 	// and whose CRUSH location is OSDPlacement.
 	OSDs         int
@@ -323,6 +324,9 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 	c := &Container{Container: control, closed: config.Closed, settings: options{
 		startupTimeout: config.StartupTimeout, hostNetwork: config.HostNetwork, publicAddress: config.PublicAddress,
 	}}
+	if config.Shared {
+		c.sharing.Store(int32(sharedWithTenants))
+	}
 	if config.NetworkName != "" {
 		c.network = &testcontainers.DockerNetwork{Name: config.NetworkName}
 	}
@@ -354,6 +358,7 @@ type testState = struct {
 	MDSImage       *string
 	RGWImage       *string
 	PortLeases     int
+	NetworkRemoved *bool
 }
 
 // TestState exposes a cluster's internals to unit tests.
@@ -363,7 +368,7 @@ func (serviceHooks) TestState(c *Container) testState {
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
 		OSDs: &c.osds, InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
 		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
-		MDSImage: &c.settings.mdsImage, RGWImage: &c.settings.rgwImage, PortLeases: len(c.portLeases),
+		MDSImage: &c.settings.mdsImage, RGWImage: &c.settings.rgwImage, PortLeases: len(c.portLeases), NetworkRemoved: &c.networkRemoved,
 	}
 }
 

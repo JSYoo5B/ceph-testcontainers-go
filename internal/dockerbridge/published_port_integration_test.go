@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
@@ -128,7 +128,7 @@ func TestRecoverableBridgePublishedPort(t *testing.T) {
 		t.Fatal("public/peer endpoints do not have the required addresses and gateway priorities")
 	}
 	checkHTTP("before peer interruption")
-	cut, err := ceph.InterruptNetwork(ctx, ctr, peer.Name)
+	cut, err := fault.InterruptLink(ctx, ctr, peer.Name)
 	if cut != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)

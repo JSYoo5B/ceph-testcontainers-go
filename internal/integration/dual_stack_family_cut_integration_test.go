@@ -12,7 +12,7 @@ import "testing"
 // working, and checks that the blocked operation completes after Restore. It
 // does this for a MON and for an OSD, then restarts the OSD's container and
 // checks that the same client reaches the new process over IPv6. It needs the netem helper
-// (CEPH_TEST_NETEM_IMAGE, by default ceph.NetemHelperImage) and an engine
+// (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage) and an engine
 // that grants it NET_ADMIN.
 func TestDualStackFamilyCut(t *testing.T) {
 	parallelWhenEnabled(t)

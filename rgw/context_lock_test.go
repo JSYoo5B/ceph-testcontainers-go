@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 )
 
@@ -33,7 +33,7 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 		"SetSyncGroupStatus": func(ctx context.Context) error { return f.SetSyncGroupStatus(ctx, group, SyncEnabled) },
 		"InterruptZoneLink":  func(ctx context.Context) error { _, err := f.InterruptZoneLink(ctx, "queued"); return err },
 		"TemporaryZoneLinkDelay": func(ctx context.Context) error {
-			_, err := f.TemporaryZoneLinkDelay(ctx, "queued", "peer", ceph.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100})
+			_, err := f.TemporaryZoneLinkDelay(ctx, "queued", "peer", fault.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100})
 			return err
 		},
 		"Terminate": func(ctx context.Context) error { return f.Terminate(ctx) },

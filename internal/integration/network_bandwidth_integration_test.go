@@ -7,7 +7,7 @@ package integration_test
 import "testing"
 
 // It needs the netem helper (CEPH_TEST_NETEM_IMAGE, by default
-// ceph.NetemHelperImage) and an engine that grants it NET_ADMIN; a missing
+// fault.NetemHelperImage) and an engine that grants it NET_ADMIN; a missing
 // one fails the test.
 func TestNetworkBandwidth(t *testing.T) {
 	testNetworkBandwidth(t)

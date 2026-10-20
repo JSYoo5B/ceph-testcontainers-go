@@ -1,10 +1,14 @@
 # Design: extracting fault injection into package `fault`
 
-This document is stage 1 of the fault-package extraction. It
-inventories every fault-injection API of the module, decides which package
+Status: stage 2's registry and internal hooks are implemented. Stage 3 moves
+network faults into `fault`, including service return types, caller-owned
+links and scenario call sites. Pause, blocklist, fullness and object errors
+remain in `ceph` for subsequent checkpoints. See the [network migration
+guide](../fault.md) for the current API.
+
+The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
-proposes the internal boundary that stage 2 builds. It changes no code and
-no public API. References use `file:symbol` for the APIs inventoried below,
+proposes the internal boundary built in stage 2. Historical references use `file:symbol` for the APIs inventoried below,
 including rate, queue-limit and packet-fault support.
 
 Stages 2 to 5 start only after this inventory and its contracts are

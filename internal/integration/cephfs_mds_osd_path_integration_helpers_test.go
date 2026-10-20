@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 // cephFSMDSOSDPathWriter keeps one mount with an admin socket and one O_RDWR
@@ -144,7 +145,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	network := m.cluster.NetworkName()
 	osdIPs := map[int]netip.Addr{}
 	var cutIDs []int
-	var peers []ceph.NetworkPeer
+	var peers []fault.NetworkPeer
 	for _, osd := range osds {
 		i := slices.IndexFunc(daemons.OSDs, func(daemon ceph.OSDAddress) bool { return daemon.ID == osd.ID })
 		if i < 0 || !daemons.OSDs[i].Up || len(daemons.OSDs[i].Public) == 0 {
@@ -161,7 +162,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		}
 		osdIPs[osd.ID] = ip
 		cutIDs = append(cutIDs, osd.ID)
-		peers = append(peers, ceph.NetworkPeer{Addr: ip})
+		peers = append(peers, fault.NetworkPeer{Addr: ip})
 	}
 	slices.Sort(cutIDs)
 	isOSDIP := func(ip netip.Addr) bool {
@@ -217,13 +218,13 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		t.Fatalf("writer has data ops in flight before the cut: %v: %s", err, raw)
 	}
 
-	cutRequest := ceph.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Loss: 100}
+	cutRequest := fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Loss: 100}
 	if osdCount == 1 {
 		cutRequest.Peer = peers[0].Addr
 	} else {
 		cutRequest.Peers = peers
 	}
-	lease, err := m.cluster.TemporaryNetworkDelay(ctx, mdsContainer, cutRequest)
+	lease, err := fault.TemporaryNetworkDelay(ctx, m.cluster, mdsContainer, cutRequest)
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

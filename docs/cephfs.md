@@ -1634,7 +1634,7 @@ remain the caller's.
 #### InterruptPeerLink
 
 ```golang
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*ceph.NetworkInterruption, error)
+func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)
 ```
 
 Disconnects one daemon from the destination network while it stays connected to

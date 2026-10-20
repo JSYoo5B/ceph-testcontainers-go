@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -223,7 +224,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 	receipt.Window.MinReporters = monConfigGet(t, ctx, cluster, "mon", "mon_osd_min_down_reporters")
 
 	// Cut only osd.P's packets to osd.R's cluster address.
-	lease, err := cluster.TemporaryNetworkDelay(ctx, containers[primary].Container, ceph.NetworkDelay{
+	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, containers[primary].Container, fault.NetworkDelay{
 		HelperImage: image, Plane: ceph.ClusterNetworkPlane, Peer: clusterIP[replica], Loss: 100,
 	})
 	if lease != nil {

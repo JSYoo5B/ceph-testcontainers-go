@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 const (
 	// severeRate is the lowest rate that the module accepts.
-	severeRate = ceph.MinNetworkRate
+	severeRate = fault.MinNetworkRate
 	// severeOpTimeout is the client's rados_osd_op_timeout in the timeout
 	// profile, in seconds; only that profile's client session sets it.
 	severeOpTimeout = 10
@@ -30,7 +30,7 @@ const (
 	// The 1 MiB timeout object's payload takes 0.08 s at queueRate. With
 	// queueDelay, the path holds 250 KB in flight; queueLimit packets hold
 	// less, so netem's queue overflows.
-	queueRate  = 100 * ceph.MegabitPerSecond
+	queueRate  = 100 * fault.MegabitPerSecond
 	queueDelay = 20 * time.Millisecond
 	queueLimit = 2
 	// The small queue's read must take at least this many times as long.
@@ -92,9 +92,9 @@ func (r severeRead) complete(t *testing.T, what string, size int, sha256 string)
 // underLimit applies limit to the limited OSD, runs during, reads the
 // lease's status before and after it, and restores the lease, checking that
 // the root qdisc and the helpers are gone.
-func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit ceph.NetworkDelay, during func()) (ceph.NetworkDelayStatus, ceph.NetworkDelayStatus) {
+func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit fault.NetworkDelay, during func()) (fault.NetworkDelayStatus, fault.NetworkDelayStatus) {
 	t.Helper()
-	lease, err := f.cluster.TemporaryNetworkDelay(ctx, f.limited.Container, limit)
+	lease, err := fault.TemporaryNetworkDelay(ctx, f.cluster, f.limited.Container, limit)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -123,7 +123,7 @@ func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit ce
 }
 
 // transferSeconds is how long size bytes take at rate, without headers.
-func transferSeconds(size int, rate ceph.NetworkRate) float64 {
+func transferSeconds(size int, rate fault.NetworkRate) float64 {
 	return float64(size) * 8 / float64(rate)
 }
 
@@ -140,7 +140,7 @@ func testNetworkBandwidthSevere(t *testing.T) {
 	// only reads, which are idempotent.
 	timeoutName, timeoutSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "timeout", timeoutObject)
 	slowName, slowSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "slow", slowObject)
-	severe := ceph.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
+	severe := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
 
 	t.Run("op timeout", func(t *testing.T) {
 		// At 64 Kbit/s the 1 MiB reply needs about 131 s; the client's
@@ -217,7 +217,7 @@ func testNetworkBandwidthSevere(t *testing.T) {
 			t.Fatalf("queue %d: %.2f s, %d drops; default queue: %.2f s, %d drops", queueLimit, narrow.Seconds, narrowDrops, wide.Seconds, wideDrops)
 		}
 		t.Logf("NETWORK_BANDWIDTH_SEVERE_RECEIPT queue osd=%d object=%d rate=%v delay=%v: default queue %d packets %.2f s (payload needs %.2f s), %d drops; queue %d packets %.2f s (%.1f times), %d drops, %d bytes sent in %d packets; both reads returned the exact SHA-256",
-			f.limited.ID, timeoutObject, queueRate, queueDelay, ceph.DefaultNetworkQueueLimit, wide.Seconds, transferSeconds(timeoutObject, queueRate), wideDrops,
+			f.limited.ID, timeoutObject, queueRate, queueDelay, fault.DefaultNetworkQueueLimit, wide.Seconds, transferSeconds(timeoutObject, queueRate), wideDrops,
 			queueLimit, narrow.Seconds, narrow.Seconds/wide.Seconds, narrowDrops, narrowAfter.Bytes-narrowBefore.Bytes, narrowAfter.Packets-narrowBefore.Packets)
 	})
 }

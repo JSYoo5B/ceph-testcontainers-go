@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -102,7 +103,7 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	// reaches it.
 	osd := cluster.OSDs()[0]
 	endpointBefore := osdEndpoint(t, ctx, cluster, osd.Container)
-	link, err := cluster.InterruptNetwork(ctx, osd.Container, ceph.PublicNetworkPlane)
+	link, err := fault.InterruptNetwork(ctx, cluster, osd.Container, ceph.PublicNetworkPlane)
 	if err != nil {
 		if link != nil {
 			_ = link.Restore(ctx)

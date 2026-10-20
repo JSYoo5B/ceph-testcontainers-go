@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -56,10 +57,10 @@ func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 		interrupt func(testcontainers.Container) (restorer, error)
 	}{
 		{"cluster method", "b", func(ctr testcontainers.Container) (restorer, error) {
-			return cluster.InterruptNetwork(ctx, ctr, ceph.PublicNetworkPlane)
+			return fault.InterruptNetwork(ctx, cluster, ctr, ceph.PublicNetworkPlane)
 		}},
 		{"package function", "c", func(ctr testcontainers.Container) (restorer, error) {
-			return ceph.InterruptNetwork(ctx, ctr, network)
+			return fault.InterruptLink(ctx, ctr, network)
 		}},
 	} {
 		mon := monitors[form.mon]

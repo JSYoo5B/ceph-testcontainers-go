@@ -1,4 +1,4 @@
-package ceph
+package fault
 
 import (
 	"context"
@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
-
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
+	"github.com/moby/moby/api/types/container"
 )
 
 // testRate limits osd-0's packets to 32 Mbit/s, without a delay.
-var testRate = NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Rate: 32 * MegabitPerSecond}
+var testRate = NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Rate: 32 * MegabitPerSecond}
 
 // rateRequests are rate limits of each shape that the lease installs: on the
 // whole interface, with a delay and a loss in the same qdisc, and through the
@@ -39,7 +40,7 @@ var rateRequests = map[string]NetworkDelay{
 }
 
 // rateCluster is delayCluster with an IPv6 address on osd-0's endpoint.
-func rateCluster(netem *fakeNetem) (*Container, *fakeNetemHelper) {
+func rateCluster(netem *fakeNetem) (*delayTestCluster, *fakeNetemHelper) {
 	netem.targets["osd-0"].address6 = netip.MustParseAddr("fd00::5")
 	return delayCluster(netem)
 }
@@ -76,8 +77,8 @@ func TestNetworkRateValidation(t *testing.T) {
 			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); err == nil || lease != nil {
 				t.Fatalf("accepted %+v", request)
 			}
-			if len(netem.helpers) != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faultNetworkDelay))
+			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatalf("%d helpers started, reservations %v for an invalid rate", len(netem.helpers), cluster.faultsOf(faulthook.NetworkDelay))
 			}
 		})
 	}
@@ -170,18 +171,18 @@ func TestNetworkRatePreflight(t *testing.T) {
 		setup      func(*fakeNetem)
 		want, kind error
 	}{
-		"tc without rate":     {func(n *fakeNetem) { n.noRateParse = true }, ErrNetemImageUnsupported, ErrImageCapability},
-		"kernel without rate": {func(n *fakeNetem) { n.rateIgnored = true }, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
-		"no rate result":      {func(n *fakeNetem) { n.editPreflight = func(out map[string]any) { delete(out, "rate") } }, ErrNetemImageUnsupported, ErrImageCapability},
+		"tc without rate":     {func(n *fakeNetem) { n.noRateParse = true }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
+		"kernel without rate": {func(n *fakeNetem) { n.rateIgnored = true }, ErrNetemKernelUnsupported, ceph.ErrEnvironmentUnavailable},
+		"no rate result":      {func(n *fakeNetem) { n.editPreflight = func(out map[string]any) { delete(out, "rate") } }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"rate not shown": {func(n *fakeNetem) {
 			n.editPreflight = func(out map[string]any) { out["rate_shown"] = `[{"kind":"noqueue","handle":"0:","root":true}]` }
-		}, ErrNetemImageUnsupported, ErrImageCapability},
+		}, ErrNetemImageUnsupported, ceph.ErrImageCapability},
 		"another limit kept": {func(n *fakeNetem) {
 			n.editPreflight = func(out map[string]any) {
 				out["rate_shown"] = `[{"kind":"netem","handle":"c7e3:","root":true,"options":{"limit":1000,"rate":{"rate":125000}}}]`
 			}
-		}, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
-		"no delete result": {func(n *fakeNetem) { n.editPreflight = func(out map[string]any) { delete(out, "rate_delete") } }, ErrNetemImageUnsupported, ErrImageCapability},
+		}, ErrNetemKernelUnsupported, ceph.ErrEnvironmentUnavailable},
+		"no delete result": {func(n *fakeNetem) { n.editPreflight = func(out map[string]any) { delete(out, "rate_delete") } }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
 	} {
 		for shape, request := range rateRequests {
 			t.Run(name+"/"+shape, func(t *testing.T) {
@@ -197,8 +198,8 @@ func TestNetworkRatePreflight(t *testing.T) {
 						t.Fatalf("ran %q on the target", command)
 					}
 				}
-				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faultNetworkDelay))
+				if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+					t.Fatalf("root %+v, %d helpers, reservations %v", netem.root("osd-0"), netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
 				}
 			})
 		}
@@ -274,7 +275,7 @@ func TestNetworkRateRestoreKeepsForeignState(t *testing.T) {
 			if status, err := lease.Status(t.Context()); err != nil || status.Applied {
 				t.Fatalf("status with a foreign qdisc %+v, %v", status, err)
 			}
-			if err := lease.Restore(t.Context()); !errors.Is(err, ErrInvalidRequest) {
+			if err := lease.Restore(t.Context()); !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("Restore with a foreign qdisc: %v", err)
 			}
 			if netem.root("osd-0") == nil || len(link.extra) != 1 || netem.liveHelpers() != 1 {

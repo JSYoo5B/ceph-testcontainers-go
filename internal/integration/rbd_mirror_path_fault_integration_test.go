@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
@@ -91,7 +92,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 	// osd.0 drops every packet it sends to the daemon's address on the
 	// source network, and only those: the daemon's requests reach the OSD,
 	// its replies do not.
-	lease, err := source.TemporaryNetworkDelay(ctx, osd.Container, ceph.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
+	lease, err := fault.TemporaryNetworkDelay(ctx, source, osd.Container, fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

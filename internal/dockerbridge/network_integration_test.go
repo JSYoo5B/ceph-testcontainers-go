@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
@@ -139,7 +139,7 @@ func TestRecoverableBridgeEndpointIdentity(t *testing.T) {
 			t.Fatal("endpoint operation changed the native process or retained bridge endpoint")
 		}
 	}
-	link, err := ceph.InterruptNetwork(ctx, ctr, first.Name)
+	link, err := fault.InterruptLink(ctx, ctr, first.Name)
 	if link != nil {
 		// Registered last: restore before terminating the caller-owned process
 		// and before removing either owned network, even after a partial failure.

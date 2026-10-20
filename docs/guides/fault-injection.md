@@ -1,5 +1,8 @@
 # Fault injection
 
+Network faults use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
+existing `*ceph.Container`; see the [API and migration guide](../fault.md).
+
 ## Introduction
 
 Client code that talks to Ceph has to survive slow daemons, failovers, fenced
@@ -17,10 +20,10 @@ extension: a separate netem helper image applies it, and only that helper gets
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
 | A daemon or client is alive but silent | `ceph.Container.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
-| A container loses one Docker network | `ceph.Container.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
-| Packets that a container sends on one network arrive late | `ceph.Container.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
-| A container sends on one network at a limited bandwidth | `ceph.Container.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
-| Packets that a container sends arrive reordered, duplicated or corrupted | `ceph.Container.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
+| A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
+| Packets that a container sends on one network arrive late | `fault.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
+| A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
+| Packets that a container sends arrive reordered, duplicated or corrupted | `fault.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `TemporaryConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
 | An OSD runs a client's write after the client gave up | `TemporaryConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
@@ -207,7 +210,7 @@ if err != nil {
 	t.Fatal(err)
 }
 // Cut only replication and heartbeat traffic of osd.0.
-cut, err := cluster.InterruptNetwork(ctx, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
+cut, err := fault.InterruptNetwork(ctx, cluster, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
 if cut != nil {
 	defer cut.Restore(cleanupCtx)
 }
@@ -256,7 +259,7 @@ Contract:
   error and can be retried. Restore a caller-owned container's endpoint before
   you terminate that container.
 
-The package function `ceph.InterruptNetwork(ctx, container, networkName)` does
+The package function `fault.InterruptLink(ctx, container, networkName)` does
 the same for any named bridge network, but the caller owns the returned handle
 and no fixture restores it.
 
@@ -269,7 +272,7 @@ sees its answers late, while the container's other bridge and the other
 daemons are unaffected.
 
 This is an opt-in extension. `NetworkDelay.HelperImage` names an image with
-`tc`, `ip` and `python3`, such as `ceph.NetemHelperImage`, which
+`tc`, `ip` and `python3`, such as `fault.NetemHelperImage`, which
 [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
 publishes for `linux/amd64` and `linux/arm64`. The module starts that image as
 a helper container in the target's network namespace and grants `NET_ADMIN` to
@@ -283,8 +286,8 @@ if cluster != nil {
 if err != nil {
 	t.Fatal(err)
 }
-delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+delay, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
 	Jitter:      20 * time.Millisecond,
@@ -320,9 +323,9 @@ Before it changes anything, the call checks:
   there and checks the values that the kernel reports back. With
   peers, it also adds and removes a `prio` qdisc with a u32 filter there, so
   a kernel without either is refused before the target changes. The errors
-  wrap `ceph.ErrNetemImageUnsupported`, which belongs to
-  `ceph.ErrImageCapability`, or `ceph.ErrNetemPermissionDenied` or
-  `ceph.ErrNetemKernelUnsupported`, which belong to
+  wrap `fault.ErrNetemImageUnsupported`, which belongs to
+  `ceph.ErrImageCapability`, or `fault.ErrNetemPermissionDenied` or
+  `fault.ErrNetemKernelUnsupported`, which belong to
   `ceph.ErrEnvironmentUnavailable`. A request without `HelperImage` has not
   selected the extension and is `ceph.ErrImageCapability` too, and a `tc`
   command that fails otherwise is a `*ceph.NativeFailure` (see
@@ -346,8 +349,8 @@ the IP header without options or extension headers, which Ceph's TCP traffic
 does not use.
 
 `NetworkDelay.Peers` selects several peers in one lease, each a
-`ceph.NetworkPeer` with an address and an optional TCP port, up to
-`ceph.MaxNetworkPeers`. Only one delay is held per endpoint, so a daemon's
+`fault.NetworkPeer` with an address and an optional TCP port, up to
+`fault.MaxNetworkPeers`. Only one delay is held per endpoint, so a daemon's
 paths to several peers are faulted with one delay that lists them all. The
 lease owns one u32 filter per peer, all leading to the same netem child: the
 IPv4 peers in preference 10 and u32 table `800:`, with handles `800::1`,
@@ -360,10 +363,10 @@ it has.
 
 ```golang
 // The MDS loses both OSDs; clients and the MON still reach it.
-cut, err := cluster.TemporaryNetworkDelay(ctx, mds, ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+cut, err := fault.TemporaryNetworkDelay(ctx, cluster, mds, fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
-	Peers:       []ceph.NetworkPeer{{Addr: osd0}, {Addr: osd1}},
+	Peers:       []fault.NetworkPeer{{Addr: osd0}, {Addr: osd1}},
 	Loss:        100,
 })
 ```
@@ -442,11 +445,11 @@ and `Loss` in the same qdisc, and `Delay` may then be zero. The lease, its
 selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-limit, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+limit, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
-	Rate:        16 * ceph.MegabitPerSecond,
+	Rate:        16 * fault.MegabitPerSecond,
 })
 if limit != nil {
 	defer limit.Restore(cleanupCtx)
@@ -455,7 +458,7 @@ if err != nil {
 	t.Fatal(err)
 }
 status, err := limit.Status(ctx)
-if err != nil || !status.Applied || status.Rate != 16*ceph.MegabitPerSecond {
+if err != nil || !status.Applied || status.Rate != 16*fault.MegabitPerSecond {
 	t.Fatalf("rate limit: %+v, %v", status, err)
 }
 ```
@@ -467,11 +470,11 @@ How the limit behaves:
   Ethernet header, and a TCP segmentation offload packet counts with all of
   its segments, so an application's throughput stays below `Rate`.
 - Packets waiting for the rate, and for a `Delay`, share one queue of
-  `QueueLimit` packets (`ceph.DefaultNetworkQueueLimit`, 1000, when zero).
+  `QueueLimit` packets (`fault.DefaultNetworkQueueLimit`, 1000, when zero).
   A packet that finds the queue full is dropped and counted in `Drops`. A
   large queue at a low rate adds latency to every selected packet, including
   Ceph's own heartbeats when the selection carries them.
-- `Rate` accepts `ceph.MinNetworkRate` (64 Kbit/s) to `ceph.MaxNetworkRate`
+- `Rate` accepts `fault.MinNetworkRate` (64 Kbit/s) to `fault.MaxNetworkRate`
   (10 Gbit/s) in whole bytes per second. Below about 1 Mbit/s, one 64 KiB
   offload packet already takes over half a second, so Ceph sessions with
   short timeouts may fail; that is the limit working, not the module.
@@ -485,7 +488,7 @@ How the limit behaves:
   target changes: a `tc` that cannot parse it is `ErrNetemImageUnsupported`,
   and a kernel that does not report the rate and queue limit back is
   `ErrNetemKernelUnsupported`. The module installs no package and never falls
-  back to another mechanism. `ceph.NetemHelperImage` parses it.
+  back to another mechanism. `fault.NetemHelperImage` parses it.
 - The limit shapes what the target sends. Limit the other direction on the
   peer's endpoint, with the target's address.
 
@@ -527,7 +530,7 @@ again safely after `Restore`. `TestNetworkBandwidthSevere` measured, in the
 same environments:
 
 - Operation timeout: with osd.0's packets to the client limited to
-  `ceph.MinNetworkRate` (64 Kbit/s), a client session whose
+  `fault.MinNetworkRate` (64 Kbit/s), a client session whose
   `rados_osd_op_timeout` is 10 s read a 1 MiB object, which needs about
   131 s at that rate. The read failed with `ETIMEDOUT` after 10.0 s. By then
   netem had sent about 80 KB of the reply and still held about 67 KB in 23
@@ -562,11 +565,11 @@ if err != nil {
 	return err
 }
 peer := inspect.NetworkSettings.Networks[source.NetworkName()].IPAddress
-lease, err := source.TemporaryNetworkDelay(ctx, source.OSDs()[0].Container, ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+lease, err := fault.TemporaryNetworkDelay(ctx, source, source.OSDs()[0].Container, fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        peer,
-	Rate:        2 * ceph.MegabitPerSecond,
+	Rate:        2 * fault.MegabitPerSecond,
 })
 ```
 
@@ -616,16 +619,16 @@ errors above instead of falling back to another mechanism.
 ### Packet faults
 
 `NetworkDelay.Reorder`, `Duplicate` and `Corrupt` add netem's packet faults
-to the lease's netem qdisc. Each is a `ceph.NetworkPacketFault` with a
+to the lease's netem qdisc. Each is a `fault.NetworkPacketFault` with a
 `Percent` of the selected packets and an optional `Correlation`. The lease,
 its selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-fault, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+fault, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
-	Duplicate:   ceph.NetworkPacketFault{Percent: 50},
+	Duplicate:   fault.NetworkPacketFault{Percent: 50},
 })
 if fault != nil {
 	defer fault.Restore(cleanupCtx)
@@ -634,7 +637,7 @@ if err != nil {
 	t.Fatal(err)
 }
 status, err := fault.Status(ctx)
-if err != nil || !status.Applied || status.Duplicate != (ceph.NetworkPacketFault{Percent: 50}) {
+if err != nil || !status.Applied || status.Duplicate != (fault.NetworkPacketFault{Percent: 50}) {
 	t.Fatalf("duplicate: %+v, %v", status, err)
 }
 ```
@@ -696,7 +699,7 @@ What they do to TCP, and what that means for a test:
   gap of 1 is `ErrNetemKernelUnsupported`. The apply compares the target's
   installed faults with the request the same way and returns the lease with
   an error on any difference. iproute2 6.1, the `tc` of
-  `ceph.NetemHelperImage`, sends a duplicate's correlation only together
+  `fault.NetemHelperImage`, sends a duplicate's correlation only together
   with a delay's correlation, so the lease passes a zero delay correlation
   with a `Duplicate.Correlation`; without that, the preflight would see the
   correlation missing.
@@ -783,7 +786,7 @@ if _, err := mirror.WaitReplayReady(ctx, "disk"); err != nil {
 // Compare the destination bytes with your own client.
 ```
 
-The handles are `*ceph.NetworkInterruption` with the same contract as above.
+The handles are `*fault.NetworkInterruption` with the same contract as above.
 Only owned daemons and zones can be selected, the daemon is never stopped or
 restarted, and host-network fixtures are refused. Each fixture restores its
 interruptions during its own cleanup. Endpoint restoration does not mean the

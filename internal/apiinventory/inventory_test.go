@@ -20,6 +20,7 @@ const root = "../.."
 // Public packages and the page that documents each.
 var packages = map[string]string{
 	"ceph":   "docs/ceph.md",
+	"fault":  "docs/fault.md",
 	"rbd":    "docs/rbd.md",
 	"cephfs": "docs/cephfs.md",
 	"rgw":    "docs/rgw.md",

@@ -68,7 +68,8 @@ type Held struct {
 }
 
 type hooks interface {
-	Admit(c *ceph.Container, op string) error
+	TestFaults(c *ceph.Container, kind string) map[string]any
+ Admit(c *ceph.Container, op string) error
 	Reserve(ctx context.Context, c *ceph.Container, kind, key string) (any, any, error)
 	Settle(c *ceph.Container, token any, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) (bool, error)
 	Release(c *ceph.Container, token any) bool
@@ -211,3 +212,6 @@ func NativeFailure(program string, code int, stdout, stderr []byte) error {
 // OnlyMissingHostResource reports an error that only says a container or
 // network is already gone.
 func OnlyMissingHostResource(err error) bool { return get().OnlyMissingHostResource(err) }
+
+// TestFaults snapshots the registry for unit tests. Call with the cluster mutex held.
+func TestFaults(c *ceph.Container, kind Kind) map[string]any { return get().TestFaults(c, string(kind)) }

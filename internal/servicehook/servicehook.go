@@ -330,6 +330,7 @@ type TestConfig = struct {
 	HostNetwork    bool
 	PublicAddress  string
 	NetworkName    string
+	Shared         bool
 	// OSDs adds owned OSD descriptors 0..OSDs-1 whose container is control
 	// and whose CRUSH location is OSDPlacement.
 	OSDs         int
@@ -355,6 +356,7 @@ type TestStateView = struct {
 	MDSImage       *string
 	RGWImage       *string
 	PortLeases     int
+	NetworkRemoved *bool
 }
 
 // TestCluster builds a cluster value for unit tests: control runs the CLI.
