@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
@@ -142,7 +143,7 @@ func TestMonitorAddressKeepsANetworkInterruptionUntilItsOwnerRestores(t *testing
 	}
 	// Restore reattaches the original address explicitly; the MON then starts
 	// there without another reconnect.
-	model.endpoint = restoreEndpoint(&dockernetwork.EndpointSettings{IPAddress: netip.MustParseAddr("172.19.0.2"), Aliases: []string{"ceph-mon"}})
+	model.endpoint = dockerbridge.RestoreEndpoint(&dockernetwork.EndpointSettings{IPAddress: netip.MustParseAddr("172.19.0.2"), Aliases: []string{"ceph-mon"}})
 	if err := pin(); err != nil || model.connects != 0 {
 		t.Fatalf("a restored endpoint: %v, %d connects", err, model.connects)
 	}

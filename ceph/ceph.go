@@ -108,8 +108,6 @@ type Container struct {
 	faults faultRegistry
 	// osdRunner replaces runContainer for OSD containers in tests.
 	osdRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
-	// newNetemBackend replaces the Docker netem backend in tests.
-	newNetemBackend func() netemBackend
 	// controlImageID is the ID of the first MON's image, which errors about
 	// the control image's capabilities name.
 	controlImageID string

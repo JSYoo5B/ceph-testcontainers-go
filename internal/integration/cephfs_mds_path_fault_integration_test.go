@@ -10,7 +10,7 @@ import "testing"
 // while the client holds an open file: the MDS's packets to the client, and
 // in the reverse variant the client's packets to the MDS. A metadata request
 // stays pending while data writes to the open file reach the OSDs. It needs
-// the netem helper (CEPH_TEST_NETEM_IMAGE, by default ceph.NetemHelperImage)
+// the netem helper (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage)
 // and an engine that grants it NET_ADMIN.
 func TestCephFSClientMDSPathCut(t *testing.T) {
 	t.Run("mds-to-client", func(t *testing.T) { testCephFSClientMDSPathCut(t, mdsToClient) })

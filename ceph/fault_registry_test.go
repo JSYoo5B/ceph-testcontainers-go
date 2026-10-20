@@ -98,8 +98,8 @@ func TestFaultRegistryReserveSettleRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := &NetworkDelayLease{}
-	if closed := c.settleFault(token, "", lease, lease.Restore, nil); closed {
+	lease := &modelFault{}
+	if closed := c.settleFault(token, "", lease, lease.undo, nil); closed {
 		t.Fatal("settle reported a terminate that did not happen")
 	}
 	_, previous, err = c.reserveFault(ctx, faultNetworkDelay, "net/osd-0")
@@ -318,9 +318,6 @@ func TestSettleAfterTerminateReportsClosed(t *testing.T) {
 	if err := f.undo(t.Context()); err != nil || len(c.faultsOf(faultNetworkDelay)) != 0 {
 		t.Fatal("self-restore after a late settle left the entry")
 	}
-	if _, _, err := c.reserveNetworkDelay(t.Context(), contextLockClient{}, PublicNetworkPlane); !errors.Is(err, errClusterTerminated) {
-		t.Fatalf("a closed cluster admitted a delay reservation: %v", err)
-	}
 }
 
 // TestTerminateConcurrentWithDelayRestore models a lease whose Restore takes
@@ -364,12 +361,18 @@ func TestTerminateConcurrentWithDelayRestore(t *testing.T) {
 }
 
 func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
+
 	for op, policy := range sharedFaultPolicies {
 		method, ok := strings.CutPrefix(op, "fault.")
-		if !ok || sharedMethodPolicies[method] != policy {
-			t.Errorf("%s has policy %v, its method %v", op, policy, sharedMethodPolicies[method])
+		expected := sharedMethodPolicies[method]
+		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" {
+			expected = sharedExclusive
+		}
+		if !ok || policy != expected {
+			t.Errorf("%s has policy %v, want %v", op, policy, expected)
 		}
 	}
+
 	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "PauseContainer", "TemporaryBlocklist", "TemporaryFullRatios", "InjectObjectDataError"} {
 		if _, ok := sharedFaultPolicies["fault."+method]; !ok {
 			t.Errorf("fault.%s has no shared policy", method)

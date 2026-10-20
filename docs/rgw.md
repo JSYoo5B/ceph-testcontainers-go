@@ -1273,7 +1273,7 @@ remain caller decisions.
 #### InterruptZoneLink
 
 ```golang
-func (m *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*ceph.NetworkInterruption, error)
+func (m *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*fault.NetworkInterruption, error)
 ```
 
 Disconnects one zone's gateway from the private multisite HTTP network. Its S3
@@ -1289,7 +1289,7 @@ See [guides/fault-injection.md](guides/fault-injection.md).
 #### TemporaryZoneLinkDelay
 
 ```golang
-func (m *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
+func (m *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error)
 ```
 
 Delays or drops, below RGW, only the packets that the gateway of `zoneName`
@@ -1302,8 +1302,8 @@ notifications. Connections that `peerZone` opens to `zoneName` answer from
 Local S3 endpoints, the clusters and other zones' links are untouched.
 
 It is an opt-in extension like
-[TemporaryNetworkDelay](ceph.md#temporarynetworkdelay), applied through
-[ceph.TemporaryLinkDelay](ceph.md#temporarylinkdelay): `delay` names the netem
+[TemporaryNetworkDelay](fault.md#temporarynetworkdelay), applied through
+[fault.TemporaryLinkDelay](fault.md#standalone-bridge-functions): `delay` names the netem
 helper image and the delay, jitter or loss, and leaves `Plane`, `Peer`,
 `PeerPort` and `Peers` empty; the fixture selects the network and the peer and
 returns them in the lease. The checks, errors, `Status` and `Restore` are
@@ -1312,8 +1312,8 @@ be restored. The fixture restores remaining leases during `Terminate`. Host
 mode has no private multisite network and is rejected.
 
 ```golang
-cut, err := ms.TemporaryZoneLinkDelay(ctx, "west", "east", ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
+cut, err := ms.TemporaryZoneLinkDelay(ctx, "west", "east", fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage,
 	Loss:        100,
 })
 if cut != nil {

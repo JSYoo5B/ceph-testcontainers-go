@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -141,7 +142,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	topologyRados(t, ctx, client, "seed")
 	// Disconnect only the caller-owned client's public endpoint. Docker Exec
 	// remains available, while a fresh native MON authentication is bounded.
-	cut, err := cluster.InterruptNetwork(ctx, client, ceph.PublicNetworkPlane)
+	cut, err := fault.InterruptNetwork(ctx, cluster, client, ceph.PublicNetworkPlane)
 	if cut != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -161,7 +162,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	topologyRados(t, ctx, client, "public-endpoint-restored")
 	// Interrupt an OSD's backend without stopping its process/public listener.
 	osd := cluster.OSDs()[0]
-	backend, err := cluster.InterruptNetwork(ctx, osd, ceph.ClusterNetworkPlane)
+	backend, err := fault.InterruptNetwork(ctx, cluster, osd, ceph.ClusterNetworkPlane)
 	if backend != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -277,7 +278,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	topologyRados(t, ctx, client, "seed")
-	var cuts []*ceph.NetworkInterruption
+	var cuts []*fault.NetworkInterruption
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -288,7 +289,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 		}
 	})
 	for i, mon := range cluster.Monitors()[:2] {
-		cut, err := cluster.InterruptNetwork(ctx, mon, ceph.PublicNetworkPlane)
+		cut, err := fault.InterruptNetwork(ctx, cluster, mon, ceph.PublicNetworkPlane)
 		if cut != nil {
 			cuts = append(cuts, cut)
 		}

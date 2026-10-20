@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -428,9 +429,9 @@ func testDualStackFamilyCut(t *testing.T) {
 	sameInstance(expect(v4, map[string]any{"id": "before", "op": "mon", "wait": 30}, true), &instance4)
 	state := readFamilyCutState(t, ctx, cluster)
 
-	cut := func(peer netip.AddrPort) *ceph.NetworkDelayLease {
+	cut := func(peer netip.AddrPort) *fault.NetworkDelayLease {
 		t.Helper()
-		lease, err := cluster.TemporaryNetworkDelay(ctx, client, ceph.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane,
+		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, client, fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane,
 			Peer: peer.Addr(), PeerPort: peer.Port(), Loss: 100})
 		if lease != nil {
 			t.Cleanup(func() {
@@ -449,7 +450,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		}
 		return lease
 	}
-	restore := func(lease *ceph.NetworkDelayLease, peer netip.AddrPort) string {
+	restore := func(lease *fault.NetworkDelayLease, peer netip.AddrPort) string {
 		t.Helper()
 		status, err := lease.Status(ctx)
 		// With Loss 100 netem sends none of the selected packets.

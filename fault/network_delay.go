@@ -1,4 +1,4 @@
-package ceph
+package fault
 
 import (
 	"context"
@@ -15,12 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // NetemHelperImage is the netem helper that ceph-testcontainers-images
@@ -129,18 +130,18 @@ var (
 	// netem contract: a missing or broken tc, ip, sh, sleep or python3, or a
 	// tc without netem, or, for a Rate, a tc that cannot parse netem's rate,
 	// or for a Reorder, Duplicate or Corrupt, a tc that cannot parse that
-	// fault with a correlation. It belongs to ErrImageCapability.
-	ErrNetemImageUnsupported error = &categoryError{text: "the netem helper image does not meet the netem contract", kind: ErrImageCapability}
+	// fault with a correlation. It belongs to ceph.ErrImageCapability.
+	ErrNetemImageUnsupported error = &categoryError{text: "the netem helper image does not meet the netem contract", kind: ceph.ErrImageCapability}
 	// ErrNetemPermissionDenied reports an engine that did not give the helper
 	// NET_ADMIN, or refused a qdisc change for lack of it. It belongs to
-	// ErrEnvironmentUnavailable.
-	ErrNetemPermissionDenied error = &categoryError{text: "the netem helper has no NET_ADMIN", kind: ErrEnvironmentUnavailable}
+	// ceph.ErrEnvironmentUnavailable.
+	ErrNetemPermissionDenied error = &categoryError{text: "the netem helper has no NET_ADMIN", kind: ceph.ErrEnvironmentUnavailable}
 	// ErrNetemKernelUnsupported reports a kernel without the netem qdisc,
 	// for a delay with peers without the prio qdisc or the u32 classifier, or
 	// for a Rate a netem qdisc that does not keep the rate, or for a Reorder,
 	// Duplicate or Corrupt one that does not keep that fault, its correlation
-	// or, for a Reorder, a gap of 1. It belongs to ErrEnvironmentUnavailable.
-	ErrNetemKernelUnsupported error = &categoryError{text: "the engine's kernel lacks a qdisc or classifier that the delay needs", kind: ErrEnvironmentUnavailable}
+	// or, for a Reorder, a gap of 1. It belongs to ceph.ErrEnvironmentUnavailable.
+	ErrNetemKernelUnsupported error = &categoryError{text: "the engine's kernel lacks a qdisc or classifier that the delay needs", kind: ceph.ErrEnvironmentUnavailable}
 )
 
 // NetworkDelay configures TemporaryNetworkDelay.
@@ -149,7 +150,7 @@ type NetworkDelay struct {
 	// that meets contract 1 of the netem extension. Required.
 	HelperImage string
 	// Plane selects the bridge whose endpoint of the target is delayed.
-	Plane NetworkPlane
+	Plane ceph.NetworkPlane
 	// Delay is added to every packet that leaves the target through that
 	// endpoint: at least 1ms and at most MaxNetworkDelay, in whole
 	// microseconds. With a Loss or a Rate it may be zero.
@@ -628,14 +629,14 @@ func validateNetworkDelay(delay NetworkDelay) error {
 func validateDelay(delay NetworkDelay, plane bool) error {
 	if strings.TrimSpace(delay.HelperImage) == "" {
 		// The extension is not selected.
-		return &OperationError{Kind: ErrImageCapability, Capability: "netem extension",
+		return &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "netem extension",
 			Err: errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")}
 	}
 	// Every check runs: allowing a zero delay with a Loss must not skip the
 	// selection's checks.
 	noDelay := delay.Delay == 0 && (delay.Loss > 0 || delay.Rate > 0 || !delay.Duplicate.IsZero() || !delay.Corrupt.IsZero())
 	switch {
-	case plane && delay.Plane != PublicNetworkPlane && delay.Plane != ClusterNetworkPlane:
+	case plane && delay.Plane != ceph.PublicNetworkPlane && delay.Plane != ceph.ClusterNetworkPlane:
 		return invalidRequest("invalid Ceph network plane")
 	case !plane && delay.Plane != "":
 		return invalidRequest("a link delay names its network; leave NetworkDelay.Plane empty")
@@ -903,16 +904,23 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 // ErrNetemPermissionDenied or
 // ErrNetemKernelUnsupported. It refuses an interface whose root qdisc is not
 // the kernel's default and a target that already has a delay on that bridge.
-// A missing HelperImage is ErrImageCapability, the refusals are
-// ErrInvalidRequest, and a tc command that fails otherwise is a
-// *NativeFailure.
+// A missing HelperImage is ceph.ErrImageCapability, the refusals are
+// ceph.ErrInvalidRequest, and a tc command that fails otherwise is a
+// *ceph.NativeFailure.
 //
 // The delay lasts until Restore, or until the target stops or leaves the
 // bridge, which removes its interface. Terminate restores delays that are
 // still held; restore a caller-owned target's delay before removing it.
-func (c *Container) TemporaryNetworkDelay(ctx context.Context, target testcontainers.Container, delay NetworkDelay) (*NetworkDelayLease, error) {
-	if gateErr := c.sharedGate("TemporaryNetworkDelay"); gateErr != nil {
+func TemporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkDelay) (*NetworkDelayLease, error) {
+	return temporaryNetworkDelay(ctx, c, target, delay, nil)
+}
+
+func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkDelay, backend netemBackend) (*NetworkDelayLease, error) {
+	if gateErr := faulthook.Admit(c, "fault.TemporaryNetworkDelay"); gateErr != nil {
 		return nil, gateErr
+	}
+	if backend == nil {
+		backend = dockerNetemBackend{label: faulthook.OwnedLabel(c)}
 	}
 	if err := validateNetworkDelay(delay); err != nil {
 		return nil, err
@@ -921,14 +929,15 @@ func (c *Container) TemporaryNetworkDelay(ctx context.Context, target testcontai
 		return nil, invalidRequest("network delay requires a container")
 	}
 	id := target.GetContainerID()
-	name, token, err := c.reserveNetworkDelay(ctx, target, delay.Plane)
+	name, token, err := reserveNetworkDelay(ctx, c, target, delay.Plane)
 	if err != nil {
 		return nil, err
 	}
-	lease, err := applyNetworkDelay(ctx, c.netemBackend(), id, name, delay)
-	if closed := c.settleNetworkDelay(token, lease); closed && lease != nil {
+	lease, err := applyNetworkDelay(ctx, backend, id, name, delay)
+	if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
 		// Terminate ran meanwhile and did not see this delay.
-		return lease, errors.Join(err, errNativeTerminated, lease.Restore(ctx))
+		native, _ := faulthook.Terminated()
+		return lease, errors.Join(err, native, lease.Restore(ctx))
 	}
 	return lease, err
 }
@@ -937,7 +946,7 @@ func (c *Container) TemporaryNetworkDelay(ctx context.Context, target testcontai
 // cluster's planes, for fixtures that own one, such as the private HTTP
 // bridge between the gateways of an RGW multisite: it delays or drops the
 // packets that ctr sends through its endpoint on the bridge named network.
-// Like InterruptNetwork, the caller owns ctr, the network and the returned
+// Like InterruptLink, the caller owns ctr, the network and the returned
 // lease, and restores the lease before it removes either: no cluster's
 // Terminate knows it. delay.Plane stays empty; every other field, check and
 // error is that of TemporaryNetworkDelay, and a network that is not a bridge
@@ -961,65 +970,67 @@ func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testconta
 
 // reserveNetworkDelay admits target for a delay on plane and reserves its
 // endpoint until settleNetworkDelay.
-func (c *Container) reserveNetworkDelay(ctx context.Context, target testcontainers.Container, plane NetworkPlane) (string, *faultEntry, error) {
-	if err := c.lockTopology(ctx); err != nil {
-		return "", nil, err
+func reserveNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, plane ceph.NetworkPlane) (string, faulthook.Token, error) {
+	var closed, hostNetwork, owned bool
+	var name string
+	err := faulthook.WithTopology(ctx, c, func() error {
+		closed, hostNetwork = faulthook.Closed(c), c.UsesHostNetwork()
+		name = c.NetworkName()
+		if plane == ceph.ClusterNetworkPlane {
+			name = c.ClusterNetworkName()
+		}
+		owned = faulthook.Owns(c, target.GetContainerID())
+		return nil
+	})
+	var token faulthook.Token
+	if err != nil {
+		return "", token, err
 	}
-	closed, hostNetwork := c.closed, c.UsesHostNetwork()
-	name := c.NetworkName()
-	if plane == ClusterNetworkPlane {
-		name = c.ClusterNetworkName()
-	}
-	owned := c.ownsNativeTarget(target.GetContainerID())
-	c.mu.Unlock()
+	_, terminated := faulthook.Terminated()
 	switch {
 	case closed:
-		return "", nil, errClusterTerminated
+		return "", token, terminated
 	case hostNetwork:
-		return "", nil, invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
+		return "", token, invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
 	case name == "":
-		return "", nil, invalidRequest("Ceph bridge is not initialized")
+		return "", token, invalidRequest("Ceph bridge is not initialized")
 	}
 	if !owned {
 		attached, err := target.Networks(ctx)
 		if err != nil {
-			return "", nil, classifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
+			return "", token, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
 		}
 		if !slices.Contains(attached, name) {
-			return "", nil, invalidRequest("the container is not attached to Ceph network %s", name)
+			return "", token, invalidRequest("the container is not attached to Ceph network %s", name)
 		}
 	}
-	key := name + "/" + target.GetContainerID()
-	if err := c.lockTopology(ctx); err != nil {
-		return "", nil, err
-	}
-	defer c.mu.Unlock()
-	if c.closed {
-		return "", nil, errClusterTerminated
-	}
-	// A completed lease leaves the registry, so a held one still needs
-	// Restore.
-	token, _, err := c.reserveFault(ctx, faultNetworkDelay, key)
+	err = faulthook.WithTopology(ctx, c, func() error {
+		if faulthook.Closed(c) {
+			return terminated
+		}
+		var reserveErr error
+		token, _, reserveErr = faulthook.Reserve(ctx, c, faulthook.NetworkDelay, name+"/"+target.GetContainerID())
+		return reserveErr
+	})
 	if err != nil {
-		return "", nil, err
+		return "", token, err
 	}
 	return name, token, nil
 }
 
 // settleNetworkDelay keeps a returned lease for Terminate, or frees the
 // reservation when there is none. It reports whether Terminate has started.
-func (c *Container) settleNetworkDelay(token *faultEntry, lease *NetworkDelayLease) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if lease == nil {
-		return c.settleFault(token, "", nil, nil, nil)
-	}
-	lease.release = func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.releaseFault(token)
-	}
-	return c.settleFault(token, "", lease, lease.Restore, nil)
+func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *NetworkDelayLease) (closed bool) {
+	faulthook.WithTopologyNoContext(c, func() {
+		held := faulthook.Held{}
+		if lease != nil {
+			lease.release = func() { faulthook.WithTopologyNoContext(c, func() { faulthook.Release(c, token) }) }
+			held = faulthook.Held{Handle: lease, Undo: lease.Restore}
+		}
+		// token came from this cluster's reservation; no arbitrary token is accepted.
+		closed, _ = faulthook.Settle(c, token, held)
+	})
+	return closed
 }
 
 // applyNetworkDelay checks the helper and the target, then applies the delay.
@@ -1027,7 +1038,7 @@ func (c *Container) settleNetworkDelay(token *faultEntry, lease *NetworkDelayLea
 func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkDelay) (*NetworkDelayLease, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
-		return nil, classifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+		return nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
 	}
 	if err := admitNetemTarget(state); err != nil {
 		return nil, err
@@ -1213,7 +1224,7 @@ func admitNetemTarget(state netemTarget) error {
 func preflightNetem(ctx context.Context, backend netemBackend, image string, peers, rate bool, faults []string) (string, error) {
 	helper, err := backend.startHelper(ctx, image, "none")
 	if err != nil {
-		return "", errors.Join(classifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
+		return "", errors.Join(faulthook.ClassifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
 	}
 	imageID, err := func() (string, error) {
 		_, imageID, err := backend.helper(ctx, helper)
@@ -1434,7 +1445,7 @@ func runNetemScript(ctx context.Context, backend netemBackend, helper testcontai
 func startNetemHelper(ctx context.Context, backend netemBackend, image string, networkMode container.NetworkMode) (testcontainers.Container, error) {
 	helper, err := backend.startHelper(ctx, image, networkMode)
 	if err != nil {
-		return nil, errors.Join(classifyDocker(ctx, fmt.Errorf("start the netem helper: %w", err)), removeNetemHelper(ctx, backend, helper))
+		return nil, errors.Join(faulthook.ClassifyDocker(ctx, fmt.Errorf("start the netem helper: %w", err)), removeNetemHelper(ctx, backend, helper))
 	}
 	if _, started, err := backend.helper(ctx, helper); err != nil || started != image {
 		return nil, errors.Join(fmt.Errorf("the netem helper runs image %q instead of %s", started, image), err,
@@ -1461,7 +1472,7 @@ func netemCommandError(label string, result supervised.Report) error {
 }
 
 // classifyNetem turns tc's exit code and error text into the error kinds of
-// the contract, or a *NativeFailure of tc.
+// the contract, or a *ceph.NativeFailure of tc.
 func classifyNetem(label string, code int, text string) error {
 	switch {
 	case strings.Contains(text, "Operation not permitted"):
@@ -1474,7 +1485,7 @@ func classifyNetem(label string, code int, text string) error {
 		strings.Contains(text, `What is "`):
 		return fmt.Errorf("%s: %w: tc cannot parse it", label, ErrNetemImageUnsupported)
 	}
-	return fmt.Errorf("%s: %w", label, nativeFailure("tc", code, nil, []byte(text)))
+	return fmt.Errorf("%s: %w", label, faulthook.NativeFailure("tc", code, nil, []byte(text)))
 }
 
 // removeNetemHelper removes helper, also after ctx ended: a helper of a
@@ -1495,7 +1506,7 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 // Status reads the delayed interface's qdiscs through the helper. After the
 // target restarted, stopped, was removed or left the bridge, it reports Gone.
 func (l *NetworkDelayLease) Status(ctx context.Context) (NetworkDelayStatus, error) {
-	if err := lockTopologyMutex(ctx, &l.mu); err != nil {
+	if err := lockMutex(ctx, &l.mu); err != nil {
 		return NetworkDelayStatus{}, err
 	}
 	defer l.mu.Unlock()
@@ -1675,7 +1686,7 @@ func (l *NetworkDelayLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
-	if err := lockTopologyMutex(ctx, &l.mu); err != nil {
+	if err := lockMutex(ctx, &l.mu); err != nil {
 		return err
 	}
 	defer l.mu.Unlock()
@@ -1732,13 +1743,6 @@ type dockerNetemBackend struct {
 	label testcontainers.CustomizeRequestOption
 }
 
-func (c *Container) netemBackend() netemBackend {
-	if c.newNetemBackend != nil {
-		return c.newNetemBackend()
-	}
-	return dockerNetemBackend{label: c.ownedLabel()}
-}
-
 func (dockerNetemBackend) target(ctx context.Context, id, network string) (netemTarget, error) {
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
@@ -1775,7 +1779,7 @@ func (dockerNetemBackend) target(ctx context.Context, id, network string) (netem
 // capability.
 func netemHelperOptions(networkMode container.NetworkMode) []testcontainers.ContainerCustomizer {
 	return []testcontainers.ContainerCustomizer{
-		WithIdleEntrypoint(),
+		ceph.WithIdleEntrypoint(),
 		testcontainers.WithConfigModifier(func(config *container.Config) { config.User = "0:0" }),
 		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
 			host.NetworkMode = networkMode

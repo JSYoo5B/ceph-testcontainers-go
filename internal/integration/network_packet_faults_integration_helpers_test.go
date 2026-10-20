@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 // transportScript prints a network namespace's kernel transport counters
@@ -121,22 +121,22 @@ func deltas(before, after transportSnapshot) string {
 // which keeps packets small.
 type packetFaultProfile struct {
 	name    string
-	fault   ceph.NetworkDelay
+	fault   fault.NetworkDelay
 	effects [][]string
 	reads   int
 }
 
 var packetFaultProfiles = []packetFaultProfile{
-	{"reorder", ceph.NetworkDelay{Delay: 10 * time.Millisecond, Reorder: ceph.NetworkPacketFault{Percent: 25}}, [][]string{reorderCounters}, 1},
-	{"duplicate", ceph.NetworkDelay{Duplicate: ceph.NetworkPacketFault{Percent: 50}}, [][]string{duplicateCounters}, 4},
-	{"corrupt", ceph.NetworkDelay{Corrupt: ceph.NetworkPacketFault{Percent: 5}}, [][]string{corruptCounters}, 8},
+	{"reorder", fault.NetworkDelay{Delay: 10 * time.Millisecond, Reorder: fault.NetworkPacketFault{Percent: 25}}, [][]string{reorderCounters}, 1},
+	{"duplicate", fault.NetworkDelay{Duplicate: fault.NetworkPacketFault{Percent: 50}}, [][]string{duplicateCounters}, 4},
+	{"corrupt", fault.NetworkDelay{Corrupt: fault.NetworkPacketFault{Percent: 5}}, [][]string{corruptCounters}, 8},
 }
 
 // composedProfile composes a duplicate with a correlation and a corrupt
 // with a delay and a rate in the same netem qdisc.
 var composedProfile = packetFaultProfile{"duplicate+corrupt with delay and rate",
-	ceph.NetworkDelay{Delay: 5 * time.Millisecond, Rate: 256 * ceph.MegabitPerSecond,
-		Duplicate: ceph.NetworkPacketFault{Percent: 30, Correlation: 25}, Corrupt: ceph.NetworkPacketFault{Percent: 5}},
+	fault.NetworkDelay{Delay: 5 * time.Millisecond, Rate: 256 * fault.MegabitPerSecond,
+		Duplicate: fault.NetworkPacketFault{Percent: 30, Correlation: 25}, Corrupt: fault.NetworkPacketFault{Percent: 5}},
 	[][]string{duplicateCounters, corruptCounters}, 2}
 
 // engineContext describes the engine and kernel that the counters come
@@ -217,7 +217,7 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	t.Helper()
 	request := profile.fault
 	request.HelperImage, request.Plane, request.Peer = p.image, ceph.PublicNetworkPlane, p.peer
-	lease, err := p.cluster.TemporaryNetworkDelay(ctx, p.limited.Container, request)
+	lease, err := fault.TemporaryNetworkDelay(ctx, p.cluster, p.limited.Container, request)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}

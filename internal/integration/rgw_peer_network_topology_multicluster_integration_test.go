@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -149,7 +149,7 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 // from b; the zones' local endpoints and both clusters keep serving. After
 // Restore b catches up with a's object byte for byte, with the same
 // gateway processes and period. It needs the netem helper
-// (CEPH_TEST_NETEM_IMAGE, by default ceph.NetemHelperImage) and an engine
+// (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage) and an engine
 // that grants it NET_ADMIN.
 func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
@@ -187,7 +187,7 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 		pids[zone.Name] = state.Pid
 	}
 
-	lease, err := fixture.TemporaryZoneLinkDelay(ctx, "b", "a", ceph.NetworkDelay{HelperImage: netem, Loss: 100})
+	lease, err := fixture.TemporaryZoneLinkDelay(ctx, "b", "a", fault.NetworkDelay{HelperImage: netem, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)

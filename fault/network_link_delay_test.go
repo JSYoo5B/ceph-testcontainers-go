@@ -1,10 +1,11 @@
-package ceph
+package fault
 
 import (
 	"errors"
 	"net/netip"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -14,7 +15,7 @@ func TestTemporaryLinkDelay(t *testing.T) {
 	peer := []NetworkPeer{{Addr: netip.MustParseAddr("10.88.0.7"), Port: 7480}}
 	link := NetworkDelay{HelperImage: "netem-helper:test", Loss: 100, Peers: peer}
 	planed := link
-	planed.Plane = PublicNetworkPlane
+	planed.Plane = ceph.PublicNetworkPlane
 	osd := &fakeNetemHelper{id: "osd-0"}
 	for name, test := range map[string]struct {
 		delay   NetworkDelay
@@ -29,7 +30,7 @@ func TestTemporaryLinkDelay(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			lease, err := temporaryLinkDelay(t.Context(), netem, test.target, test.network, test.delay)
-			if !errors.Is(err, ErrInvalidRequest) || lease != nil || netem.liveHelpers() != 0 || len(tcCommands(netem, "tc ")) != 0 {
+			if !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || netem.liveHelpers() != 0 || len(tcCommands(netem, "tc ")) != 0 {
 				t.Fatalf("got %v, %v with %d helpers", lease, err, netem.liveHelpers())
 			}
 		})
@@ -37,7 +38,7 @@ func TestTemporaryLinkDelay(t *testing.T) {
 	// A network that is not a bridge is refused before any helper starts.
 	netem := newFakeNetem()
 	netem.driver = "macvlan"
-	if lease, err := temporaryLinkDelay(t.Context(), netem, osd, "tc-public", link); !errors.Is(err, ErrInvalidRequest) || lease != nil || len(netem.helpers) != 0 {
+	if lease, err := temporaryLinkDelay(t.Context(), netem, osd, "tc-public", link); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || len(netem.helpers) != 0 {
 		t.Fatalf("a macvlan network: %v, %v", lease, err)
 	}
 	netem = newFakeNetem()

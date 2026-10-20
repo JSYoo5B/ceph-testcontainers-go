@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
@@ -16,7 +16,7 @@ import (
 // bridge. Its local Ceph/S3 endpoint stays attached, allowing local operations
 // while cross-zone synchronization is interrupted. Restore reconnects the
 // original peer IP/aliases; realm/period membership is unchanged.
-func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*ceph.NetworkInterruption, error) {
+func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*fault.NetworkInterruption, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
 	}
@@ -42,11 +42,11 @@ func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*ce
 // its sync reads and its notifications. Connections that peerZone opens to
 // zoneName answer from zoneName's own port and stay unselected, so peerZone
 // keeps syncing from zoneName; the zones' local endpoints and other links
-// are untouched. It is ceph.TemporaryLinkDelay with the opt-in netem helper:
+// are untouched. It is fault.TemporaryLinkDelay with the opt-in netem helper:
 // delay names the helper and the delay, jitter or loss, and leaves Plane,
 // Peer, PeerPort and Peers empty, which the fixture fills in. The fixture
 // restores the lease when it terminates; restore it earlier to end the fault.
-func (f *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error) {
+func (f *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
 	}
@@ -97,8 +97,8 @@ func (f *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZo
 	if !address.IsValid() {
 		return nil, fmt.Errorf("the gateway of RGW zone %s has no address on the multisite bridge %s", peerZone, f.httpNetwork.Name)
 	}
-	delay.Peers = []ceph.NetworkPeer{{Addr: address, Port: uint16(port)}}
-	lease, err := ceph.TemporaryLinkDelay(ctx, zone.Gateway, f.httpNetwork.Name, delay)
+	delay.Peers = []fault.NetworkPeer{{Addr: address, Port: uint16(port)}}
+	lease, err := fault.TemporaryLinkDelay(ctx, zone.Gateway, f.httpNetwork.Name, delay)
 	if lease != nil {
 		f.owned.AddCleanup("restore RGW zone link delay", lease.Restore)
 	}

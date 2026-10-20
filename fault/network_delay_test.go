@@ -1,4 +1,4 @@
-package ceph
+package fault
 
 import (
 	"context"
@@ -15,11 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // fakeQdisc is an interface's root qdisc; nil means the kernel's default.
@@ -722,25 +723,23 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 }
 
 // delayCluster is a bridge cluster whose OSD osd-0 is attached to tc-public.
-func delayCluster(netem *fakeNetem) (*Container, *fakeNetemHelper) {
+func delayCluster(netem *fakeNetem) (*delayTestCluster, *fakeNetemHelper) {
 	osd := &fakeNetemHelper{id: "osd-0"}
-	cluster := ownedCluster("cluster-a", &fakeOwnedDocker{containers: map[string]map[string]string{}})
-	cluster.osds = map[int]*OSDContainer{0: {Container: osd}}
-	cluster.newNetemBackend = func() netemBackend { return netem }
+	cluster := newDelayTestCluster(netem, osd, false)
 	return cluster, osd
 }
 
-var testDelay = NetworkDelay{HelperImage: "netem-helper:test", Plane: PublicNetworkPlane, Delay: 200 * time.Millisecond, Jitter: 20 * time.Millisecond}
+var testDelay = NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 200 * time.Millisecond, Jitter: 20 * time.Millisecond}
 
 func TestNetworkDelayValidation(t *testing.T) {
 	for name, delay := range map[string]NetworkDelay{
-		"no helper":       {Plane: PublicNetworkPlane, Delay: time.Second},
+		"no helper":       {Plane: ceph.PublicNetworkPlane, Delay: time.Second},
 		"no plane":        {HelperImage: "h", Delay: time.Second},
-		"too short":       {HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Microsecond},
-		"too long":        {HelperImage: "h", Plane: PublicNetworkPlane, Delay: MaxNetworkDelay + time.Millisecond},
-		"jitter > delay":  {HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Millisecond, Jitter: 2 * time.Millisecond},
-		"negative jitter": {HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Millisecond, Jitter: -1},
-		"nanoseconds":     {HelperImage: "h", Plane: PublicNetworkPlane, Delay: time.Millisecond + 1},
+		"too short":       {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Microsecond},
+		"too long":        {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: MaxNetworkDelay + time.Millisecond},
+		"jitter > delay":  {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: 2 * time.Millisecond},
+		"negative jitter": {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: -1},
+		"nanoseconds":     {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond + 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
@@ -807,10 +806,10 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 		setup      func(*fakeNetem)
 		want, kind error
 	}{
-		"no tc":        {func(n *fakeNetem) { n.missing = []string{"tc", "ip"} }, ErrNetemImageUnsupported, ErrImageCapability},
-		"no python3":   {func(n *fakeNetem) { n.noPython = true }, ErrNetemImageUnsupported, ErrImageCapability},
-		"no NET_ADMIN": {func(n *fakeNetem) { n.netAdmin = false }, ErrNetemPermissionDenied, ErrEnvironmentUnavailable},
-		"no netem":     {func(n *fakeNetem) { n.kernel = false }, ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
+		"no tc":        {func(n *fakeNetem) { n.missing = []string{"tc", "ip"} }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
+		"no python3":   {func(n *fakeNetem) { n.noPython = true }, ErrNetemImageUnsupported, ceph.ErrImageCapability},
+		"no NET_ADMIN": {func(n *fakeNetem) { n.netAdmin = false }, ErrNetemPermissionDenied, ceph.ErrEnvironmentUnavailable},
+		"no netem":     {func(n *fakeNetem) { n.kernel = false }, ErrNetemKernelUnsupported, ceph.ErrEnvironmentUnavailable},
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
@@ -834,8 +833,8 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 				t.Fatal("the refusal left a change or a helper")
 			}
 			// The endpoint is free again.
-			if len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-				t.Fatalf("reservations left: %v", cluster.faultsOf(faultNetworkDelay))
+			if len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatalf("reservations left: %v", cluster.faultsOf(faulthook.NetworkDelay))
 			}
 		})
 	}
@@ -856,7 +855,7 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 			setup(netem.targets["osd-0"])
 			before := netem.root("osd-0")
 			cluster, osd := delayCluster(netem)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("returned %v, lease %v", err, lease)
 			}
 			if name != "custom root" && name != "not on the plane" && len(netem.helpers) != 0 {
@@ -873,9 +872,9 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 		})
 	}
 	netem := newFakeNetem()
-	cluster, osd := delayCluster(netem)
-	cluster.settings.hostNetwork = true
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ErrInvalidRequest) || len(netem.helpers) != 0 {
+	osd := &fakeNetemHelper{id: "osd-0"}
+	cluster := newDelayTestCluster(netem, osd, true)
+	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || len(netem.helpers) != 0 {
 		t.Fatalf("a host-network cluster: %v", err)
 	}
 }
@@ -887,8 +886,8 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	cluster, osd := delayCluster(netem)
 	unselected := testDelay
 	unselected.HelperImage = ""
-	var missing *OperationError
-	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, unselected); !errors.As(err, &missing) || missing.Kind != ErrImageCapability ||
+	var missing *ceph.OperationError
+	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, unselected); !errors.As(err, &missing) || missing.Kind != ceph.ErrImageCapability ||
 		missing.Capability != "netem extension" || errors.Is(err, ErrNetemImageUnsupported) || lease != nil || len(netem.helpers) != 0 {
 		t.Fatalf("an unselected extension returned %v", err)
 	}
@@ -899,7 +898,7 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	} {
 		request := testDelay
 		change(&request)
-		if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ErrInvalidRequest) {
+		if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Fatalf("%s returned %v", name, err)
 		}
 	}
@@ -909,9 +908,9 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 		return supervised.Report{ExitCode: 2, Stderr: []byte("RTNETLINK answers: Invalid argument")}, nil
 	}
 	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
-	var failure *NativeFailure
+	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) || failure.Program != "tc" || failure.ExitCode != 2 || failure.Reason != "RTNETLINK answers: Invalid argument" ||
-		errors.Is(err, ErrImageCapability) || errors.Is(err, ErrEnvironmentUnavailable) || lease != nil {
+		errors.Is(err, ceph.ErrImageCapability) || errors.Is(err, ceph.ErrEnvironmentUnavailable) || lease != nil {
 		t.Fatalf("a refused tc command returned %v, lease %v", err, lease)
 	}
 	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 {
@@ -921,7 +920,7 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	netem = newFakeNetem()
 	netem.slowPreflight = true
 	cluster, osd = delayCluster(netem)
-	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || classified(err) || !strings.Contains(err.Error(), "timed out") ||
+	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || classifiedError(err) || !strings.Contains(err.Error(), "timed out") ||
 		lease != nil || netem.liveHelpers() != 0 {
 		t.Fatalf("a slow preflight returned %v, lease %v", err, lease)
 	}
@@ -937,7 +936,7 @@ func TestNetworkDelayCanceledApplyKeepsALease(t *testing.T) {
 	}
 	cluster, osd := delayCluster(netem)
 	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
-	if !errors.Is(err, context.Canceled) || classified(err) || lease == nil {
+	if !errors.Is(err, context.Canceled) || classifiedError(err) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
 	if status, err := lease.Status(t.Context()); err != nil || !status.Applied {
@@ -1093,7 +1092,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
 		t.Fatal("Terminate left a delay")
 	}
 
@@ -1106,7 +1105,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 		return apply(), nil
 	}
 	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
-	if !errors.Is(err, errNativeTerminated) || lease == nil {
+	if !errors.Is(err, nativeTerminated()) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
 	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 {
@@ -1323,8 +1322,8 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 					t.Fatalf("ran %q on the target", command)
 				}
 			}
-			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faultNetworkDelay))
+			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faulthook.NetworkDelay))
 			}
 		})
 	}

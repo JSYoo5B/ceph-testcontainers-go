@@ -125,7 +125,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	// Cluster-wide changes.
 	"DeepScrubPG":              sharedExclusive,
 	"CreatePool":               sharedExclusive,
-	"InterruptNetwork":         sharedExclusive,
 	"PauseContainer":           sharedExclusive,
 	"RefreshMonitorConfig":     sharedExclusive,
 	"RemovePool":               sharedExclusive,
@@ -141,7 +140,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"TemporaryFullRatios":      sharedExclusive,
 	"TemporaryMGRModule":       sharedExclusive,
 	"TemporaryMessengerPolicy": sharedExclusive,
-	"TemporaryNetworkDelay":    sharedExclusive,
 	"TemporaryOSDFlag":         sharedExclusive,
 	// Raw access: the admin CLI and keyring, and daemon container handles.
 	"AdminSocket":             sharedExclusive,

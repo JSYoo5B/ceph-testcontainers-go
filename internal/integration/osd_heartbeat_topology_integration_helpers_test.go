@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+ "github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
@@ -96,7 +97,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	}
 	receipt.Before, _ = before.osd(target.ID)
 
-	cut, err := cluster.InterruptNetwork(ctx, target, ceph.ClusterNetworkPlane)
+	cut, err := fault.InterruptNetwork(ctx, cluster, target, ceph.ClusterNetworkPlane)
 	if cut != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

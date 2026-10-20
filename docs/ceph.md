@@ -861,8 +861,8 @@ Linux) can reach MONs and OSDs directly.
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
 - Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
-  and Docker endpoint interruption ([InterruptNetwork](#interruptnetwork)) and
-  packet delay ([TemporaryNetworkDelay](#temporarynetworkdelay)) are not
+  and Docker endpoint interruption ([fault.InterruptNetwork](fault.md#interruptnetwork)) and
+  packet delay ([fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay)) are not
   available.
 
 [UsesHostNetwork](#useshostnetwork) and [PublicAddress](#publicaddress) report the
@@ -892,7 +892,7 @@ traffic. Docker selects both IPv4 subnets, and Ceph's `public network` and
 `cluster network` settings make OSDs use them. Only OSDs join both bridges;
 MON, MGR, MDS, RGW and `WithClient` containers use only the public bridge.
 [NetworkName](#networkname) and [ClusterNetworkName](#clusternetworkname) return
-the two bridges, and [InterruptNetwork](#interruptnetwork) with
+the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
@@ -1130,7 +1130,7 @@ identified by its name in the monmap.
 
 ###### Cutting one family of a path
 
-[TemporaryNetworkDelay](#temporarynetworkdelay) with a `Peer`, a `PeerPort`
+[fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) with a `Peer`, a `PeerPort`
 and `Loss: 100` drops every packet that one container sends to one address
 and port. On a dual-stack cluster, a `Peer` that is a daemon's IPv6 address
 cuts only that family of the path: the same daemon stays reachable over IPv4,
@@ -1140,8 +1140,8 @@ and the container's paths to other daemons are untouched.
 addresses, err := cluster.DaemonAddresses(ctx)
 // osd.1 lists [fd62:93fe:2c9e::4]:6800 first; a native client dials it.
 peer := netip.MustParseAddrPort("[fd62:93fe:2c9e::4]:6800")
-cut, err := cluster.TemporaryNetworkDelay(ctx, client, ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage, Plane: ceph.PublicNetworkPlane,
+cut, err := fault.TemporaryNetworkDelay(ctx, cluster, client, fault.NetworkDelay{
+	HelperImage: fault.NetemHelperImage, Plane: ceph.PublicNetworkPlane,
 	Peer: peer.Addr(), PeerPort: peer.Port(), Loss: 100})
 // Operations of the client on osd.1 stay pending until cut.Restore(ctx).
 ```
@@ -1505,7 +1505,7 @@ that only read state stay available.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `TemporaryClientRevocation`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `TemporaryNetworkDelay`, `InterruptNetwork`, `PauseContainer`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `PauseContainer`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1565,8 +1565,8 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.FullRatiosOverride` | [TemporaryFullRatios](#temporaryfullratios) | `Restore` |
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*ceph.ContainerPause` | [PauseContainer](#pausecontainer) | `Resume` |
-| `*ceph.NetworkInterruption` | [InterruptNetwork](#interruptnetwork) | `Restore` |
-| `*ceph.NetworkDelayLease` | [TemporaryNetworkDelay](#temporarynetworkdelay) | `Restore` |
+| `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
+| `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
 | `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
 
 All handles follow the same contract:
@@ -1873,7 +1873,7 @@ A MON binds the address that the monmap records for it. On a bridge network,
 each MON returns at that address whatever the order of `Start` calls: before
 a stopped MON starts, the fixture requests its original address from Docker
 again. A MON whose endpoint is interrupted with
-[InterruptNetwork](#interruptnetwork) does not start until the interruption is
+[fault.InterruptNetwork](fault.md#interruptnetwork) does not start until the interruption is
 restored. MON a's container waits for a quorum when it starts, so after all
 MONs were stopped, start the others first.
 
@@ -3365,329 +3365,12 @@ if err != nil {
 // Client operations on PGs that include osd.1 now wait for their timeouts.
 ```
 
-#### InterruptNetwork
+#### Network faults
 
-```golang
-func (c *Container) InterruptNetwork(ctx context.Context, ctr testcontainers.Container, plane ceph.NetworkPlane) (*ceph.NetworkInterruption, error)
-```
-
-Disconnects one container from one of the cluster's bridges without stopping it.
-`ctr` can be an owned daemon or a caller-owned `WithClient` container.
-`ceph.PublicNetworkPlane` selects the client/public bridge and
-`ceph.ClusterNetworkPlane` the OSD replication bridge; with a single bridge both
-select the same endpoint. Host mode is refused because Docker cannot disconnect a
-host-network endpoint.
-
-The returned `*ceph.NetworkInterruption` has `ContainerID`, `NetworkName` and
-`OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
-its original IPv6 address on the dual-stack bridge of
-[WithAddressFamily](#withaddressfamily)`(AddressIPv6)`, and its aliases, so the
-address Ceph advertises stays valid and the daemon is not restarted. An
-endpoint that someone else reattached with a different or missing address is
-refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
-specific peers. The cluster keeps the handle and restores it during `Terminate`;
-restore caller-owned containers explicitly before removing them.
-
-An interrupted MON stays detached when it is stopped and started: `Start`
-refuses to run it with `ceph.ErrInvalidRequest` until `Restore` has
-reattached its endpoint, because the MON can only bind its monmap address.
-
-```golang
-cut, err := cluster.InterruptNetwork(ctx, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
-if cut != nil {
-	defer cut.Restore(context.Background())
-}
-if err != nil {
-	t.Fatal(err)
-}
-// With WithSeparateClusterNetwork, osd.0 keeps its public listener and process
-// but loses replication and heartbeat traffic until Restore.
-if err := cut.Restore(ctx); err != nil {
-	t.Fatal(err)
-}
-```
-
-A cut cluster endpoint can end the OSD process. With three or more OSDs on
-separate CRUSH hosts, the OSD's peers report its failed heartbeats, and after
-`osd_heartbeat_grace` (20 s) the MON marks it down. The OSD then tries to
-rebind its cluster messenger to an address that no longer exists, logs
-`rebind cluster_messenger failed` and exits. `Restore` does not restart it:
-call `Start` on its handle afterwards. With two OSDs one reporter is not
-enough (`mon_osd_min_down_reporters` is 2), so the OSD stays up.
-
-#### TemporaryNetworkDelay
-
-```golang
-func (c *Container) TemporaryNetworkDelay(ctx context.Context, ctr testcontainers.Container, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
-```
-
-Delays every packet that `ctr` sends through its endpoint on one of the
-cluster's bridges, with the kernel's netem qdisc, below Ceph. It is an opt-in
-extension: `delay.HelperImage` names a netem helper image, such as
-`ceph.NetemHelperImage` (`ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1`),
-or any image that meets
-[netem contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md).
-The module starts the helper in `ctr`'s network namespace as root and grants
-`NET_ADMIN` to the helper only; `ctr` keeps its own image and capabilities.
-
-| `ceph.NetworkDelay` field | Meaning |
-| --- | --- |
-| `HelperImage` | The helper image. Required; nothing selects it implicitly. |
-| `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
-| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. With a `Loss` or a `Rate` it may be zero. |
-| `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
-| `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (the dual-stack bridge of `AddressIPv6` or `AddressDualStack`; see [Dual-stack clusters](#dual-stack-clusters) for cutting one family of a path). Mapped, zoned or unspecified addresses are refused. |
-| `Loss` | Optional. Drops this percentage of the selected packets at random, from more than 0 to 100. With 100 and a `Peer`, the packets to that peer never arrive: a blackhole of one direction of one path. |
-| `PeerPort` | Optional, with `Peer`: only TCP packets to this destination port, such as one of the peer's Messenger ports. An IPv6 packet with extension headers before its TCP header is not selected. |
-| `Peers` | Optional, instead of `Peer` and `PeerPort`: several `ceph.NetworkPeer` entries, each an `Addr` and an optional TCP `Port`, of either family, at most `ceph.MaxNetworkPeers` (16) distinct ones. The packets to any of them get the same delay, loss and rate. Use it to cut a daemon's paths to several peers, since an endpoint holds one delay. |
-| `Rate` | Optional. Limits the selected packets to this bandwidth, a `ceph.NetworkRate` in bits per second (`ceph.BitPerSecond`, `ceph.KilobitPerSecond`, `ceph.MegabitPerSecond`, `ceph.GigabitPerSecond`), from `ceph.MinNetworkRate` (64 Kbit/s) to `ceph.MaxNetworkRate` (10 Gbit/s), in whole bytes per second (a multiple of 8 bit/s). It uses netem's rate in the same qdisc as `Delay` and `Loss`, which it composes with. See [Bandwidth limits](#bandwidth-limits). |
-| `QueueLimit` | Optional, with `Rate`: the netem queue in packets, from 1 to `ceph.MaxNetworkQueueLimit` (100000). Zero means `ceph.DefaultNetworkQueueLimit` (1000, tc's default). |
-| `Reorder` | Optional, a `ceph.NetworkPacketFault`: sends this percentage of the selected packets at once, ahead of the packets that wait for the `Delay`. Needs a `Delay`, and takes no `Jitter` and no `Rate`. See [Packet faults](#packet-faults). |
-| `Duplicate` | Optional, a `ceph.NetworkPacketFault`: sends a second copy of this percentage of the selected packets. With it `Delay` may be zero. |
-| `Corrupt` | Optional, a `ceph.NetworkPacketFault`: flips one random bit in this percentage of the selected packets. With it `Delay` may be zero. |
-
-`ctr` can be an owned daemon or a caller-owned container attached to the
-plane's bridge; it must be running, not paused, with its own network
-namespace and an IPv4 endpoint, and an IPv6 address for an IPv6 peer. Host-network clusters are refused. Before it
-changes anything, the call checks the helper image, `NET_ADMIN` and the
-kernel's netem, with a `Rate` or a packet fault also those netem options,
-and with peers also its `prio` qdisc and u32 classifier, in a
-separate helper container without a network, and fails
-with an error that wraps `ceph.ErrNetemImageUnsupported`,
-`ceph.ErrNetemPermissionDenied` or `ceph.ErrNetemKernelUnsupported`. It
-refuses an interface whose root qdisc is not the kernel's default, and a
-second delay of the same endpoint.
-
-| Failure | Category | Narrower error |
-| --- | --- | --- |
-| No `HelperImage`: the extension is not selected | `ErrImageCapability` | |
-| The helper image does not meet the contract: a missing or broken tool, a `tc` without netem, for a `Rate` a `tc` that cannot parse netem's `rate`, or for a packet fault a `tc` that cannot parse it | `ErrImageCapability` | `ErrNetemImageUnsupported` |
-| The engine gave the helper no `NET_ADMIN` | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied` |
-| The kernel has no netem qdisc, for peers no `prio` qdisc or u32 classifier, for a `Rate` a netem that does not keep the rate, or for a packet fault a netem that does not keep the fault, its correlation or a reorder's gap | `ErrEnvironmentUnavailable` | `ErrNetemKernelUnsupported` |
-| A malformed request, a refused target, a held endpoint or a foreign root qdisc | `ErrInvalidRequest` | |
-| A `tc` command that ran and failed otherwise | `ErrNativeFailure` | `*NativeFailure` of `tc` |
-
-The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
-`NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
-`MACAddress`, `Address`), the helper's `HelperImageID` and the requested
-`Delay`, `Jitter`, `Peer`, `PeerPort`, `Loss`, `Rate`, `Reorder`, `Duplicate`
-and `Corrupt`, and in `Peers` the
-whole selection: `Peer` and `PeerPort` as one entry, or the requested `Peers`.
-With a `Rate`, `QueueLimit` is the queue limit that the lease installed: the
-requested one, or `ceph.DefaultNetworkQueueLimit`.
-
-- `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
-  through the helper: `Applied`, the interface's current name (`Interface`)
-  and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter`, `Loss`
-  percentage, `Rate`, `QueueLimit`, `Reorder`, `Duplicate`, `Corrupt` and
-  the reorder `Gap`, the `Packets`, `Bytes`, `Drops`,
-  `Overlimits` and `Requeues` counters and the queue's `Backlog` (bytes) and
-  `QueueLength` (packets) while `Applied`, and tc's JSON output (`Qdiscs`, and `Filters` for the egress
-  filters). After the first lookup by address and MAC, the lease follows
-  the interface by its index, so a changed address, MAC or name does not lose
-  it. `Gone` means that the delayed
-  interface no longer exists, because `ctr` stopped, restarted, was removed or
-  left the bridge.
-- With a `Peer` or `Peers`, the lease owns a `prio` root qdisc whose third
-  band leads to a netem child, and one u32 filter per peer that sends its
-  packets there; every priority maps to the first band, so nothing else is
-  delayed. The IPv4 peers' filters are in preference 10 and u32 table `800:`,
-  with handles `800::1`, `800::2` and so on in the given order, and the IPv6
-  peers' in the next preference and table (`11` and `801:` after IPv4 peers,
-  otherwise `10` and `800:`). They are added root first and filters last, so
-  no packet is delayed before the hierarchy is complete. `Status` reports
-  `Applied` only when the root, the child and exactly those filters, with the
-  requested address and port keys, are all present and nothing else is under
-  the root; `Filters` has tc's filter
-  dump with each u32 filter's keys under `matches`. The counters are the
-  child's, so they count only selected packets.
-- `Restore(ctx)` removes the lease's qdisc and the helper. With peers,
-  removing the lease's root removes its child and filters with it, also when
-  an apply stopped half way. A filter or qdisc that the apply did not add,
-  under the lease's root, is refused with `ErrInvalidRequest` instead of
-  removed with the root, with or without a `Peer` and also while the delay
-  itself is intact (`Status` then reports it not `Applied`). Qdiscs outside
-  the root, such as an ingress qdisc, are not removed and do not count; the lease stays retryable, and `Restore` succeeds
-  once its owner removed it. A gone interface
-  needs no removal, and `Restore` never touches a new namespace. A root qdisc
-  that someone replaced is refused with an error, and the lease stays
-  retryable. A helper that exited or was removed is replaced first, from the
-  checked image by its ID (`HelperImageID`), even if the tag moved.
-- Every `tc` command runs under the module's command supervisor. A non-nil
-  lease returned with an error must be restored: the change may have reached
-  the kernel.
-- The cluster keeps the lease and removes the delay at the start of
-  `Terminate`. Restore a caller-owned container's delay before removing that
-  container.
-
-```golang
-delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
-	Plane:       ceph.PublicNetworkPlane,
-	Delay:       200 * time.Millisecond,
-})
-if delay != nil {
-	defer delay.Restore(context.Background())
-}
-if err != nil {
-	t.Fatal(err)
-}
-// Answers from osd.0 arrive at least 200 ms late until Restore.
-```
-
-To delay only one peer, set `Peer` to its address on the same plane, for
-example a client container's address or one from
-[DaemonAddresses](#daemonaddresses). The delay applies to packets that leave
-`ctr` toward that peer; for the other direction, delay the peer's endpoint
-with `ctr`'s address.
-
-```golang
-clientAddress, err := client.ContainerIP(ctx)
-if err != nil {
-	t.Fatal(err)
-}
-delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
-	Plane:       ceph.PublicNetworkPlane,
-	Delay:       200 * time.Millisecond,
-	Peer:        netip.MustParseAddr(clientAddress),
-})
-// Answers from osd.0 reach this client late; other clients and the other
-// OSDs see no delay.
-```
-
-To fault a container's paths to several peers, list them in `Peers`, for
-example every OSD's address from [DaemonAddresses](#daemonaddresses):
-
-```golang
-addresses, err := cluster.DaemonAddresses(ctx)
-if err != nil {
-	t.Fatal(err)
-}
-var peers []ceph.NetworkPeer
-for _, osd := range addresses.OSDs {
-	host, _, _ := net.SplitHostPort(osd.Public[0].Addr)
-	peers = append(peers, ceph.NetworkPeer{Addr: netip.MustParseAddr(host)})
-}
-cut, err := cluster.TemporaryNetworkDelay(ctx, mds, ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
-	Plane:       ceph.PublicNetworkPlane,
-	Peers:       peers,
-	Loss:        100,
-})
-// The MDS's packets to every OSD are dropped; clients still reach the OSDs.
-```
-
-##### Bandwidth limits
-
-`Rate` limits what `ctr` sends through the endpoint, on the whole interface or
-only to the selected peers, until `Restore`:
-
-```golang
-limit, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
-	Plane:       ceph.PublicNetworkPlane,
-	Peer:        netip.MustParseAddr(clientAddress),
-	Rate:        16 * ceph.MegabitPerSecond,
-})
-if limit != nil {
-	defer limit.Restore(context.Background())
-}
-if err != nil {
-	t.Fatal(err)
-}
-// osd.0 sends to this client at no more than 16 Mbit/s; other clients and
-// the other OSDs are not limited.
-```
-
-- netem sends each packet only after the previous one has taken its length
-  over the rate. There is no burst allowance. A packet counts with its
-  Ethernet header as the kernel queues it, and a TCP segmentation offload
-  packet counts with all of its segments, so what an application achieves is
-  below `Rate`.
-- The packets waiting for the rate, and with a `Delay` for the delay, share
-  one queue of `QueueLimit` packets. A packet that arrives at a full queue is
-  dropped and counted in `Drops`. With a `Loss`, netem drops first, then
-  delays, then paces what is left.
-- `Status` reports what the kernel has: `Rate` and `QueueLimit` are the
-  installed configuration, and the counters and queue are what netem counted.
-  Neither is a throughput. Measure the workload, or divide a difference of
-  `Bytes` by a period that you time.
-- A `Rate` needs a `tc` that parses netem's `rate` and a kernel whose netem
-  keeps it. The preflight helper adds and removes a netem qdisc with a rate
-  and a queue limit on its loopback and checks the values that the kernel
-  reports, so either missing is an error before `ctr` changes. A delay
-  without a `Rate` does not need either.
-- The limit is the sender's egress only. To limit what `ctr` receives from a
-  peer, limit the peer's endpoint with `ctr`'s address.
-
-##### Packet faults
-
-`Reorder`, `Duplicate` and `Corrupt` add netem's packet faults to the
-lease's netem qdisc, on the whole interface or only to the selected peers.
-Each is a `ceph.NetworkPacketFault` with a `Percent`, from more than 0 to 100,
-and an optional `Correlation`, from 0 to 100, which makes each packet's
-decision that much dependent on the previous one's. A zero value is off
-(`IsZero()` reports it); a `Correlation` without a `Percent` is refused.
-`String()` formats the fault as tc's arguments do, such as `25%` or
-`5% 10%`.
-
-```golang
-fault, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
-	HelperImage: ceph.NetemHelperImage,
-	Plane:       ceph.PublicNetworkPlane,
-	Peer:        netip.MustParseAddr(clientAddress),
-	Delay:       10 * time.Millisecond,
-	Reorder:     ceph.NetworkPacketFault{Percent: 25},
-})
-if fault != nil {
-	defer fault.Restore(context.Background())
-}
-if err != nil {
-	t.Fatal(err)
-}
-// A quarter of osd.0's packets to this client leave at once, ahead of the
-// others, which wait 10 ms.
-```
-
-| Field | What netem does | Combinations |
-| --- | --- | --- |
-| `Reorder` | Sends this percentage of the selected packets at once, ahead of the packets that wait for the `Delay`; netem's gap is 1, so every packet may be chosen. | Needs a `Delay`. Refuses `Jitter`, which reorders packets by itself, and `Rate`, which the packets sent at once bypass. Works with `Loss`, `Duplicate` and `Corrupt`. |
-| `Duplicate` | Sends a second copy of this percentage of the selected packets. | Works with everything; `Delay` may be zero. |
-| `Corrupt` | Flips one random bit in this percentage of the selected packets, within what the kernel holds in the packet's first buffer: the Ethernet, IP and TCP headers, and payload bytes only when they are there too. netem first computes a checksum that the device would have offloaded, and splits a segmentation offload packet first, corrupting one of its segments. | Works with everything; `Delay` may be zero. |
-
-- netem decides per packet that it queues. A TCP segmentation offload packet
-  carries many segments, so a percentage of packets is not a percentage of
-  segments or of bytes, and the same percentage affects more segments when
-  the delay or the losses keep packets small.
-- `Status` reports the kernel's `Reorder`, `Duplicate`, `Corrupt` and `Gap`
-  apart from the lease's request, and with a `Reorder` netem's `Requeues`
-  counts the packets that it sent ahead. None of them shows what the
-  receiver got. The apply returns the lease with an error when the kernel
-  reports other values than the request, and Restore removes it.
-- The preflight helper adds and removes netem with each requested fault and
-  a correlation on its own loopback. A `tc` that cannot parse a fault is
-  `ErrNetemImageUnsupported`; a kernel that does not report the fault, its
-  correlation or a reorder's gap of 1 back is `ErrNetemKernelUnsupported`.
-  There is no fallback and no package install. A delay without a packet
-  fault does not need them.
-- iproute2 6.1, the `tc` of `ceph.NetemHelperImage`, sends a duplicate's
-  correlation only together with a delay's correlation and silently drops it
-  otherwise. With a `Duplicate.Correlation` the lease therefore passes the
-  delay with a correlation of zero (`delay 0us 0us 0%` without a `Delay`),
-  which is the kernel's state without one.
-- TCP absorbs these faults before Ceph sees them: the receiver puts
-  reordered segments back in order, discards duplicates and answers them
-  with a D-SACK, and drops a segment whose checksum fails, which the sender
-  then retransmits. A Ceph operation that returns the right bytes therefore
-  does not show that a packet was altered, and a corrupted packet does not
-  mean that an altered Messenger frame reached Ceph. Read the receiver's
-  kernel counters (see
-  [Fault injection](guides/fault-injection.md#packet-faults)) for the
-  transport effect.
-
-See [Fault injection](guides/fault-injection.md#delaying-packets-below-ceph)
-for what clients observe and the engines this was checked on.
+Network fault functions and handles are in [`fault`](fault.md). Use
+`fault.InterruptNetwork(ctx, cluster, target, plane)` and
+`fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` with the existing
+cluster; its `Terminate` restores cluster-bound faults.
 
 ### Container Methods: Networking
 
@@ -4028,37 +3711,14 @@ client, err := testcontainers.Run(ctx, cluster.ControlImage(),
 )
 ```
 
-#### InterruptNetwork
+#### Standalone network faults
 
-```golang
-func InterruptNetwork(ctx context.Context, ctr testcontainers.Container, name string) (*ceph.NetworkInterruption, error)
-```
+[`fault.InterruptLink`](fault.md#standalone-bridge-functions) and
+[`fault.TemporaryLinkDelay`](fault.md#standalone-bridge-functions) operate on
+caller-owned bridges. The caller restores their handles before removing the
+container or bridge.
 
-Disconnects one existing container from the Docker bridge network `name` and
-returns a restoration handle. Unlike the
-[method of the same name](#interruptnetwork), it works for any bridge network,
-for example a network shared by containers of two clusters, and the caller owns
-both the container and the handle; nothing restores it automatically. It does
-not stop a daemon, change Ceph policies or remove the network. Host networking
-cannot be interrupted. A non-nil handle returned with an error must be restored,
-because a transport failure cannot prove that Docker did not disconnect the
-endpoint.
-
-#### TemporaryLinkDelay
-
-```golang
-func TemporaryLinkDelay(ctx context.Context, ctr testcontainers.Container, network string, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
-```
-
-[TemporaryNetworkDelay](#temporarynetworkdelay) on a bridge network named
-`network` instead of one of a cluster's planes, for fixtures that own another
-bridge, such as the private HTTP network of an RGW multisite (see
-`rgw.Multisite.TemporaryZoneLinkDelay`). `delay.Plane` stays empty; every
-other field, check, error and lease method is the same, and a network that is
-not a bridge is refused. Like the package-level
-[InterruptNetwork](#interruptnetwork-1), the caller owns the container, the
-network and the lease, and nothing restores it automatically: restore it
-before removing either.
+#### ErrHostNetworkUnavailable
 
 ```golang
 var ErrHostNetworkUnavailable error
@@ -4238,7 +3898,7 @@ const (
 ```
 
 Selects the client/public network or the OSD replication network for
-[InterruptNetwork](#interruptnetwork).
+[fault.InterruptNetwork](fault.md#interruptnetwork).
 
 #### Daemon handles
 
@@ -4274,7 +3934,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `FullRatiosOverride` | `Restore(ctx) error` | [TemporaryFullRatios](#temporaryfullratios) |
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `ContainerPause` | `ContainerID`; `Resume(ctx) error` | [PauseContainer](#pausecontainer) |
-| `NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [InterruptNetwork](#interruptnetwork) (method or function) |
+| `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
 | `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
 
 See the [handle contract](#container-methods).

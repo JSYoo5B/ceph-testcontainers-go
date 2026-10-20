@@ -1,13 +1,9 @@
 package ceph
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestOverridesRefuseUntrackedHandlesAndFreeFailedReservations(t *testing.T) {
@@ -47,25 +43,4 @@ func TestOverridesRefuseUntrackedHandlesAndFreeFailedReservations(t *testing.T) 
 			t.Fatalf("an untracked override removed the entry: %v", err)
 		}
 	})
-}
-
-// closingTarget is a caller-owned target whose network inspection overlaps
-// a Terminate: the cluster closes between the admission and the reservation.
-type closingTarget struct {
-	contextLockClient
-	c *Container
-}
-
-func (target closingTarget) Networks(context.Context) ([]string, error) {
-	target.c.mu.Lock()
-	target.c.closed = true
-	target.c.mu.Unlock()
-	return []string{target.c.NetworkName()}, nil
-}
-
-func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T) {
-	c := &Container{network: &testcontainers.DockerNetwork{Name: "public"}}
-	if _, token, err := c.reserveNetworkDelay(t.Context(), closingTarget{c: c}, PublicNetworkPlane); !errors.Is(err, errClusterTerminated) || token != nil || len(c.faultsOf(faultNetworkDelay)) != 0 {
-		t.Fatalf("a delay was reserved on a cluster closed meanwhile: %v", err)
-	}
 }

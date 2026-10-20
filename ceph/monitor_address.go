@@ -6,10 +6,18 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
+
+type networkLinkClient interface {
+	ContainerInspect(context.Context, string, mobycl.ContainerInspectOptions) (mobycl.ContainerInspectResult, error)
+	NetworkDisconnect(context.Context, string, mobycl.NetworkDisconnectOptions) (mobycl.NetworkDisconnectResult, error)
+	NetworkConnect(context.Context, string, mobycl.NetworkConnectOptions) (mobycl.NetworkConnectResult, error)
+	Close() error
+}
 
 // newMonitorAddressDocker opens the Docker client of the MON address hooks.
 var newMonitorAddressDocker = func(ctx context.Context) (networkLinkClient, error) {
@@ -50,7 +58,7 @@ func keepMonitorAddress(network string) testcontainers.CustomizeRequestOption {
 			if err != nil {
 				return fmt.Errorf("record MON address: %w", err)
 			}
-			recorded = restoreEndpoint(endpoint)
+			recorded = dockerbridge.RestoreEndpoint(endpoint)
 			return nil
 		}},
 		PreStarts: []testcontainers.ContainerHook{func(ctx context.Context, ctr testcontainers.Container) error {

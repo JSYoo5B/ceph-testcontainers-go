@@ -1,4 +1,4 @@
-package ceph
+package fault
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -20,7 +22,7 @@ var manyPeers = []NetworkPeer{
 }
 
 // peersCluster is delayCluster with an IPv6 address on osd-0's endpoint.
-func peersCluster(netem *fakeNetem) (*Container, *fakeNetemHelper) {
+func peersCluster(netem *fakeNetem) (*delayTestCluster, *fakeNetemHelper) {
 	netem.targets["osd-0"].address6 = netip.MustParseAddr("fd62:93fe:2c9e::2")
 	return delayCluster(netem)
 }
@@ -103,7 +105,7 @@ func TestNetworkDelayPeersPartialApplyIsRestored(t *testing.T) {
 			if err != nil || status.Applied || status.RootHandle != lease.handle {
 				t.Fatalf("status %+v %v", status, err)
 			}
-			if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ErrInvalidRequest) {
+			if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("a second delay while the partial one is held: %v", err)
 			}
 			if err := lease.Restore(t.Context()); err != nil {
@@ -126,7 +128,7 @@ func TestNetworkDelayPeersRefuseAnotherTableNumber(t *testing.T) {
 	delay := testDelay
 	delay.Peers = manyPeers
 	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
-	var failure *NativeFailure
+	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -153,11 +155,11 @@ func TestNetworkDelayPeersPreflightTheClassifier(t *testing.T) {
 			delay := testDelay
 			delay.Peers = manyPeers
 			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
-			if !errors.Is(err, ErrNetemKernelUnsupported) || !errors.Is(err, ErrEnvironmentUnavailable) || errors.Is(err, ErrImageCapability) || lease != nil {
+			if !errors.Is(err, ErrNetemKernelUnsupported) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 				t.Fatalf("got %v, %v", lease, err)
 			}
-			if tc := tcCommands(netem, "tc "); len(tc) != 0 || netem.liveHelpers() != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
-				t.Fatalf("the refusal ran %q, left %d helpers and %v", tc, netem.liveHelpers(), cluster.faultsOf(faultNetworkDelay))
+			if tc := tcCommands(netem, "tc "); len(tc) != 0 || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
+				t.Fatalf("the refusal ran %q, left %d helpers and %v", tc, netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
 			}
 			whole, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
 			if err != nil {
@@ -220,7 +222,7 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 				edit(&delay)
 			}
 			// Without edit, the IPv6 peer of an endpoint without IPv6.
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("%+v: %v, %v", delay.Peers, lease, err)
 			}
 			if len(netem.helpers) != 0 || len(tcCommands(netem, "tc ")) != 0 {
@@ -229,7 +231,7 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 		})
 	}
 	// The same address on two ports is two peers.
-	if err := validateNetworkDelay(NetworkDelay{HelperImage: "h", Plane: PublicNetworkPlane, Loss: 100,
+	if err := validateNetworkDelay(NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100,
 		Peers: []NetworkPeer{{Addr: v4, Port: 6800}, {Addr: v4, Port: 6801}}}); err != nil {
 		t.Fatal(err)
 	}

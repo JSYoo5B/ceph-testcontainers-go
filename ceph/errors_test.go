@@ -127,9 +127,6 @@ func TestErrorSentinelsBelongToTheirCategories(t *testing.T) {
 		err  error
 		kind error
 	}{
-		{ErrNetemImageUnsupported, ErrImageCapability},
-		{ErrNetemPermissionDenied, ErrEnvironmentUnavailable},
-		{ErrNetemKernelUnsupported, ErrEnvironmentUnavailable},
 		{ErrHostNetworkUnavailable, ErrEnvironmentUnavailable},
 		{errClusterTerminated, ErrInvalidRequest},
 	} {

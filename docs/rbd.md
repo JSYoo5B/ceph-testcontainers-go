@@ -853,7 +853,7 @@ containers with `cluster.RefreshClientMonitorConfig(ctx, client)` (see
 #### InterruptPeerLink
 
 ```golang
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*ceph.NetworkInterruption, error)
+func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)
 ```
 
 Disconnects one owned daemon from the source cluster's public bridge network

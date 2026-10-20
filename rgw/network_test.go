@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 )
 
@@ -15,12 +16,12 @@ import (
 func TestTemporaryZoneLinkDelayRefusesBeforeAnythingRuns(t *testing.T) {
 	probe := &clustertest.ContextLockRuntime{}
 	f := &Multisite{sourceClient: probe, destinationClient: probe}
-	loss := ceph.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100}
-	for name, edit := range map[string]func(*ceph.NetworkDelay){
-		"a plane": func(d *ceph.NetworkDelay) { d.Plane = ceph.PublicNetworkPlane },
-		"a peer":  func(d *ceph.NetworkDelay) { d.Peer = netip.MustParseAddr("10.88.0.7") },
-		"a port":  func(d *ceph.NetworkDelay) { d.PeerPort = 7480 },
-		"peers":   func(d *ceph.NetworkDelay) { d.Peers = []ceph.NetworkPeer{} },
+	loss := fault.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100}
+	for name, edit := range map[string]func(*fault.NetworkDelay){
+		"a plane": func(d *fault.NetworkDelay) { d.Plane = ceph.PublicNetworkPlane },
+		"a peer":  func(d *fault.NetworkDelay) { d.Peer = netip.MustParseAddr("10.88.0.7") },
+		"a port":  func(d *fault.NetworkDelay) { d.PeerPort = 7480 },
+		"peers":   func(d *fault.NetworkDelay) { d.Peers = []fault.NetworkPeer{} },
 	} {
 		delay := loss
 		edit(&delay)

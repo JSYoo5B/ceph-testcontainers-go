@@ -6,8 +6,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
@@ -18,11 +16,7 @@ func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 		"RemoveManager": func(ctx context.Context, c *Container) error { return c.RemoveManager(ctx, "queued") },
 		"AddOSD":        func(ctx context.Context, c *Container) error { _, err := c.AddOSD(ctx); return err },
 		"RemoveOSD":     func(ctx context.Context, c *Container) error { return c.RemoveOSD(ctx, 3) },
-		"InterruptNetwork": func(ctx context.Context, c *Container) error {
-			_, err := c.InterruptNetwork(ctx, c.Container, PublicNetworkPlane)
-			return err
-		},
-		"Terminate": func(ctx context.Context, c *Container) error { return c.Terminate(ctx) },
+		"Terminate":     func(ctx context.Context, c *Container) error { return c.Terminate(ctx) },
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
@@ -71,38 +65,6 @@ func TestSerializedAuxiliaryCleanupQueuedDeadline(t *testing.T) {
 			t.Fatalf("fresh lease cleanup could not remove its owned allocator: %v", err)
 		}
 	})
-	t.Run("network endpoint", func(t *testing.T) {
-		link, docker := newLinkFake()
-		assertContextLockQueued(t, &link.mu, link.Restore)
-		if docker.connects != 0 || docker.closes != 0 || link.complete {
-			t.Fatal("queued endpoint restore mutated Docker or completion state")
-		}
-		if err := link.Restore(t.Context()); err != nil || docker.connects != 1 || docker.closes != 1 || !link.complete || docker.endpoint.IPAddress != link.OriginalAddress {
-			t.Fatalf("fresh endpoint restore could not preserve its original advertised address: %v", err)
-		}
-	})
-}
-
-type contextLockClient struct{ testcontainers.Container }
-
-func (contextLockClient) GetContainerID() string { return "osd-0" }
-
-func TestSerializedNetworkNestedGateReturnsOriginalHandle(t *testing.T) {
-	link, docker := newLinkFake()
-	cluster := &Container{network: &testcontainers.DockerNetwork{Name: link.NetworkName}}
-	cluster.trackInterruption(link.NetworkName+"/osd-0", link)
-	var result *NetworkInterruption
-	assertContextLockQueued(t, &link.mu, func(ctx context.Context) error {
-		var err error
-		result, err = cluster.InterruptNetwork(ctx, contextLockClient{}, PublicNetworkPlane)
-		return err
-	})
-	if result != link || docker.connects != 0 || docker.closes != 0 || link.complete || cluster.heldFault(faultNetworkInterruption, link.NetworkName+"/osd-0") != link {
-		t.Fatal("nested endpoint queue lost the retry handle or changed its endpoint")
-	}
-	if err := link.Restore(t.Context()); err != nil || docker.connects != 1 || !link.complete {
-		t.Fatalf("fresh context could not restore the retained endpoint: %v", err)
-	}
 }
 
 func assertContextLockQueued(t *testing.T, mutex *sync.Mutex, operation func(context.Context) error) {

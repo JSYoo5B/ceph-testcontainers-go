@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
@@ -13,7 +13,7 @@ import (
 // bridge while retaining the source filesystem and MGR registration. It does
 // not stop/reassign the daemon or alter directory/peer policies. Restore the
 // returned endpoint to allow native snapshot synchronization to resume.
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*ceph.NetworkInterruption, error) {
+func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error) {
 	if m == nil {
 		return nil, errors.New("CephFS mirror is unavailable")
 	}
