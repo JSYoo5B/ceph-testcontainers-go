@@ -12,8 +12,6 @@ versions keep their original APIs. Update imports and calls together:
 
 | Previous call or type | New call or type |
 | --- | --- |
-| `cluster.TemporaryBlocklist(ctx, address, duration)` | `fault.TemporaryBlocklist(ctx, cluster, address, duration)` |
-| `ceph.BlocklistOverride` | `fault.BlocklistOverride` (`Address` and `Restore` unchanged) |
 | `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
 | `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
 | `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` |
@@ -38,44 +36,11 @@ handles returned with errors; restore remains retryable after uncertain results.
 The error categories remain in `ceph`; the moved sentinels still match them
 with `errors.Is`.
 
-Temporary fullness and object-error injection remain in `ceph` until their
-separately validated extraction steps. Blocklist overrides are tracked for
-overlap and ownership; their state dies with the disposable cluster, without
-a per-entry undo during `Terminate`.
-
-## TemporaryBlocklist
-
-```golang
-func TemporaryBlocklist(ctx context.Context, cluster *ceph.Container, address string, duration time.Duration) (*fault.BlocklistOverride, error)
-```
-
-Fences one specific client session for `duration` (at least one second). The
-address must be the session's exact `IP:port/nonce` with a nonzero nonce, so
-other clients on the same host are unaffected. Get it from the client after it
-connects (librados `rados_getaddrs`, go-ceph `Conn.GetAddrs`), from
-[ObjectWatchers](ceph.md#objectwatchers), from an RBD lock owner or from a CephFS
-session. A v1/v2 address vector is accepted only when all entries denote the same
-IP, port and nonce. Bare IPs, CIDR ranges, nonce zero and existing entries are
-refused.
-
-`Restore` removes only this entry (`Address()` returns it), after checking the
-captured expiration; an entry renewed by someone else is refused, and natural
-expiry counts as removed. After removal, OSDs admit the address again, but how the
-session recovers depends on the client library; with librados both the existing
-session and a new connection recover. See [Fence one client session](ceph.md#fence-one-client-session).
-
-A non-nil `*fault.BlocklistOverride` returned with an error still owns the
-uncertain add. An unavailable apply readback cannot authorize removing a
-present entry. `BlocklistOverride.Address()` reports the exact canonical
-session address; `BlocklistOverride.Restore(ctx)` is retryable and copies share
-restoration state. The existing topology mutex still serializes apply and
-restore without a context-aware lock wait. Operation contexts bound the native
-commands once the mutex is acquired.
-
-`Terminate` does not remove blocklist entries individually: their state ends
-with the disposable cluster. Restore explicitly when continuing to use the
-cluster. Read-only `BlocklistEntry`, `Container.BlocklistEntries` and
-`Tenant.BlocklistEntries` stay in `ceph`.
+Session blocklist and full-ratio policy belong to `ceph`, including their
+mutation APIs and restoration handles. They use Ceph control-plane operations
+to change admission or policy; testing failure outcomes does not move these
+controls into `fault`. The blocklist extraction in PR #12 is reverted.
+Object-error injection remains in `ceph` for its separately reviewed checkpoint.
 
 ## Pause
 
