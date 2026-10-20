@@ -200,8 +200,10 @@ func TestCephControlSnapshotDoesNotReenterTopologyOwner(t *testing.T) {
 			cluster.mu.Unlock()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
+	// No caller deadline: a correct Ceph reaches the fake whatever a slow
+	// (race-instrumented) run spends first, and one that waits for the held
+	// topology owner is caught by the watchdog below.
+	ctx := t.Context()
 	done := make(chan error, 1)
 	go func() { _, err := cluster.Ceph(ctx, "status"); done <- err }()
 	select {

@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_recovery && (!ci_batch || ci_batch_container_pause))))
 
-//ci: timeout=25m job-timeout=35
+//ci: timeout=25m job-timeout=35 representative=recovery
 
 package integration_test
 
@@ -18,11 +18,8 @@ import (
 // primary reports slow operations. Without nodown its peer marks it down and
 // degraded I/O resumes. Both phases end with the same OSD rejoining.
 func TestPausedOSDFaults(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()

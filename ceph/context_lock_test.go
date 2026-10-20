@@ -89,17 +89,15 @@ func (contextLockClient) GetContainerID() string { return "osd-0" }
 
 func TestSerializedNetworkNestedGateReturnsOriginalHandle(t *testing.T) {
 	link, docker := newLinkFake()
-	cluster := &Container{
-		network:       &testcontainers.DockerNetwork{Name: link.NetworkName},
-		interruptions: map[string]*NetworkInterruption{link.NetworkName + "/osd-0": link},
-	}
+	cluster := &Container{network: &testcontainers.DockerNetwork{Name: link.NetworkName}}
+	cluster.trackInterruption(link.NetworkName+"/osd-0", link)
 	var result *NetworkInterruption
 	assertContextLockQueued(t, &link.mu, func(ctx context.Context) error {
 		var err error
 		result, err = cluster.InterruptNetwork(ctx, contextLockClient{}, PublicNetworkPlane)
 		return err
 	})
-	if result != link || docker.connects != 0 || docker.closes != 0 || link.complete || cluster.interruptions[link.NetworkName+"/osd-0"] != link {
+	if result != link || docker.connects != 0 || docker.closes != 0 || link.complete || cluster.heldFault(faultNetworkInterruption, link.NetworkName+"/osd-0") != link {
 		t.Fatal("nested endpoint queue lost the retry handle or changed its endpoint")
 	}
 	if err := link.Restore(t.Context()); err != nil || docker.connects != 1 || !link.complete {

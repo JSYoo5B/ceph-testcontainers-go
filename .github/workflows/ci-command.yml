@@ -1,0 +1,202 @@
+name: CI command
+
+# A pull request comment line "/ci run <batch|profile>... [on <release|all>]"
+# runs the named runtime batches on the pull request's head commit (#116).
+# Default pull request CI, pushes to main and the ci:full and
+# ci:selected-batches labels are unchanged by it.
+#
+# issue_comment runs this file and its scripts from the default branch.
+# Command and Report check out only the default branch; Validate and the
+# runtime jobs check out the recorded head commit with a read-only token and
+# no persisted credentials. Pull requests from forks are refused before any
+# of their code is checked out.
+#
+# The jobs of an issue_comment run belong to the default branch's commit, so
+# Acknowledge and Report set a commit status on the head commit to show the
+# result on the pull request, and Report replies with the run link. Both set
+# the same context, which Validate names after the comment, so every command
+# has its own status even when another command selects the same batches.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+env:
+  # A failed request to the module proxy, such as a reset HTTP/2 stream,
+  # falls back to the module's origin; go.sum verifies either source.
+  GOPROXY: 'https://proxy.golang.org|direct'
+
+jobs:
+  command:
+    name: Command
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      command: ${{ steps.authorize.outputs.command }}
+      accepted: ${{ steps.authorize.outputs.accepted }}
+      reply: ${{ steps.authorize.outputs.reply }}
+      sha: ${{ steps.authorize.outputs.sha }}
+      request: ${{ steps.authorize.outputs.request }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The head commit is read once, here, and every later job uses it.
+      - name: Read the pull request and its head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_NUMBER" > "$RUNNER_TEMP/pull.json"; then
+            : > "$RUNNER_TEMP/pull.json"
+          fi
+      - name: Authorize and parse the command
+        id: authorize
+        run: python3 .github/scripts/ci_command.py authorize --event "$GITHUB_EVENT_PATH" --pull "$RUNNER_TEMP/pull.json" --github-output "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate
+    needs: command
+    if: needs.command.outputs.accepted == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      accepted: ${{ steps.select.outputs.accepted }}
+      reply: ${{ steps.select.outputs.reply }}
+      profiles: ${{ steps.select.outputs.profiles }}
+      releases: ${{ steps.select.outputs.releases }}
+      batches: ${{ steps.select.outputs.batches }}
+      key: ${{ steps.select.outputs.key }}
+      context: ${{ steps.select.outputs.context }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          path: trusted
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.command.outputs.sha }}
+          path: head
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('head/go.sum') }}
+      # The head commit's own planner names its batches and releases. A head
+      # that predates the vocabulary command is refused by the next step.
+      - name: List the batches and releases of the head commit
+        continue-on-error: true
+        working-directory: head
+        run: python3 .github/scripts/tag_scenarios.py vocabulary --output "$RUNNER_TEMP/vocabulary.json"
+      - name: Resolve every name or refuse the command
+        id: select
+        env:
+          COMMAND_REQUEST: ${{ needs.command.outputs.request }}
+        run: python3 trusted/.github/scripts/ci_command.py select --request "$COMMAND_REQUEST" --vocabulary "$RUNNER_TEMP/vocabulary.json" --github-output "$GITHUB_OUTPUT"
+
+  acknowledge:
+    name: Acknowledge
+    needs: [command, validate]
+    if: needs.validate.outputs.accepted == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Mark the head commit pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.command.outputs.sha }}
+          STATUS_CONTEXT: ${{ needs.validate.outputs.context }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
+          -f state=pending -f context="$STATUS_CONTEXT" -f target_url="$RUN_URL"
+          -f description='CI command running' > /dev/null
+
+  # One caller per release. A repeated command for the same head commit,
+  # batches and release waits for the run in progress instead of cancelling
+  # it; GitHub keeps one waiting caller per group, so a third identical
+  # command replaces the waiting one. The group names the selection, not the
+  # comment, while the commit status context names the comment.
+  runtime:
+    name: Scenarios ${{ matrix.release }}
+    needs: [command, validate]
+    if: needs.validate.outputs.accepted == 'true'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ${{ fromJSON(needs.validate.outputs.releases) }}
+    concurrency:
+      group: ci-command-${{ needs.validate.outputs.key }}-${{ matrix.release }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      category: selected
+      profiles: ${{ needs.validate.outputs.profiles }}
+      check_name: CI command
+      release: ${{ matrix.release }}
+      ref: ${{ needs.command.outputs.sha }}
+
+  # Runs after a refusal, a validation failure, a finished run and a
+  # cancelled one alike. It never re-runs anything.
+  report:
+    name: Report
+    needs: [command, validate, acknowledge, runtime]
+    if: always() && needs.command.outputs.command == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Write the reply
+        id: reply
+        env:
+          COMMAND_OUTPUTS: ${{ toJSON(needs.command.outputs) }}
+          VALIDATE_OUTPUTS: ${{ toJSON(needs.validate.outputs) }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python3 .github/scripts/ci_command.py report
+          --command-outputs "$COMMAND_OUTPUTS" --validate-outputs "$VALIDATE_OUTPUTS"
+          --validate-result "$VALIDATE_RESULT" --runtime-result "$RUNTIME_RESULT"
+          --run-url "$RUN_URL" --body "$RUNNER_TEMP/reply.md" --github-output "$GITHUB_OUTPUT"
+      - name: Set the commit status of the head commit
+        if: steps.reply.outputs.state != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.command.outputs.sha }}
+          STATUS_CONTEXT: ${{ needs.validate.outputs.context }}
+          STATUS_STATE: ${{ steps.reply.outputs.state }}
+          STATUS_DESCRIPTION: ${{ steps.reply.outputs.description }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA"
+          -f state="$STATUS_STATE" -f context="$STATUS_CONTEXT" -f target_url="$RUN_URL"
+          -f description="$STATUS_DESCRIPTION" > /dev/null
+      - name: Reply on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL_NUMBER: ${{ github.event.issue.number }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/$PULL_NUMBER/comments" -F body=@"$RUNNER_TEMP/reply.md" > /dev/null

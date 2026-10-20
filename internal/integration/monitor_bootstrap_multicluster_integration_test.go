@@ -24,11 +24,8 @@ import (
 // mirror processes. File/peer assertions prevent address reuse or a warm
 // librados session from concealing obsolete bootstrap configuration.
 func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 			defer cancel()
@@ -146,17 +143,27 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, cluster := range []*ceph.Container{source, destination} {
-				for _, pair := range [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}} {
-					if _, err := cluster.AddMonitor(ctx, pair[1]); err != nil {
-						t.Fatal(err)
-					}
-					monitorRollingQuorum(t, ctx, cluster, 4)
-					if err := cluster.RemoveMonitor(ctx, pair[0]); err != nil {
-						t.Fatal(err)
-					}
-					monitorRollingQuorum(t, ctx, cluster, 3)
+			// The MGR, OSD and MDS daemons stay up through the replacement.
+			// Each phase records what every MON and warm daemon reports on
+			// its own admin socket; a failed phase logs its bundle first.
+			// The clients and both mirror daemons are stopped here and
+			// started after it, so they have no warm window; their logs
+			// are in the bundle. A failure later in the test logs a bundle
+			// from the cleanup, while the warm daemons' windows are open.
+			stopped := []ceph.DiagnosticsContainer{
+				{Role: "client", Name: "source-client", Container: sourceClient},
+				{Role: "client", Name: "destination-client", Container: destinationClient},
+				{Role: "rbd-mirror", Name: "rbd-mirror", Container: rbdMirror.Container},
+				{Role: "cephfs-mirror", Name: "cephfs-mirror", Container: mirror.Container},
+			}
+			for i, cluster := range []*ceph.Container{source, destination} {
+				var mdss []monReplacementExecDaemon
+				for _, mds := range []*cephfs.Filesystem{sourceFS, destinationFS}[i].MDSs() {
+					mdss = append(mdss, monReplacementExecDaemon{Daemon: "mds." + mds.ID, Container: mds.Container, Socket: "/var/run/ceph/ceph-mds." + mds.ID + ".asok"})
 				}
+				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], cluster, monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
+				t.Cleanup(func() { finishMonReplacement(t, recorder) })
+				runMonReplacement(t, ctx, recorder, [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
 				quorum, err := cluster.QuorumStatus(ctx)
 				if err != nil {
 					t.Fatal(err)

@@ -97,16 +97,20 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 	pipe := rgw.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
 	err = link.CreateSyncPipe(ctx, selected, pipe)
-	if strings.HasPrefix(source.CephVersion(), "19.") {
-		// Ceph 19 drops this pipe from the destination's resolved sources and
-		// replicates nothing, so the fixture refuses it before any change.
-		const want = "RGW user-mode sync with an account principal needs Ceph 20 or later"
-		var refusal *ceph.OperationError
-		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || !strings.HasPrefix(refusal.Version, "19.") ||
-			!strings.HasPrefix(refusal.Target, "zone ") || !strings.Contains(err.Error(), want) {
-			t.Fatalf("Ceph 19 account user-mode pipe error = %v, want ErrUnsupported %q from a Ceph 19 zone", err, want)
+	// Ceph 19 drops this pipe from the destination's resolved sources and
+	// replicates nothing, so the fixture refuses it before any change. Any
+	// zone without the capability refuses it.
+	var lacking *ceph.Container
+	for _, cluster := range []*ceph.Container{source, destination} {
+		if !capabilitySupported(t, ctx, cluster, capabilityRGWAccountUserModePipe) && lacking == nil {
+			lacking = cluster
 		}
-		t.Logf("%s (Ceph %s) refused the account user-mode pipe before any change", refusal.Target, refusal.Version)
+	}
+	if lacking != nil {
+		refusal := requireCapabilityRefused(t, err, lacking, capabilityRGWAccountUserModePipe, "")
+		if !strings.HasPrefix(refusal.Target, "zone ") {
+			t.Fatalf("account user-mode pipe refusal names %q, want a zone", refusal.Target)
+		}
 		return
 	}
 	if err != nil {

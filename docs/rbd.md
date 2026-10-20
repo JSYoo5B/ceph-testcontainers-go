@@ -13,6 +13,7 @@ package starts such a cluster and prepares the server side of RBD tests:
 - image namespaces for tenant isolation (`CreateNamespace`, `ListNamespaces`, `RemoveNamespace`);
 - observation of the clients that watch an image and hold its locks (`ImageClients`), for exclusive-lock and fencing tests;
 - full and incremental backup transport between independent clusters (`ExportBackup`, `ExportIncremental`, `RestoreBackup`, `RestoreIncremental`);
+- the RBD immutable object cache daemon in a client container, with its cached objects and RADOS reads (`TemporaryImmutableObjectCache`);
 - native `rbd-mirror` replication between two clusters, in snapshot or journal mode, with image or pool scope, default or named namespaces, any number of receiver daemons, and typed readiness observation (`RunMirror` and the `Mirror` methods).
 
 Image CRUD (create, clone, flatten, trash, migration, group snapshots,
@@ -432,6 +433,97 @@ the image lacks the baseline snapshot. The check is by snapshot name only:
 there is no manifest that proves the baseline has the same content.
 
 See [Back up an image and restore it on another cluster](#back-up-an-image-and-restore-it-on-another-cluster).
+
+### Immutable object cache
+
+The RBD immutable object cache, `ceph-immutable-object-cache`, keeps whole
+parent-image objects of clones on the client's local disk. librbd clients that
+enable the parent cache ask the daemon for each parent object first, so after
+the first read a clone's unmodified data comes from the cache instead of the
+OSDs. Use it to study clone read paths: what a read promotes, how many RADOS
+reads it saves, and what clients do when the daemon goes away.
+
+The daemon runs in a client container that you own, next to the librbd
+consumer: both use the same socket and cache directory. The container needs
+`ceph-immutable-object-cache` on its `PATH` and the librbd `parent_cache`
+plugin in its plugin directory. The official Ceph image has both, and so do
+the `control` role images of
+[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images)
+that include the `ceph-immutable-object-cache` package. A container without them is refused with
+`ceph.ErrImageCapability`; nothing is installed at runtime.
+
+#### TemporaryImmutableObjectCache
+
+```golang
+func TemporaryImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)
+```
+
+Starts the daemon in `client` and waits until its socket is open. `config`
+sets:
+
+- `ID`: the cephx ID the daemon reads parent objects with; empty means
+  `admin`. A client attached with `WithClientIdentity` passes its own name.
+  It needs read access to the parents' pool, such as
+  `osd 'profile rbd pool=<pool>'`.
+- `Path`: the cache directory, `/var/cache/ceph/immutable-object-cache` by
+  default. It must be absent or empty.
+- `Socket`: the daemon's client socket, `/var/run/ceph/immutable-object-cache.sock`
+  by default. It must not exist and must not be inside `Path`.
+- `MaxSize`: `immutable_object_cache_max_size` in bytes, 1 GiB by default. The
+  daemon treats it as a target rather than a hard limit: with 16 MiB, nine
+  4 MiB objects stayed cached in a native run.
+
+The defaults are the constants `DefaultImmutableObjectCachePath`,
+`DefaultImmutableObjectCacheSocket` and `DefaultImmutableObjectCacheMaxSize`.
+An existing socket, a non-empty cache directory or an invalid path is refused
+with `ceph.ErrInvalidRequest` before any change. A daemon that exits or never
+opens its socket fails the call with `ceph.ErrNativeFailure`, and what it left
+is removed.
+
+#### ImmutableObjectCacheLease
+
+```golang
+func (l *ImmutableObjectCacheLease) ClientOptions() map[string]string
+func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObjectCacheStatus, error)
+func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error
+func (l *ImmutableObjectCacheLease) Restore(ctx context.Context) error
+```
+
+- `ClientOptions` returns `rbd_parent_cache_enabled=true`,
+  `rbd_plugins=parent_cache` and `immutable_object_cache_sock=<Socket>`. Pass
+  them to each client that should use the cache, for example as
+  `rbd --rbd_parent_cache_enabled=true ...` or
+  `rados.Rados(conf={...})`. Clients without them read from RADOS as usual.
+- `Status` reports `Running` and `PID`, `CachedObjects` and `CachedBytes`
+  (one file per cached parent object), and `RADOSReads`, the daemon's own
+  objecter read count while it runs. The daemon has no hit or miss counters;
+  a repeated read through the cache leaves `RADOSReads` unchanged.
+- `Stop` stops the daemon with SIGTERM, then SIGKILL, and keeps the cache
+  directory and the socket file. Clients that open an image afterwards log
+  `Parent cache fail to register client` and read the parents from RADOS
+  with the same data.
+- `Restore` stops the daemon if it runs and removes its socket, admin socket,
+  PID file and cached objects; it removes the cache directory only if it
+  created it. A repeated call does nothing.
+
+The lease signals a process only while its command line holds the lease's
+socket, so a reused PID is never stopped. In a native run with 16 objects of
+a 64 MiB clone, the first `rbd export` through the cache made 16 RADOS reads
+and cached 64 MiB; a second export and a Python `rbd.Image.read` added none.
+`rados df` read counters lag behind and do not show this; use `RADOSReads`.
+
+```golang
+lease, err := rbd.TemporaryImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: "rbd-client"})
+if err != nil {
+    return err
+}
+defer lease.Restore(context.WithoutCancel(ctx))
+args := []string{"rbd", "--id", "rbd-client", "export", "pool/clone", "/dev/null"}
+for name, value := range lease.ClientOptions() {
+    args = append(args, "--"+name+"="+value)
+}
+// Run args in client, then read lease.Status(ctx).RADOSReads.
+```
 
 ### RunMirror function
 
@@ -1001,6 +1093,53 @@ pool and peer:
 
 Images are distributed among instances: the leader does not replay every image
 itself.
+
+### Shared cluster tenants
+
+A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RBD
+namespace of its own. Create the RBD pool with `WithPools` in
+`ceph.WithSharedRunOptions`.
+
+```golang
+func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error)
+
+func (n *TenantNamespace) Pool() string
+func (n *TenantNamespace) Namespace() string
+func (n *TenantNamespace) Client() *ceph.ClientConfig
+func (n *TenantNamespace) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
+```
+
+`Lease` creates the namespace `ID` (the tenant's ID) in `pool` and the client
+`client.ID-rbd-POOL` with `mon 'allow r'` and `osd` and `mgr 'profile rbd
+pool=POOL namespace=ID'`. It fails with `ErrInvalidRequest` for a pool without
+the `rbd` application, and when the tenant already leased the pool.
+`WithClient` attaches a container with that client, which the tenant's
+`RunNativeCommand` accepts:
+
+```golang
+tenant := shared.Lease(t)
+images, err := rbd.Lease(t.Context(), tenant, "rbd")
+if err != nil {
+	t.Fatal(err)
+}
+client, err := testcontainers.Run(t.Context(), ceph.DefaultImage, images.WithClient(), ceph.WithIdleEntrypoint())
+testcontainers.CleanupContainer(t, client)
+// rbd --id <images.Client().User()> create --size 8M rbd/<images.Namespace()>/image
+```
+
+The client can create, clone, snapshot, trash and remove images in its
+namespace. Checked natively, it cannot list or open another tenant's images,
+create images in the default namespace, create namespaces or add blocklist
+entries. It has no blocklist capability, so it cannot break another client's
+exclusive lock either.
+
+The tenant's release removes everything in the namespace: groups, trash,
+snapshots (unprotected first), clones before their parents, and images. An
+image that a client which ended without closing it still watches is retried
+for up to 60 seconds, until the OSDs drop the watch, and its exclusive lock is
+broken without a blocklist entry. Then the release removes the namespace and
+any raw object left in it, and fails the test and poisons the cluster if
+anything remains.
 
 ## Examples
 

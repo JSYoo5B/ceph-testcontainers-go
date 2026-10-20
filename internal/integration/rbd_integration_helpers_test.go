@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -292,23 +291,20 @@ func rbdClientExec(ctx context.Context, client testcontainers.Container, args ..
 	return stdout.Bytes(), nil
 }
 
-// rbdNamespaceMappingUnsupported reports a release whose rbd CLI cannot map
-// differently named namespaces (Ceph 19 has no --remote-namespace).
-func rbdNamespaceMappingUnsupported(cluster *ceph.Container) bool {
-	return strings.HasPrefix(cluster.CephVersion(), "19.")
+// rbdNamespaceMappingUnsupported reports whether cluster's control image
+// cannot map differently named namespaces: its rbd has no
+// --remote-namespace, as in Ceph 19 (see releaseCapabilities).
+func rbdNamespaceMappingUnsupported(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
+	t.Helper()
+	return !capabilitySupported(t, ctx, cluster, capabilityRBDNamespaceMapping)
 }
 
 // requireRBDNamespaceMappingRefused proves that the fixture refused the
-// mapping before any change, as unsupported by a Ceph 19 cluster. That
-// refusal is the whole Ceph 19 contract of a mapping case, so callers return
-// afterwards instead of skipping.
-func requireRBDNamespaceMappingRefused(t *testing.T, err error, mapping [2]string) {
+// mapping before any change, naming cluster as the side that lacks it.
+func requireRBDNamespaceMappingRefused(t *testing.T, err error, cluster *ceph.Container, mapping [2]string) {
 	t.Helper()
-	want := fmt.Sprintf("mirroring RBD namespace %q to %q needs Ceph 20 or later", mapping[0], mapping[1])
-	var refusal *ceph.OperationError
-	if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || !strings.HasPrefix(refusal.Version, "19.") ||
-		!strings.HasSuffix(refusal.Target, " cluster") || !strings.Contains(err.Error(), want) {
-		t.Fatalf("Ceph 19 namespace mapping %q -> %q error = %v, want ErrUnsupported %q from a Ceph 19 cluster", mapping[0], mapping[1], err, want)
+	detail := fmt.Sprintf("mirroring RBD namespace %q to %q", mapping[0], mapping[1])
+	if refusal := requireCapabilityRefused(t, err, cluster, capabilityRBDNamespaceMapping, detail); !strings.HasSuffix(refusal.Target, " cluster") {
+		t.Fatalf("namespace mapping refusal names %q, want the cluster that lacks the option", refusal.Target)
 	}
-	t.Logf("%s (Ceph %s) refused namespace mapping %q -> %q before any change", refusal.Target, refusal.Version, mapping[0], mapping[1])
 }

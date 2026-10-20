@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"strings"
 	"testing"
@@ -36,6 +37,31 @@ func TestMonitorBootstrapAddressesKeepAddressFamilies(t *testing.T) {
 	}
 }
 
+func TestDualStackOrderConfigRequiresDualStack(t *testing.T) {
+	path := writeUserConfig(t, "[osd.1]\nms bind prefer ipv4 = false\n[mgr.b]\nms-bind-prefer-ipv4 = false\n")
+	var settings options
+	if err := WithConfigFile(path)(&settings); err != nil {
+		t.Fatalf("WithConfigFile rejected ms_bind_prefer_ipv4: %v", err)
+	}
+	if !userConfigSets(settings.userConfig, dualStackOrderKey) || userConfigSets(settings.userConfig, "ms_bind_ipv4") {
+		t.Fatalf("parsed sections %+v", settings.userConfig)
+	}
+	if got := string(renderUserConfig(settings.userConfig)); got != "[osd.1]\nms_bind_prefer_ipv4 = false\n[mgr.b]\nms_bind_prefer_ipv4 = false\n" {
+		t.Fatalf("rendered %q", got)
+	}
+	for _, key := range []string{"ms_bind_ipv4", "ms_bind_ipv6", "ms_bind_msgr1", "ms_bind_msgr2"} {
+		if err := WithConfigFile(writeUserConfig(t, "[osd.1]\n"+key+" = true\n"))(&options{}); err == nil {
+			t.Fatalf("WithConfigFile accepted %s", key)
+		}
+	}
+	for _, family := range []AddressFamily{AddressIPv4, AddressIPv6, AddressIPv4MappedIPv6} {
+		cluster, err := Run(context.Background(), DefaultImage, WithAddressFamily(family), WithConfigFile(path))
+		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires WithAddressFamily(dual-stack)") {
+			t.Fatalf("%s: Run accepted ms_bind_prefer_ipv4: %v", family, err)
+		}
+	}
+}
+
 func TestAddressFamilyOptions(t *testing.T) {
 	if err := WithAddressFamily(AddressFamily(7))(&options{}); err == nil {
 		t.Fatal("unknown family accepted")
@@ -48,7 +74,8 @@ func TestAddressFamilyOptions(t *testing.T) {
 		t.Fatal("defaults or names changed")
 	}
 	for name, opts := range map[string][]Option{
-		"host network":             {WithAddressFamily(AddressIPv6), WithHostNetwork()},
+		"host network":                    {WithAddressFamily(AddressIPv6), WithHostNetwork()},
+		"dual-stack host network":         {WithAddressFamily(AddressDualStack), WithHostNetwork()},
 		"mapped separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
 	} {
 		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])

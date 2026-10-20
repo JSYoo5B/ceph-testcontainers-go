@@ -105,6 +105,13 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // The key has the cluster's AuthConfig.KeyType, the release default without
 // one, or the type that WithClientKeyType selects.
 func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
+	if err := c.sharedGate("CreateClient"); err != nil {
+		return nil, err
+	}
+	return c.createClient(ctx, name, caps, opts...)
+}
+
+func (c *Container) createClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
 	entity, err := clientEntity(name)
 	if err != nil {
 		return nil, err
@@ -130,7 +137,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +171,7 @@ func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCa
 	}
 	client := &ClientConfig{owner: c, name: entity}
 	client.config = clientConfigBytes(c.config, client)
-	control, err = c.ControlContainerContext(ctx)
+	control, err = c.controlContainerContext(ctx)
 	if err != nil {
 		return client, err
 	}
@@ -214,6 +221,13 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 // Caller owns the attached container and must terminate it before the cluster.
 // The options customize the container's ceph.conf.
 func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+	if err := c.sharedGate("WithClientIdentity"); err != nil {
+		return func(*testcontainers.GenericContainerRequest) error { return err }
+	}
+	return c.withClientIdentity(client, opts...)
+}
+
+func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -251,6 +265,13 @@ func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientConta
 // ReplaceClientKey: a failed call reports what the MONs hold once settled, and
 // an uncertain one is resolved by the next operation on the identity.
 func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) error {
+	if err := c.sharedGate("DeleteClient"); err != nil {
+		return err
+	}
+	return c.deleteClient(ctx, client)
+}
+
+func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) error {
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -318,7 +339,7 @@ func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) erro
 // Auth command output can contain keys, including on failure. Never include it
 // in an error returned to test logs; preserve cancellation without secret output.
 func (c *Container) clientAuthCommand(ctx context.Context, operation string, args ...string) ([]byte, error) {
-	data, err := c.Ceph(ctx, args...)
+	data, err := c.cephCLI(ctx, args...)
 	if err != nil {
 		return nil, clientOperationError(ctx, operation+": Ceph command failed", err)
 	}

@@ -79,6 +79,9 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // leaves the mode options free. Select a MessengerMode when creating a new
 // cluster instead.
 func (c *Container) TemporaryConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
+	if gateErr := c.sharedGate("TemporaryConfig"); gateErr != nil {
+		return nil, gateErr
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -283,6 +286,11 @@ func (c *Container) configuration(ctx context.Context) ([]ConfigEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeConfiguration(data)
+}
+
+// decodeConfiguration decodes the output of config dump.
+func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 	var entries []ConfigEntry
 	if err := json.Unmarshal(data, &entries); err != nil || entries == nil {
 		return nil, errors.New("decode central Ceph configuration")
@@ -305,7 +313,7 @@ func (c *Container) configuration(ctx context.Context) ([]ConfigEntry, error) {
 }
 
 func (c *Container) configCommand(ctx context.Context, args ...string) ([]byte, error) {
-	data, err := c.Ceph(ctx, append([]string{"config"}, args...)...)
+	data, err := c.cephCLI(ctx, append([]string{"config"}, args...)...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("Ceph configuration command: %w", ctx.Err())

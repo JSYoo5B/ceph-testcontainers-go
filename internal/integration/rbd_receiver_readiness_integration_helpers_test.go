@@ -294,8 +294,8 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 					}
 				})
 			}
-			if mapping[0] != mapping[1] && rbdNamespaceMappingUnsupported(source) {
-				requireRBDNamespaceMappingRefused(t, err, mapping)
+			if mapping[0] != mapping[1] && rbdNamespaceMappingUnsupported(t, ctx, source) {
+				requireRBDNamespaceMappingRefused(t, err, source, mapping)
 				return
 			}
 			if err != nil {

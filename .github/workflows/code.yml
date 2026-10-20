@@ -100,6 +100,14 @@ jobs:
         run: make tag-compile
       - name: Check CI selection, image, cleanup and completion tooling without Docker
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      # Parses every workflow as YAML and resolves reusable-workflow calls,
+      # which the regex-based tooling tests above cannot. actionlint does not
+      # know job.check_run_id yet.
+      - name: Lint workflow syntax and reusable-workflow calls
+        run: >-
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          -shellcheck= -pyflakes=
+          -ignore 'property "check_run_id" is not defined'
       - name: Check supplied-image Linux consumer harness without Docker
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
 

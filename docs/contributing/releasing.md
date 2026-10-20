@@ -7,21 +7,20 @@ or a successful retry as evidence for all four.
 
 ## v0.3.0 scope
 
-The [v0.3.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2)
-has no open items. The three bounded deliverables are:
+The three completed, bounded v0.3.0 deliverables are:
 
 | Item | Implementation | Maintained evidence |
 | --- | --- | --- |
-| [#82](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/82): supervised bounded binary input | [#85](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/85), public `NativeInput` and result fields | `TestNativeCommandInput`, `TestNativeCommandInputCancellation`, input/supervisor unit tests; `native_input` batch |
-| [#83](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/83): MDS unsafe-to-safe observation | [#86](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/86), test-only receipt | `TestCephFSUnsafeRequestWindow`, saved native parser/classifier fixtures; `cephfs_fixtures_sessions` batch |
-| [#84](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/84): stock-image first-failure diagnostics | [#87](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/87), test-only collector and classifier | `TestAuthFirstFailureBundle`, retained-failure and partial-observation fixtures; `messenger_client_profiles` batch |
+| supervised bounded binary input | public `NativeInput` and result fields | `TestNativeCommandInput`, `TestNativeCommandInputCancellation`, input/supervisor unit tests; `native_input` batch |
+| MDS unsafe-to-safe observation | test-only receipt | `TestCephFSUnsafeRequestWindow`, saved native parser/classifier fixtures; `cephfs_fixtures_sessions` batch |
+| stock-image first-failure diagnostics | test-only collector and classifier | `TestAuthFirstFailureBundle`, retained-failure and partial-observation fixtures; `messenger_client_profiles` batch |
 
 Other changes since v0.2.0 include the MDS session, daemon-path and MGR
 transition receipts listed in [CHANGELOG.md](../../CHANGELOG.md). The
 [v0.3.0 guide](../guides/upgrading-to-v0.3.md) records compatibility and the
-limits of each claim. MDS replay across a crash (#48), selected auth-key
-generation equality and the intermittent rejection (#71), and the remaining
-daemon-path/mode matrix (#49) stay separate. No downstream wire
+limits of each claim. MDS replay across a crash, selected auth-key
+generation equality and the intermittent rejection, and the remaining
+daemon-path/mode matrix stay separate. No downstream wire
 implementation or adapter migration is certified. Image production and the
 authoritative image contracts remain in ceph-testcontainers-images.
 
@@ -52,10 +51,7 @@ record the final source and checks.
    vulnerability-scan results from Code checks as well.
 5. Review failed attempts, not just their latest conclusion. Keep fixed
    cases linked to their correction and regression. Unresolved cases need
-   a disposition and live owner. [#41](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/41)
-   completed its audit by retaining MON replacement/join investigations in
-   [#61](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/61) and
-   infrastructure/storage observations in [#31](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/31).
+   a disposition and live owner.
 6. Confirm native completion and cleanup for the claimed profiles. Strict
    upstream-defect tests under `native_regression` are opt-in, outside
    `all`; document their limits instead of counting them as required passes.

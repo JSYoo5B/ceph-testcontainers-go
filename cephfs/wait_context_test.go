@@ -10,29 +10,30 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
 func TestMultiClusterWaitManagerRejectsLateReadyCancellation(t *testing.T) {
 	for _, deadline := range []bool{false, true} {
 		t.Run(map[bool]string{false: "cancel", true: "deadline"}[deadline], func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
+			cancelable, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			ctx, end := context.Context(cancelable), cancel
 			want := error(context.Canceled)
 			if deadline {
-				cancel()
-				ctx, cancel = context.WithTimeout(t.Context(), 10*time.Millisecond)
+				// The deadline passes during the first observation, rather than
+				// after a wall-clock interval that a slow (race-instrumented) run
+				// can spend before the wait observes the manager map at all.
+				expiring := clustertest.NewSignalDeadline(t.Context())
+				ctx, end = expiring, expiring.Expire
 				want = context.DeadlineExceeded
 			}
-			defer cancel()
 			b := &ceph.ManagerContainer{DaemonName: "b", Container: &cephFSManagerCandidate{id: "manager-b", running: true}}
 			calls := 0
 			ids, err := waitForCephFSManagerCandidates(ctx, time.Millisecond, func(context.Context) (ceph.ManagerStatus, []*ceph.ManagerContainer, error) {
 				calls++
-				if deadline {
-					<-ctx.Done()
-				} else {
-					cancel()
-				}
+				end()
 				return ceph.ManagerStatus{Available: true, ActiveName: "b", ActiveGID: 77}, []*ceph.ManagerContainer{b}, nil
 			})
 			if err == nil || !errors.Is(err, want) || len(ids) != 0 || calls != 1 {
@@ -43,20 +44,34 @@ func TestMultiClusterWaitManagerRejectsLateReadyCancellation(t *testing.T) {
 }
 
 // A Deadline call after the main test holds the owner proves that the next
-// public Status attempt has started, before its owner admission. Both public
-// deadlines exceed this context, so their derived contexts retain this probe.
+// public Status attempt has started, before its owner admission. A call after
+// the first native failure while the owner is not held means the next attempt
+// started before the test took the owner, and calls missed. The probe reports
+// a deadline earlier than the public 2 minute wait deadlines but later than the
+// 30 second attempt deadline, so the wait's context retains this probe and
+// each attempt consults it once; the context still ends only on cancel or
+// Expire, not at that time.
 type multiClusterWaitAdmissionProbe struct {
 	context.Context
-	held   *atomic.Bool
-	queued chan struct{}
-	once   sync.Once
+	reported time.Time
+	held     *atomic.Bool
+	first    <-chan struct{}
+	missed   func()
+	queued   chan struct{}
+	once     sync.Once
 }
 
 func (p *multiClusterWaitAdmissionProbe) Deadline() (time.Time, bool) {
 	if p.held.Load() {
 		p.once.Do(func() { close(p.queued) })
+	} else {
+		select {
+		case <-p.first:
+			p.missed()
+		default:
+		}
 	}
-	return p.Context.Deadline()
+	return p.reported, true
 }
 
 type multiClusterWaitRemovalResult struct {
@@ -97,10 +112,22 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 						return multiClusterWaitRemovalResult{s.Daemons["a"].Problem, s.Daemons["a"].State, s.PolicyRemoved, s.Released, err}
 					}
 				}
-				ctx, cancel := context.WithTimeout(t.Context(), 1100*time.Millisecond)
+				// The caller's deadline passes once the next observation is queued
+				// on the held owner, rather than after a wall-clock interval that
+				// a slow (race-instrumented) run can use up before that point.
+				cancelable, cancel := context.WithCancel(t.Context())
 				defer cancel()
+				ctx, end := context.Context(cancelable), cancel
+				if deadline {
+					expiring := clustertest.NewSignalDeadline(t.Context())
+					ctx, end = expiring, expiring.Expire
+				}
+				// The test must take the owner before the wait starts its next
+				// attempt; a slow observation that still holds it cannot expire
+				// this gate, only a wait that keeps the owner across its poll.
+				gate := clustertest.NewSignalDeadline(t.Context())
 				var held atomic.Bool
-				probe := &multiClusterWaitAdmissionProbe{Context: ctx, held: &held, queued: make(chan struct{})}
+				probe := &multiClusterWaitAdmissionProbe{Context: ctx, reported: time.Now().Add(time.Minute), held: &held, first: first, missed: gate.Expire, queued: make(chan struct{})}
 				done, exited := make(chan multiClusterWaitRemovalResult, 1), make(chan struct{})
 				unlock := func() {
 					if held.Swap(false) {
@@ -116,17 +143,14 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				}
 				// Install cleanup before launch; only a successfully acquired owner
 				// sets held. Late hooks signal only and never acquire an orphan gate.
-				t.Cleanup(func() { cancel(); unlock(); join() })
+				t.Cleanup(func() { end(); unlock(); join() })
 				go func() { defer close(exited); done <- wait(probe) }()
 				select {
 				case <-first:
 				case <-time.After(500 * time.Millisecond):
 					t.Fatal("wait never reached the original native failure")
 				}
-				gateCtx, gateCancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-				gateErr := multicluster.LockObservation(gateCtx, &mirror.mu)
-				gateCancel()
-				if gateErr != nil {
+				if gateErr := multicluster.LockObservation(gate, &mirror.mu); gateErr != nil {
 					t.Fatal("wait held the owner across polls", gateErr)
 				}
 				held.Store(true)
@@ -138,8 +162,8 @@ func TestMultiClusterWaitRemovalRetainsReportAcrossOwnerAdmissionCancel(t *testi
 				want := error(context.DeadlineExceeded)
 				if !deadline {
 					want = context.Canceled
-					cancel()
 				}
+				end()
 				var result multiClusterWaitRemovalResult
 				select {
 				case result = <-done:

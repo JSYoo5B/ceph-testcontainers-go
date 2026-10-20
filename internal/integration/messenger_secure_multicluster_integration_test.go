@@ -273,14 +273,14 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 		mode = "secure"
 	}
 	for _, daemon := range daemons {
-		data := mixedMessengerExec(t, ctx, cluster.ControlContainer(), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(cluster))
+		data := mixedMessengerExec(t, ctx, cluster.ControlContainer(), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR_MIX_NATIVE %s", data)
 	}
 }
 
 func mixedMessengerCatalog(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, socket string) {
 	t.Helper()
-	if messengerDumpArg(cluster) != "1" {
+	if messengerDumpArg(t, ctx, cluster) != "1" {
 		// Ceph 19 has no messenger dump; prove the owned socket answers.
 		data := mixedMessengerExec(t, ctx, daemon, "ceph", "--admin-daemon", socket, "version")
 		t.Logf("MSGR_MIX_MIRROR socket=%s native_version=%s", socket, bytes.TrimSpace(data))

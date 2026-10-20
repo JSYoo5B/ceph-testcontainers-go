@@ -100,7 +100,7 @@ func TestTemporaryBlocklistRefusesExistingAndOutsideRenewal(t *testing.T) {
 	}
 	// Natural native expiration converges even after outside renewal.
 	delete(native.entries, blocklistTestAddress)
-	if err := change.Restore(t.Context()); err != nil || len(c.blocklistOverrides) != 0 {
+	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultBlocklist)) != 0 {
 		t.Fatal("native absence not reconciled")
 	}
 }

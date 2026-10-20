@@ -58,6 +58,9 @@ type mgrModuleOverrideState struct {
 // membership, not command readiness. External edits must not race apply/restore;
 // Ceph has no module membership CAS or per-module generation.
 func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error) {
+	if gateErr := c.sharedGate("TemporaryMGRModule"); gateErr != nil {
+		return nil, gateErr
+	}
 	if !mgrModuleNamePattern.MatchString(name) {
 		return nil, errors.New("invalid Ceph manager module name")
 	}
@@ -221,7 +224,7 @@ func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
 		}
 		if err == nil {
 			for _, probe := range probes {
-				data, probeErr := c.Ceph(ctx, probe...)
+				data, probeErr := c.cephCLI(ctx, probe...)
 				if probeErr != nil {
 					err = probeErr
 					break
@@ -267,7 +270,7 @@ func (c *Container) setMGRModule(ctx context.Context, name string, enabled bool)
 	if enabled {
 		op = "enable"
 	}
-	_, err := c.Ceph(ctx, "mgr", "module", op, name)
+	_, err := c.cephCLI(ctx, "mgr", "module", op, name)
 	return err
 }
 
@@ -312,7 +315,7 @@ func (c *Container) waitMGRModuleMembership(ctx context.Context, name string, en
 }
 
 func (c *Container) mgrModules(ctx context.Context) ([]MGRModuleState, error) {
-	data, err := c.Ceph(ctx, "mgr", "module", "ls", "--format", "json")
+	data, err := c.cephCLI(ctx, "mgr", "module", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +367,7 @@ func (c *Container) mgrModules(ctx context.Context) ([]MGRModuleState, error) {
 	}
 	// module ls omits can_run for enabled modules. The active MGR's beacon
 	// metadata in mgr dump advertises dependency status for every loaded module.
-	data, err = c.Ceph(ctx, "mgr", "dump", "--format", "json")
+	data, err = c.cephCLI(ctx, "mgr", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +428,7 @@ func (c *Container) protectMGRModule(ctx context.Context, name string) error {
 	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || ownedNeed) {
 		return errors.New("MGR volumes module is required by configured or owned CephFS filesystems")
 	}
-	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return err
 	}

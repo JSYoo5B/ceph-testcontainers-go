@@ -21,8 +21,8 @@ import (
 // finish. An error that matches no category is a failed check of the
 // fixture's own, such as output it could not parse, or a failure whose
 // outcome is unknown, such as a container that disappeared after a native
-// command was sent to it. Only ErrInvalidRequest promises that nothing
-// changed.
+// command was sent to it. Only ErrInvalidRequest and ErrSharedCluster
+// promise that nothing changed.
 var (
 	// ErrInvalidRequest reports a request that the fixture refused before
 	// any change: malformed arguments, or an operation that the state of the
@@ -33,8 +33,10 @@ var (
 	// ErrUnsupported reports a native feature that the Ceph of the relevant
 	// target lacks, established before any change from that target's own
 	// capability, such as an option that its tool does not list, or from a
-	// documented limit of the release it runs. *OperationError names the
-	// feature, the target and its version.
+	// documented limit of the release it runs. AddressDualStack establishes
+	// it after startup instead, from the addresses that the daemons
+	// advertise. *OperationError names the feature, the target and its
+	// version.
 	ErrUnsupported = errors.New("unsupported by the target's Ceph")
 	// ErrImageCapability reports an image that lacks what the operation
 	// needs: an executable or runtime, such as the python3 of the
@@ -50,13 +52,20 @@ var (
 	// refused the request, a resource was missing, permission was denied or
 	// I/O failed. *NativeFailure carries the native status.
 	ErrNativeFailure = errors.New("native operation failed")
+	// ErrSharedCluster reports a method that a cluster shared through
+	// SharedCluster refuses before any change: an operation that would
+	// reach outside one tenant's scope, a raw handle to its containers or
+	// credentials, or Terminate, since only SharedCluster.Close ends it.
+	// *OperationError names the method in Op.
+	ErrSharedCluster = errors.New("refused on a shared cluster")
 )
 
 // OperationError is a classified failure with the details that identify it.
 // Its text never includes command arguments, raw output or credentials.
 type OperationError struct {
 	// Kind is the category: ErrInvalidRequest, ErrUnsupported,
-	// ErrImageCapability, ErrEnvironmentUnavailable or ErrNativeFailure.
+	// ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure or
+	// ErrSharedCluster.
 	Kind error
 	// Op names the operation, such as "create client", when the error's
 	// text does not already start with it.
@@ -177,7 +186,7 @@ func (e *categoryError) Error() string { return e.text }
 func (e *categoryError) Is(target error) bool { return target == e.kind }
 
 // categories are the error categories.
-var categories = []error{ErrInvalidRequest, ErrUnsupported, ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure}
+var categories = []error{ErrInvalidRequest, ErrUnsupported, ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure, ErrSharedCluster}
 
 // classified reports whether err belongs to a category.
 func classified(err error) bool {

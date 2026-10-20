@@ -8,6 +8,9 @@ import (
 // ClientCapabilities returns the current caps of a confirmed, owned identity.
 // It verifies the native key without returning auth database secrets.
 func (c *Container) ClientCapabilities(ctx context.Context, client *ClientConfig) (ClientCaps, error) {
+	if gateErr := c.sharedGate("ClientCapabilities"); gateErr != nil {
+		return ClientCaps{}, gateErr
+	}
 	if err := c.lockTopology(ctx); err != nil {
 		return ClientCaps{}, err
 	}
@@ -23,6 +26,9 @@ func (c *Container) ClientCapabilities(ctx context.Context, client *ClientConfig
 // MONs hold once settled, and an uncertain one is resolved by the next
 // operation on the identity.
 func (c *Container) UpdateClientCaps(ctx context.Context, client *ClientConfig, caps ClientCaps) error {
+	if gateErr := c.sharedGate("UpdateClientCaps"); gateErr != nil {
+		return gateErr
+	}
 	args, err := clientCapArgs(caps)
 	if err != nil {
 		return err

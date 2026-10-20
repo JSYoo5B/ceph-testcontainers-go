@@ -10,6 +10,9 @@ inputs:
   roles:
     description: Comma-separated role images that the batch declares, control included
     default: 'control,osd,rgw,mds'
+  digests:
+    description: Comma-separated role=sha256:<digest> pins of the role tags; empty pulls the tags
+    default: ''
 runs:
   using: composite
   steps:
@@ -18,10 +21,11 @@ runs:
       env:
         SCENARIO_RELEASE: ${{ inputs.release }}
         SCENARIO_ROLES: ${{ inputs.roles }}
+        SCENARIO_DIGESTS: ${{ inputs.digests }}
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
           --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
-          --roles "$SCENARIO_ROLES" \
+          --roles "$SCENARIO_ROLES" --digests "$SCENARIO_DIGESTS" \
           --platform linux/amd64 --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images
         printf '%s\n' 'SCENARIO_IMAGE_LAYOUT=roles' "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES" >> "$GITHUB_ENV"

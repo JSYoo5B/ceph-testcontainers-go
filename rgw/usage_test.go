@@ -21,7 +21,7 @@ import (
 
 const rgwUsageFixture = `{"stats":{"size":8193,"size_actual":12288,"size_kb":9,"size_kb_actual":12,"num_objects":3},"last_stats_sync":"0.000000","last_stats_update":"2026-10-08T01:02:03.000000Z"}`
 
-func rgwUsageStream(data string) io.Reader {
+func rgwUsageStream(data string) *bytes.Buffer {
 	var header [8]byte
 	header[0] = byte(stdcopy.Stdout)
 	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
@@ -105,14 +105,16 @@ type rgwUsageAccountContainer struct {
 }
 
 func (f *rgwUsageAccountContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	original := args
+	args = rgwAdminArgv(args)
 	if args[0] == "radosgw-admin" && slices.Contains(args, "user") && slices.Contains(args, "stats") {
 		f.calls = append(f.calls, slices.Clone(args))
 		if f.onStats != nil {
 			f.onStats()
 		}
-		return 0, rgwUsageStream(f.statsRaw), nil
+		return rgwAdminReply(original, 0, rgwUsageStream(f.statsRaw))
 	}
-	return f.rgwAccountTestContainer.Exec(ctx, args, opts...)
+	return f.rgwAccountTestContainer.Exec(ctx, original, opts...)
 }
 
 func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContainer, *Account, *User) {

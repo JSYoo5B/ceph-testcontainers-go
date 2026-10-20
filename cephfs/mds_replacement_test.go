@@ -557,8 +557,22 @@ func TestMDSReplacementRecognizedRecoveryProgressAndPollOwnerRelease(t *testing.
 	observed := make(chan struct{}, 1)
 	result := make(chan error, 1)
 	joined := make(chan struct{})
+	// The admission's deadline passes when the poll inspects the new daemon
+	// in a later observation (or ends) without the admission having taken the
+	// owner gate, not after 50 ms that a slow observation can still spend.
+	admitCtx := clustertest.NewSignalDeadline(t.Context())
+	inspected, observedAt := 0, -1 // both touched only by the poll goroutine
+	r.newCID.inspectHook = func(n int) {
+		inspected = n
+		if observedAt >= 0 && n > observedAt {
+			admitCtx.Expire()
+		}
+	}
 	r.n.hook = func(call string) {
 		if call == "fs dump --format json" && r.starts != 0 {
+			if observedAt < 0 {
+				observedAt = inspected
+			}
 			select {
 			case observed <- struct{}{}:
 			default:
@@ -573,14 +587,12 @@ func TestMDSReplacementRecognizedRecoveryProgressAndPollOwnerRelease(t *testing.
 			t.Error("replacement poll did not exit")
 		}
 	})
-	go func() { defer close(joined); _, err := r.add(ctx); result <- err }()
+	go func() { defer close(joined); _, err := r.add(ctx); admitCtx.Expire(); result <- err }()
 	select {
 	case <-observed:
 	case <-time.After(time.Second):
 		t.Fatal("pending recovery never observed")
 	}
-	admitCtx, admitCancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer admitCancel()
 	if err := servicehook.LockTopology(admitCtx, r.fs.cluster); err != nil {
 		t.Fatal("poll retained owner lock", err)
 	}

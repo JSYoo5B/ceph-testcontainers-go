@@ -25,11 +25,20 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 # Releases that ceph-testcontainers-images checks and publishes, with their
-# unmodified official images. RELEASE is the default and matches DefaultImage.
-RELEASES = {
-    "20.2.4": "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9",
-    "19.2.5": "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b",
-}
+# codenames and unmodified official images. This table is the supported
+# release set of CI: Ceph periodic and Ceph release matrix run every category
+# on each row (tag_scenarios.py releases), so a new release is one row here
+# once ceph-testcontainers-images publishes its role images. A release or
+# patch that is not a row is refused, never mapped to a neighbouring one.
+# RELEASE is the default and matches DefaultImage.
+SUPPORTED_RELEASES = (
+    ("20.2.4", "tentacle",
+     "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"),
+    ("19.2.5", "squid",
+     "quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b"),
+)
+RELEASES = {release: image for release, _, image in SUPPORTED_RELEASES}
+CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
 RELEASE = "20.2.4"
 OFFICIAL_IMAGE = RELEASES[RELEASE]
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
@@ -51,6 +60,7 @@ EXPECTED_TESTS = (
     "TestMultiClusterRGWMultisite",
 )
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
+DIGEST = IMAGE_ID
 RUN = re.compile(r"^=== RUN[ \t]+(Test[A-Za-z0-9_]+)(?:[ \t]*)$")
 RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0-9]+)?s\)[ \t]*$")
 
@@ -71,6 +81,9 @@ def parse_arguments(argv=None):
     parser.add_argument("--roles",
                         help="Comma-separated roles to prepare, control included; default all four. "
                              "Requires --prepare-only and --layout roles")
+    parser.add_argument("--digests", default="",
+                        help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
+                             "Requires --layout roles")
     args = parser.parse_args(argv)
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
@@ -83,6 +96,12 @@ def parse_arguments(argv=None):
             args.roles = parse_roles(args.roles)
         except ValueError as error:
             parser.error(str(error))
+    try:
+        args.digests = parse_digests(args.digests)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.digests and args.layout != "roles":
+        parser.error("--digests requires --layout roles")
     return args
 
 
@@ -92,6 +111,25 @@ def parse_roles(text):
     if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "control" not in roles:
         raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV) + ", control included")
     return tuple(role for role in ROLE_ENV if role in roles)
+
+
+def parse_digests(text):
+    """role=sha256:<hex> pins, comma-separated; an empty text pins none."""
+    digests = {}
+    for item in filter(None, (text or "").split(",")):
+        role, _, digest = item.partition("=")
+        if role not in ROLE_ENV or role in digests or DIGEST.fullmatch(digest) is None:
+            raise ValueError("--digests takes distinct role=sha256:<64 hex> pins of " + ",".join(ROLE_ENV))
+        digests[role] = digest
+    return digests
+
+
+def pin_references(references, digests):
+    """Pin each role tag to its registry digest, so that every attempt of a
+    campaign pulls the same manifest even when the tag moves. A pinned role
+    that this run does not prepare is ignored."""
+    return {role: reference + "@" + digests[role] if role in digests else reference
+            for role, reference in references.items()}
 
 
 def image_references(variant, layout, release, roles=tuple(ROLE_ENV)):
@@ -281,7 +319,11 @@ def main(argv=None):
         summary["platform"] = platform
         if args.platform and args.platform != platform:
             raise RuntimeError("requested platform differs from Docker engine native platform; emulation is not validation")
-        for role, reference in image_references(args.variant, args.layout, args.release, args.roles).items():
+        references = pin_references(image_references(args.variant, args.layout, args.release, args.roles),
+                                    args.digests)
+        if args.digests:
+            summary["pinned_digests"] = args.digests
+        for role, reference in references.items():
             # Ordinary inspection keeps this native-only runner compatible
             # with engines predating the inspect --platform API (1.49).
             inspect = ["docker", "image", "inspect", "--", reference]

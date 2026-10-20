@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -296,7 +297,14 @@ func TestCephFSObserverDraftReplaySchemaAndFailureStates(t *testing.T) {
 	if status, err := mirror.DirectoryStatus(t.Context(), "/owned"); err == nil || status.Ready {
 		t.Fatal("syncing without current snapshot became ready")
 	}
-	for _, field := range []string{"current_syncing_snap", "last_synced_snap"} {
+	// Squid 19.2.5 writes the syncing snapshot as current_sycning_snap. A
+	// directory caught mid-sync on Squid is a valid status, not a guard error.
+	a.replay = `{"/owned":{"state":"syncing","current_sycning_snap":{"id":7,"name":"checkpoint"},"last_synced_snap":{"id":6,"name":"before"},"snaps_synced":1,"snaps_deleted":0,"snaps_renamed":0}}`
+	status, err = mirror.DirectoryStatus(t.Context(), "/owned")
+	if err != nil || status.State != "syncing" || status.CurrentSnapshot == nil || *status.CurrentSnapshot != (MirrorSnapshot{ID: 7, Name: "checkpoint"}) {
+		t.Fatalf("Squid syncing status rejected: %+v %v", status, err)
+	}
+	for _, field := range []string{"current_syncing_snap", "current_sycning_snap", "last_synced_snap"} {
 		a.replay = fmt.Sprintf(`{"/owned":{"state":"idle",%q:null,"snaps_synced":0,"snaps_deleted":0,"snaps_renamed":0}}`, field)
 		if status, err := mirror.DirectoryStatus(t.Context(), "/owned"); err == nil || status.Ready {
 			t.Fatalf("explicit null snapshot accepted: %+v %v", status, err)
@@ -369,22 +377,32 @@ func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
 	}
 	a.running = false
 	started := make(chan struct{})
-	source.hook = func(*cephFSObserverDraftControl, []string) {
+	// The deadline passes when the wait reads the directory map a second time
+	// without the test taking the lock in between, rather than after a
+	// wall-clock interval that a slow (race-instrumented) observation can use up
+	// while it still holds the lock. Otherwise the test expires it once unlocked.
+	polling := clustertest.NewSignalDeadline(t.Context())
+	mappingReads := 0
+	source.hook = func(_ *cephFSObserverDraftControl, args []string) {
 		select {
 		case <-started:
 		default:
 			close(started)
 		}
+		if slices.Contains(args, "dirmap") {
+			if mappingReads++; mappingReads > 1 {
+				polling.Expire()
+			}
+		}
 	}
-	deadline, stop = context.WithTimeout(t.Context(), 40*time.Millisecond)
-	defer stop()
 	finished := make(chan error, 1)
-	go func() { _, err := mirror.WaitDirectoryReady(deadline, "/owned"); finished <- err }()
+	go func() { _, err := mirror.WaitDirectoryReady(polling, "/owned"); finished <- err }()
 	<-started
-	if err := multicluster.LockObservation(deadline, &mirror.mu); err != nil {
+	if err := multicluster.LockObservation(polling, &mirror.mu); err != nil {
 		t.Fatal("wait held lock across poll sleep")
 	}
 	mirror.mu.Unlock()
+	polling.Expire()
 	if err := <-finished; !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("wait lost deadline: %v", err)
 	}
@@ -399,26 +417,33 @@ func TestCephFSObserverDraftPartialMemberExceptionIsNarrow(t *testing.T) {
 	if err != nil || status.DaemonProblems["b"] == "" {
 		t.Fatal("valid per-directory success hid unrelated partial member issue")
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
-	defer cancel()
+	// The deadline passes during the first observation, after it returned the
+	// selected owner's error, rather than after a wall-clock interval that a
+	// slow (race-instrumented) run can spend before the first observation.
+	expiring := clustertest.NewSignalDeadline(t.Context())
 	selectedError := errors.New("private selected native output")
-	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err = waitCephFSObservedDirectory(expiring, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+		expiring.Expire()
 		return base, errors.Join(partial, cephFSObserveQuery("selected owner query", selectedError))
 	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, selectedError) || status.Ready || strings.Contains(err.Error(), selectedError.Error()) {
 		t.Fatalf("broader error was ignored via partial exception: %+v %v", status, err)
 	}
 	calls := 0
-	guardContext, guardCancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer guardCancel()
+	// The deadline passes only if the wait retries the permanent failure, so a
+	// slow (race-instrumented) run cannot expire it before the first observation.
+	guardContext := clustertest.NewSignalDeadline(t.Context())
 	status, err = waitCephFSObservedDirectory(guardContext, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
-		calls++
+		if calls++; calls > 1 {
+			guardContext.Expire()
+		}
 		return base, errors.Join(partial, cephFSObserveGuard("native schema changed"))
 	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
 	if err == nil || status.Ready || calls != 1 {
 		t.Fatal("permanent native schema failure was retried or ignored")
 	}
-	ctx, cancel = context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
 		cancel()
 		return base, partial
@@ -497,6 +522,14 @@ func TestCephFSObserverDraftWaitPeerSchemaFailsPermanently(t *testing.T) {
 		for _, phase := range []string{"before", "after"} {
 			t.Run(name+"/"+phase, func(t *testing.T) {
 				mirror, source, _, _, _ := newCephFSObserverDraft()
+				expectedQueries := 1
+				if phase == "after" {
+					expectedQueries = 2
+				}
+				// The deadline passes only if the wait queries the peer policy
+				// again after the malformed reply, so a slow (race-instrumented)
+				// observation cannot expire it before the guard is reached.
+				ctx := clustertest.NewSignalDeadline(t.Context())
 				peerQueries := 0
 				source.hook = func(control *cephFSObserverDraftControl, args []string) {
 					if !slices.Contains(args, "peer_list") {
@@ -506,14 +539,11 @@ func TestCephFSObserverDraftWaitPeerSchemaFailsPermanently(t *testing.T) {
 					if phase == "before" || peerQueries == 2 {
 						control.peer = response
 					}
+					if peerQueries > expectedQueries {
+						ctx.Expire()
+					}
 				}
-				ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-				defer cancel()
 				status, err := mirror.WaitSnapshotSynced(ctx, "/owned", MirrorSnapshot{ID: 120, Name: "checkpoint"})
-				expectedQueries := 1
-				if phase == "after" {
-					expectedQueries = 2
-				}
 				if !errors.Is(err, errCephFSObservationGuard) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || status.Ready || status.SourceFilesystemID != 1 || peerQueries != expectedQueries {
 					t.Fatalf("wait retried/adopted malformed peer policy: %+v err=%v queries=%d", status, err, peerQueries)
 				}
@@ -525,8 +555,15 @@ func TestCephFSObserverDraftWaitPeerSchemaFailsPermanently(t *testing.T) {
 	mirror, source, _, _, _ := newCephFSObserverDraft()
 	queryErr := errors.New("private peer transport output")
 	source.peerQueryError = queryErr
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
+	// The deadline passes when the peer policy query fails, rather than after a
+	// wall-clock interval that a slow (race-instrumented) run can spend before
+	// the query, which would leave no transport cause to preserve.
+	ctx := clustertest.NewSignalDeadline(t.Context())
+	source.hook = func(_ *cephFSObserverDraftControl, args []string) {
+		if slices.Contains(args, "peer_list") {
+			ctx.Expire()
+		}
+	}
 	status, err := mirror.WaitDirectoryReady(ctx, "/owned")
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, queryErr) || errors.Is(err, errCephFSObservationGuard) || status.Ready || strings.Contains(err.Error(), queryErr.Error()) {
 		t.Fatalf("peer CLI transport failure classified as schema guard or leaked/lost: %+v %v", status, err)

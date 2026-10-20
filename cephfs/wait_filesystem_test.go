@@ -253,8 +253,16 @@ func TestWaitClonePendingObservationReleasesSetupGateBeforeDelay(t *testing.T) {
 	gate := &filesystems(f.cluster).setupMu
 	entered := make(chan struct{})
 	var signal sync.Once
+	// The test must take the gate before the wait reads the clone status again;
+	// a slow (race-instrumented) observation that still holds the gate cannot
+	// expire this admission, only a wait that keeps it across its poll delay.
+	admission := clustertest.NewSignalDeadline(t.Context())
+	statusReads := 0
 	f.control.after = func(args []string) {
 		if strings.Join(clustertest.ModuleArgs(args), " ") == cloneStatusQuery {
+			if statusReads++; statusReads > 1 {
+				admission.Expire()
+			}
 			signal.Do(func() { close(entered) })
 		}
 	}
@@ -284,10 +292,7 @@ func TestWaitClonePendingObservationReleasesSetupGateBeforeDelay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("pending observation did not execute")
 	}
-	admission, admissionCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-	err := clusterutil.LockMutex(admission, gate)
-	admissionCancel()
-	if err != nil {
+	if err := clusterutil.LockMutex(admission, gate); err != nil {
 		t.Fatalf("wait held the setup gate during poll delay: %v", err)
 	}
 	held = true

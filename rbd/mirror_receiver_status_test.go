@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -614,9 +615,12 @@ func TestRBDReceiverFinalNativeReadBlocksQueuedMutationOnlyUntilDeadline(t *test
 	h := newReceiverHarness(t, "", "", 1)
 	entered := make(chan struct{})
 	finished := make(chan error, 1)
-	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	// The observer's deadline passes after the queued caller was refused,
+	// rather than after a wall-clock interval that a slow (race-instrumented)
+	// observer can spend before it reaches the blocking final read.
+	ctx := clustertest.NewSignalDeadline(t.Context())
 	t.Cleanup(func() {
-		cancel()
+		ctx.Expire()
 		select {
 		case <-finished:
 		case <-time.After(time.Second):
@@ -646,6 +650,7 @@ func TestRBDReceiverFinalNativeReadBlocksQueuedMutationOnlyUntilDeadline(t *test
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("queued owner admission was not bounded")
 	}
+	ctx.Expire()
 	select {
 	case err := <-finished:
 		if !errors.Is(err, context.DeadlineExceeded) {
@@ -677,15 +682,18 @@ func TestRBDReceiverSecretSafeCanonicalCausesAndLateCancellation(t *testing.T) {
 		t.Fatal("Ready returned after final cancellation")
 	}
 	before := MirrorReceiverStatus{PeerID: receiverPeerUUID, Ready: false, Pool: "images"}
-	ctx, cancel = context.WithTimeout(t.Context(), 10*time.Millisecond)
-	defer cancel()
+	// The deadline passes in the second, failing attempt, after the first one
+	// was observed, rather than after a wall-clock interval that a slow
+	// (race-instrumented) run can spend before the first attempt.
+	expiring := clustertest.NewSignalDeadline(t.Context())
 	attempt := 0
-	status, err = waitRBDReceiverReady(ctx, time.Millisecond, func(context.Context, *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	status, err = waitRBDReceiverReady(expiring, time.Millisecond, func(context.Context, *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
 		attempt++
 		if attempt == 1 {
 			return before, nil, nil
 		}
-		return MirrorReceiverStatus{}, nil, rbdReceiverQuery(ctx, "query", errors.New("private"))
+		expiring.Expire()
+		return MirrorReceiverStatus{}, nil, rbdReceiverQuery(expiring, "query", errors.New("private"))
 	})
 	if !errors.Is(err, context.DeadlineExceeded) || status.PeerID != receiverPeerUUID || status.Ready {
 		t.Fatal("wait erased last useful observation")

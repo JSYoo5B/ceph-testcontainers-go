@@ -41,6 +41,9 @@ type ContainerPause struct {
 // refused rather than adopted. The cluster retains the handle and resumes it
 // during Terminate; resume explicitly before removing a caller-owned container.
 func (c *Container) PauseContainer(ctx context.Context, ctr testcontainers.Container) (*ContainerPause, error) {
+	if gateErr := c.sharedGate("PauseContainer"); gateErr != nil {
+		return nil, gateErr
+	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
@@ -49,33 +52,31 @@ func (c *Container) PauseContainer(ctx context.Context, ctr testcontainers.Conta
 		return nil, errors.New("container pause requires a live cluster and a started container")
 	}
 	id := ctr.GetContainerID()
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if control != nil && control.GetContainerID() == id {
 		return nil, errors.New("pausing the control CLI container would block every fixture command")
 	}
-	if previous := c.pauses[id]; previous != nil {
-		complete, err := previous.isComplete(ctx)
-		if err != nil {
-			return previous, err
-		}
-		if !complete {
-			return previous, errors.New("resume the existing container pause first")
-		}
+	// An incomplete previous pause is returned with the refusal; a complete
+	// one stays registered until this one replaces it.
+	token, previous, err := c.reserveFault(ctx, faultContainerPause, id)
+	if err != nil {
+		pause, _ := previous.(*ContainerPause)
+		return pause, err
 	}
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
 	pause, err := pauseContainer(ctx, docker, id)
-	if pause != nil {
-		if c.pauses == nil {
-			c.pauses = make(map[string]*ContainerPause)
-		}
-		c.pauses[id] = pause
+	if pause == nil {
+		c.settleFault(token, "", nil, nil, nil)
+		return nil, err
 	}
+	c.settleFault(token, "", pause, pause.Resume, pause.isComplete)
 	return pause, err
 }
 

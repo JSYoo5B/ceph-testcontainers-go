@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       category:
-        description: Source-owned required category or explicit optional profile
+        description: Source-owned required category, explicit optional profile, representative (the source-owned representative batches of every category), or selected (the profiles input)
         required: true
         type: string
       check_name:
@@ -15,6 +15,10 @@ on:
         description: Source-owned optional batch (optional category only)
         default: ''
         type: string
+      profiles:
+        description: Comma-separated runtime profile IDs of any category or optional batch, from a pull request comment command (selected only)
+        default: ''
+        type: string
       rgw_image:
         description: Existing RGW role override for explicitly requested regressions
         default: ''
@@ -23,6 +27,34 @@ on:
         description: Ceph release of the published role images
         default: '20.2.4'
         type: string
+      changed_since:
+        description: Base commit of a pull request; run only the batches whose own test files changed since it. Empty runs every batch
+        default: ''
+        type: string
+      select_declarations:
+        description: Base commit of a pull request that opted in with the ci:selected-batches label; run only the batches that reach a declaration changed since it, and list every batch with its reason in the job summary. Empty runs every batch
+        default: ''
+        type: string
+      networks:
+        description: Run each batch in its default Docker network mode (default) or in every mode its tests declare (all)
+        default: default
+        type: string
+      repetitions:
+        description: Run each representative matrix entry this many times, each attempt its own job (representative only)
+        default: 1
+        type: number
+      ref:
+        description: Commit that every job checks out; empty checks out the caller's commit
+        default: ''
+        type: string
+      role_digests:
+        description: Comma-separated role=sha256:<digest> pins of the role image tags; empty pulls the tags
+        default: ''
+        type: string
+      max_parallel:
+        description: Runtime jobs that run at once; the default (the matrix size limit) leaves them unbounded
+        default: 256
+        type: number
 
 permissions:
   contents: read
@@ -43,16 +75,23 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref }}
+          # A changed-file or declaration selection needs the base commit's
+          # history. The order matters: 0 is false in an expression, so
+          # "cond && 0 || 1" would always give 1.
+          fetch-depth: ${{ inputs.changed_since == '' && inputs.select_declarations == '' && 1 || 0 }}
       # setup-go's own cache is keyed by go.sum and saved by whichever job
       # finishes first. Once that was this job, which needs almost no modules,
       # every later job restored an 11 MB cache and downloaded its modules
       # inside the compile bound (#51). This job fills an explicit module
       # cache instead, before any runtime job starts.
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: '1.26.x'
           check-latest: true
@@ -63,16 +102,37 @@ jobs:
         with:
           path: ~/go/pkg/mod
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      # The compiled dependencies of the tagged suites, shared by every
+      # runtime job (docs/contributing/ci.md, "Runner budget"). The key names
+      # the exact toolchain and the module set; Go's own content hashes decide
+      # what in it a build reuses, so a stale entry is only unused.
+      - name: Restore the Go build cache
+        id: build_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Discover only this workflow family from source tags
         id: plan
         env:
           SCENARIO_CATEGORY: ${{ inputs.category }}
           SCENARIO_OPTIONAL_BATCH: ${{ inputs.optional_batch }}
+          SCENARIO_PROFILES: ${{ inputs.profiles }}
+          SCENARIO_CHANGED_SINCE: ${{ inputs.changed_since }}
+          SCENARIO_SELECT_DECLARATIONS: ${{ inputs.select_declarations }}
+          SCENARIO_NETWORKS: ${{ inputs.networks }}
+          SCENARIO_REPETITIONS: ${{ inputs.repetitions }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+          elif [ "$SCENARIO_CATEGORY" = selected ]; then
+            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+          elif [ "$SCENARIO_CATEGORY" = representative ]; then
+            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+          elif [ -n "$SCENARIO_SELECT_DECLARATIONS" ]; then
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
@@ -83,29 +143,54 @@ jobs:
         with:
           path: ~/go/pkg/mod
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      # Only an acceleration: a failure leaves the cache unsaved, and every
+      # runtime job still compiles its own binary.
+      - name: Compile one profile of each package into the build cache
+        id: warm_build
+        if: steps.build_cache.outputs.cache-hit != 'true' && steps.plan.outputs.count != '0'
+        continue-on-error: true
+        env:
+          GOPROXY: 'off'
+        run: python3 .github/scripts/tag_scenarios.py buildcache --directory artifacts/buildcache
+      - name: Save the Go build cache
+        if: steps.warm_build.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Save family plan
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: plan-${{ inputs.category }}
+          name: plan-${{ inputs.category }}-${{ inputs.release }}
           path: |
             artifacts/tag-plan.json
             artifacts/modules/
+            artifacts/buildcache/
           if-no-files-found: error
 
   runtime:
-    name: ${{ matrix.batch }}
+    # A batch's default network mode keeps the batch name; another mode adds
+    # it, as in "rbd_namespaces (bridge)".
+    name: ${{ matrix.name }}
     needs: plan
+    # A changed-file selection can be empty; the plan artifact records why.
+    if: needs.plan.outputs.count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.job_timeout }}
     strategy:
       fail-fast: false
+      # The caller's runner budget (tag_scenarios.RELEASE_MAX_PARALLEL);
+      # bounding it delays jobs and never removes one.
+      max-parallel: ${{ inputs.max_parallel }}
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: '1.26.x'
           check-latest: true
@@ -116,6 +201,13 @@ jobs:
         with:
           path: ~/go/pkg/mod
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      # Filled by Plan. A miss, such as another toolchain patch release
+      # than Plan's, only makes the compile below build every dependency.
+      - name: Restore the Go build cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Prepare Go modules
         id: modules
         env:
@@ -136,15 +228,19 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: snapshot
-          artifact_name: runtime-cleanup-${{ matrix.id }}
+          artifact_name: runtime-cleanup-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
       - name: Resolve native published Ceph roles
         id: role_images
         if: matrix.requires_ceph
         uses: ./.github/actions/scenario-images
         with:
-          artifact_name: scenario-images-${{ matrix.id }}
+          artifact_name: scenario-images-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
+          digests: ${{ inputs.role_digests }}
+      # Runs the binary that the compile step built and recorded, after
+      # verifying its sha256, build key, sources and inventory; it never
+      # builds again.
       - name: Native assertions and completion proof
         id: native
         env:
@@ -152,11 +248,15 @@ jobs:
           SCENARIO_BATCH: ${{ matrix.batch }}
           SCENARIO_PACKAGE: ${{ matrix.package }}
           CEPH_TEST_RGW_IMAGE: ${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}
+          # Empty for a batch whose tests declare no network modes. Another
+          # mode than the batch's default runs only the tests that declare it.
+          CEPH_TEST_NETWORK: ${{ matrix.network }}
+          SCENARIO_TESTS: ${{ matrix.tests }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           else
-            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           fi
       - name: Verify owned Docker resource cleanup
         id: cleanup
@@ -164,7 +264,7 @@ jobs:
         uses: ./.github/actions/runtime-cleanup
         with:
           phase: check
-          artifact_name: runtime-cleanup-${{ matrix.id }}
+          artifact_name: runtime-cleanup-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
       - name: Show actual failure phases in PR check annotations and summary
         if: always()
         env:
@@ -178,14 +278,49 @@ jobs:
           SCENARIO_NATIVE_OUTCOME: ${{ steps.native.outcome }}
           SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: python3 .github/scripts/report_workflow_phases.py
+      # One offline history row that joins the receipts above. It reads
+      # files only, and its own failure never changes the job's result.
+      - name: Normalize the scenario history row
+        if: always()
+        continue-on-error: true
+        env:
+          SCENARIO_PROFILE: ${{ matrix.id }}
+          SCENARIO_NETWORK: ${{ matrix.network }}
+          SCENARIO_RELEASE: ${{ inputs.release }}
+          SCENARIO_JOB_ID: ${{ job.check_run_id }}
+          SCENARIO_REPETITION: ${{ matrix.repetition }}
+          SCENARIO_REQUESTED_HEAD: ${{ inputs.ref || github.event.pull_request.head.sha }}
+        run: |
+          if [ -d artifacts/scenario ]; then
+            python3 .github/scripts/scenario_history.py normalize \
+              --scenario artifacts/scenario --cleanup artifacts/runtime-cleanup --images artifacts/scenario-images \
+              --profile "$SCENARIO_PROFILE" --network "$SCENARIO_NETWORK" --release "$SCENARIO_RELEASE" \
+              --job-id "$SCENARIO_JOB_ID" --repetition-id "$SCENARIO_REPETITION" --requested-head "$SCENARIO_REQUESTED_HEAD" \
+              --checkout-commit "$(git rev-parse HEAD)" --checkout-tree "$(git rev-parse 'HEAD^{tree}')" \
+              --output artifacts/scenario/history-row.json
+          fi
       - name: Save compile, native and phase results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: tag-scenario-${{ matrix.id }}
-          path: artifacts/scenario/
+          name: tag-scenario-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
+          # The test binary is tens of megabytes; its sha256 stays in
+          # compile-report.json.
+          path: |
+            artifacts/scenario/
+            !artifacts/scenario/compile/*.test
           if-no-files-found: warn
+      # The classification of earlier attempts, from the scenario-history
+      # branch that Ceph periodic's History job writes. Read only on a
+      # failure; a missing branch leaves the report without history.
+      - name: Read the scenario history summary
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -H 'Accept: application/vnd.github.raw' "repos/$GITHUB_REPOSITORY/contents/summary.json?ref=scenario-history" > artifacts/history-summary.json
       - name: Identify completed failing tests
         if: failure()
         continue-on-error: true
-        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/native/native.log --profile '${{ matrix.id }}'
+        run: python3 .github/scripts/report_test_failures.py artifacts/scenario/native/native.log --profile '${{ matrix.id }}' --row artifacts/scenario/history-row.json --history-summary artifacts/history-summary.json

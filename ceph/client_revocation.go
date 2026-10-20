@@ -64,6 +64,9 @@ func (r ClientRevocation) GoString() string { return r.String() }
 // revocation with the error, and Restore settles first and then restores.
 // The cluster needs no Restore before Terminate.
 func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ClientConfig) (*ClientRevocation, error) {
+	if gateErr := c.sharedGate("TemporaryClientRevocation"); gateErr != nil {
+		return nil, gateErr
+	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}

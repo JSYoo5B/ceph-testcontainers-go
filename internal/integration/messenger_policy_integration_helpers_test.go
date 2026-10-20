@@ -64,13 +64,30 @@ func (client policyClient) run(t *testing.T, ctx context.Context, args ...string
 func (client policyClient) expect(t *testing.T, ctx context.Context, step, want string, args ...string) {
 	t.Helper()
 	code, output := client.run(t, ctx, args...)
-	switch {
-	case want == "accepted" && code == 0,
-		want == "rejected" && code != 0 && code != 124 && strings.Contains(output, "handle_auth_bad_method"),
-		want == "unanswered" && code == 124:
-		return
+	if policyOutcome(code, output) != want {
+		t.Fatalf("%s: %s %v: want %s, got exit %d: %s", step, client.name, args, want, code, output)
 	}
-	t.Fatalf("%s: %s %v: want %s, got exit %d: %s", step, client.name, args, want, code, output)
+}
+
+// policyOutcome classifies a policy client's CLI call by what the CLI itself
+// reports: "accepted" when it succeeded, "unanswered" when timeout stopped
+// it, and "rejected" when the MON refused its authentication, so that the
+// connect failed with EACCES.
+//
+// The MON client's handle_auth_bad_method line is no evidence either way.
+// Ceph writes it from an asynchronous log thread, and after a failed connect
+// the CLI leaves with os._exit without shutting librados down, so the line
+// is lost whenever the process exits before that thread writes it.
+func policyOutcome(code int, output string) string {
+	switch {
+	case code == 0:
+		return "accepted"
+	case code == 124:
+		return "unanswered"
+	case code == 13 && strings.Contains(output, "RADOS permission denied"):
+		return "rejected"
+	}
+	return "unexpected"
 }
 
 // testMessengerPolicy starts a cluster whose MONs accept only secure, MGRs

@@ -11,8 +11,10 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -35,6 +37,27 @@ type rgwSyncCLI struct {
 	bucketStatusOutput                               string
 	periodByZone                                     map[string]map[string]any
 	cancelOnBucketStatus                             context.CancelFunc
+	// onExec, when set, sees each command and the context it was issued with.
+	onExec func(context.Context, []string)
+}
+
+// expireAfterDestinationObservation returns an Exec hook that expires
+// deadline once the observation that first read the destination's period has
+// ended, which its attempt context ending marks, so that a wait's deadline
+// passes between two observations and the wait returns a complete one.
+func expireAfterDestinationObservation(deadline *clustertest.SignalDeadline) func(context.Context, []string) {
+	var once sync.Once
+	return func(ctx context.Context, args []string) {
+		if syncTestFlag(args, "--zone-id") != "dest-id" || !syncTestCommand(args, "period", "get") {
+			return
+		}
+		once.Do(func() {
+			go func() {
+				<-ctx.Done()
+				deadline.Expire()
+			}()
+		})
+	}
 }
 
 func syncTestFlag(args []string, name string) string {
@@ -53,7 +76,10 @@ func syncTestCommand(args []string, words ...string) bool {
 	}
 	return false
 }
-func (c *rgwSyncCLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if c.onExec != nil {
+		c.onExec(ctx, args)
+	}
 	c.calls = append(c.calls, slices.Clone(args))
 	if syncTestFlag(args, "--realm-id") != "realm" || syncTestFlag(args, "--zonegroup-id") != "group-id" || !slices.Contains([]string{"source-id", "dest-id"}, syncTestFlag(args, "--zone-id")) {
 		return 0, nil, errors.New("secret native scope error")

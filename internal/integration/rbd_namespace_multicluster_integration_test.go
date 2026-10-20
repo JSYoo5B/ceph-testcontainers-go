@@ -22,11 +22,8 @@ import (
 // snapshot enrollment with distinct namespace mappings. Each comparison opens
 // a new librados/librbd session against the destination FSID, with no image cache.
 func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		network := "bridge"
-		if host {
-			network = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, network := mode.Host, mode.Name
 		t.Run(network, func(t *testing.T) {
 			var opts []testcontainers.ContainerCustomizer
 			if host {
@@ -119,8 +116,8 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							}
 						})
 					}
-					if tc.sourceNamespace != tc.destinationNamespace && rbdNamespaceMappingUnsupported(source) {
-						requireRBDNamespaceMappingRefused(t, err, [2]string{tc.sourceNamespace, tc.destinationNamespace})
+					if tc.sourceNamespace != tc.destinationNamespace && rbdNamespaceMappingUnsupported(t, ctx, source) {
+						requireRBDNamespaceMappingRefused(t, err, source, [2]string{tc.sourceNamespace, tc.destinationNamespace})
 						return
 					}
 					if err != nil {
@@ -144,7 +141,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 							// default namespace in image mode, which mirrors nothing
 							// until an image is enabled explicitly.
 							want := "init-only"
-							if rbdNamespaceMappingUnsupported(source) {
+							if rbdNamespaceMappingUnsupported(t, ctx, source) {
 								want = "image"
 							}
 							if err := json.Unmarshal(rbdOutput(t, ctx, site.client, "mirror", "pool", "info", pool, "--format", "json"), &base); err != nil || base.Mode != want {

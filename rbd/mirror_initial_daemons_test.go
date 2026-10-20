@@ -126,8 +126,11 @@ func TestMirrorInitialZeroRBDObserverDoesNotLaunchDaemons(t *testing.T) {
 	if err != nil || status.Ready || status.PeerID != receiverPeerUUID || len(status.Daemons) != 0 || h.m.Container != nil {
 		t.Fatalf("zero observer adopted process: %+v %v", status, err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
+	// The deadline passes when the first observation reads the destination,
+	// after it recorded the peer, rather than after a wall-clock interval that
+	// a slow (race-instrumented) run can spend before observing at all.
+	ctx := clustertest.NewSignalDeadline(t.Context())
+	h.destination.hook = func(context.Context, []string) { ctx.Expire() }
 	status, err = h.m.WaitReceiverReady(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) || status.Ready || status.PeerID != receiverPeerUUID || len(h.m.Daemons()) != 0 || h.m.Container != nil {
 		t.Fatalf("zero wait changed topology: %+v %v", status, err)

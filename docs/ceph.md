@@ -33,6 +33,9 @@ The `ceph` package provides:
 - observation: health checks, PG reports, pool usage, quorum, manager services
   and bounded diagnostics reports.
 
+A [shared cluster](#shared-cluster) lends one cluster to many tests, each
+confined to a RADOS namespace of its own.
+
 RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 [cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
 `ceph.Run`; see [Service packages](#service-packages).
@@ -184,7 +187,7 @@ of option order:
 | `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
 | `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
 | `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
-| `WithAddressFamily(AddressIPv6)` or `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
+| `WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
 | `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
@@ -293,6 +296,25 @@ roots. A later [WithOSDCount](#withosdcount) replaces this layout. Hosts and
 racks are simulated placement domains on one Docker engine; they let you test
 CRUSH behaviour, not physical failure tolerance. Pools that need `N` distinct
 domains are validated against this layout before anything is created.
+
+#### How Run starts the initial OSDs
+
+`Run` registers the initial OSDs one after another in the order of the layout,
+so OSD IDs, keys and CRUSH host buckets are allocated in that order on every
+run: the first OSD gets the lowest free ID, and each host bucket is created
+before any OSD boots. It then creates and starts up to four OSD containers at
+a time and waits until all OSDs are up and in. The first manager boots while
+the OSDs are registered and started; further managers from
+[WithManagerCount](#withmanagercount) are added after it is registered, so it
+stays the active one.
+
+If an OSD fails to start, `Run` starts no further OSD and returns an error that
+names it. Every registered OSD, and every container that was created, stays
+owned by the returned cluster, and `Terminate` removes them. On
+`quay.io/ceph/ceph:v20.2.4`, starting the OSDs together cuts `Run` from about 17
+to 11 seconds for three OSDs and from about 27 to 16 seconds for five.
+[AddOSD](#addosd) and [AddOSDWithConfig](#addosdwithconfig) still add one OSD
+at a time.
 
 #### WithNoInitialOSDs
 
@@ -568,7 +590,7 @@ rejected with the option to use instead:
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
 | `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
 | `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithHostNetwork` |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithAddressFamily`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
 | `bluestore_block_size` | `WithOSDBlockSize` |
@@ -578,6 +600,11 @@ rejected with the option to use instead:
 | `crash_dir` | fixed at `/var/lib/ceph/crash` (`ceph.CrashDir`), where [CollectCrashMetadata](#collectcrashmetadata) reads |
 | `mds_join_fs`, `mds_cache_memory_limit` | set on the MDS command line |
 | `rgw_frontends`, `rgw_thread_pool_size`, `rgw_exit_timeout_secs`, `rgw_realm`, `rgw_zonegroup`, `rgw_zone`, `rgw_sync_obj_etag_verify`, `rgw_sync_lease_period` | set on the RGW command line |
+
+`ms_bind_prefer_ipv4` is the one accepted `ms_bind_*` key, and only with
+`AddressDualStack`: `Run` rejects it with `ErrInvalidRequest` for the other
+families. It orders the families in a daemon's advertised vectors; see
+[Dual-stack clusters](#dual-stack-clusters).
 
 The parser also rejects keys outside a section, `!include`/`include`/`includedir`,
 lines continued with a trailing `\`, duplicate keys within one section of one
@@ -766,11 +793,17 @@ A rejected client sees one of two behaviours, depending on the daemon:
 
 | Daemon | A client that offers no accepted mode |
 | --- | --- |
-| MON | fails at once: `handle_auth_bad_method ... (95) Operation not supported` |
+| MON | fails at once: the connect returns `EACCES`, and the `ceph` CLI prints `RADOS permission denied` and exits with 13 |
 | MGR, OSD | gets no error; the client keeps retrying the connection until its own timeout |
 
 Bound calls that a MGR or an OSD may reject, for example with the context of
 your client or with `timeout` around the CLI.
+
+The MON client also logs a `handle_auth_bad_method` line, but do not assert
+on it in the CLI's output. Ceph writes its log from a separate thread, and
+after a failed connect the `ceph` CLI exits without shutting librados down,
+so the line is sometimes missing. A librados client of your own writes it
+reliably to its log when you call `shutdown` after the failed connect.
 
 #### WithClientMessengerPolicy
 
@@ -880,6 +913,11 @@ addresses, err := cluster.DaemonAddresses(ctx)
 // addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
 ```
 
+With `WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
+as well, and `public network` and `cluster network` each list both subnets of
+their bridge. Every daemon then advertises one address of each family from
+the matching bridge.
+
 #### WithAddressFamily
 
 ```golang
@@ -894,9 +932,11 @@ and advertises. `cluster.AddressFamily()` returns the selected value.
 | `ceph.AddressIPv4` (default) | IPv4 | the container's IPv4 address, such as `172.19.0.2:3300` |
 | `ceph.AddressIPv6` | dual-stack: one IPv4 and one IPv6 subnet | the container's IPv6 address, such as `[fd62:93fe:2c9e::2]:3300`; no IPv4 listener |
 | `ceph.AddressIPv4MappedIPv6` | IPv4 | the container's IPv4 address as an IPv4-mapped IPv6 address on an IPv6 socket, such as `[::ffff:172.19.0.2]:3300` |
+| `ceph.AddressDualStack` | dual-stack: one IPv4 and one IPv6 subnet | both the container's IPv4 and IPv6 address, such as `[v2:[fd62:93fe:2c9e::2]:3300,v2:172.19.0.2:3300]`; clients of either family connect |
 
-The MONs get these addresses in the monmap and bind them. The generated
-`ceph.conf` sets `ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
+The MONs get these addresses in the monmap and bind them. For `AddressIPv6`
+and `AddressIPv4MappedIPv6`, the generated `ceph.conf` sets
+`ms_bind_ipv4 = false` and `ms_bind_ipv6 = true`, so MGRs,
 OSDs and MDSs bind the IPv6 wildcard address, `[::]`, and advertise the address
 from which the MONs see them. No daemon has an IPv4 Messenger socket; with
 `AddressIPv4MappedIPv6` the IPv6 sockets accept the IPv4 connections that the
@@ -911,10 +951,10 @@ addresses, err := cluster.DaemonAddresses(ctx)
 // addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
 ```
 
-- Bridge mode only. `AddressIPv6` works with
+- Bridge mode only. `AddressIPv6` and `AddressDualStack` work with
   [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
   both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
-- `AddressIPv6` needs a Docker Engine that allocates an IPv6 subnet for a new
+- `AddressIPv6` and `AddressDualStack` need a Docker Engine that allocates an IPv6 subnet for a new
   IPv6 bridge without an explicit subnet, from its default pool of unique local
   addresses. `Run` fails with the Engine's error otherwise.
 - With `AddressIPv6`, Docker forwards an IPv4 connection to a published MON
@@ -929,6 +969,211 @@ addresses, err := cluster.DaemonAddresses(ctx)
   pass it to a Ceph tool, for example with `-m`. Go's `net/netip` parses both.
 - HTTP endpoints, such as RGW's, are not Messenger listeners and keep their
   addresses.
+
+##### Dual-stack clusters
+
+`AddressDualStack` makes every Messenger bind and advertise both families.
+The generated `ceph.conf` sets `ms_bind_ipv4`, `ms_bind_ipv6` and
+`ms_bind_prefer_ipv4` to `true` and `public network` to both subnets of the
+bridge, such as `172.19.0.0/16,fd62:93fe:2c9e::/64`. Every address vector
+then has one entry of each family for each enabled Messenger protocol: v2,
+and v1 unless [WithMessengerMode](#withmessengermode) removes it.
+
+```golang
+cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	ceph.WithAddressFamily(ceph.AddressDualStack))
+addresses, err := cluster.DaemonAddresses(ctx)
+// addresses.Monitors[0].Addrs:
+//   v2 [fd62:93fe:2c9e::2]:3300, v1 [fd62:93fe:2c9e::2]:6789,
+//   v2 172.19.0.2:3300, v1 172.19.0.2:6789
+// addresses.ActiveManager.Addrs:
+//   v2 172.19.0.3:6800, v1 172.19.0.3:6801,
+//   v2 [fd62:93fe:2c9e::3]:6802, v1 [fd62:93fe:2c9e::3]:6803
+```
+
+The MON vectors in the monmap and in `mon_host` list the IPv6 address first;
+MGR, OSD and MDS vectors list the IPv4 address first by default. The order is
+deliberate. A MGR fills its vector from one scalar address that it picks first, which is
+the IPv4 one, and turns its IPv6 entry into the wildcard `[::]` unless its
+own MON session runs over IPv6. A client cannot connect to `[::]`, so with an
+IPv4-first MON vector `mgr_command` and `ceph tell mgr` time out from any
+other container. Listing the MON's IPv6 address first gives the MGR an IPv6
+MON session and a concrete IPv6 entry. The upstream fix would be in
+`ceph_mgr.cc`, which seeds that scalar address.
+
+The MGR still binds its IPv6 listener to the wildcard, such as `[::]:6800`,
+while it advertises its concrete IPv6 address on the same port; the other
+daemons bind the concrete address of each family. The wildcard listener
+accepts connections to the advertised address, so clients are not affected,
+but a test that reads the MGR container's listening sockets sees `[::]`.
+
+`Run`, [AddManager](#addmanager) and [RemoveManager](#removemanager) then read
+[DaemonAddresses](#daemonaddresses) and check that every MON, the active MGR
+and every up OSD advertise exactly one concrete IPv4 and one concrete IPv6
+address for each protocol. An unspecified, IPv4-mapped or link-local address,
+or a missing family, fails the call with `ErrUnsupported` (see
+[Error categories](#error-categories)), naming the daemon and its vector. A
+MGR that a caller restarts directly, such as with `Stop` and `Start` on its
+container, is not checked; call `DaemonAddresses` after it.
+
+A native client connects to the first entry of each vector it learns. Its own
+`ms_bind_*` settings do not change that, and it does not fall back to the
+other family: Ceph's `AsyncMessenger::create_connect` takes the first entry of
+a supported protocol. Bootstrapped from IPv4 MON addresses, librados still
+moves its MON session to the monmap's first, IPv6, entry unless
+`mon_host_override` pins it. With the default order, librados and libcephfs
+reach MGRs, OSDs and MDSs over IPv4.
+
+To reach a daemon over IPv6, make it list its IPv6 address first with
+`ms_bind_prefer_ipv4 = false` in its section of a
+[WithConfigFile](#withconfigfile) file. `Run` accepts this key only with
+`AddressDualStack`.
+
+```ini
+# Clients reach mgr.b, osd.1 and the MDS tc-cephfs-1 over IPv6, and the
+# other MGRs, OSDs and MDSs over IPv4.
+[mgr.b]
+ms bind prefer ipv4 = false
+[osd.1]
+ms bind prefer ipv4 = false
+[mds.tc-cephfs-1]
+ms bind prefer ipv4 = false
+```
+
+In `[global]` the setting makes every MGR, OSD and MDS list IPv6 first. MON
+vectors are unaffected, and both orders give concrete addresses of both
+families, which the admission check accepts.
+
+`TestDualStackAddressFamily` checks on Tentacle 20.2.4 and Squid 19.2.5:
+
+- every MON, the active MGR before and after a failover, and the public,
+  cluster and heartbeat vectors of every OSD advertise a concrete IPv4 and
+  IPv6 address;
+- a Python librados client in another container, pinned to the IPv4 and then
+  to the IPv6 MON addresses with `mon_host_override`, completes a MON command,
+  a `pg stat` `mgr_command` and an object write and read, and its open sockets
+  show the MON session in that family and the MGR and OSD sessions over IPv4;
+- every advertised v2 address of both families, MON, MGR and OSD, answers with
+  the Messenger v2 banner.
+
+`TestDualStackSeparateClusterNetwork` checks the same with
+`WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
+both families from the replication bridge.
+
+`TestDualStackServices` starts CephFS and RGW with two MGRs, two OSDs, an
+active and a standby MDS and one gateway, with `[mgr.b]`, `[osd.1]` and
+`[mds.tc-cephfs-1]` set to IPv6 first as above. It checks:
+
+- every MDS vector in `fs dump`, active and standby, has a concrete IPv4 and
+  IPv6 address, in the configured order. The MDS picks its vector directly
+  and has no MGR-like wildcard problem;
+- a librados client completes a `pg stat` `mgr_command` and an object write
+  and read on each OSD, before and after a MGR failover, and a libcephfs
+  client mounts and writes, fsyncs and reads a file, before and after an MDS
+  failover. Each session goes to the first entry of the daemon's vector, so
+  MGR, OSD and MDS operations complete over IPv4 with one daemon and over IPv6
+  with the other. The same TCP connection appears in the client container's
+  and in the daemon container's socket table;
+- the gateway listens on `0.0.0.0:7480` and `[::]:7480`. A client in another
+  container creates a bucket and writes and reads objects with signed S3
+  requests to both the gateway's IPv4 and IPv6 addresses, and the published
+  host port serves the same objects.
+
+The RGW's own librados session follows the vectors like any other client.
+
+`TestDualStackReplacement` replaces one daemon of each kind with a new
+container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
+
+1. [AddMonitor](#addmonitor) `c`, then [RemoveMonitor](#removemonitor) `b`;
+2. [AddOSD](#addosd) (osd.2), then [RemoveOSD](#removeosd) `0`;
+3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
+   MDS started with `AddMDSReplacement` (see [cephfs](cephfs.md#addmdsreplacement));
+4. [AddManager](#addmanager) `b`, then [RemoveManager](#removemanager) `a`.
+
+`[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
+false`, so clients reach each replacement over IPv6 and the daemon it
+replaces over IPv4. One Python process keeps a librados session and a
+libcephfs mount open through all four steps. Before the first step and after
+each one it sends a MON command and a `pg stat` `mgr_command`, writes and
+reads an object on each OSD, writes, fsyncs and reads a file and reads the
+files of the earlier steps. After each step the test checks that:
+
+- the replacement advertises a concrete IPv4 and IPv6 address, and the map's
+  epoch has grown. The replacement MDS and MGR have new GIDs, and the
+  replacement MDS holds rank 0 with a later incarnation (`fs dump`), while
+  the MDS's GID and incarnation stay the same through the other steps;
+- no MON, MGR, OSD or MDS vector lists an entry, address and nonce, of a
+  replaced daemon, no vector holds `[::]`, and
+  [MonitorBootstrapAddresses](#monitorbootstrapaddresses) lists mon.c and not
+  mon.b;
+- the retained process completed every operation. Its two MON sessions, one
+  of librados and one of libcephfs, are on the first, IPv6, entry of a
+  current MON, its MGR, OSD and MDS sessions go to the
+  first v2 entry of the current daemons, so over IPv6 to each replacement,
+  and it has no connection left to an address that only a replaced daemon
+  advertised. Each session is matched in the daemon container's socket table
+  as above;
+- new clients whose MON session `mon_host_override` pins to mon.c's IPv4 or
+  IPv6 address complete their operations over that family.
+
+The MGR is replaced last, so the admission check of `RemoveManager` also reads
+the vectors of mon.c and osd.2. `AddMonitor` and `AddOSD` do not run the
+check, and MDS vectors are not part of it. At the end a new process reads back
+every file and the last objects.
+
+Docker gives the address of a removed or stopped container to a later one.
+A replacement can therefore advertise the old IP address of its predecessor
+or of another replaced daemon, such as a new MDS on the address of a removed
+OSD. An address alone does not identify a daemon; compare the nonce of the
+entry, or the GID of a MGR or MDS. MONs always use nonce 0, so a MON is
+identified by its name in the monmap.
+
+###### Cutting one family of a path
+
+[TemporaryNetworkDelay](#temporarynetworkdelay) with a `Peer`, a `PeerPort`
+and `Loss: 100` drops every packet that one container sends to one address
+and port. On a dual-stack cluster, a `Peer` that is a daemon's IPv6 address
+cuts only that family of the path: the same daemon stays reachable over IPv4,
+and the container's paths to other daemons are untouched.
+
+```golang
+addresses, err := cluster.DaemonAddresses(ctx)
+// osd.1 lists [fd62:93fe:2c9e::4]:6800 first; a native client dials it.
+peer := netip.MustParseAddrPort("[fd62:93fe:2c9e::4]:6800")
+cut, err := cluster.TemporaryNetworkDelay(ctx, client, ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage, Plane: ceph.PublicNetworkPlane,
+	Peer: peer.Addr(), PeerPort: peer.Port(), Loss: 100})
+// Operations of the client on osd.1 stay pending until cut.Restore(ctx).
+```
+
+A native client does not fall back to the other family (see above), so its
+operations on that path wait instead of failing over, and they complete after
+`Restore` on the same session.
+
+`TestDualStackFamilyCut` checks this on a cluster with one MON, one MGR and
+two OSDs, where osd.1 lists IPv6 first. A client container runs two librados
+processes whose MON sessions `mon_host_override` pins to mon.a's IPv6 and
+IPv4 address. The test cuts the container's packets first to mon.a's IPv6 v2
+address and then to osd.1's. During each cut:
+
+- the operation on the cut path, a MON command or a read of an object whose
+  primary is osd.1, stays pending;
+- the same daemon keeps serving over IPv4: the IPv4-pinned process completes
+  MON commands, and osd.1's IPv4 v2 address and its IPv6 v1 port answer with
+  their Messenger banners while its IPv6 v2 address does not;
+- the process's other paths complete MON, MGR and object operations, and
+  netem reports dropped and no sent selected packets.
+
+After `Restore` the pending operation completes on the same TCP connection,
+matched in the daemon's socket table, and the client keeps its instance ID.
+The pending read returns the bytes of the object it started to read, compared
+by SHA-256.
+Quorum, the up OSDs, the active MGR's GID and the blocklist are unchanged,
+and a new session reads back the exact objects. Finally osd.1's container is
+stopped and started: the new process advertises both families again with a
+new nonce, and the same client reads from it over IPv6 on a new connection.
+The test needs the netem
+helper and `NET_ADMIN`, like every `TemporaryNetworkDelay`.
 
 #### WithStartupTimeout
 
@@ -993,6 +1238,296 @@ this page is available on it. A service `Run` rejects bootstrap options that
 leave its service without the storage or manager it needs (for example
 `ceph.WithNoInitialOSDs`); `rbd.Run` accepts `WithNoInitialManagers`. For staged
 bootstraps, start with `ceph.Run` and add the service later.
+
+### Shared cluster
+
+A cluster takes 15 to 25 seconds to start, so a package with many small RADOS
+tests spends most of its time starting clusters. A `SharedCluster` starts one
+cluster for the whole test binary and lends each test a tenant: a RADOS
+namespace of one shared pool and a Cephx client that can reach nothing else.
+A test that needs the whole cluster takes it with `Exclusive`. Tests that need a
+cluster with other `Run` options, or several clusters, keep using `Run`.
+
+```golang
+func NewShared(image string, opts ...SharedOption) *SharedCluster
+func WithSharedRunOptions(opts ...testcontainers.ContainerCustomizer) SharedOption
+func WithMaxTenants(n int) SharedOption
+func WithMaxRecycles(n int) SharedOption
+func RunTests(m *testing.M, s ...*SharedCluster) int
+
+func (s *SharedCluster) Lease(t testing.TB, opts ...LeaseOption) *Tenant
+func (s *SharedCluster) Exclusive(t testing.TB) *Container
+func (s *SharedCluster) Close(ctx context.Context) error
+func (s *SharedCluster) Stats() SharedStats
+func WithKeepOnTenantFailure() LeaseOption
+```
+
+Create the shared cluster in a package variable and end it in `TestMain`.
+`NewShared` starts nothing; the first `Lease` starts the cluster with the
+options of `WithSharedRunOptions`, which are `Run` options. `RunTests` runs the
+tests and then closes every shared cluster you pass it:
+
+```golang
+var shared = ceph.NewShared(ceph.DefaultImage,
+	ceph.WithSharedRunOptions(ceph.WithOSDCount(1)))
+
+func TestMain(m *testing.M) { os.Exit(ceph.RunTests(m, shared)) }
+
+func TestStoresObject(t *testing.T) {
+	t.Parallel()
+	tenant := shared.Lease(t)
+	client, err := testcontainers.Run(t.Context(), ceph.DefaultImage,
+		tenant.WithClient(), ceph.WithIdleEntrypoint())
+	testcontainers.CleanupContainer(t, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// rados --id <tenant.Client().User()> -p <tenant.Pool()> -N <tenant.Namespace()> ...
+}
+```
+
+Each test binary has its own shared cluster: `go test` runs every package in a
+process of its own, and Ryuk removes what a process leaves. A shared cluster
+that `RunTests` does not close stays until the process exits, and the first
+`Lease` logs a warning about it. Call `Close` yourself when you do not use
+`RunTests`.
+
+`Lease` fails the test when the cluster cannot start or the tenant cannot be
+set up, and releases the tenant in `t.Cleanup`. Leases are safe under
+`t.Parallel`. `WithMaxTenants` bounds the leases held at once (4 by default);
+`Lease` waits for a free one, so a test that holds a lease must not wait for a
+second one when the running tests can hold all of them. `Lease` also waits while
+a test holds the [exclusive lease](#exclusive-lease), and behind an `Exclusive`
+that asked first.
+
+#### Tenant
+
+```golang
+func (t *Tenant) ID() string
+func (t *Tenant) Pool() string
+func (t *Tenant) Namespace() string
+func (t *Tenant) Client() *ClientConfig
+func (t *Tenant) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
+func (t *Tenant) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
+func (t *Tenant) CreateClient(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)
+func (t *Tenant) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)
+
+func (t *Tenant) Status(ctx context.Context) (Status, error)
+func (t *Tenant) HealthDetails(ctx context.Context) (HealthSnapshot, error)
+func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error)
+func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error)
+func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error)
+func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)
+func (t *Tenant) OSDFlags(ctx context.Context) ([]string, error)
+func (t *Tenant) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error)
+
+const SharedPool = "tenants"
+const (
+	TenantReadOnly TenantAccess = iota + 1
+	TenantReadWrite
+)
+```
+
+`ID` is `t` and 8 hex digits. The tenant owns the namespace `ID` of the pool
+`SharedPool`, which the shared cluster creates once with the cluster's pool
+defaults. `Client` is `client.ID` with these capabilities:
+
+| Service | Capability |
+| --- | --- |
+| mon | `allow r` |
+| osd | `allow rw pool=tenants namespace=ID` |
+
+`CreateClient` creates `client.ID-name` with `mon 'allow r'` and
+`TenantReadOnly` (`allow r`) or `TenantReadWrite` (`allow rw`) on the same
+namespace only. `WithClient` and `WithClientIdentity` attach a container like
+the `Container` methods of the same names: it gets `ceph.conf` and the
+client's keyring, never the admin keyring, and a label that marks it as the
+tenant's. `RunNativeCommand` runs a command only in a container with that
+label. The other methods are the read-only views of the `Container` methods of
+the same names.
+
+What a tenant can do:
+
+- read and write objects of its own namespace, through its clients;
+- create read-only and read-write clients of that namespace;
+- read the cluster's status, health, pools, usage, watchers, OSD flags and
+  blocklist.
+
+What it cannot do, checked natively:
+
+- read, write or list another tenant's namespace, every namespace (`ls --all`),
+  the default namespace of the shared pool or another pool: Ceph returns
+  `EPERM`;
+- change configuration, OSD flags or the blocklist: Ceph returns `EACCES`.
+
+Tenancy is isolation, not secrecy: a tenant sees pool names, usage and the
+cluster's health.
+
+#### Service tenants
+
+A tenant can also lease RBD, CephFS and RGW resources of the shared cluster.
+Start the services with the usual `Run` options in `WithSharedRunOptions`, and
+call the service package's `Lease` with the tenant:
+
+```golang
+var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedRunOptions(
+	ceph.WithOSDCount(1),
+	rbd.WithPools(ceph.PoolConfig{Name: "rbd"}),
+	cephfs.WithFilesystems(),
+	rgw.WithGateways(),
+))
+
+func TestUsesEveryService(t *testing.T) {
+	tenant := shared.Lease(t)
+	images, err := rbd.Lease(t.Context(), tenant, "rbd")      // RBD namespace ID of pool rbd
+	files, err := cephfs.Lease(t.Context(), tenant, "")       // subvolume group ID
+	objects, err := rgw.Lease(t.Context(), tenant)            // RGW tenant ID, user ID$user
+	...
+}
+```
+
+| Lease | The tenant owns | Its client or credentials |
+| --- | --- | --- |
+| `rbd.Lease(ctx, tenant, pool)` | RBD namespace `ID` of `pool` | `client.ID-rbd-POOL`: `mon 'allow r'`, `osd` and `mgr 'profile rbd pool=POOL namespace=ID'` |
+| `cephfs.Lease(ctx, tenant, fs)` | subvolume group `ID`, directory `/volumes/ID`, data in namespace `fsns-ID` of the default data pool | `client.ID-cephfs-FS`: `mon 'allow r'`, `mds 'allow rw fsname=FS path=/volumes/ID'`, `osd 'allow rw pool=DATA namespace=fsns-ID'` |
+| `rgw.Lease(ctx, tenant)` | RGW tenant `ID` and its buckets | S3 keys of user `ID$user` |
+
+The service leases are described in [RBD](rbd.md#shared-cluster-tenants),
+[CephFS](cephfs.md#shared-cluster-tenants) and
+[RGW](rgw.md#shared-cluster-tenants). A tenant leases each RBD pool, each
+filesystem and RGW once. The clients are the tenant's: `Tenant.WithClientIdentity`
+and `RunNativeCommand` accept them, and the release deletes them.
+
+Before the baseline, the shared cluster creates what a service would
+otherwise create on a tenant's first use: the pools of the RGW zone, such as
+the bucket index and data pools. It also waits until the MGR `volumes` module
+answers.
+
+#### Release, verification and poisoning
+
+When the shared cluster starts, it waits for active+clean PGs and records a
+baseline: auth entities and their capabilities, pools and their policies, OSD
+flags, the configuration database, the blocklist, the unmuted health checks
+the objects of each namespace of the shared pool, and the service resources
+that tenants could create: the RBD namespaces of every RBD pool, the subvolume
+groups of every filesystem, and the RGW users and buckets. `MON_DISK_LOW` is left
+out, because it reports the free space of the Docker host, which changes
+whatever the tests do. Before a lease, it
+checks that the daemon containers run, PGs are active+clean, and health, OSD
+flags and the blocklist match the baseline, waiting up to 30 seconds.
+
+A release first removes the tenant's service resources, in reverse order of
+their leases: each service checks that nothing of the tenant's remains. It then
+deletes the tenant's clients, removes the objects of its namespace, and
+compares the cluster with the baseline, ignoring the scopes of the other
+tenants. Health gets 30 seconds to settle. A difference means that the test
+changed something outside its scope, for example through a raw admin path;
+the release then fails the test and names what changed, without config values.
+
+These poison the cluster:
+
+- a release that finds a difference or a service resource that remains, or
+  that cannot finish its removals and checks;
+- a failed test of a tenant, unless the lease used `WithKeepOnTenantFailure`
+  and the release found the cluster clean;
+- a daemon container that exited, found by a lease or a release.
+
+A poisoned cluster takes no new leases. It is terminated when its last lease
+ends, and the next `Lease` starts a fresh cluster. `WithMaxRecycles` bounds
+these restarts (2 by default); a `Lease` after that fails the test. A cluster
+that fails to start is not retried: every later `Lease` fails with the same
+error.
+
+`Stats` returns `SharedStats`: the clusters started and recycled, the leases,
+exclusive leases and poisonings, and the total time spent starting clusters,
+waiting for and setting up leases, releasing them, and waiting for exclusive
+leases.
+
+#### Exclusive lease
+
+`Exclusive` lends a test the whole shared cluster: the `*ceph.Container`, with
+every method available except `Terminate`. Use it for a test that needs what
+the tenant gate refuses, such as `TemporaryConfig`, OSD flags, pool changes,
+the raw `Ceph` CLI or `AddOSD`, in a package whose other tests share the
+cluster:
+
+```golang
+func TestRecoversWithNoout(t *testing.T) {
+	cluster := shared.Exclusive(t)
+	if _, err := cluster.TemporaryOSDFlag(t.Context(), "noout", true); err != nil {
+		t.Fatal(err)
+	}
+	osd, err := cluster.AddOSD(t.Context())
+	...
+}
+```
+
+- **Waiting.** `Exclusive` waits until no tenant holds a lease. From the moment
+  it asks, new leases wait behind it, so a stream of leases cannot starve it;
+  leases that asked before it go first. While the exclusive lease is held, every
+  `Lease` and other `Exclusive` waits. A test that already holds a lease can
+  still take a second one while an `Exclusive` waits, because the `Exclusive`
+  waits for that test's first lease. The same holds for a test whose parallel
+  subtest (`t.Parallel`) holds a lease: the subtest releases it only after
+  its parent returns, so the parent's lease goes before the waiting
+  `Exclusive`.
+- **Admission.** The cluster is checked against its baseline as for a lease. A
+  cluster that drifted is poisoned and replaced first.
+- **Release.** The release, in `t.Cleanup`, does not try to restore the
+  cluster. It retires and terminates it, and the next `Lease` or `Exclusive`
+  starts a fresh cluster. The baseline comparison cannot see everything an
+  exclusive test can change: MGR modules, network shaping, paused containers,
+  daemon keys, data, or what the service packages' functions do with the
+  `Container`. These restarts do not count against `WithMaxRecycles`.
+  Each `Exclusive` therefore costs one cluster start, so group the exclusive
+  tests of a package or keep them few. A cluster that cannot be terminated
+  stays with the shared cluster, and `Close` tries again and reports it.
+- **Failing fast.** A test that holds a lease, or whose parent test holds one,
+  cannot take the exclusive lease, because the exclusive lease would wait for
+  that lease forever; `Exclusive` fails the test at once. `Lease` and
+  `Exclusive` in the test that holds the exclusive lease, or in its subtests,
+  also fail at once. So do `Exclusive` in a test whose parallel subtest
+  (`t.Parallel`) still holds a lease, and `Lease` or `Exclusive` in a test
+  whose parallel subtest holds the exclusive lease: the subtest is paused
+  until its parent returns, so it cannot release before the parent's request
+  would be granted.
+- **Cancellation.** `Exclusive` fails the test when the test's context ends
+  while it waits, also while the cluster starts, and the leases behind it go
+  on.
+
+#### The shared Container
+
+The tenant never gets the `*ceph.Container`. While a cluster is shared, its
+methods that could reach outside one tenant return an error that matches
+`ErrSharedCluster` and names the method in `OperationError.Op`. The methods
+that only read state stay available.
+
+| Methods | Why they are refused |
+| --- | --- |
+| `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `TemporaryClientRevocation`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
+| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `TemporaryNetworkDelay`, `InterruptNetwork`, `PauseContainer`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
+| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
+| `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
+
+Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
+
+`*ceph.Container` overrides those promoted methods of the MON's
+`testcontainers.Container` only to apply this gate; on a cluster of your own
+they behave as before.
+
+#### Limits
+
+- An exclusive lease costs a cluster start, because its release retires the
+  cluster instead of restoring it.
+- Service tenants get the scoped operations listed in their packages. The
+  other service functions take a `*ceph.Container`, which a tenant never
+  gets.
+- Tenants share daemons, so a busy neighbour can slow a timing-sensitive test.
+- Tests that inject faults, change ratios or quotas, or exercise recovery need
+  an exclusive lease or a cluster of their own.
+- The checks catch what a tenant left behind, not what it did and undid
+  before its release.
 
 ### Container Methods
 
@@ -1096,6 +1631,9 @@ retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
 passed by the caller takes precedence.
 
+A cluster that a [shared cluster](#shared-cluster) shares refuses `Terminate`
+with `ErrSharedCluster`; `SharedCluster.Close` ends it.
+
 Containers you attached with [WithClient](#withclient) or
 [WithClientIdentity](#withclientidentity) are yours: terminate them before the
 cluster, because Docker cannot remove a network that still has attached
@@ -1169,7 +1707,9 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   When that cannot be confirmed, the error is a
   `*NativeCommandUnstoppedError`; keep it and call its `Stop` with a fresh
   context. Its `Unwrap` returns the cause, so `errors.Is(err, context.Canceled)`
-  still holds. `Terminate` also cancels and stops these commands.
+  still holds. `Terminate` also cancels and stops these commands. It does so
+  first, before it waits for any running cluster operation, and from then on
+  refuses new ones, also when it then fails.
 - Stopping a command does not undo what it did, and a command is never run
   again.
 - With `Input`, the command reads what `Input.Write` sends, in order, and the
@@ -1474,7 +2014,9 @@ if no manager is active, otherwise as standby. Existing daemon names are rejecte
 and it never forces the active role away from a running manager. Success does
 not mean that every MGR module is ready; use
 [WaitMGRModuleReady](#waitmgrmoduleready) or [WaitForClean](#waitforclean)
-afterwards. A non-nil descriptor returned with an error stays owned.
+afterwards. A non-nil descriptor returned with an error stays owned. On an
+`AddressDualStack` cluster it then checks the advertised addresses of the
+active MGR; see [Dual-stack clusters](#dual-stack-clusters).
 
 #### RemoveManager
 
@@ -1484,8 +2026,10 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error
 
 Deletes an owned manager after confirming that another running, registered
 candidate is available. Removing the last candidate is refused; add a replacement
-first. Removing the active manager makes a standby take over. On failure the
-handle stays owned for a retry or for cluster cleanup.
+first. Removing the active manager makes a standby take over; on an
+`AddressDualStack` cluster the new active manager's addresses are checked as in
+[Dual-stack clusters](#dual-stack-clusters). On failure the handle stays owned
+for a retry or for cluster cleanup.
 
 #### ManagerStatus
 
@@ -2427,6 +2971,52 @@ in host mode. They are not mapped Docker host ports. An empty map means no modul
 advertises a service. See
 [Scrape the MGR Prometheus exporter](#scrape-the-mgr-prometheus-exporter).
 
+#### ManagerMetrics
+
+```golang
+func (c *Container) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
+```
+
+Scrapes the active manager's `prometheus` module once and returns its
+samples parsed from the Prometheus text exposition format. It never enables
+the module: enable it with [TemporaryMGRModule](#temporarymgrmodule) and wait
+until [ManagerServices](#managerservices) lists `prometheus`; until then the
+call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
+control container, at the address that `ManagerServices` advertises, and is
+bounded to 30 seconds and 32 MiB. `TestManagerMetrics` checks it in bridge
+mode; in host mode the module first needs its own address and port per
+manager, as the recipe below shows. A failed fetch is a `*NativeFailure`, and a
+standby's empty page or text that does not parse is an error.
+
+| `ceph.ManagerMetrics` field or method | Meaning |
+| --- | --- |
+| `URL` | The scraped endpoint, the active manager's `…/metrics`. |
+| `Types`, `Help` | Each metric family's `# TYPE` and `# HELP` text. |
+| `Samples` | Every `ceph.MetricSample` (`Name`, `Labels`, `Value`, `Timestamp` in milliseconds or 0), in the module's order. `Value` may be `NaN` or ±Inf. |
+| `Select(name, labels)` | The samples of `name` whose labels include all of `labels`; nil `labels` selects every sample of `name`. |
+| `Value(name, labels)` | The value of the one sample that `Select` finds; none or several is an error. |
+
+The module reports cluster-level metrics: pools (`ceph_pool_wr`,
+`ceph_pool_objects`, `ceph_pool_stored`), OSD state (`ceph_osd_up`,
+`ceph_osd_in`, `ceph_osd_metadata`), health and the MGRs. Since Reef it leaves
+out each daemon's perf counters, such as `ceph_osd_op_w`, by default; the
+module's `mgr/prometheus/exclude_perf_counters` option set to `false` adds
+them back (see the
+[Ceph documentation](https://docs.ceph.com/en/tentacle/mgr/prometheus/#ceph-daemon-performance-counters-metrics);
+the module's tests do not cover that setting). Each daemon's own counters are
+also in `cluster.AdminSocket(ctx, "osd.0", "perf", "dump")`.
+
+```golang
+metrics, err := cluster.ManagerMetrics(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+writes, err := metrics.Value("ceph_pool_wr", map[string]string{"pool_id": "2"})
+```
+
+The pool counters come from the MGR's PG statistics, which OSDs report every
+few seconds: poll until the expected value appears.
+
 ### Container Methods: Health and status
 
 #### Status
@@ -2817,6 +3407,14 @@ if err := cut.Restore(ctx); err != nil {
 }
 ```
 
+A cut cluster endpoint can end the OSD process. With three or more OSDs on
+separate CRUSH hosts, the OSD's peers report its failed heartbeats, and after
+`osd_heartbeat_grace` (20 s) the MON marks it down. The OSD then tries to
+rebind its cluster messenger to an address that no longer exists, logs
+`rebind cluster_messenger failed` and exits. `Restore` does not restart it:
+call `Start` on its handle afterwards. With two OSDs one reporter is not
+enough (`mon_osd_min_down_reporters` is 2), so the OSD stays up.
+
 #### TemporaryNetworkDelay
 
 ```golang
@@ -2836,14 +3434,25 @@ The module starts the helper in `ctr`'s network namespace as root and grants
 | --- | --- |
 | `HelperImage` | The helper image. Required; nothing selects it implicitly. |
 | `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
-| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. |
+| `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `ceph.MaxNetworkDelay` (10 s), in whole microseconds. With a `Loss` or a `Rate` it may be zero. |
 | `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
+| `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (the dual-stack bridge of `AddressIPv6` or `AddressDualStack`; see [Dual-stack clusters](#dual-stack-clusters) for cutting one family of a path). Mapped, zoned or unspecified addresses are refused. |
+| `Loss` | Optional. Drops this percentage of the selected packets at random, from more than 0 to 100. With 100 and a `Peer`, the packets to that peer never arrive: a blackhole of one direction of one path. |
+| `PeerPort` | Optional, with `Peer`: only TCP packets to this destination port, such as one of the peer's Messenger ports. An IPv6 packet with extension headers before its TCP header is not selected. |
+| `Peers` | Optional, instead of `Peer` and `PeerPort`: several `ceph.NetworkPeer` entries, each an `Addr` and an optional TCP `Port`, of either family, at most `ceph.MaxNetworkPeers` (16) distinct ones. The packets to any of them get the same delay, loss and rate. Use it to cut a daemon's paths to several peers, since an endpoint holds one delay. |
+| `Rate` | Optional. Limits the selected packets to this bandwidth, a `ceph.NetworkRate` in bits per second (`ceph.BitPerSecond`, `ceph.KilobitPerSecond`, `ceph.MegabitPerSecond`, `ceph.GigabitPerSecond`), from `ceph.MinNetworkRate` (64 Kbit/s) to `ceph.MaxNetworkRate` (10 Gbit/s), in whole bytes per second (a multiple of 8 bit/s). It uses netem's rate in the same qdisc as `Delay` and `Loss`, which it composes with. See [Bandwidth limits](#bandwidth-limits). |
+| `QueueLimit` | Optional, with `Rate`: the netem queue in packets, from 1 to `ceph.MaxNetworkQueueLimit` (100000). Zero means `ceph.DefaultNetworkQueueLimit` (1000, tc's default). |
+| `Reorder` | Optional, a `ceph.NetworkPacketFault`: sends this percentage of the selected packets at once, ahead of the packets that wait for the `Delay`. Needs a `Delay`, and takes no `Jitter` and no `Rate`. See [Packet faults](#packet-faults). |
+| `Duplicate` | Optional, a `ceph.NetworkPacketFault`: sends a second copy of this percentage of the selected packets. With it `Delay` may be zero. |
+| `Corrupt` | Optional, a `ceph.NetworkPacketFault`: flips one random bit in this percentage of the selected packets. With it `Delay` may be zero. |
 
 `ctr` can be an owned daemon or a caller-owned container attached to the
 plane's bridge; it must be running, not paused, with its own network
-namespace and an IPv4 endpoint. Host-network clusters are refused. Before it
+namespace and an IPv4 endpoint, and an IPv6 address for an IPv6 peer. Host-network clusters are refused. Before it
 changes anything, the call checks the helper image, `NET_ADMIN` and the
-kernel's netem in a separate helper container without a network, and fails
+kernel's netem, with a `Rate` or a packet fault also those netem options,
+and with peers also its `prio` qdisc and u32 classifier, in a
+separate helper container without a network, and fails
 with an error that wraps `ceph.ErrNetemImageUnsupported`,
 `ceph.ErrNetemPermissionDenied` or `ceph.ErrNetemKernelUnsupported`. It
 refuses an interface whose root qdisc is not the kernel's default, and a
@@ -2852,27 +3461,54 @@ second delay of the same endpoint.
 | Failure | Category | Narrower error |
 | --- | --- | --- |
 | No `HelperImage`: the extension is not selected | `ErrImageCapability` | |
-| The helper image does not meet the contract: a missing or broken tool, or a `tc` without netem | `ErrImageCapability` | `ErrNetemImageUnsupported` |
+| The helper image does not meet the contract: a missing or broken tool, a `tc` without netem, for a `Rate` a `tc` that cannot parse netem's `rate`, or for a packet fault a `tc` that cannot parse it | `ErrImageCapability` | `ErrNetemImageUnsupported` |
 | The engine gave the helper no `NET_ADMIN` | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied` |
-| The kernel has no netem qdisc | `ErrEnvironmentUnavailable` | `ErrNetemKernelUnsupported` |
+| The kernel has no netem qdisc, for peers no `prio` qdisc or u32 classifier, for a `Rate` a netem that does not keep the rate, or for a packet fault a netem that does not keep the fault, its correlation or a reorder's gap | `ErrEnvironmentUnavailable` | `ErrNetemKernelUnsupported` |
 | A malformed request, a refused target, a held endpoint or a foreign root qdisc | `ErrInvalidRequest` | |
 | A `tc` command that ran and failed otherwise | `ErrNativeFailure` | `*NativeFailure` of `tc` |
 
 The returned `*ceph.NetworkDelayLease` records the target (`ContainerID`,
 `NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
 `MACAddress`, `Address`), the helper's `HelperImageID` and the requested
-`Delay` and `Jitter`.
+`Delay`, `Jitter`, `Peer`, `PeerPort`, `Loss`, `Rate`, `Reorder`, `Duplicate`
+and `Corrupt`, and in `Peers` the
+whole selection: `Peer` and `PeerPort` as one entry, or the requested `Peers`.
+With a `Rate`, `QueueLimit` is the queue limit that the lease installed: the
+requested one, or `ceph.DefaultNetworkQueueLimit`.
 
 - `Status(ctx)` returns a `ceph.NetworkDelayStatus`, the kernel's state read
   through the helper: `Applied`, the interface's current name (`Interface`)
-  and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter` and
-  `Packets`, `Bytes` and `Drops` counters while `Applied`, and tc's JSON output
-  (`Qdiscs`). After the first lookup by address and MAC, the lease follows
+  and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter`, `Loss`
+  percentage, `Rate`, `QueueLimit`, `Reorder`, `Duplicate`, `Corrupt` and
+  the reorder `Gap`, the `Packets`, `Bytes`, `Drops`,
+  `Overlimits` and `Requeues` counters and the queue's `Backlog` (bytes) and
+  `QueueLength` (packets) while `Applied`, and tc's JSON output (`Qdiscs`, and `Filters` for the egress
+  filters). After the first lookup by address and MAC, the lease follows
   the interface by its index, so a changed address, MAC or name does not lose
   it. `Gone` means that the delayed
   interface no longer exists, because `ctr` stopped, restarted, was removed or
   left the bridge.
-- `Restore(ctx)` removes the lease's qdisc and the helper. A gone interface
+- With a `Peer` or `Peers`, the lease owns a `prio` root qdisc whose third
+  band leads to a netem child, and one u32 filter per peer that sends its
+  packets there; every priority maps to the first band, so nothing else is
+  delayed. The IPv4 peers' filters are in preference 10 and u32 table `800:`,
+  with handles `800::1`, `800::2` and so on in the given order, and the IPv6
+  peers' in the next preference and table (`11` and `801:` after IPv4 peers,
+  otherwise `10` and `800:`). They are added root first and filters last, so
+  no packet is delayed before the hierarchy is complete. `Status` reports
+  `Applied` only when the root, the child and exactly those filters, with the
+  requested address and port keys, are all present and nothing else is under
+  the root; `Filters` has tc's filter
+  dump with each u32 filter's keys under `matches`. The counters are the
+  child's, so they count only selected packets.
+- `Restore(ctx)` removes the lease's qdisc and the helper. With peers,
+  removing the lease's root removes its child and filters with it, also when
+  an apply stopped half way. A filter or qdisc that the apply did not add,
+  under the lease's root, is refused with `ErrInvalidRequest` instead of
+  removed with the root, with or without a `Peer` and also while the delay
+  itself is intact (`Status` then reports it not `Applied`). Qdiscs outside
+  the root, such as an ingress qdisc, are not removed and do not count; the lease stays retryable, and `Restore` succeeds
+  once its owner removed it. A gone interface
   needs no removal, and `Restore` never touches a new namespace. A root qdisc
   that someone replaced is refused with an error, and the lease stays
   retryable. A helper that exited or was removed is replaced first, from the
@@ -2898,6 +3534,157 @@ if err != nil {
 }
 // Answers from osd.0 arrive at least 200 ms late until Restore.
 ```
+
+To delay only one peer, set `Peer` to its address on the same plane, for
+example a client container's address or one from
+[DaemonAddresses](#daemonaddresses). The delay applies to packets that leave
+`ctr` toward that peer; for the other direction, delay the peer's endpoint
+with `ctr`'s address.
+
+```golang
+clientAddress, err := client.ContainerIP(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Delay:       200 * time.Millisecond,
+	Peer:        netip.MustParseAddr(clientAddress),
+})
+// Answers from osd.0 reach this client late; other clients and the other
+// OSDs see no delay.
+```
+
+To fault a container's paths to several peers, list them in `Peers`, for
+example every OSD's address from [DaemonAddresses](#daemonaddresses):
+
+```golang
+addresses, err := cluster.DaemonAddresses(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+var peers []ceph.NetworkPeer
+for _, osd := range addresses.OSDs {
+	host, _, _ := net.SplitHostPort(osd.Public[0].Addr)
+	peers = append(peers, ceph.NetworkPeer{Addr: netip.MustParseAddr(host)})
+}
+cut, err := cluster.TemporaryNetworkDelay(ctx, mds, ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peers:       peers,
+	Loss:        100,
+})
+// The MDS's packets to every OSD are dropped; clients still reach the OSDs.
+```
+
+##### Bandwidth limits
+
+`Rate` limits what `ctr` sends through the endpoint, on the whole interface or
+only to the selected peers, until `Restore`:
+
+```golang
+limit, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        netip.MustParseAddr(clientAddress),
+	Rate:        16 * ceph.MegabitPerSecond,
+})
+if limit != nil {
+	defer limit.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// osd.0 sends to this client at no more than 16 Mbit/s; other clients and
+// the other OSDs are not limited.
+```
+
+- netem sends each packet only after the previous one has taken its length
+  over the rate. There is no burst allowance. A packet counts with its
+  Ethernet header as the kernel queues it, and a TCP segmentation offload
+  packet counts with all of its segments, so what an application achieves is
+  below `Rate`.
+- The packets waiting for the rate, and with a `Delay` for the delay, share
+  one queue of `QueueLimit` packets. A packet that arrives at a full queue is
+  dropped and counted in `Drops`. With a `Loss`, netem drops first, then
+  delays, then paces what is left.
+- `Status` reports what the kernel has: `Rate` and `QueueLimit` are the
+  installed configuration, and the counters and queue are what netem counted.
+  Neither is a throughput. Measure the workload, or divide a difference of
+  `Bytes` by a period that you time.
+- A `Rate` needs a `tc` that parses netem's `rate` and a kernel whose netem
+  keeps it. The preflight helper adds and removes a netem qdisc with a rate
+  and a queue limit on its loopback and checks the values that the kernel
+  reports, so either missing is an error before `ctr` changes. A delay
+  without a `Rate` does not need either.
+- The limit is the sender's egress only. To limit what `ctr` receives from a
+  peer, limit the peer's endpoint with `ctr`'s address.
+
+##### Packet faults
+
+`Reorder`, `Duplicate` and `Corrupt` add netem's packet faults to the
+lease's netem qdisc, on the whole interface or only to the selected peers.
+Each is a `ceph.NetworkPacketFault` with a `Percent`, from more than 0 to 100,
+and an optional `Correlation`, from 0 to 100, which makes each packet's
+decision that much dependent on the previous one's. A zero value is off
+(`IsZero()` reports it); a `Correlation` without a `Percent` is refused.
+`String()` formats the fault as tc's arguments do, such as `25%` or
+`5% 10%`.
+
+```golang
+fault, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        netip.MustParseAddr(clientAddress),
+	Delay:       10 * time.Millisecond,
+	Reorder:     ceph.NetworkPacketFault{Percent: 25},
+})
+if fault != nil {
+	defer fault.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// A quarter of osd.0's packets to this client leave at once, ahead of the
+// others, which wait 10 ms.
+```
+
+| Field | What netem does | Combinations |
+| --- | --- | --- |
+| `Reorder` | Sends this percentage of the selected packets at once, ahead of the packets that wait for the `Delay`; netem's gap is 1, so every packet may be chosen. | Needs a `Delay`. Refuses `Jitter`, which reorders packets by itself, and `Rate`, which the packets sent at once bypass. Works with `Loss`, `Duplicate` and `Corrupt`. |
+| `Duplicate` | Sends a second copy of this percentage of the selected packets. | Works with everything; `Delay` may be zero. |
+| `Corrupt` | Flips one random bit in this percentage of the selected packets, within what the kernel holds in the packet's first buffer: the Ethernet, IP and TCP headers, and payload bytes only when they are there too. netem first computes a checksum that the device would have offloaded, and splits a segmentation offload packet first, corrupting one of its segments. | Works with everything; `Delay` may be zero. |
+
+- netem decides per packet that it queues. A TCP segmentation offload packet
+  carries many segments, so a percentage of packets is not a percentage of
+  segments or of bytes, and the same percentage affects more segments when
+  the delay or the losses keep packets small.
+- `Status` reports the kernel's `Reorder`, `Duplicate`, `Corrupt` and `Gap`
+  apart from the lease's request, and with a `Reorder` netem's `Requeues`
+  counts the packets that it sent ahead. None of them shows what the
+  receiver got. The apply returns the lease with an error when the kernel
+  reports other values than the request, and Restore removes it.
+- The preflight helper adds and removes netem with each requested fault and
+  a correlation on its own loopback. A `tc` that cannot parse a fault is
+  `ErrNetemImageUnsupported`; a kernel that does not report the fault, its
+  correlation or a reorder's gap of 1 back is `ErrNetemKernelUnsupported`.
+  There is no fallback and no package install. A delay without a packet
+  fault does not need them.
+- iproute2 6.1, the `tc` of `ceph.NetemHelperImage`, sends a duplicate's
+  correlation only together with a delay's correlation and silently drops it
+  otherwise. With a `Duplicate.Correlation` the lease therefore passes the
+  delay with a correlation of zero (`delay 0us 0us 0%` without a `Delay`),
+  which is the kernel's state without one.
+- TCP absorbs these faults before Ceph sees them: the receiver puts
+  reordered segments back in order, discards duplicates and answers them
+  with a D-SACK, and drops a segment whose checksum fails, which the sender
+  then retransmits. A Ceph operation that returns the right bytes therefore
+  does not show that a packet was altered, and a corrupted packet does not
+  mean that an altered Messenger frame reached Ceph. Read the receiver's
+  kernel counters (see
+  [Fault injection](guides/fault-injection.md#packet-faults)) for the
+  transport effect.
 
 See [Fault injection](guides/fault-injection.md#delaying-packets-below-ceph)
 for what clients observe and the engines this was checked on.
@@ -3257,7 +4044,21 @@ cannot be interrupted. A non-nil handle returned with an error must be restored,
 because a transport failure cannot prove that Docker did not disconnect the
 endpoint.
 
-#### ErrHostNetworkUnavailable
+#### TemporaryLinkDelay
+
+```golang
+func TemporaryLinkDelay(ctx context.Context, ctr testcontainers.Container, network string, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
+```
+
+[TemporaryNetworkDelay](#temporarynetworkdelay) on a bridge network named
+`network` instead of one of a cluster's planes, for fixtures that own another
+bridge, such as the private HTTP network of an RGW multisite (see
+`rgw.Multisite.TemporaryZoneLinkDelay`). `delay.Plane` stays empty; every
+other field, check, error and lease method is the same, and a network that is
+not a bridge is refused. Like the package-level
+[InterruptNetwork](#interruptnetwork-1), the caller owns the container, the
+network and the lease, and nothing restores it automatically: restore it
+before removing either.
 
 ```golang
 var ErrHostNetworkUnavailable error
@@ -3291,6 +4092,7 @@ var (
 	ErrImageCapability        error
 	ErrEnvironmentUnavailable error
 	ErrNativeFailure          error
+	ErrSharedCluster          error
 )
 ```
 
@@ -3302,10 +4104,11 @@ engine capability, and from a native command that failed. Match them with
 | Category | Meaning |
 | --- | --- |
 | `ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids, such as a terminated cluster, an unowned container or an override that is already held. |
-| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release. `*OperationError` names the target, its version and the feature. |
+| `ErrUnsupported` | The Ceph of the relevant target lacks the feature, judged from that target's tools or from a documented limit of its release, or, for `AddressDualStack`, from the addresses its daemons advertise after startup. `*OperationError` names the target, its version and the feature. |
 | `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
+| `ErrSharedCluster` | A cluster that a `SharedCluster` shares refused the method before any change; see [The shared Container](#the-shared-container). |
 
 Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
@@ -3313,8 +4116,8 @@ category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
 own, such as native output that it could not parse, or a failure whose
 outcome is unknown, such as a container that disappeared after a native
-command was sent to it. Only `ErrInvalidRequest` promises that nothing
-changed. See [Classified errors](guides/errors.md).
+command was sent to it. Only `ErrInvalidRequest` and `ErrSharedCluster`
+promise that nothing changed. See [Classified errors](guides/errors.md).
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
@@ -4117,8 +4920,7 @@ for url == "" {
 		time.Sleep(time.Second) // bound this loop with ctx in real tests
 	}
 }
-// Scrape from a WithClient container, for example:
-// python3 -c 'import sys,urllib.request; print(urllib.request.urlopen(sys.argv[1]+"metrics").read().decode())' <url>
+metrics, err := cluster.ManagerMetrics(ctx) // parsed samples; see ManagerMetrics
 ```
 
 In bridge mode each manager listens on its own container address on port 9283,

@@ -82,7 +82,7 @@ def expected_events():
     return events
 
 
-def validate(log, case, pass_order="preorder"):
+def validate(log, case, pass_order="preorder", execution="go-test"):
     """Corroborate the executed native history and exact selected leaf.
 
     Unchanged Go assertions remain responsible for raw Docker/task/watcher,
@@ -93,6 +93,8 @@ def validate(log, case, pass_order="preorder"):
     leaf = required_leaf(case)
     if pass_order not in ("preorder", "postorder"):
         raise ValueError("unknown recovery PASS reporting order")
+    if execution not in ("go-test", "test-binary"):
+        raise ValueError("unknown native execution format")
     network, kind = CASES[case]
     tests = [PARENT, PARENT + "/" + network, leaf]
     expected_passes = tests if pass_order == "preorder" else list(reversed(tests))
@@ -100,7 +102,8 @@ def validate(log, case, pass_order="preorder"):
     run_positions, pass_positions, package_passes, packages = {}, {}, [], []
     proofs = {marker: [] for marker in MARKERS}
     filesystems, binding, observation_identity = {}, None, None
-    for index, line in enumerate(log.splitlines()):
+    lines = log.splitlines()
+    for index, line in enumerate(lines):
         run = re.fullmatch(r"=== RUN\s+(\S+)", line)
         if run:
             runs.append(run[1]); run_positions[run[1]] = index
@@ -231,9 +234,13 @@ def validate(log, case, pass_order="preorder"):
         errors.append("recovery RUN/PASS inventory/order differs from the selected leaf")
     if failures or skipped:
         errors.append("recovery log contains a failed/skipped test or package failure")
-    package_success = (len(package_passes) == len(packages) == 1
-                       and package_passes[0] < packages[0][0]
-                       and re.fullmatch(r"ok\s+" + original.PACKAGE_PATTERN + r"\s+[0-9.]+s", packages[0][1]) is not None)
+    if execution == "test-binary":
+        package_success = original.binary_completed(lines, package_passes, packages)
+    else:
+        package_success = (len(package_passes) == len(packages) == 1
+                           and package_passes[0] < packages[0][0]
+                           and re.fullmatch(r"ok\s+" + original.PACKAGE_PATTERN + r"\s+[0-9.]+s",
+                                            packages[0][1]) is not None)
     if not package_success:
         errors.append("recovery lacks exactly one completed successful Go package")
     if runs == tests and passes == expected_passes:

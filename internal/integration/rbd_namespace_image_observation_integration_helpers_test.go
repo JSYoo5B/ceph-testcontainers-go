@@ -101,8 +101,8 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			}
 		})
 	}
-	if rbdNamespaceMappingUnsupported(source) {
-		requireRBDNamespaceMappingRefused(t, err, mappings[0])
+	if rbdNamespaceMappingUnsupported(t, ctx, source) {
+		requireRBDNamespaceMappingRefused(t, err, source, mappings[0])
 		return
 	}
 	if err != nil {

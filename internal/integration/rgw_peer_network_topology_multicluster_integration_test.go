@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -140,4 +141,156 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	}
 	rgwAssertZonegroupPeriod(t, ctx, fixture)
 	t.Log("RGW peer HTTP bridge removed/restored with original IP/aliases and unchanged process/period: local reads+writes continued, cross-zone updates stayed absent during isolation, bidirectional native catch-up passed")
+}
+
+// One direction of the link between two zones' gateways is cut below RGW:
+// zone b's packets to zone a's gateway port on the multisite bridge, with
+// the netem helper. b's own sync reads of a stall, while a keeps reading
+// from b; the zones' local endpoints and both clusters keep serving. After
+// Restore b catches up with a's object byte for byte, with the same
+// gateway processes and period. It needs the netem helper
+// (CEPH_TEST_NETEM_IMAGE, by default ceph.NetemHelperImage) and an engine
+// that grants it NET_ADMIN.
+func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
+	defer cancel()
+	netem := netemImage(t)
+	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
+		ControlImage: control, Zonegroup: "us", MetadataMaster: "a",
+		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+	})
+	rgwTopologyCleanup(t, fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zones := fixture.Zones()
+	if len(zones) != 2 {
+		t.Fatal("two-zone fixture was not constructed")
+	}
+	a, b := rgwTopologyS3(t, ctx, zones[0]), rgwTopologyS3(t, ctx, zones[1])
+	const bucket = "/tc-rgw-zone-link-path"
+	createMultisiteBucket(t, ctx, fixture, a, bucket, nil)
+	seed := bytes.Repeat([]byte("synced in both directions before one direction is cut\n"), 64)
+	a.request(t, ctx, http.MethodPut, bucket+"/seed", seed, http.StatusOK)
+	waitMultisiteObject(t, ctx, b, bucket+"/seed", http.StatusOK, seed)
+	beforePeriod, err := fixture.ZoneAdmin(ctx, "a", "period", "get", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pids := map[string]int{}
+	for _, zone := range zones {
+		state, err := zone.Gateway.State(ctx)
+		if err != nil || !state.Running {
+			t.Fatalf("gateway of zone %s: %+v, %v", zone.Name, state, err)
+		}
+		pids[zone.Name] = state.Pid
+	}
+
+	lease, err := fixture.TemporaryZoneLinkDelay(ctx, "b", "a", ceph.NetworkDelay{HelperImage: netem, Loss: 100})
+	if lease != nil {
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cleanupCancel()
+			if err := lease.Restore(cleanupCtx); err != nil {
+				t.Errorf("restore the zone link delay: %v", err)
+			}
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutAt := time.Now()
+	status, err := lease.Status(ctx)
+	if err != nil || !status.Applied || status.Loss != 100 || len(lease.Peers) != 1 || lease.Peers[0].Port != 7480 ||
+		lease.ContainerID != zones[1].Gateway.GetContainerID() || lease.NetworkName == clusters[1].NetworkName() {
+		t.Fatalf("zone link delay %+v: status %+v, %v", lease, status, err)
+	}
+	fromA, fromB := []byte("written in zone a while b cannot read from a"), []byte("written in zone b while a still reads from b")
+	a.request(t, ctx, http.MethodPut, bucket+"/from-a", fromA, http.StatusOK)
+	b.request(t, ctx, http.MethodPut, bucket+"/from-b", fromB, http.StatusOK)
+	if got := b.request(t, ctx, http.MethodGet, bucket+"/seed", nil, http.StatusOK); !bytes.Equal(got, seed) {
+		t.Fatal("zone b did not read its retained object during the cut")
+	}
+	// The unselected direction: a reads b's new object from b's gateway.
+	waitMultisiteObject(t, ctx, a, bucket+"/from-b", http.StatusOK, fromB)
+	readBack := time.Since(cutAt).Round(time.Millisecond)
+	// The selected direction: b's native sync status, read by its CLI
+	// client, which is not cut, compares a's log with b's markers and finds
+	// shards behind, while a has caught up with b; and b does not get the
+	// object.
+	behind, err := observe(ctx, 3*time.Minute, time.Minute, 2*time.Second, func(probeCtx context.Context) (zoneLinkSync, bool, error) {
+		var seen zoneLinkSync
+		var err error
+		if seen.b, err = fixture.SyncStatus(probeCtx, "b"); err != nil {
+			return seen, false, err
+		}
+		if seen.a, err = fixture.SyncStatus(probeCtx, "a"); err != nil {
+			return seen, false, err
+		}
+		fromA, fromB := dataSource(seen.b, "a"), dataSource(seen.a, "b")
+		return seen, fromA.BehindShards > 0 && !fromA.CaughtUp && fromB.CaughtUp, nil
+	})
+	if err != nil {
+		t.Fatalf("sync status during the cut: b %+v, a %+v: %v", behind.Value.b.DataSources, behind.Value.a.DataSources, err)
+	}
+	until := time.Now().Add(12 * time.Second)
+	for {
+		b.request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusNotFound)
+		if time.Now().After(until) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
+	cut, err := lease.Status(ctx)
+	if err != nil || !cut.Applied || cut.Drops == 0 {
+		t.Fatalf("netem status during the cut: %+v, %v", cut, err)
+	}
+	if err := lease.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	window := time.Since(cutAt).Round(time.Millisecond)
+	restored := time.Now()
+	waitMultisiteObject(t, ctx, b, bucket+"/from-a", http.StatusOK, fromA)
+	caughtUp := time.Since(restored).Round(time.Millisecond)
+	synced, err := fixture.WaitSyncReady(ctx, "b", "a")
+	if err != nil {
+		t.Fatalf("zone b's sync status after Restore: %+v: %v", synced.DataSources, err)
+	}
+	for _, zone := range fixture.Zones() {
+		state, err := zone.Gateway.State(ctx)
+		if err != nil || !state.Running || state.Pid != pids[zone.Name] {
+			t.Fatalf("gateway of zone %s after the cut: %+v, %v (pid before %d)", zone.Name, state, err, pids[zone.Name])
+		}
+		after, err := fixture.ZoneAdmin(ctx, zone.Name, "period", "get", "--format", "json")
+		if err != nil || !bytes.Equal(after, beforePeriod) {
+			t.Fatalf("the zone link cut changed the committed period in %s: %v", zone.Name, err)
+		}
+	}
+	rgwAssertZonegroupPeriod(t, ctx, fixture)
+	if got := a.request(t, ctx, http.MethodGet, bucket+"/from-a", nil, http.StatusOK); !bytes.Equal(got, fromA) {
+		t.Fatal("zone a lost its own object")
+	}
+	t.Logf("RGW_ZONE_LINK_PATH_RECEIPT zone b's gateway %.12s on %s dropped %d packets to %v for %s through filters %s: zone a read b's %d bytes within %s of the cut and its data sync from b was caught up, while b's data sync from a had %d of %d shards behind and b lacked a's object for 12 s; after Restore b read a's %d bytes after %s, its data sync from a was caught up (%+v), and both gateways kept their processes and the period",
+		lease.ContainerID, lease.NetworkName, cut.Drops, lease.Peers, window, cut.Filters, len(fromB), readBack,
+		dataSource(behind.Value.b, "a").BehindShards, dataSource(behind.Value.b, "a").Shards, len(fromA), caughtUp, dataSource(synced, "a"))
+}
+
+// zoneLinkSync is one look at both zones' sync status.
+type zoneLinkSync struct {
+	a, b rgw.SyncStatus
+}
+
+// dataSource returns status's data sync from the zone named source.
+func dataSource(status rgw.SyncStatus, source string) rgw.DataSyncStatus {
+	for _, data := range status.DataSources {
+		if data.SourceZone == source {
+			return data
+		}
+	}
+	return rgw.DataSyncStatus{}
 }

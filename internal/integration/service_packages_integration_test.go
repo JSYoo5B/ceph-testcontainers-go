@@ -58,11 +58,8 @@ func TestServicePackages(t *testing.T) {
 		}
 		servicePackageS3(t, ctx, gateways[0], gateways[0].AccessKey, gateways[0].SecretKey, "default")
 	})
-	for _, host := range []bool{false, true} {
-		name := "combined_bridge"
-		if host {
-			name = "combined_host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, "combined_"+mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()

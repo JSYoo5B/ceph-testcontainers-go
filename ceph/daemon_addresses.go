@@ -69,15 +69,15 @@ type DaemonAddresses struct {
 // is down keeps its last addresses.
 func (c *Container) DaemonAddresses(ctx context.Context) (DaemonAddresses, error) {
 	var result DaemonAddresses
-	mon, err := c.Ceph(ctx, "mon", "dump", "--format", "json")
+	mon, err := c.cephCLI(ctx, "mon", "dump", "--format", "json")
 	if err != nil {
 		return DaemonAddresses{}, fmt.Errorf("read monmap: %w", err)
 	}
-	mgr, err := c.Ceph(ctx, "mgr", "dump", "--format", "json")
+	mgr, err := c.cephCLI(ctx, "mgr", "dump", "--format", "json")
 	if err != nil {
 		return DaemonAddresses{}, fmt.Errorf("read mgrmap: %w", err)
 	}
-	osd, err := c.Ceph(ctx, "osd", "dump", "--format", "json")
+	osd, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
 		return DaemonAddresses{}, fmt.Errorf("read osdmap: %w", err)
 	}

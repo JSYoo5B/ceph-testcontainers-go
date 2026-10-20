@@ -31,6 +31,9 @@ var errPoolMissing = errors.New("pool does not exist")
 // whichever owned resources remain. External edits to the pool must not race
 // this call.
 func (c *Container) RemovePool(ctx context.Context, name string) error {
+	if gateErr := c.sharedGate("RemovePool"); gateErr != nil {
+		return gateErr
+	}
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -86,17 +89,17 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 	// Fixture rules and profiles are named after their pool. A retry after
 	// pool deletion finds them without the pool.
 	if slices.Contains(ruleNames, replicated) {
-		if _, err := c.Ceph(ctx, "osd", "crush", "rule", "rm", replicated); err != nil {
+		if _, err := c.cephCLI(ctx, "osd", "crush", "rule", "rm", replicated); err != nil {
 			return fmt.Errorf("remove CRUSH rule %q of removed pool %q: %w", replicated, name, err)
 		}
 	}
 	if slices.Contains(ruleNames, erasure) {
-		if _, err := c.Ceph(ctx, "osd", "crush", "rule", "rm", erasure); err != nil {
+		if _, err := c.cephCLI(ctx, "osd", "crush", "rule", "rm", erasure); err != nil {
 			return fmt.Errorf("remove CRUSH rule %q of removed pool %q: %w", erasure, name, err)
 		}
 	}
 	if slices.Contains(profiles, erasure) {
-		if _, err := c.Ceph(ctx, "osd", "erasure-code-profile", "rm", erasure); err != nil {
+		if _, err := c.cephCLI(ctx, "osd", "erasure-code-profile", "rm", erasure); err != nil {
 			return fmt.Errorf("remove erasure-code profile %q of removed pool %q: %w", erasure, name, err)
 		}
 	}
@@ -140,7 +143,7 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 	// Monitors apply a committed config change asynchronously; retry the
 	// permission refusal briefly instead of failing on that window.
 	for attempt := 0; ; attempt++ {
-		_, err = c.Ceph(ctx, "osd", "pool", "rm", pool.Name, pool.Name, "--yes-i-really-really-mean-it")
+		_, err = c.cephCLI(ctx, "osd", "pool", "rm", pool.Name, pool.Name, "--yes-i-really-really-mean-it")
 		if err == nil || !strings.Contains(err.Error(), "mon_allow_pool_delete") || attempt == 10 {
 			break
 		}
@@ -157,7 +160,7 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 }
 
 func (c *Container) refusePoolInUse(ctx context.Context, name string) error {
-	data, err := c.Ceph(ctx, "fs", "ls", "--format", "json")
+	data, err := c.cephCLI(ctx, "fs", "ls", "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -178,7 +181,7 @@ func (c *Container) refusePoolInUse(ctx context.Context, name string) error {
 }
 
 func (c *Container) crushRuleNames(ctx context.Context) (map[int]string, error) {
-	data, err := c.Ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +200,7 @@ func (c *Container) crushRuleNames(ctx context.Context) (map[int]string, error) 
 }
 
 func (c *Container) erasureCodeProfiles(ctx context.Context) ([]string, error) {
-	data, err := c.Ceph(ctx, "osd", "erasure-code-profile", "ls", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "erasure-code-profile", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

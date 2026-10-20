@@ -45,11 +45,20 @@ func TestRGWBucketSyncStatusUsesOwnedPipeInstancesAndRemoteCheckpoint(t *testing
 	if err != nil || status.CaughtUp || status.BehindShards != 1 || strings.Contains(status.State, "secret-marker") {
 		t.Fatalf("native bucket lag was ignored or exposed: %+v %v", status, err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	// End the wait at its second read, after it read the lagging status
+	// once, not after a fixed time: the checkpoint lookup before the first
+	// read can outlast any short deadline on a loaded machine.
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	reads := 0
+	cli.cancelOnBucketStatus = func() {
+		if reads++; reads == 2 {
+			cancel()
+		}
+	}
 	status, err = f.WaitBucketSyncReady(ctx, g, "selected", "source", "destination")
-	if !errors.Is(err, context.DeadlineExceeded) || status.CaughtUp || status.BehindShards != 1 || strings.Contains(err.Error(), "secret-marker") {
-		t.Fatal("bounded waiter accepted lag or exposed markers")
+	if !errors.Is(err, context.Canceled) || status.CaughtUp || status.BehindShards != 1 || strings.Contains(err.Error(), "secret-marker") {
+		t.Fatalf("bounded waiter accepted lag or exposed markers: %+v %v", status, err)
 	}
 }
 

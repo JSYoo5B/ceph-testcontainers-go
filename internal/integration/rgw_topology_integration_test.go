@@ -1,4 +1,4 @@
-//go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_topology))))
+//go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_rgw_topology))))
 
 //ci: timeout=40m job-timeout=50
 
@@ -18,11 +18,10 @@ import (
 
 func TestRGWTopology(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		name := "bridge"
+	for _, mode := range networkModes(t, "bridge", "host") {
+		name := mode.Name
 		var options []testcontainers.ContainerCustomizer
-		if host {
-			name = "host"
+		if mode.Host {
 			options = append(options, ceph.WithHostNetwork())
 		}
 		options = append(options, rgw.WithGateways(rgw.Config{Name: "gateway-a"}))

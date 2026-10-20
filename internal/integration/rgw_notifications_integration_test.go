@@ -1,6 +1,6 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rgw_notifications))))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 representative=flaky
 
 package integration_test
 
@@ -25,11 +25,8 @@ import (
 // receiver runs in the WithClient container so it shares the cluster network,
 // or the host network in host mode.
 func TestRGWBucketNotifications(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "bridge", "host") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			testRGWBucketNotifications(t, host)
 		})
@@ -116,7 +113,9 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 			t.Fatalf("persistent notification blocked the S3 write for %s", elapsed)
 		}
 		time.Sleep(3 * time.Second)
-		if events := readNotificationEvents(t, ctx, client); slices.Contains(events, "ObjectCreated:Put queued/c") {
+		if events, err := readNotificationEvents(ctx, client); err != nil {
+			t.Fatal(err)
+		} else if slices.Contains(events, "ObjectCreated:Put queued/c") {
 			t.Fatal("event was recorded while the receiver was stopped")
 		}
 		startNotificationReceiver(t, ctx, client, port)
@@ -207,31 +206,15 @@ func stopNotificationReceiver(t *testing.T, ctx context.Context, client testcont
 	execOutput(t, ctx, client, "sh", "-c", `pid=$(cat /tmp/tc-receiver.pid); kill "$pid"; while [ -e /proc/$pid ] && [ "$(cut -d' ' -f3 /proc/$pid/stat)" != Z ]; do sleep 0.1; done`)
 }
 
-func readNotificationEvents(t *testing.T, ctx context.Context, client testcontainers.Container) []string {
-	t.Helper()
-	output := execOutput(t, ctx, client, "sh", "-c", "cat /tmp/tc-events.log 2>/dev/null || true")
-	if output == "" {
-		return nil
-	}
-	return strings.Split(output, "\n")
-}
-
+// waitNotificationEvents waits up to two minutes until the receiver in client
+// has logged every event of want, and returns the logged events.
 func waitNotificationEvents(t *testing.T, ctx context.Context, client testcontainers.Container, want []string) []string {
 	t.Helper()
-	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	for {
-		events := readNotificationEvents(t, ctx, client)
-		missing := slices.DeleteFunc(slices.Clone(want), func(event string) bool { return slices.Contains(events, event) })
-		if len(missing) == 0 {
-			data, _ := json.Marshal(events)
-			t.Logf("RGW_NOTIFY events=%s", data)
-			return events
-		}
-		select {
-		case <-deadline.Done():
-			t.Fatalf("notification events %v not received; got %v", missing, events)
-		case <-time.After(time.Second):
-		}
+	seen, err := observeNotificationEvents(ctx, client, want, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("notification events %v not received: %v; last read %v", missingNotificationEvents(want, seen.Value), err, seen.Value)
 	}
+	data, _ := json.Marshal(seen.Value)
+	t.Logf("RGW_NOTIFY events=%s after %d reads in %s", data, seen.Attempts, seen.Elapsed.Round(time.Millisecond))
+	return seen.Value
 }

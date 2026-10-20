@@ -33,7 +33,7 @@ type Status struct {
 // Status queries the monitor's JSON API through the container-local CLI.
 func (c *Container) Status(ctx context.Context) (Status, error) {
 	var s Status
-	data, err := c.Ceph(ctx, "status", "--format", "json")
+	data, err := c.cephCLI(ctx, "status", "--format", "json")
 	if err != nil {
 		return s, err
 	}

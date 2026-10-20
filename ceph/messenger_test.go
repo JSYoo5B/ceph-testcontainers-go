@@ -393,7 +393,8 @@ func runEmbeddedScript(t *testing.T, name string, env map[string]string, files m
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(bin, "hostname"), []byte("#!/bin/sh\nprintf '%s\\n' 192.0.2.12\n"), 0o700); err != nil {
+	// TC_HOSTNAME_I replaces the addresses that hostname -i prints.
+	if err := os.WriteFile(filepath.Join(bin, "hostname"), []byte("#!/bin/sh\nprintf '%s\\n' ${TC_HOSTNAME_I:-192.0.2.12}\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	data, err := scripts.ReadFile("internal/scripts/" + name + ".sh")

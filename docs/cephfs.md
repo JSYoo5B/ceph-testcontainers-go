@@ -397,6 +397,12 @@ retry after an error continues with whatever remains.
 `cluster.PauseContainer` freezes it instead. A restarted daemon keeps its name
 but gets a new GID. The cluster removes every MDS container when it terminates.
 
+On a `ceph.AddressDualStack` cluster every MDS advertises a concrete IPv4 and
+IPv6 address, IPv4 first. Clients reach an MDS through the first entry, so
+`ms_bind_prefer_ipv4 = false` in its `[mds.<ID>]` section of a
+`ceph.WithConfigFile` file makes them use IPv6; see
+[Dual-stack clusters](ceph.md#dual-stack-clusters).
+
 ### Handles and ownership
 
 The filesystem methods below share these rules:
@@ -921,6 +927,87 @@ Deletes an owned snapshot without `--force`. Snapshots with pending clones are
 refused by the fixture and by Ceph. The source data and completed clones are
 kept. Copies of the handle share the removal state, and a retry reconciles an
 uncertain deletion.
+
+#### TemporarySnapshotSchedule
+
+```golang
+func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule cephfs.SnapshotSchedule) (*cephfs.SnapshotScheduleLease, error)
+```
+
+Adds a snapshot schedule, and its retention, to one directory through the MGR
+`snap_schedule` module, which then takes `scheduled-…` snapshots in that
+directory's `.snap`.
+
+| `cephfs.SnapshotSchedule` field | Meaning |
+| --- | --- |
+| `Path` | A clean absolute path in the filesystem, such as `/` or `/data`. |
+| `Repeat` | A positive number and one of `m` (minutes), `h`, `d`, `w`, `M` (months) or `y`, such as `6h`. |
+| `Start` | Optional first time slot; the zero time leaves the module's default, midnight UTC of the day it is added. |
+| `Retention` | Optional counts per period (`m`, `h`, `d`, `w`, `M`, `y`), or `n` for the newest snapshots of any period. |
+
+The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
+- while the `snap_schedule` module is disabled. Enable it with
+  [TemporaryMGRModule](ceph.md#temporarymgrmodule), and wait until the active
+  MGR, which restarts to load the module, answers again;
+- a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
+  `true`. The module refuses minutes otherwise; set it with
+  [TemporaryConfig](ceph.md#temporaryconfig) for a test;
+- a directory that already has a schedule, which the lease would not own,
+  or another lease from this filesystem value.
+
+The module keeps retention per directory, not per schedule: every schedule of
+a directory shares it, and it stays after the directory's last schedule is
+removed. A new schedule inherits what is left, so a directory with retention
+rules is refused with `ErrInvalidRequest` after the schedule was added; the
+returned lease removes the schedule and leaves those rules.
+
+The lease's `Status(ctx)` returns a `cephfs.SnapshotScheduleStatus`, the module's state: `Schedule`, `Active`,
+`Start`, `Added` (when the module added it), `Retention`, the `Created` and
+`Pruned` counts, the `First` and `Last` snapshot times (zero before the
+first) and the module's JSON (`Raw`). A directory can have several schedules
+with one repeat; the lease identifies its own by the start and the time the
+module added it, read back after the add.
+`Snapshots(ctx)` lists the directory's `scheduled-…` snapshots through
+libcephfs, oldest first.
+
+`Restore(ctx)` removes the retention rules that the lease added, then its
+schedule; the snapshots stay. It reads the directory back on every call, so a
+retry continues where an earlier call stopped, and the lease is restored only
+once its rules and its schedule are both confirmed gone:
+
+- A rule that the directory no longer lists is skipped. When no schedule of
+  the directory is left to show its retention, `Restore` removes each rule
+  anyway; the module's "was not set" or "No schedule found" answer is what
+  confirms that a rule is gone. So a rule that outlived the lease's schedule,
+  for example after another client removed that schedule, is still removed.
+- It refuses with `ErrInvalidRequest`, changing nothing and staying
+  retryable, while another schedule of the directory, of any repeat, shares a
+  rule that the lease still has to remove; when the lease's schedule was
+  replaced by another one with its repeat; and when one of its rules has
+  another count. Retry after the other schedule's owner removed it.
+
+A non-nil lease returned with an error must be restored: after an add whose
+reply was lost, `Restore` takes the only schedule with the requested repeat
+and start as the lease's.
+
+```golang
+module, err := cluster.TemporaryMGRModule(ctx, "snap_schedule", true)
+// … wait for the active MGR, and set allow_m_granularity for minutes …
+schedule, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{
+	Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2},
+})
+if schedule != nil {
+	defer schedule.Restore(context.Background())
+}
+```
+
+`TestCephFSSnapshotSchedule` runs a 1-minute schedule with `n: 2`. Within
+about three minutes the module had taken three snapshots and pruned one, two
+`scheduled-…` snapshots were left, and after `Restore` the directory had no
+schedule and kept both snapshots. It then changes leases' schedules and
+rules natively, and checks that `Restore` refuses a replaced schedule and a
+rule shared with another repeat's schedule, skips a removed rule, and still
+removes a rule that outlived its schedule.
 
 ### Filesystem Methods: authorization
 
@@ -1897,6 +1984,65 @@ acknowledgement requires the original containers to be removed. The observer
 assumes a trusted Docker endpoint; proxies that impersonate an engine,
 checkpoint/restore and concurrent external container changes are outside its
 contract.
+
+### Shared cluster tenants
+
+A tenant of a [shared cluster](ceph.md#shared-cluster) leases a subvolume
+group of its own. Create the filesystem with `WithFilesystems` in
+`ceph.WithSharedRunOptions`.
+
+```golang
+func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
+
+func (g *TenantGroup) FilesystemName() string
+func (g *TenantGroup) Group() string
+func (g *TenantGroup) Path() string
+func (g *TenantGroup) DataPool() string
+func (g *TenantGroup) PoolNamespace() string
+func (g *TenantGroup) Client() *ceph.ClientConfig
+func (g *TenantGroup) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
+func (g *TenantGroup) CreateSubvolume(ctx context.Context, name string, sizeBytes int64) (string, error)
+```
+
+`Lease` creates the subvolume group `ID` (the tenant's ID) in filesystem `fs`,
+or in the cluster's only filesystem when `fs` is empty. Its directory is
+`/volumes/ID`, and its layout puts file data in the RADOS namespace `fsns-ID`
+of the filesystem's default data pool. The client `client.ID-cephfs-FS` has
+these capabilities:
+
+| Service | Capability |
+| --- | --- |
+| mon | `allow r` |
+| mds | `allow rw fsname=FS path=/volumes/ID` |
+| osd | `allow rw pool=DATA namespace=fsns-ID` |
+
+Mount `Path` with that client, with libcephfs `mount_root`, `ceph-fuse -r` or
+the kernel client's path. `CreateSubvolume` creates a subvolume in the group,
+with a quota when `sizeBytes` is positive, and returns its path; it inherits
+the group's data namespace, so the same client uses it.
+
+```golang
+tenant := shared.Lease(t)
+files, err := cephfs.Lease(t.Context(), tenant, "")
+if err != nil {
+	t.Fatal(err)
+}
+client, err := testcontainers.Run(t.Context(), ceph.DefaultImage, files.WithClient(), ceph.WithIdleEntrypoint())
+testcontainers.CleanupContainer(t, client)
+// python3: cephfs.LibCephFS(auth_id=files.Client().User()).mount(mount_root=files.Path(), filesystem_name=files.FilesystemName())
+```
+
+Checked natively, the client cannot mount `/`, `/volumes` or another tenant's
+group: the MDS refuses the root. It cannot list another group's data
+namespace. It cannot set layouts, quotas or snapshots, which need the `p` and
+`s` flags.
+
+The tenant's release evicts the sessions of its client that remain, for
+example of a client container that ended with the filesystem mounted, and
+removes the blocklist entries that the evictions added. It then removes the
+group's subvolumes with their snapshots, its other files and the group, and
+waits up to 90 seconds for the MDS and the volumes module to purge the data
+namespace. It fails the test and poisons the cluster if anything remains.
 
 ## Examples
 

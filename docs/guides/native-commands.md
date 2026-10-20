@@ -253,7 +253,7 @@ Compare the raw bytes in assertions; redaction changes the data.
   `ceph.NativeCommandStopTimeout` (15 seconds), independent of `ctx`. If
   Docker had not started the command yet, the stop claims the invocation, and
   a start that Docker delivers later runs nothing. Such a claim can stay as a
-  small file in `/tmp/tc-supervised` inside the container.
+  small file in the local validation artifact inside the container.
 - When the stop cannot be confirmed, the error is a
   `*ceph.NativeCommandUnstoppedError`, and the command may still run. This
   happens when the container is paused or stopped, when the Docker engine does
@@ -815,7 +815,7 @@ images always have it; OSD, MDS and RGW role images are not required to (see
 | MGR | `/var/run/ceph/ceph-mgr.<name>.asok` | `cluster.Managers()[i]`, name `DaemonName` |
 | OSD | `/var/run/ceph/ceph-osd.<id>.asok` | `cluster.OSDs()[i]`, `ID` |
 | MDS | `/var/run/ceph/ceph-mds.<id>.asok` | `fs.MDSs()[i]`, `ID` |
-| `rbd-mirror` | `/tmp/rbd-mirror.asok` | `rbdMirror.Daemons()[i]` |
+| `rbd-mirror` | the local validation artifact | `rbdMirror.Daemons()[i]` |
 | `cephfs-mirror` | `/var/run/ceph/cephfs-mirror.asok` | `cephfsMirror.Daemons()[i]` |
 
 Mirror daemons run from the control image, so `--admin-daemon` always works
@@ -871,6 +871,11 @@ logs, err := cluster.OSDs()[0].Logs(ctx)
   current and the next one.
 - The log contains the secrets themselves. Keep it to disposable test
   clusters, and set `debug_auth` back to `1/5` when you are done.
+- On Tentacle 20.2.4, a MON at `debug_auth` 10 also logs the session key and
+  the service secret of every ticket that it builds (`session_key=` and
+  `service_secret=` after `build_service_ticket`). Do not raise a MON's
+  `debug_auth` in a run whose logs you keep or upload. Squid 19.2.5 has no
+  such lines.
 - On Tentacle, `ceph auth dump-keys --format json` on the MONs lists the same
   secret IDs and expirations under `rotating_secrets`. Squid has no such
   command.

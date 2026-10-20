@@ -1,22 +1,51 @@
 name: Ceph topology
 
+# Runtime batches never read documentation or the separately built go-ceph
+# probe module, so a change to those alone runs only Code checks.
+#
+# This category does not gate every merge. A pull request runs only the
+# batches whose own test files it changes, or every batch when it has the
+# ci:full label or while the repository variable CI_RELEASE_PHASE is "true".
+# Pushes to main run it only in a release phase; otherwise Ceph periodic runs
+# every batch on main.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Adding a label other than ci:full starts a run that does nothing; its own
+# group keeps it from cancelling the pull request's run in progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}${{ github.event.action == 'labeled' && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   scenarios:
     name: Scenarios
+    if: >-
+      (github.event_name != 'push' || vars.CI_RELEASE_PHASE == 'true') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'ci:full')
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: topology
       check_name: Ceph topology
+      changed_since: >-
+        ${{ github.event_name == 'pull_request' &&
+        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
+        vars.CI_RELEASE_PHASE != 'true' &&
+        github.event.pull_request.base.sha || '' }}

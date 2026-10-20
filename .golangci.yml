@@ -6,6 +6,7 @@ run:
     - all
     - goceph
     - native_regression
+    - cephfs_fuse
 
 linters:
   default: standard

@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -41,9 +42,47 @@ func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliCon
 // Closed reports a terminated cluster.
 func (serviceHooks) Closed(c *Container) bool { return c.closed }
 
+// TenantCluster returns the shared cluster of a live tenant, whose gate
+// still refuses the methods a tenant cannot use, or nil.
+func (serviceHooks) TenantCluster(t *Tenant) *Container {
+	c, err := t.cluster()
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// TenantClient creates client.ID-suffix for a live tenant with caps that the
+// service limited to the tenant's resources. The tenant's release deletes it,
+// and WithClientIdentity and RunNativeCommand of the tenant accept it.
+func (serviceHooks) TenantClient(ctx context.Context, t *Tenant, suffix string, caps ClientCaps) (*ClientConfig, error) {
+	return t.serviceClient(ctx, suffix, caps)
+}
+
+// AttachTenantScope registers a service resource of a live tenant that its
+// release removes with release, before its clients are deleted. release
+// returns what remains of the resource; a remainder or an error poisons the
+// shared cluster. Attach before creating the resource.
+func (serviceHooks) AttachTenantScope(t *Tenant, key string, release func(ctx context.Context) ([]string, error)) error {
+	return t.attachScope(key, release)
+}
+
+// RegisterSharedService records a service's shared-cluster hooks: prepare
+// runs before a shared cluster's baseline, and probe lists the service's
+// resources mapped to their owning tenant IDs.
+func (serviceHooks) RegisterSharedService(kind string, prepare func(context.Context, *Container) error, probe func(context.Context, *Container) (map[string]string, error)) {
+	registerSharedService(sharedService{kind: kind, prepare: prepare, probe: probe})
+}
+
 // Command runs a CLI command in ctr and returns its standard output.
 func (serviceHooks) Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	return command(ctx, ctr, args...)
+}
+
+// RunOwnedShell runs argv in an admitted container of c under the shell
+// supervisor and tracks it until it is known to have ended.
+func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+	return c.runOwnedShell(ctx, target, label, limit, argv...)
 }
 
 // ServiceBootstrap returns the Run option that records a service bootstrap.

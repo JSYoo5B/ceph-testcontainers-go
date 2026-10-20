@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -37,7 +38,12 @@ type hooks interface {
 	StartupTimeout(c *ceph.Container) time.Duration
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
+	TenantCluster(t *ceph.Tenant) *ceph.Container
+	TenantClient(ctx context.Context, t *ceph.Tenant, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
+	AttachTenantScope(t *ceph.Tenant, key string, release func(ctx context.Context) ([]string, error)) error
+	RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error))
 	Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error)
+	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error)
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
 	LockTopology(ctx context.Context, c *ceph.Container) error
 	Service(c *ceph.Container, name string) testcontainers.Container
@@ -105,9 +111,51 @@ func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
 // Closed reports a terminated cluster.
 func Closed(c *ceph.Container) bool { return get().Closed(c) }
 
+// TenantCluster returns the shared cluster of a live tenant, or nil. Its
+// gate refuses the methods that a tenant cannot use; the scoped operations
+// of the service packages use the hooks instead.
+func TenantCluster(t *ceph.Tenant) *ceph.Container { return get().TenantCluster(t) }
+
+// TenantClient creates client.ID-suffix for a live tenant with caps that the
+// service limited to the tenant's resources. The tenant's release deletes it,
+// and the tenant's WithClientIdentity and RunNativeCommand accept it.
+func TenantClient(ctx context.Context, t *ceph.Tenant, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error) {
+	return get().TenantClient(ctx, t, suffix, caps)
+}
+
+// AttachTenantScope registers a service resource of a live tenant. The
+// tenant's release calls release, in reverse order of attachment and before
+// it deletes the tenant's clients, to remove the resource and list what
+// remains of it; a remainder or an error poisons the shared cluster. Attach
+// before creating the resource, so that a partial creation is removed too.
+// Each key is attached once per tenant.
+func AttachTenantScope(t *ceph.Tenant, key string, release func(ctx context.Context) ([]string, error)) error {
+	return get().AttachTenantScope(t, key, release)
+}
+
+// RegisterSharedService records a service package's shared-cluster hooks.
+// prepare runs on each shared cluster before its baseline is taken, while
+// the cluster is not shared yet, to create what the service would create
+// lazily on a tenant's first use; it does nothing on a cluster without the
+// service. probe lists the service's resources that a tenant could create,
+// each mapped to the tenant ID that owns it (or to another name); releases
+// compare the listing with the baseline.
+func RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) {
+	get().RegisterSharedService(kind, prepare, probe)
+}
+
 // Command runs a CLI command in ctr and returns its standard output.
 func Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	return get().Command(ctx, ctr, args...)
+}
+
+// RunOwnedShell runs argv in target, a container of c that the caller holds
+// the cluster mutex for, under the shell supervisor with limit seconds (0
+// for none), and tracks it until it is known to have ended: when ctx ends
+// first the command is stopped before RunOwnedShell returns, and a stop that
+// cannot be confirmed returns a *ceph.NativeCommandUnstoppedError.
+func RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+	return get().RunOwnedShell(ctx, c, target, label, limit, argv...)
 }
 
 // WithBootstrap returns the Run option that records the bootstrap build

@@ -208,6 +208,9 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 // or replaces the key anew once it turns out not to have. A returned
 // descriptor never changes afterwards.
 func (c *Container) ReplaceClientKey(ctx context.Context, client *ClientConfig, opts ...ClientOption) (*ClientConfig, error) {
+	if gateErr := c.sharedGate("ReplaceClientKey"); gateErr != nil {
+		return nil, gateErr
+	}
 	settings := clientOptions{}
 	for _, opt := range opts {
 		if err := opt(&settings); err != nil {

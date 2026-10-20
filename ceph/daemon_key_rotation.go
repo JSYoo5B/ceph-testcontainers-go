@@ -244,6 +244,9 @@ type keyRotationExecClient interface {
 // finishes the rotation with the same key and generates another key only once
 // the daemon's container has restarted.
 func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err error) {
+	if gateErr := c.sharedGate("RotateDaemonKey"); gateErr != nil {
+		return gateErr
+	}
 	kind, id, err := parseAdminSocketDaemon(daemon)
 	if err != nil {
 		return err
@@ -506,7 +509,7 @@ func (c *Container) rotationCommand(ctx context.Context, argv ...string) ([]byte
 }
 
 func (c *Container) rotationCommandResult(ctx context.Context, stdoutLimit, stderrLimit int, argv ...string) (supervised.Result, error) {
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return supervised.Result{}, fmt.Errorf("select Ceph CLI container: %w", err)
 	}

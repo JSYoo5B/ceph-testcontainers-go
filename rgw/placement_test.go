@@ -41,6 +41,8 @@ func (f *rgwPlacementTestContainer) Stop(context.Context, *time.Duration) error 
 }
 func (f *rgwPlacementTestContainer) Start(context.Context) error { f.startCount++; return nil }
 func (f *rgwPlacementTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	original := args
+	args = rgwAdminArgv(args)
 	f.calls = append(f.calls, slices.Clone(args))
 	var result any
 	var raw string
@@ -154,7 +156,7 @@ func (f *rgwPlacementTestContainer) Exec(_ context.Context, args []string, _ ...
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.WriteString(raw)
-	return code, &stream, nil
+	return rgwAdminReply(original, code, &stream)
 }
 
 func newRGWPlacementFixture() (*Gateway, *rgwPlacementTestContainer) {

@@ -13,6 +13,9 @@ import (
 // ConnectionConfigContext returns independent bootstrap copies, waiting for
 // topology and the configuration cache only while ctx remains active.
 func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte, error) {
+	if gateErr := c.sharedGate("ConnectionConfigContext"); gateErr != nil {
+		return nil, nil, gateErr
+	}
 	if c == nil {
 		return nil, nil, errors.New("ceph cluster is unavailable")
 	}
@@ -36,6 +39,9 @@ func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte
 // ManagersContext returns sorted owned candidate descriptors. The slice is
 // independent; descriptors and their containers retain fixture ownership.
 func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, error) {
+	if gateErr := c.sharedGate("ManagersContext"); gateErr != nil {
+		return nil, gateErr
+	}
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}
@@ -55,6 +61,13 @@ func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, e
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
 func (c *Container) ControlContainerContext(ctx context.Context) (testcontainers.Container, error) {
+	if err := c.sharedGate("ControlContainerContext"); err != nil {
+		return nil, err
+	}
+	return c.controlContainerContext(ctx)
+}
+
+func (c *Container) controlContainerContext(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}

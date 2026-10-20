@@ -2,9 +2,11 @@ package ceph
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -24,7 +26,84 @@ import (
 type fakeQdisc struct {
 	kind, handle  string
 	delay, jitter time.Duration
-	packets       uint64
+	loss          float64 // fraction
+	// rate is in bytes per second, as the kernel keeps it; limit is the
+	// queue limit in packets, tc's 1000 unless the command set one.
+	rate    uint64
+	limit   int
+	packets uint64
+	// The kernel's other counters and queue state.
+	overlimits, requeues, backlog, qlen uint64
+	// faults are netem's packet faults by keyword, in percent as tc's
+	// arguments give them; gap is the reorder gap.
+	faults map[string]NetworkPacketFault
+	gap    int
+}
+
+// fakeNetemQdisc reads tc's netem arguments: [delay D [J]] [loss P%]
+// [reorder|duplicate|corrupt P% [C%]]... [rate Nbit limit L]. Like tc, a
+// reorder sets a gap of 1. Like tc 6.1, it keeps a duplicate's correlation
+// only when the delay has a correlation too.
+func fakeNetemQdisc(handle string, args []string) *fakeQdisc {
+	qdisc := &fakeQdisc{kind: "netem", handle: handle, limit: 1000}
+	delayCorrelation := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "rate":
+			bits, _ := strconv.ParseUint(strings.TrimSuffix(args[i+1], "bit"), 10, 64)
+			qdisc.rate = bits / 8
+		case "limit":
+			qdisc.limit, _ = strconv.Atoi(args[i+1])
+		case "delay":
+			qdisc.delay, _ = time.ParseDuration(args[i+1])
+			if i+2 < len(args) && strings.HasSuffix(args[i+2], "us") {
+				qdisc.jitter, _ = time.ParseDuration(args[i+2])
+				delayCorrelation = i+3 < len(args) && strings.HasSuffix(args[i+3], "%")
+			}
+		case "loss":
+			percent, _ := strconv.ParseFloat(strings.TrimSuffix(args[i+1], "%"), 64)
+			qdisc.loss = percent / 100
+		case "reorder", "duplicate", "corrupt":
+			var fault NetworkPacketFault
+			fault.Percent, _ = strconv.ParseFloat(strings.TrimSuffix(args[i+1], "%"), 64)
+			if i+2 < len(args) && strings.HasSuffix(args[i+2], "%") {
+				fault.Correlation, _ = strconv.ParseFloat(strings.TrimSuffix(args[i+2], "%"), 64)
+			}
+			if qdisc.faults == nil {
+				qdisc.faults = map[string]NetworkPacketFault{}
+			}
+			qdisc.faults[args[i]] = fault
+			if args[i] == "reorder" {
+				qdisc.gap = 1
+			}
+		}
+	}
+	if fault, set := qdisc.faults["duplicate"]; set && !delayCorrelation {
+		fault.Correlation = 0
+		qdisc.faults["duplicate"] = fault
+	}
+	return qdisc
+}
+
+// fakeNetemOptions prints a netem qdisc's options as tc does: no delay
+// member for a zero delay, the loss as a fraction.
+func fakeNetemOptions(q *fakeQdisc) map[string]any {
+	options := map[string]any{"limit": q.limit}
+	if q.rate > 0 {
+		options["rate"] = map[string]any{"rate": q.rate, "packetoverhead": 0, "cellsize": 0, "celloverhead": 0}
+	}
+	if q.delay > 0 {
+		options["delay"] = map[string]any{"delay": q.delay.Seconds(), "jitter": q.jitter.Seconds(), "correlation": 0}
+	}
+	if q.loss > 0 {
+		options["loss-random"] = map[string]any{"loss": q.loss, "correlation": 0}
+	}
+	// tc prints each fault as fractions, under its own keyword.
+	for name, fault := range q.faults {
+		options[name] = map[string]any{name: fault.Percent / 100, "correlation": fault.Correlation / 100}
+	}
+	options["ecn"], options["gap"] = false, q.gap
+	return options
 }
 
 type fakeLink struct {
@@ -33,6 +112,38 @@ type fakeLink struct {
 	mac     string
 	address netip.Addr
 	root    *fakeQdisc
+	// child is a netem qdisc under a prio root, parent its band; filters
+	// are the egress filter dump, u32 keys under "matches".
+	child   *fakeQdisc
+	parent  string
+	filters []map[string]any
+	// tables are the u32 tables under the root, by preference: the kernel
+	// gives the first preference 800:, the next 801:, and so on.
+	tables map[int]fakeU32Table
+	// extra are qdiscs that someone else added, by parent; removing the
+	// root removes those under it.
+	extra []fakeExtraQdisc
+}
+
+type fakeU32Table struct {
+	protocol, id string
+}
+
+type fakeExtraQdisc struct {
+	kind, handle, parent string
+}
+
+// options prints a foreign qdisc's options as tc does: a tbf's rate is a
+// number of bytes per second, not netem's rate object.
+func (q fakeExtraQdisc) options() map[string]any {
+	if q.kind == "tbf" {
+		return map[string]any{"rate": 125000000, "burst": 65536, "lat": 0.05}
+	}
+	if q.kind == "faultlike" {
+		// Members named like netem's faults that are not netem's.
+		return map[string]any{"duplicate": 3, "corrupt": true, "reorder": "x", "gap": "none"}
+	}
+	return map[string]any{}
 }
 
 // fakeNamespace is a network namespace with its interfaces.
@@ -42,6 +153,8 @@ type fakeNamespace struct {
 }
 
 type fakeNetemTarget struct {
+	// address6 is the endpoint's IPv6 address on a dual-stack bridge.
+	address6        netip.Addr
 	running, paused bool
 	mode            container.NetworkMode
 	sandbox         int
@@ -67,11 +180,19 @@ func (h *fakeNetemHelper) GetContainerID() string { return h.id }
 // their root qdiscs, the helper containers in them, and an image that may
 // break the netem contract.
 type fakeNetem struct {
-	mu       sync.Mutex
-	nextID   int
-	targets  map[string]*fakeNetemTarget
-	helpers  []*fakeNetemHelper
-	kernel   bool // the kernel has netem
+	mu      sync.Mutex
+	nextID  int
+	targets map[string]*fakeNetemTarget
+	helpers []*fakeNetemHelper
+	kernel  bool // the kernel has netem
+	noPrio  bool // the kernel lacks the prio qdisc
+	noU32   bool // the kernel lacks the u32 classifier
+	// driver is the driver of the network tc-public; newFakeNetem makes it a
+	// bridge.
+	driver string
+	// tableGap skips numbers before the u32 table of a second preference,
+	// as a kernel that numbered them otherwise would.
+	tableGap int
 	netAdmin bool // the engine grants NET_ADMIN
 	imageID  string
 	// tags resolves image references; an image ID resolves to itself.
@@ -92,10 +213,57 @@ type fakeNetem struct {
 	editPreflight func(map[string]any)
 	// slowPreflight makes the preflight run into its deadline.
 	slowPreflight bool
+	// onSelective may refuse a command of a selective delay before it runs.
+	onSelective func(argv []string) (supervised.Report, bool)
+	// noRateParse is an image whose tc cannot parse netem's rate.
+	noRateParse bool
+	// rateIgnored is a kernel whose netem does not keep a rate.
+	rateIgnored bool
+	// faultUnparsed is a packet fault keyword that the image's tc cannot
+	// parse; faultIgnored are those that the kernel's netem does not keep,
+	// with "gap" the reorder gap, and faultChanged those that it keeps
+	// without their correlation.
+	faultUnparsed string
+	faultIgnored  map[string]bool
+	faultChanged  map[string]bool
 }
 
+// faultUnparsedReport is tc's answer to a netem keyword that it cannot parse.
+func faultUnparsedReport(name string) supervised.Report {
+	return supervised.Report{ExitCode: 1, Stderr: []byte("What is \"" + name + "\"?\nUsage: ... netem [ limit PACKETS ]")}
+}
+
+// unparsedFault reports whether argv has the keyword that tc cannot parse.
+func (n *fakeNetem) unparsedFault(argv []string) bool {
+	return n.faultUnparsed != "" && slices.Contains(argv, n.faultUnparsed)
+}
+
+// netemQdisc is fakeNetemQdisc in this kernel; the caller holds n.mu.
+func (n *fakeNetem) netemQdisc(handle string, args []string) *fakeQdisc {
+	qdisc := fakeNetemQdisc(handle, args)
+	if n.rateIgnored {
+		qdisc.rate = 0
+	}
+	for name := range n.faultIgnored {
+		if name == "gap" {
+			qdisc.gap = 0
+		}
+		delete(qdisc.faults, name)
+	}
+	for name := range n.faultChanged {
+		if fault, kept := qdisc.faults[name]; kept {
+			fault.Correlation = 0
+			qdisc.faults[name] = fault
+		}
+	}
+	return qdisc
+}
+
+// rateUnparsed is tc's answer to a netem rate that it cannot parse.
+var rateUnparsed = supervised.Report{ExitCode: 1, Stderr: []byte("What is \"rate\"?\nUsage: ... netem [ limit PACKETS ]")}
+
 func newFakeNetem() *fakeNetem {
-	n := &fakeNetem{targets: map[string]*fakeNetemTarget{}, kernel: true, netAdmin: true, imageID: "sha256:helper",
+	n := &fakeNetem{targets: map[string]*fakeNetemTarget{}, kernel: true, netAdmin: true, imageID: "sha256:helper", driver: "bridge",
 		tags: map[string]string{"netem-helper:test": "sha256:helper"}}
 	n.targets["osd-0"] = &fakeNetemTarget{running: true, mode: "tc-public", sandbox: 1, namespace: n.namespace("10.88.0.5", "02:42:0a:58:00:05")}
 	return n
@@ -158,7 +326,8 @@ func (n *fakeNetem) target(_ context.Context, id, network string) (netemTarget, 
 	state := netemTarget{running: target.running, paused: target.paused, networkMode: target.mode,
 		sandboxID: strconv.Itoa(target.sandbox)}
 	if network == "tc-public" && len(target.namespace.links) > 1 {
-		state.address, state.mac = target.namespace.links[1].address, target.namespace.links[1].mac
+		state.address, state.address6, state.mac = target.namespace.links[1].address, target.address6, target.namespace.links[1].mac
+		state.driver = n.driver
 	}
 	return state, nil
 }
@@ -220,11 +389,66 @@ func (n *fakeNetem) cancel(context.Context, testcontainers.Container, string, st
 
 func qdiscJSON(link *fakeLink) []map[string]any {
 	if link.root == nil {
-		return []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		qdiscs := []map[string]any{{"kind": "noqueue", "handle": "0:", "root": true, "options": map[string]any{}}}
+		for _, extra := range link.extra {
+			qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": extra.options()})
+		}
+		return qdiscs
 	}
-	return []map[string]any{{"kind": link.root.kind, "handle": link.root.handle, "root": true,
-		"options": map[string]any{"delay": map[string]any{"delay": link.root.delay.Seconds(), "jitter": link.root.jitter.Seconds()}},
-		"packets": link.root.packets, "bytes": link.root.packets * 100, "drops": 0}}
+	counted := func(q *fakeQdisc, entry map[string]any) map[string]any {
+		entry["options"], entry["packets"], entry["bytes"], entry["drops"] = fakeNetemOptions(q), q.packets, q.packets*100, 0
+		entry["overlimits"], entry["requeues"], entry["backlog"], entry["qlen"] = q.overlimits, q.requeues, q.backlog, q.qlen
+		return entry
+	}
+	qdiscs := []map[string]any{counted(link.root, map[string]any{"kind": link.root.kind, "handle": link.root.handle, "root": true})}
+	if link.child != nil {
+		qdiscs = append(qdiscs, counted(link.child, map[string]any{"kind": link.child.kind, "handle": link.child.handle, "parent": link.parent}))
+	}
+	for _, extra := range link.extra {
+		qdiscs = append(qdiscs, map[string]any{"kind": extra.kind, "handle": extra.handle, "parent": extra.parent, "options": extra.options()})
+	}
+	return qdiscs
+}
+
+// fakeU32Keys encodes tc's u32 match arguments as tc prints them: one
+// 32-bit word per key, in hex without leading zeros.
+func fakeU32Keys(args []string) []map[string]any {
+	key := func(off int, value, mask uint32) map[string]any {
+		return map[string]any{"value": strconv.FormatUint(uint64(value), 16), "mask": strconv.FormatUint(uint64(mask), 16), "offmask": "", "off": off}
+	}
+	var keys []map[string]any
+	for i := 0; i < len(args); i++ {
+		if args[i] != "match" {
+			continue
+		}
+		family, field := args[i+1], args[i+2]
+		switch field {
+		case "dst":
+			prefix := netip.MustParsePrefix(args[i+3])
+			address := prefix.Addr().AsSlice()
+			if family == "ip" {
+				keys = append(keys, key(16, binary.BigEndian.Uint32(address), 0xffffffff))
+			} else {
+				for word := range 4 {
+					keys = append(keys, key(24+4*word, binary.BigEndian.Uint32(address[4*word:]), 0xffffffff))
+				}
+			}
+		case "protocol":
+			if family == "ip" {
+				keys = append(keys, key(8, 6<<16, 0xff<<16))
+			} else {
+				keys = append(keys, key(4, 6<<8, 0xff<<8))
+			}
+		case "dport":
+			port, _ := strconv.Atoi(args[i+3])
+			if family == "ip" {
+				keys = append(keys, key(20, uint32(port), 0xffff))
+			} else {
+				keys = append(keys, key(40, uint32(port), 0xffff))
+			}
+		}
+	}
+	return keys
 }
 
 func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label string, argv ...string) (supervised.Report, error) {
@@ -254,6 +478,88 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 		n.mu.Unlock()
 		return supervised.Report{ExitCode: 1, Stderr: []byte(`Cannot find device "` + argv[4] + `"`)}, nil
 	}
+	if argv[1] == "filter" || argv[5] == "parent" || len(argv) > 8 && argv[8] == "prio" {
+		defer n.mu.Unlock()
+		if n.onSelective != nil {
+			if report, refused := n.onSelective(argv); refused {
+				return report, nil
+			}
+		}
+		switch {
+		case argv[1] == "filter":
+			// tc filter add dev IF parent H protocol P pref 10 handle 800::1 u32 ... flowid F
+			if link.root == nil || link.root.kind != "prio" || link.root.handle != argv[6] {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Parent Qdisc doesn't exists.")}, nil
+			}
+			protocol := argv[8]
+			pref, _ := strconv.Atoi(argv[10])
+			if link.tables == nil {
+				link.tables = map[int]fakeU32Table{}
+			}
+			tables := maps.Clone(link.tables)
+			table, exists := tables[pref]
+			switch {
+			case !exists:
+				// A new preference: the kernel creates its u32 table with
+				// the next free number, and drops both again if the filter
+				// that created them fails.
+				number := 0x800 + len(tables)
+				if number > 0x800 {
+					number += n.tableGap
+				}
+				table = fakeU32Table{protocol: protocol, id: fmt.Sprintf("%x:", number)}
+				tables[pref] = table
+			case table.protocol != protocol:
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Filter with specified priority/protocol not found.")}, nil
+			}
+			// The handle names its table; the kernel puts the key node in that
+			// table, whichever preference it belongs to.
+			handle := argv[12]
+			id, _, _ := strings.Cut(handle, "::")
+			owner, found := 0, false
+			for p, t := range tables {
+				if t.id == id+":" {
+					owner, found = p, true
+				}
+			}
+			if !found {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("RTNETLINK answers: Invalid argument")}, nil
+			}
+			for _, filter := range link.filters {
+				if options, ok := filter["options"].(map[string]any); ok && options["fh"] == handle {
+					return supervised.Report{ExitCode: 2, Stderr: []byte("RTNETLINK answers: File exists")}, nil
+				}
+			}
+			if !exists {
+				link.filters = append(link.filters,
+					map[string]any{"parent": argv[6], "protocol": protocol, "pref": pref, "kind": "u32", "chain": 0},
+					map[string]any{"parent": argv[6], "protocol": protocol, "pref": pref, "kind": "u32", "chain": 0, "options": map[string]any{"fh": table.id, "ht_divisor": 1}})
+			}
+			link.tables = tables
+			leaf := map[string]any{"parent": argv[6], "protocol": tables[owner].protocol, "pref": owner, "kind": "u32", "chain": 0,
+				"options": map[string]any{"fh": handle, "order": 1, "key_ht": id, "bkt": "0", "flowid": argv[len(argv)-1], "matches": fakeU32Keys(argv[13:])}}
+			link.filters = append(link.filters, leaf)
+		case argv[5] == "parent":
+			// tc qdisc add dev IF parent H:3 handle C netem delay X [J]
+			if link.root == nil || link.root.kind != "prio" || argv[6] != link.root.handle+"3" {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Failed to find specified qdisc.")}, nil
+			}
+			if n.noRateParse && slices.Contains(argv, "rate") {
+				return rateUnparsed, nil
+			}
+			if n.unparsedFault(argv) {
+				return faultUnparsedReport(n.faultUnparsed), nil
+			}
+			link.child, link.parent = n.netemQdisc(argv[8], argv[10:]), argv[6]
+		default:
+			// tc qdisc add dev IF root handle H prio bands 3 priomap ...
+			if link.root != nil {
+				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Exclusivity flag on, cannot modify.")}, nil
+			}
+			link.root = &fakeQdisc{kind: "prio", handle: argv[7]}
+		}
+		return supervised.Report{}, nil
+	}
 	switch argv[2] {
 	case "add":
 		apply := func() supervised.Report {
@@ -266,13 +572,12 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Specified qdisc kind is unknown.")}
 			case link.root != nil:
 				return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Exclusivity flag on, cannot modify.")}
+			case n.noRateParse && slices.Contains(argv, "rate"):
+				return rateUnparsed
+			case n.unparsedFault(argv):
+				return faultUnparsedReport(n.faultUnparsed)
 			}
-			root := &fakeQdisc{kind: "netem", handle: argv[7]}
-			root.delay, _ = time.ParseDuration(argv[10])
-			if len(argv) > 11 {
-				root.jitter, _ = time.ParseDuration(argv[11])
-			}
-			link.root = root
+			link.root = n.netemQdisc(argv[7], argv[9:])
 			return supervised.Report{}
 		}
 		n.mu.Unlock()
@@ -288,7 +593,10 @@ func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label
 		if link.root == nil || link.root.handle != argv[7] {
 			return supervised.Report{ExitCode: 2, Stderr: []byte("Error: Invalid handle.")}, nil
 		}
-		link.root = nil
+		// Removing a root removes its children and filters with it.
+		major, _, _ := strings.Cut(link.root.handle, ":")
+		link.extra = slices.DeleteFunc(link.extra, func(extra fakeExtraQdisc) bool { return strings.HasPrefix(extra.parent, major+":") })
+		link.root, link.child, link.parent, link.filters, link.tables = nil, nil, "", nil, nil
 		return supervised.Report{}, nil
 	}
 	n.mu.Unlock()
@@ -325,6 +633,61 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 				shown, _ := json.Marshal([]map[string]any{{"kind": "netem", "handle": "c7e1:", "root": true}})
 				out["shown"] = string(shown)
 				out["delete"] = []any{0, ""}
+				if slices.Contains(args[1:], "rate") {
+					// The script's netem rate on the loopback.
+					if n.noRateParse {
+						out["rate"] = []any{int(rateUnparsed.ExitCode), string(rateUnparsed.Stderr)}
+					} else {
+						out["rate"] = []any{0, ""}
+						rate := n.netemQdisc("c7e3:", []string{"rate", "1000000bit", "limit", "100"})
+						shown, _ := json.Marshal([]map[string]any{{"kind": "netem", "handle": "c7e3:", "root": true, "options": fakeNetemOptions(rate)}})
+						out["rate_shown"] = string(shown)
+						out["rate_delete"] = []any{0, ""}
+					}
+				}
+				if faults := slices.DeleteFunc(slices.Clone(args[1:]), func(arg string) bool { return arg == "rate" || arg == "peers" }); len(faults) > 0 {
+					// The script's netem packet faults on the loopback, each
+					// with a correlation, a delay for a reorder, and a delay
+					// correlation for a duplicate's.
+					argv := []string{}
+					switch {
+					case slices.Contains(faults, "reorder"):
+						argv = append(argv, "delay", "1000us", "0us", "0%")
+					case slices.Contains(faults, "duplicate"):
+						argv = append(argv, "delay", "0us", "0us", "0%")
+					}
+					for _, name := range faults {
+						fault := preflightFault[name]
+						argv = append(argv, name, fmt.Sprintf("%v%%", fault.Percent), fmt.Sprintf("%v%%", fault.Correlation))
+					}
+					if n.unparsedFault(argv) {
+						report := faultUnparsedReport(n.faultUnparsed)
+						out["faults"] = []any{report.ExitCode, string(report.Stderr)}
+					} else {
+						out["faults"] = []any{0, ""}
+						qdisc := n.netemQdisc("c7e4:", argv)
+						shown, _ := json.Marshal([]map[string]any{{"kind": "netem", "handle": "c7e4:", "root": true, "options": fakeNetemOptions(qdisc)}})
+						out["faults_shown"] = string(shown)
+						out["faults_delete"] = []any{0, ""}
+					}
+				}
+				if slices.Contains(args[1:], "peers") {
+					// The script's prio root and u32 filter on the loopback.
+					out["prio"] = []any{0, ""}
+					if n.noPrio {
+						out["prio"] = []any{2, "Error: Specified qdisc kind is unknown."}
+						break
+					}
+					out["u32"] = []any{0, ""}
+					if n.noU32 {
+						out["u32"] = []any{2, "Error: TC classifier not found.\nWe have an error talking to the kernel"}
+					} else {
+						filters, _ := json.Marshal([]map[string]any{{"parent": "c7e2:", "protocol": "ip", "pref": 10, "kind": "u32",
+							"options": map[string]any{"fh": "800::1", "flowid": "c7e2:3"}}})
+						out["u32_shown"] = string(filters)
+					}
+					out["prio_delete"] = []any{0, ""}
+				}
 			}
 		}
 		if n.editPreflight != nil {
@@ -347,7 +710,11 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 			if matches[0].root != nil {
 				matches[0].root.packets += 10
 			}
+			if matches[0].child != nil {
+				matches[0].child.packets += 3
+			}
 			out["qdiscs"] = qdiscJSON(matches[0])
+			out["filters"] = append([]map[string]any{}, matches[0].filters...)
 		}
 	}
 	stdout, err := json.Marshal(out)
@@ -467,8 +834,8 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 				t.Fatal("the refusal left a change or a helper")
 			}
 			// The endpoint is free again.
-			if len(cluster.delays) != 0 {
-				t.Fatalf("reservations left: %v", cluster.delays)
+			if len(cluster.faultsOf(faultNetworkDelay)) != 0 {
+				t.Fatalf("reservations left: %v", cluster.faultsOf(faultNetworkDelay))
 			}
 		})
 	}
@@ -726,7 +1093,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.delays) != 0 {
+	if netem.root("osd-0") != nil || netem.liveHelpers() != 0 || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
 		t.Fatal("Terminate left a delay")
 	}
 
@@ -956,8 +1323,8 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 					t.Fatalf("ran %q on the target", command)
 				}
 			}
-			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.delays) != 0 {
-				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.delays)
+			if netem.liveHelpers() != 0 || netem.root("osd-0") != nil || len(cluster.faultsOf(faultNetworkDelay)) != 0 {
+				t.Fatalf("%d helpers, root %+v, reservations %v", netem.liveHelpers(), netem.root("osd-0"), cluster.faultsOf(faultNetworkDelay))
 			}
 		})
 	}

@@ -1,0 +1,9 @@
+{
+ "rewrites": [
+  {
+   "reason": "#31: a failed or timed-out `ceph fsid` read keeps its cause and is no longer reported as an FSID change; only a returned, differing FSID is. The branch is taken on the same inputs as before (a read error or a differing identity), and the retained run passed without taking it.",
+   "old": "\t\tif err != nil || strings.TrimSpace(string(data)) != p.fsids[i] {\n\t\t\treturn errors.Join(err, errors.New(\"independent native original cluster FSID changed\"))\n\t\t}\n",
+   "new": "\t\tif err := cephFSOriginalFSIDCheck([]string{\"source\", \"destination\"}[i], p.fsids[i], data, err); err != nil {\n\t\t\treturn err\n\t\t}\n"
+  }
+ ]
+}

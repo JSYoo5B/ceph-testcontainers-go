@@ -9,24 +9,63 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
 | Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
-| Docker checks | `docker.yml` | push to `main`, pull request, manual | The `environment` category: Docker bridge behaviour without Ceph |
-| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual | The `short` category on Tentacle 20.2.4 |
-| Ceph topology | `ceph-topology.yml` | push to `main`, pull request, manual | The `topology` category on Tentacle 20.2.4 |
-| Ceph multicluster | `ceph-multicluster.yml` | push to `main`, pull request, manual | The `multicluster` category on Tentacle 20.2.4 |
-| Ceph recovery | `ceph-recovery.yml` | push to `main`, pull request, manual | The `recovery` category on Tentacle 20.2.4 |
-| Ceph squid | `ceph-squid.yml` | push to `main`, pull request, manual | The `short` category on Squid 19.2.5 |
-| Ceph squid extended | `ceph-squid-extended.yml` | weekly (Tuesday 04:41 UTC), manual | The `topology`, `multicluster` and `recovery` categories on Squid 19.2.5 |
+| Docker checks | `docker.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `environment` category: Docker bridge behaviour without Ceph |
+| Ceph short | `ceph-short.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `short` category on Tentacle 20.2.4 |
+| Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `topology` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph multicluster | `ceph-multicluster.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `multicluster` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `recovery` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
+| Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases) (Tentacle 20.2.4 and Squid 19.2.5), on `main`; the representative batches repeated on a pinned commit and pinned images |
+| Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one (Squid 19.2.5) |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, with an optional RGW image override |
+| CI command | `ci-command.yml` | a pull request comment `/ci run ...` (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) | The named runtime batches, of any category or optional, on the pull request's head commit and the chosen releases |
 
 Every runtime workflow calls the reusable template `tagged-runtime.yml`
 (`workflow_call` only; it has no triggers of its own). The workflows are
 independent: none waits for another, and each can be re-run on its own. A
 failed check name therefore tells you the kind of failure before you open it.
 
+### Pull request scope
+
+A pull request runs, on Tentacle 20.2.4 role images and in each batch's
+default [network mode](#network-modes):
+- Code checks, for every change;
+- Docker checks and every `short` batch, which includes the netem helper's
+  `network_delay`, `network_bandwidth`, `network_packet_faults`,
+  `osd_peer_path` and `cephfs_mds_path_fault` batches. With
+  the `ci:selected-batches` label, Ceph short runs only the batches that the
+  declaration selection selects (see
+  [Opting in to declaration selection](#opting-in-to-declaration-selection));
+- of the `topology`, `multicluster` and `recovery` categories, only the
+  batches whose own test files (the files that declare the batch's tests) the
+  pull request changes. A change to a shared helper or a public package
+  selects none of them; [Ceph periodic](#periodic-runs) runs them on `main`.
+
+Two things run every batch of those categories on the pull request instead:
+the `ci:full` label (adding it starts the run), and a release phase. A change
+that touches nothing but `docs/`, the top-level Markdown files (`README.md`,
+`CHANGELOG.md`), `LICENSE` or the go-ceph probe under
+`internal/integration/goceph/` runs only Code checks: no runtime batch reads
+those paths, and Code checks still runs the API inventory test against
+`docs/`. A Markdown file anywhere else, for example under a package's
+`testdata/`, can be a test's embedded or run-time input, so changing it runs
+the batches as usual. Each `Plan` job's `tag-plan.json` artifact lists the changed
+files and the selected batches.
+
+Pushes to `main` run Code checks, Docker checks and Ceph short. Every other
+batch, and every batch on Squid 19.2.5, runs in Ceph periodic within 3 hours
+of a new commit on `main`.
+
+To run any other batch on a pull request, such as one batch of another
+category or a batch on Squid, comment `/ci run <batch>` (see
+[Running chosen batches from a comment](#running-chosen-batches-from-a-comment)).
+The command adds a run; it never changes the checks above.
+
 Pushes to branches other than `main` trigger nothing. Pull requests are
 checked through the `pull_request` event (`opened`, `synchronize`,
 `reopened`), so a commit on a PR branch is checked once, not once as a push
-and again as a pull request.
+and again as a pull request. The label events `labeled` (Ceph short and the
+scoped categories) and `unlabeled` (Ceph short) start runs only for the
+`ci:full` and `ci:selected-batches` labels.
 
 Both workflow files set `GOPROXY=https://proxy.golang.org|direct`. With `|`,
 the go command fetches a module from its origin after any failed proxy
@@ -42,20 +81,35 @@ it keeps whatever the first job to finish under a key had, which once was a
 `Plan` job with almost no modules, so every later compile downloaded its
 modules again.
 
+The runtime jobs also share one Go build cache, keyed by the exact Go version
+that `setup-go` installed and `go.sum`. When `Plan` finds none, it compiles
+one runtime batch of each package with `tag_scenarios.py buildcache` and
+saves the cache; each runtime job restores it before its compile step. Every
+batch of a package builds the same dependencies, so the batch compile then
+builds only the package's own tests: on four CPUs, `./internal/integration`
+compiled in 18 seconds with an empty cache and in 3.4 seconds with the cache
+of another batch (about 55 MB compressed). The cache only speeds the build
+up. Go reuses an entry only when its content hash matches, a stale entry is
+merely unused, a failed `buildcache` leaves the cache unsaved without failing
+`Plan`, and each job still compiles, records and verifies its own binary.
+
 ### Check names
 
 Displayed names are layered as `<workflow> / <caller job> / <batch>`. For
 example, `Ceph multicluster / Scenarios / mirror_initial_daemons` is the
 `mirror_initial_daemons` batch of the multicluster category, and
-`Ceph squid extended / Topology / empty_bootstrap` is a Squid topology batch.
+`Ceph periodic / Squid topology / empty_bootstrap` is a Squid topology batch.
 Each runtime workflow also has a `Plan` job.
 
 ## Concurrency and cancellation
 
 | Workflows | Concurrency group | Effect |
 | --- | --- | --- |
-| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph squid | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run of the same workflow. Manual runs are never cancelled and cancel nothing. |
-| Ceph squid extended | workflow name and ref | A manual run on `main` cancels a running scheduled run on `main`, and the other way round. |
+| Code checks, Docker checks, Ceph short/topology/multicluster/recovery, Ceph release matrix | workflow name, event, then the PR number (pull requests), the ref (pushes) or the run ID (manual runs) | A new commit on a PR cancels that PR's previous run of the same workflow. A new push to `main` cancels the previous `main` push run of the same workflow. Manual runs are never cancelled and cancel nothing. |
+| Ceph periodic | workflow name and ref | A new run waits for the run in progress on the same ref and never cancels it, so every started run finishes. GitHub keeps one waiting run per group. |
+| Ceph topology/multicluster/recovery | as above, plus the run ID for a label other than `ci:full` | Adding an unrelated label starts a run that skips its jobs; its own group keeps it from cancelling the pull request's run. |
+| Ceph short | as above, plus the run ID when a label other than `ci:selected-batches` is added or removed | Adding or removing `ci:selected-batches` replaces the run in progress. Any other label starts a run that skips its job and cancels nothing. |
+| CI command | per caller job: the pull request number, head commit, selected profiles and release; no group for the run itself | A repeated command for the same head commit, batches and release waits for the run in progress and never cancels it. Each command still has its own commit status. GitHub keeps one waiting caller per group, so a third identical command replaces the waiting one, which ends as cancelled. A different selection, release or head commit runs independently. |
 | Native regressions | none | Runs are independent. |
 
 Practical consequences:
@@ -130,10 +184,11 @@ tests tell you if the edit breaks those rules.
 `.github/scripts/tag_scenarios.py` builds the CI matrix from the test source.
 Nothing in the workflows names a test.
 
-1. **Catalog.** `tools/tagcatalog` parses every `*_test.go` file in the
-   module (skipping hidden directories, `artifacts` and `vendor`) without
-   importing or running it. For each file it records the `//go:build`
-   expression, its tags, the `Test...` functions and the `//ci:` metadata.
+1. **Catalog.** `internal/tools/tagcatalog` parses every `*_test.go` file in the
+   module (skipping hidden directories, `artifacts`, `vendor` and
+   `testdata`) without importing or running it. For each file it records the
+   `//go:build` expression, its tags, the `Test...` functions and the `//ci:`
+   metadata.
 2. **Discovery.** Every file that declares tests and has a constraint must
    belong to exactly one category (`ci_<category>`) and one batch
    (`ci_batch_<name>`), compile under `all`, and carry one valid `//ci:` line.
@@ -165,13 +220,333 @@ from the environment cannot change what runs. The runner passes only build
 tags and the batch timeout to `go test`: no `-run`, no `-short`, no name
 filters. To move a test between batches, change its build constraint.
 
-Multi-cluster CephFS process-quiescence and process-recovery scenarios, and
-RBD receiver readiness, are split into one leaf batch per network mode and
-case. Those batches declare `checker=` and `case=` in `//ci:`, and after the
-run a dedicated checker (`check_scenario_quiescence.py`,
-`check_scenario_recovery.py`, `check_scenario_receivers.py`) verifies the
-leaf-specific evidence in the log. Locally, the `all` build still runs the
-original parent test with every leaf.
+Multi-cluster CephFS process-quiescence and process-recovery scenarios are
+split into one batch per receipt kind (`peer`, `directory`), and RBD receiver
+readiness has a batch of its own. Those batches declare `checker=`, and the
+kind as `case=`, in `//ci:`; their test declares its network modes like any
+other (see [Network modes](#network-modes)). A checker validates one mode's
+run, so the runner runs such a batch in the matrix entry's mode, or in its
+default mode when no entry selects one, and after the run a dedicated checker
+(`check_scenario_quiescence.py`, `check_scenario_recovery.py`,
+`check_scenario_receivers.py`) verifies that mode's leaf-specific evidence in
+the log. The planner rejects these batches unless together they cover every
+mode and kind of the checker. Locally, the `all` build still runs the original
+parent test with every leaf.
+
+### Advisory declaration selection
+
+File-level selection cannot narrow `internal/integration`: its
+`*_helpers_test.go` files compile into every batch. `internal/tools/batchselect`
+selects at the level of declarations instead. It is advisory. By default no
+workflow narrows by it. A pull request can opt in for Ceph short (see
+[Opting in to declaration selection](#opting-in-to-declaration-selection)).
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --category topology \
+  --select-declarations origin/main --output artifacts/tag-plan.json
+```
+
+The plan then has a `declaration_selection` object. `selected` and
+`excluded` map each profile ID to a reason, such as
+`func TestX reaches func helperY (file)` or
+`none of 25 roots reaches a changed declaration`. `fallback` lists why every
+batch was selected, and `changed_declarations` lists what the diff touched.
+The matrix and the `include` list are unchanged.
+
+With `--apply-declarations`, the plan keeps only the selected profiles in
+`include` and in the matrix, and sets `selected_scope` to `declarations`.
+`--summary FILE` appends the selected and excluded batches with their reasons
+as a Markdown table, for example to `$GITHUB_STEP_SUMMARY`. To see locally
+what a pull request would run:
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --category short \
+  --select-declarations origin/main --apply-declarations \
+  --summary /dev/stdout --output artifacts/tag-plan.json
+```
+
+The tool works as follows:
+1. It diffs the checkout against its merge base with the given base, with
+   `git diff -U0 --no-renames`.
+2. It type-checks the `all` build of the package with `go/types`, for
+   `linux/amd64` and with `CGO_ENABLED=0`, from the export data of
+   `go list -export`. A batch whose files are not all in that build gets its
+   own type check with its own tags.
+3. It builds a graph over the package's top-level declarations: functions,
+   methods, and each type, var and const spec. An identifier that `go/types`
+   resolves to another declaration of the package is an edge, so
+   `cluster.Ceph(...)` reaches `(*ceph.Container).Ceph` and never a fake's
+   method of the same name. Two further kinds of edge are added:
+   - a call through an interface method reaches that method of every type in
+     the package that implements the interface (class hierarchy analysis);
+   - a type reaches all of its methods, because code in other packages, such
+     as `fmt` or testcontainers, can call any of them.
+4. It maps each hunk to the declarations whose lines, doc comment included,
+   it touches. A deleted line is mapped through the base version to the
+   declaration of the same name in the head.
+5. It selects a batch when one of its roots reaches a changed declaration.
+   The roots are the batch's `Test`, `Fuzz` and `Example` functions, and
+   every `init` function and package-level var initializer that the batch
+   compiles.
+
+An added Go file of the package counts as a change to each of its
+declarations. Its build constraint and package clause only decide which
+batches compile it. A new test in it therefore selects its own batch, a new
+helper selects the batches that call it, and a new method selects the
+batches that reach its type, because the method can change which interfaces
+the type satisfies.
+
+An import counts by the package it links. When a modified file adds or
+removes an import, or an added file imports a package, the change is fine
+grained as long as another file of the same build imports that package too:
+the package is in the test binary either way, and only the declarations
+that use it change. Otherwise the package's `init` functions start or stop
+running in the binary, so every batch is selected.
+
+Every batch is selected, with the reason, when the change touches any of:
+- a line outside every declaration: the file header (build constraint,
+  `//ci:` line, package clause) of a modified file, a directive comment
+  (`//go:`), or any other code. Blank lines, plain comments between
+  declarations and import lines of packages that the build links anyway are
+  ignored;
+- an import of a package that no other file of the build imports;
+- a deleted or untracked file in the package;
+- a non-Go file in the package directory or below it, such as an embedded
+  file or the go-ceph probe in `internal/integration/goceph/`;
+- `.github/`, whose scripts, workflows and actions are read at run time;
+- `go.mod` or `go.sum`;
+- any other path outside `internal/integration`. The public packages are not
+  analysed yet;
+- a removed `init` function or package-level var initializer;
+- a diff, base file or package that cannot be parsed or type-checked.
+
+Every file under the analysed package's directory is classified first, so
+a Markdown file that a test embeds or reads there selects every batch. Other
+Markdown files, `docs/` and `LICENSE` are ignored. A profile of another
+package, such as the `environment` batch, is always selected. If the tool
+fails, every profile is recorded as selected, with the error.
+
+#### Validating the selection against CI history
+
+`replay_declaration_selection.py` replays the selection over merged pull
+requests. For each of the last pull requests on `origin/main`, merged or
+squashed, it takes the first parent as the base and the pull request head
+(the second parent, or the squash commit) as the head. It exports the head's
+tree, plans it with the head's own planner, and prints a table of selected
+batches per pull request: all runtime profiles, and the `short` ones on
+their own, since Ceph short runs every batch on every pull request.
+
+```sh
+python3 .github/scripts/replay_declaration_selection.py --merges 15
+```
+
+With `--github`, it also reads each pull request's CI history through `gh`:
+every attempt of every runtime run on the pull request's branch while it was
+open, and the push runs of its merge commit. It then checks each failed
+batch job against the selection of the diff that the run tested. A pull
+request run is checked against the diff up to the head it tested, and a push
+run against the pull request's diff. Cancelled jobs are ignored. A failed
+job that the selection excludes is reported as:
+- `explained`, when `batch_selection_explained.json` records its job ID;
+- otherwise an unresolved miss, and the script exits with status 1.
+
+A later attempt of the same run that passed the job is shown next to the
+miss as `(passed on rerun)`, but it does not clear the miss. A regression
+that the diff introduced and that fails only sometimes passes a retry of the
+same commit too, so the retry proves only that the failure is intermittent.
+
+Each entry of `batch_selection_explained.json` records the pull request,
+the batch (`category/batch`, which must match the failed job), a short
+quote of the failure's signature, the evidence that the diff did not cause
+it, and a reference. The evidence is one of:
+- an infrastructure failure before the tests ran, such as an action that
+  could not be downloaded or an artifact upload error;
+- a known intermittent failure whose code path the diff does not touch,
+  with the issue or pull request that investigated or fixed it.
+
+Add an entry only after reading the job's log. A failure that cannot be
+explained this way stays a miss.
+
+```sh
+python3 .github/scripts/replay_declaration_selection.py --merges 60 \
+  --github JSYoo5B/ceph-testcontainers-go --cache gh-cache.json \
+  --output validation.json
+```
+
+`--cache` keeps every API response in a JSON file, so a second run reads
+GitHub only for new pull requests. The replay builds every head's plan and
+type-checks the package once per head, which takes a few minutes for 60
+pull requests. To run it on a host without `gh`, fill the cache on a machine
+that has it, copy the cache and a clone with the pull request heads
+(`git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'`), and pass
+`--offline` and the same `--ref`.
+
+In a replay of 60 pull requests, the selection
+kept 1170 of 2288 Ceph short jobs (51%); 31 pull requests ran fewer than
+every batch. Of 31 failed batch jobs, 5 were selected and the other 26 are
+explained, so the script exits with status 0:
+
+| Failed jobs | Explanation |
+| --- | --- |
+| 19 | infrastructure: `actions/setup-go` could not be downloaded, no step ran |
+| 1 | infrastructure: `ENOTFOUND` while finalizing an artifact during image preparation, no test ran |
+| 1 | infrastructure: the Docker daemon failed to create a network before the scenario started |
+| 1 | CephFS mirror release hang in the MGR `mirroring` module, subsequently fixed |
+| 1 | `radosgw-admin` hang, cause not established; the command is now bounded |
+| 1 | `TestImmutableObjectCache` promotion race, subsequently fixed |
+| 1 (`short/messenger_policy`) | the `ceph` CLI lost the MON client's `handle_auth_bad_method` line that the check required; the check was corrected |
+| 1 (`short/rbd_fixtures_mirror_scope`) | infrastructure: a host-wide I/O stall of the runner held both OSDs' BlueStore commits for up to 84 s |
+
+Changes outside `internal/integration`, such as the public packages and
+`.github/`, still select every batch.
+
+#### Opting in to declaration selection
+
+Ceph short is the only workflow that can narrow by declarations, and only on
+request. It is not the default gate. Add the `ci:selected-batches` label to a
+pull request to opt in. Without the label, Ceph short runs every batch.
+
+- With the label, the caller passes the pull request's base commit as the
+  `select_declarations` input of `tagged-runtime.yml`. `Plan` then fetches
+  the full history and runs `tag_scenarios.py plan --select-declarations
+  BASE --apply-declarations --summary "$GITHUB_STEP_SUMMARY"`, so the
+  matrix holds only the selected batches. The job summary of `Plan` lists
+  every batch with `yes` or `no` and its reason, and says that the run is
+  narrowed by opt-in.
+- Adding the label starts a selected run that replaces the run in progress.
+  Removing it starts a full run in the same way. A later commit runs selected
+  as long as the label stays.
+- Pushes to `main`, manual runs and pull requests without the label run every
+  batch. No other workflow passes `select_declarations`. Docker checks, the
+  `topology`, `multicluster` and `recovery` pull request scope, Ceph periodic
+  and the release matrix are unchanged.
+- The `main` push after a merge still runs every Ceph short batch, so a
+  batch that the selection missed fails there. Record such a miss with its
+  plan, failed job and selection evidence in a new tracking issue.
+- Use the label for changes inside `internal/integration`. A change to
+  `.github/`, `go.mod`, the public packages or any other fallback path
+  selects every batch anyway.
+
+Measured on 2026-10-18 with two measurement pull requests, each adding one
+comment line. The selected run and the full run are of the same commit: the
+label was removed after the selected run, which started a full Ceph short
+run. Execution totals include Code checks (6 jobs), Docker checks (2 jobs) and
+the `Plan` jobs of the three scoped categories (1 job each, no batch
+selected). Job minutes are the sum of each job's start-to-completion time.
+Wall time runs from the run's creation to its last job's completion. For an
+execution it is the longest of its workflows.
+
+| Change | Ceph short | Ceph short jobs | Ceph short job minutes | Ceph short wall time | Execution jobs | Execution job minutes | Execution wall time |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| one batch (`address_family`) | selected | 2 | 2.7 | 4.9 min | 13 | 20.5 | 11.2 min |
+| one batch (`address_family`) | full | 49 | 184.7 | 24.5 min | 60 | 202.5 | 24.5 min |
+| shared helper (`verifyRBDBytes`, 5 batches) | selected | 6 | 20.9 | 10.1 min | 17 | 35.3 | 10.1 min |
+| shared helper (`verifyRBDBytes`, 5 batches) | full | 49 | 185.7 | 17.7 min | 60 | 200.1 | 17.7 min |
+
+Earlier measurements without selection were 50 to 51 jobs, 209 to
+227 job minutes and 17 to 27 minutes of wall time, the same for a one-batch
+and a public-API change. In these measurements the selection cut an
+execution to 13 jobs and 21 job minutes for a one-batch change (about 90%
+fewer job minutes), and to 17 jobs and 35 job minutes for a shared helper
+that five batches reach (about 82% fewer). The wall time became that of Code
+checks (7 to 11 minutes) or of the longest selected batch. The `Plan` job
+took 36 seconds with the analysis included. The two full runs started
+together, and from their eighth minute a third pull request's full Ceph
+short run competed with them for runners. This contention may explain why
+the one-batch full run took longer than the shared-helper full run. Each figure is a single
+run.
+
+### Running chosen batches from a comment
+
+A collaborator can run chosen runtime batches on a pull request by
+commenting a command line:
+
+```text
+/ci run <batch|profile>... [on <release|codename|all>...]
+```
+
+For example, `/ci run rbd_mirror_bandwidth network_delay on squid` runs the
+two batches on Squid 19.2.5 role images. The command adds a run beside the
+pull request's usual checks, which stay as they are, and so do pushes to
+`main` and the `ci:full` and `ci:selected-batches` labels.
+
+- **Names.** Each name is a batch (`network_delay`), a category and batch
+  (`short/network_delay`), a profile name
+  (`short/network_delay/internal-integration`) or a profile ID
+  (`short-network_delay-<hash>`), separated by blanks or commas. Any runtime
+  category and the optional batches are allowed. Code batches run in Code
+  checks and are refused here. A name given twice runs once, and the reply
+  says so.
+- **Releases.** After `on`, give a release (`20.2.4`), its codename
+  (`tentacle`, `squid`) or `all` for every
+  [supported release](#supported-releases). Without `on`, the batches run on
+  the current release, Tentacle 20.2.4. Each batch runs in its default
+  [network mode](#network-modes).
+- **Validation.** Every name is checked against the planner of the head
+  commit (`tag_scenarios.py vocabulary`). One unknown name refuses the whole
+  command and the reply lists every unknown name, so a typo never runs a
+  partial selection. A head that predates this command has no vocabulary,
+  so rebase it onto `main` first.
+- **Format.** The command must start its line: text before `/ci` on the
+  same line, a quote (`> /ci`) or a fenced code block makes the line an
+  ordinary comment. Other lines of the comment may hold any text. A comment
+  may hold only one command line. Editing a comment does not run its command.
+- **Who and which pull requests.** Only comments whose author association
+  is `OWNER`, `MEMBER` or `COLLABORATOR` run. Any other author gets a refusal
+  reply and nothing runs. Pull requests from forks are refused as well, and
+  so are closed ones. Comments on issues and by bots are ignored.
+
+The command records the pull request's head commit when the workflow reads
+the pull request, a few seconds after the comment, and every job runs that
+commit even if the branch moves on. The reply names it.
+
+The `CI command` workflow (`ci-command.yml`) runs on `issue_comment`, so
+GitHub runs the workflow file and its scripts as they are on `main`. Its
+jobs and their token permissions are:
+
+| Job | Permissions | What it does |
+| --- | --- | --- |
+| `Command` | `contents: read`, `pull-requests: read` | Checks out `main`, reads the pull request and runs `ci_command.py authorize`: the author association, the fork and state checks, and the command syntax. No code of the pull request runs here. |
+| `Validate` | `contents: read` | Checks out `main` and the recorded head commit side by side, without persisted credentials. The head's planner lists its batches and releases, and `main`'s `ci_command.py select` resolves the names. |
+| `Acknowledge` | `statuses: write` | Sets a pending commit status on the head commit. |
+| `Scenarios <release>` | `contents: read` | Calls `tagged-runtime.yml` with category `selected`, the resolved profile IDs and the recorded commit, once per release. |
+| `Report` | `contents: read`, `pull-requests: write`, `statuses: write` | Sets the final commit status and replies on the pull request with the result and the run link. It also posts every refusal. |
+
+Runs of `issue_comment` belong to `main`'s commit, so their check runs do not
+appear on the pull request. The result appears there as the commit status
+`CI command <comment-id>: <names> on <releases>` on the head commit, linked to
+the run: a passed run is `success`, a failed one `failure`, and a cancelled one
+`error`. For example, the comment `/ci run environment/sdk_network on all`
+with ID `4000000001` sets
+`CI command 4000000001: environment/sdk_network on 20.2.4 19.2.5`. The comment
+ID is the number in the comment's link (`#issuecomment-<comment-id>`). A
+selection too long for GitHub's 100-character context limit is cut and ends
+with a 12-character digest of the selection; the comment ID is never cut.
+`Acknowledge` sets the context to `pending` and `Report` finalizes the same
+context, so each command has its own status. Posting the same command twice
+gives two statuses: the second one stays `pending` while its runtime jobs wait
+for the first command's, and never shows the first command's result. The
+duplicate still waits rather than cancels, because the concurrency group names
+the selection and not the comment. A refused command sets no status. Every new comment starts a `CI command`
+run. Without `/ci` in it, every job is skipped. A comment that mentions
+`/ci` without a command line ends after `Command` and gets no reply.
+
+A cancelled run is reported as cancelled and is never re-run
+automatically. To run the batches again, comment the command again or
+re-run the workflow run. See
+[Concurrency and cancellation](#concurrency-and-cancellation) for repeated
+commands.
+
+To check a command before posting it, run the same steps locally on the
+event payload and pull request JSON:
+
+```sh
+python3 .github/scripts/tag_scenarios.py vocabulary --output artifacts/vocabulary.json
+python3 .github/scripts/ci_command.py authorize --event event.json --pull pull.json
+python3 .github/scripts/ci_command.py select \
+  --request '{"names": ["network_delay"], "selectors": ["squid"], "duplicates": [], "sha": "<head>", "pull": 1, "comment_id": 1}' \
+  --vocabulary artifacts/vocabulary.json
+```
 
 ## How a batch runs
 
@@ -181,19 +556,53 @@ steps in order:
 | Step | Phase in summary | What happens |
 | --- | --- | --- |
 | Restore the Go module cache | n/a | Restores the module cache that the `Plan` job saved. |
+| Restore the Go build cache | n/a | Restores the build cache that a `Plan` job saved for this Go version and `go.sum`. A miss only makes the compile build every dependency. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. Nothing runs. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves the batch's roles of `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`, with `SCENARIO_IMAGE_LAYOUT=roles` and `SCENARIO_IMAGE_ROLES`. A batch gets all four roles unless its `//ci:` line declares `image-roles` (see [Image roles](#image-roles)). Pulls only, never builds. |
-| Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) runs the batch and applies the pass rules below. |
+| Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
+| Normalize the scenario history row | n/a | Writes `history-row.json` from the saved receipts (see [Scenario history](#scenario-history)). Its own failure never changes the job's result. |
 | Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
 | Identify completed failing tests | n/a | On failure, adds one annotation per failed test or subtest name found in `native.log`. |
 
 The job environment sets `CGO_ENABLED=0`, `TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1`
 and `CEPH_TEST_PARALLEL=2`. Go is the latest `1.26.x`. Tentacle workflows use
 role images for release 20.2.4; the Squid workflows pass release 19.2.5.
+
+### Reusing the compiled binary
+
+`run --binary <compile-directory>` (and `optional --binary`) executes the
+binary that `compile` wrote to that directory. Before it creates the native
+directory or starts anything, it checks the receipt in `compile-report.json`
+and stops with an error when any check fails:
+
+- the receipt exists, records a successful compile and belongs to the same
+  profile and tags;
+- the binary's sha256 matches the receipt;
+- the build key computed now matches the recorded one, so a different Go
+  version or platform is rejected;
+- every source file that the build reads still has its recorded sha256;
+- the recorded inventory, and the binary's own `-test.list=.` output, equal
+  the tests that the source files declare for the batch.
+
+A failed check never falls back to `go test`. The binary runs in the package
+directory, as `go test` runs it, with `-test.v -test.count=1` and
+`-test.timeout` from the batch's `//ci:` line. A network-mode entry adds
+`-test.run` for the tests of `--tests`. The environment is the same as with
+`go test`. `native/report.json` records `execution: test-binary` and the
+binary's sha256 and build key.
+
+Without `--binary`, `run` builds and runs the batch with `go test`, which
+suits local use. To follow the CI path locally, compile first and pass the
+compile directory:
+
+```sh
+python3 .github/scripts/tag_scenarios.py compile --category code --batch pure --directory /tmp/c/compile
+python3 .github/scripts/tag_scenarios.py run --category code --batch pure --directory /tmp/c/run --binary /tmp/c/compile
+```
 
 ### Image roles
 
@@ -208,6 +617,42 @@ it. With `SCENARIO_IMAGE_LAYOUT=roles`, `integrationImages` fails for a role
 that was not prepared instead of using the control image. The image
 compatibility matrix always uses all four roles.
 
+### Network modes
+
+A test that can run its cluster on the Docker bridge and on the host network
+declares the modes with `networkModes`, its default first, and runs one
+subtest per returned mode:
+
+```go
+for _, mode := range networkModes(t, "host", "bridge") {
+	host, name := mode.Host, mode.Name
+	t.Run(name, func(t *testing.T) { /* ceph.WithHostNetwork() when host */ })
+}
+```
+
+The default is `host` for the RADOS products (`ceph`, `rbd`, `cephfs`): their
+clients reach every daemon at the address that the maps advertise, which a
+native client in the test process can use only on the host network. It is
+`bridge` for RGW, whose one HTTP endpoint a port mapping serves. A test that
+uses a bridge-only feature (`WithSeparateClusterNetwork`, `InterruptNetwork`,
+`TemporaryNetworkDelay`) declares `bridge` alone, or keeps that part in the
+bridge subtest.
+
+The planner reads the modes from the call (`internal/tools/tagcatalog`), so they are
+string literals, the call is in the `Test` function itself, and the test files
+of one batch that declare modes declare the same ones. A matrix entry sets
+`CEPH_TEST_NETWORK`:
+
+| Scope | Entries of a batch |
+| --- | --- |
+| Pull requests and `main` pushes (`networks: default`) | One, in the batch's default mode, with all its tests |
+| Ceph periodic and the release matrix (`networks: all`) | The default entry, and one more per other mode that runs only the tests that declare modes (`--tests`); its job is named `<batch> (<mode>)` |
+
+A test without `networkModes` runs once, in the default entry, and ignores
+`CEPH_TEST_NETWORK`. A mode that a test does not declare is never scheduled;
+run locally with such a `CEPH_TEST_NETWORK`, the test skips. Unset, a test runs
+in every mode it declares.
+
 ### How a batch passes
 
 The native phase succeeds only if all of these hold in `native.log`:
@@ -218,7 +663,10 @@ The native phase succeeds only if all of these hold in `native.log`:
 - every started subtest has exactly one `--- PASS`;
 - there is no `--- FAIL`, `FAIL` or `panic:` line;
 - there is no `--- SKIP` line at any level;
-- exactly one `PASS` line and one `ok <package>` line follow all test results;
+- exactly one `PASS` line follows all test results. After `go test`, exactly
+  one `ok <package>` line follows it. A test binary run with `--binary` prints
+  no `ok` line, so its `PASS` must be the last line of the log, and its exit
+  status and verified receipt bind the run to the package;
 - for checker batches, the strict checker also passes.
 
 A skipped test therefore fails CI. Tests must assert release differences
@@ -249,25 +697,208 @@ sequentially and share the process timeout. Splitting a long test into its own
 batch shortens the critical path when runners are free, but repeats checkout,
 image preparation and the cleanup check, so total runner time grows.
 
-## Squid workflows
+### Runner budget
 
-`Ceph squid` runs the same `short` batches as `Ceph short`, on Squid 19.2.5
-role images, for every push to `main` and every pull request. A test added to
-the `short` category is therefore verified on both releases.
+GitHub runs at most 40 jobs of this account's hosted runners at once. The
+limit is measured, not configured: of the jobs that waited more than two
+minutes for a runner, the largest share started when exactly 39 others were
+running, and the limit also covers the account's other repositories. The
+constants in `tag_scenarios.py` divide it:
 
-`Ceph squid extended` runs the `topology`, `multicluster` and `recovery`
-categories on Squid. Running them on every push would add a large amount of
-CI time, so they run weekly and on demand. Dispatch a run after changing
-release-dependent behaviour:
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `RUNNER_LIMIT` | 40 | The measured limit. |
+| `PULL_REQUEST_RUNNERS` | 16 | Runners that the periodic matrix leaves free. A pull request execution (Ceph short plus Code and Docker checks, about 55 jobs and 185 runner minutes) finishes in about the time of its longest batch with them. |
+| `RELEASE_MAX_PARALLEL` | short 4, topology 2, multicluster 2, recovery 2 | The `max-parallel` of each release caller's runtime matrix, in Ceph periodic and Ceph release matrix. Short has about twice the runner minutes of each other category. |
+| `ENVIRONMENT_MAX_PARALLEL` | 1 | The `max-parallel` of the periodic environment caller. |
+| `CAMPAIGN_MAX_PARALLEL` | 3 | The `max-parallel` of the representative campaign: what a full matrix run leaves of the periodic share. |
+
+A full matrix run holds at most 21 runners (two releases of 4 + 2 + 2 + 2,
+and 1 for environment) and a campaign run at most 3, together the 24 that
+pull requests leave. Both are needed because the two modes have separate
+concurrency groups (`Ceph periodic-<ref>` and `Ceph periodic-<ref>-campaign`,
+see [Representative campaign](#representative-campaign)), so a run of each
+can be in progress at once. `tag_scenarios.py releases --scope all` fails
+when the two groups together could hold more than
+`RUNNER_LIMIT - PULL_REQUEST_RUNNERS` runners
+(`periodic_runner_budget`), and `--scope others` fails when the release
+callers alone could, so a new release, category or campaign bound cannot
+take the pull request share unnoticed. The pull request entry points stay
+unbounded and use whatever is free.
+
+A bound only delays jobs: every matrix entry and every campaign attempt still
+runs, with `fail-fast: false`, and a started run always finishes. Simulated
+on the periodic runs of 2026-10-16 and 2026-10-17, the bounded matrix takes
+74 to 81 minutes instead of about 40, well within its 3-hour schedule. With
+the representative batches' measured durations, the default campaign (seven
+batches, three repetitions) takes about 27 minutes on 3 runners.
+
+Runtime batches are not packed into shared jobs, and a compiled binary is not
+passed between jobs. In a pull request execution each batch compiles exactly
+once, so there is nothing to share between jobs. Packing small batches would
+save under 2 % of its runner time while serializing them and removing their
+separate runners. The build cache above removes most of the compile time
+instead.
+
+To measure again, fill a cache directory from the GitHub API and report from
+it offline:
 
 ```sh
-gh workflow run "Ceph squid extended" --ref main
-gh run list --workflow "Ceph squid extended" --limit 3
+python3 .github/scripts/ci_measurements.py fetch --cache /tmp/ci-cache --repo JSYoo5B/ceph-testcontainers-go \
+  --since 2026-10-14 --marker pr-scope=<commit> --marker binary-reuse=<commit>
+python3 .github/scripts/ci_measurements.py report --cache /tmp/ci-cache \
+  --marker pr-scope=<commit> --marker binary-reuse=<commit> --pack-size 2 --pack-size 4
+```
+
+A marker names a CI change by its commit; each execution (the runs of one
+head commit and event) belongs to the cohort of the newest marker that its
+head contains. Cancelled runs and reruns are left out. The report gives per
+cohort the job count, runner minutes, wall time from the first run's creation
+to the last job's end, runner acquisition delay (a job's creation to its
+start), per-phase step times and per-batch duration distributions. It also
+gives the measured runner limit, pull request wall time with and without an
+overlapping periodic run, and simulated periodic and pull request makespans
+under `RELEASE_MAX_PARALLEL` (or `--limit category=N` and `--reserve N`).
+
+## Periodic runs
+
+`Ceph periodic` runs every runtime category on the role images of every
+[supported release](#supported-releases), on `main`, in every
+[network mode](#network-modes) that a batch's tests declare. Its schedule
+fires every 3 hours, and its
+`Gate` job (`.github/scripts/periodic_gate.py`) decides whether the matrix
+runs:
+
+| Situation | Matrix runs |
+| --- | --- |
+| `main` has a commit that no earlier periodic run executed | yes |
+| The last execution of the current commit is 7 days old or older | yes, as a repeat |
+| The repository variable `CI_RELEASE_PHASE` is `true` | yes, on every firing |
+| A manual dispatch | yes |
+| Otherwise | no; the run ends after `Gate` |
+
+An earlier run counts as an execution only when a batch job ran to an end:
+a job of a runtime caller, named `<caller> / <batch>`, other than its `Plan`
+job. Jobs that the periodic workflow defines itself (`Gate`, `Releases`,
+`Pin`, `History`) only plan or record, so a run that ended in them executed
+nothing and the next firing runs the commit again.
+
+While development is active, a run therefore checks the commits merged since
+the previous one, and a failure points at those commits. When `main` stays
+still, as in a release phase, the same commit runs again and again.
+
+### Supported releases
+
+`SUPPORTED_RELEASES` in `.github/scripts/run_image_matrix.py` lists each
+supported release with its codename and pinned official image. Ceph periodic
+and Ceph release matrix do not list releases themselves: their `Releases`
+job runs
+
+```sh
+python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic'
+python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Ceph release matrix'
+```
+
+and calls `tagged-runtime.yml` once per release and category of the printed
+matrix, as `<Codename> <category>` with the check name
+`<prefix> <codename> <category>`. The `environment` category needs no Ceph
+release and stays a separate Ceph periodic job.
+
+The command also proves coverage before it prints the matrix. It expands the
+callers into `(release, profile)` cells and fails, naming the missing or
+extra cells, unless every required profile runs on every release of the scope
+exactly once. `test_scenario_shards.py` checks the same rule offline, with
+the release and caller set the workflows had before they were generated, so
+a consolidation cannot drop a required cell.
+
+To add a release, add its row once ceph-testcontainers-images publishes its
+role images, then run the CI tooling tests. A release or patch that is not a
+row is refused (`run_image_matrix.py --release 20.2.5` is a usage error), and
+the role images of one cell always come from one release. For a new major
+release, also add its entry to every release-limited row of the test
+expectation table (see
+[Release differences](testing.md#release-differences)). The default release
+(`RELEASE`, the `release` input default of `tagged-runtime.yml` and of the
+scenario-images action, and `ceph.DefaultImage`) changes only when the
+current release changes.
+
+### Release phase
+
+Set the repository variable for the days before a release:
+
+```sh
+gh variable set CI_RELEASE_PHASE --body true    # entering a release phase
+gh variable delete CI_RELEASE_PHASE              # after the release
+```
+
+While it is `true`:
+- Ceph periodic runs the full matrix every 3 hours, even on an unchanged
+  commit;
+- every pull request and push to `main` runs every batch of every category
+  on Tentacle, and Ceph release matrix runs every category on Squid.
+
+### Flaky profiles
+
+Runs of an unchanged commit are how flaky profiles are found. A profile that
+fails in one periodic run and passes in another on the same commit is a flaky
+candidate: keep its first failure, with the run link, the commit and the image
+IDs, in an issue, and fix the cause. Do not re-run the job to get a pass. The
+gate never repeats a failed execution of a commit on its own; a repeat comes
+from a release phase, the weekly repeat or a dispatch.
+
+Dispatch a run to check a branch on both releases before it merges:
+
+```sh
+gh workflow run "Ceph periodic" --ref <branch>
+gh run list --workflow "Ceph periodic" --limit 3
 gh run watch <run-id>
 ```
 
-`--ref` may name any branch on GitHub that contains the workflow. A manual run
-cancels a scheduled run in progress on the same ref.
+`--ref` may name any branch on GitHub that contains the workflow. A dispatch
+in the default `full` mode always runs the matrix.
+
+### Representative campaign
+
+The campaign repeats a small, source-owned set of batches many times on one
+configuration, so that a same-configuration pass or fail record exists for
+them. The set is every batch whose `//ci:` line declares
+`representative=<theme>` (see [Testing](testing.md#batches-and-the-ci-line));
+`tag_scenarios.py plan --representative` selects it and fails if a theme
+(`topology`, `auth`, `mirroring`, `recovery`, `flaky`) has no batch. The
+matrix and the category workflows keep running every batch; the campaign
+adds repetitions only.
+
+The campaign runs in Ceph periodic, on the daily `23 4 * * *` firing or on a
+dispatch with mode `representative`. Its `Gate` decision is
+`campaign=true`, and then:
+
+1. `Pin` resolves the commit (the `ref` input, or the run's commit) and the
+   registry digest of every role image tag of the release
+   (`periodic_campaign.py pin`, through `docker buildx imagetools inspect`).
+2. `Representative` calls the reusable template with
+   `category: representative`. Each matrix entry is repeated `repetitions`
+   times (default 3, at most 10), and each attempt is its own job on a fresh
+   runner, named `<batch> #<n>`, with artifact names ending in `-r<n>`. Every
+   attempt checks out the pinned commit and pulls `tag@digest`, so a moved
+   tag cannot change a later attempt. The attempt's history row carries
+   `repetition_id` `<n>` under the same profile ID.
+3. Each attempt keeps the normal native completion, no-skip and cleanup
+   proofs; nothing is retried.
+
+The planner bounds a campaign at 100 jobs and 3000 summed `job-timeout`
+minutes. A campaign run never counts as an execution of the matrix for the
+gate, and has its own concurrency group, so a matrix firing never replaces a
+waiting campaign. A campaign can therefore run beside a full matrix run, and
+its `max-parallel` is `CAMPAIGN_MAX_PARALLEL` (see
+[Runner budget](#runner-budget)).
+
+```sh
+gh workflow run "Ceph periodic" -f mode=representative -f repetitions=5 -f release=19.2.5
+gh workflow run "Ceph periodic" -f mode=representative -f ref=<commit>
+```
+
+`ref` must be a commit that already contains the campaign tooling, because
+every job runs the scripts of the pinned commit.
 
 ## Native regressions
 
@@ -282,8 +913,20 @@ gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/cep
 ```
 
 An empty `rgw_image` uses the published official RGW role image. The workflow
-never builds an image. The other optional batch, `native_shuffle`, has no
-workflow and is run locally with `tag_scenarios.py optional`.
+never builds an image. The other optional batches have no workflow and are run
+locally with `tag_scenarios.py optional`: `native_shuffle`, and
+`cephfs_fuse`.
+
+`cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
+client containers that get `/dev/fuse`, `CAP_SYS_ADMIN` and
+`apparmor=unconfined`. It is optional because those settings are proven
+only on native, rootful Linux Docker Engine; GitHub-hosted runners are
+untested, and no required check should depend on them. On an engine that
+refuses the mount the test fails with the missing requirement (device,
+capability, security profile or engine device mapping); it never skips or
+falls back to libcephfs. Outside the tag runner, build it with the
+`cephfs_fuse` tag (`go test -tags all,cephfs_fuse`). See
+[the feasibility report](../research/ceph-fuse-mount.md).
 
 ## Reading a failing batch
 
@@ -316,7 +959,7 @@ workflow and is run locally with `tag_scenarios.py optional`.
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output and outcome); `native/native.log` (complete `go test -v` output); `native/report.json` (verdict); `phases.json` (phase outcomes) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `phases.json` (phase outcomes); `history-row.json` (the job's [history row](#scenario-history)) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
@@ -329,8 +972,8 @@ workflow and is run locally with `tag_scenarios.py optional`.
   - `passed`;
   - `native-test-failure`: a test failed, panicked or hit the Go timeout;
   - `incomplete-skipped-fixture`: a test or subtest was skipped;
-  - `process-or-build-failure`: `go test` exited non-zero without any failure
-    line, for example because the process was killed;
+  - `process-or-build-failure`: `go test` or the test binary exited non-zero
+    without any failure line, for example because the process was killed;
   - `incomplete-native-proof`: the exit status was 0 but a pass rule failed,
     such as a missing `--- PASS` or a failed strict checker.
 - `completion.errors`: which pass rules failed.
@@ -343,11 +986,145 @@ workflow and is run locally with `tag_scenarios.py optional`.
 `timed_out`, `timeout_seconds` and `elapsed_seconds`. Their `classification`
 is `prepared` or `compiled`, `modules-failure` or `compile-failure` for a
 nonzero exit, and `modules-timeout` or `compile-timeout` when the bound
-expired. A timed-out command is killed with its whole process group, its
-`exit_code` is `null`, and its log keeps the output written until then.
+expired. `compile-receipt-failure` means the build succeeded but its receipt
+could not be recorded, so the binary is not reused. A timed-out command is
+killed with its whole process group, its `exit_code` is `null`, and its log
+keeps the output written until then.
 
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.
+
+### Scenario history
+
+`scenario_history.py` turns one job's receipts into one JSON row with schema
+`ceph-scenario-history/v1`, and keeps such rows in a JSONL file. It reads
+files only: it never contacts Docker or GitHub and never infers a cause.
+
+The workflow writes the row as `history-row.json` in `tag-scenario-<id>`. To
+build one from downloaded artifacts:
+
+```sh
+gh run download <run-id> -n tag-scenario-<id> -D a/scenario
+gh run download <run-id> -n runtime-cleanup-<id> -D a/cleanup
+gh run download <run-id> -n scenario-images-<id> -D a/images
+python3 .github/scripts/scenario_history.py normalize \
+  --scenario a/scenario --cleanup a/cleanup --images a/images \
+  --repository <owner/repo> --run-id <run-id> --run-attempt <attempt> --job-id <job-id> \
+  --output row.json
+```
+
+A row holds:
+
+- `execution_key`: repository, workflow, run ID, run attempt, job ID,
+  repetition ID, profile ID (the matrix entry ID), checker, case and network
+  mode. Each attempt has its own key.
+- `source`: the requested pull request head and the commit and tree that the
+  job checked out.
+- `build`: the compile receipt's build key, binary sha256, a digest of its
+  source hashes, and whether the native step ran that binary.
+- `runtime`: the resolved release, layout, platform and every role's image
+  ID and registry digests, or `not_applicable` for a batch without Ceph.
+- `phases`: for each workflow phase, the step outcome (`workflow`), the
+  phase's own receipt (`evidence`) and their join (`status`). A failure on
+  either side is `failed`. A pass needs a successful step and a passing
+  receipt, so a cleanup failure after a native pass stays a failure, and a
+  missing receipt or `phases.json` is `missing`, never `passed`. The native
+  phase also records its classification and the completion and strict
+  checker results.
+- `outcome.status`: `failed` if any phase failed, else `cancelled`, else
+  `passed` when every phase passed or was not required, else `incomplete`.
+  `first_failure` names the first failed phase, its classification and first
+  error, and for the native phase the first failed test.
+- `tests`: every RUN, PASS, FAIL and SKIP line of `native.log` with its
+  duration. A test without a result line stays `RUN`.
+- `build`: the compile receipt's binary sha256 and build key, and, for a
+  native phase that ran a compiled binary, that binary's own sha256 and build
+  key (`native_binary_sha256`, `native_build_key`). `native_binary` says
+  whether the two match.
+- `comparability`: `complete`, or `incomplete` with the missing checkout,
+  build or image identity, or `native_binary_identity_mismatch` when the
+  native phase ran another binary than the compile receipt records. The
+  phase outcomes stay as they were.
+- `evidence`: the sha256 of every file read, and `row_sha256` over the row.
+
+Append rows to a history file, and count it:
+
+```sh
+python3 .github/scripts/scenario_history.py ingest --history history.jsonl row.json
+python3 .github/scripts/scenario_history.py summary --history history.jsonl
+```
+
+`ingest` skips a row identical to one already stored. A different row under
+the same execution key is an error that prints both rows' `row_sha256` and
+evidence hashes and leaves the file unchanged. A row without repository, run
+ID or run attempt, such as one built from a local run, is rejected.
+
+`summary` groups rows by profile ID and release. It reports the rows, the
+passed, failed, cancelled and incomplete counts, failures by first failed
+phase and classification, and the nearest-rank p50 and p90 of the native
+step's `elapsed_seconds` over rows with a native receipt. Cancelled rows are excluded from the failure
+denominator and from the durations; incomplete rows stay in the denominator.
+
+#### Durable history and classification
+
+The `History` job of every Ceph periodic run that executes the matrix or a
+campaign downloads the run's `tag-scenario-*` artifacts and runs
+`scenario_history.py collect` on a checkout of the `scenario-history`
+branch. It stores the rows in `rows/<run-id>-<run-attempt>.jsonl`, one file
+per run attempt that is only ever appended to, rewrites `summary.json`, and
+pushes the commit. A branch keeps the history without expiry (artifacts
+expire after at most 90 days and caches are evicted), needs no service
+outside the repository, and makes every update a reviewable commit. A row
+without a run identity is skipped with a warning; a row that conflicts with
+a stored one fails the job and changes nothing.
+
+`summary.json` (schema `ceph-scenario-history/v1/classification`) has, per
+profile ID and release:
+
+- `recent`: the last 20 attempts, their attempt kinds, and how many of the
+  scenario outcomes among them failed.
+- `configs`: the 10 most recent configurations. A configuration is the
+  profile, network mode, release, checked-out tree, build key, platform and
+  every role image ID; rows without complete identities are counted in
+  `incomparable_rows` and never joined to one. Each configuration has its
+  `passed` and `failed` counts, the excluded attempts by kind, the first
+  failure (run, attempt, job, repetition, phase and test; a later pass does
+  not remove it), per-test `failed`/`ran` counts and a classification. A
+  test's counts cover only the attempts whose native log has its `PASS` or
+  `FAIL` line, so an attempt that stopped before the test ran (a timeout,
+  panic or earlier abort) or left it without a result is not counted for it.
+
+Attempt kinds separate what an outcome is evidence of. `passed`,
+`assertion_failure`, `timeout` (the native receipt timed out) and
+`cleanup_failure` are scenario outcomes. `runner_failure` (modules, compile
+or Docker baseline), `image_failure`, `cancelled` and `incomplete` are
+excluded from the scenario record.
+
+| Classification | Scenario outcomes of the configuration |
+| --- | --- |
+| `insufficient_samples` | fewer than two |
+| `confirmed_pass` | two or more, all passed |
+| `deterministic_failure` | two or more, all failed with the same phase, test and classification |
+| `confirmed_fail` | two or more, all failed, in different ways |
+| `suspected_intermittent` | at least one pass and one failure |
+
+Print the classification of a local checkout of the branch:
+
+```sh
+git fetch origin scenario-history
+git worktree add /tmp/history origin/scenario-history
+python3 .github/scripts/scenario_history.py classify --history-dir /tmp/history
+```
+
+When a runtime job fails, it reads `summary.json` from the branch and
+`report_test_failures.py` adds `Scenario history` notices beside the failed
+test names, for example `TestClientRevocation/aes failed 2/10 earlier
+same-config attempts that ran it`, the same configuration's record and
+classification, and the profile's recent failure count. A test with no
+observed outcome in the earlier attempts gets `has no observed outcome in N
+earlier same-config attempts` instead of a count, and a job whose
+configuration has no earlier attempt says so. The notes describe history; they do not decide the
+job's result.
 
 ### Typical causes by phase
 

@@ -76,7 +76,7 @@ func (c *Container) PoolPGs(ctx context.Context, name string) (PoolPGSnapshot, e
 	if c.closed {
 		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return PoolPGSnapshot{}, err
 	}

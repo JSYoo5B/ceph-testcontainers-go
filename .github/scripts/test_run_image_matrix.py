@@ -298,6 +298,34 @@ class MatrixTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.image_references("official", "all", "20.2.4", ("control",))
 
+    def test_digest_pins_pull_the_pinned_manifest_of_each_role(self):
+        # A campaign pins the role tags once, so that every attempt runs the
+        # same manifests even if a tag moves during the campaign.
+        control, osd = "sha256:" + "c" * 64, "sha256:" + "d" * 64
+        pinned = runner.REGISTRY + ":official-20.2.4-control@" + control
+        self.runtime.missing.add(pinned)
+        self.assertEqual(self.invoke(["--prepare-only", "--layout", "roles", "--roles", "control",
+                                      "--digests", "control=" + control + ",osd=" + osd]), 0)
+        self.assertEqual(self.runtime.stream_commands, [["docker", "pull", "--platform", "linux/arm64", pinned]])
+        report = self.summary()
+        self.assertEqual(report["images"]["control"]["reference"], pinned)
+        self.assertEqual(report["pinned_digests"], {"control": control, "osd": osd})
+        # Without pins the tags are pulled as before.
+        self.assertEqual(runner.pin_references({"control": "r:t"}, {}), {"control": "r:t"})
+
+    def test_digest_pins_are_validated_before_tools_or_output(self):
+        digest = "sha256:" + "e" * 64
+        for value in ("control=" + digest[:-1], "client=" + digest, "control=" + digest + ",control=" + digest,
+                      "control", "control=sha512:" + "e" * 64):
+            with self.subTest(digests=value), self.assertRaises(SystemExit) as error:
+                self.invoke(["--prepare-only", "--layout", "roles", "--digests", value])
+            self.assertEqual(error.exception.code, 2)
+            self.assertFalse(self.output.exists())
+            self.assertFalse(self.runtime.capture_commands)
+        with self.assertRaises(SystemExit):
+            self.invoke(["--prepare-only", "--layout", "all", "--digests", "control=" + digest])
+        self.assertEqual(runner.parse_digests(""), {})
+
     def test_export_requires_exactly_the_declared_roles(self):
         env_file = self.write("github-env", "EXISTING=keep\n")
         image = "sha256:" + "a" * 64

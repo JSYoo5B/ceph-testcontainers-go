@@ -19,6 +19,8 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A daemon or client is alive but silent | `ceph.Container.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
 | A container loses one Docker network | `ceph.Container.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets that a container sends on one network arrive late | `ceph.Container.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
+| A container sends on one network at a limited bandwidth | `ceph.Container.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
+| Packets that a container sends arrive reordered, duplicated or corrupted | `ceph.Container.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `TemporaryConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
 | An OSD runs a client's write after the client gave up | `TemporaryConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
@@ -37,21 +39,27 @@ snippets below use `cleanupCtx` for a context that outlives the test's own
 context, for example one made with
 `context.WithTimeout(context.Background(), time.Minute)`.
 
-## Out of scope: packet loss, bandwidth limits and pairwise filtering
+## Out of scope: packet faults without the netem extension
 
 The official `quay.io/ceph/ceph` image contains no `tc`, `ip`, `iptables` or
 `nft`, and the Docker network API can only connect or disconnect a whole
-container endpoint. Packet delay below Ceph is available as an opt-in
-extension with its own helper image (see
-[Delaying packets below Ceph](#delaying-packets-below-ceph)). The module does
-not offer:
+container endpoint. With the official image alone, the module therefore offers
+no packet fault below Ceph. The opt-in netem extension, with its own helper
+image, delays, drops, rate-limits, reorders, duplicates or corrupts the
+packets that a container sends, on the whole interface or only to selected
+peers (see
+[Delaying packets below Ceph](#delaying-packets-below-ceph)). Pairwise faults
+such as "OSD 1 cannot reach OSD 2 but can reach the MON" need that extension.
 
-- random packet loss, corruption, duplication, reordering or bandwidth limits;
-- delay of incoming packets, or of packets to selected peers only;
-- pairwise rules such as "OSD 1 cannot reach OSD 2 but can reach the MON";
+Neither the baseline nor the extension offers:
+
+- faults or shaping on the receiving side. To delay, drop, rate-limit,
+  reorder, duplicate or corrupt the packets that a container receives from a
+  peer, apply the fault to the peer's endpoint with the container's address;
+- firewall rules, TCP resets, socket destruction or packet capture;
 - any change in the host namespace, so no packet fault on host networks.
 
-Use one of these instead:
+Without the extension, use one of these instead:
 
 - `InterruptNetwork` to cut one container off one network entirely;
 - `WithSeparateClusterNetwork` plus `ceph.ClusterNetworkPlane` to cut only OSD
@@ -220,7 +228,13 @@ Typical uses:
   the client loses the whole cluster.
 - `ceph.ClusterNetworkPlane` with `WithSeparateClusterNetwork`: the OSD keeps
   serving its public listener while replication and heartbeats on the backend
-  fail. With a single bridge, both planes select the same endpoint.
+  fail. With two OSDs that lasts, because one reporter is not enough to mark an
+  OSD down (`mon_osd_min_down_reporters` is 2). With three or more OSDs on
+  separate hosts, both peers report it after `osd_heartbeat_grace` (20 s) and
+  the MON marks it down; the OSD then fails to rebind its cluster messenger to
+  the missing address, logs `rebind cluster_messenger failed` and exits. Call
+  `Restore`, then `Start` on its handle; it comes up from a later epoch. See
+  `TestOSDHeartbeatFailure`. With a single bridge, both planes select the same endpoint.
 
 Contract:
 
@@ -297,11 +311,15 @@ Before it changes anything, the call checks:
 
 - the target: an owned daemon, or a caller-owned container attached to the
   plane's bridge, running and not paused, with its own network namespace and
-  an IPv4 endpoint. Host-network clusters are refused, because a delay there
+  an IPv4 endpoint, and an IPv6 address for an IPv6 peer. Host-network clusters are refused, because a delay there
   would delay the host;
 - the helper, in a separate helper container without a network: the
   contract's executables, `tc` with JSON output and netem, `python3`,
-  `NET_ADMIN`, and the kernel's netem on that container's loopback. The errors
+  `NET_ADMIN`, and the kernel's netem on that container's loopback. With a
+  `Rate` or a packet fault, it also adds and removes netem with that option
+  there and checks the values that the kernel reports back. With
+  peers, it also adds and removes a `prio` qdisc with a u32 filter there, so
+  a kernel without either is refused before the target changes. The errors
   wrap `ceph.ErrNetemImageUnsupported`, which belongs to
   `ceph.ErrImageCapability`, or `ceph.ErrNetemPermissionDenied` or
   `ceph.ErrNetemKernelUnsupported`, which belong to
@@ -312,6 +330,79 @@ Before it changes anything, the call checks:
 - the interface, found by the endpoint's address and MAC address and then
   followed by its index: its root qdisc must be the kernel's default. A qdisc that someone else installed is
   refused, not replaced, and only one delay per endpoint is held.
+
+### Selected peers
+
+With `NetworkDelay.Peer`, only the packets that the target sends to that
+address are delayed, and with `PeerPort` only TCP packets to that destination
+port. The lease owns a `prio` root qdisc, a netem qdisc in its third band and
+one u32 filter that selects the peer's packets; everything else uses the first
+band without delay. `TestNetworkDelay/peer` delays osd.0's packets to a client
+container by 200 ms ± 20 ms: that client's reads from osd.0 took a median of
+220 ms, its reads from osd.1 0.4 ms, and the control container's reads from
+osd.0 0.1 ms; netem counted only the selected packets. `TestNetworkDelayPeerIPv6`
+does the same through the IPv6 filter on an IPv6 cluster. The filter matches
+the IP header without options or extension headers, which Ceph's TCP traffic
+does not use.
+
+`NetworkDelay.Peers` selects several peers in one lease, each a
+`ceph.NetworkPeer` with an address and an optional TCP port, up to
+`ceph.MaxNetworkPeers`. Only one delay is held per endpoint, so a daemon's
+paths to several peers are faulted with one delay that lists them all. The
+lease owns one u32 filter per peer, all leading to the same netem child: the
+IPv4 peers in preference 10 and u32 table `800:`, with handles `800::1`,
+`800::2` and so on, and the IPv6 peers in the next preference and table, `11`
+and `801:`, or `10` and `800:` without IPv4 peers. The filters are added after
+the root and the child, one by one, and `Status` reports `Applied` only when
+every filter is there with exactly its keys. An apply that stops after some of
+them returns the lease, and `Restore` removes the root with the filters that
+it has.
+
+```golang
+// The MDS loses both OSDs; clients and the MON still reach it.
+cut, err := cluster.TemporaryNetworkDelay(ctx, mds, ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peers:       []ceph.NetworkPeer{{Addr: osd0}, {Addr: osd1}},
+	Loss:        100,
+})
+```
+
+The native tests check this on Tentacle and Squid, with the official image and
+the role images:
+
+- `TestNetworkDelay/peers_blackhole` drops osd.0's packets to two client
+  containers with one lease: the kernel shows the filters `800::1` and
+  `800::2`, both clients' reads from osd.0 fail with `ETIMEDOUT` after 5 s,
+  while the first client's read from osd.1 and the control container's read
+  from osd.0 take under a millisecond, and both clients read again after
+  `Restore`.
+- `TestNetworkDelayPeerIPv6` also delays, with one lease, osd.0's packets to
+  the client's IPv6 address and to the control container's IPv4 address. The
+  kernel shows `ip/10/800::1` and `ipv6/11/801::1`. The client's reads over
+  IPv6 took a median of 206 to 212 ms, and the control container's 0.1 ms. A
+  TCP connect from osd.0's namespace to the control container's IPv4 address
+  was refused after 194 to 203 ms, and one to the client's IPv4 address after
+  0.1 ms.
+- `TestCephFSMDSOSDsPathCut` drops the MDS's packets to both OSDs of a
+  two-OSD filesystem while the clients reach both; see
+  [MDS sessions](messenger-client-fixtures.md#mds-sessions).
+
+A delay selects the direction in which its target sends. To fault the other
+direction of a path, delay the peer's endpoint with the target's address; to
+fault both, hold one delay on each endpoint. `TestCephFSClientMDSPathCut`
+cuts each direction of a client-MDS path this way.
+
+`Loss` drops a percentage of the selected packets; with `Loss: 100` and a
+`Peer`, and no `Delay`, nothing that the target sends to that peer arrives.
+`TestNetworkDelay/peer_blackhole` drops osd.0's packets to a client container:
+that client's read from osd.0 failed with `ETIMEDOUT` after its 5-second
+`rados_osd_op_timeout`, while its read from osd.1 and the control
+container's read from osd.0 took under a millisecond, and after `Restore`
+the client read the object again. Only one direction is dropped: the
+client's requests still reach osd.0, so an operation that changes data may
+have run although its reply was lost. Read the outcome back with a client
+of its own before treating it as failed.
 
 What to expect:
 
@@ -330,21 +421,324 @@ What to expect:
   and `Status` reports `Gone`; `Restore` then only removes the helper and never
   touches the new namespace.
 - `Restore` removes only the lease's own qdisc. A root qdisc that someone
-  replaced is refused with an error, and the lease stays retryable. A helper
+  replaced, or a qdisc or filter that someone added under the lease's root, is
+  refused with an error, and the lease stays retryable. A helper
   that exited or was removed is replaced first, because removing a helper does
   not remove its qdisc from a live namespace. The replacement runs the image
   that was checked, by its ID.
 - Every `tc` command runs under the module's command supervisor. A canceled
   call returns its lease, because the change may have reached the kernel; a
   stop that cannot be confirmed fences the lease until `Restore` confirms it.
+  The module never runs a `tc` command again by itself.
 - The cluster keeps the lease and restores it at the start of `Terminate`.
   Restore a caller-owned container's delay before you remove that container.
+
+### Bandwidth limits
+
+`NetworkDelay.Rate` limits the bandwidth of the packets that the target sends
+through its endpoint, on the whole interface or only to the selected peers,
+with netem's rate in the lease's netem qdisc. A `Rate` composes with `Delay`
+and `Loss` in the same qdisc, and `Delay` may then be zero. The lease, its
+selection, its checks and `Restore` are those of any other delay.
+
+```golang
+limit, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        netip.MustParseAddr(clientAddress),
+	Rate:        16 * ceph.MegabitPerSecond,
+})
+if limit != nil {
+	defer limit.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+status, err := limit.Status(ctx)
+if err != nil || !status.Applied || status.Rate != 16*ceph.MegabitPerSecond {
+	t.Fatalf("rate limit: %+v, %v", status, err)
+}
+```
+
+How the limit behaves:
+
+- netem paces packets: each leaves only after the previous one has taken its
+  length over the rate. There is no burst allowance. The length includes the
+  Ethernet header, and a TCP segmentation offload packet counts with all of
+  its segments, so an application's throughput stays below `Rate`.
+- Packets waiting for the rate, and for a `Delay`, share one queue of
+  `QueueLimit` packets (`ceph.DefaultNetworkQueueLimit`, 1000, when zero).
+  A packet that finds the queue full is dropped and counted in `Drops`. A
+  large queue at a low rate adds latency to every selected packet, including
+  Ceph's own heartbeats when the selection carries them.
+- `Rate` accepts `ceph.MinNetworkRate` (64 Kbit/s) to `ceph.MaxNetworkRate`
+  (10 Gbit/s) in whole bytes per second. Below about 1 Mbit/s, one 64 KiB
+  offload packet already takes over half a second, so Ceph sessions with
+  short timeouts may fail; that is the limit working, not the module.
+- `Status` separates three things. The lease's `Rate` and `QueueLimit` are
+  the request. The status's `Rate`, `QueueLimit`, `Qdiscs` and `Filters` are
+  the configuration that the kernel reports. `Packets`, `Bytes`, `Drops`,
+  `Overlimits`, `Requeues`, `Backlog` and `QueueLength` are netem's counters
+  and queue. None of them is a throughput: time the workload yourself.
+- A `Rate` needs a `tc` that parses netem's `rate` and a kernel whose netem
+  keeps it. The preflight helper checks both on its own loopback before the
+  target changes: a `tc` that cannot parse it is `ErrNetemImageUnsupported`,
+  and a kernel that does not report the rate and queue limit back is
+  `ErrNetemKernelUnsupported`. The module installs no package and never falls
+  back to another mechanism. `ceph.NetemHelperImage` parses it.
+- The limit shapes what the target sends. Limit the other direction on the
+  peer's endpoint, with the target's address.
+
+The native tests `TestNetworkBandwidth` and `TestNetworkBandwidthIPv6` limit
+osd.0's packets to a client container to 16 Mbit/s (2 MB/s) and read one
+16 MiB object through a single-replica pool whose primary is osd.0. On
+Docker Engine with x86_64 hosts, with Tentacle 20.2.4 and Squid 19.2.5, both
+as the official image and as the role images:
+
+- before the limit, the client read it at 550 to 835 MB/s; through the limit
+  at 1.88 to 1.91 MB/s, and again at 585 to 820 MB/s after `Restore`. The
+  tests accept 40 to 110 percent of the rate under the limit and at least four
+  times the rate without it;
+- the control container read the same object from the same OSD at 570 to
+  850 MB/s while the client's path was limited: the unselected peer is not
+  limited;
+- netem's child sent 17.5 to 17.8 MB for the 16 MiB read through the selected
+  filter, headers included, without drops. On the IPv6 cluster this is the
+  IPv6 filter; a second lease
+  that selects the client's IPv4 address on the same cluster sent 0 bytes and
+  left the read unlimited, so the family that Ceph used is observed, not
+  inferred from the configuration;
+- with a 20 ms `Delay` in the same lease the read stayed bounded at the same
+  rate, and without a `Peer` both the client's and the control container's
+  reads were bounded;
+- after every `Restore` the root qdisc is the kernel's default again and no
+  helper is left.
+
+#### Severe limits
+
+A limit far below what a transfer needs does not fail the transfer by
+itself. netem keeps pacing the packets, so the connection stays up and the
+data keeps arriving slowly. Whether the client fails depends on the client's
+own timeouts. A librados client with `rados_osd_op_timeout` gives up on an
+operation after that many seconds and returns `ETIMEDOUT` (errno 110); the
+default, 0, waits without limit. Each profile below writes its objects before
+any limit and only reads under a limit, so a failed operation can be read
+again safely after `Restore`. `TestNetworkBandwidthSevere` measured, in the
+same environments:
+
+- Operation timeout: with osd.0's packets to the client limited to
+  `ceph.MinNetworkRate` (64 Kbit/s), a client session whose
+  `rados_osd_op_timeout` is 10 s read a 1 MiB object, which needs about
+  131 s at that rate. The read failed with `ETIMEDOUT` after 10.0 s. By then
+  netem had sent about 80 KB of the reply and still held about 67 KB in 23
+  packets in its queue (`Backlog`, `QueueLength`). A fresh read after
+  `Restore` returned the exact object in a few milliseconds.
+- Extreme slowdown: at the same rate, a client without an operation timeout
+  read a 256 KiB object in about 34.5 s, against 32.8 s for its payload alone
+  and under a millisecond before the limit. The control container read it
+  from the same OSD in about a millisecond during the limit. The bytes were
+  exact.
+- Queue overflow: at 100 Mbit/s with a 20 ms `Delay`, the 1 MiB read took
+  0.18 s with the default queue of 1000 packets and no drops. With a
+  `QueueLimit` of 2, which cannot hold the 250 KB that the path keeps in
+  flight, netem dropped 137 to 185 packets, TCP retransmitted them, and the
+  same read took 4.8 to 7.1 s (27 to 40 times as long) and returned the exact
+  object. The test
+  requires drops and at least 1.25 times the default queue's time.
+
+#### Replication under a limit
+
+A limit on the link between a replicating daemon and the other cluster slows
+replication without stopping it: a backlog builds up, the daemon keeps
+copying at the limit, and after `Restore` the destination catches up. Select
+the link the same way as for a [cut](#interrupting-links-between-clusters):
+the source OSD's packets to the daemon's address on the source network carry
+the daemon's reads of the source image, so a `Peer` limit there slows the
+copy and nothing else.
+
+```go
+inspect, err := daemon.Inspect(ctx) // mirror.Daemons()[0]
+if err != nil {
+	return err
+}
+peer := inspect.NetworkSettings.Networks[source.NetworkName()].IPAddress
+lease, err := source.TemporaryNetworkDelay(ctx, source.OSDs()[0].Container, ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        peer,
+	Rate:        2 * ceph.MegabitPerSecond,
+})
+```
+
+Read the backlog and the progress from the mirror's own status, not from the
+daemon's readiness. While rbd-mirror syncs a snapshot, the description of
+`rbd.Mirror.ImageStatus` carries `replay_state` `syncing`, the
+`syncing_snapshot_timestamp`, a `syncing_percent` of the image's objects and
+the measured `bytes_per_second`. The daemon writes its status to the cluster
+only every 30 seconds, so poll it read-only over windows longer than that.
+After `Restore`, check the destination's bytes with the destination's own
+client; the status reports the snapshot in sync (`local_snapshot_timestamp`
+equal to `remote_snapshot_timestamp`, `replay_state` `idle`) up to 30 seconds
+later.
+
+`TestRBDMirrorBandwidthCatchUp` limits osd.0's packets to the destination's
+rbd-mirror daemon to 2 Mbit/s (250 KB/s) on a snapshot-mode mirror between two
+single-OSD clusters. The source client then rewrites the whole 48 MiB image
+(256 KiB objects) and creates a mirror snapshot. In the same environments as
+above:
+
+- the source client read the image back through the same OSD at 174 to 185
+  MB/s while the daemon's path was limited: the unselected path is not
+  limited;
+- the status reported the new snapshot syncing at 7 to 9 percent 26 to 34 s
+  after the snapshot and at 22 to 23 percent after 56 to 60 s, at 236 to
+  245 KB/s, with an estimated 205 to 213 s left. The test requires two status
+  updates with a growing percentage below 100, and that each percentage's
+  bytes fit the limit since the snapshot;
+- the destination's SHA-256 still differed from the source's, and netem's
+  child had sent 14.0 to 14.9 MB to the daemon without drops, more than the
+  reported percentage of the image;
+- within 5 s of `Restore` the destination's exported image had the source's
+  SHA-256 and exact bytes. The status reported the snapshot in sync 26 to
+  31 s after `Restore`, with all 50331648 bytes copied once in a sync of 57
+  to 61 s.
+
+Bandwidth limits share the netem helper's requirements and unsupported
+environments listed below. Shaping a host-network target, or what a target
+receives, is not supported.
 
 The netem helper has been checked on Docker Engine (GitHub-hosted Ubuntu 24.04
 runners, `amd64` and `arm64`) and on Docker Desktop on macOS (`arm64`).
 Rootless engines, Podman and Docker Desktop's Enhanced Container Isolation may
 refuse `NET_ADMIN` or the namespace join; the call then fails with one of the
 errors above instead of falling back to another mechanism.
+
+### Packet faults
+
+`NetworkDelay.Reorder`, `Duplicate` and `Corrupt` add netem's packet faults
+to the lease's netem qdisc. Each is a `ceph.NetworkPacketFault` with a
+`Percent` of the selected packets and an optional `Correlation`. The lease,
+its selection, its checks and `Restore` are those of any other delay.
+
+```golang
+fault, err := cluster.TemporaryNetworkDelay(ctx, cluster.OSDs()[0], ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        netip.MustParseAddr(clientAddress),
+	Duplicate:   ceph.NetworkPacketFault{Percent: 50},
+})
+if fault != nil {
+	defer fault.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+status, err := fault.Status(ctx)
+if err != nil || !status.Applied || status.Duplicate != (ceph.NetworkPacketFault{Percent: 50}) {
+	t.Fatalf("duplicate: %+v, %v", status, err)
+}
+```
+
+The supported combinations are those whose installed state the kernel
+reports back and a receiver can attribute:
+
+- `Reorder` sends the chosen packets at once, ahead of the packets that wait
+  for the `Delay`, so it needs a `Delay`. It refuses `Jitter`, which
+  reorders packets by itself so the two could not be told apart, and `Rate`,
+  because netem sends the reordered packets past the rate limit. It works
+  with `Loss`, `Duplicate` and `Corrupt`.
+- `Duplicate` and `Corrupt` work with every other field, and `Delay` may then
+  be zero.
+
+What they do to TCP, and what that means for a test:
+
+- netem decides per packet that it queues, and a TCP segmentation offload
+  packet carries many segments. A duplicated offload packet duplicates all
+  of its segments. A corrupted one is split first and one segment is
+  corrupted. The same `Percent` therefore affects a different number of
+  segments depending on how large the sender's packets are, which a delay or
+  losses change.
+- The receiving kernel absorbs the faults before Ceph sees the bytes. It puts
+  reordered segments back in order (`TcpExtTCPOFOQueue` counts each segment
+  that waited), discards a segment that it already has and answers it with a
+  D-SACK (`TcpExtTCPDSACKOldSent`), and drops a segment whose TCP checksum
+  fails (`TcpInCsumErrors`), which the sender retransmits. Reordering also
+  makes the sender retransmit segments that were only late, so a reorder
+  shows D-SACKs too.
+- `Corrupt` flips one bit in what the kernel holds in the packet's first
+  buffer: the Ethernet, IP and TCP headers, and payload bytes only when they
+  are in that buffer. netem first computes the checksum that the device
+  would have offloaded (`tx-checksum` was on in every environment below), so
+  the receiver checks it in software. A packet with a flipped bit in its
+  IPv4 header never reached the receiver's IP layer in these environments
+  (`IpExtInCsumErrors` and `IpInHdrErrors` stayed 0). The host probably
+  dropped it while validating IPv4 headers on the bridge, but the tests do
+  not read the host's counters, so that is not verified. On IPv6,
+  which has no header checksum, a flipped destination address reached the
+  receiver and was counted in `Ip6InAddrErrors`. A flipped Ethernet address
+  sends the packet elsewhere on the bridge.
+- A Ceph operation that returns the exact bytes therefore does not show
+  that any packet was altered, and a counter that moved does not show that
+  an altered Messenger frame reached Ceph's parser: TCP's checksum and
+  sequence numbers stop both. `Status` reports the configuration that the
+  kernel installed, and with a `Reorder` netem's `Requeues` counts the
+  packets that it sent ahead; neither is proof of what the receiver got.
+  Read the receiver's own counters, from `/proc/net/netstat`, `/proc/net/snmp`
+  and `/proc/net/snmp6` in its network namespace, before and after a bounded
+  window, and compare them with an unselected receiver and with a window
+  without a fault. Receivers count a few reordered segments and D-SACKs
+  without any fault, so expect a margin, not zero, and never an exact count
+  of random events.
+- The preflight helper adds and removes netem with each requested fault and
+  a correlation on its own loopback and checks what the kernel reports
+  back. A `tc` that cannot parse a fault is `ErrNetemImageUnsupported`, and
+  a kernel that does not report the fault, its correlation or a reorder's
+  gap of 1 is `ErrNetemKernelUnsupported`. The apply compares the target's
+  installed faults with the request the same way and returns the lease with
+  an error on any difference. iproute2 6.1, the `tc` of
+  `ceph.NetemHelperImage`, sends a duplicate's correlation only together
+  with a delay's correlation, so the lease passes a zero delay correlation
+  with a `Duplicate.Correlation`; without that, the preflight would see the
+  correlation missing.
+
+The native tests `TestNetworkPacketFaults` and `TestNetworkPacketFaultsIPv6`
+fault osd.0's packets to a client container, on an IPv4 and an IPv6
+cluster, and read a 4 MiB object from a single-replica pool whose primary is
+osd.0. Each window reads the object from the client and from the control
+container, which the selection does not include, and helpers in the
+client's, the control container's and osd.0's namespaces read the kernel
+counters before and after. The client must count at least 10 of the effect
+and 4 times what the control container counted in the same window and what
+either receiver counted in four reads without a fault. Every read returns
+the exact SHA-256. On a native Linux Docker Engine on x86_64,
+with Tentacle 20.2.4 and Squid 19.2.5, both as the official image and as the
+role images:
+
+- without a fault, four reads counted 0 to 2 out-of-order segments, 0 to 2
+  D-SACKs and no checksum failure at either receiver. An earlier run counted
+  19 D-SACKs at the control container without any fault, so the test
+  compares margins instead of expecting zero;
+- `Reorder` 25 percent with a 10 ms `Delay`: one read took 5.3 to 6.5 s,
+  against 8 ms without the fault. The client queued 274 to 339 segments out
+  of order, the control container 0 or 1. netem reported 468 to 570
+  `Requeues`, and osd.0 counted reordering (`TcpExtTCPSACKReorder`) and
+  retransmitted segments that were only late, which the client answered with
+  D-SACKs;
+- `Duplicate` 50 percent: four reads took about 8 ms each, and the client
+  sent 179 to 212 D-SACKs, the control container 0 or 1;
+- `Corrupt` 5 percent: in eight reads of 7 to 266 ms the client counted 67
+  to 132 TCP checksum failures and the control container none. The client
+  also queued segments out of order behind each dropped one, and on IPv6
+  counted 21 to 29 packets with a corrupted destination address
+  (`Ip6InAddrErrors`). No IPv4 header checksum failure reached it;
+- `Duplicate` 30 percent with a 25 percent correlation and `Corrupt`
+  5 percent, with a 5 ms `Delay` and a 256 Mbit/s `Rate` in the same lease
+  (IPv4 only): in two reads of 0.8 to 2.7 s the client sent 454 to 592
+  D-SACKs and counted 112 to 131 checksum failures, the control container
+  0 or 1 D-SACKs and no checksum failure;
+- after every `Restore` the root qdisc is the kernel's default again, no
+  helper is left, and the same reads took about 8 ms again without the
+  effects.
 
 ## Interrupting links between clusters
 
@@ -356,6 +750,19 @@ clusters keep serving their local clients.
 | `rbd.Mirror.InterruptPeerLink(ctx, daemonName)` | The receiving `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, pool leader election, peer and image policies |
 | `cephfs.Mirror.InterruptPeerLink(ctx, daemonName)` | The source `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
 | `rgw.Multisite.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
+
+The mirror path tests cut one path of a mirror daemon with
+`TemporaryNetworkDelay` and a `Peer` instead of a whole endpoint. For RGW,
+`rgw.Multisite.TemporaryZoneLinkDelay(ctx, zoneName, peerZone, delay)` does
+the same on the multisite HTTP network: with the netem helper it drops or
+delays only the packets that one zone's gateway sends to another zone's
+gateway port, so that zone stops reading the peer's changes while the peer
+keeps reading its own. `TestMultiClusterRGWZoneLinkPathCut` drops zone b's
+packets to zone a's gateway: zone a read b's new object, and its data sync
+from b was caught up, while b's data sync from a had shards behind and b
+lacked a's new object for 12 s. After `Restore` b read a's object byte for
+byte, its data sync from a was caught up, and both gateways kept their
+processes and the period.
 
 ```golang
 daemon := mirror.Daemons()[0].DaemonName
@@ -867,7 +1274,7 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.TemporarySessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.
-- [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`.
+- [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.TemporaryZoneLinkDelay`.
 - [Host network and native clients](host-network.md): which faults are
   available in host mode.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): handles returned

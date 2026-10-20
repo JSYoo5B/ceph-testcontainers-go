@@ -108,16 +108,16 @@ func (c *Container) configureDefaultCRUSHRoot(ctx context.Context) error {
 	if root == "default" {
 		return nil
 	}
-	if _, err := c.Ceph(ctx, "osd", "crush", "add-bucket", root, "root"); err != nil {
+	if _, err := c.cephCLI(ctx, "osd", "crush", "add-bucket", root, "root"); err != nil {
 		return err
 	}
 	// This name cannot collide with CreatePool's -replicated/-ec rule names.
 	const ruleName = "tc-default-placement"
 	config := PoolConfig{CRUSHRoot: root, FailureDomain: "osd"}
-	if _, err := c.Ceph(ctx, replicatedCRUSHRuleCommand(config, ruleName)...); err != nil {
+	if _, err := c.cephCLI(ctx, replicatedCRUSHRuleCommand(config, ruleName)...); err != nil {
 		return err
 	}
-	data, err := c.Ceph(ctx, "osd", "crush", "rule", "dump", ruleName, "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", ruleName, "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (c *Container) configureDefaultCRUSHRoot(ctx context.Context) error {
 		return fmt.Errorf("default CRUSH rule response is incomplete")
 	}
 	value := strconv.Itoa(*rule.ID)
-	if _, err := c.Ceph(ctx, "config", "set", "global", "osd_pool_default_crush_rule", value); err != nil {
+	if _, err := c.cephCLI(ctx, "config", "set", "global", "osd_pool_default_crush_rule", value); err != nil {
 		return err
 	}
 	c.configMu.Lock()

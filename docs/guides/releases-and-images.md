@@ -233,6 +233,11 @@ Requirements that apply to every role:
 | `mds` | `ceph-mds` | MDS shared libraries |
 | `all` | Union of the four roles | Union of the four roles |
 
+`rbd.TemporaryImmutableObjectCache` also needs `ceph-immutable-object-cache`
+and the librbd `parent_cache` plugin in the client container it runs in. The
+official image has both; an image without them is refused with
+`ceph.ErrImageCapability` for that function only.
+
 Python and the CLIs of other roles are not required in `osd`, `rgw` or `mds`
 images. Do not rely on `ceph` or `python3` inside OSD, MDS or RGW containers
 when you run your own commands; use the control container instead (see
@@ -292,12 +297,15 @@ baseline feature and no default uses it.
 
 | Extension | API | Helper image | Contract |
 | --- | --- | --- | --- |
-| netem packet delay | `TemporaryNetworkDelay` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `ceph.NetemHelperImage` | netem contract 1: `sh`, `sleep`, `tc` and `ip` with JSON output and netem, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc |
+| netem packet delay and loss | `TemporaryNetworkDelay` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `ceph.NetemHelperImage` | netem contract 1 with its selector profiles: `sh`, `sleep`, `tc` and `ip` with JSON output, netem, `prio` and u32, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc, and for peers the `prio` qdisc and the u32 classifier |
 
 `NET_ADMIN` is granted only to the opt-in helper, not to the Ceph daemons.
-This extension does not require Docker's privileged mode. The current API
-delays all outgoing packets on the selected interface; peer-selective loss,
-reordering and packet inspection are not provided by this contract.
+This extension does not require Docker's privileged mode. It delays or drops
+the packets that a container sends, on the whole interface or only to selected
+peers, families and TCP ports. The module checks the kernel's `prio` qdisc and
+u32 classifier in its preflight helper before it selects peers. Packets that a
+container receives, reordering, rate limits and packet inspection are not
+provided.
 
 ## Related APIs
 

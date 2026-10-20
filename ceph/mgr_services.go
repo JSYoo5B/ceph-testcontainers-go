@@ -22,7 +22,7 @@ func (c *Container) ManagerServices(ctx context.Context) (map[string]string, err
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	data, err := c.Ceph(ctx, "mgr", "services", "--format", "json")
+	data, err := c.cephCLI(ctx, "mgr", "services", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

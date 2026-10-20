@@ -1,0 +1,239 @@
+name: Ceph periodic
+
+# The full matrix on main: every runtime category on every supported release,
+# the rows of SUPPORTED_RELEASES in .github/scripts/run_image_matrix.py. The
+# Releases job expands them, so a new release needs no edit here. Pull requests run Code checks, Docker checks and Ceph short on
+# Tentacle, and only the changed batches of the other categories, so this is
+# where every batch runs on both releases.
+#
+# The schedule fires every 3 hours; the Gate job (periodic_gate.py) lets the
+# matrix run only for a commit of main that no earlier run executed, for a
+# weekly repeat of an unchanged commit, or on every firing while the
+# repository variable CI_RELEASE_PHASE is "true". Repeated runs of one commit
+# show which profiles fail without a source change.
+#
+# The daily campaign firing (or a dispatch with mode "representative") runs
+# the representative campaign instead: the batches whose //ci: line declares
+# representative=<theme>, each repeated as separate jobs on one pinned commit
+# and pinned role image digests. Full coverage stays with the matrix above.
+#
+# The History job of every executing run stores its jobs' history rows on the
+# scenario-history branch and rewrites the same-config classification there.
+on:
+  schedule:
+    - cron: '41 */3 * * *'
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: full runs the matrix; representative runs the repeated representative campaign
+        type: choice
+        options: [full, representative]
+        default: full
+      repetitions:
+        description: Attempts of each representative batch (representative only, 1 to 10)
+        type: number
+        default: 3
+      release:
+        description: Ceph release of the campaign's role images (representative only)
+        type: choice
+        options: ['20.2.4', '19.2.5']
+        default: '20.2.4'
+      ref:
+        description: Commit the campaign pins (representative only); empty pins the dispatched branch head
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+# A new run waits for the one in progress instead of cancelling it, so every
+# started run finishes and counts. A campaign has its own group, so that a
+# matrix firing never replaces a waiting campaign, or the reverse. A matrix
+# run and a campaign run can therefore run at once, and their runtime bounds
+# together stay within the runners that pull requests leave
+# (tag_scenarios.periodic_runner_budget).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}${{ (github.event.schedule == '23 4 * * *' || inputs.mode == 'representative') && '-campaign' || '' }}
+  cancel-in-progress: false
+
+env:
+  # A failed request to the module proxy, such as a reset HTTP/2 stream,
+  # falls back to the module's origin; go.sum verifies either source.
+  GOPROXY: 'https://proxy.golang.org|direct'
+
+jobs:
+  gate:
+    name: Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      campaign: ${{ steps.gate.outputs.campaign }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Decide whether the matrix or the campaign runs
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RELEASE_PHASE: ${{ vars.CI_RELEASE_PHASE }}
+          PERIODIC_SCHEDULE: ${{ github.event.schedule }}
+          PERIODIC_MODE: ${{ inputs.mode }}
+        run: python3 .github/scripts/periodic_gate.py --workflow ceph-periodic.yml --campaign-schedule '23 4 * * *'
+  environment:
+    name: Environment
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      networks: all
+      category: environment
+      check_name: Ceph periodic environment
+      # tag_scenarios.ENVIRONMENT_MAX_PARALLEL
+      max_parallel: 1
+  releases:
+    name: Releases
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.releases.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      # Fails unless the callers run every required profile on every
+      # supported release exactly once.
+      - name: Expand supported releases and prove required coverage
+        id: releases
+        run: python3 .github/scripts/tag_scenarios.py releases --scope all --check-prefix 'Ceph periodic' --github-output "$GITHUB_OUTPUT"
+  runtime:
+    name: ${{ matrix.title }}
+    needs: releases
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.releases.outputs.matrix) }}
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      networks: all
+      category: ${{ matrix.category }}
+      check_name: ${{ matrix.check_name }}
+      release: ${{ matrix.release }}
+      # tag_scenarios.RELEASE_MAX_PARALLEL: every release caller together
+      # leaves tag_scenarios.PULL_REQUEST_RUNNERS for pull requests.
+      max_parallel: ${{ matrix.max_parallel }}
+  # The representative campaign. Pin fixes the commit and the role image
+  # digests once; every attempt of Representative then runs exactly those, on
+  # its own runner, with its repetition ID in its history row.
+  pin:
+    name: Pin
+    needs: gate
+    if: needs.gate.outputs.campaign == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      release: ${{ steps.images.outputs.release }}
+      digests: ${{ steps.images.outputs.digests }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Pin the commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAMPAIGN_REF: ${{ inputs.ref }}
+        run: |
+          if [ -n "$CAMPAIGN_REF" ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$CAMPAIGN_REF" --jq .sha)
+          else
+            sha=$GITHUB_SHA
+          fi
+          echo "Campaign commit: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Pin the role images to registry digests
+        id: images
+        env:
+          CAMPAIGN_RELEASE: ${{ inputs.release || '20.2.4' }}
+        run: python3 .github/scripts/periodic_campaign.py pin --release "$CAMPAIGN_RELEASE" --github-output "$GITHUB_OUTPUT"
+  representative:
+    name: Representative
+    needs: pin
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      networks: default
+      # tag_scenarios.CAMPAIGN_MAX_PARALLEL: what a full matrix run, which
+      # can run at the same time, leaves of the periodic runner budget.
+      max_parallel: 3
+      category: representative
+      check_name: Ceph periodic representative
+      release: ${{ needs.pin.outputs.release }}
+      # The dispatch input reaches the call as a string; the reusable
+      # workflow's number input refuses it unless converted.
+      repetitions: ${{ fromJSON(inputs.repetitions || 3) }}
+      ref: ${{ needs.pin.outputs.sha }}
+      role_digests: ${{ needs.pin.outputs.digests }}
+  # Durable history: the rows of this run's jobs go to the scenario-history
+  # branch, one append-only file per run attempt, and summary.json there is
+  # recomputed. A branch keeps rows without expiry (artifacts expire, caches
+  # are evicted) and needs no service outside the repository; every update
+  # is a commit. The runtime jobs read summary.json for their failure notes.
+  history:
+    name: History
+    needs: [gate, environment, releases, runtime, pin, representative]
+    if: always() && (needs.gate.outputs.run == 'true' || needs.gate.outputs.campaign == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download this run's history rows
+        uses: actions/download-artifact@v8
+        with:
+          pattern: tag-scenario-*
+          path: artifacts/rows
+      - name: Store the rows on the scenario-history branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git init -q history
+          cd history
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          for attempt in 1 2 3 4 5; do
+            if git -c http.extraheader="$auth" ls-remote --exit-code origin refs/heads/scenario-history > /dev/null; then
+              git -c http.extraheader="$auth" fetch -q --depth=1 origin scenario-history
+              git checkout -q -f -B scenario-history FETCH_HEAD
+              git clean -fdq
+            else
+              git symbolic-ref HEAD refs/heads/scenario-history
+            fi
+            python3 ../.github/scripts/scenario_history.py collect --history-dir . --rows ../artifacts/rows
+            git add -A .
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+            git commit -q -m "Scenario history of run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+            if git -c http.extraheader="$auth" push -q origin HEAD:refs/heads/scenario-history; then
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          exit 1

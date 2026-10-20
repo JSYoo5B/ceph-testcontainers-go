@@ -184,7 +184,8 @@ func TestInterruptedEndpointRequiresOriginalPeerAliases(t *testing.T) {
 func TestClusterCleanupRetainsNetworkAfterCallerRestoreFailure(t *testing.T) {
 	link, d := newLinkFake()
 	d.connectErr = errors.New("temporary reconnect failure")
-	cluster := &Container{network: &testcontainers.DockerNetwork{Name: link.NetworkName}, interruptions: map[string]*NetworkInterruption{"client": link}}
+	cluster := &Container{network: &testcontainers.DockerNetwork{Name: link.NetworkName}}
+	cluster.trackInterruption("client", link)
 	if err := cluster.Terminate(t.Context()); err == nil || cluster.networkRemoved || link.complete || d.closes != 0 {
 		t.Fatal("cleanup removed the original network needed to restore a caller-owned client")
 	}

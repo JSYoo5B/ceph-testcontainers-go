@@ -176,9 +176,10 @@ func (r NativeCommandResult) Complete() bool {
 	return !r.TimedOut && !r.StdoutTruncated && !r.StderrTruncated
 }
 
-// NativeCommandUnstoppedError reports a native command that RunNativeCommand
-// could not confirm as stopped after its call ended early: it may still run
-// in its container. Stop retries the confirmation; Terminate also tries it.
+// NativeCommandUnstoppedError reports a native command that RunNativeCommand,
+// or rgw.Gateway.Admin, could not confirm as stopped after its call ended
+// early: it may still run in its container. Stop retries the confirmation;
+// Terminate also tries it.
 type NativeCommandUnstoppedError struct {
 	invocation *nativeInvocation
 	err        error
@@ -220,6 +221,9 @@ type nativeInvocation struct {
 	target testcontainers.Container
 	label  string
 	cancel context.CancelCauseFunc
+	// stopCommand confirms that the command of marker no longer runs:
+	// supervised.Cancel, or supervised.CancelShell for a shell supervisor.
+	stopCommand func(ctx context.Context, ctr testcontainers.Container, label, marker string) error
 	// done is closed when the call has returned. It then has set marker if
 	// it could not confirm that its command stopped.
 	done   chan struct{}
@@ -241,7 +245,7 @@ func (inv *nativeInvocation) stop(ctx context.Context) error {
 	if inv.stopped {
 		return nil
 	}
-	if err := supervised.Cancel(ctx, inv.target, inv.label, inv.marker); err != nil {
+	if err := inv.stopCommand(ctx, inv.target, inv.label, inv.marker); err != nil {
 		stateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nativeInspectTimeout)
 		_, stateErr := inv.target.State(stateCtx)
 		cancel()
@@ -376,6 +380,13 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // then fails. A malformed limit or an Input that served another command fails
 // before anything runs or any input is taken.
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
+	if err := c.sharedGate("RunNativeCommand"); err != nil {
+		return NativeCommandResult{}, err
+	}
+	return c.runNativeCommand(ctx, target, command)
+}
+
+func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {
 		return NativeCommandResult{}, classify(ErrInvalidRequest, err)
@@ -407,7 +418,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, done: make(chan struct{})}
+	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
 	c.nativeMu.Lock()
 	if c.nativeClosed {
 		c.nativeMu.Unlock()
@@ -482,6 +493,47 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 			result.TimedOut, result.StdoutTruncated, result.StderrTruncated)
 	}
 	return result, nil
+}
+
+// runOwnedShell runs argv in target, a container of this cluster that the
+// caller admitted while it holds the cluster mutex, under the shell
+// supervisor with limit seconds (0 for none). The invocation is tracked like
+// a RunNativeCommand's: when ctx ends first, the command is stopped before
+// runOwnedShell returns, and a stop that cannot be confirmed returns a
+// NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
+// cancels a running call. label names the command in errors.
+func (c *Container) runOwnedShell(ctx context.Context, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
+	c.nativeMu.Lock()
+	if c.nativeClosed {
+		c.nativeMu.Unlock()
+		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
+	}
+	if c.nativeInvocations == nil {
+		c.nativeInvocations = make(map[*nativeInvocation]bool)
+	}
+	c.nativeInvocations[inv] = true
+	c.nativeMu.Unlock()
+	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
+	unstopped, _ := supervised.Unconfirmed(err)
+	c.nativeMu.Lock()
+	if unstopped != "" {
+		inv.marker = unstopped
+	} else {
+		delete(c.nativeInvocations, inv)
+	}
+	c.nativeMu.Unlock()
+	close(inv.done)
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
+		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
+	}
+	err = safeNativeError(err)
+	if unstopped != "" {
+		return supervised.ShellReport{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
+	}
+	return report, err
 }
 
 // admitNativeTarget accepts a container of this cluster, or one of the caller
@@ -579,11 +631,11 @@ func (c *Container) ownsNativeTarget(id string) bool {
 	return false
 }
 
-// stopNativeInvocations refuses new native commands, cancels the running
-// ones, waits until their calls have returned and stops the commands that
-// they could not confirm as stopped. It keeps those it cannot stop and returns
-// their errors.
-func (c *Container) stopNativeInvocations(ctx context.Context) []error {
+// cancelNativeInvocations refuses new native commands, cancels the running
+// ones and returns every tracked invocation. It takes only nativeMu, so
+// Terminate calls it before it waits for the cluster mutex, which an
+// invocation's caller may hold.
+func (c *Container) cancelNativeInvocations() []*nativeInvocation {
 	c.nativeMu.Lock()
 	c.nativeClosed = true
 	pending := slices.Collect(maps.Keys(c.nativeInvocations))
@@ -591,6 +643,15 @@ func (c *Container) stopNativeInvocations(ctx context.Context) []error {
 	for _, inv := range pending {
 		inv.cancel(errNativeTerminated)
 	}
+	return pending
+}
+
+// stopNativeInvocations refuses new native commands, cancels the running
+// ones, waits until their calls have returned and stops the commands that
+// they could not confirm as stopped. It keeps those it cannot stop and returns
+// their errors.
+func (c *Container) stopNativeInvocations(ctx context.Context) []error {
+	pending := c.cancelNativeInvocations()
 	var errs []error
 	for _, inv := range pending {
 		// A canceled call returns within its own stop budget.

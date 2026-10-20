@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
@@ -307,6 +309,284 @@ func testNetworkDelay(t *testing.T) {
 			slow, heldSlow[0], fast, heldFast[len(heldFast)-1], slow, heldAfter[len(heldAfter)/2], counted.Packets)
 	})
 
+	t.Run("peer", func(t *testing.T) {
+		// Only the packets that osd.N sends to the client container are
+		// delayed: the client's reads from that OSD wait for a delayed answer,
+		// while its reads from the other OSD and another client's reads from
+		// the delayed OSD do not.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer := netip.MustParseAddr(address)
+		other := cluster.ControlContainer()
+		otherAddress, err := other.ContainerIP(ctx)
+		if err != nil || otherAddress == address {
+			t.Fatalf("the control container's address %q: %v", otherAddress, err)
+		}
+		selective := request
+		selective.Peer = peer
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, selective)
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied || status.RootKind != "prio" || status.Delay != delayAmount || status.Jitter != delayJitter {
+			t.Fatalf("status of the peer delay: %+v, %v", status, err)
+		}
+		during := readDelayObjects(t, ctx, client, slow, fast)
+		elsewhere := readDelayObjects(t, ctx, other, slow)
+		counted, err := lease.Status(ctx)
+		if err != nil || counted.Packets == 0 {
+			t.Fatalf("netem counted %d selected packets: %v", counted.Packets, err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		after := readDelayObjects(t, ctx, client, slow)
+		if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+			t.Fatalf("root qdisc after Restore: %s", root)
+		}
+		if helpers := netemHelpers(t, ctx); helpers != 0 {
+			t.Fatalf("%d netem helpers after Restore", helpers)
+		}
+		limit := float64(delayAmount.Milliseconds())
+		lowest := float64((delayAmount - delayJitter).Milliseconds())
+		if during[slow].Min < lowest || during[fast].Median >= limit/2 || elsewhere[slow].Median >= limit/2 || after[slow].Median >= limit/2 {
+			t.Fatalf("peer delay to %s: %s %+v and %s %+v from it, %s %+v from %s, %s %+v after Restore",
+				peer, slow, during[slow], fast, during[fast], slow, elsewhere[slow], otherAddress, slow, after[slow])
+		}
+		filters, _ := json.Marshal(status.Filters)
+		t.Logf("osd.%d delayed by %v±%v to %s only: from it %s median %.1f ms (min %.1f), %s median %.1f ms; from %s %s median %.1f ms; after Restore %.1f ms; netem counted %d selected packets; filters %s",
+			delayed.ID, delayAmount, delayJitter, peer, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median,
+			otherAddress, slow, elsewhere[slow].Median, after[slow].Median, counted.Packets, filters)
+	})
+
+	t.Run("peer foreign filter", func(t *testing.T) {
+		// A filter that another owner adds under the lease's prio root is not
+		// the lease's: Restore refuses to remove the root with it and keeps
+		// the lease, and succeeds after that owner removed its filter.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selective := request
+		selective.Peer = netip.MustParseAddr(address)
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, selective)
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied {
+			t.Fatalf("status of the peer delay: %+v, %v", status, err)
+		}
+		root := status.RootHandle
+		owner := startNetemObserver(t, ctx, image, delayed.Container, true)
+		delayExec(t, ctx, owner, "tc", "filter", "add", "dev", lease.Interface, "parent", root, "protocol", "ip", "pref", "20",
+			"handle", "801::1", "u32", "match", "ip", "dst", "192.0.2.1/32", "flowid", root+"1")
+		if changed, err := lease.Status(ctx); err != nil || changed.Applied {
+			t.Fatalf("status with a foreign filter: %+v, %v", changed, err)
+		}
+		if err := lease.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Fatalf("Restore with a foreign filter: %v", err)
+		}
+		if kept := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); kept != "prio "+root {
+			t.Fatalf("root after the refused Restore: %s", kept)
+		}
+		if filters := delayExec(t, ctx, owner, "tc", "-j", "filter", "show", "dev", lease.Interface); !strings.Contains(filters, `"pref":20`) {
+			t.Fatalf("the foreign filter is gone: %s", filters)
+		}
+		delayExec(t, ctx, owner, "tc", "filter", "del", "dev", lease.Interface, "parent", root, "protocol", "ip", "pref", "20")
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if after := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); after != "noqueue 0:" {
+			t.Fatalf("root qdisc after Restore: %s", after)
+		}
+		t.Logf("a foreign pref 20 filter under %s kept the peer delay: Restore refused, the root and filter stayed, and Restore succeeded after the owner removed it", root)
+	})
+
+	t.Run("peer blackhole", func(t *testing.T) {
+		// Every packet that osd.N sends to the client container is dropped:
+		// the client's read from that OSD times out, while its read from the
+		// other OSD and the control container's read from the dropped OSD
+		// answer. After Restore the client reads it again.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := cluster.ControlContainer()
+		blackhole := ceph.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peer: netip.MustParseAddr(address), Loss: 100}
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, blackhole)
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied || status.Loss != 100 || status.Delay != 0 {
+			t.Fatalf("status of the blackhole: %+v, %v", status, err)
+		}
+		dropped := timedRead(t, ctx, client, slow)
+		served := timedRead(t, ctx, client, fast)
+		elsewhere := timedRead(t, ctx, other, slow)
+		counted, err := lease.Status(ctx)
+		if err != nil || counted.Drops == 0 {
+			t.Fatalf("netem dropped %d selected packets: %v", counted.Drops, err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		after := timedRead(t, ctx, client, slow)
+		if dropped.Errno != 110 || served.Errno != 0 || elsewhere.Errno != 0 || after.Errno != 0 {
+			t.Fatalf("blackhole to %s: %s %+v and %s %+v from it, %s %+v from the control container, %s %+v after Restore",
+				address, slow, dropped, fast, served, slow, elsewhere, slow, after)
+		}
+		t.Logf("osd.%d drops every packet to %s: its read of %s failed with errno %d after %.1f s, of %s took %.1f ms; the control container read %s in %.1f ms; after Restore %.1f ms; netem dropped %d packets",
+			delayed.ID, address, slow, dropped.Errno, dropped.Ms/1000, fast, served.Ms, slow, elsewhere.Ms, after.Ms, counted.Drops)
+	})
+
+	t.Run("peers blackhole", func(t *testing.T) {
+		// One lease drops every packet that osd.N sends to two client
+		// containers, through one filter each: both clients' reads from
+		// that OSD time out, while the first client's read from the other
+		// OSD and the control container's read from the dropped OSD answer.
+		// After Restore both clients read it again.
+		clientImage, _ := integrationImages(t)
+		second, err := testcontainers.Run(ctx, clientImage, cluster.WithClient(), ceph.WithIdleEntrypoint(),
+			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
+		testcontainers.CleanupContainer(t, second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var peers []ceph.NetworkPeer
+		for _, ctr := range []testcontainers.Container{client, second} {
+			address, err := ctr.ContainerIP(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			peers = append(peers, ceph.NetworkPeer{Addr: netip.MustParseAddr(address)})
+		}
+		other := cluster.ControlContainer()
+		if address, err := other.ContainerIP(ctx); err != nil || slices.ContainsFunc(peers, func(peer ceph.NetworkPeer) bool { return peer.Addr.String() == address }) {
+			t.Fatalf("the control container's address %q: %v", address, err)
+		}
+		lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peers: peers, Loss: 100})
+		if lease != nil {
+			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		status, err := lease.Status(ctx)
+		if err != nil || !status.Applied || status.Loss != 100 || status.RootKind != "prio" || !slices.Equal(lease.Peers, peers) {
+			t.Fatalf("status of the blackhole to %v: %+v, %v", lease.Peers, status, err)
+		}
+		var filters []struct {
+			Options struct {
+				Handle string `json:"fh"`
+				FlowID string `json:"flowid"`
+			} `json:"options"`
+		}
+		if err := json.Unmarshal(status.Filters, &filters); err != nil {
+			t.Fatal(err)
+		}
+		var leaves []string
+		for _, filter := range filters {
+			if filter.Options.FlowID != "" {
+				leaves = append(leaves, filter.Options.Handle)
+			}
+		}
+		if !slices.Equal(leaves, []string{"800::1", "800::2"}) {
+			t.Fatalf("the kernel shows the filters %v: %s", leaves, status.Filters)
+		}
+		dropped := timedRead(t, ctx, client, slow)
+		droppedSecond := timedRead(t, ctx, second, slow)
+		served := timedRead(t, ctx, client, fast)
+		elsewhere := timedRead(t, ctx, other, slow)
+		counted, err := lease.Status(ctx)
+		if err != nil || !counted.Applied || counted.Drops == 0 {
+			t.Fatalf("netem dropped %d selected packets: %+v, %v", counted.Drops, counted, err)
+		}
+		if err := lease.Restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+			t.Fatalf("root qdisc after Restore: %s", root)
+		}
+		if helpers := netemHelpers(t, ctx); helpers != 0 {
+			t.Fatalf("%d netem helpers after Restore", helpers)
+		}
+		after := timedRead(t, ctx, client, slow)
+		afterSecond := timedRead(t, ctx, second, slow)
+		if dropped.Errno != 110 || droppedSecond.Errno != 110 || served.Errno != 0 || elsewhere.Errno != 0 || after.Errno != 0 || afterSecond.Errno != 0 {
+			t.Fatalf("blackhole to %v: %s %+v and %+v from them, %s %+v from the first, %s %+v from the control container, %s %+v and %+v after Restore",
+				peers, slow, dropped, droppedSecond, fast, served, slow, elsewhere, slow, after, afterSecond)
+		}
+		t.Logf("osd.%d drops every packet to %v through filters %v: its reads of %s failed with errno %d after %.1f s and %d after %.1f s, of %s took %.1f ms; the control container read %s in %.1f ms; after Restore %.1f ms and %.1f ms; netem dropped %d packets",
+			delayed.ID, peers, leaves, slow, dropped.Errno, dropped.Ms/1000, droppedSecond.Errno, droppedSecond.Ms/1000, fast, served.Ms, slow, elsewhere.Ms,
+			after.Ms, afterSecond.Ms, counted.Drops)
+	})
+
+	t.Run("foreign qdisc", func(t *testing.T) {
+		// A qdisc that another owner adds under the lease's root, while the
+		// delay itself stays intact, is not the lease's either: Restore
+		// refuses, keeps every qdisc, and succeeds after the owner removed it.
+		address, err := client.ContainerIP(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selective := request
+		selective.Peer = netip.MustParseAddr(address)
+		for name, delay := range map[string]ceph.NetworkDelay{"peer": selective, "interface": request} {
+			lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, delay)
+			if lease != nil {
+				defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, err := lease.Status(ctx)
+			if err != nil || !status.Applied {
+				t.Fatalf("status of the %s delay: %+v, %v", name, status, err)
+			}
+			root := status.RootHandle
+			owner := startNetemObserver(t, ctx, image, delayed.Container, true)
+			delayExec(t, ctx, owner, "tc", "qdisc", "add", "dev", lease.Interface, "parent", root+"1", "handle", "9999:",
+				"tbf", "rate", "1gbit", "burst", "64kb", "latency", "50ms")
+			if changed, err := lease.Status(ctx); err != nil || changed.Applied {
+				t.Fatalf("status of the %s delay with a foreign qdisc: %+v, %v", name, changed, err)
+			}
+			if err := lease.Restore(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Fatalf("Restore of the %s delay with a foreign qdisc: %v", name, err)
+			}
+			qdiscs := delayExec(t, ctx, owner, "tc", "-j", "qdisc", "show", "dev", lease.Interface)
+			for _, handle := range []string{root, "9999:"} {
+				if !strings.Contains(qdiscs, `"handle":"`+handle+`"`) {
+					t.Fatalf("the refused Restore of the %s delay removed %s: %s", name, handle, qdiscs)
+				}
+			}
+			if name == "peer" && strings.Count(qdiscs, `"kind":"netem"`) != 1 {
+				t.Fatalf("the refused Restore removed the delay's netem child: %s", qdiscs)
+			}
+			delayExec(t, ctx, owner, "tc", "qdisc", "del", "dev", lease.Interface, "parent", root+"1", "handle", "9999:")
+			if err := lease.Restore(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if after := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); after != "noqueue 0:" {
+				t.Fatalf("root qdisc after Restore of the %s delay: %s", name, after)
+			}
+			t.Logf("a foreign tbf 9999: under %s's band 1 kept the %s delay: Restore refused, every qdisc stayed, and Restore succeeded after the owner removed it", root, name)
+		}
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
 		if lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: cluster.ControlImage(),
@@ -424,4 +704,215 @@ func testNetworkDelay(t *testing.T) {
 			t.Fatalf("%d netem helpers after Terminate", helpers)
 		}
 	})
+}
+
+// testNetworkDelayPeerIPv6 delays only the packets that an OSD of an IPv6
+// cluster sends to the client container's IPv6 address, through the IPv6 u32
+// filter: the client's reads from that OSD wait, its reads from the other OSD
+// and the control container's reads do not.
+func testNetworkDelayPeerIPv6(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
+	defer cancel()
+	image := netemImage(t)
+	cluster, client := newServiceCluster(t, ceph.WithPoolDefaults(1, 1), ceph.WithAddressFamily(ceph.AddressIPv6))
+	objects := placeDelayObjects(t, ctx, cluster, client)
+	osds := cluster.OSDs()
+	delayed, other := osds[0], osds[1]
+	slow, fast := objects[delayed.ID], objects[other.ID]
+	ipv6 := func(ctr testcontainers.Container) netip.Addr {
+		t.Helper()
+		inspection, err := ctr.Inspect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+		if endpoint == nil || !endpoint.GlobalIPv6Address.IsValid() {
+			t.Fatalf("no IPv6 address on %s", cluster.NetworkName())
+		}
+		return endpoint.GlobalIPv6Address
+	}
+	peer, control := ipv6(client), ipv6(cluster.ControlContainer())
+	lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: image,
+		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peer: peer})
+	if lease != nil {
+		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := lease.Status(ctx)
+	if err != nil || !status.Applied || status.RootKind != "prio" {
+		t.Fatalf("status of the IPv6 peer delay: %+v, %v", status, err)
+	}
+	during := readDelayObjects(t, ctx, client, slow, fast)
+	elsewhere := readDelayObjects(t, ctx, cluster.ControlContainer(), slow)
+	counted, err := lease.Status(ctx)
+	if err != nil || counted.Packets == 0 {
+		t.Fatalf("netem counted %d selected packets: %v", counted.Packets, err)
+	}
+	if err := lease.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after := readDelayObjects(t, ctx, client, slow)
+	if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+		t.Fatalf("root qdisc after Restore: %s", root)
+	}
+	limit := float64(delayAmount.Milliseconds())
+	lowest := float64((delayAmount - delayJitter).Milliseconds())
+	if during[slow].Min < lowest || during[fast].Median >= limit/2 || elsewhere[slow].Median >= limit/2 || after[slow].Median >= limit/2 {
+		t.Fatalf("IPv6 peer delay to %s: %s %+v and %s %+v from it, %s %+v from %s, %s %+v after Restore",
+			peer, slow, during[slow], fast, during[fast], slow, elsewhere[slow], control, slow, after[slow])
+	}
+	filters, _ := json.Marshal(status.Filters)
+	t.Logf("osd.%d delayed by %v±%v to %s only: from it %s median %.1f ms (min %.1f), %s median %.1f ms; from %s %s median %.1f ms; after Restore %.1f ms; netem counted %d selected packets; filters %s",
+		delayed.ID, delayAmount, delayJitter, peer, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median,
+		control, slow, elsewhere[slow].Median, after[slow].Median, counted.Packets, filters)
+
+	testNetworkDelayMixedPeers(t, ctx, image, cluster, client, delayed, slow, fast)
+}
+
+// connectProbeScript connects over TCP to port 9 of each IPv4 address once,
+// where nothing listens, and prints how each attempt ended and how long it
+// took. The SYN leaves the probe's namespace and the reset comes back.
+const connectProbeScript = `import json,socket,sys,time
+out=[]
+for address in sys.argv[1:]:
+ s=socket.socket(socket.AF_INET,socket.SOCK_STREAM); s.settimeout(5); start=time.monotonic()
+ try:
+  s.connect((address,9)); result="connected"
+ except ConnectionRefusedError: result="refused"
+ except OSError as e: result=type(e).__name__
+ out.append({"address":address,"result":result,"ms":(time.monotonic()-start)*1000}); s.close()
+print(json.dumps(out))
+`
+
+type connectProbe struct {
+	Address string  `json:"address"`
+	Result  string  `json:"result"`
+	Ms      float64 `json:"ms"`
+}
+
+// testNetworkDelayMixedPeers delays, with one lease, osd.N's packets to the
+// client's IPv6 address and to the control container's IPv4 address: an
+// IPv4 filter in preference 10 and table 800:, and an IPv6 filter in
+// preference 11 and table 801:. The client's Ceph reads, over IPv6, wait;
+// the control container's, also over IPv6, do not. A TCP connect from the
+// OSD's namespace to the control container's IPv4 address waits, one to the
+// client's IPv4 address does not.
+func testNetworkDelayMixedPeers(t *testing.T, ctx context.Context, image string, cluster *ceph.Container, client testcontainers.Container, delayed *ceph.OSDContainer, slow, fast string) {
+	t.Helper()
+	endpoint := func(ctr testcontainers.Container) (netip.Addr, netip.Addr) {
+		t.Helper()
+		inspection, err := ctr.Inspect(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+		if settings == nil || !settings.IPAddress.Is4() || !settings.GlobalIPv6Address.IsValid() {
+			t.Fatalf("no IPv4 and IPv6 address on %s", cluster.NetworkName())
+		}
+		return settings.IPAddress, settings.GlobalIPv6Address
+	}
+	client4, client6 := endpoint(client)
+	control4, control6 := endpoint(cluster.ControlContainer())
+	peers := []ceph.NetworkPeer{{Addr: client6}, {Addr: control4}}
+	lease, err := cluster.TemporaryNetworkDelay(ctx, delayed.Container, ceph.NetworkDelay{HelperImage: image,
+		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peers: peers})
+	if lease != nil {
+		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := lease.Status(ctx)
+	if err != nil || !status.Applied || status.RootKind != "prio" {
+		t.Fatalf("status of the mixed peer delay: %+v, %v", status, err)
+	}
+	var filters []struct {
+		Protocol string `json:"protocol"`
+		Pref     int    `json:"pref"`
+		Options  struct {
+			Handle string `json:"fh"`
+			FlowID string `json:"flowid"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(status.Filters, &filters); err != nil {
+		t.Fatal(err)
+	}
+	var leaves []string
+	for _, filter := range filters {
+		if filter.Options.FlowID != "" {
+			leaves = append(leaves, fmt.Sprintf("%s/%d/%s", filter.Protocol, filter.Pref, filter.Options.Handle))
+		}
+	}
+	slices.Sort(leaves)
+	if !slices.Equal(leaves, []string{"ip/10/800::1", "ipv6/11/801::1"}) {
+		t.Fatalf("the kernel shows the filters %v: %s", leaves, status.Filters)
+	}
+	during := readDelayObjects(t, ctx, client, slow, fast)
+	elsewhere := readDelayObjects(t, ctx, cluster.ControlContainer(), slow)
+	prober := startNetemObserver(t, ctx, image, delayed.Container, false)
+	var probes []connectProbe
+	if err := json.Unmarshal([]byte(delayExec(t, ctx, prober, "python3", "-c", connectProbeScript, control4.String(), client4.String())), &probes); err != nil || len(probes) != 2 {
+		t.Fatalf("connect probes %+v: %v", probes, err)
+	}
+	counted, err := lease.Status(ctx)
+	if err != nil || !counted.Applied || counted.Packets == 0 {
+		t.Fatalf("netem counted %d selected packets: %+v, %v", counted.Packets, counted, err)
+	}
+	if err := lease.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var restored []connectProbe
+	if err := json.Unmarshal([]byte(delayExec(t, ctx, prober, "python3", "-c", connectProbeScript, control4.String())), &restored); err != nil || len(restored) != 1 {
+		t.Fatalf("connect probe after Restore %+v: %v", restored, err)
+	}
+	after := readDelayObjects(t, ctx, client, slow)
+	if root := rootQdisc(t, ctx, image, delayed.Container, lease.Interface); root != "noqueue 0:" {
+		t.Fatalf("root qdisc after Restore: %s", root)
+	}
+	limit := float64(delayAmount.Milliseconds())
+	lowest := float64((delayAmount - delayJitter).Milliseconds())
+	if during[slow].Min < lowest || during[fast].Median >= limit/2 || elsewhere[slow].Median >= limit/2 || after[slow].Median >= limit/2 {
+		t.Fatalf("mixed peer delay to %v: %s %+v and %s %+v from it, %s %+v from %s, %s %+v after Restore",
+			peers, slow, during[slow], fast, during[fast], slow, elsewhere[slow], control6, slow, after[slow])
+	}
+	if probes[0].Result != "refused" || probes[0].Ms < lowest || probes[1].Result != "refused" || probes[1].Ms >= limit/2 ||
+		restored[0].Result != "refused" || restored[0].Ms >= limit/2 {
+		t.Fatalf("connect probes while delayed %+v, after Restore %+v", probes, restored)
+	}
+	t.Logf("osd.%d delayed by %v±%v to %v through filters %v: the client's reads of %s over IPv6 median %.1f ms (min %.1f), of %s %.1f ms; the control container's read of %s over IPv6 %.1f ms; a connect to %s:9 was refused after %.1f ms, to %s:9 after %.1f ms, and to %s:9 after %.1f ms after Restore; after Restore the client's read took %.1f ms; netem counted %d selected packets",
+		delayed.ID, delayAmount, delayJitter, peers, leaves, slow, during[slow].Median, during[slow].Min, fast, during[fast].Median, slow, elsewhere[slow].Median,
+		control4, probes[0].Ms, client4, probes[1].Ms, control4, restored[0].Ms, after[slow].Median, counted.Packets)
+}
+
+// timedReadScript reads one object once with a 5-second OSD operation timeout
+// and prints the errno (0 on success) and the time it took.
+const timedReadScript = `import json,rados,sys,time
+c=rados.Rados(conffile="/etc/ceph/ceph.conf",conf={"rados_osd_op_timeout":"5"})
+c.connect(timeout=30)
+try:
+ io=c.open_ioctx(sys.argv[1])
+ start=time.monotonic(); errno=0
+ try: io.read(sys.argv[2],1<<20)
+ except rados.Error as e: errno=getattr(e,"errno",None) or -1
+ print(json.dumps({"errno":abs(errno),"ms":(time.monotonic()-start)*1000}))
+ io.close()
+finally:
+ c.shutdown()
+`
+
+type timedReadResult struct {
+	Errno int     `json:"errno"`
+	Ms    float64 `json:"ms"`
+}
+
+func timedRead(t *testing.T, ctx context.Context, ctr testcontainers.Container, name string) timedReadResult {
+	t.Helper()
+	out := delayExec(t, ctx, ctr, "python3", "-c", timedReadScript, delayPool, name)
+	var result timedReadResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("parse timed read %q: %v", out, err)
+	}
+	return result
 }

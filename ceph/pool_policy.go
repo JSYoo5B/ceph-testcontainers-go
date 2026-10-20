@@ -69,6 +69,9 @@ func (c *Container) PoolStatus(ctx context.Context, name string) (PoolState, err
 // an error. Existing data is never removed. External pool edits must not race
 // this operation; native pool IDs are checked before each mutation.
 func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuota) error {
+	if gateErr := c.sharedGate("SetPoolQuota"); gateErr != nil {
+		return gateErr
+	}
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -96,7 +99,7 @@ func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuo
 		if err := c.checkPoolID(ctx, pool); err != nil {
 			return err
 		}
-		if _, err := c.Ceph(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
+		if _, err := c.cephCLI(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
 			return fmt.Errorf("set pool %q %s quota (earlier settings may have changed): %w", name, setting.name, err)
 		}
 	}
@@ -109,6 +112,9 @@ func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuo
 // waits for resulting recovery. On partial failure, inspect PoolStatus; no rollback
 // or data deletion is attempted. External pool/CRUSH edits must not race this call.
 func (c *Container) SetPoolReplication(ctx context.Context, name string, replicas, minSize int) error {
+	if gateErr := c.sharedGate("SetPoolReplication"); gateErr != nil {
+		return gateErr
+	}
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -161,7 +167,7 @@ func (c *Container) SetPoolReplication(ctx context.Context, name string, replica
 		if setting.name == "size" && setting.desired == 1 {
 			args = append(args, "--yes-i-really-mean-it")
 		}
-		if _, err := c.Ceph(ctx, args...); err != nil {
+		if _, err := c.cephCLI(ctx, args...); err != nil {
 			return fmt.Errorf("set pool %q %s (earlier settings may have changed): %w", name, setting.name, err)
 		}
 	}
@@ -188,10 +194,15 @@ func (c *Container) poolPolicyReady() error {
 }
 
 func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
-	data, err := c.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "pool", "ls", "detail", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
+	return decodePoolStates(data)
+}
+
+// decodePoolStates decodes the output of osd pool ls detail.
+func decodePoolStates(data []byte) ([]PoolState, error) {
 	var native []struct {
 		ID                 *int64 `json:"pool_id"`
 		Name               string `json:"pool_name"`
@@ -257,7 +268,7 @@ func (c *Container) checkPoolID(ctx context.Context, expected PoolState) error {
 }
 
 func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, error) {
-	data, err := c.Ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return PoolConfig{}, err
 	}
@@ -307,7 +318,7 @@ func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, 
 // Count native buckets rather than creation-time placement descriptions. A
 // completed external move, class or weight edit is reflected in this snapshot.
 func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig) (int, error) {
-	data, err := c.Ceph(ctx, "osd", "crush", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "crush", "dump", "--format", "json")
 	if err != nil {
 		return 0, err
 	}

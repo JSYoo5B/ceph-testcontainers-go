@@ -1,0 +1,15 @@
+{
+  "schema": "ceph-tag-scenarios/v1",
+  "default_release": "20.2.4",
+  "releases": [
+    {"release": "20.2.4", "codename": "tentacle"},
+    {"release": "19.2.5", "codename": "squid"}
+  ],
+  "profiles": [
+    {"id": "code-pure-0978ddfd", "profile": "code/pure/internal-integration", "category": "code", "batch": "pure", "package": "./internal/integration"},
+    {"id": "environment-sdk_network-2956058c", "profile": "environment/sdk_network/internal-dockerbridge", "category": "environment", "batch": "sdk_network", "package": "./internal/dockerbridge"},
+    {"id": "short-network_delay-0a1b2c3d", "profile": "short/network_delay/internal-integration", "category": "short", "batch": "network_delay", "package": "./internal/integration"},
+    {"id": "multicluster-rbd_mirror_bandwidth-4e5f6a7b", "profile": "multicluster/rbd_mirror_bandwidth/internal-integration", "category": "multicluster", "batch": "rbd_mirror_bandwidth", "package": "./internal/integration"},
+    {"id": "optional-native_rgw_translation-8c9d0e1f", "profile": "optional/native_rgw_translation/internal-integration", "category": "optional", "batch": "native_rgw_translation", "package": "./internal/integration"}
+  ]
+}

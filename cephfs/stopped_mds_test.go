@@ -213,9 +213,14 @@ func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) 
 	if len(fs.mdss) != published {
 		t.Fatalf("a daemon without a container was published: %d -> %d", published, len(fs.mdss))
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
-	if err := fs.cluster.Terminate(ctx); err != nil {
+	// The start has returned, so the topology lock is free now or never. Check
+	// it directly instead of giving cleanup a wall-clock deadline that a slow
+	// (race-instrumented) teardown of the fake cluster can use up.
+	if !servicehook.TryLock(fs.cluster) {
+		t.Fatal("MDS start left the topology lock held")
+	}
+	servicehook.Unlock(fs.cluster)
+	if err := fs.cluster.Terminate(t.Context()); err != nil {
 		t.Fatalf("cleanup could not run: %v", err)
 	}
 }

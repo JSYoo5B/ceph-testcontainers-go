@@ -398,7 +398,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertLess(prepare_index, run_index)
         self.assertLess(run_index, cleanup[1][0])
         prepare, run = job_steps[prepare_index], job_steps[run_index]
-        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-${{ matrix.id }}")
+        self.assertEqual(scalar(prepare, "artifact_name"), "scenario-images-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}")
         self.assertEqual(scalar(prepare, "if"), "matrix.requires_ceph")
         self.assertNotIn("continue-on-error", prepare)
         self.assertEqual(scalar(self.optional_entry, "category"), "optional")
@@ -406,7 +406,10 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(self.optional_entry, "rgw_image"), "${{ inputs.rgw_image }}")
         self.assertEqual(scalar(run, "CEPH_TEST_RGW_IMAGE"),
                          "${{ inputs.rgw_image || env.CEPH_TEST_RGW_IMAGE }}")
-        self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE"])
+        # Role images come from the preparation step; the run step sets only
+        # the RGW override and the matrix entry's network mode.
+        self.assertEqual(re.findall(r"^          (CEPH_TEST_\w+):", run, re.M), ["CEPH_TEST_RGW_IMAGE", "CEPH_TEST_NETWORK"])
+        self.assertEqual(scalar(run, "CEPH_TEST_NETWORK"), "${{ matrix.network }}")
         self.assertNotIn("run:", self.optional_entry)
         self.assertNotIn("quay.io/", block)
         for selected_rgw in ("", "registry.example/ceph-rgw@sha256:" + "a" * 64):
@@ -441,6 +444,7 @@ class ScenarioImageTests(unittest.TestCase):
         # environment. Without a roles input the action prepares all four.
         self.assertEqual(scalar(action_steps[0], "SCENARIO_RELEASE"), "${{ inputs.release }}")
         self.assertEqual(scalar(action_steps[0], "SCENARIO_ROLES"), "${{ inputs.roles }}")
+        self.assertEqual(scalar(action_steps[0], "SCENARIO_DIGESTS"), "${{ inputs.digests }}")
         inputs = dict(blocks(self.action.split("\nruns:\n", 1)[0], r"^  ([\w-]+):$"))
         self.assertEqual(scalar(inputs["release"], "default"), "'" + runner.RELEASE + "'")
         self.assertEqual(scalar(inputs["roles"], "default"), "'" + ",".join(runner.ROLE_ENV) + "'")
@@ -453,7 +457,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
              "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
-             "--roles", "$SCENARIO_ROLES",
+             "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
             ["printf", "%s\\n", "SCENARIO_IMAGE_LAYOUT=roles", "SCENARIO_IMAGE_ROLES=$SCENARIO_ROLES", ">>", "$GITHUB_ENV"],
@@ -467,7 +471,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(upload, "if-no-files-found"), "error")
         return script
 
-    def run_composite(self, code, roles="control,osd,rgw,mds"):
+    def run_composite(self, code, roles="control,osd,rgw,mds", digests=""):
         script = self.composite_script()
         with tempfile.TemporaryDirectory(prefix="scenario images ") as directory:
             root = Path(directory)
@@ -495,7 +499,7 @@ class ScenarioImageTests(unittest.TestCase):
                 "SCENARIO_TEST_EXIT": str(code),
                 "SCENARIO_TEST_IMAGES": json.dumps({runner.ROLE_ENV[role]: IMAGES[runner.ROLE_ENV[role]]
                                                     for role in roles.split(",")}),
-                "SCENARIO_RELEASE": "19.2.5", "SCENARIO_ROLES": roles,
+                "SCENARIO_RELEASE": "19.2.5", "SCENARIO_ROLES": roles, "SCENARIO_DIGESTS": digests,
             })
             result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail",
                                      "-c", script], cwd=root, env=env,
@@ -504,7 +508,7 @@ class ScenarioImageTests(unittest.TestCase):
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
                 "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
-                "--roles", roles,
+                "--roles", roles, "--digests", digests,
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
             ])
@@ -519,6 +523,11 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertEqual(actual, existing + role_lines + "SCENARIO_IMAGE_LAYOUT=roles\n"
                                  + "SCENARIO_IMAGE_ROLES=" + roles + "\n")
                 self.assertEqual(actual.count("SCENARIO_IMAGE_LAYOUT=roles\n"), 1)
+
+    def test_composite_passes_campaign_digest_pins_as_one_argument(self):
+        pins = "control=sha256:" + "a" * 64 + ",osd=sha256:" + "b" * 64
+        result, _, _ = self.run_composite(0, "control,osd", pins)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_composite_failed_preparation_never_selects_roles(self):
         for code in (1, 17):

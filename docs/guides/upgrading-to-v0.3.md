@@ -8,11 +8,10 @@ one root module version:
 go get github.com/JSYoo5B/ceph-testcontainers-go/ceph@v0.3.0
 ```
 
-The [v0.3.0 milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2)
-has no remaining open items: supervised native input, an MDS unsafe-to-safe
-request window, and bounded authentication first-failure diagnostics.
+The v0.3.0 fixture scope is complete: supervised native input, an MDS
+unsafe-to-safe request window, and bounded authentication first-failure diagnostics.
 Additional native receipts merged since v0.2.0 are listed in
-[CHANGELOG.md](../../CHANGELOG.md). Completion of this milestone describes
+[CHANGELOG.md](../../CHANGELOG.md). Completion of this scope describes
 the producer fixtures; a consumer must still run its own protocol tests.
 
 ## Compatibility
@@ -57,10 +56,9 @@ and joining the call when an assertion fails.
 `TestNativeCommandInput` supplies two binary records in separate phases and
 verifies a worker receipt, byte counts, EOF and supervisor cleanup.
 `TestNativeCommandInputCancellation` verifies cancellation while the command
-does not read. Both belong to the control-only `native_input` batch. The
-implementation PR records focused official and role-image runs on Tentacle
-and Squid: [#85](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/85).
-Those implementation runs are separate from final release-source CI.
+does not read. Both belong to the control-only `native_input` batch. Check
+the recipe with official and role images on Tentacle and Squid. Focused
+runs do not replace final release-source CI.
 
 ## Protocol receipts and their limits
 
@@ -72,9 +70,9 @@ are stable package interfaces.
 
 | Receipt | Established observation | Boundary |
 | --- | --- | --- |
-| [MDS unsafe-to-safe window](messenger-client-fixtures.md#mds-sessions), [#86](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/86) | With `mds_log_pause` applied on the running MDS, the client's and MDS's pending requests hold the same rename TID after its early unsafe reply. Restoring the pause permits journal completion; another client verifies the resulting inode and namespace. | The MDS stays alive. This does not establish replay across a crash, arbitrary dirty-data recovery or lease recovery; [#48](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/48) remains separate. |
-| [Authentication first-failure bundle](messenger-client-fixtures.md#authentication-first-failure-bundle), [#87](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/87) | Within bounded collection and cleanup allowances, preserve the first rejection, MON observations, MGR identities, query outcomes and fresh native controls, including partial results. Offline fixtures preserve the retained failure and classify missing or changed observations. | Complete collection or a successful control is not proof of issuer/verifier key-generation equality. That field remains `unavailable/unverified`; the intermittent failure in [#71](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/71) is not fixed by this recipe. |
-| [MGR transition](messenger-client-fixtures.md#mgr-transition-receipt), [#88](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/88) | Stop the active MGR, observe the captured standby promoted without replacing its process, then restart the old container and observe its new registration. Bracket maps and correlate beacon sessions with GIDs. | Tested with the default Messenger policy. This is not secure/CRC matrix coverage, connection-mode evidence or OSD/MDS/RGW/mirror continuity across that transition. |
+| [MDS unsafe-to-safe window](messenger-client-fixtures.md#mds-sessions) | With `mds_log_pause` applied on the running MDS, the client's and MDS's pending requests hold the same rename TID after its early unsafe reply. Restoring the pause permits journal completion; another client verifies the resulting inode and namespace. | The MDS stays alive. This does not establish replay across a crash, arbitrary dirty-data recovery or lease recovery; those need separate validation. |
+| [Authentication first-failure bundle](messenger-client-fixtures.md#authentication-first-failure-bundle) | Within bounded collection and cleanup allowances, preserve the first rejection, MON observations, MGR identities, query outcomes and fresh native controls, including partial results. Offline fixtures preserve the retained failure and classify missing or changed observations. | Complete collection or a successful control is not proof of issuer/verifier key-generation equality. That field remains `unavailable/unverified`; the recipe does not fix the underlying intermittent failure. |
+| [MGR transition](messenger-client-fixtures.md#mgr-transition-receipt) | Stop the active MGR, observe the captured standby promoted without replacing its process, then restart the old container and observe its new registration. Bracket maps and correlate beacon sessions with GIDs. | Tested with the default Messenger policy. This is not secure/CRC matrix coverage, connection-mode evidence or OSD/MDS/RGW/mirror continuity across that transition. |
 
 The native tests also distinguish Squid and Tentacle observations: Squid's
 pending MDS requests use repeated `request` members rather than Tentacle's

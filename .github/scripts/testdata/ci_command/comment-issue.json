@@ -1,0 +1,20 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 116,
+    "title": "Batch selection",
+    "state": "open",
+    "html_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/issues/116",
+    "user": {"login": "JSYoo5B", "type": "User"}
+  },
+  "comment": {
+    "id": 4000000002,
+    "html_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/issues/116#issuecomment-4000000002",
+    "body": "/ci run rbd_mirror_bandwidth",
+    "author_association": "OWNER",
+    "user": {"login": "JSYoo5B", "type": "User"},
+    "created_at": "2026-10-19T09:00:00Z"
+  },
+  "repository": {"full_name": "JSYoo5B/ceph-testcontainers-go", "default_branch": "main"},
+  "sender": {"login": "JSYoo5B", "type": "User"}
+}

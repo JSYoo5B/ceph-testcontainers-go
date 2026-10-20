@@ -124,6 +124,9 @@ type MessengerPolicyOverride struct {
 // valid mode, and any policy with MessengerV2Secure, is refused with
 // ErrInvalidRequest before any change.
 func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error) {
+	if gateErr := c.sharedGate("TemporaryMessengerPolicy"); gateErr != nil {
+		return nil, gateErr
+	}
 	settings, err := policy.settings()
 	if err != nil {
 		return nil, invalid(fmt.Errorf("messenger policy: %w", err))

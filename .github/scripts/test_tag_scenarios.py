@@ -42,6 +42,10 @@ def native_log(names=("TestNewFeature",), package="example/internal/integration"
         lines += ["=== RUN   " + name, "--- PASS: " + name + " (1.00s)"]
     return "\n".join([*lines, "PASS", "ok\t" + package + "\t1.002s", ""])
 
+def github_outputs(path):
+    """The key=value lines that a step appended to GITHUB_OUTPUT."""
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
 
 class TagPlannerTests(unittest.TestCase):
     def test_new_test_and_new_file_join_existing_batch_without_ci_edit(self):
@@ -260,15 +264,186 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(engine.main(["plan", "--category", "environment", "--verify", "--output", str(output),
                                           "--github-output", str(github_output)]), 0)
             report = json.loads(output.read_text())
-            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(github_output)["matrix"])
         verified_plan = verifier.call_args.args[1]
         self.assertEqual(len(verified_plan["include"]), 2)
         self.assertEqual(report["required_profiles"], 2)
         self.assertEqual(report["selected_profiles"], 1)
         self.assertEqual(report["compiled_coverage"], {"passed": True})
-        self.assertEqual(matrix["include"], report["include"])
+        # A batch without network modes is one entry, as before the axis.
+        self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": "",
+                                              "repetition": "1", "artifact_suffix": ""}
+                                             for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "environment")
         self.assertFalse(matrix["include"][0]["requires_ceph"])
+
+    def representative_catalog(self):
+        """One representative batch per theme, plus an ordinary batch."""
+        catalog = []
+        for index, theme in enumerate(engine.REPRESENTATIVE_THEMES):
+            file = fixture(path="internal/integration/" + theme + "_test.go", tests=("TestTheme" + str(index),),
+                           batch="theme_" + str(index))
+            file["metadata"] = ["timeout=20m job-timeout=30 representative=" + theme]
+            catalog.append(file)
+        catalog.append(fixture())
+        return catalog
+
+    def test_representative_set_is_declared_in_source_and_covers_every_theme(self):
+        catalog = self.representative_catalog()
+        plan = engine.discover(catalog)
+        selected = engine.select_representative_plan(plan)
+        self.assertEqual(sorted(profile["representative"] for profile in selected["include"]),
+                         sorted(engine.REPRESENTATIVE_THEMES))
+        self.assertNotIn("basic", [profile["batch"] for profile in selected["include"]])
+        # The required universe stays whole; the campaign only repeats a part.
+        self.assertEqual(len(selected["required_include"]), len(engine.REPRESENTATIVE_THEMES) + 1)
+        with self.assertRaisesRegex(ValueError, "lacks the theme"):
+            engine.select_representative_plan(engine.discover(catalog[1:]))
+        for value in ("Flaky", "smoke", "flaky,auth"):
+            with self.subTest(theme=value), self.assertRaisesRegex(ValueError, "representative takes one of"):
+                catalog[0]["metadata"] = ["timeout=20m job-timeout=30 representative=" + value]
+                engine.discover(catalog)
+
+    def test_representative_theme_is_one_per_batch_like_its_budget(self):
+        first = fixture()
+        first["metadata"] = ["timeout=20m job-timeout=35 representative=flaky"]
+        second = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            engine.discover([first, second])
+        second["metadata"] = first["metadata"]
+        self.assertEqual(engine.discover([first, second])["include"][0]["representative"], "flaky")
+
+    def test_repetitions_give_each_attempt_its_own_job_and_artifacts_but_one_profile_id(self):
+        plan = engine.select_representative_plan(engine.discover(self.representative_catalog()))
+        entries = engine.network_matrix(plan["include"], "default")
+        self.assertEqual(engine.repeat_matrix(entries, 1), entries)
+        repeated = engine.repeat_matrix(entries, 3)
+        self.assertEqual(len(repeated), 3 * len(entries))
+        self.assertEqual([entry["repetition"] for entry in repeated[:len(entries) + 1]],
+                         ["1"] * len(entries) + ["2"])
+        names = {(entry["id"], entry["artifact_suffix"]) for entry in repeated}
+        self.assertEqual(len(names), len(repeated))
+        self.assertEqual({entry["id"] for entry in repeated}, {entry["id"] for entry in entries})
+        self.assertTrue(all(entry["name"].endswith(" #" + entry["repetition"]) for entry in repeated))
+        for value in (0, engine.MAX_REPETITIONS + 1, "3"):
+            with self.subTest(repetitions=value), self.assertRaisesRegex(ValueError, "repetitions must be"):
+                engine.repeat_matrix(entries, value)
+        many = [{**entries[0], "id": "e" + str(index)} for index in range(engine.MAX_CAMPAIGN_JOBS)]
+        with self.assertRaisesRegex(ValueError, "jobs; the bound"):
+            engine.repeat_matrix(many, 2)
+        long = [{**entry, "job_timeout": 360} for entry in entries]
+        with self.assertRaisesRegex(ValueError, "minutes; the bound"):
+            engine.repeat_matrix(long, 2)
+
+    def test_representative_plan_cli_writes_the_repeated_matrix(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "load_catalog", return_value=self.representative_catalog()), \
+                patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            output = Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--representative", "--repetitions", "2",
+                                          "--github-output", str(output)]), 0)
+            values = github_outputs(output)
+            self.assertEqual(values["count"], str(2 * len(engine.REPRESENTATIVE_THEMES)))
+            for arguments in (["--repetitions", "2"], ["--representative", "--category", "short"],
+                              ["--representative", "--verify"], ["--representative", "--repetitions", "11"]):
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(engine.main(["plan", *arguments]), 1)
+
+    def test_optional_batch_cannot_be_representative(self):
+        optional = fixture(path="internal/integration/optional_test.go", tests=("TestOptional",), batch="regression")
+        optional["tags"] = ["ci_optional", "ci_batch_regression", "native_regression"]
+        optional["constraint"] = combine("and", tag("ci_optional"), tag("ci_batch_regression"))
+        optional["metadata"] = ["timeout=20m job-timeout=35 representative=flaky"]
+        with self.assertRaisesRegex(ValueError, "optional batch cannot be representative"):
+            engine.discover_optional([optional])
+
+    def test_network_modes_make_one_entry_per_mode_of_the_scope(self):
+        host = fixture(tests=("TestHostFirst", "TestModeless"))
+        host["networks"], host["network_tests"] = ["host", "bridge"], ["TestHostFirst"]
+        same = fixture(path="internal/integration/same_test.go", tests=("TestSame",))
+        same["networks"], same["network_tests"] = ["host", "bridge"], ["TestSame"]
+        # A file without modes joins the batch and runs in its default mode.
+        modeless = fixture(path="internal/integration/modeless_test.go", tests=("TestOther",))
+        rgw = fixture(path="internal/integration/rgw_test.go", tests=("TestRGW",), batch="rgw")
+        rgw["networks"], rgw["network_tests"] = ["bridge"], ["TestRGW"]
+        plain = fixture(path="internal/integration/plain_test.go", tests=("TestPlain",), batch="plain")
+        plan = engine.discover([host, same, modeless, rgw, plain])
+        self.assertEqual({profile["batch"]: (profile["networks"], profile["network_tests"]) for profile in plan["include"]},
+                         {"basic": (["host", "bridge"], ["TestHostFirst", "TestSame"]), "rgw": (["bridge"], ["TestRGW"]),
+                          "plain": ([], [])})
+        default = engine.network_matrix(plan["include"], "default")
+        self.assertEqual([(entry["name"], entry["network"], entry["tests"]) for entry in default],
+                         [("basic", "host", ""), ("plain", "", ""), ("rgw", "bridge", "")])
+        everything = engine.network_matrix(plan["include"], "all")
+        self.assertEqual([(entry["name"], entry["network"], entry["tests"]) for entry in everything],
+                         [("basic", "host", ""), ("basic (bridge)", "bridge", "TestHostFirst,TestSame"),
+                          ("plain", "", ""), ("rgw", "bridge", "")])
+        # The default entry keeps the profile's ID; another mode's is distinct.
+        basic = [entry for entry in everything if entry["batch"] == "basic"]
+        self.assertEqual(basic[0]["id"], plan["include"][0]["id"])
+        self.assertEqual(basic[1]["id"], plan["include"][0]["id"] + "-bridge")
+        with self.assertRaisesRegex(ValueError, "network scope"):
+            engine.network_matrix(plan["include"], "some")
+
+    def test_network_modes_must_agree_within_a_batch(self):
+        for name, modes in {"other modes": (["bridge"], ["host", "bridge"]),
+                            "other default": (["bridge", "host"], ["host", "bridge"])}.items():
+            first = fixture(tests=("TestFirst",))
+            second = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
+            first["networks"], second["networks"] = modes
+            first["network_tests"], second["network_tests"] = ["TestFirst"], ["TestSecond"]
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "declare different networkModes"):
+                engine.discover([first, second])
+        for modes in (["overlay"], ["host", "host"]):
+            file = fixture()
+            file["networks"], file["network_tests"] = modes, ["TestNewFeature"]
+            with self.subTest(modes=modes), self.assertRaisesRegex(ValueError, "distinct modes"):
+                engine.discover([file])
+        helper = fixture(path="internal/integration/helpers_test.go", tests=())
+        helper["metadata"], helper["networks"] = [], ["host"]
+        with self.assertRaisesRegex(ValueError, "file that declares the test"):
+            engine.discover([fixture(), helper])
+
+    def test_plan_writes_the_network_scope_to_the_matrix(self):
+        file = fixture()
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNewFeature"]
+        for scope, networks in (("default", ["host"]), ("all", ["host", "bridge"])):
+            with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[file]), \
+                    patch("sys.stdout", new=io.StringIO()):
+                github_output = Path(temporary) / "github-output"
+                self.assertEqual(engine.main(["plan", "--category", "short", "--networks", scope,
+                                              "--github-output", str(github_output)]), 0)
+                outputs = github_outputs(github_output)
+            matrix = json.loads(outputs["matrix"])
+            self.assertEqual([entry["network"] for entry in matrix["include"]], networks, scope)
+            self.assertEqual(outputs["count"], str(len(networks)))
+
+    def test_run_selects_only_tests_that_declare_network_modes(self):
+        file = fixture(tests=("TestNetworked", "TestModeless"))
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNetworked"]
+        plan = engine.discover([file])
+        for selection in ("TestModeless", "TestNetworked,TestNetworked", "TestMissing"):
+            with self.subTest(selection), tempfile.TemporaryDirectory() as temporary, \
+                    self.assertRaisesRegex(ValueError, "test selection"):
+                engine.run_profile([file], plan, "short", "basic", None, Path(temporary) / "native", tests=selection)
+        commands = []
+
+        class Child:
+            def __init__(self, command, **_):
+                commands.append(command)
+                self.stdout = io.StringIO(native_log(("TestNetworked",)))
+
+            def wait(self):
+                return 0
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "compile_inventory", return_value=["TestModeless", "TestNetworked"]), \
+                patch.object(engine.subprocess, "Popen", Child), patch("sys.stdout", new=io.StringIO()):
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            report = engine.run_profile([file], plan, "short", "basic", None, root / "native", root=root, tests="TestNetworked")
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["compiled_tests"], ["TestNetworked"])
+        self.assertEqual(commands[0][commands[0].index("-run") + 1], "^(TestNetworked)$")
 
     def test_optional_plan_is_explicit_and_cannot_claim_required_coverage(self):
         optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
@@ -281,10 +456,13 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(engine.main(["plan", "--optional", "--batch", "native_rgw_translation",
                                           "--output", str(output), "--github-output", str(github_output)]), 0)
             report = json.loads(output.read_text())
-            matrix = json.loads(github_output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(github_output)["matrix"])
         self.assertEqual(report["coverage_scope"], "optional")
         self.assertEqual(report["selected_batch"], "native_rgw_translation")
-        self.assertEqual(matrix["include"], report["include"])
+        # A batch without network modes is one entry, as before the axis.
+        self.assertEqual(matrix["include"], [{**profile, "network": "", "name": profile["batch"], "tests": "",
+                                              "repetition": "1", "artifact_suffix": ""}
+                                             for profile in report["include"]])
         self.assertEqual(matrix["include"][0]["category"], "optional")
         self.assertFalse(any(key.startswith("required_") for key in report))
         self.assertNotIn("compiled_coverage", report)
@@ -328,12 +506,169 @@ class TagPlannerTests(unittest.TestCase):
         with patch.object(engine, "compile_inventory", return_value=["TestDifferent"]), self.assertRaisesRegex(ValueError, "all-tag"):
             engine.verify([file], plan)
 
+    def test_changed_scope_keeps_only_batches_whose_own_test_files_changed(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="topology", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/one_more_test.go", category="topology", batch="one", tests=("TestOneMore",)),
+                   fixture(path="internal/integration/two_test.go", category="topology", batch="two", tests=("TestTwo",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "topology")
+        self.assertEqual([profile["sources"] for profile in plan["include"]],
+                         [["internal/integration/one_more_test.go", "internal/integration/one_test.go"],
+                          ["internal/integration/two_test.go"]])
+        for changed, batches in {
+                ("internal/integration/one_more_test.go",): ["one"],
+                ("internal/integration/one_test.go", "internal/integration/two_test.go"): ["one", "two"],
+                # A shared helper, a public package or docs select nothing:
+                # the periodic matrix runs those batches on main.
+                ("internal/integration/one_integration_helpers_test.go", "ceph/ceph.go", "docs/ceph.md"): [],
+                (): []}.items():
+            with self.subTest(changed=changed):
+                selected = engine.select_changed_plan(plan, [*changed, ""])
+                self.assertEqual([profile["batch"] for profile in selected["include"]], batches)
+                self.assertEqual(selected["selected_scope"], "changed")
+                self.assertEqual(selected["changed_files"], sorted(changed))
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            changed, output = Path(temporary) / "changed", Path(temporary) / "github-output"
+            changed.write_text("internal/integration/two_test.go\nREADME.md\n")
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-files", str(changed),
+                                          "--github-output", str(output)]), 0)
+            outputs = github_outputs(output)
+            self.assertEqual([profile["batch"] for profile in json.loads(outputs["matrix"])["include"]], ["two"])
+            self.assertEqual(outputs["count"], "1")
+            output.unlink()
+            changed.write_text("docs/ceph.md\n")
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-files", str(changed),
+                                          "--github-output", str(output)]), 0)
+            self.assertEqual(github_outputs(output), {"matrix": '{"include":[]}', "count": "0"})
+            for arguments in (["--changed-files", str(changed)],
+                              ["--category", "topology", "--verify", "--changed-files", str(changed)]):
+                self.assertEqual(engine.main(["plan", *arguments]), 1)
+
+    def test_declaration_selection_is_recorded_without_changing_the_matrix(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="topology", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/two_test.go", category="topology", batch="two", tests=("TestTwo",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "topology")
+        one, two = (profile["id"] for profile in plan["include"])
+        calls = []
+
+        def tool(batches, base, root):
+            calls.append((batches, base))
+            return {"merge_base": "abc", "fallback": [], "changed_declarations": ["x_test.go: func helper"],
+                    "batches": [{"id": one, "selected": True, "reason": "func TestOne reaches func helper"},
+                                {"id": two, "selected": False, "reason": "none of 1 roots reaches a changed declaration"}]}
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch.object(engine, "run_batchselect", side_effect=tool), patch("sys.stdout", new=io.StringIO()):
+            output, github = Path(temporary) / "plan.json", Path(temporary) / "github-output"
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--select-declarations", "origin/main",
+                                          "--output", str(output), "--github-output", str(github)]), 0)
+            report = json.loads(output.read_text())
+            matrix = json.loads(github_outputs(github)["matrix"])
+        self.assertEqual(calls, [([{"id": profile["id"], "tags": profile["tags"]} for profile in plan["include"]],
+                                  "origin/main")])
+        # Advisory: both batches still run.
+        self.assertEqual([entry["batch"] for entry in matrix["include"]], ["one", "two"])
+        self.assertEqual([profile["batch"] for profile in report["include"]], ["one", "two"])
+        selection = report["declaration_selection"]
+        self.assertTrue(selection["advisory"])
+        self.assertEqual(selection["selected"], {one: "func TestOne reaches func helper"})
+        self.assertEqual(selection["excluded"], {two: "none of 1 roots reaches a changed declaration"})
+        self.assertEqual((selection["selected_profiles"], selection["total_profiles"]), (1, 2))
+        self.assertEqual(selection["changed_declarations"], ["x_test.go: func helper"])
+        with patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(engine.main(["plan", "--optional", "--batch", "x", "--select-declarations", "main"]), 1)
+
+    def test_applied_declaration_selection_narrows_the_matrix_and_writes_the_summary(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="short", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/two_test.go", category="short", batch="two", tests=("TestTwo",))]
+        plan = engine.select_required_plan(engine.discover(catalog), "short")
+        one, two = (profile["id"] for profile in plan["include"])
+        result = {"merge_base": "abc", "fallback": [], "changed_declarations": ["x_test.go: func helper"],
+                  "batches": [{"id": one, "selected": True, "reason": "func TestOne reaches func helper"},
+                              {"id": two, "selected": False, "reason": "none of 1 roots reaches a changed declaration"}]}
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), \
+                patch.object(engine, "run_batchselect", return_value=result), patch("sys.stdout", new=io.StringIO()):
+            output, github, summary = (Path(temporary) / name for name in ("plan.json", "github-output", "summary.md"))
+            summary.write_text("earlier\n")
+            self.assertEqual(engine.main(["plan", "--category", "short", "--select-declarations", "base",
+                                          "--apply-declarations", "--summary", str(summary),
+                                          "--output", str(output), "--github-output", str(github)]), 0)
+            report = json.loads(output.read_text())
+            outputs = github_outputs(github)
+            text = summary.read_text()
+        self.assertEqual([entry["batch"] for entry in json.loads(outputs["matrix"])["include"]], ["one"])
+        self.assertEqual(outputs["count"], "1")
+        self.assertEqual((report["selected_scope"], report["selected_profiles"]), ("declarations", 1))
+        self.assertFalse(report["declaration_selection"]["advisory"])
+        self.assertEqual(text, "earlier\n### Declaration selection: short\n\n1 of 2 batches selected since abc.\n\n"
+                               "Only the selected batches run here, by opt-in. The selection is advisory: "
+                               "pushes to main run every batch.\n\n"
+                               "| Batch | Runs | Reason |\n| --- | --- | --- |\n"
+                               "| " + one + " | yes | func TestOne reaches func helper |\n"
+                               "| " + two + " | no | none of 1 roots reaches a changed declaration |\n")
+        with patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            for arguments in (["--category", "short", "--apply-declarations"],
+                              ["--select-declarations", "base", "--apply-declarations"],
+                              ["--category", "short", "--select-declarations", "base", "--apply-declarations",
+                               "--changed-since", "base"]):
+                self.assertEqual(engine.main(["plan", *arguments]), 1, arguments)
+
+    def test_declaration_summary_names_the_fallback(self):
+        selection = {"base": "main", "fallback": ["go.mod changed"], "selected": {"short-a": "every batch: go.mod changed"},
+                     "excluded": {}, "selected_profiles": 1, "total_profiles": 1, "error": "x | y"}
+        text = engine.declaration_summary(selection, "short")
+        self.assertIn("1 of 1 batches selected since main.", text)
+        self.assertIn("Every batch runs: go.mod changed", text)
+        self.assertIn("the analysis failed: x \\| y", text)
+
+    def test_declaration_selection_falls_back_to_every_profile(self):
+        catalog = [fixture(path="internal/integration/one_test.go", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/dockerbridge/bridge_test.go", category="environment", batch="bridge",
+                           tests=("TestBridge",))]
+        profiles = engine.discover(catalog)["include"]
+        ids = {profile["batch"]: profile["id"] for profile in profiles}
+        for runner, reason in (
+                (lambda batches, base, root: {"fallback": ["go.mod changed"], "batches": [
+                    {"id": ids["one"], "selected": True, "reason": "every batch: go.mod changed"}]},
+                 "every batch: go.mod changed"),
+                (lambda batches, base, root: {"fallback": [], "batches": []}, "analysis unavailable"),
+                (lambda batches, base, root: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
+                (lambda batches, base, root: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
+                 "analysis unavailable")):
+            with self.subTest(reason=reason):
+                selection = engine.declaration_selection(profiles, "main", runner=runner)
+                self.assertEqual(selection["excluded"], {})
+                self.assertTrue(selection["selected"][ids["one"]].startswith(reason))
+                self.assertIn("is not analysed", selection["selected"][ids["bridge"]])
+                self.assertEqual(selection["selected_profiles"], 2)
+        # Nothing to analyse: the tool is not run.
+        selection = engine.declaration_selection([profile for profile in profiles if profile["batch"] == "bridge"],
+                                                 "main", runner=lambda *arguments: self.fail("ran the tool"))
+        self.assertEqual(list(selection["selected"].values()), ["package ./internal/dockerbridge is not analysed"])
+
+    def test_run_batchselect_passes_the_head_and_fails_closed(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='{"batches": []}', stderr="")
+        with patch.object(engine.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(engine.run_batchselect([{"id": "x", "tags": "a"}], "base", "/tree", head="abc"),
+                             {"batches": []})
+            command = run.call_args.args[0]
+            self.assertEqual(command[:4], ["go", "run", "-mod=readonly", "./internal/tools/batchselect"])
+            self.assertEqual(command[command.index("-head") + 1], "abc")
+            self.assertEqual(command[command.index("-repo") + 1], str(engine.ROOT))
+            self.assertEqual(command[command.index("-package") + 1], "./internal/integration")
+            engine.run_batchselect([], "base", tool="/bin/tool")
+            self.assertEqual(run.call_args.args[0][0], "/bin/tool")
+            self.assertNotIn("-head", run.call_args.args[0])
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="boom")
+        with patch.object(engine.subprocess, "run", return_value=failed), self.assertRaisesRegex(ValueError, "boom"):
+            engine.run_batchselect([], "base")
+
     def test_plan_github_matrix_excludes_code_and_records_source_metadata(self):
         catalog = [fixture(), fixture(path="internal/integration/code_test.go", category="code", batch="pure", tests=("TestCode",))]
         with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=catalog), patch("sys.stdout", new=io.StringIO()):
             output = Path(temporary) / "github-output"
             self.assertEqual(engine.main(["plan", "--github-output", str(output)]), 0)
-            matrix = json.loads(output.read_text().split("=", 1)[1])
+            matrix = json.loads(github_outputs(output)["matrix"])
         self.assertEqual(len(matrix["include"]), 1)
         self.assertEqual(matrix["include"][0]["category"], "short")
         self.assertEqual(matrix["include"][0]["timeout"], "20m")
@@ -357,31 +692,90 @@ class CompletionTests(unittest.TestCase):
         for invalid in (before, after):
             self.assertFalse(engine.completion(invalid, ["TestNewFeature"], "example/internal/integration")["passed"])
 
-    def test_strict_completion_uses_existing_checker_and_original_case(self):
-        for checker, case in (("quiescence", "process-quiescence-bridge-peer"),
-                              ("recovery", "process-recovery-host-directory"), ("receivers", "host")):
+    def test_strict_completion_composes_the_checker_case_from_mode_and_kind(self):
+        for checker, kind, network, case in (("quiescence", "peer", "bridge", "process-quiescence-bridge-peer"),
+                                             ("recovery", "directory", "host", "process-recovery-host-directory"),
+                                             ("receivers", "", "host", "host")):
             module = __import__(engine.CHECKERS[checker][0])
             with patch.object(module, "validate", return_value={"passed": True}) as validator:
-                self.assertTrue(engine.strict_completion("native log", {"checker": checker, "case": case})["passed"])
+                self.assertTrue(engine.strict_completion("native log", {"checker": checker, "case": kind}, network)["passed"])
             validator.assert_called_once_with("native log", case)
 
-    def test_isolated_scope_ownership_covers_exact_original_aggregate(self):
-        checker = "receivers"
+    def checker_files(self, checker, kinds, networks=("host", "bridge")):
+        """An all-tag aggregate and one CI file per receipt kind, each in
+        every network mode, as the split checker batches are declared."""
         parent = engine.CHECKERS[checker][1]
         aggregate = fixture(tests=(parent,), category="recovery", batch="unused")
         aggregate["constraint"] = combine("or", tag("all"), combine("and", tag("ci_recovery"), negate(tag("ci_batch"))))
         aggregate["tags"] = ["all", "ci_recovery", "ci_batch"]
         aggregate["metadata"] = []
-        profiles = []
-        for network in ("bridge", "host"):
-            file = fixture(path="internal/integration/" + network + "_test.go", tests=(parent,), category="recovery", batch=network)
-            file["constraint"] = combine("and", tag("ci"), tag("ci_recovery"), tag("ci_batch"), tag("ci_batch_" + network))
+        files = []
+        for kind in kinds:
+            batch = checker + ("_" + kind if kind else "")
+            file = fixture(path="internal/integration/" + batch + "_test.go", tests=(parent,), category="recovery", batch=batch)
+            file["constraint"] = combine("and", tag("ci"), tag("ci_recovery"), tag("ci_batch"), tag("ci_batch_" + batch))
             file["tags"].remove("all")
-            file["metadata"] = ["timeout=20m job-timeout=35 checker=receivers case=" + network]
-            profiles.append(file)
-        self.assertEqual(engine.discover([aggregate, *profiles])["required_executions"], 2)
-        with self.assertRaisesRegex(ValueError, "do not cover"):
-            engine.discover([aggregate, profiles[0]])
+            file["metadata"] = ["timeout=20m job-timeout=35 checker=" + checker + (" case=" + kind if kind else "")]
+            file["networks"], file["network_tests"] = list(networks), [parent]
+            files.append(file)
+        return aggregate, files
+
+    def test_checker_batches_cover_the_aggregate_in_every_network_mode(self):
+        for checker, kinds in (("receivers", ("",)), ("quiescence", ("peer", "directory")),
+                               ("recovery", ("peer", "directory"))):
+            with self.subTest(checker=checker):
+                aggregate, files = self.checker_files(checker, kinds)
+                plan = engine.discover([aggregate, *files])
+                self.assertEqual(plan["required_executions"], len(kinds))
+                self.assertEqual([profile["networks"] for profile in plan["include"]], [["host", "bridge"]] * len(kinds))
+                # A kind's file that leaves out a mode, or a missing kind,
+                # leaves a case of the checker unowned.
+                _, narrow = self.checker_files(checker, kinds, ("host",))
+                with self.assertRaisesRegex(ValueError, "do not cover"):
+                    engine.discover([aggregate, *narrow])
+                if len(files) > 1:
+                    with self.assertRaisesRegex(ValueError, "do not cover"):
+                        engine.discover([aggregate, files[0]])
+
+    def test_checker_metadata_names_a_kind_and_the_file_names_its_modes(self):
+        for checker, case in (("receivers", "host"), ("quiescence", ""), ("quiescence", "bridge-peer"),
+                              ("recovery", "process-recovery-host-peer"), ("quiescence", "other")):
+            aggregate, files = self.checker_files(checker, ("peer",) if checker != "receivers" else ("",))
+            files[0]["metadata"] = ["timeout=20m job-timeout=35 checker=" + checker + (" case=" + case if case else "")]
+            with self.subTest(checker=checker, case=case), self.assertRaisesRegex(ValueError, "checker case"):
+                engine.discover([aggregate, *files])
+        aggregate, files = self.checker_files("receivers", ("",))
+        del files[0]["networks"]
+        with self.assertRaisesRegex(ValueError, "networkModes"):
+            engine.discover([aggregate, *files])
+
+    def test_checker_run_selects_one_mode_and_checks_its_case(self):
+        aggregate, files = self.checker_files("quiescence", ("peer", "directory"))
+        plan = engine.discover([aggregate, *files])
+        parent = engine.CHECKERS["quiescence"][1]
+        module = __import__(engine.CHECKERS["quiescence"][0])
+        unset = {key: value for key, value in os.environ.items() if key != "CEPH_TEST_NETWORK"}
+        for environment, network, tests in ((unset, "host", ""), ({**unset, "CEPH_TEST_NETWORK": "bridge"}, "bridge", parent)):
+            process = unittest.mock.Mock()
+            process.stdout = io.StringIO(native_log((parent,)))
+            process.wait.return_value = 0
+            with self.subTest(network=network), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "go.mod").write_text("module example\n")
+                with patch.object(engine, "compile_inventory", return_value=[parent]), \
+                        patch.object(engine.subprocess, "Popen", return_value=process) as popen, \
+                        patch.object(module, "validate", return_value={"passed": True}) as validator, \
+                        patch("sys.stdout", new=io.StringIO()), patch.dict(os.environ, environment, clear=True):
+                    report = engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
+                                                root / "output", root, tests=tests)
+                self.assertTrue(report["passed"])
+                self.assertEqual(report["network"], network)
+                self.assertEqual(popen.call_args.kwargs["env"]["CEPH_TEST_NETWORK"], network)
+                validator.assert_called_once_with(unittest.mock.ANY, "process-quiescence-" + network + "-peer")
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"CEPH_TEST_NETWORK": "none"}), \
+                self.assertRaisesRegex(ValueError, "network mode"):
+            engine.run_profile([aggregate, *files], plan, "recovery", "quiescence_peer", None,
+                               Path(temporary) / "output", Path(temporary))
 
     def test_native_command_has_tags_and_never_test_name_selector(self):
         file = fixture()
@@ -422,14 +816,235 @@ class CompletionTests(unittest.TestCase):
         plan = engine.discover([fixture()])
         outcome = {"exit_code": 0, "timed_out": False, "timeout_seconds": 180, "elapsed_seconds": 1.0}
         with tempfile.TemporaryDirectory() as temporary, \
-                patch.object(engine, "bounded_go", return_value=(outcome, "")) as compiler:
+                patch.object(engine, "bounded_go", return_value=(outcome, "")) as compiler, \
+                patch.object(engine, "binary_receipt", return_value={"binary": "receipt"}) as receipt:
             report = engine.compile_profile(plan, "short", "basic", None, Path(temporary) / "compile")
         self.assertTrue(report["passed"])
+        self.assertEqual(report["binary"], {"binary": "receipt"})
+        self.assertEqual(receipt.call_args.args[1].name, "internal-integration.test")
         self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
         command = compiler.call_args.args[0]
         self.assertIn("-c", command)
         self.assertFalse(any(argument.startswith(("-run", "-short", "-list")) for argument in command))
         self.assertEqual(compiler.call_args.args[2], engine.COMPILE_TIMEOUT_SECONDS)
+
+
+def binary_log(names=("TestNewFeature",)):
+    """What the compiled test binary itself prints: PASS, but no ok line."""
+    return native_log(names).rsplit("ok\t", 1)[0]
+
+
+BUILD_KEY = {"package": "./internal/integration", "go_version": "go1.26.2", "goos": "linux", "goarch": "amd64"}
+SOURCES = {"go.mod": "b" * 64, "internal/integration/new_test.go": "c" * 64}
+
+
+class BinaryReuseTests(unittest.TestCase):
+    """run --binary executes the compile phase's binary, or nothing at all."""
+
+    def compiled(self, root, profile, tests, changes, content=b"binary"):
+        """A compile directory as compile_profile leaves it."""
+        directory = root / "compile"
+        directory.mkdir()
+        name = engine.binary_name(profile["package"])
+        (directory / name).write_bytes(content)
+        receipt = {"binary": name, "sha256": engine.hashlib.sha256(content).hexdigest(),
+                   "build_key": dict(BUILD_KEY), "sources": dict(SOURCES), "tests": sorted(tests)}
+        report = {"schema": engine.SCHEMA, "profile": profile, "passed": True, "classification": "compiled",
+                  "binary": receipt}
+        for key, value in changes.items():
+            (receipt if key in receipt else report)[key] = value
+        (directory / "compile-report.json").write_text(json.dumps(report))
+        return directory
+
+    def run_binary(self, file, compile_changes=None, tests="", log=None, inventory=None, key=None, sources=None,
+                   content=b"binary", environment=None):
+        plan = engine.discover([file])
+        commands = []
+
+        class Child:
+            def __init__(self, command, **kwargs):
+                commands.append((command, kwargs))
+                self.stdout = io.StringIO(log if log is not None else binary_log(tuple(file["tests"])))
+
+            def wait(self):
+                return 0
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            directory = self.compiled(root, plan["include"][0], file["tests"], compile_changes or {})
+            if content != b"binary":
+                (directory / engine.binary_name(plan["include"][0]["package"])).write_bytes(content)
+            output = root / "native"
+            with patch.object(engine, "build_key", return_value=dict(key or BUILD_KEY)), \
+                    patch.object(engine, "build_sources", return_value=dict(sources or SOURCES)), \
+                    patch.object(engine, "binary_inventory",
+                                 return_value=sorted(inventory if inventory is not None else file["tests"])), \
+                    patch.object(engine, "compile_inventory") as compiled, \
+                    patch.object(engine.subprocess, "Popen", Child), patch("sys.stdout", new=io.StringIO()), \
+                    patch.dict(os.environ, environment or {}):
+                try:
+                    report = engine.run_profile([file], plan, "short", "basic", None, output, root, tests=tests,
+                                                binary=directory)
+                finally:
+                    self.created = output.exists()
+            compiled.assert_not_called()
+        return report, commands, directory, root, self.created
+
+    def test_reuse_runs_the_verified_binary_from_its_package_directory(self):
+        report, commands, directory, root, _ = self.run_binary(
+            fixture(), environment={"CEPH_TEST_RBD_CLIENT_IMAGE": "override", "GOFLAGS": "-overlay=/x.json"})
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["execution"], "test-binary")
+        self.assertEqual(report["completion"]["execution"], "test-binary")
+        command, options = commands[0]
+        binary = str((directory / "internal-integration.test").resolve())
+        self.assertEqual(command, [binary, "-test.v", "-test.count=1", "-test.timeout=20m"])
+        self.assertEqual(options["cwd"], root / "internal/integration")
+        self.assertNotIn("CEPH_TEST_RBD_CLIENT_IMAGE", options["env"])
+        for name, value in engine.GO_EXECUTION_ENV.items():
+            self.assertEqual(options["env"][name], value)
+        self.assertEqual(report["binary"]["sha256"], engine.hashlib.sha256(b"binary").hexdigest())
+        self.assertEqual(report["binary"]["build_key"], BUILD_KEY)
+
+    def test_network_entry_selects_its_tests_with_the_binary_run_flag(self):
+        file = fixture(tests=("TestNetworked", "TestModeless"))
+        file["networks"], file["network_tests"] = ["host", "bridge"], ["TestNetworked"]
+        report, commands, *_ = self.run_binary(file, tests="TestNetworked", log=binary_log(("TestNetworked",)),
+                                               environment={"CEPH_TEST_NETWORK": "bridge"})
+        self.assertTrue(report["passed"], report)
+        command, options = commands[0]
+        self.assertEqual(command[1:], ["-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=^(TestNetworked)$"])
+        self.assertEqual(options["env"]["CEPH_TEST_NETWORK"], "bridge")
+
+    def test_each_receipt_mismatch_fails_closed_before_running_anything(self):
+        cases = {
+            "sha256 differs": {"content": b"tampered"},
+            "build key differs": {"key": BUILD_KEY | {"goarch": "arm64"}},
+            "different source files": {"sources": SOURCES | {"go.mod": "d" * 64}},
+            "recorded inventory differs": {"compile_changes": {"tests": ["TestOther"]}},
+            "own inventory differs": {"inventory": ["TestNewFeature", "TestInjected"]},
+            "another profile": {"compile_changes": {"profile": {"id": "short-other-00000000", "tags": "x"}}},
+            "did not record a successful binary": {"compile_changes": {"passed": False}},
+            "unexpected binary": {"compile_changes": {"binary": "../other.test"}},
+        }
+        for message, arguments in cases.items():
+            with self.subTest(message), patch.object(engine.subprocess, "Popen") as popen:
+                with self.assertRaisesRegex(ValueError, message):
+                    self.run_binary(fixture(), **arguments)
+                popen.assert_not_called()
+                self.assertFalse(self.created)
+
+    def test_missing_receipt_fails_closed_and_never_recompiles(self):
+        file = fixture()
+        plan = engine.discover([file])
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine.subprocess, "Popen") as popen, \
+                patch.object(engine, "compile_inventory") as compiled, \
+                patch.object(engine, "bounded_go") as compiler:
+            output = Path(temporary) / "native"
+            with self.assertRaisesRegex(ValueError, "receipt is missing"):
+                engine.run_profile([file], plan, "short", "basic", None, output, Path(temporary),
+                                   binary=Path(temporary) / "compile")
+            self.assertFalse(output.exists())
+        popen.assert_not_called()
+        compiled.assert_not_called()
+        compiler.assert_not_called()
+
+    def test_failed_verification_allocates_no_native_directory(self):
+        with self.assertRaises(ValueError):
+            self.run_binary(fixture(), content=b"tampered")
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch.object(engine.subprocess, "Popen") as popen, patch("sys.stderr", new=io.StringIO()):
+            output = Path(temporary) / "native"
+            code = engine.main(["run", "--category", "short", "--batch", "basic", "--directory", str(output),
+                                "--binary", str(Path(temporary) / "compile")])
+            self.assertEqual(code, 1)
+            self.assertFalse(output.exists())
+        popen.assert_not_called()
+
+    def test_without_binary_run_and_optional_keep_go_test(self):
+        optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_rgw_translation")
+        optional["constraint"] = combine("and", optional["constraint"], tag("native_regression"))
+        optional["tags"].append("native_regression")
+        for arguments, binary in ((["run", "--category", "short", "--batch", "basic"], None),
+                                  (["run", "--category", "short", "--batch", "basic", "--binary", "c"], Path("c")),
+                                  (["optional", "--batch", "native_rgw_translation"], None),
+                                  (["optional", "--batch", "native_rgw_translation", "--binary", "c"], Path("c"))):
+            with self.subTest(arguments=arguments), \
+                    patch.object(engine, "load_catalog", return_value=[fixture(), optional]), \
+                    patch.object(engine, "run_profile", return_value={"passed": True}) as runner, \
+                    patch("sys.stdout", new=io.StringIO()):
+                self.assertEqual(engine.main([*arguments, "--directory", "native"]), 0)
+                self.assertEqual(runner.call_args.kwargs["binary"], binary)
+        process = unittest.mock.Mock()
+        process.stdout = io.StringIO(native_log())
+        process.wait.return_value = 0
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "compile_inventory", return_value=["TestNewFeature"]), \
+                patch.object(engine, "verified_binary") as verifier, \
+                patch.object(engine.subprocess, "Popen", return_value=process) as popen, \
+                patch("sys.stdout", new=io.StringIO()):
+            root = Path(temporary)
+            (root / "go.mod").write_text("module example\n")
+            report = engine.run_profile([fixture()], engine.discover([fixture()]), "short", "basic", None,
+                                        root / "native", root)
+        verifier.assert_not_called()
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["execution"], "go-test")
+        self.assertNotIn("binary", report)
+        self.assertEqual(popen.call_args.args[0][:2], ["go", "test"])
+        self.assertEqual(popen.call_args.kwargs["cwd"], root)
+
+    def test_binary_completion_needs_its_own_final_pass_and_exit_status(self):
+        package = "example/internal/integration"
+        good = binary_log(("TestNewFeature", "TestNewFeature/leaf"))
+        self.assertTrue(engine.completion(good, ["TestNewFeature"], package, "test-binary")["passed"])
+        # Each format rejects the other's package completion.
+        self.assertFalse(engine.completion(good, ["TestNewFeature"], package)["passed"])
+        self.assertFalse(engine.completion(native_log(), ["TestNewFeature"], package, "test-binary")["passed"])
+        for invalid in (good.replace("PASS\n", ""),
+                        good + "PASS\n",
+                        good + "=== RUN   TestNewFeature\n",
+                        good + "late output\n",
+                        good.replace("--- PASS: TestNewFeature/leaf (1.00s)\n", ""),
+                        good.replace("--- PASS: TestNewFeature/leaf", "--- SKIP: TestNewFeature/leaf"),
+                        "PASS\n"):
+            with self.subTest(log=invalid):
+                self.assertFalse(engine.completion(invalid, ["TestNewFeature"], package, "test-binary")["passed"])
+        with self.assertRaisesRegex(ValueError, "execution format"):
+            engine.completion(good, ["TestNewFeature"], package, "guess")
+        report = engine.completion(good, ["TestNewFeature"], package, "test-binary")
+        self.assertEqual(engine.failure_kind(1, report, None), "process-or-build-failure")
+        self.assertEqual(engine.failure_kind(0, report, None), "passed")
+
+    def test_strict_checkers_accept_only_the_declared_execution_format(self):
+        import check_scenario_quiescence as quiescence
+        import check_scenario_receivers as receivers
+        import check_scenario_recovery as recovery
+        import test_scenario_quiescence
+        import test_scenario_receivers
+        import test_scenario_recovery
+        cases = ((quiescence, test_scenario_quiescence.native_leaf_log, sorted(quiescence.CASES)[0]),
+                 (recovery, test_scenario_recovery.native_leaf_log, sorted(recovery.CASES)[0]),
+                 (receivers, test_scenario_receivers.successful_log, receivers.NETWORKS[0]))
+        for module, record, case in cases:
+            with self.subTest(checker=module.__name__):
+                driver = record(case)
+                self.assertTrue(module.validate(driver, case)["passed"])
+                self.assertFalse(module.validate(driver, case, execution="test-binary")["passed"])
+                lines = driver.rstrip("\n").splitlines()
+                self.assertRegex(lines[-1], r"^ok\s")
+                direct = "\n".join(lines[:-1]) + "\n"
+                self.assertTrue(module.validate(direct, case, execution="test-binary")["passed"])
+                self.assertFalse(module.validate(direct, case)["passed"])
+                self.assertFalse(module.validate(direct + "trailing\n", case, execution="test-binary")["passed"])
+                self.assertFalse(module.validate(direct.replace("\nPASS\n", "\n"), case, execution="test-binary")["passed"])
+                with self.assertRaisesRegex(ValueError, "execution format"):
+                    module.validate(direct, case, execution="guess")
+        profile = {"checker": "receivers", "case": ""}
+        with patch.object(receivers, "validate", return_value={"passed": True}) as validator:
+            engine.strict_completion("log", profile, "host", "test-binary")
+        validator.assert_called_once_with("log", "host", execution="test-binary")
 
 
 # A go command that writes to both streams, leaves a child process that keeps
@@ -470,12 +1085,34 @@ class BoundedPreparationTests(unittest.TestCase):
         return report, files, pid
 
     def assertGone(self, pid):
+        """pid no longer runs. A killed grandchild of the go command stays a
+        zombie until init reaps it, and kill(pid, 0) still succeeds on a
+        zombie, so its state decides."""
         self.assertIsNotNone(pid)
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return
-        self.fail("a process of the timed-out go command is still running")
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if state and not state.startswith("Z"):
+            self.fail("a process of the timed-out go command is still running (state " + state + ")")
+
+    def test_a_zombie_counts_as_gone(self):
+        # An exited child that nobody waited for yet is a zombie.
+        child = subprocess.Popen(["true"])
+        try:
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+            os.kill(child.pid, 0)
+            self.assertGone(child.pid)
+        finally:
+            child.wait()
+        running = subprocess.Popen(["sleep", "30"])
+        try:
+            with self.assertRaisesRegex(AssertionError, "still running"):
+                self.assertGone(running.pid)
+        finally:
+            running.kill()
+            running.wait()
 
     def compile(self, directory):
         return engine.compile_profile(engine.discover([fixture()]), "short", "basic", None, directory)
@@ -491,7 +1128,7 @@ class BoundedPreparationTests(unittest.TestCase):
         self.assertEqual(json.loads(files["compile-report.json"]), report)
         self.assertIn("go: downloading example.com/module v1.0.0", files["compile.log"])
         self.assertIn("stalled on purpose", files["compile.log"])
-        self.assertNotIn("test-binary", files)
+        self.assertNotIn("internal-integration.test", files)
         self.assertGone(pid)
 
     def test_compile_failure_keeps_the_compiler_error(self):
@@ -517,6 +1154,43 @@ class BoundedPreparationTests(unittest.TestCase):
             code = engine.main(["compile", "--category", "short", "--batch", "basic", "--directory", str(directory)])
             self.assertEqual(code, 1)
             self.assertEqual(json.loads((directory / "compile-report.json").read_text())["classification"], "compile-timeout")
+
+    def build_cache_catalog(self):
+        return [fixture(), fixture("internal/integration/other_test.go", ("TestOther",), batch="other"),
+                fixture("internal/dockerbridge/bridge_test.go", ("TestBridge",), category="environment", batch="bridge"),
+                fixture("internal/integration/pure_test.go", ("TestPure",), category="code", batch="pure")]
+
+    def test_build_cache_compiles_one_runtime_profile_per_package_and_keeps_no_binary(self):
+        plan = engine.discover(self.build_cache_catalog())
+        outcome = {"exit_code": 0, "timed_out": False, "timeout_seconds": 180, "elapsed_seconds": 1.0}
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "bounded_go", return_value=(outcome, "built")) as compiler:
+            directory = Path(temporary) / "buildcache"
+            report = engine.warm_build_cache(plan, directory)
+            self.assertEqual(sorted(path.name for path in directory.iterdir()),
+                             ["buildcache-report.json", "internal-dockerbridge.log", "internal-integration.log"])
+        self.assertTrue(report["passed"])
+        commands = [call.args[0] for call in compiler.call_args_list]
+        self.assertEqual([command[-1] for command in commands], ["./internal/dockerbridge", "./internal/integration"])
+        for command in commands:
+            self.assertEqual(command[:4], ["go", "test", "-mod=readonly", command[3]])
+            self.assertIn("-c", command)
+            self.assertFalse(any(argument.startswith(("-run", "-list", "-short")) for argument in command))
+        # A runtime profile's tags, never the code profile's.
+        self.assertIn("ci_short", commands[1][3])
+        self.assertTrue(all(call.args[2] == engine.COMPILE_TIMEOUT_SECONDS for call in compiler.call_args_list))
+
+    def test_build_cache_failure_is_reported_and_the_cli_exits_nonzero(self):
+        failed = {"exit_code": 1, "timed_out": False, "timeout_seconds": 180, "elapsed_seconds": 1.0}
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "load_catalog", return_value=self.build_cache_catalog()), \
+                patch.object(engine, "bounded_go", return_value=(failed, "compile error")), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            directory = Path(temporary) / "buildcache"
+            self.assertEqual(engine.main(["buildcache", "--directory", str(directory)]), 1)
+            report = json.loads((directory / "buildcache-report.json").read_text())
+            self.assertFalse(report["passed"])
+            self.assertIn("compile error", (directory / "internal-integration.log").read_text())
 
 
 class GoSourceEnvironmentTests(unittest.TestCase):
@@ -592,7 +1266,7 @@ func TestOriginal(t *testing.T) { ''' + body + " }\n")
             environment = self.offline_environment()
             replacement = directory / "catalog.go"
             replacement.write_text('package main\nimport "fmt"\nfunc main() { fmt.Println("[]") }\n')
-            tool = engine.ROOT / "tools/tagcatalog/main.go"
+            tool = engine.ROOT / "internal/tools/tagcatalog/main.go"
             injected = environment | {"GOFLAGS": self.overlay(directory, tool, replacement, "catalog-overlay")}
             rewritten = self.control(root, injected, "run", "-mod=readonly", str(tool), str(root))
             self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
@@ -622,10 +1296,36 @@ func TestOriginal(t *testing.T) { ''' + body + " }\n")
                 compiled = engine.compile_profile(plan, "short", "basic", ".", directory / "compile", root)
             self.assertTrue(compiled["passed"])
             self.assertEqual(compiled["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
-            actual = subprocess.run([str(directory / "compile/test-binary"), "-test.v", "-test.timeout=20s"],
+            actual = subprocess.run([str(directory / "compile/root.test"), "-test.v", "-test.timeout=20s"],
                                     text=True, capture_output=True, timeout=30)
             self.assertNotEqual(actual.returncode, 0, actual.stdout + actual.stderr)
             self.assertIn("original assertion executed", actual.stdout)
+
+    def test_run_reuses_the_compiled_binary_and_rejects_a_changed_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            root = directory / "source"
+            source = self.source(root, body='t.Log("original assertion executed")')
+            with patch.dict(os.environ, self.offline_environment(), clear=True), patch("sys.stdout", new=io.StringIO()):
+                catalog = engine.load_catalog(root)
+                plan = engine.discover(catalog)
+                compiled = engine.compile_profile(plan, "short", "basic", ".", directory / "compile", root)
+                self.assertTrue(compiled["passed"], compiled)
+                self.assertEqual(compiled["binary"]["tests"], ["TestOriginal"])
+                self.assertEqual(set(compiled["binary"]["sources"]), {"go.mod", "fixture_test.go"})
+                report = engine.run_profile(catalog, plan, "short", "basic", ".", directory / "native", root,
+                                            binary=directory / "compile")
+                self.assertTrue(report["passed"], report)
+                self.assertEqual(report["execution"], "test-binary")
+                self.assertEqual(report["command"][0], str(directory / "compile/root.test"))
+                log = (directory / "native/native.log").read_text()
+                self.assertIn("original assertion executed", log)
+                self.assertNotRegex(log, r"(?m)^ok\s")
+                source.write_text(source.read_text().replace("original assertion", "edited assertion"))
+                with self.assertRaisesRegex(ValueError, "different source files"):
+                    engine.run_profile(catalog, plan, "short", "basic", ".", directory / "edited", root,
+                                       binary=directory / "compile")
+                self.assertFalse((directory / "edited").exists())
 
     def test_external_workspace_cannot_replace_local_dependency(self):
         with tempfile.TemporaryDirectory() as temporary:

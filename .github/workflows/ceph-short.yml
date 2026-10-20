@@ -1,22 +1,51 @@
 name: Ceph short
 
+# Runtime batches never read documentation or the separately built go-ceph
+# probe module, so a change to those alone runs only Code checks.
+#
+# Every batch runs on every push to main and on every pull request. A pull
+# request can opt in to running only the batches that reach a declaration it
+# changes, with the ci:selected-batches label (#116). The selection is
+# advisory: adding or removing the label starts a new run, and pushes to main
+# always run every batch, so a selection miss surfaces at the next merge.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Adding or removing a label other than ci:selected-batches starts a run that
+# does nothing; its own group keeps it from cancelling the pull request's run
+# in progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:selected-batches' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   scenarios:
     name: Scenarios
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'ci:selected-batches'
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: short
       check_name: Ceph short
+      select_declarations: >-
+        ${{ github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'ci:selected-batches') &&
+        github.event.pull_request.base.sha || '' }}

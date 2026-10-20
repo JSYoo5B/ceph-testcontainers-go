@@ -367,6 +367,11 @@ address and port. Use it from containers attached to the
 cluster (for example a `cluster.WithClient()` container), not from the test
 process, which uses `S3Endpoint`.
 
+On a `ceph.AddressDualStack` cluster it returns the gateway's IPv4 address.
+The gateway listens on `0.0.0.0:7480` and `[::]:7480`, so clients in the
+cluster's network reach it over its IPv6 address on port 7480 as well; see
+[Dual-stack clusters](ceph.md#dual-stack-clusters).
+
 ### Container Methods: Native commands
 
 #### Admin
@@ -380,9 +385,29 @@ zonegroup, zone, Ceph configuration and admin keyring, and returns standard
 output. It is the escape hatch for anything without a typed method.
 
 - `--format json` is always added, so output is JSON.
-- Arguments are passed individually without a shell. Arguments must not contain
-  control characters, so pass JSON documents (policies, trust documents) as
-  single-line strings.
+- Arguments are passed individually and never parsed by a shell. Arguments
+  must not contain control characters, so pass JSON documents (policies,
+  trust documents) as single-line strings.
+- The call is bounded by `ctx` and by the cluster's startup timeout, and no
+  `radosgw-admin` outlives it. A small `sh` supervisor in the gateway
+  container (it needs no Python, which the RGW role image does not have)
+  runs `radosgw-admin` and stops it with SIGTERM, then SIGKILL after 2 s:
+  - 15 s before the bound (at half the bound for a short one), which returns
+    `ceph.ErrNativeFailure` with "radosgw-admin still ran after Ns and was
+    stopped";
+  - when `ctx` ends first, for example when the caller cancels. Admin then
+    stops the command under its own budget of about 10 s, which is not
+    limited by the expired `ctx`, and returns `ctx`'s error only after the
+    command is gone. A call that ends before Docker started the command
+    makes sure that it never starts;
+  - when the cluster's `Terminate` starts. The call then returns an error
+    that says the cluster is terminated.
+- When Admin cannot confirm that stop, for example because the gateway is
+  paused or the engine is unreachable, it returns a
+  `*ceph.NativeCommandUnstoppedError`. Its `Stop(ctx)` retries the stop, and
+  `Terminate` retries it too. Stopping `radosgw-admin` does not undo a
+  request that it already sent to the cluster: the outcome of a stopped or
+  canceled mutation is unknown, and Admin never repeats it.
 - Arguments that would change the scope or connection are rejected:
   `--rgw-realm`, `--rgw-zonegroup`, `--rgw-zone` and their ID and name
   variants, `--conf`/`-c`, `--keyring`/`-k`, `--name`/`-n`, `--id`,
@@ -1261,6 +1286,51 @@ disconnect the endpoint. The fixture restores remaining interruptions during
 `Terminate`. Host mode has no Docker endpoint to disconnect and is rejected.
 See [guides/fault-injection.md](guides/fault-injection.md).
 
+#### TemporaryZoneLinkDelay
+
+```golang
+func (m *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay ceph.NetworkDelay) (*ceph.NetworkDelayLease, error)
+```
+
+Delays or drops, below RGW, only the packets that the gateway of `zoneName`
+sends to the gateway of `peerZone` on the private multisite HTTP network: to
+the peer gateway's address there and the port of its peer endpoint. They carry
+the requests that `zoneName` makes of `peerZone`, its sync reads and its
+notifications. Connections that `peerZone` opens to `zoneName` answer from
+`zoneName`'s own port and are not selected, so `peerZone` keeps syncing from
+`zoneName`: one direction of replication stalls while the other continues.
+Local S3 endpoints, the clusters and other zones' links are untouched.
+
+It is an opt-in extension like
+[TemporaryNetworkDelay](ceph.md#temporarynetworkdelay), applied through
+[ceph.TemporaryLinkDelay](ceph.md#temporarylinkdelay): `delay` names the netem
+helper image and the delay, jitter or loss, and leaves `Plane`, `Peer`,
+`PeerPort` and `Peers` empty; the fixture selects the network and the peer and
+returns them in the lease. The checks, errors, `Status` and `Restore` are
+those of `TemporaryNetworkDelay`. A non-nil lease returned with an error must
+be restored. The fixture restores remaining leases during `Terminate`. Host
+mode has no private multisite network and is rejected.
+
+```golang
+cut, err := ms.TemporaryZoneLinkDelay(ctx, "west", "east", ceph.NetworkDelay{
+	HelperImage: ceph.NetemHelperImage,
+	Loss:        100,
+})
+if cut != nil {
+	defer cut.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+// west no longer reads east's changes; east still reads west's.
+if err := cut.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+if _, err := ms.WaitSyncReady(ctx, "west", "east"); err != nil {
+	t.Fatal(err)
+}
+```
+
 ### Multisite Methods: Sync status
 
 #### SyncStatus
@@ -1648,6 +1718,39 @@ Native markers and error text are never returned.
 | `Buckets` | Distinct bucket instances needed by pipes that select this destination. |
 | `PeriodImported`, `PolicyImported`, `BucketsImported` | Individual checks. |
 | `Imported` | All three are true. |
+
+### Shared cluster tenants
+
+A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RGW tenant of
+its own. Start the gateway with `WithGateways` in `ceph.WithSharedRunOptions`.
+
+```golang
+func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error)
+
+func (u *TenantUser) Tenant() string
+func (u *TenantUser) UserID() string
+func (u *TenantUser) Credentials() (accessKey, secretKey string)
+func (u *TenantUser) Region() string
+func (u *TenantUser) S3Endpoint(ctx context.Context) (string, error)
+func (u *TenantUser) DaemonEndpoint(ctx context.Context) (string, error)
+```
+
+`Lease` creates the S3 user `ID$user` in the RGW tenant `ID` (the tenant's ID)
+on the gateway named `default`, or else the first gateway by name. Use
+`S3Endpoint` from the host and `DaemonEndpoint` from a container on the
+cluster's network, with path-style addressing and `Credentials`.
+
+Bucket names are scoped by the RGW tenant. Checked natively, two tenants can
+both create a bucket of the same name, `ListBuckets` lists only the tenant's
+own buckets, and a request for another tenant's bucket (`/OTHER:bucket`)
+returns 403 AccessDenied.
+
+The tenant never gets the `*rgw.Gateway`, whose container holds the admin
+keyring. The shared cluster creates the pools of the gateway's zone before
+its baseline, because RGW would otherwise create the bucket pools on the
+first bucket. The tenant's release removes every user of the RGW tenant with
+their buckets and objects, then any bucket of the tenant that remains, and
+fails the test and poisons the cluster if a user or bucket remains.
 
 ## Examples
 

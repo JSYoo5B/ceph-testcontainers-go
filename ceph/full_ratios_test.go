@@ -144,7 +144,7 @@ func TestFullRatiosTemporaryOrderingNormalizationAndSharedRestore(t *testing.T) 
 				t.Fatal("overlapping lease reached native reads")
 			}
 			copy := *change
-			if err := copy.Restore(t.Context()); err != nil || ctr.ratios != previous || !ctr.observedOrdered || c.fullRatiosOverride != nil {
+			if err := copy.Restore(t.Context()); err != nil || ctr.ratios != previous || !ctr.observedOrdered || len(c.faultsOf(faultFullRatios)) != 0 {
 				t.Fatal("restore did not recover original native tuple", err)
 			}
 			before = len(ctr.calls)
@@ -181,7 +181,7 @@ func TestFullRatiosPartialApplyAndRestoreLostReplies(t *testing.T) {
 						}
 					}
 					ctr.failBefore, ctr.failAfter = 0, 0
-					if err := change.Restore(t.Context()); err != nil || ctr.ratios != previous || c.fullRatiosOverride != nil || !ctr.observedOrdered {
+					if err := change.Restore(t.Context()); err != nil || ctr.ratios != previous || len(c.faultsOf(faultFullRatios)) != 0 || !ctr.observedOrdered {
 						t.Fatal("partial owned tuple did not safely restore", err, ctr.ratios)
 					}
 				})
@@ -231,7 +231,7 @@ func TestFullRatiosNoopAndOutsideTupleRefuseMutation(t *testing.T) {
 		}
 		ctr.ratios.BackfillFull = float64(float32(.7))
 		before := ctr.mutations
-		if err := change.Restore(t.Context()); err == nil || ctr.mutations != before || c.fullRatiosOverride == nil {
+		if err := change.Restore(t.Context()); err == nil || ctr.mutations != before || c.heldFault(faultFullRatios, "") == nil {
 			t.Fatal("outside tuple overwritten or active lease lost", err)
 		}
 	}
@@ -260,7 +260,7 @@ func TestFullRatiosRestoreRetainsCapturedIdentityAndMapEpoch(t *testing.T) {
 				if err != nil || ctr.mutations != before+3 {
 					t.Fatal("unrelated native epoch change blocked owned restoration", err)
 				}
-			} else if err == nil || ctr.mutations != before || c.fullRatiosOverride == nil {
+			} else if err == nil || ctr.mutations != before || c.heldFault(faultFullRatios, "") == nil {
 				t.Fatal("replacement bootstrap or map rollback authorized mutation", err)
 			}
 		})
@@ -283,7 +283,7 @@ func TestFullRatiosFailureBeforeRegistrationAndNativeErrorSafety(t *testing.T) {
 			ctr.failDump = true
 		}
 		change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
-		if err == nil || change != nil || c.fullRatiosOverride != nil || ctr.mutations != 0 || strings.Contains(err.Error(), "PRIVATE") {
+		if err == nil || change != nil || len(c.faultsOf(faultFullRatios)) != 0 || ctr.mutations != 0 || strings.Contains(err.Error(), "PRIVATE") {
 			t.Fatal("failed initial observation published a lease or native output", unavailable, err)
 		}
 	}
@@ -384,7 +384,7 @@ func TestFullRatiosIdentityCancellationAndBoundedAdmission(t *testing.T) {
 		go func() { _, err := c.TemporaryFullRatios(ctx, FullRatios{.1, .2, .3}); done <- err }()
 		select {
 		case err := <-done:
-			if !errors.Is(err, context.DeadlineExceeded) || len(ctr.calls) != 0 || c.fullRatiosOverride != nil {
+			if !errors.Is(err, context.DeadlineExceeded) || len(ctr.calls) != 0 || len(c.faultsOf(faultFullRatios)) != 0 {
 				t.Fatal("expired admission changed fixture or lost deadline", gate, err)
 			}
 		case <-time.After(time.Second):

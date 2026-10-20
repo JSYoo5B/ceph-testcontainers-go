@@ -4,12 +4,427 @@ All notable changes are listed here. Versions follow
 [semantic versioning](https://semver.org); before v1.0.0 a minor release may
 change the API.
 
+## Unreleased
+
+### Added
+
+- `TestCephFSFuseMount`, in the new optional batch `cephfs_fuse` (build tag
+  `cephfs_fuse`, outside every required check), mounts a
+  path-restricted CephX identity's directory with `ceph-fuse` from the
+  official image in client containers that alone get `/dev/fuse`,
+  `CAP_SYS_ADMIN` and `apparmor=unconfined`. An admission probe refuses
+  smaller settings with a typed reason before any mount, and `ceph-fuse`
+  then fails the same way. The test reads bytes written through the mount
+  back through libcephfs, logs `CEPHFS_FCNTL_LOCK_RECEIPT` for a POSIX
+  record lock between two mounts that the MDS holds waiting, and checks the
+  cleanup of a killed, an unmounted and a cancelled `ceph-fuse`. The
+  feasibility report `docs/research/ceph-fuse-mount.md` records the
+  per-environment requirements and outcomes, and the Messenger coverage row
+  `client-mds/file-locks` cites the receipt.
+
+- `NetworkDelay.Reorder`, `Duplicate` and `Corrupt` add netem's packet
+  faults to a `TemporaryNetworkDelay` or `TemporaryLinkDelay` lease, on the
+  whole endpoint or only to the selected peers. Each is a new
+  `ceph.NetworkPacketFault` with a `Percent` and an optional `Correlation`.
+  A `Reorder` needs a `Delay` and refuses `Jitter` and `Rate`; `Duplicate`
+  and `Corrupt` work with every other field and need no `Delay`. The
+  preflight helper checks that `tc` parses each requested fault
+  (`ErrNetemImageUnsupported`) and that the kernel reports it, its
+  correlation and a reorder's gap back (`ErrNetemKernelUnsupported`) before
+  the target changes. The lease records the request, `NetworkDelayStatus`
+  reports the kernel's `Reorder`, `Duplicate`, `Corrupt` and `Gap`, and an
+  apply whose installed faults differ returns the lease with an error. The
+  `tc` of `ceph.NetemHelperImage` (iproute2 6.1) drops a duplicate's
+  correlation unless the delay has a correlation too, so the lease passes a
+  zero delay correlation with it. `TestNetworkPacketFaults` and
+  `TestNetworkPacketFaultsIPv6`, in the new short batch
+  `network_packet_faults`, fault osd.0's packets to one client on an IPv4
+  and an IPv6 cluster and read a 4 MiB object with its exact SHA-256 from
+  the client and from an unselected control container. The receiver's own
+  kernel counters show each effect at the client and not at the control
+  container: `TcpExtTCPOFOQueue` for a reorder, `TcpExtTCPDSACKOldSent` for
+  a duplicate and `TcpInCsumErrors` for a corrupt, also with a duplicate and
+  a corrupt composed with a delay and a rate; after `Restore` the reads are
+  fast again.
+- `NetworkDelay.Rate` limits the bandwidth of the packets that a
+  `TemporaryNetworkDelay` or `TemporaryLinkDelay` target sends, on the whole
+  endpoint or only to the selected peers, with netem's rate in the lease's
+  netem qdisc, alone or with `Delay` and `Loss`. The new `ceph.NetworkRate`
+  counts bits per second (`BitPerSecond` to `GigabitPerSecond`), from
+  `MinNetworkRate` (64 Kbit/s) to `MaxNetworkRate` (10 Gbit/s) in whole bytes
+  per second, and `NetworkDelay.QueueLimit` sets the netem queue in packets
+  (`DefaultNetworkQueueLimit`, 1000, when zero). The preflight helper checks
+  that `tc` parses netem's rate (`ErrNetemImageUnsupported`) and that the
+  kernel keeps it (`ErrNetemKernelUnsupported`) before the target changes.
+  The lease records the requested `Rate` and `QueueLimit`, and
+  `NetworkDelayStatus` reports the kernel's `Rate` and `QueueLimit` apart
+  from netem's `Overlimits`, `Requeues`, `Backlog` and `QueueLength`, and
+  never a throughput. `TestNetworkBandwidth` and `TestNetworkBandwidthIPv6`,
+  in the new short batch `network_bandwidth`, read a 16 MiB object through
+  an IPv4 and an IPv6 peer limit of 16 Mbit/s, check that an unselected peer
+  and the other family stay unlimited, and that `Restore` leaves the
+  kernel's default root qdisc and no helper. `TestNetworkBandwidthSevere`
+  shows severe limits: at 64 Kbit/s a client with a 10-second
+  `rados_osd_op_timeout` fails a 1 MiB read with `ETIMEDOUT` and reads it
+  again after `Restore`, a client without one reads 256 KiB in about 34 s,
+  and a `QueueLimit` of 2 under a delay makes netem drop packets and the read
+  many times slower while it still completes.
+- `TestRBDMirrorBandwidthCatchUp`, in the new multicluster batch
+  `rbd_mirror_bandwidth`, limits the source OSD's packets to the
+  destination's rbd-mirror daemon to 2 Mbit/s while the source client
+  rewrites a 48 MiB snapshot-mirrored image through the same OSD at full
+  speed. The mirror's native status reports the new snapshot syncing with a
+  growing `syncing_percent` within the limit over two 30-second status
+  updates, and the destination's bytes still differ; after `Restore` the
+  destination's own client reads exactly the source's bytes and the status
+  reports the snapshot in sync with every byte copied once.
+- `NetworkDelay.Peers` selects several peers in one `TemporaryNetworkDelay`,
+  each a `ceph.NetworkPeer` with an address and an optional TCP port, of
+  either family, up to `ceph.MaxNetworkPeers`. The lease owns one u32 filter
+  per peer under its `prio` root and netem child: IPv4 peers in preference 10
+  and table `800:`, IPv6 peers in the next preference and table. `Status`
+  reports `Applied` only with every filter, and `NetworkDelayLease.Peers`
+  records the whole selection. A delay with peers first checks the kernel's
+  `prio` qdisc and u32 classifier in the preflight helper, and a kernel
+  without either is `ErrNetemKernelUnsupported`. `TestCephFSMDSOSDsPathCut`
+  cuts an MDS's paths to both OSDs of a filesystem with one lease.
+- `rgw.Multisite.TemporaryZoneLinkDelay` delays or drops only the packets
+  that one zone's gateway sends to another zone's gateway on the private
+  multisite network, so one direction of replication stalls while the other
+  continues, through the new package-level `ceph.TemporaryLinkDelay`, which
+  applies a netem delay on a bridge that a fixture owns besides the cluster's
+  planes. Every netem delay now also requires that the endpoint's network is
+  a bridge.
+- `ceph.AddressDualStack` (`"dual-stack"`) runs the cluster on a dual-stack
+  bridge where every MON, MGR, OSD and service daemon binds and advertises
+  both its IPv4 and IPv6 address, also with `WithSeparateClusterNetwork`. MON
+  vectors list IPv6 first so that the MGR advertises a concrete IPv6 address
+  instead of `[::]`, and `Run`, `AddManager` and `RemoveManager` fail with
+  `ErrUnsupported` when a daemon advertises a wildcard or lacks a family.
+- `ceph.NewShared` lends one lazily started cluster to the tests of a test
+  binary. `SharedCluster.Lease` gives each test a `Tenant`: the RADOS
+  namespace of its ID in the pool `ceph.SharedPool` and a client with
+  `mon 'allow r'` and `osd 'allow rw pool=tenants namespace=ID'`, more clients
+  of that namespace with `CreateClient`, `WithClient` and `RunNativeCommand`
+  for its own client containers, and read-only views. A release removes the
+  tenant's clients and objects and compares auth entities, pools, OSD flags,
+  the configuration database, the blocklist, health and the shared pool's
+  namespaces with the baseline taken at start. A difference, a failed tenant
+  test (unless `WithKeepOnTenantFailure`) or an exited daemon poisons the
+  cluster, and the next lease starts a fresh one, at most `WithMaxRecycles`
+  times. `WithMaxTenants` bounds the leases held at once, `RunTests` closes
+  the clusters after `TestMain`, and `Stats` reports starts, recycles and
+  times. While shared, the `*ceph.Container` refuses the methods that reach
+  outside one tenant with the new category `ceph.ErrSharedCluster`, including
+  `Terminate`.
+- `SharedCluster.Exclusive` lends a test the whole shared cluster: the
+  `*ceph.Container` with every method except `Terminate`. It waits until no
+  tenant holds a lease, and new leases wait behind it, so leases cannot starve
+  it, while leases that asked first still go first. Its release retires the
+  cluster, and the next lease starts a fresh one without spending
+  `WithMaxRecycles`. A test that holds a tenant lease, or whose parent does,
+  fails at once instead of waiting for itself, as does a lease of the test
+  that holds the exclusive lease. `SharedStats` gains `Exclusives` and
+  `ExclusiveWait`.
+- Service tenants of a shared cluster: `rbd.Lease` gives a tenant the RBD
+  namespace of its ID and a client with `profile rbd` limited to it,
+  `cephfs.Lease` the subvolume group of its ID, with its file data in the
+  namespace `fsns-ID` and a client limited to `/volumes/ID` and that
+  namespace, and `rgw.Lease` the RGW tenant of its ID with the S3 user
+  `ID$user`. A release removes them, evicting leftover CephFS sessions and
+  waiting out leftover RBD watchers, and the baseline and releases also
+  compare the RBD namespaces, subvolume groups and RGW users and buckets.
+  Lease setup and release read the cluster state over one connection instead
+  of a Ceph CLI process per command: on Tentacle a RADOS lease took about
+  3.7 s to set up and 4.7 s to release, now about 0.2 s and 0.4 s.
+
+- With `ceph.AddressDualStack`, `WithConfigFile` accepts `ms_bind_prefer_ipv4`,
+  such as `[osd.1] ms bind prefer ipv4 = false`, to make a MGR, OSD or MDS
+  list its IPv6 address first. Native clients connect to the first entry of
+  a vector, so they then complete MGR, OSD and MDS operations with that daemon
+  over IPv6. `Run` rejects the key for the other families. Dual-stack CephFS
+  and RGW are now tested: MDS vectors are concrete in both families, and the
+  gateway serves S3 on its IPv4 and IPv6 addresses.
+
+- Replacing a dual-stack MON, OSD, MDS and MGR with new containers is now
+  tested: each replacement advertises concrete addresses of both families,
+  the maps drop every entry of the replaced daemon, `MonitorBootstrapAddresses`
+  follows the MON change, and a client that stays connected throughout
+  reaches each replacement over the family its vector lists first. Docker
+  can give a replaced daemon's IP address to a later container, so the docs
+  now say to tell daemon instances apart by nonce or GID.
+
+- Cutting one address family of one path of a dual-stack cluster is now
+  documented and tested: `TemporaryNetworkDelay` with a daemon's IPv6 address
+  as `Peer`, its port as `PeerPort` and `Loss: 100` leaves a MON command or an
+  OSD read on that path pending while the same daemon serves over IPv4 and the
+  client's other paths complete. After `Restore` the operation completes on
+  the same connection, without a new client instance or a blocklist entry.
+
+- `rbd.TemporaryImmutableObjectCache` starts the RBD immutable object cache
+  daemon in a client container and returns a lease with `ClientOptions`,
+  `Status` (cached objects and bytes, the daemon's RADOS reads), `Stop` (clients
+  fall back to RADOS) and `Restore`. It needs the daemon and the librbd
+  `parent_cache` plugin in that container's image.
+
+- `ceph.Container.ManagerMetrics` scrapes the active manager's `prometheus`
+  module and returns its samples parsed from the text exposition format, with
+  `Select` and `Value` to pick samples by name and labels. It never enables
+  the module.
+
+- `ceph.NetworkDelay.Peer` and `PeerPort` limit `TemporaryNetworkDelay` to
+  the packets that the target sends to one address, and optionally one TCP
+  port, over IPv4 or IPv6. The lease owns a `prio` root, a netem child and one
+  u32 filter, reports `Applied` only for that whole hierarchy with the
+  requested keys, exposes tc's filter dump in `NetworkDelayStatus.Filters`,
+  and restores an incomplete hierarchy too.
+- `ceph.NetworkDelay.Loss` drops a percentage of the delayed or selected
+  packets, with or without a `Delay`. With `Loss: 100` and a `Peer` it cuts
+  one direction of one path, and `NetworkDelayStatus.Loss` reads the kernel's
+  value.
+
+- `cephfs.Filesystem.TemporarySnapshotSchedule` adds a snapshot schedule and
+  retention to a directory through the MGR `snap_schedule` module, with
+  `Status`, `Snapshots` and `Restore` on the returned lease. The lease binds
+  the schedule by its native start and creation time, and `Restore` resumes
+  from the directory's current state. It never enables the module or minute
+  granularity.
+
+- `TestMapPropagationReceipt` records which map each daemon holds, from its
+  own admin socket: every OSD's `status` after a new OSDMap epoch, and every
+  MON's `mon_status` with the MonMap epoch, members, quorum and election epoch
+  after a MON is added and removed
+- `TestRGWRadosReceipt` follows S3 requests to the RADOS objects that the
+  gateway writes: a small object's head object and bucket index key, a
+  6 MiB object's head and tail stripe, and the tail left to the garbage
+  collector after a delete.
+
+- `TestCephFSClientKilledDuringUnsafeRequest` SIGKILLs the client while one
+  rename is held between its unsafe and safe replies: after the journal is
+  released the MDS commits and replies to the dead session, keeps the session
+  `open` until `session_autoclose`, then evicts and blocklists it, and an
+  independent client finds the new name. The
+  [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
+  guide lists the receipt
+- `TestCephFSBlocklistEpochBarrier` evicts a live client that holds a
+  buffered, unflushed write: the MDS's `osdmap_epoch_barrier` becomes the
+  OSDMap epoch whose blocklist first holds the client, the client reports
+  itself blocklisted at that epoch, drops its dirty data and fails fsync,
+  write and stat with `ESHUTDOWN`, and a second live client reads only the
+  fsynced bytes and receives the barrier with a flush ack.
+  `TestCephFSOSDFullRetainedClient` fills the OSDs with `TemporaryFullRatios`
+  under a live client: its write fails with `ENOSPC` while metadata calls
+  succeed, and after `Restore` the same descriptor writes again.
+  `TestCephFSFlockContention` lets two live clients contend for one flock:
+  `EWOULDBLOCK` for the second, its blocking lock waiting in the MDS's
+  `dump_ops_in_flight`, and the grant when the first unlocks, without an
+  eviction.
+- `TestCephFSOSDInterruption` freezes, with `PauseContainer` and `nodown`
+  held, the OSD that holds a live client's file while the client fsyncs a
+  buffered write and a second client makes a directory: the client's write
+  and the MDS's journal writes wait in their `objecter_requests`, the
+  `mkdir` waits in the MDS without `journal_committed`, both clients keep
+  their sessions, and after `Resume` the same fsync and `mkdir` return 0 and
+  other clients read every byte. It runs in its own
+  `cephfs_fixtures_osd_interruption` batch.
+- `TestCephFSFlockAcrossMDSFailover` SIGKILLs the active MDS while one live
+  client holds a flock and a second one was refused it: the standby that
+  takes the rank learns the lock from the clients' reconnects, refuses the
+  second client with `EWOULDBLOCK` again, holds its blocking lock waiting and
+  grants it after the unlock, and both clients keep their sessions.
+  `TestCephFSJournaledRenameAcrossMDSCrash` SIGKILLs the MDS after a rename
+  was journaled and replied but before it reached the directory's dirfrag
+  object: the standby replays the journal (its `mds_log` counters show the
+  replay), the client keeps its session, every client finds the new name with
+  the original inode, and the dirfrag holds it after the new MDS flushes. Both
+  run in their own `cephfs_fixtures_mds_failover` batch.
+- `TestCephFSMDSOSDPathCut` drops only the MDS's packets to the
+  filesystem's one OSD with a peer-selective `TemporaryNetworkDelay`
+  blackhole. A live client's data write and data-only sync complete and RADOS
+  holds the bytes, while the MDS's `objecter_requests` holds its journal
+  writes, a second client's `mkdir` waits without `journal_committed` and the
+  first client's full fsync waits with a flushing cap. Both sessions stay
+  open, and after `Restore` the same calls return 0 and other clients read
+  the result. It runs in the `cephfs_mds_path_fault` batch.
+- `TestCephFSOSDRecovery` stops the OSD that holds a live client's file with
+  `noout`, `norecover` and `nobackfill` held, starts it again and then
+  releases recovery. The client's appends and fsyncs through one descriptor
+  return 0 while the PG is `active+undersized+degraded` and while it is
+  `recovery_wait`, the pools recover to `active+clean`, and the client and
+  another client read every byte without an eviction. It runs in the
+  `cephfs_fixtures_osd_interruption` batch.
+- `TestCephFSSessionAdmission` records CephFS session admission: rank 0's
+  FSID, MDSMap epoch, daemon, GID and v2 address as the FSMap and the
+  client's admin socket report them; one native session's open, two
+  acknowledged renewals and close without a blocklist entry; a path-restricted
+  identity that mounts its path and is refused with `EPERM` elsewhere; and a
+  required client feature that evicts a client without it, refuses its next
+  mount with `EPERM` and still admits an ordinary client.
+- `TestRBDMirrorPeerPathCut` cuts one path of an RBD snapshot mirror, the
+  source OSD's packets to the destination's rbd-mirror daemon, with a
+  peer-selective `TemporaryNetworkDelay` blackhole. The daemon stays up but
+  does not see or copy a new mirror snapshot while the source client keeps
+  writing through the same OSD; after `Restore` only the changed bytes are
+  copied.
+- `TestCephFSMirrorPeerPathCut` cuts one path of a CephFS snapshot mirror,
+  the source OSD's packets to the cephfs-mirror daemon, with a peer-selective
+  `TemporaryNetworkDelay` blackhole. The daemon sees a new snapshot through
+  the MDS but stays `syncing` it without finishing while the source client
+  writes, snapshots and reads through the same OSD and MDS; after `Restore`
+  the snapshot arrives with only the new bytes copied.
+- `TestCephFSFlushingCapReplay` follows one cap flush across a SIGKILL and
+  restart of the only MDS: while `mds_log_pause` holds the journal, the
+  client keeps an unacknowledged `Fw` flush with the new size and the MDS keeps
+  the old one; after the restart the client's flush is acknowledged without
+  a second fsync, the MDS has the new size and an independent client reads
+  every byte.
+- `TestCephFSDentryLeaseRecall` records a dentry lease recall between two
+  live clients: a client without the root's `Fs` capability gets a lease on a
+  directory it looks up, and another client's rename and `rmdir` of it each
+  recall the lease at once (`num_leases` 1 to 0) without evicting the holder,
+  which then sees the new namespace.
+- `TestCephFSMetadataRecipe` records one native libcephfs client's metadata
+  operations with the errno and native values of each: a `readdir` of 1500
+  names over 8 directory fragments (one MDS readdir request each, every name
+  once), file create, write and read, `chmod`, `chown`, `truncate` and
+  `utime`, a hard link (the MDS's `dump inode` reports two links), a rename
+  over an existing file, a symlink, `user.*` xattrs with a binary value, the
+  expected `EEXIST`, `ENOENT`, `ENOTEMPTY`, `EISDIR`, `ENOTDIR` and `ENODATA`,
+  and `flock` contention (`EWOULDBLOCK`); a client in another container
+  checks the final namespace.
+- `TestCephFSClientMDSPathCut` cuts one direction of a libcephfs client's
+  MDS path with a peer-selected `Loss: 100`, the MDS's packets to the client
+  or the client's packets to the MDS: a `mkdir` stays in the client's
+  `mds_requests` while an append and a data-only `fsync` on an open file
+  reach the OSDs, both sides keep the session `open` past a 30 s session
+  timeout while `cap_ttl` stops moving, the MDS has the `mkdir` journaled in
+  one direction and never sees it in the other, and after `Restore` the
+  request completes without eviction.
+- `TestOSDReplicationPeerPathCut` cuts one direction of one OSD pair on the
+  cluster network, the primary's packets to its replica, with a peer-selected
+  `Loss: 100`: the primary holds a client write `waiting for sub ops` past
+  `osd_heartbeat_grace`, both OSDs report each other failed but stay up with
+  one reporter each, the replica's packets still reach the primary, and after
+  `Restore` the write completes and both copies read back.
+- `TestOSDHeartbeatFailure` records OSD heartbeat failure detection: with one
+  OSD's cluster network cut in a cluster of three, the MON marks it down after
+  `osd_heartbeat_grace` on two reports from different hosts, while its peers
+  stay up and clients keep working; the marked OSD fails to rebind its cluster
+  messenger and exits, and starts again after `Restore`.
+- `TestCephFSUnsafeRequestReplay` follows one rename that got an early,
+  unsafe reply across a SIGKILL and restart of the only MDS: the client keeps
+  the request while no MDS runs, the restarted MDS executes the client's
+  `REPLAY` of the same client ID and TID, and an independent client reads the
+  result. The [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
+  guide lists the receipt and what it leaves out.
+
+### Changed
+
+- The CI commands `batchselect` and `tagcatalog` moved from `tools/` to
+  `internal/tools/`. They only serve this repository's CI planner, so they
+  are no longer listed as packages of the published module.
+- `ceph.Run` starts the initial OSDs concurrently, at most four containers at
+  a time, after registering them in layout order, so OSD IDs and CRUSH host
+  buckets stay the same on every run. The first manager boots meanwhile. A
+  three-OSD cluster on `quay.io/ceph/ceph:v20.2.4` starts in about 11 seconds
+  instead of 17, a five-OSD cluster in about 16 instead of 27. When an OSD
+  fails to start, every OSD container created so far is still owned and
+  removed by `Terminate`. `AddOSD` is unchanged.
+
+### Fixed
+
+- `rgw.Multisite.WaitBucketSyncReady` returns the last status it read when the
+  wait ends; an attempt that failed or was canceled afterwards no longer
+  replaces it with an empty one. Its unit test no longer depends on a 20 ms
+  deadline that the checkpoint lookup could outlast.
+- `rgw.Gateway.Admin` no longer leaves `radosgw-admin` running in the gateway
+  container after the call returned. It stops a command that is still
+  running shortly before the call's bound and reports it as
+  `ceph.ErrNativeFailure`. When the caller's context ends first, it stops the
+  command before it returns, or returns a `*ceph.NativeCommandUnstoppedError`
+  whose `Stop` retries.
+
+- `ceph.Run` returns the engine's error when it cannot create the MON
+  container, for example for an image that cannot be pulled, instead of
+  panicking while it read the logs of a container that did not exist. Adding
+  a MON or MGR to a running cluster had the same typed-nil handle on that
+  failure.
+
+### Documentation
+
+- The design document `docs/design/fault-package.md` inventories the fault
+  injection APIs for a separate `fault` package: which APIs and types move
+  and which stay in `ceph`, the apply, undo, overlap, cancellation,
+  shared-cluster and `Terminate` contracts each must keep, the internal
+  boundary that the next stage adds, and the checkpoints of the later
+  stages. No API changes yet; this is stage 1 of the fault-package extraction.
+- The feasibility report `docs/research/crimson-cyanstore.md` records where
+  Crimson OSD builds are published (only `main` development builds, not the
+  Tentacle or Squid releases), a manual run in which a Crimson OSD with
+  CyanStore crashes on its first client operation while Crimson with
+  MemStore serves native client I/O unprivileged, and a no-go
+  recommendation with the conditions for revisiting it.
+- `InterruptNetwork` with `ceph.ClusterNetworkPlane` no longer promises that
+  the OSD keeps running: with three or more OSDs on separate hosts it is
+  marked down after `osd_heartbeat_grace` and exits, and needs `Start` after
+  `Restore`.
+- The Messenger client fixtures guide explains why a MON can issue tickets
+  from replaced service keys right after `auth wipe-rotating-service-keys`,
+  why native clients are not affected, and how a client of your own avoids
+  it.
+- The native command guide warns that a Tentacle MON at `debug_auth` 10 logs
+  session keys and service secrets.
+- The Messenger client fixtures guide shows how to read which sessions
+  negotiated on-wire compression and which features each MON session
+  negotiated, how to tell which OSD, PG or MDS answered a targeted command
+  and how its refusals and timeouts reach the caller, and describes the
+  coverage manifest that maps the ceph-msgr-go SPEC's environment
+  requirements to the tests proving them.
+
+### Continuous integration
+
+- A collaborator can run chosen runtime batches on a pull request with a
+  comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
+  The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts
+  only comments of an owner, member or collaborator, refuses pull requests
+  from forks, and refuses the whole command when one name is not a batch,
+  profile or release of the head commit's planner
+  (`tag_scenarios.py vocabulary`). It records the head commit, runs the
+  selected profiles there through `tagged-runtime.yml` (the new category
+  `selected` and `tag_scenarios.py plan --profiles`), sets a
+  `CI command: ...` commit status and replies with the result and the run
+  link. A repeated command for the same commit, batches and release waits for
+  the run in progress. Default pull request CI, pushes to `main` and the
+  `ci:full` and `ci:selected-batches` labels are unchanged.
+- The declaration-level batch selection (`tools/batchselect`) no longer
+  selects every batch for an added Go file of `internal/integration` or a
+  changed import. It treats an added file's declarations as changed, and an
+  import as changed code only when no other file of the build imports the
+  same package. `tag_scenarios.py plan --apply-declarations` keeps only the
+  selected batches, and `--summary` writes them with their reasons as
+  Markdown.
+- A pull request can opt in, with the `ci:selected-batches` label, to a Ceph
+  short run of only the batches that the declaration selection selects; the
+  `Plan` job summary lists every batch with its reason. The selection stays
+  advisory: without the label, and on every push to `main`, Ceph short runs
+  every batch. Measured on a one-batch change, a pull request ran 13 jobs and
+  21 job minutes instead of 60 and 203; on a shared helper that five batches
+  reach, 17 jobs and 35 job minutes instead of 60 and 200.
+- `replay_declaration_selection.py --github` checks every failed batch job of
+  the last merged pull requests against the selection of the diff that the
+  run tested. An excluded failure is explained only by an entry of
+  `batch_selection_explained.json` with its job ID, batch, signature,
+  evidence and reference; a passing rerun is reported but does not clear a
+  miss. Over 60 pull requests the selection kept 51% of the Ceph short jobs;
+  of 31 failed batch jobs, 5 were selected and 26 are explained, the last
+  two by a test that required a log line the `ceph` CLI can lose and
+  by an I/O stall of the runner.
+
 ## v0.3.0 (2026-10-16)
 
 The v0.3.0 release adds bounded native input and protocol observation
 recipes. See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for
-compatibility and the limits of the completed
-[milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/2).
+compatibility and the limits of the completed fixture scope.
 The receipts below are test helpers and native evidence, not new public
 observer APIs or certification of a downstream Messenger implementation.
 
@@ -108,8 +523,8 @@ observer APIs or certification of a downstream Messenger implementation.
 
 See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
 for compatibility changes, platform requirements and known native limits.
-The completed [fixture-readiness milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/1)
-provides server-side profiles and native receipts; it does not certify a
+The completed fixture scope provides server-side profiles and native receipts;
+it does not certify a
 downstream client's implementation or migration. Publication checks are in
 [Preparing a release](docs/contributing/releasing.md).
 

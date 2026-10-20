@@ -371,7 +371,10 @@ print(len(sys.stdin.buffer.read()))`, gate},
 // and the input then takes no writes.
 func TestNativeCommandInputCanceledBeforeLaunch(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
-	target.startDelay = 400 * time.Millisecond
+	// The accepted exec starts once the call has returned, not after a delay
+	// that a slow (race-instrumented) run can spend before it cancels.
+	gate := make(chan struct{})
+	target.startGate = gate
 	cluster := nativeCluster()
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
@@ -381,6 +384,7 @@ func TestNativeCommandInputCanceledBeforeLaunch(t *testing.T) {
 	if _, err := cluster.RunNativeCommand(ctx, target, command); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("late start returned %v", err)
 	}
+	close(gate)
 	target.wg.Wait()
 	if _, err := os.Stat(filepath.Join(target.pids(), "late.command")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("a command started after its cancellation ran")

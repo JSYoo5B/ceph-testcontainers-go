@@ -30,8 +30,10 @@ type rgwAccountTestContainer struct {
 }
 
 func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	original := args
+	args = rgwAdminArgv(args)
 	if args[0] != "radosgw-admin" {
-		return f.rgwPlacementTestContainer.Exec(ctx, args, opts...)
+		return f.rgwPlacementTestContainer.Exec(ctx, original, opts...)
 	}
 	f.calls = append(f.calls, slices.Clone(args))
 	flag := func(name string) string {
@@ -190,7 +192,7 @@ func (f *rgwAccountTestContainer) Exec(ctx context.Context, args []string, opts 
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.Write(data)
-	return code, &stream, nil
+	return rgwAdminReply(original, code, &stream)
 }
 
 func newRGWAccountTestGateway() (*Gateway, *rgwAccountTestContainer) {

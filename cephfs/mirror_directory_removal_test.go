@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -534,7 +535,15 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	first := make(chan struct{}, 1)
+	// The gate request's deadline passes when Wait reads stats in its next
+	// observation (or returns) without the request having taken the fixture
+	// gate, not after 200 ms that a slow first observation can still spend.
+	gateCtx := clustertest.NewSignalDeadline(t.Context())
+	statsReads := 0 // touched only by the Wait goroutine
 	a.statsHook = func(*directoryRemovalDaemonFake) {
+		if statsReads++; statsReads > 1 {
+			gateCtx.Expire()
+		}
 		select {
 		case first <- struct{}{}:
 		default:
@@ -545,7 +554,11 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 		err    error
 	}
 	done := make(chan observed, 1)
-	go func() { current, err := r.WaitReleased(ctx); done <- observed{current, err} }()
+	go func() {
+		current, err := r.WaitReleased(ctx)
+		gateCtx.Expire()
+		done <- observed{current, err}
+	}()
 	select {
 	case <-first:
 	case <-time.After(500 * time.Millisecond):
@@ -553,9 +566,7 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 		<-done
 		t.Fatal("public Wait never observed the known native failure")
 	}
-	gateCtx, gateCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	gateErr := multicluster.LockObservation(gateCtx, &m.mu)
-	gateCancel()
 	if gateErr != nil {
 		cancel()
 		<-done
@@ -709,11 +720,17 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 		})
 	}
 	// A selected real stats Exec callback attests that Wait made its first
-	// pending observation before this independent gate request. The 200ms gate
-	// deadline is shorter than the public 500ms poll interval, so carrying the
-	// fixture lock through the sleep fails this test deterministically.
+	// pending observation before this independent gate request. The gate
+	// deadline passes when Wait reads stats in its next observation (or
+	// returns), not after 200 ms that a slow first observation can still
+	// spend, so carrying the fixture lock through the sleep fails this test.
 	first := make(chan string, 1)
+	gateCtx := clustertest.NewSignalDeadline(t.Context())
+	statsReads := 0 // touched only by the Wait goroutine
 	a.statsHook = func(f *directoryRemovalDaemonFake) {
+		if statsReads++; statsReads > 1 {
+			gateCtx.Expire()
+		}
 		select {
 		case first <- f.stats:
 		default:
@@ -724,6 +741,7 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		st, err := r.WaitReleased(ctx)
+		gateCtx.Expire()
 		if err == nil && !st.Released {
 			err = errors.New("missing release proof")
 		}
@@ -741,9 +759,7 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 		<-done
 		t.Fatal("Wait never observed the original tracked path")
 	}
-	gateCtx, gateCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	err := multicluster.LockObservation(gateCtx, &m.mu)
-	gateCancel()
 	if err != nil {
 		cancel()
 		<-done

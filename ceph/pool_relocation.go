@@ -29,6 +29,9 @@ type PoolPlacement struct {
 // checked before each mutation; on partial failure inspect PoolStatus. Native
 // per-OSD PG limits can still reject the request.
 func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) error {
+	if gateErr := c.sharedGate("SetPoolPGCount"); gateErr != nil {
+		return gateErr
+	}
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -56,7 +59,7 @@ func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) 
 		if err := c.checkPoolID(ctx, pool); err != nil {
 			return err
 		}
-		if _, err := c.Ceph(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
+		if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
 			return fmt.Errorf("set pool %q %s target (earlier settings may have changed): %w", name, setting, err)
 		}
 	}
@@ -135,7 +138,7 @@ func (c *Container) WaitForPoolPGCount(ctx context.Context, name string, pgNum i
 // The OSDMap can reach a count before the manager reports the new PGs. Until
 // the reported set matches too, WaitForClean could still pass on the old set.
 func (c *Container) reportedPoolPGs(ctx context.Context, pool PoolState) (int, error) {
-	data, err := c.Ceph(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
+	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
 	if err != nil {
 		return 0, err
 	}
@@ -177,6 +180,9 @@ func validatePoolPGCount(pgNum int) error {
 // bound to their profile and are refused. External pool/CRUSH edits must not
 // race this call.
 func (c *Container) SetPoolPlacement(ctx context.Context, name string, placement PoolPlacement) error {
+	if gateErr := c.sharedGate("SetPoolPlacement"); gateErr != nil {
+		return gateErr
+	}
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -218,14 +224,14 @@ func (c *Container) SetPoolPlacement(ctx context.Context, name string, placement
 		return err
 	}
 	if !exists {
-		if _, err := c.Ceph(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
+		if _, err := c.cephCLI(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
 			return fmt.Errorf("create placement rule for pool %q: %w", name, err)
 		}
 	}
 	if err := c.checkPoolID(ctx, pool); err != nil {
 		return err
 	}
-	if _, err := c.Ceph(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
+	if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
 		return fmt.Errorf("set pool %q CRUSH rule %q: %w", name, rule, err)
 	}
 	return nil
@@ -255,7 +261,7 @@ func poolPlacementRuleName(pool string, placement PoolConfig) string {
 }
 
 func (c *Container) poolPlacementRule(ctx context.Context, pool string, desired PoolConfig) (string, bool, error) {
-	data, err := c.Ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return "", false, err
 	}

@@ -48,6 +48,37 @@ def package_split(source):
     return formatted.stdout
 
 
+DIAGNOSTIC_REWRITES = FIXTURE.with_name("diagnostic-rewrites.json")
+# A rewrite replaces one error branch: an if statement whose body is one
+# return. Its condition and returned error may change; nothing else may.
+ERROR_BRANCH = re.compile(r"\A(\t*)if [^\n]+ \{\n\1\treturn [^\n]+\n\1\}\n\Z")
+
+
+def diagnostic_rewrites(source, rewrites=None):
+    """Apply the reviewed diagnostic rewrites to a retained producer.
+
+    Each one replaces exactly one error branch of the retained source with
+    its current form, so a failure can be reported more precisely without
+    re-recording native evidence. The retained run passed and took no error
+    branch; review must still confirm that a rewrite takes its branch on the
+    same inputs. Every other byte remains significant.
+    """
+    if rewrites is None:
+        rewrites = json.loads(DIAGNOSTIC_REWRITES.read_text())["rewrites"]
+    for rewrite in rewrites:
+        old, new = rewrite["old"], rewrite["new"]
+        if not rewrite.get("reason") or old == new:
+            raise ValueError("a diagnostic rewrite needs a reason and a change")
+        if not ERROR_BRANCH.match(old) or not ERROR_BRANCH.match(new):
+            raise ValueError("a diagnostic rewrite must replace one error branch with one error branch")
+        if ERROR_BRANCH.match(old).group(1) != ERROR_BRANCH.match(new).group(1):
+            raise ValueError("a diagnostic rewrite must keep the branch's nesting")
+        if source.count(old) != 1:
+            raise ValueError("a diagnostic rewrite must match the retained source exactly once")
+        source = source.replace(old, new, 1)
+    return source
+
+
 def producer_parent(source, parent):
     # These retained producer parents contain only their nested t.Run loops;
     # gofmt keeps the sole function-closing brace at column zero.
@@ -125,7 +156,7 @@ class QuiescenceCoverageTests(unittest.TestCase):
         self.assertEqual(passes[2], checker.PARENT + "/bridge/peer")
 
     def test_split_producer_parent_and_shared_assertions_preserve_original_declarations(self):
-        retained = package_split(SOURCE_FIXTURE.read_text())
+        retained = diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text()))
         root = Path(__file__).resolve().parents[2] / "internal/integration"
         current_parent = (root / "cephfs_process_quiescence_integration_test.go").read_text()
         current_helpers = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
@@ -134,6 +165,28 @@ class QuiescenceCoverageTests(unittest.TestCase):
         helper = "testCephFSOriginalProcessQuiescence"
         self.assertEqual(retained_declaration_layout(producer_helpers(retained, helper)),
                          retained_declaration_layout(producer_helpers(current_helpers, helper)))
+
+    def test_diagnostic_rewrites_replace_one_error_branch_exactly_once(self):
+        branch = "\tif err != nil {\n\t\treturn err\n\t}\n"
+        precise = "\tif err != nil {\n\t\treturn fmt.Errorf(\"read: %w\", err)\n\t}\n"
+        rewrite = {"reason": "test", "old": branch, "new": precise}
+        source = "func f() error {\n\terr := g()\n" + branch + "\treturn nil\n}\n"
+        self.assertEqual(diagnostic_rewrites(source, [rewrite]), source.replace(branch, precise))
+        for bad in (source.replace(branch, ""), source.replace(branch, branch + branch)):
+            with self.assertRaisesRegex(ValueError, "exactly once"):
+                diagnostic_rewrites(bad, [rewrite])
+        # Only an error branch, kept at its nesting, may be replaced, and
+        # never without a stated reason.
+        for changed in ({"new": "\tg()\n" + precise}, {"new": precise.replace("return", "log.Print")},
+                        {"new": "\t" + precise.replace("\n\t", "\n\t\t")}, {"reason": ""}, {"new": branch}):
+            with self.assertRaises(ValueError):
+                diagnostic_rewrites(source, [dict(rewrite, **changed)])
+
+    def test_recorded_diagnostic_rewrites_apply_to_the_retained_producer(self):
+        rewrites = json.loads(DIAGNOSTIC_REWRITES.read_text())["rewrites"]
+        self.assertTrue(rewrites)
+        retained = package_split(SOURCE_FIXTURE.read_text())
+        self.assertNotEqual(diagnostic_rewrites(retained), retained)
 
     def test_package_split_rewrites_only_recorded_api_names(self):
         source = ("package p\n\nfunc f() {\n\tfs, err := source.StartCephFS(ctx)\n"

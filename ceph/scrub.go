@@ -65,6 +65,9 @@ func validateObjectName(name string) error {
 // HealthDetails (OSD_SCRUB_ERRORS, PG_DAMAGED) or PoolPGs to observe it. It
 // needs BlueStore OSDs and refuses a cluster that uses OSDMemStore.
 func (c *Container) InjectObjectDataError(ctx context.Context, pool, object string, osdID int) error {
+	if gateErr := c.sharedGate("InjectObjectDataError"); gateErr != nil {
+		return gateErr
+	}
 	if c.settings.objectStore() != OSDBlueStore {
 		return errors.New("InjectObjectDataError needs BlueStore OSDs")
 	}
@@ -93,7 +96,7 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 	if state.Type != "replicated" {
 		return errors.New("data error injection supports replicated pools")
 	}
-	data, err := c.Ceph(ctx, "osd", "map", pool, object, "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "map", pool, object, "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -109,13 +112,13 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 		return fmt.Errorf("OSD %d is not in the acting set %v of PG %s", osdID, mapping.Acting, mapping.PGID)
 	}
 	daemon := "osd." + strconv.Itoa(osdID)
-	if _, err := c.Ceph(ctx, "tell", daemon, "config", "set", "bluestore_debug_inject_read_err", "true"); err != nil {
+	if _, err := c.cephCLI(ctx, "tell", daemon, "config", "set", "bluestore_debug_inject_read_err", "true"); err != nil {
 		return fmt.Errorf("enable data error injection on %s: %w", daemon, err)
 	}
 	if err := c.checkPoolID(ctx, state); err != nil {
 		return err
 	}
-	if _, err := c.Ceph(ctx, "tell", daemon, "injectdataerr", pool, object); err != nil {
+	if _, err := c.cephCLI(ctx, "tell", daemon, "injectdataerr", pool, object); err != nil {
 		return fmt.Errorf("inject data error on %s: %w", daemon, err)
 	}
 	return nil
@@ -126,6 +129,9 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 // are reported, not repaired. The noscrub and nodeep-scrub flags or an
 // unavailable primary can keep the wait from finishing before its deadline.
 func (c *Container) DeepScrubPG(ctx context.Context, pgid string) error {
+	if gateErr := c.sharedGate("DeepScrubPG"); gateErr != nil {
+		return gateErr
+	}
 	_, err := c.scrubPG(ctx, pgid, "deep-scrub")
 	return err
 }
@@ -135,6 +141,9 @@ func (c *Container) DeepScrubPG(ctx context.Context, pgid string) error {
 // replicas from an authoritative copy; it cannot recover an object without
 // one, and the wait then ends with the PG still inconsistent.
 func (c *Container) RepairPG(ctx context.Context, pgid string) error {
+	if gateErr := c.sharedGate("RepairPG"); gateErr != nil {
+		return gateErr
+	}
 	state, err := c.scrubPG(ctx, pgid, "repair")
 	if err == nil && strings.Contains(state, "inconsistent") {
 		return fmt.Errorf("PG %s is still %s after repair", pgid, state)
@@ -153,7 +162,7 @@ func (c *Container) scrubPG(ctx context.Context, pgid, operation string) (string
 	}
 	before, _, err := c.pgScrubReport(ctx, pgid)
 	if err == nil {
-		_, err = c.Ceph(ctx, "pg", operation, pgid)
+		_, err = c.cephCLI(ctx, "pg", operation, pgid)
 	}
 	c.mu.Unlock()
 	if err != nil {
@@ -195,7 +204,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid string) (time.Time, 
 	if name == "" {
 		return time.Time{}, "", fmt.Errorf("pool of PG %s does not exist", pgid)
 	}
-	data, err := c.Ceph(ctx, "pg", "ls-by-pool", name, "--format", "json")
+	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", name, "--format", "json")
 	if err != nil {
 		return time.Time{}, "", err
 	}
@@ -236,7 +245,7 @@ func (c *Container) PGInconsistencies(ctx context.Context, pgid string) ([]Incon
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return nil, err
 	}

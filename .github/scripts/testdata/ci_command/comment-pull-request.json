@@ -1,0 +1,25 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 182,
+    "title": "Add a batch",
+    "state": "open",
+    "html_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/pull/182",
+    "pull_request": {
+      "url": "https://api.github.com/repos/JSYoo5B/ceph-testcontainers-go/pulls/182",
+      "html_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/pull/182",
+      "merged_at": null
+    },
+    "user": {"login": "JSYoo5B", "type": "User"}
+  },
+  "comment": {
+    "id": 4000000001,
+    "html_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/pull/182#issuecomment-4000000001",
+    "body": "The change only touches the mirror batch.\r\n\r\n/ci run rbd_mirror_bandwidth short/network_delay on squid\r\n",
+    "author_association": "OWNER",
+    "user": {"login": "JSYoo5B", "type": "User"},
+    "created_at": "2026-10-19T09:00:00Z"
+  },
+  "repository": {"full_name": "JSYoo5B/ceph-testcontainers-go", "default_branch": "main"},
+  "sender": {"login": "JSYoo5B", "type": "User"}
+}

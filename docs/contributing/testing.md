@@ -136,6 +136,15 @@ CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=90m \
 Optional tests also need their opt-in tag, for example
 `-tags=all,native_regression`.
 
+A test that declares network modes runs in each of them. `CEPH_TEST_NETWORK`
+selects one, as a CI matrix entry does (see
+[Network modes](ci.md#network-modes)):
+
+```sh
+CEPH_TEST_NETWORK=bridge CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=30m \
+  -run '^TestOSDFullRatios$' ./internal/integration
+```
+
 ### The whole suite
 
 ```sh
@@ -184,7 +193,16 @@ python3 .github/scripts/tag_scenarios.py optional \
 python3 .github/scripts/tag_scenarios.py optional \
   --batch native_shuffle --package ./internal/integration \
   --directory artifacts/local-native-shuffle
+python3 .github/scripts/tag_scenarios.py optional \
+  --batch cephfs_fuse --package ./internal/integration \
+  --directory artifacts/local-cephfs-fuse
 ```
+
+`cephfs_fuse` is optional for another reason: its client containers need
+`/dev/fuse`, `CAP_SYS_ADMIN` and `apparmor=unconfined`, which only native,
+rootful Linux Docker Engine is proven to allow (see
+[ci.md](ci.md#native-regressions)). It fails, rather than skips, on an
+engine that refuses the mount.
 
 These batches assert behaviour that the unpatched default image is known not
 to provide, so they are expected to fail there. They exist to verify a patched
@@ -219,6 +237,7 @@ The integration tests read these variables:
 | `CEPH_TEST_HOST_HTTP_REQUIRED` | unset | `1` makes `TestHostNetworkRGWEndpoints` fail, instead of logging, when the test process cannot reach the host-network RGW over HTTP. |
 | `CEPH_TEST_GOCEPH_CLIENT_IMAGE` | none | Prepared Linux image with the go-ceph probe, for `TestGoCephLinux`. |
 | `CEPH_TEST_GOCEPH_RUNNER_IMAGE` | none | Prepared runner image for `make goceph-linux` (read by the harness, not by Go). |
+| `CEPH_TEST_GOCEPH_VERSION` | set by the harness | The go-ceph version that `internal/integration/goceph/probe/go.mod` requires. `TestGoCephLinux` fails without a released version, and fails every probe receipt that names another one. |
 
 Because the control image also runs the client container, it must provide the
 Python `rados`, `rbd` and `cephfs` bindings and the `rbd`/`rados` CLIs. A
@@ -368,6 +387,12 @@ CEPH_TEST_GOCEPH_RUNNER_IMAGE=ceph-testcontainers-goceph:20.2.4-runner \
 make goceph-linux
 ```
 
+The probe reports the go-ceph version that it was linked with, from its own
+build information, and the harness reads the expected version from the probe
+module's `go.mod`. A client image with a probe built from an older pin
+therefore fails the identity check: rebuild the client image after a go-ceph
+update.
+
 ## Writing a new integration test
 
 ### Files
@@ -427,16 +452,18 @@ The parts of the constraint have these roles:
 | Category | Tag | Runs in workflow | Use it for |
 | --- | --- | --- | --- |
 | `code` | `ci_code` | Code checks | Docker-free helper tests in a Docker test package (for example the SigV4 signer) |
-| `environment` | `ci_environment` | Docker checks | Docker behaviour without Ceph |
-| `short` | `ci_short` | Ceph short and Ceph squid | Basic bootstrap, services and client fixtures |
-| `topology` | `ci_topology` | Ceph topology | Cluster composition, node lifecycle, diagnostics |
-| `multicluster` | `ci_multicluster` | Ceph multicluster | Independent clusters, zones and peers |
-| `recovery` | `ci_recovery` | Ceph recovery | Faults, partitions, removal and later recovery |
+| `environment` | `ci_environment` | Docker checks, and Ceph periodic | Docker behaviour without Ceph |
+| `short` | `ci_short` | Ceph short, and Ceph periodic on both releases | Basic bootstrap, services and client fixtures |
+| `topology` | `ci_topology` | Ceph topology (changed batches on a pull request), and Ceph periodic on both releases | Cluster composition, node lifecycle, diagnostics |
+| `multicluster` | `ci_multicluster` | Ceph multicluster (changed batches on a pull request), and Ceph periodic on both releases | Independent clusters, zones and peers |
+| `recovery` | `ci_recovery` | Ceph recovery (changed batches on a pull request), and Ceph periodic on both releases | Faults, partitions, removal and later recovery |
 
 `short` names a selection, not a time limit, and has nothing to do with Go's
-`-short` flag. It runs on every push for both Tentacle and Squid, so a test
-placed there must pass on both releases. Topology, multicluster and recovery
-batches run on Squid weekly (see [ci.md](ci.md#squid-workflows)).
+`-short` flag. `short` runs on Tentacle for every pull request and push to
+`main`. A pull request runs a batch of the other categories when it changes
+that batch's own test files. Every category runs on both Tentacle and Squid
+in Ceph periodic, so a test must pass on both releases (see
+[ci.md](ci.md#pull-request-scope)).
 
 ### Batches and the `//ci:` line
 
@@ -456,7 +483,9 @@ batches run on Squid weekly (see [ci.md](ci.md#squid-workflows)).
   checks out the code, sets up Go, compiles, pulls images and verifies
   cleanup.
 - `checker=` and `case=` are reserved for the strict completion checkers of the
-  CephFS process quiescence/recovery and RBD receiver leaf batches.
+  CephFS process quiescence/recovery and RBD receiver batches. `case=` names
+  the receipt kind (`peer` or `directory`); the receiver batch has none. The
+  network mode comes from the test's `networkModes`.
 - `image-roles=` lists the published role images that a Ceph batch needs,
   such as `image-roles=control` for a batch that only starts control-image
   containers. Roles are `control`, `osd`, `rgw` and `mds`, comma-separated,
@@ -465,6 +494,14 @@ batches run on Squid weekly (see [ci.md](ci.md#squid-workflows)).
   with an error instead of falling back to the control image. Use
   `controlImage(t)` in such a batch rather than `integrationImages(t)`, which
   needs all four.
+- `representative=<theme>` puts the batch into the representative set that
+  Ceph periodic's campaign repeats (see
+  [ci.md](ci.md#representative-campaign)). The theme is one of `topology`,
+  `auth`, `mirroring`, `recovery` and `flaky`, and the set must cover every
+  theme. Like the budget, every file of the batch declares the same value.
+  Choose short batches: each attempt is a separate job. Use `flaky` for a
+  batch with a known intermittent failure that the campaign should keep
+  measuring.
 - The process timeout covers every test in the batch, each with its own
   cluster bootstrap and cleanup. When a batch approaches its budget, move a
   long, independent test into a batch of its own instead of raising the limit.
@@ -530,15 +567,13 @@ request and every push to `main`.
 - Add a `TestHostNetwork...` variant when the feature touches addresses,
   ports or client connectivity.
 - Never call `t.Skip`. CI counts any skipped test or subtest as a failure.
-  When a release does not support something, branch on `cluster.CephVersion()`
-  and assert the documented behaviour, typically that the fixture refuses the
-  request before it changes anything:
+  When a release does not support something, select the expectation from
+  the shared table (see [Release differences](#release-differences)) and
+  assert the classified refusal, never a release prefix of your own:
 
   ```golang
-  if strings.HasPrefix(cluster.CephVersion(), "19.") {
-  	if err == nil {
-  		t.Fatal("Squid accepted a mapping that needs Ceph 20")
-  	}
+  if !capabilitySupported(t, ctx, cluster, capabilityRBDNamespaceMapping) {
+  	requireCapabilityRefused(t, err, cluster, capabilityRBDNamespaceMapping, detail)
   	return
   }
   ```
@@ -564,10 +599,77 @@ compiles under plain `all`, and uses the `ci_optional` category:
 It keeps strict assertions; there is no expected-failure mode. Run it with the
 `optional` subcommand of the tag runner.
 
+### Release differences
+
+The same contract runs on every supported release (CI runs it on real
+Tentacle 20.2.4 and Squid 19.2.5 images). Where the expected outcome differs,
+the test selects it from one table, `releaseCapabilities` in
+`internal/integration/release_capabilities_integration_helpers_test.go`, and
+never from a release prefix of its own. `capabilitySupported` first checks
+`ceph versions`: every daemon must run the release of the control image.
+It then answers from the row:
+
+| Capability | Decided by | Where unsupported |
+| --- | --- | --- |
+| `rbd mirror pool enable --remote-namespace` | Probe: `rbd help mirror pool enable` in the control image | The fixture refuses a differently named mapping with `ErrUnsupported` naming the cluster; there is no init-only mode |
+| `messenger dump` | Probe: `ceph tell mon.<leader> help` | The native probes prove encryption from secure-only service modes and client `debug_ms` READY lines instead |
+| RGW account principals in user-mode sync pipes | Release row: 19 unsupported, 20 supported. No tool reveals it, because Ceph 19 accepts the pipe and replicates nothing | The fixture refuses the pipe with `ErrUnsupported` naming the zone |
+
+Unsupported cases assert the classified error with
+`requireCapabilityRefused` and return; they do not skip. These outcomes are
+explicit failures of the test configuration rather than guesses:
+
+- A cluster whose daemons run several releases, for example a Squid RGW role
+  image beside a Tentacle control image, fails with `mixed-release cluster`.
+- A version that does not parse fails with `unrecognized Ceph release`.
+- A release-limited row has no entry for a new major release until someone
+  observes it and adds the entry; until then it fails with
+  `no expectation for Ceph <version>`. An unlisted patch of a listed major
+  release, such as 20.2.9, uses that release's entry.
+
+`TestReleaseCapabilityTable` (code category, `pure` batch) checks these rules
+without a cluster.
+
+Other release differences, kept out of the table on purpose:
+
+- CephX key types: `ceph-authtool --key-type` is probed by the product
+  (`detectKeyTypeOption`); the auth cipher tests pin the 20.2.3 image that
+  lacks it, so their expectation follows the image they start.
+- Product command forms: `ceph.CephBefore`/`multicluster.CephBefore` choose
+  how to issue a command that both releases support, such as
+  `fs new ... set max_mds` (CephFS), the empty user of a system-mode sync pipe
+  and the legacy `bucket sync status` JSON (RGW), and the receiver discovery
+  format of `rbd mirror status` (RBD). The fixture's own tests cover them;
+  they select no test expectation.
+- Release-tolerant assertions accept every observed form without a branch:
+  the rotating-key log lines of daemon key rotation, the MON session after a
+  rejected renewal (client key replacement) and when a CephFS client gets
+  its GlobalID (session admission).
+
 ## Debugging a failing local run
 
 - Read the `-v` output from the top. Tests log the phase they reached, and
   failed tests that use the shared cluster helpers print daemon log tails.
+- `TestMultiClusterMonitorBootstrapRefresh` replaces every MON as named
+  phases (`add d`, `remove a`, ...). A passing replacement logs one
+  `MON_REPLACEMENT_RECEIPT` line per cluster: each phase's operation and
+  quorum time, the monmap epoch the MONs report afterwards, and which MON held
+  each warm MGR, OSD and MDS session (`mgr.x:a>b>d`, with `-` when no MON
+  listed one). A failed phase is not retried. Before the test fails it logs a
+  `MON_REPLACEMENT_BUNDLE` JSON line: the phase and partial MON handle, every
+  MON's own `mon_status`, the warm daemons' MON sessions, status and MON client
+  settings, the MON client lines (hunting, authentication, beacons, mounts) of
+  every warm daemon, client and mirror container, and `CollectDiagnostics`
+  output. The warm MGRs, OSDs and MDS daemons run with `debug_monc 10/10` from
+  the start of the replacement to the end of the test. The MDS socket is
+  reached with the `ceph` CLI in the MDS's own container; an MDS image without
+  the CLI leaves the MDS observations marked incomplete. When a later step
+  fails, for example the CephFS observation after the mirror restarts, the
+  cleanup logs a bundle for the phase `after replacement` before the fixture
+  is removed. Otherwise the cleanup restores the exact prior level on the same
+  container generation and logs `MON_REPLACEMENT_DEBUG` with the result. The
+  clients and both mirror daemons are stopped during the replacement, so they
+  have no debug window.
 - A Go timeout prints `panic: test timed out after ...` followed by the tests
   that were still running and for how long. Raise the `-timeout` or the Make
   timeout variable only after checking that the test was making progress.

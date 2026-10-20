@@ -1,6 +1,6 @@
 //go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_messenger_secure))))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 representative=topology
 
 package integration_test
 
@@ -17,11 +17,8 @@ import (
 )
 
 func TestMessengerV2SecureOnly(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
@@ -90,11 +87,8 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 }
 
 func TestMessengerV2SecureServices(t *testing.T) {
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
@@ -123,7 +117,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, messengerDumpArg(cluster))
+			data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, messengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_CEPHFS %s", data)
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
@@ -141,7 +135,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mds := range fs.MDSs() {
-				data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(cluster))
+				data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(t, ctx, cluster))
 				t.Logf("MSGR2_NATIVE %s", data)
 			}
 			inspection, err := gateway.Inspect(ctx)
@@ -154,7 +148,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			}
 			// ServiceMap GID plus hostname/frontend binds server-side OSD
 			// connections to this owned gateway, not an unrelated CLI client.
-			data = topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(cluster))
+			data = topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_RGW %s", data)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)

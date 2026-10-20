@@ -1,0 +1,1364 @@
+{
+  "spec": {
+    "repository": "JSYoo5B/ceph-msgr-go",
+    "commit": "fb9e427018c65ac34e2431532a1929081fe04598"
+  },
+  "ceph_commit": "7f793731f1b39eb4f465e960113d2363c311b964",
+  "rows": [
+    {
+      "id": "messenger/v2-only-bootstrap",
+      "area": "messenger",
+      "requirement": "Every daemon binds and advertises only Messenger v2, and native clients connect with msgr2.1.",
+      "symbols": [
+        "CEPH_MSGR2_FEATURE_REVISION_1"
+      ],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerV2OnlyCRC",
+          "asserts": "ms_bind_msgr1 is off on every daemon and the MON map lists only v2 addresses"
+        },
+        {
+          "test": "TestMessengerClientProfileCRC/host",
+          "asserts": "the test process reads the Messenger v2 banner from every advertised address of each MON, the active MGR and the OSD"
+        },
+        {
+          "test": "TestMessengerCompressionReceipt",
+          "asserts": "every READY session of both OSDs, with MONs, MGRs, OSDs and clients, reports rev1 (msgr2.1) in messenger dump"
+        }
+      ],
+      "gap": "msgr2.1 is asserted only from messenger dump (Ceph 20) and only for sessions of OSDs; MDS and RGW binds are not checked.",
+      "owner": "#159"
+    },
+    {
+      "id": "messenger/secure-mode",
+      "area": "messenger",
+      "requirement": "Secure (AES-GCM) connections between clients and every daemon type, with no CRC fallback.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileSecure",
+          "asserts": "all six ms_*_mode options read secure on each MON and MGR; messenger dump shows client connections in secure mode where the release has it"
+        },
+        {
+          "test": "TestMessengerV2SecureServices",
+          "asserts": "a CephFS client's MON, MDS and OSD sessions, each MDS's peers and RGW to OSD sessions are AES-128-GCM in messenger dump, or secure-only modes and READY log lines without it"
+        },
+        {
+          "test": "TestMessengerV2SecureOnly",
+          "receipt": "MSGR2_CRC_REFUSAL",
+          "asserts": "a CRC-only client probe is refused by the secure-only cluster, and native I/O works after the refusal"
+        }
+      ]
+    },
+    {
+      "id": "messenger/crc-mode",
+      "area": "messenger",
+      "requirement": "CRC connections accepted by MONs, MGRs and OSDs for clients that choose CRC.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileCRC",
+          "asserts": "each daemon's service mode is crc and native clients read and write through a MemStore OSD"
+        }
+      ]
+    },
+    {
+      "id": "messenger/mode-rejection",
+      "area": "messenger",
+      "requirement": "A daemon refuses a client whose only connection mode it does not accept.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileModeRejection/monitors",
+          "asserts": "a secure-only client is refused by CRC-only MONs while MGRs stay secure-only"
+        },
+        {
+          "test": "TestMessengerClientProfileModeRejection/managers",
+          "asserts": "a secure-only client passes the secure MONs but CRC-only MGRs leave it unanswered; MGRs switched to secure then accept it"
+        }
+      ]
+    },
+    {
+      "id": "messenger/compression-negotiation",
+      "area": "messenger",
+      "requirement": "On-wire compression negotiated per peer path: compressed where both peers' policy allows it, refused on secure connections without ms_compress_secure, never on client connections the policy does not name.",
+      "symbols": [
+        "CEPH_MSGR2_FEATURE_COMPRESSION"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerCompressionReceipt",
+          "receipt": "MESSENGER_COMPRESSION_RECEIPT",
+          "asserts": "with ms_osd_compress_mode=force OSD sessions negotiate snappy; with ms_cluster_mode=secure they stay uncompressed until ms_compress_secure=true; MON, MGR and client sessions stay uncompressed, also for a client that forces compression"
+        }
+      ]
+    },
+    {
+      "id": "messenger/connection-features",
+      "area": "messenger",
+      "requirement": "The feature bits that OSDs, MGRs and clients negotiated on their MON sessions, tested by name with their incarnation.",
+      "symbols": [
+        "CEPH_FEATURE_SERVER_LUMINOUS",
+        "CEPH_FEATURE_RADOS_BACKOFF",
+        "CEPH_FEATURE_SERVER_NAUTILUS",
+        "CEPH_FEATURE_SERVER_SQUID",
+        "CEPH_FEATURE_MSG_ADDR2",
+        "CEPH_FEATURE_CEPHX_V2",
+        "CEPH_FEATURE_OSDHASHPSPOOL"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerCompressionReceipt",
+          "receipt": "MESSENGER_COMPRESSION_RECEIPT",
+          "asserts": "the MON's sessions of both OSDs and the probe client carry SERVER_LUMINOUS, RADOS_BACKOFF, SERVER_NAUTILUS to SERVER_SQUID, MSG_ADDR2, CEPHX_V2 and OSDHASHPSPOOL with their incarnation markers"
+        }
+      ]
+    },
+    {
+      "id": "messenger/hashpspool-admission",
+      "area": "messenger",
+      "requirement": "The MON requires OSDHASHPSPOOL of a client while any pool has hashpspool; a profile with no such pool admits a client without it.",
+      "symbols": [
+        "CEPH_FEATURE_OSDHASHPSPOOL"
+      ],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileCRC",
+          "asserts": "every pool, the MGR's .mgr included, has no hashpspool flag"
+        },
+        {
+          "test": "TestOSDMemStoreLegacyPlacement",
+          "asserts": "the legacy CRUSH map and the pool without hashpspool serve reads and writes"
+        }
+      ],
+      "gap": "No native client lacking the feature is refused or admitted; only the pool flags are checked.",
+      "owner": "#159"
+    },
+    {
+      "id": "messenger/address-families",
+      "area": "messenger",
+      "requirement": "Daemons advertise and accept IPv4, IPv6, IPv4-mapped IPv6 and dual-family address vectors.",
+      "symbols": [
+        "CEPH_FEATURE_MSG_ADDR2"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileAddressFamilies/ipv6",
+          "asserts": "every MON and the active MGR advertise IPv6 and clients connect"
+        },
+        {
+          "test": "TestMessengerClientProfileAddressFamilies/ipv4-mapped",
+          "asserts": "every MON and the active MGR advertise IPv4-mapped IPv6"
+        },
+        {
+          "test": "TestDualStackAddressFamily",
+          "receipt": "DUAL_STACK_RECEIPT",
+          "asserts": "every MON, MGR and OSD advertises one IPv4 and one IPv6 address per protocol, MONs IPv6 first"
+        },
+        {
+          "test": "TestDualStackServices",
+          "receipt": "DUAL_STACK_SERVICES_RECEIPT",
+          "asserts": "native clients complete MGR commands, object I/O and CephFS I/O over both families, and the gateway serves S3 over both"
+        },
+        {
+          "test": "TestDualStackFamilyCut",
+          "receipt": "DUAL_STACK_FAMILY_CUT_RECEIPT",
+          "asserts": "with one daemon's IPv6 path cut, the same daemon over IPv4 and the client's other paths keep working, and the blocked operation completes after Restore"
+        }
+      ]
+    },
+    {
+      "id": "messenger/cephx-ciphers-and-tickets",
+      "area": "messenger",
+      "requirement": "Cephx key types and service ciphers, MON and service ticket lifetimes and renewal.",
+      "symbols": [
+        "CEPH_MSG_AUTH",
+        "CEPH_MSG_AUTH_REPLY",
+        "CEPH_FEATURE_CEPHX_V2"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestAuthCiphersAndTicketLifetimes",
+          "asserts": "AES and AES256K key and service cipher combinations with configured ticket lifetimes"
+        },
+        {
+          "test": "TestMessengerClientProfileSecure",
+          "asserts": "one librados session outlives two lifetimes of each 12 s ticket"
+        },
+        {
+          "test": "TestMessengerClientProfileIdleTickets",
+          "asserts": "MON and MGR run 120 s MON and service ticket lifetimes with the fast MON timing options, and one MON and one MGR command answer"
+        }
+      ]
+    },
+    {
+      "id": "messenger/key-rotation-and-revocation",
+      "area": "messenger",
+      "requirement": "Daemon key rotation, client key replacement and revocation while sessions are open.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestDaemonKeyRotation",
+          "asserts": "rotated daemon keys keep the daemon serving and authenticating"
+        },
+        {
+          "test": "TestClientKeyReplacement",
+          "asserts": "the old client key is refused and the new one accepted"
+        },
+        {
+          "test": "TestClientRevocation",
+          "asserts": "a revoked client is refused and restored"
+        }
+      ]
+    },
+    {
+      "id": "messenger/auth-failure-evidence",
+      "area": "messenger",
+      "requirement": "The first authentication failure of a native client is recorded with its cause.",
+      "symbols": [],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestAuthFirstFailureBundle",
+          "asserts": "a wrong-key client's EACCES (-13) is kept unchanged in a complete bundle with the target MGR registered and no admin key"
+        }
+      ],
+      "gap": "The bundle keeps the refusal but leaves its cause unclassified.",
+      "owner": "#159"
+    },
+    {
+      "id": "messenger/fault-injection",
+      "area": "messenger",
+      "requirement": "Messenger-level faults: dropped client messages, delayed delivery, paused peers.",
+      "symbols": [],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerFaultInjection",
+          "asserts": "ms_blackhole_client on one OSD times out only objects it is primary for; ms_inject_delay delays OSD client messages; blackholed MDS stops new mounts"
+        },
+        {
+          "test": "TestPausedOSDFaults",
+          "asserts": "with nodown a paused OSD stays up while writes end in ETIMEDOUT and SLOW_OPS appears; without nodown it is marked down and degraded I/O works"
+        }
+      ],
+      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain.",
+      "owner": "#17"
+    },
+    {
+      "id": "messenger/keepalive-ack-reconnect",
+      "area": "messenger",
+      "requirement": "Keepalive, ACK and session reset/reconnect observed on a native peer path.",
+      "symbols": [
+        "CEPH_FEATURE_MSGR_KEEPALIVE2",
+        "CEPH_FEATURE_RECONNECT_SEQ"
+      ],
+      "status": "uncovered",
+      "evidence": "none",
+      "cases": [],
+      "gap": "No recipe records a native connection's keepalive, ACK sequence or reset; MDS session reconnect is covered under client-mds.",
+      "owner": "#159"
+    },
+    {
+      "id": "client-mon-mgr/mon-commands",
+      "area": "client-mon-mgr",
+      "requirement": "MON commands with JSON output, capability-limited identities and refusals.",
+      "symbols": [
+        "MSG_MON_COMMAND",
+        "MSG_MON_COMMAND_ACK"
+      ],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileSecure",
+          "asserts": "an fsid-only identity answers fsid and is denied mon stat; a read-only identity answers mon stat and is denied config-key set"
+        },
+        {
+          "test": "TestNativeCommands",
+          "asserts": "RunNativeCommand bounds ceph CLI processes: cancel, timeout and output limits return classified errors and leave no process"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/mgr-commands",
+      "area": "client-mon-mgr",
+      "requirement": "MGR commands and module commands across MGR registration and failover.",
+      "symbols": [
+        "MSG_MGR_COMMAND",
+        "MSG_MGR_COMMAND_REPLY",
+        "MSG_MGR_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileManagerTransition",
+          "receipt": "MGR_TRANSITION_RECEIPT",
+          "asserts": "a MGR module command answers in every phase of the failover"
+        },
+        {
+          "test": "TestMessengerClientProfileDelayedManagers",
+          "asserts": "with no MGR the MgrMap is empty; MGRs added later become active and standby"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/mon-hunting-and-failover",
+      "area": "client-mon-mgr",
+      "requirement": "Clients find a quorum while MONs join, leave, stop and never answer.",
+      "symbols": [
+        "CEPH_MSG_MON_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileUnreachableMonitor",
+          "asserts": "a MON that never answers joins and leaves the monmap; new clients connect after each election"
+        },
+        {
+          "test": "TestMonitorRollingReplacement",
+          "asserts": "after each MON is replaced, fresh RADOS reads return the retained bytes"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/mgr-monclients",
+      "area": "client-mon-mgr",
+      "requirement": "MGR MonClient sessions and the beacon client's global ID as the MgrMap GID.",
+      "symbols": [
+        "MSG_MGR_BEACON"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileManagerMonClients",
+          "asserts": "only the beacon client's global ID is the MgrMap GID among the MGR's MON sessions"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/map-subscriptions",
+      "area": "client-mon-mgr",
+      "requirement": "A client's map, config and log subscriptions and their epochs as the MON delivers them.",
+      "symbols": [
+        "CEPH_MSG_MON_MAP",
+        "CEPH_MSG_MON_SUBSCRIBE",
+        "CEPH_MSG_MON_SUBSCRIBE_ACK",
+        "CEPH_MSG_OSD_MAP",
+        "MSG_CONFIG",
+        "MSG_LOG",
+        "MSG_MGR_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestNativeWatchNotifyAndSubscriptions",
+          "receipt": "MON_SUBSCRIPTION_RECEIPT",
+          "asserts": "a python-rados client's sent mon_subscribe messages (debug_ms) hold continuous monmap, config and log-info subscriptions and a onetime osdmap subscription for the next epoch; an OSD map epoch bump reaches it, as the MON's osd_map message in its log, its Objecter map_epoch and map_inc counters (admin socket) and the MON's sessions dump (osd_epoch of its global id) all report; a client config set and rm arrive as config messages and change conf_get; a ceph log entry arrives through its cluster log subscription"
+        },
+        {
+          "test": "TestNativeWatchNotifyAndSubscriptions",
+          "receipt": "MAP_EPOCH_DELIVERY_RECEIPT",
+          "asserts": "the same client, over the MON session that the MON's sessions dump places it on: ceph mon set_location bumps the MonMap one epoch, a mon_map message from that MON follows in its log (debug_ms) and its MonClient decodes and dumps exactly that epoch with the new crush_location (debug_monc); ceph mgr fail bumps the MgrMap, and the epoch right after the failover and the epoch with the replacement active MGR (new GID) both arrive as mgrmap(e N) messages from that MON, both are taken by its MgrClient (debug_mgrc), which logs the new active address vector (nonce included, not the failed MGR's) for the latter and opens a session with it"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/pool-operations",
+      "area": "client-mon-mgr",
+      "requirement": "Pool snapshot and self-managed snapshot allocation through the MON.",
+      "symbols": [
+        "CEPH_MSG_POOLOP",
+        "CEPH_MSG_POOLOP_REPLY"
+      ],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "a pool snapshot freezes the object's bytes while HEAD changes"
+        },
+        {
+          "test": "TestRADOSSelfManagedSnapshots",
+          "asserts": "self-managed snapshot ids are allocated, used in write contexts and removed"
+        }
+      ]
+    },
+    {
+      "id": "client-mon-mgr/statfs-and-pool-stats",
+      "area": "client-mon-mgr",
+      "requirement": "Cluster and pool statistics requests and their native values.",
+      "symbols": [
+        "CEPH_MSG_STATFS",
+        "CEPH_MSG_STATFS_REPLY",
+        "MSG_GETPOOLSTATS",
+        "MSG_GETPOOLSTATSREPLY"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_STATS_RECEIPT",
+          "asserts": "pool statistics of an empty pool, after six objects of known sizes and after removing three: object count, copies, allocated bytes and write count from librados, the rados df object count and ceph df stored bytes match exactly; cluster statfs equals ceph df's total and the sum of pool objects"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/write-read",
+      "area": "client-osd",
+      "requirement": "Read, stat, write at an offset, write_full and append with exact bytes and object versions.",
+      "symbols": [
+        "CEPH_MSG_OSD_OP",
+        "CEPH_MSG_OSD_OPREPLY",
+        "CEPH_OSD_OP_READ",
+        "CEPH_OSD_OP_STAT",
+        "CEPH_OSD_OP_WRITE",
+        "CEPH_OSD_OP_WRITEFULL",
+        "CEPH_OSD_OP_APPEND"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSMutationOutcomes",
+          "asserts": "an independent client reads back the exact bytes and version of each write"
+        },
+        {
+          "test": "TestRADOSSelfManagedSnapshots",
+          "asserts": "nonaligned writes and appends read back on HEAD and every snapshot"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/zero-truncate-create-delete",
+      "area": "client-osd",
+      "requirement": "Zero, truncate, exclusive and idempotent create, and delete, with their errno and readback.",
+      "symbols": [
+        "CEPH_OSD_OP_ZERO",
+        "CEPH_OSD_OP_TRUNCATE",
+        "CEPH_OSD_OP_CREATE",
+        "CEPH_OSD_OP_DELETE"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSMutationContracts",
+          "asserts": "zero keeps the size; an exclusive create of an existing object is EEXIST, also inside a compound write; remove then ENOENT"
+        },
+        {
+          "test": "TestRADOSSelfManagedSnapshots",
+          "asserts": "shrinking and zero-extending truncates read back on HEAD and snapshots"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/guards",
+      "area": "client-osd",
+      "requirement": "Compare guards (cmpext, cmpxattr, omap_cmp) and version assertions refuse the whole compound operation with the native errno.",
+      "symbols": [
+        "CEPH_OSD_OP_CMPEXT",
+        "CEPH_OSD_OP_CMPXATTR",
+        "CEPH_OSD_OP_OMAP_CMP",
+        "CEPH_OSD_OP_ASSERT_VER"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSMutationContracts",
+          "asserts": "cmpext returns MAX_ERRNO plus the offset, cmpxattr and omap_cmp ECANCELED, and the object is unchanged"
+        },
+        {
+          "test": "TestRADOSMutationOutcomes",
+          "asserts": "assert_version with an older version is ERANGE, with a newer one EOVERFLOW"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/unknown-outcome",
+      "area": "client-osd",
+      "requirement": "Client timeouts while the OSD holds a mutation, acknowledged-write durability, and no automatic re-execution.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSMutationOutcomes",
+          "asserts": "ETIMEDOUT for held writes that the OSD applies exactly once; acknowledged writes survive SIGKILL; an unguarded retry appends again"
+        },
+        {
+          "test": "TestRADOSMutationContracts",
+          "asserts": "a guarded compound write that timed out is applied whole"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/xattr",
+      "area": "client-osd",
+      "requirement": "Set, get, list and remove xattrs with binary values.",
+      "symbols": [
+        "CEPH_OSD_OP_SETXATTR",
+        "CEPH_OSD_OP_GETXATTR",
+        "CEPH_OSD_OP_GETXATTRS",
+        "CEPH_OSD_OP_RMXATTR"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "set_xattr inside a compound write and get_xattr of the same bytes"
+        },
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_XATTR_RECEIPT",
+          "asserts": "an independent client lists binary and empty values with getxattrs, without the name rmxattr removed or the one a compound rmxattr and setxattr replaced; getxattr of a removed name is ENODATA, rmxattr of a never set name succeeds as a new version, and getxattrs, getxattr and rmxattr of a missing object are ENOENT"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/omap",
+      "area": "client-osd",
+      "requirement": "OMAP set, get (keys, values, by keys, header), clear, remove keys and key ranges.",
+      "symbols": [
+        "CEPH_OSD_OP_OMAPSETVALS",
+        "CEPH_OSD_OP_OMAPGETVALS",
+        "CEPH_OSD_OP_OMAPGETKEYS",
+        "CEPH_OSD_OP_OMAPGETVALSBYKEYS",
+        "CEPH_OSD_OP_OMAPGETHEADER",
+        "CEPH_OSD_OP_OMAPSETHEADER",
+        "CEPH_OSD_OP_OMAPCLEAR",
+        "CEPH_OSD_OP_OMAPRMKEYS",
+        "CEPH_OSD_OP_OMAPRMKEYRANGE"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "set_omap and get_omap_vals return the stored pair"
+        },
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_OMAP_RECEIPT",
+          "asserts": "keys-only listing without values; 25 keys in max_return pages of 7 continued with start_after until an empty page, also for values; with osd_max_omap_entries_per_request at 10 a request for 100 pages 10, 10, 5, 0; a prefix filter, by-keys without the absent key, a 255-byte binary header set and read by the rados CLI, single-key (librados and rados rmomapkey) and key-range removal, clear that also empties the header; reads of a missing object are ENOENT"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/class-call",
+      "area": "client-osd",
+      "requirement": "Object class calls with raw input and output bytes.",
+      "symbols": [
+        "CEPH_OSD_OP_CALL"
+      ],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "a cls_hello record_hello inside a compound write stores a greeting that the replay method returns as exactly Hello, fixture!"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/watch-notify",
+      "area": "client-osd",
+      "requirement": "Watch registration, notify delivery and acknowledgement, watch timeout and expiry, and listing watchers.",
+      "symbols": [
+        "CEPH_OSD_OP_WATCH",
+        "CEPH_OSD_OP_NOTIFY",
+        "CEPH_OSD_OP_NOTIFY_ACK",
+        "CEPH_OSD_OP_LIST_WATCHERS",
+        "CEPH_MSG_WATCH_NOTIFY"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "one notify reaches the watcher with its payload"
+        },
+        {
+          "test": "TestPausedObjectWatcher",
+          "asserts": "a frozen watcher keeps its watch until osd_client_watch_timeout; notifies time out until the OSD drops it, then complete; no blocklist"
+        },
+        {
+          "test": "TestNativeWatchNotifyAndSubscriptions",
+          "receipt": "RADOS_WATCH_NOTIFY_RECEIPT",
+          "asserts": "two notifies acknowledged by two watchers under distinct notify ids: each ack (watcher client id, cookie, payload naming the notify id or empty) matches the notify id, notifier id, cookie and payload that watcher's callback saw, and rados listwatchers lists the same clients and cookies; a silent watcher is the one timeout of a rados notify process that lists both acks (python-rados reports only ETIMEDOUT) and keeps its watch; blocklisting a watcher fires its error callback with its cookie (ENOTCONN or EBLOCKLISTED) and the OSD drops its watch; removing the object fires ENOTCONN on the remaining watches"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/snapshots",
+      "area": "client-osd",
+      "requirement": "Self-managed snapshot write contexts, snapshot reads, clone listing and rollback.",
+      "symbols": [
+        "CEPH_OSD_OP_LIST_SNAPS",
+        "CEPH_OSD_OP_ROLLBACK"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSSelfManagedSnapshots",
+          "asserts": "write contexts with older sequences, ORDERSNAP and unknown ids; listsnaps clones; reads of every snapshot by an independent client"
+        },
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_ROLLBACK_RECEIPT",
+          "asserts": "rollback to a self-managed snapshot restores the snapshot's bytes, xattrs and omap on HEAD at a new version while the clone keeps its version; a later write changes HEAD only; rolling back an object created after the snapshot deletes it"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/erasure-coded",
+      "area": "client-osd",
+      "requirement": "Operations an erasure-coded pool accepts and refuses, with and without overwrites, and reads with a missing shard.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSErasureCodedOutcomes",
+          "asserts": "each write operation's outcome on k=2 m=1 pools, read back also while a shard is missing"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/enumeration",
+      "area": "client-osd",
+      "requirement": "PG object enumeration with namespaces, filters, cursors and termination.",
+      "symbols": [
+        "CEPH_OSD_OP_PGNLS",
+        "CEPH_OSD_OP_PGNLS_FILTER",
+        "CEPH_OSD_OP_PGLS"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSClientFixtures",
+          "asserts": "the pool lists no objects after cleanup in the test namespace"
+        },
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_ENUMERATION_RECEIPT",
+          "asserts": "with osd_max_pgls lowered to 3 on the OSD, rados ls of one namespace in a 4-PG pool sends PGNLS requests PG by PG in bitwise hash order (client debug_ms and debug_objecter log): each request's cursor is the previous reply's handle, starting at MIN; each reply holds at most 3 entries of that namespace only; a continuation (result 0) hands back the PG's first object not yet returned (in either namespace), and the PG's last reply (result 1) the next PG's start, MAX after the last PG, after which the listing ends; each PG's entries are exactly the objects that osd map places there and that rados --pgid ls lists, and rados ls --all lists both namespaces; rados_object_list over each PG's slice in calls of 2 with a plain xattr filter sends PGNLS_FILTER requests (result 0 until the PG's last, 1) and returns only that PG's matching objects, each cursor comparing below the next and the last equal to the slice end (the pool end for the last PG); the OSD refuses an unknown filter type with EINVAL. No tool of the image sends the legacy CEPH_OSD_OP_PGLS"
+        }
+      ]
+    },
+    {
+      "id": "client-osd/sparse-read-and-hints",
+      "area": "client-osd",
+      "requirement": "Sparse reads, allocation hints and fadvise flags.",
+      "symbols": [
+        "CEPH_OSD_OP_SPARSE_READ",
+        "CEPH_OSD_OP_SETALLOCHINT",
+        "CEPH_FEATURE_OSD_FADVISE_FLAGS"
+      ],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRADOSObjectReceipts",
+          "receipt": "RADOS_HINTS_RECEIPT",
+          "asserts": "rados set-alloc-hint on an existing object keeps its bytes at a new version and on a missing one creates it empty, and the decoded object info holds the hinted sizes; fadvise flags on a write_full, on a cmpext read (match and MAX_ERRNO plus offset) and on the rados cp copy-from leave exact bytes, xattrs and omap"
+        }
+      ],
+      "gap": "Sparse reads have no native receipt: neither python-rados nor the rados CLI of the official image issues CEPH_OSD_OP_SPARSE_READ (only the C++ API and librbd do).",
+      "owner": "#159"
+    },
+    {
+      "id": "client-osd/backoff",
+      "area": "client-osd",
+      "requirement": "OSD backoff and unblock events for a client on a blocked PG or object.",
+      "symbols": [
+        "CEPH_MSG_OSD_BACKOFF",
+        "CEPH_FEATURE_RADOS_BACKOFF"
+      ],
+      "status": "uncovered",
+      "evidence": "none",
+      "cases": [],
+      "gap": "No recipe makes an OSD send a backoff and records it.",
+      "owner": "#159"
+    },
+    {
+      "id": "client-osd/blocklist-and-full",
+      "area": "client-osd",
+      "requirement": "Blocklisted clients and full pools refuse writes with the native errno.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestClientFencing",
+          "asserts": "a blocklisted client's write_full returns ESHUTDOWN (-108) while a second client keeps working; after restore or expiry fresh clients work"
+        },
+        {
+          "test": "TestOSDFullRatios",
+          "asserts": "full ratios raise OSD_NEARFULL, BACKFILLFULL and FULL; at full a FULL_TRY write fails ENOSPC and creates nothing while reads work"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/session",
+      "area": "client-mds",
+      "requirement": "MDS discovery, session open, renewal, close, stale and eviction, and required client features.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_SESSION",
+        "CEPH_MSG_MDS_MAP",
+        "CEPH_MSG_FS_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSSessionAdmission",
+          "asserts": "discovery, open, renewals and close; a path-restricted identity admitted and refused; a required client feature evicts and refuses a client without it"
+        },
+        {
+          "test": "TestCephFSPausedClientEviction",
+          "asserts": "a paused client is evicted after the session timeout"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/reconnect",
+      "area": "client-mds",
+      "requirement": "Client reconnect after an MDS restart or takeover, and a missed reconnect window.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_RECONNECT"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSRetainedClientAcrossMDSRestart",
+          "receipt": "CEPHFS_RETAINED",
+          "asserts": "the client keeps its session identity across the restart"
+        },
+        {
+          "test": "TestCephFSLateReconnect",
+          "asserts": "a client frozen through the failover misses the window and is evicted"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/capabilities",
+      "area": "client-mds",
+      "requirement": "Capability grant, revoke, flush and flush ack, including a flush across an MDS crash.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_CAPS",
+        "CEPH_MSG_CLIENT_CAPRELEASE"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSCapabilityHandoff",
+          "asserts": "the MDS revokes a live holder's caps for a second writer without eviction"
+        },
+        {
+          "test": "TestCephFSFlushingCapReplay",
+          "asserts": "a cap flush pending when the MDS is killed is acknowledged after its restart with size and bytes intact"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/leases",
+      "area": "client-mds",
+      "requirement": "Dentry leases and their recall.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_LEASE"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSDentryLeaseRecall",
+          "asserts": "the MDS leases a dentry and recalls it on rename and removal by another client"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/metadata-requests",
+      "area": "client-mds",
+      "requirement": "Metadata requests (lookup, getattr, setattr, create, readdir, link, rename, symlink, xattrs, errors) with native results.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_REQUEST",
+        "CEPH_MSG_CLIENT_REPLY"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSMetadataRecipe",
+          "receipt": "CEPHFS_METADATA_RECIPE",
+          "asserts": "per-operation errno and returned inode, mode, links, owner, size, times, bytes and xattrs, compared by a second client"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/unsafe-and-replay",
+      "area": "client-mds",
+      "requirement": "Unsafe and safe replies, request replay after an MDS crash, and a client killed during an unsafe request.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSUnsafeRequestWindow",
+          "receipt": "CEPHFS_UNSAFE",
+          "asserts": "a rename held between its unsafe and safe replies, seen from MDS and client"
+        },
+        {
+          "test": "TestCephFSUnsafeRequestReplay",
+          "asserts": "the client replays the unsafe rename after the MDS restarts and it becomes safe"
+        },
+        {
+          "test": "TestCephFSJournaledRenameAcrossMDSCrash",
+          "asserts": "the standby replays a journaled rename that the directory object lacked"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/file-locks",
+      "area": "client-mds",
+      "requirement": "flock contention and lock state across MDS failover.",
+      "symbols": [
+        "CEPH_FEATURE_FLOCK"
+      ],
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSFlockContention",
+          "receipt": "CEPHFS_FLOCK_RECEIPT",
+          "asserts": "a second owner's lock is EWOULDBLOCK until the first unlocks"
+        },
+        {
+          "test": "TestCephFSFlockAcrossMDSFailover",
+          "asserts": "the new MDS learns the lock from reconnects and refuses a contender"
+        },
+        {
+          "test": "TestCephFSFuseMount",
+          "receipt": "CEPHFS_FCNTL_LOCK_RECEIPT",
+          "asserts": "through two ceph-fuse mounts, a second client's fcntl record lock is EAGAIN, its F_SETLKW waits in the MDS (rule 1) until the holder unlocks, and a killed holder's lock lasts until its eviction"
+        }
+      ],
+      "gap": "POSIX (fcntl) record locks have a receipt only through an opt-in ceph-fuse mount, which needs /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance; fcntl lock state across an MDS failover has no receipt.",
+      "owner": "#159"
+    },
+    {
+      "id": "client-mds/snapshots",
+      "area": "client-mds",
+      "requirement": "CephFS snapshots, snapshot realms and their data.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_SNAP"
+      ],
+      "status": "partial",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestCephFSRetainedSnapshotAndMetadataRecipe",
+          "asserts": "snapshot-retained subvolume state and file bytes read by a native client"
+        },
+        {
+          "test": "TestCephFSSnapshotSchedule",
+          "asserts": "a 1-minute schedule with retention 2 creates at least three snapshots and prunes to at most two"
+        }
+      ],
+      "gap": "Snapshot realm updates to a live client are not recorded.",
+      "owner": "#159"
+    },
+    {
+      "id": "client-mds/multi-rank-and-standby",
+      "area": "client-mds",
+      "requirement": "Multiple active ranks, standby and standby-replay takeover with live clients.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSRetainedClientAcrossStandbyTakeover",
+          "asserts": "the client keeps its session when a standby takes the rank"
+        },
+        {
+          "test": "TestCephFSStandbyReplayFailover",
+          "asserts": "a standby-replay daemon takes the rank"
+        },
+        {
+          "test": "TestCephFSLiveRankMigration",
+          "asserts": "both ranks agree on one authority while a client writes during the move"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/coupled-osd-io",
+      "area": "client-mds",
+      "requirement": "MDS metadata and OSD data I/O of one client, with the OSD interrupted or full and the client evicted.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSOSDInterruption",
+          "receipt": "CEPHFS_OSD_INTERRUPTION_RECEIPT",
+          "asserts": "fsync and the MDS journal both wait at a frozen OSD without eviction and return 0 after"
+        },
+        {
+          "test": "TestCephFSOSDFullRetainedClient",
+          "receipt": "CEPHFS_OSD_FULL_RECEIPT",
+          "asserts": "with the data pool full the client's write returns ENOSPC while fsync, mkdir and stat return 0; after restore another client reads every byte"
+        },
+        {
+          "test": "TestCephFSBlocklistEpochBarrier",
+          "receipt": "CEPHFS_EPOCH_BARRIER_RECEIPT",
+          "asserts": "the evicting OSDMap epoch is the barrier; only fsynced bytes survive"
+        }
+      ]
+    },
+    {
+      "id": "client-mds/quota-metrics-reclaim",
+      "area": "client-mds",
+      "requirement": "Quota updates, client metrics and session reclaim messages.",
+      "symbols": [
+        "CEPH_MSG_CLIENT_QUOTA",
+        "CEPH_MSG_CLIENT_METRICS",
+        "CEPH_MSG_CLIENT_RECLAIM",
+        "CEPH_MSG_CLIENT_RECLAIM_REPLY",
+        "CEPH_FEATURE_MDS_QUOTA"
+      ],
+      "status": "uncovered",
+      "evidence": "none",
+      "cases": [],
+      "gap": "No recipe sets a quota against a live client or records client metrics or reclaim.",
+      "owner": "#159"
+    },
+    {
+      "id": "rbd/image-io",
+      "area": "rbd",
+      "requirement": "Native RBD images, snapshots, clones, namespaces, groups, migration, encryption and locks with readback.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestRBDLifecycle",
+          "asserts": "image create, write, read, snapshot and removal through the CLI"
+        },
+        {
+          "test": "TestRBDClientFeatures",
+          "asserts": "librbd snapshots, groups, migration, trash, encryption and exclusive-lock contention with readback in an isolated namespace"
+        },
+        {
+          "test": "TestRBDPausedLockOwner",
+          "receipt": "RBD_LOCK",
+          "asserts": "a frozen owner keeps the lock until its header watch expires; blocklisting hands it over"
+        }
+      ]
+    },
+    {
+      "id": "rbd/layout-receipt",
+      "area": "rbd",
+      "requirement": "An RBD image's layout and identity for consumer codec tests: object prefix, order, striping, data object names and bytes, snapshot ids, clone parent and the OSD map epoch.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRBDLayoutReceipt",
+          "receipt": "RBD_LAYOUT_RECEIPT",
+          "asserts": "a striped parent image, its snapshot and a clone in an RBD namespace: librados decodes each id object and header (object prefix, order, stripe unit and count, features, snapshot ids, snap_seq, the clone's parent pool, namespace, image id and snapshot id) to what librbd reports; rados lists and reads exactly the rbd_data.<id>.<objno> objects and bytes that the striping of the writes gives, the clone's copied up from the snapshot; librados reads the overwritten object at the snapshot id, in the clone listsnaps reports; ceph osd map gives each object's PG and OSD map epoch"
+        }
+      ]
+    },
+    {
+      "id": "cephfs/layout-receipt",
+      "area": "client-mds",
+      "requirement": "A CephFS file's layout and identity for consumer codec tests: inode, layout xattr, data object names and bytes, snapshot ids and the OSD map epoch.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSLayoutReceipt",
+          "receipt": "CEPHFS_LAYOUT_RECEIPT",
+          "asserts": "a striped file in a pool namespace written through libcephfs: its inode and ceph.file.layout xattr (pool, namespace, object size, stripe unit and count); rados lists and reads exactly the <ino hex>.<objno> objects and bytes that the striping of the writes gives; librados reads the overwritten object at the directory snapshot's id, in the clone listsnaps reports; ceph osd map gives each object's PG and OSD map epoch"
+        }
+      ]
+    },
+    {
+      "id": "targeted-command/mgr-tell",
+      "area": "targeted-command",
+      "requirement": "A command targeted at one MGR, bounded and cleaned up.",
+      "symbols": [
+        "MSG_COMMAND",
+        "MSG_COMMAND_REPLY"
+      ],
+      "status": "covered",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestNativeCommands",
+          "asserts": "ceph tell mgr.a version under RunNativeCommand returns and leaves no process"
+        }
+      ]
+    },
+    {
+      "id": "targeted-command/osd-pg-mds",
+      "area": "targeted-command",
+      "requirement": "Commands targeted at an OSD id, a PG and an MDS: the answering target's identity and map epoch, rights refusals, a missing, stopped or unresponsive target, with the librados result kept apart from the CLI exit status.",
+      "symbols": [
+        "MSG_COMMAND",
+        "MSG_COMMAND_REPLY"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestTargetedCommandRecipe",
+          "receipt": "TARGETED_COMMAND_RECEIPT",
+          "asserts": "OSD status, PG query and MDS status name the id, UUID, PG, acting set, rank, GID and FSID that the maps list; a limited identity gets -13 and CLI exit 13"
+        },
+        {
+          "test": "TestTargetedCommandRecipe",
+          "receipt": "TARGETED_COMMAND_RECEIPT",
+          "asserts": "osd.99 and pool 99 are refused by librados with -2 before sending, a down OSD with -6, a paused OSD under nodown ends in -110, an unknown prefix in -22"
+        }
+      ]
+    },
+    {
+      "id": "targeted-command/binary-io",
+      "area": "targeted-command",
+      "requirement": "A targeted command with bulk binary input and binary output, preserved byte for byte, and its cancellation.",
+      "symbols": [
+        "MSG_COMMAND",
+        "MSG_COMMAND_REPLY",
+        "MSG_MON_COMMAND",
+        "MSG_MON_COMMAND_ACK",
+        "MSG_MGR_COMMAND",
+        "MSG_MGR_COMMAND_REPLY"
+      ],
+      "status": "partial",
+      "gap": "Arbitrary bytes are echoed byte for byte only over the MON session (config-key set/get, CRUSH set/get) and the MGR session (crash post/info); on the named-target MSG_COMMAND path the receiver proves the input length of an ignored 1 MiB buffer and the reply carries a JSON buffer, because no admin-socket command of the official image reads arbitrary input or returns binary output.",
+      "owner": "#159",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestTargetedCommandRecipe",
+          "receipt": "TARGETED_BINARY_IO_RECEIPT",
+          "asserts": "python-rados with debug_ms 1 on the client, the OSDs and the MONs: osd_command status to osd.0 with 1 MiB holding every byte value, whose MCommand data segment osd.0's messenger receives at that length from the client's address, and config show, whose 77 KiB MCommandReply data segment equals the output buffer's length; on the MON session (MMonCommand, the answering rank from the client's dispatch lines) config-key set of exactly the MON's entry limit (65536) of arbitrary bytes, which the MON receives at that length, and config-key get returning the same SHA-256 in a 65536-byte data segment, one byte more refused with -27 after the MON received all of it, the key removed; osd getcrushmap and osd getmap decoded by crushtool -d and osdmaptool --print (epoch and FSID; the map's exported CRUSH decompiles to the same text), a crushtool-compiled map with one more rule set as input (CRUSH version +1, OSDMap epoch +1, rule listed), the same bytes with a broken magic refused with -22, and the original bytes set back with prior_version and sent again, which the MON acknowledges once (CRUSH version +2), after which getcrushmap returns the original SHA-256; on the MGR session (MMgrCommand) the crash module's crash post with a 96 KiB report and crash info returning it followed by one newline, a report that is not UTF-8 refused with -22, the report removed. Each reply's data segment length is bound to the output buffer librados returned, per channel in send order. Capability limits: a command targeted at a named MON or MGR (MCommand) reaches only its admin socket, so osd getcrushmap and crash ls return -22 there, no admin socket command of an OSD, MON or MGR returns binary output and none reads the input buffer except the OSD's rotate-stored-key (not used); a MGR module takes its input as UTF-8 text"
+        },
+        {
+          "test": "TestTargetedCommandRecipe",
+          "receipt": "TARGETED_BINARY_IO_RECEIPT",
+          "asserts": "cancellation: one client sends status with 4 KiB to osd.1, which is then paused under nodown; status with 256 KiB of input ends in -110 at the client's 5 s timeout and the client's Objecter logs command_op_cancel for its tid; after the resume osd.1's messenger receives that tid with all 262144 bytes, answers it, and the client logs the late reply and drops it (handle_command_reply tid not found); the next command on the same session returns 0"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/osd-replication",
+      "area": "daemon-path",
+      "requirement": "OSD primary to replica on the cluster network, cut in both directions and in one direction.",
+      "symbols": [
+        "MSG_OSD_REPOP",
+        "MSG_OSD_REPOPREPLY"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestSeparateClusterNetworksAndInterruptions",
+          "receipt": "HELD_REPLICATION_RECEIPT",
+          "asserts": "the primary reports the write waiting for sub ops while the replica's cluster endpoint is cut"
+        },
+        {
+          "test": "TestSeparateIPv6ClusterNetworksAndInterruptions",
+          "receipt": "HELD_REPLICATION_RECEIPT",
+          "asserts": "the same on IPv6 cluster networks"
+        },
+        {
+          "test": "TestOSDReplicationPeerPathCut",
+          "receipt": "OSD_PEER_PATH_RECEIPT",
+          "asserts": "only the primary's packets to the replica dropped; failure reports below min reporters; the write completes after restore"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/mon-quorum",
+      "area": "daemon-path",
+      "requirement": "MON to MON quorum loss and recovery.",
+      "symbols": [
+        "MSG_MON_ELECTION",
+        "MSG_MON_PAXOS"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestFiveMonitorQuorumAndNetworkRecovery",
+          "asserts": "two of five MONs cut leave a quorum of three; restored, five"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/map-propagation",
+      "area": "daemon-path",
+      "requirement": "MonMap and OSDMap epochs reaching each daemon.",
+      "symbols": [
+        "CEPH_MSG_MON_MAP",
+        "CEPH_MSG_OSD_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMapPropagationReceipt",
+          "receipt": "MAP_PROPAGATION_RECEIPT",
+          "asserts": "each OSD's newest_map and each MON's monmap epoch from their own admin sockets"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/osd-recovery-backfill",
+      "area": "daemon-path",
+      "requirement": "OSD log recovery and backfill, replicated and erasure-coded, and recovery after a placement change.",
+      "symbols": [
+        "MSG_OSD_PG_PUSH",
+        "MSG_OSD_PG_PULL",
+        "MSG_OSD_PG_PUSH_REPLY",
+        "MSG_OSD_PG_SCAN",
+        "MSG_OSD_PG_BACKFILL",
+        "MSG_OSD_BACKFILL_RESERVE",
+        "MSG_OSD_RECOVERY_RESERVE"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestOSDRecoveryAndBackfillReceipts/replicated",
+          "receipt": "OSD_RECOVERY_RECEIPT",
+          "asserts": "pg query tells log recovery from backfill; recovered object counts match the writes"
+        },
+        {
+          "test": "TestOSDRecoveryAndBackfillReceipts/erasure",
+          "receipt": "OSD_RECOVERY_RECEIPT",
+          "asserts": "the same for one shard of a k=2 m=1 pool"
+        },
+        {
+          "test": "TestPoolPGRelocation",
+          "asserts": "PGs wait for recovery or backfill on a new OSD under the flags and are clean after"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/osd-heartbeat",
+      "area": "daemon-path",
+      "requirement": "OSD heartbeats on the cluster network and the MON's failure handling.",
+      "symbols": [
+        "MSG_OSD_PING",
+        "MSG_OSD_FAILURE",
+        "MSG_OSD_MARK_ME_DEAD"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestOSDHeartbeatFailure",
+          "receipt": "OSD_HEARTBEAT_RECEIPT",
+          "asserts": "two reporters from different hosts mark the cut OSD down; it reports itself dead and returns with the same UUID"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/mds-export",
+      "area": "daemon-path",
+      "requirement": "MDS to MDS subtree export and import.",
+      "symbols": [
+        "MSG_MDS_EXPORTDIR",
+        "MSG_MDS_EXPORTDIRACK"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSRetainedClientAcrossRankOneTakeover",
+          "asserts": "exported and imported perf counters grow on the two ranks for a pinned directory"
+        },
+        {
+          "test": "TestCephFSLiveRankMigration",
+          "asserts": "the client keeps writing during the move"
+        },
+        {
+          "test": "TestCephFSPins",
+          "asserts": "export pins move authority as get subtrees reports"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/mgr-registration",
+      "area": "daemon-path",
+      "requirement": "MGR to MON beacons, registration and failover.",
+      "symbols": [
+        "MSG_MGR_BEACON",
+        "MSG_MGR_MAP"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerClientProfileManagerTransition",
+          "receipt": "MGR_TRANSITION_RECEIPT",
+          "asserts": "the standby is promoted with its GID; the restarted MGR registers with a new GID"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/mds-osd-and-client",
+      "area": "daemon-path",
+      "requirement": "MDS to OSD and MDS to client paths cut in one direction, and MDS to client across restarts and exports.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSMDSOSDPathCut",
+          "receipt": "CEPHFS_MDS_OSD_PATH_RECEIPT",
+          "asserts": "the MDS's journal writes wait in objecter_requests while client data reaches the OSD"
+        },
+        {
+          "test": "TestCephFSMDSOSDsPathCut",
+          "receipt": "CEPHFS_MDS_OSD_PATH_RECEIPT",
+          "asserts": "with two replica OSDs, one multi-peer lease cuts the MDS's paths to both and its journal writes wait the same way"
+        },
+        {
+          "test": "TestCephFSClientMDSPathCut/mds-to-client",
+          "receipt": "CEPHFS_MDS_PATH_RECEIPT",
+          "asserts": "mkdir held in the client's mds_requests while data I/O returns; the session stays open"
+        },
+        {
+          "test": "TestCephFSClientMDSPathCut/client-to-mds",
+          "receipt": "CEPHFS_MDS_PATH_RECEIPT",
+          "asserts": "the MDS never sees the request until the restore"
+        },
+        {
+          "test": "TestCephFSRetainedClientAcrossMDSRestart",
+          "asserts": "the session identity across the restart"
+        },
+        {
+          "test": "TestCephFSRetainedClientAcrossStandbyTakeover",
+          "asserts": "the session identity across the takeover"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/osd-compression",
+      "area": "daemon-path",
+      "requirement": "Compression negotiated on OSD to OSD connections.",
+      "symbols": [
+        "CEPH_MSGR2_FEATURE_COMPRESSION"
+      ],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestMessengerCompressionReceipt",
+          "receipt": "MESSENGER_COMPRESSION_RECEIPT",
+          "asserts": "every READY session between the two OSDs, heartbeats included, reports the phase's mode and snappy or UNCOMPRESSED after osd.1 restarts under each policy"
+        }
+      ]
+    },
+    {
+      "id": "service-path/rgw-rados",
+      "area": "service-path",
+      "requirement": "RGW head, tail, index and garbage-collection objects in RADOS.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRGWRadosReceipt",
+          "receipt": "RGW_RADOS_RECEIPT",
+          "asserts": "the S3 object's head and tail stripes, its index omap key and the GC queue, read with rados and radosgw-admin"
+        }
+      ]
+    },
+    {
+      "id": "service-path/mirror-daemons",
+      "area": "service-path",
+      "requirement": "Source OSD to the rbd-mirror and cephfs-mirror daemons, cut in one direction.",
+      "symbols": [],
+      "status": "covered",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestRBDMirrorPeerPathCut",
+          "receipt": "RBD_MIRROR_PATH_RECEIPT",
+          "asserts": "the daemon does not see the new snapshot while the OSD's packets to it are dropped; only the changed bytes are copied after restore"
+        },
+        {
+          "test": "TestCephFSMirrorPeerPathCut",
+          "receipt": "CEPHFS_MIRROR_PATH_RECEIPT",
+          "asserts": "the daemon's last synced snapshot stays the previous one while it is stuck on the new one; after restore the new snapshot arrives with exactly the new bytes"
+        }
+      ]
+    },
+    {
+      "id": "daemon-path/peering-and-scrub",
+      "area": "daemon-path",
+      "requirement": "PG peering, PG creation and scrub messages between OSDs, observed per message.",
+      "symbols": [
+        "MSG_OSD_PG_NOTIFY2",
+        "MSG_OSD_PG_QUERY2",
+        "MSG_OSD_PG_INFO2",
+        "MSG_OSD_PG_LOG",
+        "MSG_OSD_PG_CREATE2",
+        "MSG_OSD_REP_SCRUB",
+        "MSG_OSD_REP_SCRUBMAP",
+        "MSG_OSD_PG_LEASE",
+        "MSG_OSD_PG_LEASE_ACK"
+      ],
+      "status": "partial",
+      "evidence": "outcome",
+      "cases": [
+        {
+          "test": "TestScrubInconsistency",
+          "asserts": "a deep scrub finds an injected inconsistency"
+        }
+      ],
+      "gap": "Peering and scrub run as outcomes; no recipe observes these messages or their per-step state.",
+      "owner": "#159"
+    }
+  ]
+}

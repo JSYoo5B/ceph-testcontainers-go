@@ -139,6 +139,9 @@ func (c *Container) runMount() []testcontainers.ContainerCustomizer {
 // in the control container before it returns, including one that Docker has
 // not started yet. A nonzero exit returns the output with an error.
 func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
+	if gateErr := c.sharedGate("AdminSocket"); gateErr != nil {
+		return nil, gateErr
+	}
 	kind, id, err := parseAdminSocketDaemon(daemon)
 	if err != nil {
 		return nil, err
@@ -166,7 +169,7 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 	case !owned:
 		return nil, invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}

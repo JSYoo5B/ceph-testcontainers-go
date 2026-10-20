@@ -1,0 +1,74 @@
+name: Ceph release matrix
+
+# In a release phase (repository variable CI_RELEASE_PHASE is "true"), every
+# pull request and push to main also runs every runtime category on each
+# supported release other than the current one (the rows of SUPPORTED_RELEASES
+# in .github/scripts/run_image_matrix.py). Outside it, this workflow skips its
+# jobs and Ceph periodic covers those releases on main.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'internal/integration/goceph/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  # A failed request to the module proxy, such as a reset HTTP/2 stream,
+  # falls back to the module's origin; go.sum verifies either source.
+  GOPROXY: 'https://proxy.golang.org|direct'
+
+jobs:
+  releases:
+    name: Releases
+    if: vars.CI_RELEASE_PHASE == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.releases.outputs.matrix }}
+      count: ${{ steps.releases.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache: false
+      # Fails unless the callers run every required profile on each other
+      # release exactly once.
+      - name: Expand supported releases and prove required coverage
+        id: releases
+        run: python3 .github/scripts/tag_scenarios.py releases --scope others --check-prefix 'Ceph release matrix' --github-output "$GITHUB_OUTPUT"
+  runtime:
+    name: ${{ matrix.title }}
+    needs: releases
+    # With a single supported release there is no other release to run.
+    if: needs.releases.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.releases.outputs.matrix) }}
+    uses: ./.github/workflows/tagged-runtime.yml
+    with:
+      networks: all
+      category: ${{ matrix.category }}
+      check_name: ${{ matrix.check_name }}
+      release: ${{ matrix.release }}
+      # tag_scenarios.RELEASE_MAX_PARALLEL; see docs/contributing/ci.md.
+      max_parallel: ${{ matrix.max_parallel }}

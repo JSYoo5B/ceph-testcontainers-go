@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -28,6 +29,8 @@ type rgwPolicyImportCLI struct {
 	localMetadataID, localGroupID string
 	malformedStats                bool
 	onLocalPolicyRead             func()
+	// onExec, when set, sees each command before the wrapper serves it.
+	onExec func(context.Context, []string)
 }
 
 func policyImportJSON(value any) io.Reader {
@@ -41,6 +44,9 @@ func policyImportJSON(value any) io.Reader {
 }
 
 func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if c.onExec != nil {
+		c.onExec(ctx, args)
+	}
 	if syncTestFlag(args, "--zone-id") != "dest-id" {
 		return c.rgwSyncCLI.Exec(ctx, args, opts...)
 	}
@@ -184,8 +190,11 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 				cli.missingBuckets = map[string]bool{"output": true}
 			}
 			before := len(cli.calls)
-			ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
-			defer cancel()
+			// The deadline passes once the first observation of the
+			// destination ended, rather than after a wall-clock interval
+			// that a slow (race-instrumented) run can end mid-observation.
+			ctx := clustertest.NewSignalDeadline(t.Context())
+			cli.onExec = expireAfterDestinationObservation(ctx)
 			state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
 			if !errors.Is(err, context.DeadlineExceeded) || state.Imported || len(state.Buckets) != 2 || strings.Contains(err.Error(), "secret-marker") {
 				t.Fatalf("partial local imports became ready or leaked native text: %+v %v", state, err)

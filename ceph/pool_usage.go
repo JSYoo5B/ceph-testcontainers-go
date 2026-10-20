@@ -58,7 +58,7 @@ func (c *Container) PoolUsage(ctx context.Context, name string) (PoolUsageSnapsh
 	if c.closed {
 		return PoolUsageSnapshot{}, errClusterTerminated
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}

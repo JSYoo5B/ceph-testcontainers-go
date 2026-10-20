@@ -57,7 +57,13 @@ func (c *Container) cliContainer() testcontainers.Container {
 
 // ControlContainer returns the stable CLI container for multi-monitor clusters,
 // or the primary MON for the default single-monitor fixture. The cluster owns it.
-func (c *Container) ControlContainer() testcontainers.Container { return c.cliContainer() }
+// A shared cluster returns nil; see SharedCluster.
+func (c *Container) ControlContainer() testcontainers.Container {
+	if c.sharedGate("ControlContainer") != nil {
+		return nil
+	}
+	return c.cliContainer()
+}
 
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
@@ -68,7 +74,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
+	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
 		c.runMount()...)...)
@@ -82,6 +88,9 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 
 // Monitors returns membership owned by this fixture, sorted by daemon name.
 func (c *Container) Monitors() []*MonitorContainer {
+	if c.sharedGate("Monitors") != nil {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
@@ -97,6 +106,9 @@ func (c *Container) Monitors() []*MonitorContainer {
 
 // Managers returns active/standby candidates owned by this fixture.
 func (c *Container) Managers() []*ManagerContainer {
+	if c.sharedGate("Managers") != nil {
+		return nil
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	result := make([]*ManagerContainer, 0, len(c.managers))
@@ -125,7 +137,7 @@ type QuorumStatus struct {
 }
 
 func (c *Container) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
 	}
@@ -146,6 +158,9 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 // AddMonitor joins a new named MON from the live quorum's map and shared key.
 // Existing daemon data is retained; a partial new member remains owned on error.
 func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContainer, error) {
+	if gateErr := c.sharedGate("AddMonitor"); gateErr != nil {
+		return nil, gateErr
+	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
 	}
@@ -176,12 +191,12 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	if err := c.ensureControlPlane(ctx); err != nil {
 		return nil, fmt.Errorf("start independent CLI control: %w", err)
 	}
-	key, err := c.Ceph(ctx, "auth", "get", "mon.")
+	key, err := c.cephCLI(ctx, "auth", "get", "mon.")
 	if err != nil {
 		return nil, err
 	}
 	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
-	if _, err := c.Ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
+	if _, err := c.cephCLI(ctx, "mon", "getmap", "-o", mapPath); err != nil {
 		return nil, err
 	}
 	monmap, err := readFile(ctx, c.cliContainer(), mapPath)
@@ -210,9 +225,8 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
-		monEnv := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
-		maps.Copy(monEnv, c.settings.messengerEnvironment())
-		opts := []testcontainers.ContainerCustomizer{c.WithClient(),
+		monEnv := c.monitorJoinEnvironment(name)
+		opts := []testcontainers.ContainerCustomizer{c.adminClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),
 			testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", config, 0o644),
@@ -229,7 +243,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			return mon, err
 		}
 		opts = append(opts, c.runMount()...)
-		mon.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
+		mon.Container, err = runContainer(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -267,6 +281,9 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 // RemoveMonitor preserves a working quorum; add a replacement first when a
 // stop would leave fewer than a majority of the current map running.
 func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
+	if gateErr := c.sharedGate("RemoveMonitor"); gateErr != nil {
+		return gateErr
+	}
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -373,6 +390,9 @@ func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 // refresh reads each current file and skips copies that are already up to date.
 // External config writers must not race this operation: Docker has no file CAS.
 func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
+	if gateErr := c.sharedGate("RefreshMonitorConfig"); gateErr != nil {
+		return gateErr
+	}
 	if c == nil {
 		return errors.New("ceph cluster is unavailable")
 	}
@@ -701,7 +721,12 @@ func monitorConfigComment(line string) (int, error) {
 // AddManager creates a named active/standby candidate and waits for its mgrmap
 // registration. Existing daemon identities are rejected; it does not force
 // active ownership away from an existing MGR.
+// With AddressDualStack it then checks the active MGR's advertised addresses
+// and fails with ErrUnsupported when one family has no concrete address.
 func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContainer, error) {
+	if gateErr := c.sharedGate("AddManager"); gateErr != nil {
+		return nil, gateErr
+	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
 	}
@@ -712,11 +737,28 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if c.closed {
 		return nil, errClusterTerminated
 	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	mgr, err := c.startManager(ctx, name)
+	if err != nil {
+		return mgr, err
+	}
+	if err := c.waitManagerRegistered(ctx, name); err != nil {
+		return mgr, err
+	}
+	if err := c.checkDualStackAddresses(ctx); err != nil {
+		return mgr, err
+	}
+	return mgr, nil
+}
+
+// startManager creates the identity of a new MGR and starts its container,
+// but does not wait for the MGR to register. The caller holds c.mu. The
+// returned MGR is nil when the error came before it was owned.
+func (c *Container) startManager(ctx context.Context, name string) (*ManagerContainer, error) {
 	if c.managers[name] != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
 	data, err := c.clientAuthCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -753,7 +795,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.WithClient(), c.ownedLabel(),
+	mgr.Container, err = runContainer(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
@@ -762,9 +804,12 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	if name == "a" {
 		c.manager = mgr.Container
 	}
-	if err != nil {
-		return mgr, err
-	}
+	return mgr, err
+}
+
+// waitManagerRegistered waits until the MGR is the available active MGR or a
+// standby.
+func (c *Container) waitManagerRegistered(ctx context.Context, name string) error {
 	if err := c.poll(ctx, func() (bool, error) {
 		status, err := c.ManagerStatus(ctx)
 		if status.ActiveName == name && status.Available {
@@ -777,9 +822,9 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 		}
 		return false, err
 	}); err != nil {
-		return mgr, fmt.Errorf("register manager %s: %w", name, err)
+		return fmt.Errorf("register manager %s: %w", name, err)
 	}
-	return mgr, nil
+	return nil
 }
 
 // RemoveManager deletes an owned manager after another running, registered
@@ -787,6 +832,9 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 // On failure the handle remains owned for retry or cluster cleanup. Do not edit
 // these manager identities externally while a topology operation is in progress.
 func (c *Container) RemoveManager(ctx context.Context, name string) error {
+	if gateErr := c.sharedGate("RemoveManager"); gateErr != nil {
+		return gateErr
+	}
 	if !daemonNamePattern.MatchString(name) {
 		return errors.New("invalid manager name")
 	}
@@ -844,7 +892,7 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	if registered {
 		// Ceph interprets a numeric argument as a daemon GID, even when a
 		// daemon's name consists entirely of digits. Use the observed GID.
-		if _, err := c.Ceph(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
+		if _, err := c.cephCLI(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
 			return fmt.Errorf("remove manager %s from the manager map: %w", name, err)
 		}
 	}
@@ -862,7 +910,9 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	if name == "a" {
 		c.manager = nil
 	}
-	return nil
+	// The removal is complete; a replacement that advertises an unreachable
+	// address is reported, not undone.
+	return c.checkDualStackAddresses(ctx)
 }
 
 func managerMapGID(status ManagerStatus, name string) (uint64, bool) {
@@ -890,7 +940,7 @@ type ManagerStatus struct {
 
 func (c *Container) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
 	var status ManagerStatus
-	data, err := c.Ceph(ctx, "mgr", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "mgr", "dump", "--format", "json")
 	if err == nil {
 		err = json.Unmarshal(data, &status)
 	}
@@ -910,7 +960,7 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.Ceph(command, "-m", hosts, "mon", "remove", name)
+		_, err := c.cephCLI(command, "-m", hosts, "mon", "remove", name)
 		done <- err
 	}()
 	ticker := time.NewTicker(monitorRemovalObserveInterval)

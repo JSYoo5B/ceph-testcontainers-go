@@ -22,7 +22,8 @@ import (
 // retainedAuthFailureBundle replays, as a bundle, the consumer's retained
 // first failure of 2026-10-15: cycle 2's first cold MGR authentication,
 // refused with -13 after mgr.a logged that it could not decrypt the ticket
-// info. The values and links are the report's. Its opaque run-scoped labels
+// info. The observed values are retained; provenance uses a neutral label.
+// Its opaque run-scoped labels
 // are replaced by synthetic placeholders that keep their equality: the
 // installed, selected and encoded ticket share "label-A". The report has no
 // MON session or container data, so those fields are empty, and its readiness
@@ -30,9 +31,9 @@ import (
 const retainedAuthFailureBundle = `{
  "schema": "auth-first-failure/v1",
  "provenance": {"producer": "ceph-testcontainers-go v0.2.0",
-  "subject": "https://github.com/JSYoo5B/ceph-msgr-go/commit/b01a3cfb90c483832a61cbe7716e0252d7108214",
-  "run": "https://github.com/JSYoo5B/ceph-msgr-go/actions/runs/38739526554/job/116437288897",
-  "report": "https://github.com/JSYoo5B/ceph-msgr-go/blob/3ebe00e6d01f66786b4d17ff15888041744b59a6/integration/fixture/SERVICE_KEY_EPOCH_FAILURE_20261015.md"},
+  "subject": "archived first-failure evidence",
+  "run": "archived first-failure evidence",
+  "report": "archived first-failure evidence"},
  "release": "20.2.4 tentacle",
  "images": {"control": "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"},
  "expected_target": {"fsid": "3f991852-459f-46a3-bd7b-c55161b0bfab", "monitors": ["a", "b", "c"], "manager": "a", "gid": 4191, "container_id": "", "started_at": ""},

@@ -19,11 +19,8 @@ import (
 
 func TestMonitorManagerTopology(t *testing.T) {
 	parallelWhenEnabled(t)
-	for _, host := range []bool{false, true} {
-		name := "bridge"
-		if host {
-			name = "host"
-		}
+	for _, mode := range networkModes(t, "host", "bridge") {
+		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
@@ -135,7 +132,15 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cephCommand(t, ctx, cluster, "fs", "subvolumegroup", "create", fs.FilesystemName, "before-failover")
+			// The MGR learns a new filesystem from its own FSMap subscription,
+			// which can trail the MON's commit; after the MON replacement it
+			// did, and a raw volumes command right after Start returned
+			// ENOENT. CreateSubvolumeGroup first waits until the active MGR
+			// lists the filesystem, so each create runs against a MGR that
+			// knows it, before and after the failover.
+			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "before-failover"}); err != nil {
+				t.Fatal(err)
+			}
 			mgrStatus, err := cluster.ManagerStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -152,7 +157,9 @@ func TestMonitorManagerTopology(t *testing.T) {
 				status, err := cluster.ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName != previous
 			})
-			cephCommand(t, ctx, cluster, "fs", "subvolumegroup", "create", fs.FilesystemName, "after-failover")
+			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "after-failover"}); err != nil {
+				t.Fatal(err)
+			}
 			data, err := cluster.Ceph(ctx, "fs", "subvolumegroup", "ls", fs.FilesystemName, "--format", "json")
 			var groups []struct{ Name string }
 			if err != nil || json.Unmarshal(data, &groups) != nil || len(groups) != 2 {
@@ -161,7 +168,13 @@ func TestMonitorManagerTopology(t *testing.T) {
 			topologyRados(t, ctx, client, "verify")
 			session.check(t, ctx, client, "manager-failed-over")
 			session.finish(t, ctx, client)
-			t.Log("MGR failover: active identity changed, native volumes command created and listed durable subvolume groups")
+			t.Log("MGR failover: active identity changed, native volumes commands created and listed durable subvolume groups")
 		})
 	}
+}
+
+// Each daemon's own admin socket shows which OSDMap and MonMap epoch it holds
+// after a pool creation and a MON addition and removal.
+func TestMapPropagationReceipt(t *testing.T) {
+	testMapPropagationReceipt(t)
 }

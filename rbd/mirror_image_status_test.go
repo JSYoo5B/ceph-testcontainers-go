@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -292,23 +293,32 @@ func TestRBDMirrorImageStatusWaitPinsIdentitiesAndPreservesCancellation(t *testi
 	}
 	// Public waiting must release its mutation lock between observations.
 	daemon.running = false
-	deadline, stop = context.WithTimeout(t.Context(), 40*time.Millisecond)
-	defer stop()
+	// The deadline passes when the wait starts its next observation (an
+	// observation reads the source twice) without this test taking the lock
+	// in between, rather than after a wall-clock interval that a slow
+	// (race-instrumented) observation can spend holding the lock. Otherwise
+	// the test expires it once unlocked.
+	waiting := clustertest.NewSignalDeadline(t.Context())
 	started := make(chan struct{})
+	sourceReads := 0 // touched only by the wait goroutine
 	source.infoHook = func(*rbdImageStatusFixture) {
 		select {
 		case <-started:
 		default:
 			close(started)
 		}
+		if sourceReads++; sourceReads > 2 {
+			waiting.Expire()
+		}
 	}
 	finished := make(chan error, 1)
-	go func() { _, err := link.WaitReplayReady(deadline, "volume"); finished <- err }()
+	go func() { _, err := link.WaitReplayReady(waiting, "volume"); finished <- err }()
 	<-started
-	if err := multicluster.LockObservation(deadline, &link.mu); err != nil {
+	if err := multicluster.LockObservation(waiting, &link.mu); err != nil {
 		t.Fatal("wait held mutation lock across polling sleep")
 	}
 	link.mu.Unlock()
+	waiting.Expire()
 	if err := <-finished; !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("non-ready wait lost deadline: %v", err)
 	}
@@ -666,9 +676,12 @@ func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) 
 	if !errors.Is(err, context.Canceled) || status.ReplayReady || status.SourceImageID != "source" {
 		t.Fatalf("ready observation bypassed caller cancellation: %+v %v", status, err)
 	}
-	deadline, stop := context.WithTimeout(t.Context(), time.Millisecond)
-	defer stop()
+	// The deadline passes inside the first observation rather than after a
+	// wall-clock millisecond that a slow (race-instrumented) run can spend
+	// before observing at all.
+	deadline := clustertest.NewSignalDeadline(t.Context())
 	status, err = waitRBDMirrorReplay(deadline, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+		deadline.Expire()
 		<-ctx.Done()
 		return ready, nil
 	})

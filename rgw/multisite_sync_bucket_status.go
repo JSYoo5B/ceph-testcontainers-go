@@ -64,7 +64,9 @@ func (f *Multisite) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, 
 // WaitBucketSyncReady waits up to four minutes, bounded by the caller context,
 // for the captured pipe/bucket checkpoint. Disabled, full-sync, missing sources
 // and native per-source errors never satisfy readiness even when CLI exit is 0.
-// It changes no sync state, leases, permissions or object data.
+// It changes no sync state, leases, permissions or object data. When the wait
+// ends without readiness, the returned status is the last one that was read,
+// so its lag survives a later attempt that failed or was canceled.
 func (f *Multisite) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	if f == nil {
 		return BucketSyncStatus{}, errors.New("RGW multisite fixture is required")
@@ -80,12 +82,21 @@ func (f *Multisite) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeI
 	if err != nil {
 		return BucketSyncStatus{}, err
 	}
+	// last is the most recent status that was read; an attempt that fails
+	// afterwards, a canceled one included, does not replace it, so the
+	// result of an ended wait reports the lag that was last observed.
 	var last BucketSyncStatus
 	var lastErr error
+	observed := false
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-		last, lastErr = f.syncBucketStatus(attempt, checkpoint)
+		status, err := f.syncBucketStatus(attempt, checkpoint)
 		stop()
+		lastErr = err
+		if err == nil || !observed {
+			last = status
+			observed = observed || err == nil
+		}
 		if lastErr == nil && last.CaughtUp && ctx.Err() == nil {
 			return last, nil
 		}

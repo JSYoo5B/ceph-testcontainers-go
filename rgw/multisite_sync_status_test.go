@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 )
 
 const rgwReadyMetadata = `{"sync_status":{"info":{"status":"sync","num_shards":2,"period":"period-original","realm_epoch":1},"markers":[{"key":0,"val":{"state":1}},{"key":1,"val":{"state":1}}]},"full_sync":{"total":0,"complete":0}}`
@@ -91,10 +93,13 @@ func TestRGWSyncWaitHonorsCancellationAndExplicitSources(t *testing.T) {
 		t.Fatal("cancelled waiter invoked CLI")
 	}
 	cli.metadataOutput, cli.humanOutput = rgwReadyMetadata, strings.Replace(rgwReadyText, "data is caught up with source", "data is behind on 1 shards", 1)
-	ctx, cancel = context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
+	// The deadline passes once the first observation of the destination
+	// ended, rather than after a wall-clock interval that a slow
+	// (race-instrumented) run can end before the observation read its sources.
+	deadline := clustertest.NewSignalDeadline(t.Context())
+	cli.onExec = expireAfterDestinationObservation(deadline)
 	started := time.Now()
-	last, err := f.WaitSyncReady(ctx, "destination", "source")
+	last, err := f.WaitSyncReady(deadline, "destination", "source")
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second || len(last.DataSources) != 1 || last.DataSources[0].CaughtUp {
 		t.Fatalf("bounded wait lost last state: %+v %v", last, err)
 	}

@@ -6,10 +6,9 @@ in [CHANGELOG.md](../../CHANGELOG.md).
 
 The release prepares server-side fixtures for Messenger client tests:
 configurable v2-only, secure and CRC profiles, Cephx keys and ticket lifetimes,
-daemon controls and native mutation receipts. The
-[fixture-readiness milestone](https://github.com/JSYoo5B/ceph-testcontainers-go/milestone/1)
-is complete. A downstream project must still migrate its adapter and run its
-own client tests; the milestone does not certify a Go Messenger implementation.
+daemon controls and native mutation receipts. A downstream project must still
+migrate its adapter and run its own client tests; completion of the producer
+fixtures does not certify a Go Messenger implementation.
 
 ## Go and client platforms
 
@@ -166,12 +165,10 @@ See [Native commands](native-commands.md),
   25-second pause, this happened to the active MGR in two of four native
   runs. See [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - Intermittent MON join timeout and long-lived session loss after replacing
-  every MON remain under investigation in [#61](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/61).
+  every MON remain under investigation.
   A later green retry does not establish their cause or a fix.
 - Preparation, runner and storage/health observation investigations remain
-  in [#31](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/31).
-  Closing the historical [#41 audit](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/41)
-  retained these owners and the original failures.
+  open; completion of the release scope did not resolve the original failures.
 
 The [Messenger fixture guide](messenger-client-fixtures.md) records each
 profile and native receipt. Full Messenger/MDS/daemon-path coverage is a

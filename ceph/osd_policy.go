@@ -55,6 +55,9 @@ func (c *Container) OSDStates(ctx context.Context) ([]OSDState, error) {
 // a nonzero map reweight across out/in. External replacement must not race this
 // method; Ceph has no compare-and-swap operation for OSD membership.
 func (c *Container) SetOSDIn(ctx context.Context, id int, in bool) error {
+	if gateErr := c.sharedGate("SetOSDIn"); gateErr != nil {
+		return gateErr
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
@@ -77,7 +80,7 @@ func (c *Container) SetOSDIn(ctx context.Context, id int, in bool) error {
 	if in {
 		op = "in"
 	}
-	if _, err := c.Ceph(ctx, "osd", op, strconv.Itoa(id)); err != nil {
+	if _, err := c.cephCLI(ctx, "osd", op, strconv.Itoa(id)); err != nil {
 		return err
 	}
 	dump, err = c.osdPolicyDump(ctx)
@@ -130,6 +133,9 @@ type osdFlagOverrideState struct {
 // handles for a flag are refused. External edits to the same flag must not race
 // apply/restore: a boolean flag has no generation and Ceph provides no CAS.
 func (c *Container) TemporaryOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error) {
+	if gateErr := c.sharedGate("TemporaryOSDFlag"); gateErr != nil {
+		return nil, gateErr
+	}
 	if !slices.Contains(reversibleOSDFlags, flag) {
 		return nil, errors.New("unsupported reversible global OSD flag")
 	}
@@ -229,7 +235,7 @@ func (c *Container) setOSDFlag(ctx context.Context, flag string, enabled bool) e
 	if enabled {
 		op = "set"
 	}
-	_, err := c.Ceph(ctx, "osd", op, flag)
+	_, err := c.cephCLI(ctx, "osd", op, flag)
 	return err
 }
 
@@ -239,11 +245,16 @@ type osdPolicySnapshot struct {
 }
 
 func (c *Container) osdPolicyDump(ctx context.Context) (osdPolicySnapshot, error) {
-	result := osdPolicySnapshot{osds: make(map[int]OSDState)}
-	data, err := c.Ceph(ctx, "osd", "dump", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
-		return result, err
+		return osdPolicySnapshot{osds: make(map[int]OSDState)}, err
 	}
+	return decodeOSDPolicyDump(data)
+}
+
+// decodeOSDPolicyDump decodes the flags and OSDs of the output of osd dump.
+func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
+	result := osdPolicySnapshot{osds: make(map[int]OSDState)}
 	var dump struct {
 		Flags *string `json:"flags"`
 		OSDs  []struct {

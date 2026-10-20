@@ -69,6 +69,9 @@ type Pool struct {
 // application I/O. For RBD, create images in a replicated metadata pool and pass
 // the EC pool as data_pool in the native client (or --data-pool to the RBD CLI).
 func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, error) {
+	if gateErr := c.sharedGate("CreatePool"); gateErr != nil {
+		return nil, gateErr
+	}
 	config = resolvePoolDefaults(c.settings, config)
 	config, err := normalizePoolConfig(config)
 	if err != nil {
@@ -113,7 +116,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		}{pool.ErasureCodeProfile, []string{"osd", "erasure-code-profile", "ls", "--format", "json"}})
 	}
 	for _, check := range checks {
-		data, err := c.Ceph(ctx, check.args...)
+		data, err := c.cephCLI(ctx, check.args...)
 		if err != nil {
 			return nil, fmt.Errorf("check existing pool resources: %w", err)
 		}
@@ -163,7 +166,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		commands = append(commands, []string{"osd", "pool", "application", "enable", pool.Name, config.Application})
 	}
 	for _, args := range commands {
-		if _, err := c.Ceph(ctx, args...); err != nil {
+		if _, err := c.cephCLI(ctx, args...); err != nil {
 			return pool, fmt.Errorf("create pool %q: %w", pool.Name, err)
 		}
 	}

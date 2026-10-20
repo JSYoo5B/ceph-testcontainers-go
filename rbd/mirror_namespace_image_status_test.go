@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -673,14 +674,17 @@ func TestRBDNamespaceImageTransitionSecondReadRejectsModeDrift(t *testing.T) {
 func TestRBDNamespaceImagePublicWaitDeadlineAndGuardAreSecretSafe(t *testing.T) {
 	h := newNamespaceImageHarness(t, 1)
 	view := namespaceBindingMustBind(t, h.receiverHarness, "ns-c", "ns-d")
+	// The deadline passes when the destination refuses its first info read,
+	// after the source was read, rather than after a wall-clock interval that
+	// a slow (race-instrumented) run can spend before reading the source.
+	ctx := clustertest.NewSignalDeadline(t.Context())
 	h.destination.failure = func(args []string) error {
 		if len(args) > 2 && args[1] == "info" {
+			ctx.Expire()
 			return errors.New("private-public-wait-secret")
 		}
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer cancel()
 	status, err := view.WaitReplayReady(ctx, "volume")
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) || status.ReplayReady || status.SourceImageID != "source-1" || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("public bounded wait: %+v %v", status, err)

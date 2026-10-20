@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -153,10 +154,26 @@ func TestNoInitialManagersReadinessUsesQuorumAndOwnedOSDMap(t *testing.T) {
 			case "invalid map":
 				delete(control.osds[0], "weight")
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-			defer cancel()
+			// A not-ready scenario's deadline passes when the fake answers the
+			// query the scenario fails on, and a ready one has none, so a slow
+			// (race-instrumented) run cannot expire before the native reads.
+			deadline := clustertest.NewSignalDeadline(t.Context())
+			expireOn := "osd dump --format json"
+			if scenario == "minority" {
+				expireOn = "quorum_status --format json"
+			}
+			if !good {
+				control.after = func(call string) {
+					if call == expireOn {
+						deadline.Expire()
+					}
+				}
+			}
+			ctx := context.Context(deadline)
 			if scenario == "canceled" {
+				canceled, cancel := context.WithCancel(t.Context())
 				cancel()
+				ctx = canceled
 			}
 			err := cluster.waitForInitialDaemons(ctx)
 			wantError := error(context.DeadlineExceeded)
@@ -183,9 +200,17 @@ func TestNoInitialManagersPreservesOrdinaryAvailabilityAndCleanBarriers(t *testi
 	for _, available := range []bool{false, true} {
 		cluster, control := noInitialManagerFixture()
 		control.available = available
-		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+		// The deadline passes when the fake answers the first status query,
+		// so a slow run still makes exactly one observation before it.
+		ctx := clustertest.NewSignalDeadline(t.Context())
+		if !available {
+			control.after = func(call string) {
+				if call == "status --format json" {
+					ctx.Expire()
+				}
+			}
+		}
 		err := cluster.waitForInitialDaemons(ctx)
-		cancel()
 		if available && err != nil || !available && !errors.Is(err, context.DeadlineExceeded) || !slices.Equal(control.calls, []string{"status --format json"}) {
 			t.Fatalf("ordinary MGR readiness changed: available=%v err=%v calls=%v", available, err, control.calls)
 		}
@@ -194,9 +219,15 @@ func TestNoInitialManagersPreservesOrdinaryAvailabilityAndCleanBarriers(t *testi
 		cluster, control := noInitialManagerFixture()
 		cluster.settings.noInitialManagers = true
 		cluster.osds[0] = &OSDContainer{ID: 0, nativeUUID: control.osdUUID}
-		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+		// The deadline passes when the fake answers a status query, after the
+		// wait observed the synthetic clean statistics, not at a point in time.
+		ctx := clustertest.NewSignalDeadline(t.Context())
+		control.after = func(call string) {
+			if call == "status --format json" {
+				ctx.Expire()
+			}
+		}
 		err := wait(cluster, ctx)
-		cancel()
 		if !errors.Is(err, context.DeadlineExceeded) || !slices.Contains(control.calls, "status --format json") {
 			t.Fatalf("absent MGR became PG-clean despite synthetic clean statistics: %v", err)
 		}
@@ -291,6 +322,8 @@ type noInitialManagerControl struct {
 	available                        bool
 	calls                            []string
 	terminations                     int
+	// after, when set, sees each query once it is recorded.
+	after func(call string)
 }
 
 func (c *noInitialManagerControl) Terminate(context.Context, ...testcontainers.TerminateOption) error {
@@ -301,6 +334,9 @@ func (c *noInitialManagerControl) Terminate(context.Context, ...testcontainers.T
 func (c *noInitialManagerControl) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	call := strings.Join(monitorQuorumTestModuleArgs(args), " ")
 	c.calls = append(c.calls, call)
+	if c.after != nil {
+		c.after(call)
+	}
 	if call == c.fail {
 		if monitorQuorumTestCommand(args) {
 			return monitorQuorumTestReader(args, 1, []byte("PRIVATE-FIRST-MGR-KEY"))

@@ -46,8 +46,11 @@ type nativeTarget struct {
 	noPython bool
 	starts   int
 	networks []string
-	// startDelay delays the start of each supervisor, not of a canceler.
-	startDelay time.Duration
+	// startGate, when set, holds the start of each supervisor, not of a
+	// canceler, until it is closed. A test that needs an accepted exec to
+	// start at a given moment closes it then, instead of relying on a delay
+	// outlasting the code under test.
+	startGate chan struct{}
 	// refuseCancel fails every canceler exec, as an unreachable engine does.
 	refuseCancel bool
 	// refuseAttach fails every exec with its input attached.
@@ -160,9 +163,9 @@ func (f *nativeTarget) Exec(ctx context.Context, args []string, opts ...tcexec.P
 		f.mu.Unlock()
 		return 127, strings.NewReader(`OCI runtime exec failed: exec: "python3": executable file not found in $PATH`), nil
 	}
-	delay := f.startDelay
+	gate := f.startGate
 	if canceler {
-		delay = 0
+		gate = nil
 	}
 	f.mu.Unlock()
 	if refused != nil {
@@ -190,7 +193,9 @@ func (f *nativeTarget) Exec(ctx context.Context, args []string, opts ...tcexec.P
 	f.wg.Add(1)
 	go func() {
 		defer f.wg.Done()
-		time.Sleep(delay)
+		if gate != nil {
+			<-gate
+		}
 		f.mu.Lock()
 		if f.stopped || f.removed {
 			f.mu.Unlock()
@@ -264,7 +269,7 @@ func (m dockerFrames) Write(p []byte) (int, error) {
 }
 
 // AttachExec starts a command with its standard input attached, refused and
-// delayed like Exec. Its output ends when the command has ended.
+// held like Exec. Its output ends when the command has ended.
 func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supervised.Attachment, error) {
 	f.mu.Lock()
 	f.execs++
@@ -279,7 +284,7 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 	case f.refuseAttach:
 		refused = errors.New("engine unreachable")
 	}
-	delay, closed := f.startDelay, f.attachClosed
+	gate, closed := f.startGate, f.attachClosed
 	f.mu.Unlock()
 	if refused != nil {
 		return supervised.Attachment{}, refused
@@ -306,7 +311,9 @@ func (f *nativeTarget) AttachExec(ctx context.Context, args, env []string) (supe
 	f.wg.Add(1)
 	go func() {
 		defer f.wg.Done()
-		time.Sleep(delay)
+		if gate != nil {
+			<-gate
+		}
 		f.mu.Lock()
 		if f.stopped || f.removed {
 			f.mu.Unlock()
@@ -705,13 +712,17 @@ func TestNativeCommandCancellationStopsOnlyItsCommand(t *testing.T) {
 // cancellation and starts nothing.
 func TestNativeCommandStartedLateRunsNothing(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
-	target.startDelay = 400 * time.Millisecond
+	// The accepted exec starts once the call has returned, not after a delay
+	// that a slow (race-instrumented) run can spend before it cancels.
+	gate := make(chan struct{})
+	target.startGate = gate
 	cluster := nativeCluster()
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := cluster.RunNativeCommand(ctx, target, waiterCommand(target, "late", time.Minute)); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("late start returned %v", err)
 	}
+	close(gate)
 	target.wg.Wait()
 	if _, err := os.Stat(filepath.Join(target.pids(), "late.command")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("a command started after its cancellation ran")
@@ -806,17 +817,24 @@ func TestNativeCommandUnstoppedEndsWithItsContainer(t *testing.T) {
 // command in the new instance.
 func TestNativeCommandStartedLateInARestartedContainer(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
-	target.startDelay = 500 * time.Millisecond
+	// The accepted exec starts only after the restart, however long the
+	// refused cancellation takes. The call ends by cancellation, not by a
+	// deadline: the supervisor takes its own deadline from the caller's, and
+	// a 100 ms one killed the late command before it published its PID.
+	gate := make(chan struct{})
+	target.startGate = gate
 	target.refuseCancel = true
 	cluster := nativeCluster()
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
 	_, err := cluster.RunNativeCommand(ctx, target, waiterCommand(target, "crossing", time.Minute))
 	var unstopped *NativeCommandUnstoppedError
 	if !errors.As(err, &unstopped) {
 		t.Fatalf("a refused cancellation returned %v", err)
 	}
 	target.restart()
+	close(gate)
 	command := target.published(t, "crossing", "command")
 	if err := unstopped.Stop(t.Context()); err == nil {
 		t.Fatal("Stop confirmed a command that runs in the restarted instance")

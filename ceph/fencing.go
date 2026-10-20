@@ -37,6 +37,8 @@ type BlocklistOverride struct {
 type blocklistOverrideState struct {
 	until           time.Time
 	known, restored bool
+	// token is the override's entry in the owner's fault registry.
+	token *faultEntry
 }
 
 func (change *BlocklistOverride) Address() string { return change.address }
@@ -62,6 +64,9 @@ func (c *Container) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, err
 // readback cannot authorize removal of a present entry; inspect native state or
 // terminate the disposable cluster. Natural expiry is reconciled as absence.
 func (c *Container) TemporaryBlocklist(ctx context.Context, address string, duration time.Duration) (*BlocklistOverride, error) {
+	if gateErr := c.sharedGate("TemporaryBlocklist"); gateErr != nil {
+		return nil, gateErr
+	}
 	address, err := normalizeBlocklistSession(address, true)
 	if err != nil {
 		return nil, err
@@ -74,24 +79,26 @@ func (c *Container) TemporaryBlocklist(ctx context.Context, address string, dura
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	if active := c.blocklistOverrides[address]; active != nil && !active.state.restored {
-		return nil, errors.New("restore the existing client blocklist override first")
+	// A restored override has left the registry, so a held one is active.
+	token, _, err := c.reserveFault(ctx, faultBlocklist, address)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	entries, err := c.blocklistEntries(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
 	if findBlocklistEntry(entries, address) != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, invalid(errors.New("client session already has a native blocklist entry; refusing to renew or adopt it"))
 	}
-	change := &BlocklistOverride{owner: c, address: address, state: &blocklistOverrideState{}}
-	if c.blocklistOverrides == nil {
-		c.blocklistOverrides = make(map[string]*BlocklistOverride)
-	}
-	c.blocklistOverrides[address] = change
-	_, setErr := c.Ceph(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
+	change := &BlocklistOverride{owner: c, address: address, state: &blocklistOverrideState{token: token}}
+	// Tracked before the command: an uncertain add still needs Restore.
+	c.settleFault(token, "", change, nil, nil)
+	_, setErr := c.cephCLI(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer readCancel()
 	entries, readErr := c.blocklistEntries(readCtx)
@@ -125,7 +132,7 @@ func (change *BlocklistOverride) Restore(ctx context.Context) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if tracked := c.blocklistOverrides[change.address]; tracked == nil || tracked.state != change.state {
+	if !c.tracksFault(change.state.token) {
 		return errors.New("client blocklist override is not tracked by this cluster")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -145,7 +152,7 @@ func (change *BlocklistOverride) Restore(ctx context.Context) error {
 	if !current.Until.Equal(change.state.until) {
 		return invalid(errors.New("client blocklist entry changed outside this override; refusing removal"))
 	}
-	if _, err := c.Ceph(ctx, "osd", "blocklist", "rm", change.address); err != nil {
+	if _, err := c.cephCLI(ctx, "osd", "blocklist", "rm", change.address); err != nil {
 		return err
 	}
 	entries, err = c.blocklistEntries(ctx)
@@ -161,7 +168,7 @@ func (change *BlocklistOverride) Restore(ctx context.Context) error {
 
 func (change *BlocklistOverride) finish() {
 	change.state.restored = true
-	delete(change.owner.blocklistOverrides, change.address)
+	change.owner.releaseFault(change.state.token)
 }
 
 func findBlocklistEntry(entries []BlocklistEntry, address string) *BlocklistEntry {
@@ -174,7 +181,7 @@ func findBlocklistEntry(entries []BlocklistEntry, address string) *BlocklistEntr
 }
 
 func (c *Container) blocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	data, err := c.Ceph(ctx, "osd", "blocklist", "ls", "--format", "json")
+	data, err := c.cephCLI(ctx, "osd", "blocklist", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

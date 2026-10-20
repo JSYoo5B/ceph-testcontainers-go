@@ -454,7 +454,7 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 	if json.Unmarshal(entry, &fields) != nil || fields == nil {
 		return result, false, cephFSObserveGuard("decode CephFS directory peer replay entry")
 	}
-	for _, key := range []string{"current_syncing_snap", "last_synced_snap"} {
+	for _, key := range []string{"current_syncing_snap", "current_sycning_snap", "last_synced_snap"} {
 		if value, present := fields[key]; present && string(value) == "null" {
 			return result, false, cephFSObserveGuard("decode CephFS mirror source snapshot identity")
 		}
@@ -467,13 +467,19 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 		State         *string   `json:"state"`
 		FailureReason string    `json:"failure_reason"`
 		Current       *snapshot `json:"current_syncing_snap"`
-		Last          *snapshot `json:"last_synced_snap"`
-		Synced        *uint64   `json:"snaps_synced"`
-		Deleted       *uint64   `json:"snaps_deleted"`
-		Renamed       *uint64   `json:"snaps_renamed"`
+		// Squid's cephfs-mirror names the syncing snapshot
+		// current_sycning_snap; Tentacle spells it correctly.
+		CurrentMisspelled *snapshot `json:"current_sycning_snap"`
+		Last              *snapshot `json:"last_synced_snap"`
+		Synced            *uint64   `json:"snaps_synced"`
+		Deleted           *uint64   `json:"snaps_deleted"`
+		Renamed           *uint64   `json:"snaps_renamed"`
 	}
 	if json.Unmarshal(entry, &native) != nil || native.State == nil || !slices.Contains([]string{"idle", "syncing", "failed"}, *native.State) || native.Synced == nil || native.Deleted == nil || native.Renamed == nil {
 		return result, false, cephFSObserveGuard("decode CephFS directory peer replay state/counters")
+	}
+	if native.Current == nil {
+		native.Current = native.CurrentMisspelled
 	}
 	for _, value := range []*snapshot{native.Current, native.Last} {
 		if value != nil && (value.ID == nil || value.Name == nil || *value.ID == 0 || *value.ID > cephFSObservationMaxSnapshotID || *value.Name == "") {

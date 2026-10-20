@@ -118,7 +118,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	scope, mode := rbd.MirrorScopeImage, "snapshot"
 	if journal {
 		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, rbd.MirrorScopePool, "journal"
-		if rbdNamespaceMappingUnsupported(source) {
+		if rbdNamespaceMappingUnsupported(t, ctx, source) {
 			mapping[1] = mapping[0] // Ceph 19 pairs only same-named namespaces.
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -136,11 +137,13 @@ func TestWaitContextPollRetainsLatestCauseAndTransientSuccess(t *testing.T) {
 		}
 	})
 	t.Run("deadline", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-		defer cancel()
+		// The deadline passes during the first observation rather than after a
+		// wall-clock interval that a slow (race-instrumented) run can spend
+		// before poll observes at all.
+		ctx := clustertest.NewSignalDeadline(t.Context())
 		cause := errors.New("native observation before timeout")
 		calls := 0
-		err := (&Container{}).poll(ctx, func() (bool, error) { calls++; return false, cause })
+		err := (&Container{}).poll(ctx, func() (bool, error) { calls++; ctx.Expire(); return false, cause })
 		if err == nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) || calls != 1 {
 			t.Fatalf("deadline lost prior observation: %v calls=%d", err, calls)
 		}
@@ -335,7 +338,17 @@ func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
 			}
 			entered := make(chan struct{})
 			var signal sync.Once
+			// The admission below fails once the wait queries again after the
+			// pending observation, that is once a whole poll delay passed without
+			// the test getting the gate, not after a fixed wall-clock interval.
+			admission := clustertest.NewSignalDeadline(t.Context())
 			f.control.after = func(args []string) {
+				select {
+				case <-entered:
+					admission.Expire()
+					return
+				default:
+				}
 				if strings.Join(monitorQuorumTestModuleArgs(args), " ") == query {
 					signal.Do(func() { close(entered) })
 				}
@@ -366,9 +379,7 @@ func TestWaitContextPendingObservationReleasesGateBeforeDelay(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("pending observation did not execute")
 			}
-			admission, admissionCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 			err := lockTopologyMutex(admission, gate)
-			admissionCancel()
 			if err != nil {
 				t.Fatalf("wait held owner/setup during poll delay: %v", err)
 			}

@@ -66,6 +66,8 @@ type fullRatiosOverrideState struct {
 	fsid               string
 	epoch              uint32
 	restored           bool
+	// token is the override's entry in the owner's fault registry.
+	token *faultEntry
 }
 
 // TemporaryFullRatios applies finite thresholds satisfying
@@ -76,6 +78,9 @@ type fullRatiosOverrideState struct {
 // External writers must not race apply/restore: Ceph has no threshold CAS and
 // writes equal to owned values cannot be distinguished from this fixture.
 func (c *Container) TemporaryFullRatios(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error) {
+	if gateErr := c.sharedGate("TemporaryFullRatios"); gateErr != nil {
+		return nil, gateErr
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -92,24 +97,29 @@ func (c *Container) TemporaryFullRatios(ctx context.Context, requested FullRatio
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	if c.fullRatiosOverride != nil && !c.fullRatiosOverride.state.restored {
-		return nil, errors.New("restore the existing full ratios override first")
+	// A restored override has left the registry, so a held one is active.
+	token, _, err := c.reserveFault(ctx, faultFullRatios, "")
+	if err != nil {
+		return nil, err
 	}
 	session, err := c.fullRatiosSession(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
 	snapshot, err := session.read(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
 	if !orderedFullRatios(snapshot.Ratios) {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, errors.New("original native full ratios must have positive ascending thresholds")
 	}
 	change := &FullRatiosOverride{owner: c, state: &fullRatiosOverrideState{
-		previous: snapshot.Ratios, expected: snapshot.Ratios, fsid: snapshot.FSID, epoch: snapshot.Epoch,
+		previous: snapshot.Ratios, expected: snapshot.Ratios, fsid: snapshot.FSID, epoch: snapshot.Epoch, token: token,
 	}}
-	c.fullRatiosOverride = change
+	c.settleFault(token, "", change, nil, nil)
 	return change, change.transition(ctx, session, requested)
 }
 
@@ -136,7 +146,7 @@ func (change *FullRatiosOverride) Restore(ctx context.Context) error {
 	if change.state.restored {
 		return nil
 	}
-	if c.fullRatiosOverride == nil || c.fullRatiosOverride.state != change.state {
+	if !c.tracksFault(change.state.token) {
 		return errors.New("full ratios override is not tracked by this cluster")
 	}
 	session, err := c.fullRatiosSession(ctx)
@@ -150,7 +160,7 @@ func (change *FullRatiosOverride) Restore(ctx context.Context) error {
 		return err
 	}
 	change.state.restored = true
-	c.fullRatiosOverride = nil
+	c.releaseFault(change.state.token)
 	return nil
 }
 
@@ -172,7 +182,7 @@ func (c *Container) fullRatiosSession(ctx context.Context) (fullRatiosCLISession
 	if c.closed {
 		return fullRatiosCLISession{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return fullRatiosCLISession{}, err
 	}

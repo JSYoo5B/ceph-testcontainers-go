@@ -58,19 +58,19 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	}
 	// tell forwards admin-socket commands; the OSD role needs no ceph CLI.
 	for _, daemon := range daemons {
-		data := topologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", messengerDumpArg(cluster))
+		data := topologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 	// Standby MGRs have an admin socket but do not serve forwarded tell commands.
 	for _, mgr := range cluster.Managers() {
-		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(cluster))
+		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 }
 
 func secureMessengerClient(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, phase string) {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, messengerDumpArg(cluster))
+	data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, messengerDumpArg(t, ctx, cluster))
 	t.Logf("MSGR2_CLIENT %s", data)
 }
 
@@ -171,11 +171,29 @@ with tempfile.TemporaryDirectory() as directory:
     print(json.dumps({'phase':phase,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'ready_remote':ready}))
 `
 
-const secureMessengerCRCProbe = `import subprocess,json,re
-result=subprocess.run(['ceph','--connect-timeout','6','--ms-mon-client-mode','crc','--ms-client-mode','crc','--debug-ms','1','status','--format','json'],capture_output=True,text=True,timeout=15)
-assert result.returncode!=0, 'CRC-only client connected to secure-only cluster'
-assert re.search(r'handle_auth_bad_method.*allowed modes=\[2\]',result.stderr),result.stderr[-1500:]
-print(json.dumps({'crc_only_refused':True,'native_exit':result.returncode,'server_allowed_modes':[2],'watchdog_timeout':False}))
+// secureMessengerCRCProbe connects a CRC-only librados client and reads the
+// MON's allowed modes from its log. The CLI cannot show them reliably: Ceph
+// writes the log from an asynchronous thread, and after a failed connect the
+// CLI leaves with os._exit without flushing it. Shutting the client down
+// flushes the log.
+const secureMessengerCRCProbe = `import rados,json,re,tempfile
+with tempfile.TemporaryDirectory() as directory:
+    log=directory+'/client.log'
+    client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring',
+        'ms_mon_client_mode':'crc','ms_client_mode':'crc','debug_ms':'1',
+        'log_file':log,'log_to_file':'true','log_to_stderr':'false','err_to_stderr':'false'})
+    refused=None
+    try:
+        client.connect(timeout=6)
+    except rados.PermissionDeniedError as error:
+        refused=str(error)
+    finally:
+        client.shutdown()
+    assert refused is not None,'CRC-only client connected to secure-only cluster'
+    with open(log) as lines:
+        text=lines.read()
+assert re.search(r'handle_auth_bad_method.*allowed modes=\[2\]',text),text[-1500:]
+print(json.dumps({'crc_only_refused':True,'native_error':refused,'server_allowed_modes':[2],'watchdog_timeout':False}))
 `
 
 const secureMessengerCephFSProbe = `import cephfs,os,sys,json,subprocess,tempfile

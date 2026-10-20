@@ -42,7 +42,10 @@ type userConfigSection struct {
 // Keys that the fixture owns or passes on a daemon command line are rejected:
 // identity, addresses, networks, Cephx, Messenger modes, logging, data paths,
 // pool size defaults and BlueStore file layout. Use the dedicated options for
-// those. RGW runs as client.admin, so RGW settings belong in [client] or
+// those. The exception is ms_bind_prefer_ipv4, which Run accepts with
+// AddressDualStack only: false in a daemon's section, such as [osd.1] or
+// [mgr.b], makes that daemon advertise its IPv6 address first, and native
+// clients then connect to it over IPv6. RGW runs as client.admin, so RGW settings belong in [client] or
 // [client.admin]. Includes, continuations and keys outside a section are
 // rejected.
 func WithConfigFile(path string) Option {
@@ -177,7 +180,7 @@ var reservedConfigKeys = map[string]string{
 	"mon_host":                    "is managed by the fixture",
 	"mon_initial_members":         "is managed by the fixture; use WithMonitorCount",
 	"mon_addr":                    "is managed by the fixture",
-	"public_network":              "is managed by the fixture; use WithHostNetwork or WithSeparateClusterNetwork",
+	"public_network":              "is managed by the fixture; use WithHostNetwork, WithSeparateClusterNetwork or WithAddressFamily",
 	"cluster_network":             "is managed by the fixture; use WithSeparateClusterNetwork",
 	"public_addr":                 "is managed by the fixture; use WithHostAddress",
 	"cluster_addr":                "is managed by the fixture; use WithHostAddress",
@@ -230,10 +233,23 @@ func reservedConfigKey(key string) string {
 		return "is managed by the fixture's Cephx setup"
 	case reservedMessengerMode.MatchString(key):
 		return "is managed by the fixture; use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"
-	case strings.HasPrefix(key, "ms_bind_"):
-		return "is managed by the fixture; use WithMessengerMode or WithHostNetwork"
+	case strings.HasPrefix(key, "ms_bind_") && key != dualStackOrderKey:
+		return "is managed by the fixture; use WithMessengerMode, WithAddressFamily or WithHostNetwork"
 	}
 	return ""
+}
+
+// dualStackOrderKey is the one ms_bind_ option that WithConfigFile accepts,
+// and Run accepts it only with AddressDualStack. It orders the families of a
+// daemon's advertised vectors, and a native client connects to the first
+// entry of a vector.
+const dualStackOrderKey = "ms_bind_prefer_ipv4"
+
+// userConfigSets reports whether any section of sections sets key.
+func userConfigSets(sections []userConfigSection, key string) bool {
+	return slices.ContainsFunc(sections, func(section userConfigSection) bool {
+		return slices.ContainsFunc(section.entries, func(entry userConfigEntry) bool { return entry.key == key })
+	})
 }
 
 // mergeUserConfig applies later sections over earlier ones key by key while

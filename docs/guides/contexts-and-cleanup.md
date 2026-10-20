@@ -343,7 +343,7 @@ result:
 | `PauseContainer` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
-| `TemporaryNetworkDelay` | Delay lease (the change may have reached the kernel) | `Restore` |
+| `TemporaryNetworkDelay`, `TemporaryLinkDelay`, `TemporaryZoneLinkDelay` | Delay lease (the change may have reached the kernel) | `Restore` |
 | `rbd.RunMirror`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |

@@ -582,8 +582,8 @@ func (p cephFSOriginalProcessPolicy) check(ctx context.Context, kind string) err
 	var sourcePeers map[string]json.RawMessage
 	for i, cluster := range []*ceph.Container{p.source, p.destination} {
 		data, err := cluster.Ceph(ctx, "fsid")
-		if err != nil || strings.TrimSpace(string(data)) != p.fsids[i] {
-			return errors.Join(err, errors.New("independent native original cluster FSID changed"))
+		if err := cephFSOriginalFSIDCheck([]string{"source", "destination"}[i], p.fsids[i], data, err); err != nil {
+			return err
 		}
 		filesystem := []*cephfs.Filesystem{p.sourceFS, p.destinationFS}[i]
 		id := []int{p.expected.SourceFilesystemID, p.expected.DestinationFilesystemID}[i]
