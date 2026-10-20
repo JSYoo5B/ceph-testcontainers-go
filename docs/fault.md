@@ -12,8 +12,8 @@ versions keep their original APIs. Update imports and calls together:
 
 | Previous call or type | New call or type |
 | --- | --- |
-| `cluster.PauseContainer(ctx, target)` | `fault.PauseContainer(ctx, cluster, target)` |
-| `ceph.ContainerPause` | `fault.ContainerPause` (same `Resume` contract) |
+| `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
+| `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
 | `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` |
 | `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.TemporaryLinkDelay(ctx, target, network, delay)` |
 | `cluster.InterruptNetwork(ctx, target, plane)` | `fault.InterruptNetwork(ctx, cluster, target, plane)` |
@@ -39,10 +39,10 @@ with `errors.Is`.
 Blocklist, temporary fullness and object-error injection remain in
 `ceph` until their separately validated extraction steps.
 
-## PauseContainer
+## Pause
 
 ```golang
-func PauseContainer(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container) (*fault.ContainerPause, error)
+func Pause(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container) (*fault.PauseLease, error)
 ```
 
 Freezes every process of an owned daemon or of a caller-owned `WithClient`
@@ -58,7 +58,7 @@ mode.
 The control container is refused (in a single-MON cluster that is MON `a`),
 because every fixture command would block. A container that is already paused is
 refused rather than adopted, and only one pause per container is allowed. The
-returned `*fault.ContainerPause` has `ContainerID` and `Resume`; `Resume` thaws the
+returned `*fault.PauseLease` has `ContainerID` and `Resume`; `Resume` thaws the
 container without restarting it and treats a removed or already running
 container as done. `Terminate` resumes remaining pauses after network fault restoration and before
 container teardown; resume a
@@ -72,7 +72,7 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := fault.PauseContainer(ctx, cluster, cluster.OSDs()[1])
+pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[1])
 if pause != nil {
 	defer pause.Resume(context.Background())
 }

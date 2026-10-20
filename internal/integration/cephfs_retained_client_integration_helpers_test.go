@@ -1029,7 +1029,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	baseline := actor.receipt(t, ctx, 1)
 	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
 
-	pause, err := fault.PauseContainer(ctx, cluster, client)
+	pause, err := fault.Pause(ctx, cluster, client)
 	if pause != nil {
 		t.Cleanup(func() {
 			resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)

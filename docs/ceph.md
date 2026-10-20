@@ -1564,7 +1564,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.MGRModuleOverride` | [TemporaryMGRModule](#temporarymgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [TemporaryFullRatios](#temporaryfullratios) | `Restore` |
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
-| `*fault.ContainerPause` | [fault.PauseContainer](fault.md#pausecontainer) | `Resume` |
+| `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
 | `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
@@ -1784,7 +1784,7 @@ code, reader, err := cluster.ControlContainer().Exec(ctx,
 	[]string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())
 ```
 
-Do not pause or stop it; [fault.PauseContainer](fault.md#pausecontainer) refuses it.
+Do not pause or stop it; [fault.Pause](fault.md#pause) refuses it.
 
 #### ControlContainerContext
 
@@ -3325,9 +3325,9 @@ and full ratios, see [Fault injection](guides/fault-injection.md).
 
 #### Container pause faults
 
-[`fault.PauseContainer`](fault.md#pausecontainer) freezes a daemon or client
+[`fault.Pause`](fault.md#pause) freezes a daemon or client
 with the existing cluster's ownership and cleanup lifetime. Its
-`*fault.ContainerPause` handle resumes the process with `Resume`.
+`*fault.PauseLease` handle resumes the process with `Resume`.
 
 #### Network faults
 
@@ -3467,7 +3467,7 @@ volume belongs to the cluster and `Terminate` removes it.
 - The daemon must be running. A stopped or removed daemon returns an error. A
   daemon that has just started can answer before it registers all of its
   commands (`no valid command found`); poll with a deadline.
-- A paused daemon (see [fault.PauseContainer](fault.md#pausecontainer)) accepts the
+- A paused daemon (see [fault.Pause](fault.md#pause)) accepts the
   connection but does not answer, so the call waits until the context ends.
 - A nonzero exit returns the command's output together with an error.
 - The call is bounded by the context and by
@@ -3897,7 +3897,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `MGRModuleOverride` | `Restore(ctx) error` | [TemporaryMGRModule](#temporarymgrmodule) |
 | `FullRatiosOverride` | `Restore(ctx) error` | [TemporaryFullRatios](#temporaryfullratios) |
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
-| `fault.ContainerPause` | `ContainerID`; `Resume(ctx) error` | [fault.PauseContainer](fault.md#pausecontainer) |
+| `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
 | `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
 
@@ -4503,7 +4503,7 @@ expires.
 
 ```golang
 // `watcher` is a WithClient container whose process watches "notify-object".
-pause, err := fault.PauseContainer(ctx, cluster, watcher)
+pause, err := fault.Pause(ctx, cluster, watcher)
 if pause != nil {
 	defer pause.Resume(context.Background())
 }

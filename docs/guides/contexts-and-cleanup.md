@@ -176,7 +176,7 @@ resources from calls that failed halfway:
 | Host-port reservation helpers | Host mode MON and RGW startup |
 | The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
 | Network delays and their netem helper containers | `TemporaryNetworkDelay` (removed first, also on your client containers) |
-| Container pauses | `PauseContainer` (resumed before the teardown) |
+| Container pauses | `fault.Pause` (resumed before the teardown) |
 | Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |
 | Native commands that are still running or not confirmed as stopped | `RunNativeCommand` (canceled and stopped, also in your client containers) |
 
@@ -316,7 +316,7 @@ daemons wrote; it also reads containers that have stopped.
 Many calls return a non-nil result together with an error:
 
 ```golang
-pause, err := fault.PauseContainer(ctx, cluster, osd)
+pause, err := fault.Pause(ctx, cluster, osd)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }
@@ -340,7 +340,7 @@ result:
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
 | `TemporaryConfig`, `TemporaryMessengerPolicy`, `TemporaryClientRevocation`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
-| `PauseContainer` | Pause handle | `Resume` |
+| `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `TemporaryNetworkDelay`, `TemporaryLinkDelay`, `TemporaryZoneLinkDelay` | Delay lease (the change may have reached the kernel) | `Restore` |
@@ -419,7 +419,7 @@ Handle-specific details:
 - `TemporarySessionTimeouts.Restore` refuses a filesystem that was recreated
   under the same name.
 
-`ContainerPause.Resume` and `NetworkInterruption.Restore` follow the same
+`fault.PauseLease.Resume` and `NetworkInterruption.Restore` follow the same
 pattern for Docker state, with one difference: the cluster resumes and
 restores them itself during `Terminate`, because a frozen or disconnected
 container would block cleanup.

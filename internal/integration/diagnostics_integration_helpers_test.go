@@ -464,7 +464,7 @@ func testCanceledDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
-	pause, err := fault.PauseContainer(ctx, cluster, cluster.ManagerContainer())
+	pause, err := fault.Pause(ctx, cluster, cluster.ManagerContainer())
 	if pause != nil {
 		defer func() { _ = pause.Resume(context.Background()) }()
 	}

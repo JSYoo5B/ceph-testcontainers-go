@@ -312,7 +312,7 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `CreateClient`, `DeleteClient` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
 | `ConnectionConfig()` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
 | `TemporaryConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
-| `fault.PauseContainer(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
+| `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `RemovePool`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
 | `ControlContainer()`, `ControlImage()` | The container that runs fixture commands and its image (mirror daemons usually use `ControlImage()`). |
@@ -394,7 +394,7 @@ retry after an error continues with whatever remains.
 `*cephfs.MDS` is one owned metadata daemon. `ID` is its fixed Ceph daemon name
 (`mds.<ID>`) and `FilesystemName` the filesystem it serves. The embedded
 `testcontainers.Container` provides `Stop` and `Start` for failure injection;
-`fault.PauseContainer` freezes it instead. A restarted daemon keeps its name
+`fault.Pause` freezes it instead. A restarted daemon keeps its name
 but gets a new GID. The cluster removes every MDS container when it terminates.
 
 On a `ceph.AddressDualStack` cluster every MDS advertises a concrete IPv4 and
@@ -2414,7 +2414,7 @@ working. See [MDS sessions](guides/messenger-client-fixtures.md#mds-sessions).
 ### Evict a frozen client
 
 A client that stops responding keeps its session and capabilities until the MDS
-gives up on it. Freezing the client container with `PauseContainer` reproduces
+gives up on it. Freezing the client container with `fault.Pause` reproduces
 this. With shortened session limits, the test can observe the eviction, the
 blocklist entry and the loss of unsynced data.
 
@@ -2484,7 +2484,7 @@ if session == nil {
 	t.Fatal("holder has no session")
 }
 
-pause, err := fault.PauseContainer(ctx, cluster, held)
+pause, err := fault.Pause(ctx, cluster, held)
 if pause != nil {
 	t.Cleanup(func() { _ = pause.Resume(context.Background()) })
 }

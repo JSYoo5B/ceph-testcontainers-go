@@ -44,7 +44,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	// frozen MGR. A raw Ceph call leaves its CLI running; this call does not.
 	t.Run("paused_mgr_read", func(t *testing.T) {
 		mustCeph(t, ctx, cluster, "tell", "mgr.a", "version")
-		pause, err := fault.PauseContainer(ctx, cluster, cluster.ManagerContainer())
+		pause, err := fault.Pause(ctx, cluster, cluster.ManagerContainer())
 		if err != nil {
 			if pause != nil {
 				_ = pause.Resume(ctx)
@@ -593,11 +593,11 @@ func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Containe
 
 // startFrozenNative runs a command in helper, freezes helper and cancels the
 // call, which then cannot confirm that the command stopped.
-func startFrozenNative(t *testing.T, ctx context.Context, cluster *ceph.Container, helper testcontainers.Container, token string) (*ceph.NativeCommandUnstoppedError, *fault.ContainerPause) {
+func startFrozenNative(t *testing.T, ctx context.Context, cluster *ceph.Container, helper testcontainers.Container, token string) (*ceph.NativeCommandUnstoppedError, *fault.PauseLease) {
 	t.Helper()
 	call := startNative(ctx, cluster, helper, nativeTree(token, time.Minute))
 	waitNative(t, ctx, helper, 4, token)
-	pause, err := fault.PauseContainer(ctx, cluster, helper)
+	pause, err := fault.Pause(ctx, cluster, helper)
 	if err != nil {
 		if pause != nil {
 			_ = pause.Resume(ctx)

@@ -63,7 +63,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	// running. A cancel at any point of startup, including before the CLI is
 	// visible, must not let a CLI start afterwards.
 	osd := cluster.OSDs()[0]
-	pause, err := fault.PauseContainer(ctx, cluster, osd)
+	pause, err := fault.Pause(ctx, cluster, osd)
 	if err != nil {
 		if pause != nil {
 			_ = pause.Resume(ctx)

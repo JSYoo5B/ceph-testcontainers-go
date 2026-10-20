@@ -19,18 +19,18 @@ type containerPauseClient interface {
 	Close() error
 }
 
-// ContainerPause owns one container frozen through Docker's cgroup freezer.
+// PauseLease owns one container frozen through Docker's cgroup freezer.
 // Resume thaws it without restarting the process. A non-nil handle returned
 // with an error must be resumed: a transport failure cannot prove that Docker
 // did not freeze the container. Resume is retryable and idempotent.
-type ContainerPause struct {
+type PauseLease struct {
 	ContainerID string
 	mu          sync.Mutex
 	docker      containerPauseClient
 	complete    bool
 }
 
-// PauseContainer freezes every process of an owned daemon or a caller-owned
+// Pause freezes every process of an owned daemon or a caller-owned
 // WithClient container, as with docker pause. Unlike Stop, the process keeps
 // its memory, sockets and Ceph identity, and peers see silence rather than a
 // closed connection: a frozen OSD stops answering client operations and
@@ -42,7 +42,7 @@ type ContainerPause struct {
 // fixture command would block on it. A container that is already paused is
 // refused rather than adopted. The cluster retains the handle and resumes it
 // during Terminate; resume explicitly before removing a caller-owned container.
-func PauseContainer(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) (*ContainerPause, error) {
+func Pause(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) (*PauseLease, error) {
 	return pauseContainerInCluster(ctx, c, ctr, func(ctx context.Context) (containerPauseClient, error) {
 		return testcontainers.NewDockerClientWithOpts(ctx)
 	})
@@ -50,8 +50,8 @@ func PauseContainer(ctx context.Context, c *ceph.Container, ctr testcontainers.C
 
 // Only the Docker connection is replaceable in unit tests; admission, locks,
 // registry ownership and Terminate use the cluster's actual implementation.
-func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, connect func(context.Context) (containerPauseClient, error)) (pause *ContainerPause, err error) {
-	if gateErr := faulthook.Admit(c, "fault.PauseContainer"); gateErr != nil {
+func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, connect func(context.Context) (containerPauseClient, error)) (pause *PauseLease, err error) {
+	if gateErr := faulthook.Admit(c, "fault.Pause"); gateErr != nil {
 		return nil, gateErr
 	}
 	err = faulthook.WithTopology(ctx, c, func() error {
@@ -70,7 +70,7 @@ func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcon
 		// one stays registered until this one replaces it.
 		token, previous, err := faulthook.Reserve(ctx, c, faulthook.ContainerPause, id)
 		if err != nil {
-			pause, _ = previous.(*ContainerPause)
+			pause, _ = previous.(*PauseLease)
 			return err
 		}
 		docker, err := connect(ctx)
@@ -87,7 +87,7 @@ func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcon
 	return pause, err
 }
 
-func pauseContainer(ctx context.Context, docker containerPauseClient, id string) (*ContainerPause, error) {
+func pauseContainer(ctx context.Context, docker containerPauseClient, id string) (*PauseLease, error) {
 	inspection, err := docker.ContainerInspect(ctx, id, mobycl.ContainerInspectOptions{})
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("inspect container before pause: %w", err), docker.Close())
@@ -96,7 +96,7 @@ func pauseContainer(ctx context.Context, docker containerPauseClient, id string)
 	if state == nil || !state.Running || state.Paused || state.Restarting {
 		return nil, errors.Join(errors.New("only a running, unpaused container can be paused"), docker.Close())
 	}
-	pause := &ContainerPause{ContainerID: id, docker: docker}
+	pause := &PauseLease{ContainerID: id, docker: docker}
 	// Return ownership even after an uncertain transport outcome.
 	if _, err := docker.ContainerPause(ctx, id, mobycl.ContainerPauseOptions{}); err != nil {
 		return pause, fmt.Errorf("pause container: %w", err)
@@ -104,7 +104,7 @@ func pauseContainer(ctx context.Context, docker containerPauseClient, id string)
 	return pause, nil
 }
 
-func (pause *ContainerPause) isComplete(ctx context.Context) (bool, error) {
+func (pause *PauseLease) isComplete(ctx context.Context) (bool, error) {
 	if err := lockMutex(ctx, &pause.mu); err != nil {
 		return false, err
 	}
@@ -114,7 +114,7 @@ func (pause *ContainerPause) isComplete(ctx context.Context) (bool, error) {
 
 // Resume thaws the container. A removed, stopped or already unpaused container
 // needs no further action, so it completes the handle without starting it.
-func (pause *ContainerPause) Resume(ctx context.Context) error {
+func (pause *PauseLease) Resume(ctx context.Context) error {
 	if pause == nil {
 		return errors.New("container pause is unavailable")
 	}

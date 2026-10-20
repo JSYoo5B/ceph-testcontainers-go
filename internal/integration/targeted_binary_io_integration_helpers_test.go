@@ -804,7 +804,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil {
 		t.Fatal(err)
 	}
-	pause, err := fault.PauseContainer(ctx, cluster, osd)
+	pause, err := fault.Pause(ctx, cluster, osd)
 	if pause != nil {
 		defer func() { _ = pause.Resume(ctx) }()
 	}

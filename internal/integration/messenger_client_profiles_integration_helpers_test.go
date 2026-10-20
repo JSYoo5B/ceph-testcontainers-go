@@ -383,7 +383,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	if active == nil {
 		t.Fatalf("active MGR %s is not owned", before.ActiveName)
 	}
-	pause, err := fault.PauseContainer(ctx, cluster, active.Container)
+	pause, err := fault.Pause(ctx, cluster, active.Container)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	// client then stops authenticating. That happened to the active MGR in
 	// two of four runs with 12-second tickets and a 25-second pause.
 	address := profileMonitorAddress(t, ctx, cluster, "b")
-	pause, err = fault.PauseContainer(ctx, cluster, monitors["b"].Container)
+	pause, err = fault.Pause(ctx, cluster, monitors["b"].Container)
 	if err != nil {
 		t.Fatal(err)
 	}

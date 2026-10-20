@@ -105,7 +105,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 				t.Fatalf("notify to a live watcher errno = %d", errno)
 			}
 
-			pause, err := fault.PauseContainer(ctx, cluster, client)
+			pause, err := fault.Pause(ctx, cluster, client)
 			if pause != nil {
 				t.Cleanup(func() {
 					cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

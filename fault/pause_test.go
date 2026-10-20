@@ -53,7 +53,7 @@ func (d *fakePauseDocker) ContainerUnpause(context.Context, string, mobycl.Conta
 
 func (d *fakePauseDocker) Close() error { d.close++; return d.closeErr }
 
-func TestPauseContainerFreezesOnlyRunningUnpausedContainers(t *testing.T) {
+func TestPauseFreezesOnlyRunningUnpausedContainers(t *testing.T) {
 	for name, state := range map[string]container.State{
 		"paused":     {Running: true, Paused: true},
 		"stopped":    {},
@@ -77,7 +77,7 @@ func TestPauseContainerFreezesOnlyRunningUnpausedContainers(t *testing.T) {
 	}
 }
 
-func TestContainerPauseUncertainOutcomesRemainRetryable(t *testing.T) {
+func TestPauseLeaseUncertainOutcomesRemainRetryable(t *testing.T) {
 	// The pause request may have reached Docker before its reply was lost.
 	docker := &fakePauseDocker{state: &container.State{Running: true, Paused: true}, pauseErr: errors.New("lost reply")}
 	docker.state.Paused = false
@@ -114,19 +114,19 @@ func TestContainerPauseUncertainOutcomesRemainRetryable(t *testing.T) {
 	}
 }
 
-func TestPauseContainerRefusesControlAndUnavailableContainers(t *testing.T) {
+func TestPauseRefusesControlAndUnavailableContainers(t *testing.T) {
 	control := pauseTestContainer{id: "control"}
 	cluster := servicehook.TestCluster(control, servicehook.TestConfig{StartupTimeout: time.Second})
 	for name, target := range map[string]testcontainers.Container{"nil": nil, "unstarted": pauseTestContainer{}, "control": control} {
-		if pause, err := PauseContainer(t.Context(), cluster, target); err == nil || pause != nil {
+		if pause, err := Pause(t.Context(), cluster, target); err == nil || pause != nil {
 			t.Fatalf("%s container accepted: %v", name, err)
 		}
 	}
 	*servicehook.TestState(cluster).Closed = true
-	if pause, err := PauseContainer(t.Context(), cluster, pauseTestContainer{id: "osd"}); err == nil || pause != nil {
+	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); err == nil || pause != nil {
 		t.Fatal("terminated cluster accepted a pause")
 	}
-	var missing *ContainerPause
+	var missing *PauseLease
 	if err := missing.Resume(t.Context()); err == nil {
 		t.Fatal("nil pause handle resumed")
 	}
@@ -159,7 +159,7 @@ func trackedPause(c *ceph.Container, id string) (held any) {
 	return held
 }
 
-func pauseWithDocker(ctx context.Context, c *ceph.Container, d *fakePauseDocker) (*ContainerPause, error) {
+func pauseWithDocker(ctx context.Context, c *ceph.Container, d *fakePauseDocker) (*PauseLease, error) {
 	return pauseContainerInCluster(ctx, c, pauseTestContainer{id: "osd"}, func(context.Context) (containerPauseClient, error) { return d, nil })
 }
 
@@ -255,7 +255,7 @@ func TestPauseQueuedTopologyAndHandleDeadlines(t *testing.T) {
 	view := servicehook.TestState(c)
 	// The public call must return before opening a Docker connection.
 	assertContextLockQueued(t, view.Mutex, func(ctx context.Context) error {
-		_, err := PauseContainer(ctx, c, pauseTestContainer{id: "osd"})
+		_, err := Pause(ctx, c, pauseTestContainer{id: "osd"})
 		return err
 	})
 	d := &fakePauseDocker{state: &container.State{Running: true}}

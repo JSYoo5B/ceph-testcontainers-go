@@ -195,7 +195,7 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	}
 	t.Logf("CEPHFS_SESSION holder %+v", *holder)
 
-	pause, err := fault.PauseContainer(ctx, p.cluster, p.client)
+	pause, err := fault.Pause(ctx, p.cluster, p.client)
 	if pause != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

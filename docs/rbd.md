@@ -231,7 +231,7 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | `ConnectionConfig()` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `PoolStatus`, `RemovePool`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
 | `Ceph(ctx, args...)`, `ControlContainer()`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
-| `PauseContainer`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
+| `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `TemporaryConfig` | Set any Ceph option and restore it. |
 | `CephVersion()` | Branch on the Ceph release (`"20.2.4"`, `"19.2.5"`). |
 
@@ -1425,7 +1425,7 @@ func TestLockHandover(t *testing.T) {
 	first := startWriter(ctx, t, cluster)
 	owner := waitOwner("")
 
-	pause, err := fault.PauseContainer(ctx, cluster, first)
+	pause, err := fault.Pause(ctx, cluster, first)
 	if pause != nil {
 		// Registered after the container's cleanup, so it runs first.
 		t.Cleanup(func() { _ = pause.Resume(context.Background()) })
@@ -1462,7 +1462,7 @@ Behaviour to rely on:
 - The blocklist entry that librbd adds when it breaks a lock is not owned by the fixture. It stays until Ceph expires it (one hour by default).
 - The cluster resumes paused containers during `Terminate`, but resume a caller-owned container explicitly before it is removed.
 
-Fault injection primitives (`PauseContainer`, `TemporaryBlocklist`, network
+Fault injection primitives (`fault.Pause`, `TemporaryBlocklist`, network
 interruptions, messenger delays) are described in
 [the fault injection guide](guides/fault-injection.md).
 

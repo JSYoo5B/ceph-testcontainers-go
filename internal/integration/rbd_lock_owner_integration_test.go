@@ -136,9 +136,9 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				}
 				return lock
 			}
-			pause := func(ctr testcontainers.Container) *fault.ContainerPause {
+			pause := func(ctr testcontainers.Container) *fault.PauseLease {
 				t.Helper()
-				paused, err := fault.PauseContainer(ctx, cluster, ctr)
+				paused, err := fault.Pause(ctx, cluster, ctr)
 				if paused != nil {
 					t.Cleanup(func() {
 						cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -1022,7 +1022,7 @@ cannot even be detected.
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbd.Mirror` operations, which compare captured policies | `rbd.Mirror` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `TemporaryConfig` refuses them | Choose `WithMessengerMode` at `Run` |
-| `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `PauseContainer`, `InterruptNetwork` |
+| `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 
 Resources you create natively (pools, images, users, buckets, CRUSH rules)
 are not owned by the fixture. Typed removal helpers refuse them; they disappear
