@@ -68,8 +68,10 @@ type Held struct {
 }
 
 type hooks interface {
+	NormalizeBlocklistSession(address string) (string, error)
+	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	TestFaults(c *ceph.Container, kind string) map[string]any
- Admit(c *ceph.Container, op string) error
+	Admit(c *ceph.Container, op string) error
 	Reserve(ctx context.Context, c *ceph.Container, kind, key string) (any, any, error)
 	Settle(c *ceph.Container, token any, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) (bool, error)
 	Release(c *ceph.Container, token any) bool
@@ -214,4 +216,16 @@ func NativeFailure(program string, code int, stdout, stderr []byte) error {
 func OnlyMissingHostResource(err error) bool { return get().OnlyMissingHostResource(err) }
 
 // TestFaults snapshots the registry for unit tests. Call with the cluster mutex held.
-func TestFaults(c *ceph.Container, kind Kind) map[string]any { return get().TestFaults(c, string(kind)) }
+func TestFaults(c *ceph.Container, kind Kind) map[string]any {
+	return get().TestFaults(c, string(kind))
+}
+
+// NormalizeBlocklistSession validates and canonicalizes an exact client session.
+func NormalizeBlocklistSession(address string) (string, error) {
+	return get().NormalizeBlocklistSession(address)
+}
+
+// BlocklistEntries reads native fencing state with the topology gate held.
+func BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error) {
+	return get().BlocklistEntries(ctx, c)
+}

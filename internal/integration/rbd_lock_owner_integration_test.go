@@ -190,7 +190,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 
 			// Fencing the frozen second owner removes its watch at once.
 			pausedB := pause(second)
-			fence, err := cluster.TemporaryBlocklist(ctx, bLock.Address, 10*time.Minute)
+			fence, err := fault.TemporaryBlocklist(ctx, cluster, bLock.Address, 10*time.Minute)
 			if err != nil {
 				t.Fatal("fence frozen owner:", err)
 			}
