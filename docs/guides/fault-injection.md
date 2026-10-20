@@ -29,7 +29,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | An OSD runs a client's write after the client gave up | `TemporaryConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
 | One client session is fenced | `fault.TemporaryBlocklist` | The OSDs reject that session | Yes | `fault.BlocklistOverride.Restore` |
 | A failed OSD stays up or in | `TemporaryOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverride.Restore` |
-| The cluster reports nearfull, backfillfull or full | `TemporaryFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
+| The cluster reports nearfull, backfillfull or full | `fault.TemporaryFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
 | The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.TemporarySessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverride.Restore` |
@@ -1027,12 +1027,12 @@ are separate native state; set them with `cluster.Ceph` (for example
 
 ## Making the cluster full
 
-`TemporaryFullRatios` changes the global nearfull, backfillfull and full
+`fault.TemporaryFullRatios` changes the global nearfull, backfillfull and full
 thresholds of the OSD map. Very low ratios make a cluster with a little data
 report the corresponding health states, without filling a device.
 
 ```golang
-change, err := cluster.TemporaryFullRatios(ctx, ceph.FullRatios{
+change, err := fault.TemporaryFullRatios(ctx, cluster, ceph.FullRatios{
 	NearFull: .0001, BackfillFull: .0002, Full: .0003,
 })
 // Several native commands run in sequence; some may have succeeded.
@@ -1271,10 +1271,11 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 ## Related APIs
 
-- [fault.md](../fault.md): `fault.Pause`, `TemporaryBlocklist`, `InterruptNetwork` and network profiles.
+- [fault.md](../fault.md): `fault.Pause`, `TemporaryBlocklist`, `TemporaryFullRatios`,
+  `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
   `TemporaryConfig`, `TemporaryOSDFlag`,
-  `TemporaryFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
+  scrub helpers, `RemoveOSD`, `SetOSDIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.TemporarySessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.

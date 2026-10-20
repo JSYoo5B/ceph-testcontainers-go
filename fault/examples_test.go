@@ -88,3 +88,24 @@ func ExampleTemporaryBlocklist() {
 	}
 	// The selected session is fenced; other sessions on the host remain admitted.
 }
+
+func ExampleTemporaryFullRatios() {
+	ctx := context.Background()
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	if cluster != nil {
+		defer func() { _ = cluster.Terminate(ctx) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	change, err := fault.TemporaryFullRatios(ctx, cluster, ceph.FullRatios{
+		NearFull: .01, BackfillFull: .02, Full: .03,
+	})
+	if change != nil {
+		defer func() { _ = change.Restore(context.Background()) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	// Map values are confirmed; observe HealthDetails for actual OSD reports.
+}

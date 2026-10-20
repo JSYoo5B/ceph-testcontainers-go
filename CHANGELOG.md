@@ -320,6 +320,13 @@ change the API.
 
 ### Changed
 
+- Move `Container.TemporaryFullRatios` to `fault.TemporaryFullRatios(ctx,
+  cluster, ratios)` and its handle to `fault.FullRatiosOverride`. Read-only
+  `FullRatios`, `FullRatioSnapshot` and the query remain in `ceph`. Ordered
+  transitions, uncertain-result reconciliation, FSID/epoch checks and retryable
+  `Restore` are preserved. This next-minor source break has no compatibility
+  aliases; see `docs/fault.md`.
+
 - Move `Container.TemporaryBlocklist` to `fault.TemporaryBlocklist(ctx, cluster,
   address, duration)` and `ceph.BlocklistOverride` to `fault.BlocklistOverride`.
   `Address` and retryable `Restore` retain their ownership semantics; read-only

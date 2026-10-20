@@ -12,6 +12,8 @@ versions keep their original APIs. Update imports and calls together:
 
 | Previous call or type | New call or type |
 | --- | --- |
+| `cluster.TemporaryFullRatios(ctx, ratios)` | `fault.TemporaryFullRatios(ctx, cluster, ratios)` (request remains `ceph.FullRatios`) |
+| `ceph.FullRatiosOverride` | `fault.FullRatiosOverride` (`Restore` unchanged) |
 | `cluster.TemporaryBlocklist(ctx, address, duration)` | `fault.TemporaryBlocklist(ctx, cluster, address, duration)` |
 | `ceph.BlocklistOverride` | `fault.BlocklistOverride` (`Address` and `Restore` unchanged) |
 | `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
@@ -38,10 +40,43 @@ handles returned with errors; restore remains retryable after uncertain results.
 The error categories remain in `ceph`; the moved sentinels still match them
 with `errors.Is`.
 
-Temporary fullness and object-error injection remain in `ceph` until their
-separately validated extraction steps. Blocklist overrides are tracked for
-overlap and ownership; their state dies with the disposable cluster, without
-a per-entry undo during `Terminate`.
+Object-error injection remains in `ceph` until its separately validated
+extraction step. Blocklist and full-ratios overrides are tracked for overlap
+and ownership; their state dies with the disposable cluster, without an
+individual undo during `Terminate`.
+
+## TemporaryFullRatios
+
+```golang
+func TemporaryFullRatios(ctx context.Context, cluster *ceph.Container, requested ceph.FullRatios) (*fault.FullRatiosOverride, error)
+```
+
+Applies the three ratios and restores all three with `Restore`. Requested values
+must be finite and satisfy `0 < NearFull < BackfillFull < Full <= 1` after float32
+normalization (inputs that collapse to equal values are refused), and the current
+map must also be ordered. The CLI changes one ratio per command; the helper orders
+the commands so that every intermediate state stays ordered, so apply and restore
+are not atomic. Only one handle per cluster is allowed, including no-op requests.
+
+Low ratios reproduce full conditions with a small amount of existing data; the
+module does not fill real devices. Success verifies the map, not OSD reports:
+wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
+[HealthDetails](ceph.md#healthdetails). See
+[Fill the cluster with low full ratios](ceph.md#fill-the-cluster-with-low-full-ratios).
+
+The returned `*fault.FullRatiosOverride` shares restoration state across
+copies. `FullRatiosOverride.Restore(ctx)` accepts only its latest confirmed
+tuple or the two possible outcomes of one pending command. An outside tuple,
+older apply prefix, map epoch rollback or changed bootstrap FSID cannot
+authorize another mutation. A non-nil handle returned with an error still owns
+a partial or uncertain apply; preserve it and restore with a fresh context.
+
+Apply and Restore retain context-bounded topology admission and use one captured
+control handle and original bootstrap FSID per operation. Read-only
+`ceph.Container.FullRatios`, `ceph.FullRatios` and `ceph.FullRatioSnapshot` remain
+in `ceph`, including their parser and before/after native FSID checks.
+`Terminate` does not reset individual thresholds; restore explicitly when
+continuing to use the cluster, or terminate the disposable fixture.
 
 ## TemporaryBlocklist
 

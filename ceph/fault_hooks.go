@@ -191,3 +191,25 @@ func (faultHooks) NormalizeBlocklistSession(address string) (string, error) {
 func (faultHooks) BlocklistEntries(ctx context.Context, c *Container) ([]BlocklistEntry, error) {
 	return c.blocklistEntries(ctx)
 }
+
+// CaptureFullRatiosSession captures the control handle and original bootstrap
+// identity while the caller holds the topology gate. Reads keep both FSID guards.
+func (faultHooks) CaptureFullRatiosSession(ctx context.Context, c *Container) (interface {
+	Read(context.Context) (FullRatioSnapshot, error)
+	Command(context.Context, ...string) ([]byte, error)
+	Identity() string
+}, error) {
+	session, err := c.fullRatiosSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (session fullRatiosCLISession) Read(ctx context.Context) (FullRatioSnapshot, error) {
+	return session.read(ctx)
+}
+func (session fullRatiosCLISession) Command(ctx context.Context, args ...string) ([]byte, error) {
+	return session.command(ctx, args...)
+}
+func (session fullRatiosCLISession) Identity() string { return session.fsid }

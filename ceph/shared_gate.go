@@ -135,7 +135,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"SetPoolQuota":             sharedExclusive,
 	"SetPoolReplication":       sharedExclusive,
 	"TemporaryConfig":          sharedExclusive,
-	"TemporaryFullRatios":      sharedExclusive,
 	"TemporaryMGRModule":       sharedExclusive,
 	"TemporaryMessengerPolicy": sharedExclusive,
 	"TemporaryOSDFlag":         sharedExclusive,

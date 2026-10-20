@@ -474,7 +474,7 @@ func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, po
 
 // testCephFSOSDFullRetainedClient fills the OSDs of a live client's file
 // while the client keeps its mount and fd. Full ratios of 0.0001, 0.0002
-// and 0.0003, through TemporaryFullRatios, make the OSDs report themselves
+// and 0.0003, through fault.TemporaryFullRatios, make the OSDs report themselves
 // full, and the MON flags the file's data pool full in OSDMap epoch F. Once
 // the client holds epoch F (it reads a file that another client wrote, and
 // the OSD shares the map with it), its write returns ENOSPC (28) and its
@@ -511,7 +511,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("probe writer: exit=%d err=%v stderr=%.2048s", written.ExitCode, err, written.Stderr)
 	}
 
-	fill, err := m.cluster.TemporaryFullRatios(ctx, ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003})
+	fill, err := fault.TemporaryFullRatios(ctx, m.cluster, ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003})
 	if fill != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
