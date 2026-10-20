@@ -66,3 +66,25 @@ func ExamplePause() {
 	}
 	// The process stays alive but silent. Resume does not restart it.
 }
+
+func ExampleTemporaryBlocklist() {
+	ctx := context.Background()
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	if cluster != nil {
+		defer func() { _ = cluster.Terminate(ctx) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	// Replace this example with the exact address from a connected native client,
+	// such as librados GetAddrs. Bare IPs and zero nonces are refused.
+	address := "192.0.2.7:0/1234"
+	fence, err := fault.TemporaryBlocklist(ctx, cluster, address, time.Minute)
+	if fence != nil {
+		defer func() { _ = fence.Restore(context.Background()) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	// The selected session is fenced; other sessions on the host remain admitted.
+}

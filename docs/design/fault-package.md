@@ -3,8 +3,9 @@
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
-Blocklist, fullness and object errors remain in `ceph` for subsequent
-checkpoints. See the [migration guide](../fault.md) for the current API.
+Blocklist fencing is also extracted as `fault.TemporaryBlocklist` and
+`fault.BlocklistOverride`; its read-only query remains in `ceph`. Fullness and
+object errors remain in `ceph` for subsequent checkpoints. See the [migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
@@ -56,7 +57,10 @@ Proposed names are the stage 3 and stage 4 starting point; final spelling
 is decided in those stages. Cluster-bound functions take the cluster as the
 second parameter. The pause extraction chooses `fault.Pause` and
 `*fault.PauseLease` as the final public names, with `Resume` unchanged.
-The tables below retain the original stage 1 names.
+The tables below retain the original stage 1 names. Blocklist extraction keeps
+its plain topology mutex wait, expiration-based ownership and explicit Restore;
+Terminate does not gain a per-entry blocklist undo. Internal hooks reuse the
+ceph-owned query parser and exact-session normalizer.
 
 | Today (`ceph`) | Proposed (`fault`) | Source |
 | --- | --- | --- |

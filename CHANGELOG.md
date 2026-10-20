@@ -320,6 +320,12 @@ change the API.
 
 ### Changed
 
+- Move `Container.TemporaryBlocklist` to `fault.TemporaryBlocklist(ctx, cluster,
+  address, duration)` and `ceph.BlocklistOverride` to `fault.BlocklistOverride`.
+  `Address` and retryable `Restore` retain their ownership semantics; read-only
+  `BlocklistEntries` and `BlocklistEntry` remain in `ceph`. This intentional
+  next-minor source break has no compatibility aliases; see `docs/fault.md`.
+
 - The CI commands `batchselect` and `tagcatalog` moved from `tools/` to
   `internal/tools/`. They only serve this repository's CI planner, so they
   are no longer listed as packages of the published module.

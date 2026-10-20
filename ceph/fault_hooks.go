@@ -181,3 +181,13 @@ func (faultHooks) TestFaults(c *Container, kind string) map[string]any {
 	}
 	return result
 }
+
+// NormalizeBlocklistSession validates the exact client identity before reservation.
+func (faultHooks) NormalizeBlocklistSession(address string) (string, error) {
+	return normalizeBlocklistSession(address, true)
+}
+
+// BlocklistEntries reads native fencing state. The caller holds the topology gate.
+func (faultHooks) BlocklistEntries(ctx context.Context, c *Container) ([]BlocklistEntry, error) {
+	return c.blocklistEntries(ctx)
+}
