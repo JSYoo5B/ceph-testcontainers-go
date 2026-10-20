@@ -134,7 +134,7 @@ OSD and the gateway. Every pool, including the ones the gateway creates, has
 size 1 and min_size 1. With cached images on Docker Desktop (arm64), `Run`
 returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 
-- Each daemon keeps its own container, so `Stop`, `Start` and `PauseContainer`
+- Each daemon keeps its own container, so `Stop`, `Start` and `fault.Pause`
   on a handle still act on one daemon only.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or

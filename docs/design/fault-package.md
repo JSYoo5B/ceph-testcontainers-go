@@ -1,10 +1,10 @@
 # Design: extracting fault injection into package `fault`
 
-Status: stage 2's registry and internal hooks are implemented. Stage 3 moves
-network faults into `fault`, including service return types, caller-owned
-links and scenario call sites. Pause, blocklist, fullness and object errors
-remain in `ceph` for subsequent checkpoints. See the [network migration
-guide](../fault.md) for the current API.
+Status: stage 2's registry and internal hooks and stage 3's network extraction
+are implemented, including container pause as `fault.Pause`, returning
+`*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
+Blocklist, fullness and object errors remain in `ceph` for subsequent
+checkpoints. See the [migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
@@ -54,7 +54,9 @@ rbd, cephfs, rgw, internal/multicluster ──imports──▶ fault, ceph
 
 Proposed names are the stage 3 and stage 4 starting point; final spelling
 is decided in those stages. Cluster-bound functions take the cluster as the
-second parameter.
+second parameter. The pause extraction chooses `fault.Pause` and
+`*fault.PauseLease` as the final public names, with `Resume` unchanged.
+The tables below retain the original stage 1 names.
 
 | Today (`ceph`) | Proposed (`fault`) | Source |
 | --- | --- | --- |
@@ -428,7 +430,7 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 | `ceph.TemporaryLinkDelay(ctx, ctr, network, delay)` | `fault.TemporaryLinkDelay(ctx, ctr, network, delay)` |
 | `cluster.InterruptNetwork(ctx, ctr, ceph.PublicNetworkPlane)` | `fault.InterruptNetwork(ctx, cluster, ctr, ceph.PublicNetworkPlane)` |
 | `ceph.InterruptNetwork(ctx, ctr, name)` | `fault.InterruptLink(ctx, ctr, name)` |
-| `cluster.PauseContainer(ctx, osd)` | `fault.PauseContainer(ctx, cluster, osd)` |
+| `cluster.PauseContainer(ctx, osd)` | `fault.Pause(ctx, cluster, osd)` |
 | `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | `fault.TemporaryBlocklist(ctx, cluster, addr, time.Minute)` |
 | `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | `fault.TemporaryFullRatios(ctx, cluster, ceph.FullRatios{...})` |
 | `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` |

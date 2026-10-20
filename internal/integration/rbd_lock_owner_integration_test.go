@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -135,9 +136,9 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				}
 				return lock
 			}
-			pause := func(ctr testcontainers.Container) *ceph.ContainerPause {
+			pause := func(ctr testcontainers.Container) *fault.PauseLease {
 				t.Helper()
-				paused, err := cluster.PauseContainer(ctx, ctr)
+				paused, err := fault.Pause(ctx, cluster, ctr)
 				if paused != nil {
 					t.Cleanup(func() {
 						cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

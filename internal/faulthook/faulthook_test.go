@@ -13,7 +13,7 @@ import (
 func TestRegistryThroughHooks(t *testing.T) {
 	c := servicehook.TestCluster(nil, servicehook.TestConfig{})
 	ctx := t.Context()
-	if err := faulthook.Admit(c, "fault.PauseContainer"); err != nil {
+	if err := faulthook.Admit(c, "fault.Pause"); err != nil {
 		t.Fatalf("a cluster of its own refused a fault: %v", err)
 	}
 	if err := faulthook.Admit(c, "fault.Unclassified"); !errors.Is(err, ceph.ErrInvalidRequest) {

@@ -27,7 +27,7 @@ from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 | Package | Import path | What it provides | Documentation |
 | --- | --- | --- | --- |
 | `ceph` | `github.com/JSYoo5B/ceph-testcontainers-go/ceph` | The cluster: MON, MGR and OSD topology, pools, Cephx identities, configuration, health, fault injection and diagnostics | [docs/ceph.md](docs/ceph.md) |
-| `fault` | `github.com/JSYoo5B/ceph-testcontainers-go/fault` | Network delay, loss, rate, packet faults and endpoint interruption on existing fixtures | [docs/fault.md](docs/fault.md) |
+| `fault` | `github.com/JSYoo5B/ceph-testcontainers-go/fault` | Container pause, network delay, loss, rate, packet faults and endpoint interruption on existing fixtures | [docs/fault.md](docs/fault.md) |
 | `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
 | `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
 | `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes, multisite replication and sync policy | [docs/rgw.md](docs/rgw.md) |

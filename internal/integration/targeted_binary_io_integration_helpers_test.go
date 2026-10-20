@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -803,7 +804,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil {
 		t.Fatal(err)
 	}
-	pause, err := cluster.PauseContainer(ctx, osd)
+	pause, err := fault.Pause(ctx, cluster, osd)
 	if pause != nil {
 		defer func() { _ = pause.Resume(ctx) }()
 	}

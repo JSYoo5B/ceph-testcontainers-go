@@ -35,10 +35,11 @@ func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T
 
 // The public package-level entry points must gate before validating zero
 // requests or touching Docker, just as their former Container methods did.
-func TestPublicNetworkFaultsRefuseSharedCluster(t *testing.T) {
+func TestPublicFaultsRefuseSharedCluster(t *testing.T) {
 	c := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
 	for name, apply := range map[string]func() error{
 		"fault.TemporaryNetworkDelay": func() error { _, err := TemporaryNetworkDelay(t.Context(), c, nil, NetworkDelay{}); return err },
+		"fault.Pause":                 func() error { _, err := Pause(t.Context(), c, nil); return err },
 		"fault.InterruptNetwork":      func() error { _, err := InterruptNetwork(t.Context(), c, nil, ""); return err },
 	} {
 		err := apply()

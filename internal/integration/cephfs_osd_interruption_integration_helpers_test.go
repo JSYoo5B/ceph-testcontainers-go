@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -217,7 +218,7 @@ func objecterRequests(ctx context.Context, cluster *ceph.Container, ctr testcont
 	return ops, string(out), nil
 }
 
-// testCephFSOSDInterruption freezes, with PauseContainer and nodown held
+// testCephFSOSDInterruption freezes, with fault.Pause and nodown held
 // through TemporaryOSDFlag, the acting primary OSD of the first object of a
 // live client's file, while a second live client in another container waits
 // to make a directory. Every PG of the two-OSD cluster includes that OSD, so
@@ -287,7 +288,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal("hold nodown:", err)
 	}
-	pause, err := m.cluster.PauseContainer(ctx, target.Container)
+	pause, err := fault.Pause(ctx, m.cluster, target.Container)
 	if pause != nil {
 		t.Cleanup(func() {
 			resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)

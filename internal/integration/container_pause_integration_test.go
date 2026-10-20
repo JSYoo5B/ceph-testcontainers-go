@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown
@@ -62,7 +63,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			if target == nil || target.Container == nil {
 				t.Fatal("second owned OSD unavailable")
 			}
-			if pause, err := cluster.PauseContainer(ctx, cluster.ControlContainer()); err == nil || pause != nil {
+			if pause, err := fault.Pause(ctx, cluster, cluster.ControlContainer()); err == nil || pause != nil {
 				t.Fatal("control CLI container was paused")
 			}
 
@@ -74,14 +75,14 @@ func TestPausedOSDFaults(t *testing.T) {
 				if err != nil {
 					t.Fatal("hold nodown", err)
 				}
-				pause, err := cluster.PauseContainer(ctx, target.Container)
+				pause, err := fault.Pause(ctx, cluster, target.Container)
 				if pause != nil {
 					t.Cleanup(func() { resumePause(t, pause) })
 				}
 				if err != nil {
 					t.Fatal("pause OSD", err)
 				}
-				if again, err := cluster.PauseContainer(ctx, target.Container); err == nil || again != pause {
+				if again, err := fault.Pause(ctx, cluster, target.Container); err == nil || again != pause {
 					t.Fatal("overlapping pause was admitted", err)
 				}
 				probe(t, "blocked")
@@ -107,7 +108,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			})
 
 			t.Run("frozen_down", func(t *testing.T) {
-				pause, err := cluster.PauseContainer(ctx, target.Container)
+				pause, err := fault.Pause(ctx, cluster, target.Container)
 				if pause != nil {
 					t.Cleanup(func() { resumePause(t, pause) })
 				}
@@ -138,7 +139,7 @@ func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverride) {
 	}
 }
 
-func resumePause(t *testing.T, pause *ceph.ContainerPause) {
+func resumePause(t *testing.T, pause *fault.PauseLease) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := pause.Resume(ctx); err != nil {

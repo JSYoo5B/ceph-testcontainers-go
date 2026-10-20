@@ -102,7 +102,7 @@ func get() hooks {
 	return h
 }
 
-// Admit refuses the fault operation op ("fault.PauseContainer" and so on)
+// Admit refuses the fault operation op ("fault.Pause" and so on)
 // on a cluster that a SharedCluster shares, with the policy of the method
 // that implements it in package ceph. An operation without a policy is
 // refused.

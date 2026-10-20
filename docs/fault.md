@@ -1,10 +1,10 @@
-# Network faults
+# Dedicated faults
 
 Import `github.com/JSYoo5B/ceph-testcontainers-go/fault` alongside `ceph`.
 This package uses the cluster created by `ceph.Run`; there is no separate
 fixture lifetime. `NetworkPlane` and its constants remain in `ceph`.
 
-## Upgrade from the ceph network fault APIs
+## Upgrade from the ceph fault APIs
 
 This is an intentional source-breaking move for the next minor release.
 There are no compatibility aliases or wrappers in `ceph`. Existing released
@@ -12,6 +12,8 @@ versions keep their original APIs. Update imports and calls together:
 
 | Previous call or type | New call or type |
 | --- | --- |
+| `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
+| `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
 | `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` |
 | `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.TemporaryLinkDelay(ctx, target, network, delay)` |
 | `cluster.InterruptNetwork(ctx, target, plane)` | `fault.InterruptNetwork(ctx, cluster, target, plane)` |
@@ -34,8 +36,51 @@ handles returned with errors; restore remains retryable after uncertain results.
 The error categories remain in `ceph`; the moved sentinels still match them
 with `errors.Is`.
 
-Pause, blocklist, temporary fullness and object-error injection remain in
+Blocklist, temporary fullness and object-error injection remain in
 `ceph` until their separately validated extraction steps.
+
+## Pause
+
+```golang
+func Pause(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container) (*fault.PauseLease, error)
+```
+
+Freezes every process of an owned daemon or of a caller-owned `WithClient`
+container through Docker's cgroup freezer, as `docker pause` does. Unlike `Stop`,
+the process keeps its memory, sockets and Ceph identity, and peers see silence
+instead of a closed connection: a frozen OSD stops answering client operations
+and heartbeats until its peers report it down after the heartbeat grace. Hold
+`nodown` with [TemporaryOSDFlag](ceph.md#temporaryosdflag) to keep it up, so that client
+operations hit their own timeouts (`rados_osd_op_timeout`) or are reported as
+`SLOW_OPS` (after `osd_op_complaint_time`, 30 seconds by default). Works in host
+mode.
+
+The control container is refused (in a single-MON cluster that is MON `a`),
+because every fixture command would block. A container that is already paused is
+refused rather than adopted, and only one pause per container is allowed. The
+returned `*fault.PauseLease` has `ContainerID` and `Resume`; `Resume` thaws the
+container without restarting it and treats a removed or already running
+container as done. `Terminate` resumes remaining pauses after network fault restoration and before
+container teardown; resume a
+caller-owned container yourself before removing it.
+
+```golang
+hold, err := cluster.TemporaryOSDFlag(ctx, "nodown", true)
+if hold != nil {
+	defer hold.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[1])
+if pause != nil {
+	defer pause.Resume(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Client operations on PGs that include osd.1 now wait for their timeouts.
+```
 
 ## InterruptNetwork
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 // radosWatcher watches one object and answers every notify until stopped.
@@ -104,7 +105,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 				t.Fatalf("notify to a live watcher errno = %d", errno)
 			}
 
-			pause, err := cluster.PauseContainer(ctx, client)
+			pause, err := fault.Pause(ctx, cluster, client)
 			if pause != nil {
 				t.Cleanup(func() {
 					cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

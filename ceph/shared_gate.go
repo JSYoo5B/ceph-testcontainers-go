@@ -125,7 +125,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	// Cluster-wide changes.
 	"DeepScrubPG":              sharedExclusive,
 	"CreatePool":               sharedExclusive,
-	"PauseContainer":           sharedExclusive,
 	"RefreshMonitorConfig":     sharedExclusive,
 	"RemovePool":               sharedExclusive,
 	"RepairPG":                 sharedExclusive,
@@ -204,7 +203,7 @@ func (c *Container) sharedGate(method string) error {
 var sharedFaultPolicies = map[string]sharedPolicy{
 	"fault.TemporaryNetworkDelay": sharedExclusive,
 	"fault.InterruptNetwork":      sharedExclusive,
-	"fault.PauseContainer":        sharedExclusive,
+	"fault.Pause":                 sharedExclusive,
 	"fault.TemporaryBlocklist":    sharedExclusive,
 	"fault.TemporaryFullRatios":   sharedExclusive,
 	"fault.InjectObjectDataError": sharedRecycle,

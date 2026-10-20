@@ -22,6 +22,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -1028,7 +1029,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	baseline := actor.receipt(t, ctx, 1)
 	session := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0)
 
-	pause, err := cluster.PauseContainer(ctx, client)
+	pause, err := fault.Pause(ctx, cluster, client)
 	if pause != nil {
 		t.Cleanup(func() {
 			resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)

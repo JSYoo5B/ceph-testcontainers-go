@@ -1,6 +1,6 @@
 # Fault injection
 
-Network faults use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
+Network faults and container pauses use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
 existing `*ceph.Container`; see the [API and migration guide](../fault.md).
 
 ## Introduction
@@ -19,7 +19,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
-| A daemon or client is alive but silent | `ceph.Container.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
+| A daemon or client is alive but silent | `fault.Pause` | No replies, no closed connection; down only after heartbeat grace | Yes | `fault.PauseLease.Resume` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets that a container sends on one network arrive late | `fault.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
 | A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
@@ -32,8 +32,8 @@ extension: a separate netem helper image applies it, and only that helper gets
 | The cluster reports nearfull, backfillfull or full | `TemporaryFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
-| The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.TemporarySessionTimeouts` with `PauseContainer` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverride.Restore` |
-| An RBD exclusive lock moves to another client | `rbd.ImageClients` with `PauseContainer` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
+| The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.TemporarySessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverride.Restore` |
+| An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
 Each of these conditions ends with the cluster: when the test terminates the
 cluster afterwards, the undo step is optional. See [Contexts, ownership and cleanup](contexts-and-cleanup.md)
@@ -105,7 +105,7 @@ before asserting recovery.
 
 ## Freezing a container
 
-`PauseContainer` freezes every process in a container through Docker's cgroup
+`fault.Pause` freezes every process in a container through Docker's cgroup
 freezer, like `docker pause`. The process keeps its memory, sockets and Ceph
 identity. Peers do not see a closed connection; they only stop getting
 replies. Use it to reproduce an unresponsive OSD, MDS or client.
@@ -118,7 +118,7 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := cluster.PauseContainer(ctx, cluster.OSDs()[1])
+pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[1])
 // A lost Docker reply does not prove the container is still running.
 // Resume a non-nil handle even when err is not nil.
 if pause != nil {
@@ -1015,7 +1015,7 @@ Useful combinations:
 
 | Goal | Flags |
 | --- | --- |
-| A frozen OSD stays up so clients hit their own timeouts | `nodown` with `PauseContainer` |
+| A frozen OSD stays up so clients hit their own timeouts | `nodown` with `fault.Pause` |
 | A stopped OSD stays in so no data moves | `noout` with `Stop` |
 | A placement change or recovery stays incomplete | `nobackfill` and `norecover` together (`nobackfill` alone does not stop log-based recovery of small PGs) |
 | No background scrub interferes with a test | `noscrub`, `nodeep-scrub` (they can also keep `DeepScrubPG` from finishing) |
@@ -1149,7 +1149,7 @@ if change != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := cluster.PauseContainer(ctx, client)
+pause, err := fault.Pause(ctx, cluster, client)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }
@@ -1189,7 +1189,7 @@ if err != nil {
 ## Handing over an RBD exclusive lock
 
 `rbd.ImageClients` reads the watchers and locks of an image. Together with
-`PauseContainer` and `TemporaryBlocklist` it reproduces an unresponsive RBD
+`fault.Pause` and `TemporaryBlocklist` it reproduces an unresponsive RBD
 client that holds the exclusive lock.
 
 ```golang
@@ -1198,7 +1198,7 @@ if err != nil {
 	t.Fatal(err)
 }
 owner := status.ExclusiveOwner() // nil when nobody holds the lock
-pause, err := cluster.PauseContainer(ctx, ownerClient)
+pause, err := fault.Pause(ctx, cluster, ownerClient)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }
@@ -1271,7 +1271,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `PauseContainer`, `InterruptNetwork`,
+- [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
+- [ceph.md](../ceph.md):
   `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryBlocklist`,
   `TemporaryFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.

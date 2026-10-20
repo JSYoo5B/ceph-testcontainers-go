@@ -295,7 +295,7 @@ Linux processes. When the setting is off, `Run` fails with
 - Docker cannot disconnect a host-network endpoint, so `InterruptNetwork`,
   `InterruptPeerLink` and `InterruptZoneLink` are refused in host mode.
   `TemporaryNetworkDelay` is refused too: a delay there would delay the host.
-  `PauseContainer` and the Ceph messenger options work in both modes (see
+  `fault.Pause` and the Ceph messenger options work in both modes (see
   [Fault injection](fault-injection.md)).
 - Every host-network container shares the host's hostname. Identify CephFS
   sessions by `ID` rather than `Hostname`, and do not rely on `hostname` to
