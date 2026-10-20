@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -62,7 +63,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	// running. A cancel at any point of startup, including before the CLI is
 	// visible, must not let a CLI start afterwards.
 	osd := cluster.OSDs()[0]
-	pause, err := cluster.PauseContainer(ctx, osd)
+	pause, err := fault.PauseContainer(ctx, cluster, osd)
 	if err != nil {
 		if pause != nil {
 			_ = pause.Resume(ctx)

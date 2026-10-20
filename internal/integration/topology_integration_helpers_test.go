@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -317,7 +318,7 @@ else:
 // client, and the command then waits for the quorum without a CLI timeout.
 func topologyQuorumStall(t *testing.T, ctx context.Context, cluster *ceph.Container, frozen []*ceph.MonitorContainer) {
 	t.Helper()
-	pauses := make([]*ceph.ContainerPause, 0, len(frozen))
+	pauses := make([]*fault.ContainerPause, 0, len(frozen))
 	resume := func() {
 		for _, pause := range pauses {
 			if err := pause.Resume(ctx); err != nil {
@@ -328,7 +329,7 @@ func topologyQuorumStall(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	}
 	defer resume()
 	for _, mon := range frozen {
-		pause, err := cluster.PauseContainer(ctx, mon.Container)
+		pause, err := fault.PauseContainer(ctx, cluster, mon.Container)
 		if pause != nil {
 			pauses = append(pauses, pause)
 		}

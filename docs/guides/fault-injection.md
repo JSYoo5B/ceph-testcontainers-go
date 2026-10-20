@@ -1,6 +1,6 @@
 # Fault injection
 
-Network faults use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
+Network faults and container pauses use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
 existing `*ceph.Container`; see the [API and migration guide](../fault.md).
 
 ## Introduction
@@ -19,7 +19,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Condition you want | API | What peers observe | Host network | Undo |
 | --- | --- | --- | --- | --- |
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
-| A daemon or client is alive but silent | `ceph.Container.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
+| A daemon or client is alive but silent | `fault.PauseContainer` | No replies, no closed connection; down only after heartbeat grace | Yes | `ContainerPause.Resume` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets that a container sends on one network arrive late | `fault.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
 | A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
@@ -118,7 +118,7 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := cluster.PauseContainer(ctx, cluster.OSDs()[1])
+pause, err := fault.PauseContainer(ctx, cluster, cluster.OSDs()[1])
 // A lost Docker reply does not prove the container is still running.
 // Resume a non-nil handle even when err is not nil.
 if pause != nil {
@@ -1149,7 +1149,7 @@ if change != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := cluster.PauseContainer(ctx, client)
+pause, err := fault.PauseContainer(ctx, cluster, client)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }
@@ -1198,7 +1198,7 @@ if err != nil {
 	t.Fatal(err)
 }
 owner := status.ExclusiveOwner() // nil when nobody holds the lock
-pause, err := cluster.PauseContainer(ctx, ownerClient)
+pause, err := fault.PauseContainer(ctx, cluster, ownerClient)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }
@@ -1271,7 +1271,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `PauseContainer`, `InterruptNetwork`,
+- [fault.md](../fault.md): `PauseContainer`, `InterruptNetwork` and network profiles.
+- [ceph.md](../ceph.md):
   `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryBlocklist`,
   `TemporaryFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.

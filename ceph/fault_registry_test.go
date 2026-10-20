@@ -365,7 +365,7 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 	for op, policy := range sharedFaultPolicies {
 		method, ok := strings.CutPrefix(op, "fault.")
 		expected := sharedMethodPolicies[method]
-		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" {
+		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" || method == "PauseContainer" {
 			expected = sharedExclusive
 		}
 		if !ok || policy != expected {

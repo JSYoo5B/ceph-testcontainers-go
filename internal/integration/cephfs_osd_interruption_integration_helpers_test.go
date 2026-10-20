@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -287,7 +288,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal("hold nodown:", err)
 	}
-	pause, err := m.cluster.PauseContainer(ctx, target.Container)
+	pause, err := fault.PauseContainer(ctx, m.cluster, target.Container)
 	if pause != nil {
 		t.Cleanup(func() {
 			resumeCtx, stop := context.WithTimeout(context.Background(), time.Minute)

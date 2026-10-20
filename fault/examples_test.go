@@ -47,3 +47,22 @@ func ExampleInterruptNetwork() {
 	}
 	// Restore reconnects the endpoint; it does not restart a daemon that exited.
 }
+
+func ExamplePauseContainer() {
+	ctx := context.Background()
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	if cluster != nil {
+		defer func() { _ = cluster.Terminate(ctx) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	pause, err := fault.PauseContainer(ctx, cluster, cluster.OSDs()[0])
+	if pause != nil {
+		defer func() { _ = pause.Resume(ctx) }()
+	}
+	if err != nil {
+		panic(err)
+	}
+	// The process stays alive but silent. Resume does not restart it.
+}

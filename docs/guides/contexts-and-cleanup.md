@@ -316,7 +316,7 @@ daemons wrote; it also reads containers that have stopped.
 Many calls return a non-nil result together with an error:
 
 ```golang
-pause, err := cluster.PauseContainer(ctx, osd)
+pause, err := fault.PauseContainer(ctx, cluster, osd)
 if pause != nil {
 	defer pause.Resume(cleanupCtx)
 }

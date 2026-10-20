@@ -1425,7 +1425,7 @@ func TestLockHandover(t *testing.T) {
 	first := startWriter(ctx, t, cluster)
 	owner := waitOwner("")
 
-	pause, err := cluster.PauseContainer(ctx, first)
+	pause, err := fault.PauseContainer(ctx, cluster, first)
 	if pause != nil {
 		// Registered after the container's cleanup, so it runs first.
 		t.Cleanup(func() { _ = pause.Resume(context.Background()) })

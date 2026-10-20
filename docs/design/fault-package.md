@@ -1,10 +1,10 @@
 # Design: extracting fault injection into package `fault`
 
-Status: stage 2's registry and internal hooks are implemented. Stage 3 moves
-network faults into `fault`, including service return types, caller-owned
-links and scenario call sites. Pause, blocklist, fullness and object errors
-remain in `ceph` for subsequent checkpoints. See the [network migration
-guide](../fault.md) for the current API.
+Status: stage 2's registry and internal hooks and stage 3's network extraction
+are implemented. The next bounded checkpoint moves `PauseContainer` and
+`ContainerPause` to `fault`, preserving admission and phase-3 `Resume` cleanup.
+Blocklist, fullness and object errors remain in `ceph` for subsequent
+checkpoints. See the [migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and

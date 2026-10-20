@@ -125,7 +125,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	// Cluster-wide changes.
 	"DeepScrubPG":              sharedExclusive,
 	"CreatePool":               sharedExclusive,
-	"PauseContainer":           sharedExclusive,
 	"RefreshMonitorConfig":     sharedExclusive,
 	"RemovePool":               sharedExclusive,
 	"RepairPG":                 sharedExclusive,
