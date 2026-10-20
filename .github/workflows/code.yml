@@ -22,7 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 # Go jobs restore the module cache that the Plan job of tagged-runtime.yml
-# saves after downloading every module; they never save one themselves.
+# saves after downloading every module. Build caches are shared by exact Go
+# version; only default-branch vulnerability checks fill a missing one here.
 jobs:
   unit:
     name: Unit tests
@@ -140,6 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ job.status == 'failure' && 14 || 7 }}
           name: code-tag-coverage
           path: |
             artifacts/tag-plan.json
@@ -161,18 +163,41 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
+        id: go
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
-          cache-dependency-path: |
-            go.sum
-            internal/integration/goceph/probe/go.sum
+          cache: false
+      - name: Restore the Go module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/go/pkg/mod
+          key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
+      - name: Restore the Go build cache
+        id: build_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Scan source and required modules
         run: make vulncheck VULNCHECK_DIR=artifacts/vulncheck
+      # The minimum Go version normally finds Plan's cache. A scheduled or
+      # main run can fill a cache for the other toolchain without storing a
+      # second copy of the module cache or saving PR-scoped build caches.
+      - name: Save the Go build cache
+        if: >-
+          steps.build_cache.outputs.cache-hit != 'true' &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Save the scans
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ job.status == 'failure' && 14 || 7 }}
           name: vulncheck-go-${{ matrix.go }}
           path: artifacts/vulncheck/*.json
           if-no-files-found: warn
