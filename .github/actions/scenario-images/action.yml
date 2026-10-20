@@ -17,6 +17,7 @@ runs:
   using: composite
   steps:
     - name: Resolve native role image identities
+      id: resolve
       shell: bash
       env:
         SCENARIO_RELEASE: ${{ inputs.release }}
@@ -33,6 +34,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@v7
       with:
+        retention-days: ${{ (job.status == 'failure' || steps.resolve.outcome == 'failure') && 14 || 7 }}
         name: ${{ inputs.artifact_name }}
         path: artifacts/scenario-images/
         if-no-files-found: error

@@ -162,6 +162,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ job.status == 'failure' && 14 || 7 }}
           name: plan-${{ inputs.category }}-${{ inputs.release }}
           path: |
             artifacts/tag-plan.json
@@ -303,6 +304,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
+          retention-days: ${{ job.status == 'failure' && 14 || 7 }}
           name: tag-scenario-${{ matrix.id }}-${{ inputs.release }}${{ matrix.artifact_suffix }}
           # The test binary is tens of megabytes; its sha256 stays in
           # compile-report.json.
