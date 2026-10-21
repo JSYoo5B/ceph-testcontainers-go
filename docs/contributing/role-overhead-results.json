@@ -1,0 +1,1619 @@
+{
+  "schema": 1,
+  "date": "2026-10-22",
+  "scope": "Warm native Linux/amd64 idle-container comparison; not cold pull, host CPU, peak RSS or load throughput",
+  "cohorts": {
+    "official": {
+      "source_revision": "111d5ba9d86906381a0e3b651577b08eaf515b84",
+      "image_assembly_revision": "7ef514c475d6c789620f7bb6f63318a154ded742",
+      "raw_report_sha256": "5c278c86de3c39e79b3b8d037168db9a0e16a97a4280d700956a0e0fc2e262d7",
+      "platform": "linux/amd64",
+      "docker": "29.9.1",
+      "kernel": "6.8.0-117-generic",
+      "cgroup": "2",
+      "storage_driver": "overlayfs",
+      "logical_cpus": 12,
+      "host_memory_bytes": 32722554880,
+      "image_ids": {
+        "all": "sha256:b4ee33c2521f6dcaf2c2da030790f7c28a559a12ffbfa9d5517cd0874b554aec",
+        "client": "sha256:5d59d3ce482668fab9107ab6c1d4a5d1da2689d09d27985f1a71363441b1beb4",
+        "essential": "sha256:cdb076bba890a3eabe70085c345c04e1baafc1e5658b68bf3a32921ae1044e0e"
+      },
+      "trials": [
+        {
+          "Round": 0,
+          "Mode": "all",
+          "Warmup": true,
+          "StartSeconds": 13.784906798,
+          "FirstClientSeconds": 2e-06,
+          "RBDProofSeconds": 9.786737697,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9964607937344553,
+            "MeanMemoryBytes": 382751464.7272726,
+            "MeanWorkingSet": 354421666.90909094,
+            "ContainerIDs": [
+              "35072d041c45b3fd84ad242ff9bfc4030fa11782fd9567b227e95661ec287412",
+              "3902ea882064f71a26ebf2d5ce04d574489e8080e0b609579a783a2f36d52f84",
+              "6591c7e7bf314b5bb833104d281303295023933542ec21bb8b4cb9e42b25eba5"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0190299013043354,
+            "MeanMemoryBytes": 385827560.7272727,
+            "MeanWorkingSet": 357041989.8181819,
+            "ContainerIDs": [
+              "35072d041c45b3fd84ad242ff9bfc4030fa11782fd9567b227e95661ec287412",
+              "3902ea882064f71a26ebf2d5ce04d574489e8080e0b609579a783a2f36d52f84",
+              "6591c7e7bf314b5bb833104d281303295023933542ec21bb8b4cb9e42b25eba5"
+            ]
+          }
+        },
+        {
+          "Round": 0,
+          "Mode": "split",
+          "Warmup": true,
+          "StartSeconds": 13.357019693,
+          "FirstClientSeconds": 0.811963689,
+          "RBDProofSeconds": 8.957054747,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9883440911311585,
+            "MeanMemoryBytes": 382534749.09090906,
+            "MeanWorkingSet": 354209047.2727274,
+            "ContainerIDs": [
+              "86d860bbd3703488f25099a34382f4d83d0da7a656ffc7c28c295e0cf071a29a",
+              "87a03fb6265c554487289bb0d5c5e94e8c1cecf3d2e1080c98ed537242d1fb0a",
+              "8e96af1066eaa26d02ae8868fd91b985e523dd092bb4e0f46896ea11877d173b"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0403359640462255,
+            "MeanMemoryBytes": 388118714.1818181,
+            "MeanWorkingSet": 357947205.8181818,
+            "ContainerIDs": [
+              "86d860bbd3703488f25099a34382f4d83d0da7a656ffc7c28c295e0cf071a29a",
+              "87a03fb6265c554487289bb0d5c5e94e8c1cecf3d2e1080c98ed537242d1fb0a",
+              "8e96af1066eaa26d02ae8868fd91b985e523dd092bb4e0f46896ea11877d173b",
+              "dbe8970dc5480e75a9a8fa7680445d5df8f3771ae875b01009f3402ffd67dfa2"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0044440922752629,
+            "MeanMemoryBytes": 2605056,
+            "MeanWorkingSet": 1216512
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.411687963,
+          "FirstClientSeconds": 0.804785925,
+          "RBDProofSeconds": 9.066486006,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.026370191803823,
+            "MeanMemoryBytes": 382613690.18181825,
+            "MeanWorkingSet": 354258943.99999994,
+            "ContainerIDs": [
+              "bdef99f03ec808a192a8046c43f82df1c361549adf971e54e8ec110aa4226c58",
+              "bf8b33e80c9da20ab19e274540bafbd9b76f36a2f5c9bc1422ab683d7c248b69",
+              "f6b3d82cd2812fe0e5f58579c4f7b5b208264b8473b0f8344a27ea7ea349b01a"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9964452105628959,
+            "MeanMemoryBytes": 388195048.7272728,
+            "MeanWorkingSet": 357993378.90909076,
+            "ContainerIDs": [
+              "bdef99f03ec808a192a8046c43f82df1c361549adf971e54e8ec110aa4226c58",
+              "bf8b33e80c9da20ab19e274540bafbd9b76f36a2f5c9bc1422ab683d7c248b69",
+              "f6b3d82cd2812fe0e5f58579c4f7b5b208264b8473b0f8344a27ea7ea349b01a",
+              "fb0d7bd3de909669fb40e48706f584ec13f5c6d4aac6f0d3fa2c33c2acdf356c"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.003689062357682736,
+            "MeanMemoryBytes": 2601704.727272727,
+            "MeanWorkingSet": 1213160.7272727273
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 14.399121176,
+          "FirstClientSeconds": 2.38e-06,
+          "RBDProofSeconds": 8.794258339,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0838379253583919,
+            "MeanMemoryBytes": 382843066.1818182,
+            "MeanWorkingSet": 354512523.63636374,
+            "ContainerIDs": [
+              "24c8f03c4983300420ce94e9e4858181b35de420df2ef4add33139915d4db698",
+              "434d5b6b19c0345785d6210d90efdf7ed46a2816968f8ffe97652a1cc8fb04fc",
+              "47919fcde64a84390b4075c88188108c3223f0f7d7cce63f3590713f7f1aa395"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0033484724545745,
+            "MeanMemoryBytes": 386095662.5454545,
+            "MeanWorkingSet": 357291473.4545455,
+            "ContainerIDs": [
+              "24c8f03c4983300420ce94e9e4858181b35de420df2ef4add33139915d4db698",
+              "434d5b6b19c0345785d6210d90efdf7ed46a2816968f8ffe97652a1cc8fb04fc",
+              "47919fcde64a84390b4075c88188108c3223f0f7d7cce63f3590713f7f1aa395"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.375078362,
+          "FirstClientSeconds": 2.29e-06,
+          "RBDProofSeconds": 9.747739977,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0354016393020393,
+            "MeanMemoryBytes": 383155479.2727273,
+            "MeanWorkingSet": 354825681.4545455,
+            "ContainerIDs": [
+              "195c8677d07c620721b73c1d35ac98503edff802bb65129969f94a1a6ecdbf16",
+              "489bd499b4ef95b866fe7fd4d0bc948ec7e868f0c1f98e3736022e6524a8baee",
+              "65cf6ebbc31e9c3b9c8e00d534f43942a5fd0b695f6d5e3b8e74e2f7ad8cfa20"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0446556923270183,
+            "MeanMemoryBytes": 386100130.90909106,
+            "MeanWorkingSet": 357317911.2727273,
+            "ContainerIDs": [
+              "195c8677d07c620721b73c1d35ac98503edff802bb65129969f94a1a6ecdbf16",
+              "489bd499b4ef95b866fe7fd4d0bc948ec7e868f0c1f98e3736022e6524a8baee",
+              "65cf6ebbc31e9c3b9c8e00d534f43942a5fd0b695f6d5e3b8e74e2f7ad8cfa20"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 12.864989334,
+          "FirstClientSeconds": 0.819175354,
+          "RBDProofSeconds": 9.585557546,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9668857065247978,
+            "MeanMemoryBytes": 381955351.2727273,
+            "MeanWorkingSet": 353630394.1818182,
+            "ContainerIDs": [
+              "146928f602452bf5dc51395e072347c979c83e24a8063779c209d22edba740ba",
+              "5be47272a2805bd3348e1f395a129b34244afc2a0d6ee08db0ad16f48e2bbeab",
+              "b27a8c98ab9d29e57334ccd052eeada3ad9485c952089500790847234cde8646"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0176855506653688,
+            "MeanMemoryBytes": 388187229.09090924,
+            "MeanWorkingSet": 358022050.9090909,
+            "ContainerIDs": [
+              "146928f602452bf5dc51395e072347c979c83e24a8063779c209d22edba740ba",
+              "5be47272a2805bd3348e1f395a129b34244afc2a0d6ee08db0ad16f48e2bbeab",
+              "b27a8c98ab9d29e57334ccd052eeada3ad9485c952089500790847234cde8646",
+              "d237c04b8a9a9333fdbaf768b6627081368798489e2b4bbd9e1aa6a85d1cecd5"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0040770523110671576,
+            "MeanMemoryBytes": 2617344,
+            "MeanWorkingSet": 1228800
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.409347744,
+          "FirstClientSeconds": 0.797961563,
+          "RBDProofSeconds": 9.043636714,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.1097951581671026,
+            "MeanMemoryBytes": 381807895.2727272,
+            "MeanWorkingSet": 353459106.90909094,
+            "ContainerIDs": [
+              "59c6d7dab9f77d4b8a525e418a1573bf639f4bb56a2eb769005dd6ed249d39e1",
+              "b26bc67dd793557986972d384ece4a373a0dcb5298a1110e32a9b63fef555b5d",
+              "d223ab17a25a322fb22b6f9ef1806cad498b051ff7328ea79e62bc6e158b328e"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0261922015530631,
+            "MeanMemoryBytes": 388046475.63636357,
+            "MeanWorkingSet": 357844805.8181818,
+            "ContainerIDs": [
+              "3efcfb2ae908aa6a0163e4a7542a70749e51b5d71fa88e1817e08b43f70ea1fe",
+              "59c6d7dab9f77d4b8a525e418a1573bf639f4bb56a2eb769005dd6ed249d39e1",
+              "b26bc67dd793557986972d384ece4a373a0dcb5298a1110e32a9b63fef555b5d",
+              "d223ab17a25a322fb22b6f9ef1806cad498b051ff7328ea79e62bc6e158b328e"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.004275127309314409,
+            "MeanMemoryBytes": 2612875.6363636362,
+            "MeanWorkingSet": 1224331.6363636365
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.348544278,
+          "FirstClientSeconds": 1.41e-06,
+          "RBDProofSeconds": 8.779063485,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0114193170137036,
+            "MeanMemoryBytes": 383469009.4545454,
+            "MeanWorkingSet": 355135860.3636364,
+            "ContainerIDs": [
+              "28c3eb42c01ae3cae22b2e60bae77d80640d4e3383cfc89eb677790d4549e6bc",
+              "ea22e7f4348cc7f3885d614bf6538e924ce34951b277a88c0a59ccc8177aa90d",
+              "fac032adef745622a0dffa5517e9a27a9e0d68d4825391aea048a63d99271ccd"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0121806166292622,
+            "MeanMemoryBytes": 386905553.4545454,
+            "MeanWorkingSet": 358121844.3636364,
+            "ContainerIDs": [
+              "28c3eb42c01ae3cae22b2e60bae77d80640d4e3383cfc89eb677790d4549e6bc",
+              "ea22e7f4348cc7f3885d614bf6538e924ce34951b277a88c0a59ccc8177aa90d",
+              "fac032adef745622a0dffa5517e9a27a9e0d68d4825391aea048a63d99271ccd"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.367492586000001,
+          "FirstClientSeconds": 2.12e-06,
+          "RBDProofSeconds": 9.837264306,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0131563299609503,
+            "MeanMemoryBytes": 383440709.8181818,
+            "MeanWorkingSet": 355115008,
+            "ContainerIDs": [
+              "3ba1374eee1c33966969b1e6a625ece6aa1483669c86909b311f57b194c3aa21",
+              "97398506383c53dccc3a7e721674b10ccbf447b038cc0181efe52b386bac42ea",
+              "b852fab7c495c645f2bea14519d17216a3b04ec5db7e1f24762373c7d5750dc3"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0120672194766698,
+            "MeanMemoryBytes": 386270673.4545455,
+            "MeanWorkingSet": 357492922.1818181,
+            "ContainerIDs": [
+              "3ba1374eee1c33966969b1e6a625ece6aa1483669c86909b311f57b194c3aa21",
+              "97398506383c53dccc3a7e721674b10ccbf447b038cc0181efe52b386bac42ea",
+              "b852fab7c495c645f2bea14519d17216a3b04ec5db7e1f24762373c7d5750dc3"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.3927472,
+          "FirstClientSeconds": 0.810918709,
+          "RBDProofSeconds": 8.949472292,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0049490198453543,
+            "MeanMemoryBytes": 382578688,
+            "MeanWorkingSet": 354252986.1818182,
+            "ContainerIDs": [
+              "5009c247c763f7a918200af8f52dc7ac152b79df43618e882eb6e0401a0b682c",
+              "644826d40b3aeab642cf9c6ef72958eaf6efe752837632237f3b8e3b64e1934e",
+              "9aff67c50288292823b0005b563474ad6a5bfaa35bbf2c2219a50a240363bf3d"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0188330676065815,
+            "MeanMemoryBytes": 388105681.45454544,
+            "MeanWorkingSet": 357934173.09090906,
+            "ContainerIDs": [
+              "5009c247c763f7a918200af8f52dc7ac152b79df43618e882eb6e0401a0b682c",
+              "644826d40b3aeab642cf9c6ef72958eaf6efe752837632237f3b8e3b64e1934e",
+              "9aff67c50288292823b0005b563474ad6a5bfaa35bbf2c2219a50a240363bf3d",
+              "be9e67d129d5b5b1c9388fce1faf5f480090e10bfa48a51fc12824f957a6d4ad"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.003987069169087825,
+            "MeanMemoryBytes": 2615482.1818181816,
+            "MeanWorkingSet": 1226938.1818181819
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.447521358,
+          "FirstClientSeconds": 0.810535411,
+          "RBDProofSeconds": 9.00264554,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0748110373878057,
+            "MeanMemoryBytes": 381750178.90909094,
+            "MeanWorkingSet": 353401018.1818182,
+            "ContainerIDs": [
+              "194dca6faea935b6ce6264bb47634a624c4a10ee6a7faed59e963105d5fee500",
+              "35a122d53e3f83225b5ed46439b9b1b0be3553a2e277ad3b4c2f7888ad65d505",
+              "c71a5f2ed3b103e065cefb71187f53556337421db0232c524c2d81bdd44cb42e"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.080180639225209,
+            "MeanMemoryBytes": 388068072.72727275,
+            "MeanWorkingSet": 357875712,
+            "ContainerIDs": [
+              "194dca6faea935b6ce6264bb47634a624c4a10ee6a7faed59e963105d5fee500",
+              "27679542f896538e8ee4b67dd42b59d07313d3b2678791c3fe29eac9664b1ddc",
+              "35a122d53e3f83225b5ed46439b9b1b0be3553a2e277ad3b4c2f7888ad65d505",
+              "c71a5f2ed3b103e065cefb71187f53556337421db0232c524c2d81bdd44cb42e"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.004742256848982085,
+            "MeanMemoryBytes": 2627397.8181818184,
+            "MeanWorkingSet": 1238853.8181818181
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.357493341,
+          "FirstClientSeconds": 2.23e-06,
+          "RBDProofSeconds": 8.781380884,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0185376923145344,
+            "MeanMemoryBytes": 383331607.27272725,
+            "MeanWorkingSet": 355005905.4545454,
+            "ContainerIDs": [
+              "48ecab6e8a7f954570fe36e8636a3c539655852015f8980b07761fc13112c23b",
+              "5b91a0d2821ebfd6d589a14cec023c29e27ba23de2c9dd5c381487e74cd817af",
+              "aa553c1677f50f5ac757e385965e8fa49e8fab9b573da748c669bde9105a14f0"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0297992715649054,
+            "MeanMemoryBytes": 386122100.3636364,
+            "MeanWorkingSet": 357341742.54545444,
+            "ContainerIDs": [
+              "48ecab6e8a7f954570fe36e8636a3c539655852015f8980b07761fc13112c23b",
+              "5b91a0d2821ebfd6d589a14cec023c29e27ba23de2c9dd5c381487e74cd817af",
+              "aa553c1677f50f5ac757e385965e8fa49e8fab9b573da748c669bde9105a14f0"
+            ]
+          }
+        }
+      ]
+    },
+    "debian": {
+      "source_revision": "111d5ba9d86906381a0e3b651577b08eaf515b84",
+      "image_assembly_revision": "7ef514c475d6c789620f7bb6f63318a154ded742",
+      "raw_report_sha256": "4eae52f1da199919585a135ee12c26174e52e3d823ea65defbee6bf5b0e516b2",
+      "platform": "linux/amd64",
+      "docker": "29.9.1",
+      "kernel": "6.8.0-117-generic",
+      "cgroup": "2",
+      "storage_driver": "overlayfs",
+      "logical_cpus": 12,
+      "host_memory_bytes": 32722558976,
+      "image_ids": {
+        "all": "sha256:bebc90fc99af33988599d151a54fdce0ad77e359bb5e05b12c400fdfcbbd51c3",
+        "client": "sha256:bdbeb680f0710f6a099a4f264e48ba677eb8ad4c918b1fb26a3231d9316908fd",
+        "essential": "sha256:47516ea0aa24b80619f49162e40b3d3d4f7685f6014bd393eb63edf080970cdd"
+      },
+      "trials": [
+        {
+          "Round": 0,
+          "Mode": "all",
+          "Warmup": true,
+          "StartSeconds": 15.058522969,
+          "FirstClientSeconds": 1.95e-06,
+          "RBDProofSeconds": 8.928385492,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0142596134998836,
+            "MeanMemoryBytes": 436031488.00000006,
+            "MeanWorkingSet": 399856733.09090906,
+            "ContainerIDs": [
+              "3ff582f21ed93899ae27d9618feaed9c6eca92d68639e2ff2539af9f020384c9",
+              "d951cf94b1a4f9f6e19e2c04d3ed7d7bf19ecdc080f32c018129da04bae07ad2",
+              "e392829ff3038af70bd46de1d97f85743b942ce2c4dd2be5818e678599954f9a"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9817849250112851,
+            "MeanMemoryBytes": 439161576.7272727,
+            "MeanWorkingSet": 402537006.5454545,
+            "ContainerIDs": [
+              "3ff582f21ed93899ae27d9618feaed9c6eca92d68639e2ff2539af9f020384c9",
+              "d951cf94b1a4f9f6e19e2c04d3ed7d7bf19ecdc080f32c018129da04bae07ad2",
+              "e392829ff3038af70bd46de1d97f85743b942ce2c4dd2be5818e678599954f9a"
+            ]
+          }
+        },
+        {
+          "Round": 0,
+          "Mode": "split",
+          "Warmup": true,
+          "StartSeconds": 14.388731681,
+          "FirstClientSeconds": 0.95786964,
+          "RBDProofSeconds": 8.85898179,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9935644038561644,
+            "MeanMemoryBytes": 434219194.1818181,
+            "MeanWorkingSet": 398043694.5454545,
+            "ContainerIDs": [
+              "906b74ba8fd0ee2637d19c43aaf9914539fcde3f7df68addc822f84aa83f4fbe",
+              "97f2324870709b3317c3b32050b3992102a93957784e3ac3adae934b2d25c538",
+              "af0f10e4bbd0afb02ff81fd7be1e48a5102cc1133c5a0fbe679f4444bef720ee"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0021351470397546,
+            "MeanMemoryBytes": 442703499.6363635,
+            "MeanWorkingSet": 402626373.81818175,
+            "ContainerIDs": [
+              "906b74ba8fd0ee2637d19c43aaf9914539fcde3f7df68addc822f84aa83f4fbe",
+              "97f2324870709b3317c3b32050b3992102a93957784e3ac3adae934b2d25c538",
+              "af0f10e4bbd0afb02ff81fd7be1e48a5102cc1133c5a0fbe679f4444bef720ee",
+              "cbbb648169cbe0046d1c63d95cda047eabe57d68eee3e59fad7b1bf20311da7d"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.004086311651357083,
+            "MeanMemoryBytes": 4788224,
+            "MeanWorkingSet": 1343488
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.595668125,
+          "FirstClientSeconds": 0.959633247,
+          "RBDProofSeconds": 9.236799019,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.014491665026839,
+            "MeanMemoryBytes": 434980677.81818175,
+            "MeanWorkingSet": 398801826.90909106,
+            "ContainerIDs": [
+              "1bcfd7295b89845c0e1ed5a40dc5562ee96ef8f89a0bdfb95648ad6573b90bd3",
+              "28db6fb506af4cbbdc1d843bb4da77d249c3c3128d7e3d91f38afb69e325f3b3",
+              "b4bdbe75c0bcb257175a8dcb1f3d54357cafd059529eaf2098b0d1d90b797e8d"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9803638770981263,
+            "MeanMemoryBytes": 442595514.1818183,
+            "MeanWorkingSet": 402523973.8181817,
+            "ContainerIDs": [
+              "1bcfd7295b89845c0e1ed5a40dc5562ee96ef8f89a0bdfb95648ad6573b90bd3",
+              "28db6fb506af4cbbdc1d843bb4da77d249c3c3128d7e3d91f38afb69e325f3b3",
+              "6179d15ac742a6effc6adeee3c9d2ca2f05b9b14c35665e138b4ebaef6049d12",
+              "b4bdbe75c0bcb257175a8dcb1f3d54357cafd059529eaf2098b0d1d90b797e8d"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.00401603750899508,
+            "MeanMemoryBytes": 4792320,
+            "MeanWorkingSet": 1347584
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.402102283,
+          "FirstClientSeconds": 2.12e-06,
+          "RBDProofSeconds": 9.566633379,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9447428697734318,
+            "MeanMemoryBytes": 433414144,
+            "MeanWorkingSet": 397263592.7272727,
+            "ContainerIDs": [
+              "4e164f1ea54aeeb1c3c4680d7dae986ce12c976c3e384ad3084f7db267ae13aa",
+              "b0bc73d7c47875612eb68b7957bac094d5e9f30608ebd32710d15a2858fef208",
+              "fcf6ae4a9dcf997c47d426c24f8680b48352f798e168c1ec6e3fc6531879d518"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9770554442805641,
+            "MeanMemoryBytes": 437043944.72727275,
+            "MeanWorkingSet": 400440971.6363637,
+            "ContainerIDs": [
+              "4e164f1ea54aeeb1c3c4680d7dae986ce12c976c3e384ad3084f7db267ae13aa",
+              "b0bc73d7c47875612eb68b7957bac094d5e9f30608ebd32710d15a2858fef208",
+              "fcf6ae4a9dcf997c47d426c24f8680b48352f798e168c1ec6e3fc6531879d518"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 14.628743183,
+          "FirstClientSeconds": 2.26e-06,
+          "RBDProofSeconds": 8.961520302,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0222312034503291,
+            "MeanMemoryBytes": 434928546.9090909,
+            "MeanWorkingSet": 398753791.99999994,
+            "ContainerIDs": [
+              "1af6bfed1bc04ef3972089d91adb8254acdc34be63960da2e48feef6a3f752c2",
+              "893d47cfd3476df0f04f8500425e75b485c9471e0449dddbbe5082498b733af4",
+              "d844711a4529fd6c7b954b75d42ab71fe89e1ad75aefdaae4fb83010db8f279b"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9980848879842505,
+            "MeanMemoryBytes": 437869102.54545456,
+            "MeanWorkingSet": 401244532.3636364,
+            "ContainerIDs": [
+              "1af6bfed1bc04ef3972089d91adb8254acdc34be63960da2e48feef6a3f752c2",
+              "893d47cfd3476df0f04f8500425e75b485c9471e0449dddbbe5082498b733af4",
+              "d844711a4529fd6c7b954b75d42ab71fe89e1ad75aefdaae4fb83010db8f279b"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.557633036,
+          "FirstClientSeconds": 0.969123133,
+          "RBDProofSeconds": 8.989133411,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9764681962489765,
+            "MeanMemoryBytes": 432421794.9090909,
+            "MeanWorkingSet": 396275339.6363637,
+            "ContainerIDs": [
+              "201e79c8d68ee836e8ff7eacd26a1a28ef8deda3c6018a23b3cc277fc375ed82",
+              "3615382cb2c6823c7507874d04ef9ad27e7e984676413471b4322ced81ca2154",
+              "c7f8c0dc1620c9ed845fce12cceb36209223b4cc37bdc09a0a832e4d9efe20c6"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9846164700514637,
+            "MeanMemoryBytes": 440605230.54545444,
+            "MeanWorkingSet": 400556404.3636362,
+            "ContainerIDs": [
+              "201e79c8d68ee836e8ff7eacd26a1a28ef8deda3c6018a23b3cc277fc375ed82",
+              "3615382cb2c6823c7507874d04ef9ad27e7e984676413471b4322ced81ca2154",
+              "7e926f97cf440505407886a10ca4591755ebd2fd767f13e78e194647eccd3148",
+              "c7f8c0dc1620c9ed845fce12cceb36209223b4cc37bdc09a0a832e4d9efe20c6"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.004047361890736543,
+            "MeanMemoryBytes": 4792320,
+            "MeanWorkingSet": 1347584
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.35634618,
+          "FirstClientSeconds": 0.946684398,
+          "RBDProofSeconds": 9.247031742,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0035032476974635,
+            "MeanMemoryBytes": 432897675.6363636,
+            "MeanWorkingSet": 396722920.72727275,
+            "ContainerIDs": [
+              "28c8a6a44f2bd83f761ea1c56723cdc122bfff5390e2b6dd5840c00be00de2f3",
+              "575e8b196bcf5b71dd0535a67d1837a059cc3228a18433e9733deb7f072596e9",
+              "e300947c9160ca5350311399b6fd5293c645741cc3c97e283ad4bc9823b92bba"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.083017029682158,
+            "MeanMemoryBytes": 440636881.45454526,
+            "MeanWorkingSet": 400569809.4545454,
+            "ContainerIDs": [
+              "28c8a6a44f2bd83f761ea1c56723cdc122bfff5390e2b6dd5840c00be00de2f3",
+              "575e8b196bcf5b71dd0535a67d1837a059cc3228a18433e9733deb7f072596e9",
+              "dfaaea67b512d2b74a85c88056cef201cfa2feba65d597a090f5999a4bc35929",
+              "e300947c9160ca5350311399b6fd5293c645741cc3c97e283ad4bc9823b92bba"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.004384901699651535,
+            "MeanMemoryBytes": 4788224,
+            "MeanWorkingSet": 1343488
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.934633232,
+          "FirstClientSeconds": 1.391e-06,
+          "RBDProofSeconds": 9.409162142,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9666564340616124,
+            "MeanMemoryBytes": 434005085.090909,
+            "MeanWorkingSet": 397834053.8181817,
+            "ContainerIDs": [
+              "1df6ed300a3a1b56732599bcb13edcd63008b8a3117982dc774fc0fcb0fff4ce",
+              "409d35bb4218453e67c67d504f5f88faf0dd55482e334bfaa30d3b02f2961178",
+              "57a563486fbeed49b608b321632b05fadc597ab775264ee338c7453d664d7a58"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9924374669408962,
+            "MeanMemoryBytes": 436780683.63636357,
+            "MeanWorkingSet": 400160209.45454556,
+            "ContainerIDs": [
+              "1df6ed300a3a1b56732599bcb13edcd63008b8a3117982dc774fc0fcb0fff4ce",
+              "409d35bb4218453e67c67d504f5f88faf0dd55482e334bfaa30d3b02f2961178",
+              "57a563486fbeed49b608b321632b05fadc597ab775264ee338c7453d664d7a58"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.43468813,
+          "FirstClientSeconds": 2.66e-06,
+          "RBDProofSeconds": 9.611957136000001,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9708897804257819,
+            "MeanMemoryBytes": 433304296.7272727,
+            "MeanWorkingSet": 397157096.72727275,
+            "ContainerIDs": [
+              "32d5f39782db13b1df7c9cb0d06af259d5f34da31223969d2073aa894b24340f",
+              "a8a5e0dcf7611dced3e7f88b461a3c5ed2f2139f36f6ce9e3dd78937f9c09bab",
+              "b516bc5fa438ec06f1fbf8981321b8b208e5da3b85675a4213de3981fb5ac36e"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0138283240123447,
+            "MeanMemoryBytes": 436286929.4545454,
+            "MeanWorkingSet": 399682839.27272725,
+            "ContainerIDs": [
+              "32d5f39782db13b1df7c9cb0d06af259d5f34da31223969d2073aa894b24340f",
+              "a8a5e0dcf7611dced3e7f88b461a3c5ed2f2139f36f6ce9e3dd78937f9c09bab",
+              "b516bc5fa438ec06f1fbf8981321b8b208e5da3b85675a4213de3981fb5ac36e"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.559917448,
+          "FirstClientSeconds": 0.961672327,
+          "RBDProofSeconds": 8.963539925,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.0031914792098218,
+            "MeanMemoryBytes": 433946251.6363636,
+            "MeanWorkingSet": 397795700.3636365,
+            "ContainerIDs": [
+              "097f2187f837f7855a584d59de3a1930cb32d9bd1ce514771cd114d3bdc121a2",
+              "6a2ac1419099d7392dc0a8beee504648269feba9f29d3af146aafcee3530f178",
+              "6fb4b2839707c76894ab13f846a03299e213a59e5dbcb130db3b777078786aed"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0169060222516033,
+            "MeanMemoryBytes": 441810571.6363638,
+            "MeanWorkingSet": 401757649.45454544,
+            "ContainerIDs": [
+              "097f2187f837f7855a584d59de3a1930cb32d9bd1ce514771cd114d3bdc121a2",
+              "60e7513928cc2ffb7188ed7b9f71359d346e0930a54d0e54a7ba0a92cc64c61d",
+              "6a2ac1419099d7392dc0a8beee504648269feba9f29d3af146aafcee3530f178",
+              "6fb4b2839707c76894ab13f846a03299e213a59e5dbcb130db3b777078786aed"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.003758074267302278,
+            "MeanMemoryBytes": 4787106.909090909,
+            "MeanWorkingSet": 1342370.9090909092
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 14.595329322,
+          "FirstClientSeconds": 0.934112379,
+          "RBDProofSeconds": 9.259676413,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 1.036373627823809,
+            "MeanMemoryBytes": 432685800.7272728,
+            "MeanWorkingSet": 396511045.81818175,
+            "ContainerIDs": [
+              "0fec9b38408539db511b915787a6c53d9307a0666363219af6c0b9fa39a0ab2b",
+              "ebc4abbab0127e1948a36b97df04d19f95d3003f6524f432638accf0d744eed5",
+              "f9824cbe439f3a1fd79b2f5a3e1bab6832869be09be27f11bdf13fc882afab17"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 1.0763652650488262,
+            "MeanMemoryBytes": 440309573.8181818,
+            "MeanWorkingSet": 400239522.9090908,
+            "ContainerIDs": [
+              "0fec9b38408539db511b915787a6c53d9307a0666363219af6c0b9fa39a0ab2b",
+              "c76f6b50db099f784213e069ccc849450334a5fce86d2c8cc36ca136016a587f",
+              "ebc4abbab0127e1948a36b97df04d19f95d3003f6524f432638accf0d744eed5",
+              "f9824cbe439f3a1fd79b2f5a3e1bab6832869be09be27f11bdf13fc882afab17"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0034814781878925926,
+            "MeanMemoryBytes": 4792320,
+            "MeanWorkingSet": 1347584
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.613376195,
+          "FirstClientSeconds": 2.64e-06,
+          "RBDProofSeconds": 9.487600953,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.9443287492919361,
+            "MeanMemoryBytes": 435249151.9999999,
+            "MeanWorkingSet": 399101952.00000006,
+            "ContainerIDs": [
+              "a83d8443c334a417368833106e63733dfd29983aad40ebbd92258ed85c0bf766",
+              "d2c71f96d21a94676e9c74245dd42976698432c5aa59e00386ab65b9e3d98c64",
+              "dd498ca3f3a5ddde529e72b287b6cc991146e37d55c60462e8c6cd08df74ca5d"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.9492348887379362,
+            "MeanMemoryBytes": 438613085.09090906,
+            "MeanWorkingSet": 402017559.2727273,
+            "ContainerIDs": [
+              "a83d8443c334a417368833106e63733dfd29983aad40ebbd92258ed85c0bf766",
+              "d2c71f96d21a94676e9c74245dd42976698432c5aa59e00386ab65b9e3d98c64",
+              "dd498ca3f3a5ddde529e72b287b6cc991146e37d55c60462e8c6cd08df74ca5d"
+            ]
+          }
+        }
+      ]
+    },
+    "ubuntu": {
+      "source_revision": "111d5ba9d86906381a0e3b651577b08eaf515b84",
+      "image_assembly_revision": "7ef514c475d6c789620f7bb6f63318a154ded742",
+      "raw_report_sha256": "9677636cddcffd7ce0b74479a9c0b32ce24ab9054f58f8d146cbc51230832b74",
+      "platform": "linux/amd64",
+      "docker": "29.9.1",
+      "kernel": "6.8.0-117-generic",
+      "cgroup": "2",
+      "storage_driver": "overlayfs",
+      "logical_cpus": 12,
+      "host_memory_bytes": 16099647488,
+      "image_ids": {
+        "all": "sha256:1beeb2304b72103db80b7169721fdad03b0f7b913b1ef31c39bc4ede50654ea8",
+        "client": "sha256:0489d25bce6e42cf8ce9b25e8235565dea6dea335f6e17f24100b79d92db8572",
+        "essential": "sha256:36a7d70ecb134f3c7a466269ee59fce7d1e8bf0e6a34498d155fd17512e63f52"
+      },
+      "trials": [
+        {
+          "Round": 0,
+          "Mode": "all",
+          "Warmup": true,
+          "StartSeconds": 13.720976365,
+          "FirstClientSeconds": 2.645e-06,
+          "RBDProofSeconds": 9.456845109,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4600001383977519,
+            "MeanMemoryBytes": 396101445.8181818,
+            "MeanWorkingSet": 366480290.90909094,
+            "ContainerIDs": [
+              "286a1b7989ad036474826f625594dae605b4ba1834c852dd355ef16f841cf04f",
+              "84d558dfa7e8212bc0dc3b349075cfcc4e88a5d1aa86974495315ae2ae910e9b",
+              "f8912ba87b00b4badebf8117955fb92174d06cfec565dec5095afcff634ea6c3"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.45977362532224986,
+            "MeanMemoryBytes": 398919866.1818181,
+            "MeanWorkingSet": 368851502.5454545,
+            "ContainerIDs": [
+              "286a1b7989ad036474826f625594dae605b4ba1834c852dd355ef16f841cf04f",
+              "84d558dfa7e8212bc0dc3b349075cfcc4e88a5d1aa86974495315ae2ae910e9b",
+              "f8912ba87b00b4badebf8117955fb92174d06cfec565dec5095afcff634ea6c3"
+            ]
+          }
+        },
+        {
+          "Round": 0,
+          "Mode": "split",
+          "Warmup": true,
+          "StartSeconds": 12.714352208,
+          "FirstClientSeconds": 0.875739407,
+          "RBDProofSeconds": 8.793778833,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.453261331015646,
+            "MeanMemoryBytes": 394491345.4545455,
+            "MeanWorkingSet": 365299898.1818182,
+            "ContainerIDs": [
+              "17288cc519ec17a8993650364dae7d8bbbd1f730795f7ba7e610ae2f1b1a3b68",
+              "23e7a6edd7107a61a94221f7bc6474baebf1dc539b4f19e46aef6f9e46944b80",
+              "70ca64d7fbd0fd3ddc18efe1ac7b7ec7f3dd4ff369febf8b844c5caaf309b893"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.46479795500407595,
+            "MeanMemoryBytes": 401915159.27272713,
+            "MeanWorkingSet": 369911249.45454544,
+            "ContainerIDs": [
+              "17288cc519ec17a8993650364dae7d8bbbd1f730795f7ba7e610ae2f1b1a3b68",
+              "23e7a6edd7107a61a94221f7bc6474baebf1dc539b4f19e46aef6f9e46944b80",
+              "70ca64d7fbd0fd3ddc18efe1ac7b7ec7f3dd4ff369febf8b844c5caaf309b893",
+              "d4305a7f490c54f9efde8cb8a9314e2afe69cb1a7ea267866e0d25451317776b"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0012630922746591168,
+            "MeanMemoryBytes": 3690496,
+            "MeanWorkingSet": 1331200
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 12.713730187,
+          "FirstClientSeconds": 0.883864306,
+          "RBDProofSeconds": 8.806079407,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4540395289468777,
+            "MeanMemoryBytes": 394024029.0909091,
+            "MeanWorkingSet": 364833326.5454545,
+            "ContainerIDs": [
+              "07eaafd0ff4c6586d090cfb77f2d539ea0ce09fee79ca9e4769f51380e75916c",
+              "1e5a5c610ce2ad51ce380c1311b5c304ebe962fda1a3b81313e4f4d18c9338c7",
+              "38eed07f5a67773b0a94cc19eb0afa268c1b020ef0b59e49cc5ab0174d58f1a1"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.47679972511984375,
+            "MeanMemoryBytes": 401117928.72727287,
+            "MeanWorkingSet": 369114018.9090909,
+            "ContainerIDs": [
+              "07eaafd0ff4c6586d090cfb77f2d539ea0ce09fee79ca9e4769f51380e75916c",
+              "0a12730af575bfdb1e26f4ee2210f55be5ee3b5d5b5afd92469a34ed646600f2",
+              "1e5a5c610ce2ad51ce380c1311b5c304ebe962fda1a3b81313e4f4d18c9338c7",
+              "38eed07f5a67773b0a94cc19eb0afa268c1b020ef0b59e49cc5ab0174d58f1a1"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.001362071382482569,
+            "MeanMemoryBytes": 3682304,
+            "MeanWorkingSet": 1323008
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.725722415,
+          "FirstClientSeconds": 2.194e-06,
+          "RBDProofSeconds": 8.900058274,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4430718660639781,
+            "MeanMemoryBytes": 394896849.4545453,
+            "MeanWorkingSet": 365705402.1818181,
+            "ContainerIDs": [
+              "11169bf628fab47e68ad1cf2800a803f8770957dda0da1e546305eef00cb3cdb",
+              "a02459f72c1afe4f0fe81bf4794c7271c5e73b23666587e5117171cb23afeed6",
+              "a170338adc2347eaddaf68f511cf22fef8d9e3192591e20c54e71608abd0549d"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.4373076547466995,
+            "MeanMemoryBytes": 397807616,
+            "MeanWorkingSet": 368168960.00000006,
+            "ContainerIDs": [
+              "11169bf628fab47e68ad1cf2800a803f8770957dda0da1e546305eef00cb3cdb",
+              "a02459f72c1afe4f0fe81bf4794c7271c5e73b23666587e5117171cb23afeed6",
+              "a170338adc2347eaddaf68f511cf22fef8d9e3192591e20c54e71608abd0549d"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.768609527,
+          "FirstClientSeconds": 2.144e-06,
+          "RBDProofSeconds": 9.190487631,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4636724281468545,
+            "MeanMemoryBytes": 394459694.54545456,
+            "MeanWorkingSet": 365270853.8181818,
+            "ContainerIDs": [
+              "05bb7bb18edd8e1a565cc4dc57790f265539fcbf45d321d45050418310044562",
+              "3f2ea57773e6417f3491f5df622a1f7614dc19c302aaa91409abb70c8599631b",
+              "6c6c63b8e7a7d4565181b8bfcc47839db21190b96a732aa59a067a3689375a6d"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.43669746911901464,
+            "MeanMemoryBytes": 398081675.6363637,
+            "MeanWorkingSet": 368438178.9090909,
+            "ContainerIDs": [
+              "05bb7bb18edd8e1a565cc4dc57790f265539fcbf45d321d45050418310044562",
+              "3f2ea57773e6417f3491f5df622a1f7614dc19c302aaa91409abb70c8599631b",
+              "6c6c63b8e7a7d4565181b8bfcc47839db21190b96a732aa59a067a3689375a6d"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.246724370999999,
+          "FirstClientSeconds": 0.893619269,
+          "RBDProofSeconds": 8.525377108,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.46976994765456304,
+            "MeanMemoryBytes": 395275170.9090908,
+            "MeanWorkingSet": 366079999.99999994,
+            "ContainerIDs": [
+              "1ba19c26b20498ec1cf30310647efb27cb994d40b0a28dcddfb546b9f7522234",
+              "7e50795f0d830bc0826ad8a519ba1c0311549251b616c6870e7a4cc54693b8a5",
+              "b9875bf86ef2182c541e5a03c688c159aec3fce19e0434e8c46ef7757eb51d80"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.46069445558811156,
+            "MeanMemoryBytes": 402002664.7272727,
+            "MeanWorkingSet": 370001733.818182,
+            "ContainerIDs": [
+              "108f3266d08bdb0262cd97fe268ff61eaf9ef61c534a7b0fa67e1baab22c2abb",
+              "1ba19c26b20498ec1cf30310647efb27cb994d40b0a28dcddfb546b9f7522234",
+              "7e50795f0d830bc0826ad8a519ba1c0311549251b616c6870e7a4cc54693b8a5",
+              "b9875bf86ef2182c541e5a03c688c159aec3fce19e0434e8c46ef7757eb51d80"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.001204160304188806,
+            "MeanMemoryBytes": 3690496,
+            "MeanWorkingSet": 1331200
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.212087678,
+          "FirstClientSeconds": 0.901938423,
+          "RBDProofSeconds": 9.48337415,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.46268508956577115,
+            "MeanMemoryBytes": 395203677.09090906,
+            "MeanWorkingSet": 366016698.18181825,
+            "ContainerIDs": [
+              "68ac22f96fdf1997e4d9570c175760a666b9b60277355ea5fc7eda3598bb866e",
+              "b6c1b15309e2bd6681bffcf98193e6d6db7f0554f5b91f99f4ac53f33723a4dd",
+              "e5f82ba3934b231e64ace4050755c322096894111df008aa4d4a981f059349c9"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.46051930005735164,
+            "MeanMemoryBytes": 401833239.27272743,
+            "MeanWorkingSet": 369829701.8181819,
+            "ContainerIDs": [
+              "19a6fd50ac199faf54c6ca869863ed931b257f66cdeff6b557e4677a5cb25dc1",
+              "68ac22f96fdf1997e4d9570c175760a666b9b60277355ea5fc7eda3598bb866e",
+              "b6c1b15309e2bd6681bffcf98193e6d6db7f0554f5b91f99f4ac53f33723a4dd",
+              "e5f82ba3934b231e64ace4050755c322096894111df008aa4d4a981f059349c9"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0011735202903647222,
+            "MeanMemoryBytes": 3703528.727272727,
+            "MeanWorkingSet": 1344232.7272727273
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.698948531,
+          "FirstClientSeconds": 2.404e-06,
+          "RBDProofSeconds": 9.130680157,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.48165431210928167,
+            "MeanMemoryBytes": 394307025.4545455,
+            "MeanWorkingSet": 365120418.90909094,
+            "ContainerIDs": [
+              "6dc8ee82d9463e322c1271ef28cc119b046b0f0dbfc70717b31fdc74067d7b96",
+              "8258810b5d72153e5de73a11f20801a44a9f274d8d3efb356f28a3e40019ceb2",
+              "868260667f4a7a6fbb7c900933133a4d3845c6d794395ff9cf1abdf773b16386"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.4480191246394519,
+            "MeanMemoryBytes": 398035130.18181807,
+            "MeanWorkingSet": 368391633.45454556,
+            "ContainerIDs": [
+              "6dc8ee82d9463e322c1271ef28cc119b046b0f0dbfc70717b31fdc74067d7b96",
+              "8258810b5d72153e5de73a11f20801a44a9f274d8d3efb356f28a3e40019ceb2",
+              "868260667f4a7a6fbb7c900933133a4d3845c6d794395ff9cf1abdf773b16386"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.247749728,
+          "FirstClientSeconds": 2.514e-06,
+          "RBDProofSeconds": 9.448987227,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4575349880445095,
+            "MeanMemoryBytes": 394673803.6363635,
+            "MeanWorkingSet": 365484590.5454546,
+            "ContainerIDs": [
+              "026a9b713490aaa2edb0eb60ced3e5bd1284bfa8b68bcf8a9ef267be82b519da",
+              "6c220d05ab46f417ef88f19349ff3e651acff63cf96b95078fc98e50457842ee",
+              "cabd4a9f2eb5361f6baf7605dcbf11ba2b46d0a526f3f3275fcc853bb813a74b"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.4373044626676543,
+            "MeanMemoryBytes": 397689204.36363626,
+            "MeanWorkingSet": 368048314.1818182,
+            "ContainerIDs": [
+              "026a9b713490aaa2edb0eb60ced3e5bd1284bfa8b68bcf8a9ef267be82b519da",
+              "6c220d05ab46f417ef88f19349ff3e651acff63cf96b95078fc98e50457842ee",
+              "cabd4a9f2eb5361f6baf7605dcbf11ba2b46d0a526f3f3275fcc853bb813a74b"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.235652191,
+          "FirstClientSeconds": 0.907791424,
+          "RBDProofSeconds": 8.576668198,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4637167804669955,
+            "MeanMemoryBytes": 396116340.3636363,
+            "MeanWorkingSet": 366896593.45454544,
+            "ContainerIDs": [
+              "ca77d360f9104dd849fc828c5ab306f20cca3b93bb9e0c2b0e69f9983197d08f",
+              "db66fe628897077bf94a2b69339172707295f8c3805541cbae2518416e73de56",
+              "efccabc759903dfd4a8291576366ba847ae393011e159430be0b209fb7dfeec7"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.47721201010042197,
+            "MeanMemoryBytes": 402487854.5454545,
+            "MeanWorkingSet": 370459741.0909091,
+            "ContainerIDs": [
+              "afaf2d18f17f645c585dce3c4ddf816bbaba85200c01dac856a77b19ca5e7fc2",
+              "ca77d360f9104dd849fc828c5ab306f20cca3b93bb9e0c2b0e69f9983197d08f",
+              "db66fe628897077bf94a2b69339172707295f8c3805541cbae2518416e73de56",
+              "efccabc759903dfd4a8291576366ba847ae393011e159430be0b209fb7dfeec7"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0013427900232491658,
+            "MeanMemoryBytes": 3697570.909090909,
+            "MeanWorkingSet": 1338274.9090909092
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.241491486,
+          "FirstClientSeconds": 0.882489015,
+          "RBDProofSeconds": 8.616173244,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.45904961809046185,
+            "MeanMemoryBytes": 394617204.36363626,
+            "MeanWorkingSet": 365427618.9090908,
+            "ContainerIDs": [
+              "373a2c1d26a12c87f015d3c23904cfb29c9a649798f25c26d521affbecf0375a",
+              "53c80e0698fb9464d884b84c09ffeaf9f1411dd38365506b8124e7dc2a23adca",
+              "9e34698e7b55167441eb898c66b98bc5086cb2380960707d8ec153a36c7186f7"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.46127690911316954,
+            "MeanMemoryBytes": 401164846.54545456,
+            "MeanWorkingSet": 369164660.36363643,
+            "ContainerIDs": [
+              "373a2c1d26a12c87f015d3c23904cfb29c9a649798f25c26d521affbecf0375a",
+              "4659b0fccd5ab5f20d8be7114a68790e54effe3579c3bed3877c8a904834db04",
+              "53c80e0698fb9464d884b84c09ffeaf9f1411dd38365506b8124e7dc2a23adca",
+              "9e34698e7b55167441eb898c66b98bc5086cb2380960707d8ec153a36c7186f7"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0012237618738480597,
+            "MeanMemoryBytes": 3690496,
+            "MeanWorkingSet": 1331200
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.765034964,
+          "FirstClientSeconds": 1.342e-06,
+          "RBDProofSeconds": 8.896659259,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.4462138591287377,
+            "MeanMemoryBytes": 396821224.72727275,
+            "MeanWorkingSet": 367629777.4545454,
+            "ContainerIDs": [
+              "4051db421bb2618fa20ca304333da169fcd02e2385282d8024b41a09703c0b95",
+              "77cbb772b364587694719561dd81ab832ce504e9186984e7df7a4a65718c46e1",
+              "e76e32b62eba378c2613e579e9bb02290ef47bce6479205df7c39e13d95ce0cb"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.44837760567761287,
+            "MeanMemoryBytes": 399947217.45454544,
+            "MeanWorkingSet": 370309306.1818183,
+            "ContainerIDs": [
+              "4051db421bb2618fa20ca304333da169fcd02e2385282d8024b41a09703c0b95",
+              "77cbb772b364587694719561dd81ab832ce504e9186984e7df7a4a65718c46e1",
+              "e76e32b62eba378c2613e579e9bb02290ef47bce6479205df7c39e13d95ce0cb"
+            ]
+          }
+        }
+      ]
+    },
+    "alpine": {
+      "source_revision": "111d5ba9d86906381a0e3b651577b08eaf515b84",
+      "image_assembly_revision": "7ef514c475d6c789620f7bb6f63318a154ded742",
+      "raw_report_sha256": "b487b491c337808031d6052661e9c5c537ae86ac4af4b2aa4355be7511f0b4a3",
+      "platform": "linux/amd64",
+      "docker": "29.9.1",
+      "kernel": "6.8.0-117-generic",
+      "cgroup": "2",
+      "storage_driver": "overlayfs",
+      "logical_cpus": 12,
+      "host_memory_bytes": 16099647488,
+      "image_ids": {
+        "all": "sha256:89df9f8852484fe2222b27935df60234f203af8ea4c4c1a602f4c40764b88bcf",
+        "client": "sha256:f527ce0d9ac05bf5f6514d5466498faef7c07f8234b7ee340ba2d3bfd42cb6b6",
+        "essential": "sha256:c07128ee9dd5d62316748330e05362138c9c5f934a56fec0080a7cae47c07e67"
+      },
+      "trials": [
+        {
+          "Round": 0,
+          "Mode": "all",
+          "Warmup": true,
+          "StartSeconds": 13.361345392,
+          "FirstClientSeconds": 2.695e-06,
+          "RBDProofSeconds": 8.835266901,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6335436549529145,
+            "MeanMemoryBytes": 500063511.27272725,
+            "MeanWorkingSet": 462939229.0909091,
+            "ContainerIDs": [
+              "1b412406f8529a044d071d16eb985880e7ef62072545864357b6c1950b76cbf8",
+              "8354e6995e892748640ba78ad3b49f5d9d405ee1625c9bf9520b347f5c93bc02",
+              "c7d52a21d068ce2bd394cd9920ef918398d0c1d3dec4cd976ed628cedcd7958e"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5697279527428349,
+            "MeanMemoryBytes": 502554996.36363643,
+            "MeanWorkingSet": 464984994.9090909,
+            "ContainerIDs": [
+              "1b412406f8529a044d071d16eb985880e7ef62072545864357b6c1950b76cbf8",
+              "8354e6995e892748640ba78ad3b49f5d9d405ee1625c9bf9520b347f5c93bc02",
+              "c7d52a21d068ce2bd394cd9920ef918398d0c1d3dec4cd976ed628cedcd7958e"
+            ]
+          }
+        },
+        {
+          "Round": 0,
+          "Mode": "split",
+          "Warmup": true,
+          "StartSeconds": 12.907839880000001,
+          "FirstClientSeconds": 0.9873815,
+          "RBDProofSeconds": 8.878174207,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6379406445825317,
+            "MeanMemoryBytes": 499420439.27272725,
+            "MeanWorkingSet": 462325946.1818182,
+            "ContainerIDs": [
+              "2369fa4cf2943a1a115c994d7c129bc5ab65c88899c3d4728c0c8c85a0d127a7",
+              "3a3ca7a4a95eb9354a4dd83c9e8e53bd99a7b8206d9fe6f94b38c5ff006a5998",
+              "3b55f6163ab9672651b3f06a64f885f081486a144bccfd8b4f262c58a1e4f90b"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5925184859873788,
+            "MeanMemoryBytes": 506040320,
+            "MeanWorkingSet": 466071924.3636365,
+            "ContainerIDs": [
+              "2369fa4cf2943a1a115c994d7c129bc5ab65c88899c3d4728c0c8c85a0d127a7",
+              "3a3ca7a4a95eb9354a4dd83c9e8e53bd99a7b8206d9fe6f94b38c5ff006a5998",
+              "3b55f6163ab9672651b3f06a64f885f081486a144bccfd8b4f262c58a1e4f90b",
+              "44a04248da0023e8fa043ec54c53d6b04bfedc5a106be224917bcdd73adfd873"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0013729769483139841,
+            "MeanMemoryBytes": 4116480,
+            "MeanWorkingSet": 1691648
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.387754316,
+          "FirstClientSeconds": 1.012752569,
+          "RBDProofSeconds": 9.433663124,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.626048249265526,
+            "MeanMemoryBytes": 500129047.27272725,
+            "MeanWorkingSet": 463037905.4545456,
+            "ContainerIDs": [
+              "3a04132f499b7e56b37878210dc4497fb96d762c29b3cae887429d5aeecacf3a",
+              "4a05c5ea4cf4207b1489f4fbadeb964250658792db36cf1833356a856c2c2040",
+              "6a8cb0ae2b97405ad47daf31af09eb5a30c3ad24e3ca687969c4f0831a9aea58"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.6201247698127021,
+            "MeanMemoryBytes": 507012189.09090906,
+            "MeanWorkingSet": 467036718.54545444,
+            "ContainerIDs": [
+              "3a04132f499b7e56b37878210dc4497fb96d762c29b3cae887429d5aeecacf3a",
+              "4a05c5ea4cf4207b1489f4fbadeb964250658792db36cf1833356a856c2c2040",
+              "6a8cb0ae2b97405ad47daf31af09eb5a30c3ad24e3ca687969c4f0831a9aea58",
+              "f85a33dd0c3192e3ac89e2ffece873e838b502189b7064995165b828404c7554"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.001452617073722804,
+            "MeanMemoryBytes": 4128768,
+            "MeanWorkingSet": 1703936
+          }
+        },
+        {
+          "Round": 1,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.893273908,
+          "FirstClientSeconds": 2.745e-06,
+          "RBDProofSeconds": 9.129928743,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6063540950237098,
+            "MeanMemoryBytes": 499633803.63636374,
+            "MeanWorkingSet": 462542661.81818193,
+            "ContainerIDs": [
+              "0791bb4512e0ab718d764adefa8fc40de86c519e86e85924f8851f2261442466",
+              "459a80c0ca7843150da97620855bc31fe498ad990eb05eed869b95d7b51da773",
+              "5f0cb784c46444e07255519e351d8b75512fc396547dae97c8c39cc666bc9ebf"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.570169326889838,
+            "MeanMemoryBytes": 502463022.5454546,
+            "MeanWorkingSet": 464921320.7272727,
+            "ContainerIDs": [
+              "0791bb4512e0ab718d764adefa8fc40de86c519e86e85924f8851f2261442466",
+              "459a80c0ca7843150da97620855bc31fe498ad990eb05eed869b95d7b51da773",
+              "5f0cb784c46444e07255519e351d8b75512fc396547dae97c8c39cc666bc9ebf"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.878313828,
+          "FirstClientSeconds": 2.024e-06,
+          "RBDProofSeconds": 8.80124849,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6279165514741105,
+            "MeanMemoryBytes": 500684986.1818182,
+            "MeanWorkingSet": 462725492.3636364,
+            "ContainerIDs": [
+              "5c9db24621dc761270117c57c273b8f3a5b77794fecd3e0c6b5df08b0cf8c2db",
+              "e4a8153bc27d4ee39dab792f91391e65c1a80fb3368a83141c09b748fd97fd45",
+              "f09021301d3fec9835328bf75e0bb1dc110b892382adcd54033b01110e770f74"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5680471482745313,
+            "MeanMemoryBytes": 503069602.9090909,
+            "MeanWorkingSet": 464664389.81818175,
+            "ContainerIDs": [
+              "5c9db24621dc761270117c57c273b8f3a5b77794fecd3e0c6b5df08b0cf8c2db",
+              "e4a8153bc27d4ee39dab792f91391e65c1a80fb3368a83141c09b748fd97fd45",
+              "f09021301d3fec9835328bf75e0bb1dc110b892382adcd54033b01110e770f74"
+            ]
+          }
+        },
+        {
+          "Round": 2,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 12.884534705,
+          "FirstClientSeconds": 0.989021798,
+          "RBDProofSeconds": 8.976584844,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6473549413860251,
+            "MeanMemoryBytes": 501842664.7272728,
+            "MeanWorkingSet": 464722478.5454545,
+            "ContainerIDs": [
+              "398c0cad997b4d85697dfb2b986ca0183abd3206829970850249582549040098",
+              "70bf32573c925737f3d08c32c19d34dcfa1d832f5f7ed143ce32e12f7ac51edf",
+              "7565b186bb0f6ecad87f83fdb58830c1c64d64ee6a4f9a2b4fd31861c40b786a"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5965406244872289,
+            "MeanMemoryBytes": 506700520.7272726,
+            "MeanWorkingSet": 466699729.45454556,
+            "ContainerIDs": [
+              "398c0cad997b4d85697dfb2b986ca0183abd3206829970850249582549040098",
+              "70bf32573c925737f3d08c32c19d34dcfa1d832f5f7ed143ce32e12f7ac51edf",
+              "7565b186bb0f6ecad87f83fdb58830c1c64d64ee6a4f9a2b4fd31861c40b786a",
+              "8f32dac02d02bc7f585b2a6ec7311e6cf760d4635823a920a2d682d3520fa436"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0013034632620869601,
+            "MeanMemoryBytes": 4131374.5454545454,
+            "MeanWorkingSet": 1706542.5454545454
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.436198108,
+          "FirstClientSeconds": 1.025029235,
+          "RBDProofSeconds": 9.449392316,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6284685961024277,
+            "MeanMemoryBytes": 499731735.27272725,
+            "MeanWorkingSet": 462643572.3636363,
+            "ContainerIDs": [
+              "15c80abd9e024176110b6d2af86fab914a4d51b7c07a9d3abad2b984ae869e26",
+              "79b72e39aca0a74f6907c9eb8ea2188dfba26866bf378291bc7e3be7a96f3a89",
+              "8f4a93af922a58930538cf6a611152e061c4a131e14105818ae686ab95fa9167"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5921669656829859,
+            "MeanMemoryBytes": 506599610.18181807,
+            "MeanWorkingSet": 466625256.7272729,
+            "ContainerIDs": [
+              "15c80abd9e024176110b6d2af86fab914a4d51b7c07a9d3abad2b984ae869e26",
+              "79b72e39aca0a74f6907c9eb8ea2188dfba26866bf378291bc7e3be7a96f3a89",
+              "8f4a93af922a58930538cf6a611152e061c4a131e14105818ae686ab95fa9167",
+              "b6df7782b640144103a913f9fae1ece72be83d2367e0ee5d1696cd582b31da81"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.001343172920678774,
+            "MeanMemoryBytes": 4124672,
+            "MeanWorkingSet": 1699840
+          }
+        },
+        {
+          "Round": 3,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 13.459374033,
+          "FirstClientSeconds": 2.224e-06,
+          "RBDProofSeconds": 9.393815586,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6285973425843111,
+            "MeanMemoryBytes": 499878074.18181825,
+            "MeanWorkingSet": 462785442.909091,
+            "ContainerIDs": [
+              "183995be200e4331b917500f43e4000acf0bb1c29105ccc0007a216ad9514760",
+              "2ed0c77c8f1cb048e61f4ac487e0e3d6278198a0bed58b0e97eb7ec39644d0a5",
+              "5a76a7c7e29a9b2f8f0693e92bb98802ce3e3b3f0d5c2ab4c506d4dd94ab912c"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5645806276623874,
+            "MeanMemoryBytes": 502557230.5454545,
+            "MeanWorkingSet": 465015528.7272727,
+            "ContainerIDs": [
+              "183995be200e4331b917500f43e4000acf0bb1c29105ccc0007a216ad9514760",
+              "2ed0c77c8f1cb048e61f4ac487e0e3d6278198a0bed58b0e97eb7ec39644d0a5",
+              "5a76a7c7e29a9b2f8f0693e92bb98802ce3e3b3f0d5c2ab4c506d4dd94ab912c"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.89392789,
+          "FirstClientSeconds": 2.144e-06,
+          "RBDProofSeconds": 8.824187673,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6120733307172115,
+            "MeanMemoryBytes": 499987176.7272728,
+            "MeanWorkingSet": 462674478.54545456,
+            "ContainerIDs": [
+              "87dfcaaa308ec7da4c15b9ce959944511d74b62fb2859ddef42b1ada59ab95ec",
+              "bd873dc8094451a57727c3108b7c89c4d42a3ebed42e9821366b40394a60772b",
+              "bf1c5ed4f372efd751a0026b577b9c2ccd0a8c2b31a4b442121c910e59cc2ae4"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.544510345061692,
+            "MeanMemoryBytes": 502461160.72727275,
+            "MeanWorkingSet": 464701253.81818175,
+            "ContainerIDs": [
+              "87dfcaaa308ec7da4c15b9ce959944511d74b62fb2859ddef42b1ada59ab95ec",
+              "bd873dc8094451a57727c3108b7c89c4d42a3ebed42e9821366b40394a60772b",
+              "bf1c5ed4f372efd751a0026b577b9c2ccd0a8c2b31a4b442121c910e59cc2ae4"
+            ]
+          }
+        },
+        {
+          "Round": 4,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 12.876557684,
+          "FirstClientSeconds": 1.000203079,
+          "RBDProofSeconds": 9.007682768,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.5718251908094112,
+            "MeanMemoryBytes": 499910097.4545455,
+            "MeanWorkingSet": 462786932.3636365,
+            "ContainerIDs": [
+              "c631fce6839a5b446513aa2eab5978b1b220d82d9a506720041e037a56d6aa82",
+              "f72a7463a116f0ef9c8335f224c3824dd40be14ae37661610b4e5dad886ae46e",
+              "fa312965a942508d603cc0a3222d2538bc886ce2293116b4940c082d71cf4302"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.6396133045632759,
+            "MeanMemoryBytes": 506283473.4545455,
+            "MeanWorkingSet": 466282682.1818181,
+            "ContainerIDs": [
+              "63ebafc843c472e7a347e1cf9f46abf87d904154701f5bbe53df75d7ac1323ee",
+              "c631fce6839a5b446513aa2eab5978b1b220d82d9a506720041e037a56d6aa82",
+              "f72a7463a116f0ef9c8335f224c3824dd40be14ae37661610b4e5dad886ae46e",
+              "fa312965a942508d603cc0a3222d2538bc886ce2293116b4940c082d71cf4302"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0013928725319666733,
+            "MeanMemoryBytes": 4120576,
+            "MeanWorkingSet": 1695744
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "split",
+          "Warmup": false,
+          "StartSeconds": 13.363992747,
+          "FirstClientSeconds": 1.019693672,
+          "RBDProofSeconds": 9.408768676,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.6151802238709954,
+            "MeanMemoryBytes": 499799133.0909091,
+            "MeanWorkingSet": 462699054.5454545,
+            "ContainerIDs": [
+              "25a12c7bcf2723634fc8d03cc71a9c3ee04c36177b5ecec119cd76fe2ff4b066",
+              "4274d1bd84f7a3c81456cfbc92ac59c1bb602c882a2dac13e0525e458a7b21e0",
+              "9e060425d93cfeddeb9a6d90d5ec4f1061d1cd0559c80ca47346e5c044b80cda"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.6217350278305018,
+            "MeanMemoryBytes": 506564235.63636374,
+            "MeanWorkingSet": 466585786.1818181,
+            "ContainerIDs": [
+              "25a12c7bcf2723634fc8d03cc71a9c3ee04c36177b5ecec119cd76fe2ff4b066",
+              "2fc551f0485c1fe310f829fc87f468827b62c59cb66207cffd9bc197b6f19ef4",
+              "4274d1bd84f7a3c81456cfbc92ac59c1bb602c882a2dac13e0525e458a7b21e0",
+              "9e060425d93cfeddeb9a6d90d5ec4f1061d1cd0559c80ca47346e5c044b80cda"
+            ]
+          },
+          "Toolkit": {
+            "CPUPercent": 0.0011243222848935162,
+            "MeanMemoryBytes": 4129140.3636363638,
+            "MeanWorkingSet": 1704308.3636363635
+          }
+        },
+        {
+          "Round": 5,
+          "Mode": "all",
+          "Warmup": false,
+          "StartSeconds": 12.894710405,
+          "FirstClientSeconds": 1.303e-06,
+          "RBDProofSeconds": 8.869257067,
+          "CleanupPassed": true,
+          "Core": {
+            "CPUPercent": 0.5976326563105778,
+            "MeanMemoryBytes": 502184122.18181825,
+            "MeanWorkingSet": 465068032.0000002,
+            "ContainerIDs": [
+              "128e137ac6b9c7561312afbae4a572b421e4bdd468317c4a95a950c2617bb947",
+              "9509dc453e04c7d74d2d7a1a60568098b93080acfdd55286bcb9fd608004c413",
+              "c58de23a7d1a512bcf7abb10c6f281de9257a1e834ecc02da1b5b187a96a1b3b"
+            ]
+          },
+          "WithClient": {
+            "CPUPercent": 0.5464835621366457,
+            "MeanMemoryBytes": 503164555.6363637,
+            "MeanWorkingSet": 465602373.8181818,
+            "ContainerIDs": [
+              "128e137ac6b9c7561312afbae4a572b421e4bdd468317c4a95a950c2617bb947",
+              "9509dc453e04c7d74d2d7a1a60568098b93080acfdd55286bcb9fd608004c413",
+              "c58de23a7d1a512bcf7abb10c6f281de9257a1e834ecc02da1b5b187a96a1b3b"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

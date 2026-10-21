@@ -10,6 +10,7 @@ images already available. Hold the runner's exclusive Docker workload lock.
 Build the binary from a clean checkout so its VCS revision is recorded:
 
 ```sh
+mkdir -p artifacts
 go build -o artifacts/roleoverhead ./internal/tools/roleoverhead
 artifacts/roleoverhead \
   -all ceph-testcontainers:roles-v2-official-19.2.5-all \
@@ -69,3 +70,70 @@ in both modes. Compare paired modes on the same host; differences between
 variants on different hosts do not establish distribution performance rankings.
 Report medians, ranges, replicate counts, exact sources and cleanup separately
 from earlier storage or functionality results.
+
+## Recorded experiment, 2026-10-22
+
+The [per-trial dataset](role-overhead-results.json) contains five measured
+pairs and one excluded warmup pair per variant: **40 measured trials plus
+8 warmups**. All 48 native RBD proofs and 48 owned-container cleanup checks
+passed. A separate final inventory found no remaining containers on the four
+measurement runners. These are repetitions of this small workload, not 48
+distinct features or a replacement for full image qualification.
+
+The clean measurement binary was built at Go revision
+`111d5ba9d86906381a0e3b651577b08eaf515b84`, based on merged consumer
+`15c95a504963a20bb73e3401c1b1f18ad1bf42c1`. Runtime images were assembled
+at image revision `7ef514c475d6c789620f7bb6f63318a154ded742`; all twelve
+selected local image IDs match the earlier stored-layer measurement reports.
+The diff from that image source to merged image revision
+`6129d8c60e18f49b19b1f6bbc1e68f715c911d32` changes only the measurement
+tool and its tests, not assembly. This experiment still records its actual
+older image identities; it is not an exact-merge-image rebuild or a registry
+pull. Official-derived/Debian/Ubuntu use 19.2.5; Alpine is the separate
+19.2.4 experiment. No ARM64/Tentacle runtime-performance claim is made.
+
+Warm core startup, seconds, **median [minimum, maximum]**. Each variant's pair
+runs on the same Linux/amd64 host. First-client time in all mode is below
+0.001 seconds because it reuses the core executor.
+
+| Variant | Core, all | Core, split | First client, split |
+| --- | ---: | ---: | ---: |
+| Official-derived | 13.367 [13.349, 14.399] | 14.409 [12.865, 14.448] | 0.811 [0.798, 0.819] |
+| Debian | 13.613 [13.402, 14.629] | 14.356 [13.558, 14.596] | 0.960 [0.934, 0.969] |
+| Ubuntu | 12.765 [12.699, 13.248] | 13.236 [12.714, 13.247] | 0.894 [0.882, 0.908] |
+| Alpine experimental | 12.894 [12.878, 13.459] | 13.364 [12.877, 13.436] | 1.013 [0.989, 1.025] |
+
+The median **within-round split minus all** startup differences are +0.025,
++0.422, +0.476 and +0.006 seconds, respectively. Every variant's observed
+paired range includes both signs; no consistent startup reduction is shown.
+Subtracting the two marginal medians above is not a paired effect estimate.
+The phases are timed separately with an idle sampling window between them;
+these numbers are not an end-to-end application-ready latency measurement.
+
+Post-client idle medians, **all → split**. Memory uses decimal MB; working set
+is the documented cgroup estimate, not RSS. CPU is percent of one CPU.
+
+| Variant | Raw memory, MB | Working set, MB | CPU, % |
+| --- | ---: | ---: | ---: |
+| Official-derived | 386.12 → 388.11 | 357.34 → 357.93 | 1.012 → 1.019 |
+| Debian | 437.04 → 440.64 | 400.44 → 400.57 | 0.992 → 1.017 |
+| Ubuntu | 398.03 → 401.83 | 368.39 → 369.83 | 0.437 → 0.461 |
+| Alpine experimental | 502.56 → 506.60 | 464.92 → 466.63 | 0.565 → 0.620 |
+
+Both modes use three core containers before the client call. All stays at
+three afterward; split adds one idle toolkit. That toolkit's own median raw
+cgroup memory is 2.62/4.79/3.69/4.13 MB and its working set is
+1.23/1.35/1.33/1.70 MB, respectively. Its sampled idle CPU is below 0.005%
+of one CPU in every variant median. This does not measure its transient
+startup/command CPU. The dataset also retains the pre-client phase, ranges,
+original report hashes, immutable IDs and cleanup results. Raw counters were
+independently recomputed and checked against the summary before publication.
+
+The supported conclusion is **selective image storage savings with a small
+lazy-executor cost**. This experiment establishes no reduction in warm start
+time or idle CPU/memory. Pruning unused image files does not remove the core
+daemon workload. Keep split selection for workloads that benefit from omitted
+capabilities; all remains useful when the broad toolkit/features are wanted.
+A separate public client lifecycle type is not needed to obtain this behavior.
+Cold distribution and Docker/host overhead remain unmeasured; registry
+publication remains a separate operation.
