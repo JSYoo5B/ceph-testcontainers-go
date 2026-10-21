@@ -672,6 +672,90 @@ func TestNativeCommandTimeoutKillsTheCommandGroup(t *testing.T) {
 	}
 }
 
+// delayedSupervisorTarget models Docker accepting an exec before its Python
+// supervisor starts. The child's full run limit begins inside that supervisor;
+// the surrounding exec budget must also allow startup and the final report.
+type delayedSupervisorTarget struct {
+	*nativeTarget
+	delay   time.Duration
+	seconds float64
+}
+
+func (f *delayedSupervisorTarget) waitStartup(ctx context.Context, args []string) error {
+	if len(args) < 6 || args[2] != supervised.Script {
+		return nil
+	}
+	var err error
+	f.seconds, err = strconv.ParseFloat(args[5], 64)
+	if err != nil {
+		return err
+	}
+	timer := time.NewTimer(f.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (f *delayedSupervisorTarget) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if err := f.waitStartup(ctx, args); err != nil {
+		return 0, nil, err
+	}
+	return f.nativeTarget.Exec(ctx, args, opts...)
+}
+
+func (f *delayedSupervisorTarget) AttachExec(ctx context.Context, args, env []string) (supervised.Attachment, error) {
+	if err := f.waitStartup(ctx, args); err != nil {
+		return supervised.Attachment{}, err
+	}
+	return f.nativeTarget.AttachExec(ctx, args, env)
+}
+
+func TestNativeCommandTimeoutAllowsSupervisorStartup(t *testing.T) {
+	for _, input := range []bool{false, true} {
+		t.Run(fmt.Sprintf("input=%t", input), func(t *testing.T) {
+			target := &delayedSupervisorTarget{nativeTarget: newNativeTarget(t, "client", "tc-public"), delay: 600 * time.Millisecond}
+			cluster := nativeCluster()
+			command := waiterCommand(target.nativeTarget, "delayed-timeout", 500*time.Millisecond)
+			if input {
+				command.Input, command.MaxInput = NewNativeInput(), 1
+				_ = command.Input.Close()
+			}
+			result, err := cluster.RunNativeCommand(t.Context(), target, command)
+			if !errors.Is(err, ErrNativeCommandIncomplete) || classified(err) || !result.TimedOut {
+				t.Fatalf("delayed supervisor lost its timeout report: %+v, %v", result, err)
+			}
+			if target.seconds != 0.5 {
+				t.Fatalf("child run limit changed to %v seconds", target.seconds)
+			}
+			if processAlive(target.published(t, "delayed-timeout", "command")) {
+				t.Fatal("the timed-out command was not reaped before its report")
+			}
+			gone(t, target.published(t, "delayed-timeout", "descendant"), "descendant")
+			if markers := target.leftMarkers(t); len(markers) != 0 || registered(cluster) != 0 {
+				t.Fatalf("delayed timeout left markers %v or a registration", markers)
+			}
+		})
+	}
+}
+
+func TestNativeCommandStartupAllowanceKeepsCallerDeadline(t *testing.T) {
+	target := &delayedSupervisorTarget{nativeTarget: newNativeTarget(t, "client", "tc-public"), delay: 600 * time.Millisecond}
+	cluster := nativeCluster()
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	_, err := cluster.RunNativeCommand(ctx, target, waiterCommand(target.nativeTarget, "caller-expired", time.Minute))
+	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != context.DeadlineExceeded {
+		t.Fatalf("startup extended the caller's deadline: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target.pids(), "caller-expired.command")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a command started after the caller expired: %v", err)
+	}
+}
+
 func TestNativeCommandCancellationStopsOnlyItsCommand(t *testing.T) {
 	target := newNativeTarget(t, "client", "tc-public")
 	cluster := nativeCluster()

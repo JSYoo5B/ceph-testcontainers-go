@@ -29,6 +29,9 @@ const (
 	// caller's context, which has usually ended.
 	NativeCommandStopTimeout = supervised.CancelTimeout + nativeInspectTimeout
 	nativeInspectTimeout     = 5 * time.Second
+	// Native timeouts need room for exec startup and the supervisor's final
+	// report. Core CLI reads retain their independent short retry allowance.
+	nativeExecCushion = 2 * time.Second
 )
 
 // ErrNativeCommandIncomplete marks a NativeCommandResult that timed out or
@@ -445,10 +448,10 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 
 	var report supervised.Report
 	if in := command.Input; in != nil {
-		report, err = supervised.RunInput(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr,
+		report, err = supervised.RunInputWithExecCushion(runCtx, target, label, command.Timeout, nativeExecCushion, command.MaxStdout, command.MaxStderr,
 			supervised.Input{Limit: int64(command.MaxInput), Writes: in.writes, Closed: in.closed, Finished: in.finished}, command.Argv...)
 	} else {
-		report, err = supervised.Run(runCtx, target, label, command.Timeout, command.MaxStdout, command.MaxStderr, command.Argv...)
+		report, err = supervised.RunWithExecCushion(runCtx, target, label, command.Timeout, nativeExecCushion, command.MaxStdout, command.MaxStderr, command.Argv...)
 	}
 	unstopped, _ := supervised.Unconfirmed(err)
 	var notStopped *supervised.NotStoppedError
