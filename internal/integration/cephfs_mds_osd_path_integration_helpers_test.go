@@ -218,13 +218,13 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 		t.Fatalf("writer has data ops in flight before the cut: %v: %s", err, raw)
 	}
 
-	cutRequest := fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Loss: 100}
+	cutRequest := fault.NetworkProfile{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Loss: 100}
 	if osdCount == 1 {
 		cutRequest.Peer = peers[0].Addr
 	} else {
 		cutRequest.Peers = peers
 	}
-	lease, err := fault.TemporaryNetworkDelay(ctx, m.cluster, mdsContainer, cutRequest)
+	lease, err := fault.ApplyNetworkProfile(ctx, m.cluster, mdsContainer, cutRequest)
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

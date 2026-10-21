@@ -16,24 +16,24 @@ import (
 func TestTemporaryZoneLinkDelayRefusesBeforeAnythingRuns(t *testing.T) {
 	probe := &clustertest.ContextLockRuntime{}
 	f := &Multisite{sourceClient: probe, destinationClient: probe}
-	loss := fault.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100}
-	for name, edit := range map[string]func(*fault.NetworkDelay){
-		"a plane": func(d *fault.NetworkDelay) { d.Plane = ceph.PublicNetworkPlane },
-		"a peer":  func(d *fault.NetworkDelay) { d.Peer = netip.MustParseAddr("10.88.0.7") },
-		"a port":  func(d *fault.NetworkDelay) { d.PeerPort = 7480 },
-		"peers":   func(d *fault.NetworkDelay) { d.Peers = []fault.NetworkPeer{} },
+	loss := fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100}
+	for name, edit := range map[string]func(*fault.NetworkProfile){
+		"a plane": func(d *fault.NetworkProfile) { d.Plane = ceph.PublicNetworkPlane },
+		"a peer":  func(d *fault.NetworkProfile) { d.Peer = netip.MustParseAddr("10.88.0.7") },
+		"a port":  func(d *fault.NetworkProfile) { d.PeerPort = 7480 },
+		"peers":   func(d *fault.NetworkProfile) { d.Peers = []fault.NetworkPeer{} },
 	} {
 		delay := loss
 		edit(&delay)
-		if lease, err := f.TemporaryZoneLinkDelay(t.Context(), "b", "a", delay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+		if lease, err := f.ApplyZoneLinkProfile(t.Context(), "b", "a", delay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 			t.Errorf("%s: %v, %v", name, lease, err)
 		}
 	}
-	if _, err := f.TemporaryZoneLinkDelay(t.Context(), "a", "a", loss); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if _, err := f.ApplyZoneLinkProfile(t.Context(), "a", "a", loss); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Errorf("a link to itself: %v", err)
 	}
 	// Without the multisite bridge there is no link to delay.
-	if _, err := f.TemporaryZoneLinkDelay(t.Context(), "b", "a", loss); err == nil {
+	if _, err := f.ApplyZoneLinkProfile(t.Context(), "b", "a", loss); err == nil {
 		t.Error("a fixture without a bridge accepted a zone link delay")
 	}
 	if probe.Execs.Load() != 0 {

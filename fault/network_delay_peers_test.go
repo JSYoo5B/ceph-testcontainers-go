@@ -46,7 +46,7 @@ func TestNetworkDelayPeersApplyOneFilterEach(t *testing.T) {
 	cluster, osd := peersCluster(netem)
 	delay := testDelay
 	delay.Peers = manyPeers
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestNetworkDelayPeersPartialApplyIsRestored(t *testing.T) {
 			cluster, osd := peersCluster(netem)
 			delay := testDelay
 			delay.Peers = manyPeers
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 			if err == nil || lease == nil {
 				t.Fatalf("a partial apply returned %v, %v", lease, err)
 			}
@@ -105,7 +105,7 @@ func TestNetworkDelayPeersPartialApplyIsRestored(t *testing.T) {
 			if err != nil || status.Applied || status.RootHandle != lease.handle {
 				t.Fatalf("status %+v %v", status, err)
 			}
-			if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) {
+			if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Fatalf("a second delay while the partial one is held: %v", err)
 			}
 			if err := lease.Restore(t.Context()); err != nil {
@@ -127,7 +127,7 @@ func TestNetworkDelayPeersRefuseAnotherTableNumber(t *testing.T) {
 	cluster, osd := peersCluster(netem)
 	delay := testDelay
 	delay.Peers = manyPeers
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
@@ -154,14 +154,14 @@ func TestNetworkDelayPeersPreflightTheClassifier(t *testing.T) {
 			cluster, osd := peersCluster(netem)
 			delay := testDelay
 			delay.Peers = manyPeers
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 			if !errors.Is(err, ErrNetemKernelUnsupported) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) || errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 				t.Fatalf("got %v, %v", lease, err)
 			}
 			if tc := tcCommands(netem, "tc "); len(tc) != 0 || netem.liveHelpers() != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
 				t.Fatalf("the refusal ran %q, left %d helpers and %v", tc, netem.liveHelpers(), cluster.faultsOf(faulthook.NetworkDelay))
 			}
-			whole, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			whole, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if err != nil {
 				t.Fatalf("a whole-interface delay: %v", err)
 			}
@@ -185,7 +185,7 @@ func TestNetworkDelayPeersPreflightTheClassifier(t *testing.T) {
 			cluster, osd := peersCluster(netem)
 			delay := testDelay
 			delay.Peers = manyPeers
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ErrNetemImageUnsupported) || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay); !errors.Is(err, ErrNetemImageUnsupported) || lease != nil {
 				t.Fatalf("got %v, %v", lease, err)
 			}
 			if tc := tcCommands(netem, "tc "); len(tc) != 0 {
@@ -201,16 +201,16 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = NetworkPeer{Addr: v4, Port: uint16(6800 + i)}
 	}
-	for name, edit := range map[string]func(*NetworkDelay){
-		"Peer and Peers":  func(d *NetworkDelay) { d.Peer = v4 },
-		"empty Peers":     func(d *NetworkDelay) { d.Peers = []NetworkPeer{} },
-		"too many peers":  func(d *NetworkDelay) { d.Peers = tooMany },
-		"duplicate peer":  func(d *NetworkDelay) { d.Peers = []NetworkPeer{{Addr: v4}, {Addr: v4}} },
-		"invalid peer":    func(d *NetworkDelay) { d.Peers = []NetworkPeer{{Addr: v4}, {Port: 6800}} },
-		"mapped peer":     func(d *NetworkDelay) { d.Peers = []NetworkPeer{{Addr: netip.MustParseAddr("::ffff:10.88.0.7")}} },
-		"zoned peer":      func(d *NetworkDelay) { d.Peers = []NetworkPeer{{Addr: netip.MustParseAddr("fe80::1%eth0")}} },
-		"unspecified":     func(d *NetworkDelay) { d.Peers = []NetworkPeer{{Addr: netip.IPv6Unspecified()}} },
-		"port and Peers":  func(d *NetworkDelay) { d.PeerPort = 6800 },
+	for name, edit := range map[string]func(*NetworkProfile){
+		"Peer and Peers":  func(d *NetworkProfile) { d.Peer = v4 },
+		"empty Peers":     func(d *NetworkProfile) { d.Peers = []NetworkPeer{} },
+		"too many peers":  func(d *NetworkProfile) { d.Peers = tooMany },
+		"duplicate peer":  func(d *NetworkProfile) { d.Peers = []NetworkPeer{{Addr: v4}, {Addr: v4}} },
+		"invalid peer":    func(d *NetworkProfile) { d.Peers = []NetworkPeer{{Addr: v4}, {Port: 6800}} },
+		"mapped peer":     func(d *NetworkProfile) { d.Peers = []NetworkPeer{{Addr: netip.MustParseAddr("::ffff:10.88.0.7")}} },
+		"zoned peer":      func(d *NetworkProfile) { d.Peers = []NetworkPeer{{Addr: netip.MustParseAddr("fe80::1%eth0")}} },
+		"unspecified":     func(d *NetworkProfile) { d.Peers = []NetworkPeer{{Addr: netip.IPv6Unspecified()}} },
+		"port and Peers":  func(d *NetworkProfile) { d.PeerPort = 6800 },
 		"IPv6 on IPv4 if": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -222,7 +222,7 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 				edit(&delay)
 			}
 			// Without edit, the IPv6 peer of an endpoint without IPv6.
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("%+v: %v, %v", delay.Peers, lease, err)
 			}
 			if len(netem.helpers) != 0 || len(tcCommands(netem, "tc ")) != 0 {
@@ -231,7 +231,7 @@ func TestNetworkDelayPeersValidation(t *testing.T) {
 		})
 	}
 	// The same address on two ports is two peers.
-	if err := validateNetworkDelay(NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100,
+	if err := validateNetworkDelay(NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100,
 		Peers: []NetworkPeer{{Addr: v4, Port: 6800}, {Addr: v4, Port: 6801}}}); err != nil {
 		t.Fatal(err)
 	}

@@ -168,8 +168,8 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 	// osd.0 sends the daemon's reads of the source image through the limit,
 	// and only those: the source client's path through the same OSD stays
 	// unlimited.
-	limit := fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: rbdMirrorBandwidthRate}
-	lease, err := fault.TemporaryNetworkDelay(ctx, source, osd.Container, limit)
+	limit := fault.NetworkProfile{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: rbdMirrorBandwidthRate}
+	lease, err := fault.ApplyNetworkProfile(ctx, source, osd.Container, limit)
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

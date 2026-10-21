@@ -92,9 +92,9 @@ func (r severeRead) complete(t *testing.T, what string, size int, sha256 string)
 // underLimit applies limit to the limited OSD, runs during, reads the
 // lease's status before and after it, and restores the lease, checking that
 // the root qdisc and the helpers are gone.
-func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit fault.NetworkDelay, during func()) (fault.NetworkDelayStatus, fault.NetworkDelayStatus) {
+func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
 	t.Helper()
-	lease, err := fault.TemporaryNetworkDelay(ctx, f.cluster, f.limited.Container, limit)
+	lease, err := fault.ApplyNetworkProfile(ctx, f.cluster, f.limited.Container, limit)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -140,7 +140,7 @@ func testNetworkBandwidthSevere(t *testing.T) {
 	// only reads, which are idempotent.
 	timeoutName, timeoutSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "timeout", timeoutObject)
 	slowName, slowSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "slow", slowObject)
-	severe := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
+	severe := fault.NetworkProfile{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
 
 	t.Run("op timeout", func(t *testing.T) {
 		// At 64 Kbit/s the 1 MiB reply needs about 131 s; the client's

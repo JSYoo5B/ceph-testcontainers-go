@@ -646,7 +646,7 @@ clients reach every daemon at the address that the maps advertise, which a
 native client in the test process can use only on the host network. It is
 `bridge` for RGW, whose one HTTP endpoint a port mapping serves. A test that
 uses a bridge-only feature (`WithSeparateClusterNetwork`, `InterruptNetwork`,
-`TemporaryNetworkDelay`) declares `bridge` alone, or keeps that part in the
+`ApplyNetworkProfile`) declares `bridge` alone, or keeps that part in the
 bridge subtest.
 
 The planner reads the modes from the call (`internal/tools/tagcatalog`), so they are

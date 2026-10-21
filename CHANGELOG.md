@@ -320,6 +320,14 @@ change the API.
 
 ### Changed
 
+- Network fault APIs use `fault.NetworkProfile`, `NetworkProfileLease` and
+  `NetworkProfileStatus`, with `ApplyNetworkProfile`, `ApplyLinkProfile` and
+  `rgw.Multisite.ApplyZoneLinkProfile`. This is a source-breaking rename of
+  the corresponding delay names; fields, error categories, ownership and
+  `Status`/`Restore` behavior are unchanged. See the
+  [migration guide](docs/guides/upgrading-network-profile-names.md). No aliases
+  or automatic expiry are introduced.
+
 - Rename CephFS policy methods to `OverrideSessionTimeouts`,
   `OverrideSubvolumePin` and `OverrideSubvolumeGroupPin`, returning explicit
   `SessionTimeoutsOverrideHandle` / `PinOverrideHandle` restoration objects.

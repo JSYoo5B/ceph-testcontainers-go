@@ -182,13 +182,13 @@ ships. When a module command finds that a program is missing from the image,
 Docker cannot start it, and the error is `ErrImageCapability` with the
 program in `Capability`.
 
-Optional extensions, such as the netem helper of `TemporaryNetworkDelay`,
+Optional extensions, such as the netem helper of `ApplyNetworkProfile`,
 are selected explicitly and checked before anything changes. Their errors
 separate the four cases that matter:
 
 | Case | Category | Narrower error |
 | --- | --- | --- |
-| The extension is not selected (`NetworkDelay.HelperImage` is empty) | `ErrImageCapability` | |
+| The extension is not selected (`NetworkProfile.HelperImage` is empty) | `ErrImageCapability` | |
 | The selected image does not meet the extension's contract | `ErrImageCapability` | `ErrNetemImageUnsupported` |
 | The tools work, but the engine denies a permission or the kernel lacks a module | `ErrEnvironmentUnavailable` | `ErrNetemPermissionDenied`, `ErrNetemKernelUnsupported` |
 | The extension's native command ran and failed | `ErrNativeFailure` | `*NativeFailure` of `tc` |

@@ -175,7 +175,7 @@ resources from calls that failed halfway:
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
 | Host-port reservation helpers | Host mode MON and RGW startup |
 | The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
-| Network delays and their netem helper containers | `TemporaryNetworkDelay` (removed first, also on your client containers) |
+| Network delays and their netem helper containers | `ApplyNetworkProfile` (removed first, also on your client containers) |
 | Container pauses | `fault.Pause` (resumed before the teardown) |
 | Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |
 | Native commands that are still running or not confirmed as stopped | `RunNativeCommand` (canceled and stopped, also in your client containers) |
@@ -343,7 +343,7 @@ result:
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
-| `TemporaryNetworkDelay`, `TemporaryLinkDelay`, `TemporaryZoneLinkDelay` | Delay lease (the change may have reached the kernel) | `Restore` |
+| `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
 | `rbd.RunMirror`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
@@ -424,7 +424,7 @@ pattern for Docker state, with one difference: the cluster resumes and
 restores them itself during `Terminate`, because a frozen or disconnected
 container would block cleanup.
 
-`TemporaryNetworkDelay` also returns a restorable lease, with ownership tied
+`ApplyNetworkProfile` also returns a restorable lease, with ownership tied
 to its interface and qdisc. It removes only its own qdisc and is restored
 before daemon teardown. Its kernel-state checks and helper requirements are
 described in [Fault injection](fault-injection.md#delaying-packets-below-ceph).

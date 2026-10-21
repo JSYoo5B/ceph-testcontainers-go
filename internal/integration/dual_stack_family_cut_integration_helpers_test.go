@@ -343,7 +343,7 @@ func v2Endpoint(vector []ceph.EntityAddress, v6 bool) netip.AddrPort {
 // and two OSDs, with osd.1 listing its IPv6 address first. A client container
 // runs two librados actors: v6, whose MON session mon_host_override pins to
 // mon.a's IPv6 address, and v4, pinned to mon.a's IPv4 address. The test then
-// blackholes, with NetworkDelay Peer, PeerPort and Loss 100 on the client
+// blackholes, with NetworkProfile Peer, PeerPort and Loss 100 on the client
 // container, first its packets to mon.a's IPv6 v2 address and then those to
 // osd.1's IPv6 v2 address. During each cut the operation of the v6 actor on
 // that path stays pending while the same daemon keeps serving over IPv4 and
@@ -429,9 +429,9 @@ func testDualStackFamilyCut(t *testing.T) {
 	sameInstance(expect(v4, map[string]any{"id": "before", "op": "mon", "wait": 30}, true), &instance4)
 	state := readFamilyCutState(t, ctx, cluster)
 
-	cut := func(peer netip.AddrPort) *fault.NetworkDelayLease {
+	cut := func(peer netip.AddrPort) *fault.NetworkProfileLease {
 		t.Helper()
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, client, fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane,
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, client, fault.NetworkProfile{HelperImage: netem, Plane: ceph.PublicNetworkPlane,
 			Peer: peer.Addr(), PeerPort: peer.Port(), Loss: 100})
 		if lease != nil {
 			t.Cleanup(func() {
@@ -450,7 +450,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		}
 		return lease
 	}
-	restore := func(lease *fault.NetworkDelayLease, peer netip.AddrPort) string {
+	restore := func(lease *fault.NetworkProfileLease, peer netip.AddrPort) string {
 		t.Helper()
 		status, err := lease.Status(ctx)
 		// With Loss 100 netem sends none of the selected packets.

@@ -26,17 +26,17 @@ import (
 
 // NetemHelperImage is the netem helper that ceph-testcontainers-images
 // publishes for contract 1 of its netem extension, for linux/amd64 and
-// linux/arm64. TemporaryNetworkDelay never selects it by itself: pass it, or
-// another image that meets the contract, as NetworkDelay.HelperImage.
+// linux/arm64. ApplyNetworkProfile never selects it by itself: pass it, or
+// another image that meets the contract, as NetworkProfile.HelperImage.
 const NetemHelperImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1"
 
-// MaxNetworkDelay bounds NetworkDelay.Delay.
+// MaxNetworkDelay bounds NetworkProfile.Delay.
 const MaxNetworkDelay = 10 * time.Second
 
-// MaxNetworkPeers bounds NetworkDelay.Peers.
+// MaxNetworkPeers bounds NetworkProfile.Peers.
 const MaxNetworkPeers = 16
 
-// NetworkRate is a bandwidth in bits per second, for NetworkDelay.Rate.
+// NetworkRate is a bandwidth in bits per second, for NetworkProfile.Rate.
 type NetworkRate uint64
 
 // Units of NetworkRate, in powers of 1000 as tc counts them.
@@ -47,17 +47,17 @@ const (
 	GigabitPerSecond             = 1000 * MegabitPerSecond
 )
 
-// MinNetworkRate and MaxNetworkRate bound NetworkDelay.Rate.
+// MinNetworkRate and MaxNetworkRate bound NetworkProfile.Rate.
 const (
 	MinNetworkRate = 64 * KilobitPerSecond
 	MaxNetworkRate = 10 * GigabitPerSecond
 )
 
 // DefaultNetworkQueueLimit is the netem queue of a rate limit whose
-// NetworkDelay.QueueLimit is zero, in packets: tc's default.
+// NetworkProfile.QueueLimit is zero, in packets: tc's default.
 const DefaultNetworkQueueLimit = 1000
 
-// MaxNetworkQueueLimit bounds NetworkDelay.QueueLimit.
+// MaxNetworkQueueLimit bounds NetworkProfile.QueueLimit.
 const MaxNetworkQueueLimit = 100000
 
 // String formats the rate in bit/s with the largest decimal prefix that
@@ -74,7 +74,7 @@ func (r NetworkRate) String() string {
 	return strconv.FormatUint(uint64(r), 10) + "bit/s"
 }
 
-// NetworkPacketFault is one of netem's packet faults, for NetworkDelay's
+// NetworkPacketFault is one of netem's packet faults, for NetworkProfile's
 // Reorder, Duplicate and Corrupt: the percentage of the selected packets
 // that it affects, and how much each packet's decision depends on the
 // previous one's.
@@ -109,7 +109,7 @@ func (f NetworkPacketFault) matches(kernel NetworkPacketFault) bool {
 	return math.Abs(f.Percent-kernel.Percent) <= 1e-4 && math.Abs(f.Correlation-kernel.Correlation) <= 1e-4
 }
 
-// validate checks a fault's percentages; name is its NetworkDelay field.
+// validate checks a fault's percentages; name is its NetworkProfile field.
 func (f NetworkPacketFault) validate(name string) error {
 	switch {
 	case math.IsNaN(f.Percent) || f.Percent < 0 || f.Percent > 100:
@@ -144,8 +144,8 @@ var (
 	ErrNetemKernelUnsupported error = &categoryError{text: "the engine's kernel lacks a qdisc or classifier that the delay needs", kind: ceph.ErrEnvironmentUnavailable}
 )
 
-// NetworkDelay configures TemporaryNetworkDelay.
-type NetworkDelay struct {
+// NetworkProfile configures netem shaping for ApplyNetworkProfile or ApplyLinkProfile.
+type NetworkProfile struct {
 	// HelperImage is the netem helper image: NetemHelperImage, or another image
 	// that meets contract 1 of the netem extension. Required.
 	HelperImage string
@@ -192,7 +192,7 @@ type NetworkDelay struct {
 	// offload packet counts with all of its segments. The packets waiting
 	// for the rate, and for the Delay, share one queue of QueueLimit
 	// packets; one that arrives at a full queue is dropped and counted in
-	// NetworkDelayStatus.Drops. Zero sets no limit. It shapes only what the
+	// NetworkProfileStatus.Drops. Zero sets no limit. It shapes only what the
 	// target sends: what an application achieves through it is less, and is
 	// for the caller to measure.
 	Rate NetworkRate
@@ -227,13 +227,13 @@ type namedFault struct {
 }
 
 // packetFaults are the delay's packet faults, set or not, in tc's order.
-func (d NetworkDelay) packetFaults() []namedFault {
+func (d NetworkProfile) packetFaults() []namedFault {
 	return []namedFault{{"reorder", d.Reorder}, {"duplicate", d.Duplicate}, {"corrupt", d.Corrupt}}
 }
 
 // requestedFaults are the netem keywords of the delay's packet faults that
 // are set, in tc's order.
-func (d NetworkDelay) requestedFaults() []string {
+func (d NetworkProfile) requestedFaults() []string {
 	var names []string
 	for _, fault := range d.packetFaults() {
 		if !fault.fault.IsZero() {
@@ -253,16 +253,16 @@ type NetworkPeer struct {
 }
 
 // selection is the delay's peers: Peer and PeerPort as one entry, or Peers.
-func (d NetworkDelay) selection() []NetworkPeer {
+func (d NetworkProfile) selection() []NetworkPeer {
 	if d.Peer.IsValid() {
 		return []NetworkPeer{{Addr: d.Peer, Port: d.PeerPort}}
 	}
 	return slices.Clone(d.Peers)
 }
 
-// NetworkDelayStatus is what the kernel reports for a delay's interface,
-// read through the helper. It is native state, not the requested NetworkDelay.
-type NetworkDelayStatus struct {
+// NetworkProfileStatus is what the kernel reports for a profile's interface,
+// read through the helper. It is native state, not the requested NetworkProfile.
+type NetworkProfileStatus struct {
 	// Applied means that the delay's own netem qdisc is the root qdisc of the
 	// interface it was applied to (with peers, that its own hierarchy is,
 	// with one filter for each peer), and that nothing the lease did not add
@@ -313,12 +313,12 @@ type NetworkDelayStatus struct {
 	mismatch error
 }
 
-// NetworkDelayLease owns one netem delay on a container's network endpoint,
+// NetworkProfileLease owns one netem profile on a container's network endpoint,
 // applied from a helper container in the target's network namespace that
 // alone has NET_ADMIN. Restore removes the delay and the helper. A non-nil
 // lease returned with an error must be restored: the change may have been
 // applied. Restore is retryable.
-type NetworkDelayLease struct {
+type NetworkProfileLease struct {
 	// ContainerID and NetworkName identify the delayed endpoint.
 	ContainerID, NetworkName string
 	// SandboxID is the Docker network sandbox of the target when the delay
@@ -619,18 +619,18 @@ func seconds(value float64) time.Duration {
 	return time.Duration(math.Round(value*1e6)) * time.Microsecond
 }
 
-// validateNetworkDelay checks a NetworkDelay before anything runs.
-func validateNetworkDelay(delay NetworkDelay) error {
+// validateNetworkDelay checks a NetworkProfile before anything runs.
+func validateNetworkDelay(delay NetworkProfile) error {
 	return validateDelay(delay, true)
 }
 
-// validateDelay checks a NetworkDelay, with a Ceph network plane or, for
-// TemporaryLinkDelay, without one.
-func validateDelay(delay NetworkDelay, plane bool) error {
+// validateDelay checks a NetworkProfile, with a Ceph network plane or, for
+// ApplyLinkProfile, without one.
+func validateDelay(delay NetworkProfile, plane bool) error {
 	if strings.TrimSpace(delay.HelperImage) == "" {
 		// The extension is not selected.
 		return &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "netem extension",
-			Err: errors.New("network delay needs NetworkDelay.HelperImage: the netem helper is never selected implicitly")}
+			Err: errors.New("network delay needs NetworkProfile.HelperImage: the netem helper is never selected implicitly")}
 	}
 	// Every check runs: allowing a zero delay with a Loss must not skip the
 	// selection's checks.
@@ -639,7 +639,7 @@ func validateDelay(delay NetworkDelay, plane bool) error {
 	case plane && delay.Plane != ceph.PublicNetworkPlane && delay.Plane != ceph.ClusterNetworkPlane:
 		return invalidRequest("invalid Ceph network plane")
 	case !plane && delay.Plane != "":
-		return invalidRequest("a link delay names its network; leave NetworkDelay.Plane empty")
+		return invalidRequest("a link delay names its network; leave NetworkProfile.Plane empty")
 	case math.IsNaN(delay.Loss) || delay.Loss < 0 || delay.Loss > 100:
 		return invalidRequest("network delay Loss must be a percentage from 0 to 100")
 	case !noDelay && (delay.Delay < time.Millisecond || delay.Delay > MaxNetworkDelay):
@@ -880,8 +880,8 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 	return nil
 }
 
-// TemporaryNetworkDelay delays every packet that target sends through its
-// endpoint on the plane's bridge, below Ceph, with the kernel's netem qdisc.
+// ApplyNetworkProfile applies netem shaping to the packets that target sends
+// through its endpoint on the plane's bridge, below Ceph.
 // It is an opt-in extension: delay.HelperImage names the netem helper, which
 // runs in the target's network namespace with NET_ADMIN, while the target
 // keeps its own image and capabilities. The target is an owned daemon or a
@@ -911,12 +911,12 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 // The delay lasts until Restore, or until the target stops or leaves the
 // bridge, which removes its interface. Terminate restores delays that are
 // still held; restore a caller-owned target's delay before removing it.
-func TemporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkDelay) (*NetworkDelayLease, error) {
+func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryNetworkDelay(ctx, c, target, delay, nil)
 }
 
-func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkDelay, backend netemBackend) (*NetworkDelayLease, error) {
-	if gateErr := faulthook.Admit(c, "fault.TemporaryNetworkDelay"); gateErr != nil {
+func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile, backend netemBackend) (*NetworkProfileLease, error) {
+	if gateErr := faulthook.Admit(c, "fault.ApplyNetworkProfile"); gateErr != nil {
 		return nil, gateErr
 	}
 	if backend == nil {
@@ -942,20 +942,20 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 	return lease, err
 }
 
-// TemporaryLinkDelay is TemporaryNetworkDelay on another bridge than the
+// ApplyLinkProfile applies the same netem profile on another bridge than the
 // cluster's planes, for fixtures that own one, such as the private HTTP
 // bridge between the gateways of an RGW multisite: it delays or drops the
 // packets that ctr sends through its endpoint on the bridge named network.
 // Like InterruptLink, the caller owns ctr, the network and the returned
 // lease, and restores the lease before it removes either: no cluster's
 // Terminate knows it. delay.Plane stays empty; every other field, check and
-// error is that of TemporaryNetworkDelay, and a network that is not a bridge
+// error is that of ApplyNetworkProfile, and a network that is not a bridge
 // is refused.
-func TemporaryLinkDelay(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkDelay) (*NetworkDelayLease, error) {
+func ApplyLinkProfile(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryLinkDelay(ctx, dockerNetemBackend{}, ctr, network, delay)
 }
 
-func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testcontainers.Container, network string, delay NetworkDelay) (*NetworkDelayLease, error) {
+func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
 	if err := validateDelay(delay, false); err != nil {
 		return nil, err
 	}
@@ -1020,7 +1020,7 @@ func reserveNetworkDelay(ctx context.Context, c *ceph.Container, target testcont
 
 // settleNetworkDelay keeps a returned lease for Terminate, or frees the
 // reservation when there is none. It reports whether Terminate has started.
-func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *NetworkDelayLease) (closed bool) {
+func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *NetworkProfileLease) (closed bool) {
 	faulthook.WithTopologyNoContext(c, func() {
 		held := faulthook.Held{}
 		if lease != nil {
@@ -1035,7 +1035,7 @@ func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *Network
 
 // applyNetworkDelay checks the helper and the target, then applies the delay.
 // It returns a lease whenever the change may have reached the kernel.
-func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkDelay) (*NetworkDelayLease, error) {
+func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
 		return nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
@@ -1058,7 +1058,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 	if err != nil {
 		return nil, err
 	}
-	lease := &NetworkDelayLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
+	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
 		MACAddress: state.mac, Address: state.address, HelperImageID: imageID, Delay: delay.Delay,
 		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, backend: backend, helper: helper}
 	if delay.Rate > 0 {
@@ -1068,7 +1068,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		}
 	}
 	lease.Reorder, lease.Duplicate, lease.Corrupt = delay.Reorder, delay.Duplicate, delay.Corrupt
-	discard := func(err error) (*NetworkDelayLease, error) {
+	discard := func(err error) (*NetworkProfileLease, error) {
 		return nil, errors.Join(err, removeNetemHelper(ctx, backend, helper))
 	}
 	report, err := inspectNetem(ctx, backend, helper, "inspect", state.address.String(), state.mac)
@@ -1182,9 +1182,9 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 // checkFaults compares the kernel's packet faults and reorder gap with the
 // request: a fault that the kernel did not keep, or keeps without being
 // asked, is an error.
-func (l *NetworkDelayLease) checkFaults(status NetworkDelayStatus) error {
+func (l *NetworkProfileLease) checkFaults(status NetworkProfileStatus) error {
 	kernel := map[string]NetworkPacketFault{"reorder": status.Reorder, "duplicate": status.Duplicate, "corrupt": status.Corrupt}
-	for _, fault := range (NetworkDelay{Reorder: l.Reorder, Duplicate: l.Duplicate, Corrupt: l.Corrupt}).packetFaults() {
+	for _, fault := range (NetworkProfile{Reorder: l.Reorder, Duplicate: l.Duplicate, Corrupt: l.Corrupt}).packetFaults() {
 		if !fault.fault.matches(kernel[fault.name]) {
 			return fmt.Errorf("the kernel reports %s %v instead of the requested %v", fault.name, kernel[fault.name], fault.fault)
 		}
@@ -1505,16 +1505,16 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 
 // Status reads the delayed interface's qdiscs through the helper. After the
 // target restarted, stopped, was removed or left the bridge, it reports Gone.
-func (l *NetworkDelayLease) Status(ctx context.Context) (NetworkDelayStatus, error) {
+func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus, error) {
 	if err := lockMutex(ctx, &l.mu); err != nil {
-		return NetworkDelayStatus{}, err
+		return NetworkProfileStatus{}, err
 	}
 	defer l.mu.Unlock()
 	if l.complete {
-		return NetworkDelayStatus{}, invalidRequest("the network delay was restored")
+		return NetworkProfileStatus{}, invalidRequest("the network delay was restored")
 	}
 	if err := l.settle(ctx); err != nil {
-		return NetworkDelayStatus{}, err
+		return NetworkProfileStatus{}, err
 	}
 	return l.read(ctx)
 }
@@ -1522,7 +1522,7 @@ func (l *NetworkDelayLease) Status(ctx context.Context) (NetworkDelayStatus, err
 // settle confirms that no earlier tc command of the lease can still run, and
 // gives the lease a running helper in the target's namespace when the target
 // still has it.
-func (l *NetworkDelayLease) settle(ctx context.Context) error {
+func (l *NetworkProfileLease) settle(ctx context.Context) error {
 	if l.helper != nil {
 		running, _, err := l.backend.helper(ctx, l.helper)
 		switch {
@@ -1565,26 +1565,26 @@ func (l *NetworkDelayLease) settle(ctx context.Context) error {
 
 // read reports the delayed interface's state; the caller holds l.mu and has
 // settled the lease. Without a helper the namespace no longer exists.
-func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error) {
+func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, error) {
 	if l.helper == nil {
-		return NetworkDelayStatus{Gone: true}, nil
+		return NetworkProfileStatus{Gone: true}, nil
 	}
 	// The interface is found by its index: its address, MAC and name may
 	// change, but a reconnect creates a new interface with a new index.
 	report, err := inspectNetem(ctx, l.backend, l.helper, "index", strconv.Itoa(l.InterfaceIndex))
 	if err != nil {
-		return NetworkDelayStatus{}, err
+		return NetworkProfileStatus{}, err
 	}
 	// Another namespace, or no interface with that index, is not the delayed
 	// interface; its qdiscs are not the lease's.
 	if report.Namespace != l.Namespace || len(report.Links) != 1 {
-		return NetworkDelayStatus{Gone: true}, nil
+		return NetworkProfileStatus{Gone: true}, nil
 	}
 	root, err := report.root()
 	if err != nil {
-		return NetworkDelayStatus{}, err
+		return NetworkProfileStatus{}, err
 	}
-	status := NetworkDelayStatus{Interface: report.Links[0].Name, RootKind: root.Kind, RootHandle: root.Handle, Qdiscs: report.Qdiscs, Filters: report.Filters}
+	status := NetworkProfileStatus{Interface: report.Links[0].Name, RootKind: root.Kind, RootHandle: root.Handle, Qdiscs: report.Qdiscs, Filters: report.Filters}
 	netem := root
 	switch {
 	case len(l.Peers) == 0:
@@ -1597,7 +1597,7 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 		// netem child in the selected band, and the one filter to it.
 		var qdiscs []netemQdisc
 		if err := json.Unmarshal(report.Qdiscs, &qdiscs); err != nil {
-			return NetworkDelayStatus{}, fmt.Errorf("parse tc qdisc output: %w", err)
+			return NetworkProfileStatus{}, fmt.Errorf("parse tc qdisc output: %w", err)
 		}
 		children := 0
 		for _, qdisc := range qdiscs {
@@ -1630,7 +1630,7 @@ func (l *NetworkDelayLease) read(ctx context.Context) (NetworkDelayStatus, error
 // delay its netem child in the selected band and then the one filter.
 // Removing the root removes everything under it, so anything else there is
 // foreign; qdiscs outside the root, such as an ingress qdisc, are not.
-func (l *NetworkDelayLease) ownedPrefix(status NetworkDelayStatus) error {
+func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 	var qdiscs []netemQdisc
 	if err := json.Unmarshal(status.Qdiscs, &qdiscs); err != nil {
 		return fmt.Errorf("parse tc qdisc output: %w", err)
@@ -1682,7 +1682,7 @@ func (l *NetworkDelayLease) ownedPrefix(status NetworkDelayStatus) error {
 // interface is gone needs no removal. A root qdisc that someone replaced, or
 // a filter or qdisc that someone added under the lease's root, is refused,
 // not removed, and the lease stays retryable.
-func (l *NetworkDelayLease) Restore(ctx context.Context) error {
+func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -1738,7 +1738,7 @@ func (l *NetworkDelayLease) Restore(ctx context.Context) error {
 }
 
 // dockerNetemBackend runs helpers as owned containers of a cluster, or
-// without a cluster's label for TemporaryLinkDelay.
+// without a cluster's label for ApplyLinkProfile.
 type dockerNetemBackend struct {
 	label testcontainers.CustomizeRequestOption
 }

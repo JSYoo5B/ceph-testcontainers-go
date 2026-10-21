@@ -14,23 +14,25 @@ versions keep their original APIs. Update imports and calls together:
 | --- | --- |
 | `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
 | `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
-| `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` |
-| `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.TemporaryLinkDelay(ctx, target, network, delay)` |
+| `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.ApplyNetworkProfile(ctx, cluster, target, delay)` |
+| `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.ApplyLinkProfile(ctx, target, network, delay)` |
 | `cluster.InterruptNetwork(ctx, target, plane)` | `fault.InterruptNetwork(ctx, cluster, target, plane)` |
 | `ceph.InterruptNetwork(ctx, target, network)` | `fault.InterruptLink(ctx, target, network)` |
-| `ceph.NetworkDelay`, `NetworkPeer`, `NetworkRate`, `NetworkPacketFault` | Same names in `fault` |
-| `ceph.NetworkDelayLease`, `NetworkDelayStatus`, `NetworkInterruption` | Same names in `fault` |
+| `ceph.NetworkDelay` | `fault.NetworkProfile` |
+| `ceph.NetworkPeer`, `NetworkRate`, `NetworkPacketFault` | Same names in `fault` |
+| `ceph.NetworkDelayLease`, `NetworkDelayStatus` | `fault.NetworkProfileLease`, `NetworkProfileStatus` |
+| `ceph.NetworkInterruption` | `fault.NetworkInterruption` |
 | Netem constants, rate units and `ErrNetem*` sentinels | Same names in `fault` |
 
 `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink` and
 `rgw.Multisite.InterruptZoneLink` now return `*fault.NetworkInterruption`.
-`rgw.Multisite.TemporaryZoneLinkDelay` takes `fault.NetworkDelay` and returns
-`*fault.NetworkDelayLease`. These service fixtures still register cleanup.
+`rgw.Multisite.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
+`*fault.NetworkProfileLease`. These service fixtures still register cleanup.
 
 Cluster-bound operations keep shared-cluster admission and cleanup ordering:
 shaping first, endpoint restoration second, then container resumes. Faults
 refuse a shared tenant cluster and are allowed in an exclusive lease.
-Standalone `InterruptLink` and `TemporaryLinkDelay` remain caller-owned:
+Standalone `InterruptLink` and `ApplyLinkProfile` remain caller-owned:
 restore them before removing their container or bridge. Preserve non-nil
 handles returned with errors; restore remains retryable after uncertain results.
 The error categories remain in `ceph`; the moved sentinels still match them
@@ -45,6 +47,9 @@ mutation APIs and restoration handles. They use Ceph control-plane operations
 to change admission or policy; testing failure outcomes does not move these
 controls into `fault`. The blocklist extraction in PR #12 is reverted.
 Object-error injection remains in `ceph` for its separately reviewed checkpoint.
+
+For code already using the extracted `fault` delay names, follow the
+[network profile naming migration](guides/upgrading-network-profile-names.md).
 
 ## Pause
 
@@ -139,13 +144,13 @@ rebind its cluster messenger to an address that no longer exists, logs
 call `Start` on its handle afterwards. With two OSDs one reporter is not
 enough (`mon_osd_min_down_reporters` is 2), so the OSD stays up.
 
-## TemporaryNetworkDelay
+## ApplyNetworkProfile
 
 ```golang
-func TemporaryNetworkDelay(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error)
+func ApplyNetworkProfile(ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error)
 ```
 
-Delays every packet that `ctr` sends through its endpoint on one of the
+Applies netem shaping to packets that `ctr` sends through its endpoint on one of the
 cluster's bridges, with the kernel's netem qdisc, below Ceph. It is an opt-in
 extension: `delay.HelperImage` names a netem helper image, such as
 `fault.NetemHelperImage` (`ghcr.io/jsyoo5b/ceph-testcontainers-images:extension-netem-v1`),
@@ -154,7 +159,7 @@ or any image that meets
 The module starts the helper in `ctr`'s network namespace as root and grants
 `NET_ADMIN` to the helper only; `ctr` keeps its own image and capabilities.
 
-| `fault.NetworkDelay` field | Meaning |
+| `fault.NetworkProfile` field | Meaning |
 | --- | --- |
 | `HelperImage` | The helper image. Required; nothing selects it implicitly. |
 | `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
@@ -191,7 +196,7 @@ second delay of the same endpoint.
 | A malformed request, a refused target, a held endpoint or a foreign root qdisc | `ErrInvalidRequest` | |
 | A `tc` command that ran and failed otherwise | `ErrNativeFailure` | `*NativeFailure` of `tc` |
 
-The returned `*fault.NetworkDelayLease` records the target (`ContainerID`,
+The returned `*fault.NetworkProfileLease` records the target (`ContainerID`,
 `NetworkName`, `SandboxID`, `Namespace`, `Interface`, `InterfaceIndex`,
 `MACAddress`, `Address`), the helper's `HelperImageID` and the requested
 `Delay`, `Jitter`, `Peer`, `PeerPort`, `Loss`, `Rate`, `Reorder`, `Duplicate`
@@ -200,7 +205,7 @@ whole selection: `Peer` and `PeerPort` as one entry, or the requested `Peers`.
 With a `Rate`, `QueueLimit` is the queue limit that the lease installed: the
 requested one, or `fault.DefaultNetworkQueueLimit`.
 
-- `Status(ctx)` returns a `fault.NetworkDelayStatus`, the kernel's state read
+- `Status(ctx)` returns a `fault.NetworkProfileStatus`, the kernel's state read
   through the helper: `Applied`, the interface's current name (`Interface`)
   and root qdisc (`RootKind`, `RootHandle`), the `Delay`, `Jitter`, `Loss`
   percentage, `Rate`, `QueueLimit`, `Reorder`, `Duplicate`, `Corrupt` and
@@ -245,7 +250,7 @@ requested one, or `fault.DefaultNetworkQueueLimit`.
   container.
 
 ```golang
-delay, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -270,7 +275,7 @@ clientAddress, err := client.ContainerIP(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-delay, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -293,7 +298,7 @@ for _, osd := range addresses.OSDs {
 	host, _, _ := net.SplitHostPort(osd.Public[0].Addr)
 	peers = append(peers, fault.NetworkPeer{Addr: netip.MustParseAddr(host)})
 }
-cut, err := fault.TemporaryNetworkDelay(ctx, cluster, mds, fault.NetworkDelay{
+cut, err := fault.ApplyNetworkProfile(ctx, cluster, mds, fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peers:       peers,
@@ -308,7 +313,7 @@ cut, err := fault.TemporaryNetworkDelay(ctx, cluster, mds, fault.NetworkDelay{
 only to the selected peers, until `Restore`:
 
 ```golang
-limit, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+limit, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -357,7 +362,7 @@ decision that much dependent on the previous one's. A zero value is off
 `5% 10%`.
 
 ```golang
-fault, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+fault, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -418,10 +423,10 @@ for what clients observe and the engines this was checked on.
 
 ```go
 func InterruptLink(ctx context.Context, target testcontainers.Container, network string) (*NetworkInterruption, error)
-func TemporaryLinkDelay(ctx context.Context, target testcontainers.Container, network string, delay NetworkDelay) (*NetworkDelayLease, error)
+func ApplyLinkProfile(ctx context.Context, target testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error)
 ```
 
-Both operate on an attached endpoint of a named bridge. `TemporaryLinkDelay`
+Both operate on an attached endpoint of a named bridge. `ApplyLinkProfile`
 requires an empty `Plane`; the explicit network selects the link. All other
 profile validation, helper admission and restoration checks match the
 cluster-bound functions. The caller owns cleanup; these functions do not
@@ -432,8 +437,8 @@ register with a cluster.
 `NetworkRate.String` formats bits per second with decimal prefixes.
 `NetworkPacketFault.IsZero` reports an inactive profile, and
 `NetworkPacketFault.String` formats its tc percentage and correlation.
-`NetworkDelayLease.Status` reads installed kernel state;
-`NetworkDelayLease.Restore` and `NetworkInterruption.Restore` keep their
+`NetworkProfileLease.Status` reads installed kernel state;
+`NetworkProfileLease.Restore` and `NetworkInterruption.Restore` keep their
 retryable ownership contracts.
 
 The bounds are `MaxNetworkDelay`, `MaxNetworkPeers`, `MinNetworkRate`,

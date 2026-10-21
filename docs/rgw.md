@@ -1286,10 +1286,10 @@ disconnect the endpoint. The fixture restores remaining interruptions during
 `Terminate`. Host mode has no Docker endpoint to disconnect and is rejected.
 See [guides/fault-injection.md](guides/fault-injection.md).
 
-#### TemporaryZoneLinkDelay
+#### ApplyZoneLinkProfile
 
 ```golang
-func (m *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error)
+func (m *Multisite) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error)
 ```
 
 Delays or drops, below RGW, only the packets that the gateway of `zoneName`
@@ -1302,17 +1302,17 @@ notifications. Connections that `peerZone` opens to `zoneName` answer from
 Local S3 endpoints, the clusters and other zones' links are untouched.
 
 It is an opt-in extension like
-[TemporaryNetworkDelay](fault.md#temporarynetworkdelay), applied through
-[fault.TemporaryLinkDelay](fault.md#standalone-bridge-functions): `delay` names the netem
+[ApplyNetworkProfile](fault.md#applynetworkprofile), applied through
+[fault.ApplyLinkProfile](fault.md#standalone-bridge-functions): `delay` names the netem
 helper image and the delay, jitter or loss, and leaves `Plane`, `Peer`,
 `PeerPort` and `Peers` empty; the fixture selects the network and the peer and
 returns them in the lease. The checks, errors, `Status` and `Restore` are
-those of `TemporaryNetworkDelay`. A non-nil lease returned with an error must
+those of `ApplyNetworkProfile`. A non-nil lease returned with an error must
 be restored. The fixture restores remaining leases during `Terminate`. Host
 mode has no private multisite network and is rejected.
 
 ```golang
-cut, err := ms.TemporaryZoneLinkDelay(ctx, "west", "east", fault.NetworkDelay{
+cut, err := ms.ApplyZoneLinkProfile(ctx, "west", "east", fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Loss:        100,
 })

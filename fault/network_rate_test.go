@@ -15,24 +15,24 @@ import (
 )
 
 // testRate limits osd-0's packets to 32 Mbit/s, without a delay.
-var testRate = NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Rate: 32 * MegabitPerSecond}
+var testRate = NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Rate: 32 * MegabitPerSecond}
 
 // rateRequests are rate limits of each shape that the lease installs: on the
 // whole interface, with a delay and a loss in the same qdisc, and through the
 // selective hierarchy of one peer and of peers of both families.
-var rateRequests = map[string]NetworkDelay{
+var rateRequests = map[string]NetworkProfile{
 	"interface": testRate,
-	"with delay and loss": func() NetworkDelay {
+	"with delay and loss": func() NetworkProfile {
 		delay := testRate
 		delay.Delay, delay.Jitter, delay.Loss, delay.QueueLimit = 20*time.Millisecond, 2*time.Millisecond, 1, 250
 		return delay
 	}(),
-	"peer": func() NetworkDelay {
+	"peer": func() NetworkProfile {
 		delay := testRate
 		delay.Peer = netip.MustParseAddr("10.88.0.7")
 		return delay
 	}(),
-	"peers": func() NetworkDelay {
+	"peers": func() NetworkProfile {
 		delay := testRate
 		delay.Peers = []NetworkPeer{{Addr: netip.MustParseAddr("10.88.0.7")}, {Addr: netip.MustParseAddr("fd00::7"), Port: 6800}}
 		return delay
@@ -57,24 +57,24 @@ func (n *fakeNetem) rateQdisc(id string) *fakeQdisc {
 }
 
 func TestNetworkRateValidation(t *testing.T) {
-	for name, change := range map[string]func(*NetworkDelay){
-		"below the minimum":      func(d *NetworkDelay) { d.Rate = MinNetworkRate - 8 },
-		"above the maximum":      func(d *NetworkDelay) { d.Rate = MaxNetworkRate + 8 },
-		"not whole bytes":        func(d *NetworkDelay) { d.Rate = MinNetworkRate + 1 },
-		"queue limit, no rate":   func(d *NetworkDelay) { d.Rate, d.Delay, d.QueueLimit = 0, time.Millisecond, 10 },
-		"negative queue limit":   func(d *NetworkDelay) { d.QueueLimit = -1 },
-		"queue limit too large":  func(d *NetworkDelay) { d.QueueLimit = MaxNetworkQueueLimit + 1 },
-		"jitter without a delay": func(d *NetworkDelay) { d.Jitter = time.Millisecond },
-		"short delay":            func(d *NetworkDelay) { d.Delay = time.Microsecond },
-		"peer port, no peer":     func(d *NetworkDelay) { d.PeerPort = 6800 },
-		"no helper":              func(d *NetworkDelay) { d.HelperImage = "" },
+	for name, change := range map[string]func(*NetworkProfile){
+		"below the minimum":      func(d *NetworkProfile) { d.Rate = MinNetworkRate - 8 },
+		"above the maximum":      func(d *NetworkProfile) { d.Rate = MaxNetworkRate + 8 },
+		"not whole bytes":        func(d *NetworkProfile) { d.Rate = MinNetworkRate + 1 },
+		"queue limit, no rate":   func(d *NetworkProfile) { d.Rate, d.Delay, d.QueueLimit = 0, time.Millisecond, 10 },
+		"negative queue limit":   func(d *NetworkProfile) { d.QueueLimit = -1 },
+		"queue limit too large":  func(d *NetworkProfile) { d.QueueLimit = MaxNetworkQueueLimit + 1 },
+		"jitter without a delay": func(d *NetworkProfile) { d.Jitter = time.Millisecond },
+		"short delay":            func(d *NetworkProfile) { d.Delay = time.Microsecond },
+		"peer port, no peer":     func(d *NetworkProfile) { d.PeerPort = 6800 },
+		"no helper":              func(d *NetworkProfile) { d.HelperImage = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
 			request := testRate
 			change(&request)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); err == nil || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); err == nil || lease != nil {
 				t.Fatalf("accepted %+v", request)
 			}
 			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
@@ -110,7 +110,7 @@ func TestNetworkRateAppliesAndRestores(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := rateCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func TestNetworkDelayWithoutRateNeedsNoRate(t *testing.T) {
 	netem := newFakeNetem()
 	netem.noRateParse, netem.rateIgnored = true, true
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestNetworkRatePreflight(t *testing.T) {
 				netem := newFakeNetem()
 				tc.setup(netem)
 				cluster, osd := rateCluster(netem)
-				lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+				lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 				if !errors.Is(err, tc.want) || !errors.Is(err, tc.kind) || lease != nil {
 					t.Fatalf("got %v, lease %v; want %v", err, lease, tc.want)
 				}
@@ -219,7 +219,7 @@ func TestNetworkRateKernelMismatchKeepsTheLease(t *testing.T) {
 				}
 			}
 			cluster, osd := rateCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 			if err == nil || lease == nil || !strings.Contains(err.Error(), "rate 0bit/s") {
 				t.Fatalf("got %v, %v", lease, err)
 			}
@@ -241,7 +241,7 @@ func TestNetworkRateKernelMismatchKeepsTheLease(t *testing.T) {
 func TestNetworkRateStatusReportsTheKernelsRate(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testRate)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testRate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestNetworkRateRestoreKeepsForeignState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := rateCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,7 +303,7 @@ func TestNetworkRateUncertainApply(t *testing.T) {
 		return supervised.Report{}, context.Canceled
 	}
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testRate)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testRate)
 	if !errors.Is(err, context.Canceled) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -323,7 +323,7 @@ func TestNetworkRateUncertainApply(t *testing.T) {
 	}
 	netem.cancelErr = errors.New("the helper is frozen")
 	cluster, osd = delayCluster(netem)
-	lease, err = cluster.TemporaryNetworkDelay(t.Context(), osd, testRate)
+	lease, err = cluster.ApplyNetworkProfile(t.Context(), osd, testRate)
 	if lease == nil || err == nil || lease.pending != "m1" {
 		t.Fatalf("got %+v, %v", lease, err)
 	}

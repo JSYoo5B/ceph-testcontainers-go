@@ -161,9 +161,9 @@ func (f bandwidthFixture) read(t *testing.T, ctx context.Context, ctr testcontai
 // the client while the kernel's counters of the lease's netem qdisc are read
 // before and after, restores the lease, and checks that the root qdisc and
 // the helpers are gone. It returns the read and the counters' difference.
-func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit fault.NetworkDelay, during func()) (bandwidthRead, fault.NetworkDelayStatus, fault.NetworkDelayStatus) {
+func (f bandwidthFixture) limitedRead(t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (bandwidthRead, fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
 	t.Helper()
-	lease, err := fault.TemporaryNetworkDelay(ctx, f.cluster, f.limited.Container, limit)
+	lease, err := fault.ApplyNetworkProfile(ctx, f.cluster, f.limited.Container, limit)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -219,7 +219,7 @@ func testNetworkBandwidth(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := netip.MustParseAddr(address)
-	limit := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: bandwidthRate}
+	limit := fault.NetworkProfile{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: bandwidthRate}
 
 	baseline := f.read(t, ctx, f.client, 3)
 	checkUnlimited(t, "baseline", baseline, bandwidthRate)
@@ -283,7 +283,7 @@ func testNetworkBandwidthIPv6(t *testing.T) {
 	baseline := f.read(t, ctx, f.client, 3)
 	checkUnlimited(t, "baseline", baseline, bandwidthRate)
 
-	limit := fault.NetworkDelay{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: client6, Rate: bandwidthRate}
+	limit := fault.NetworkProfile{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: client6, Rate: bandwidthRate}
 	var unselected bandwidthRead
 	limited, before, after := f.limitedRead(t, ctx, limit, func() { unselected = f.read(t, ctx, f.control, 3) })
 	checkBounded(t, "the client's read through the IPv6 peer limit", limited, bandwidthRate)

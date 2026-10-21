@@ -1,8 +1,9 @@
 # Public API naming: inventory and proposed conventions
 
 Status: #14's inventory/convention checkpoint was introduced by #17. This
-revision implements the first ceph policy/auth operation names below; the
-remaining rows are proposals. The source catalogue records the current branch.
+revision implements the ceph policy/auth, CephFS and network profile names
+below; the remaining RBD helper row is a proposal. The source catalogue records
+the current branch.
 #9 is closed, but its remaining object-error wording
 does not authorize another package move. This audit preserves the current
 placement of `ceph.Container.InjectObjectDataError`, session fencing and fullness.
@@ -132,35 +133,36 @@ No expiry, automatic rollback, compatibility alias or package move is added.
 
 See [the migration guide](../guides/upgrading-cephfs-names.md).
 
-Current branch catalogue: 691 declarations/methods, 9 remaining proposal rows
-and 682 baseline rows. Baseline is recorded scope, not naming approval.
+## Implemented network profile family
 
-## Remaining proposed operation and handle mappings
+The three operations and three types are migrated together. Profile describes
+all supported shaping fields rather than only Delay; it adds no new netem
+capability. Error categories, shared/exclusive admission, partial-error leases,
+identity/external-edit checks, retryability and cleanup order are preserved.
 
-All rows below are proposals for later implementation PRs. Handles and undo
-methods stay named as shown unless an explicit type rename appears. Preserve
-non-nil error handles, cancellation fencing, uncertain outcomes, identity,
-external-edit refusal, retryability and cleanup order during every rename.
+| Previous name | Current name | Contract |
+| --- | --- | --- |
+| `fault.TemporaryNetworkDelay` | `fault.ApplyNetworkProfile` | Applies an owned profile to a cluster-plane endpoint; cluster teardown restores held profiles. |
+| `fault.TemporaryLinkDelay` | `fault.ApplyLinkProfile` | Applies the same profile on a caller-owned named bridge; the caller restores before removing the target/bridge. |
+| `rgw.Multisite.TemporaryZoneLinkDelay` | `rgw.Multisite.ApplyZoneLinkProfile` | Selects the owned zone endpoint/peer and preserves multisite-owned cleanup. |
+| `fault.NetworkDelay` | `fault.NetworkProfile` | Request with unchanged fields for delay/jitter, loss, rate/queue and packet faults/peers. |
+| `fault.NetworkDelayLease` | `fault.NetworkProfileLease` | Owns the installed profile/helper; retains `Status` and retryable `Restore`, including uncertain results. |
+| `fault.NetworkDelayStatus` | `fault.NetworkProfileStatus` | Observed native state and counters, not achieved throughput or proof that a packet was affected. |
+
+Keep `MaxNetworkDelay`: it limits the Delay field. `NetworkRate`, rate units,
+`NetworkPeer`, `NetworkPacketFault`, `NetemHelperImage` and netem sentinels keep
+their names and error categories. No timer, cancellation rollback, permanent
+alias, package move or generic cleanup interface is introduced. See the
+[migration guide](../guides/upgrading-network-profile-names.md).
+
+Current branch catalogue: 691 declarations/methods, 1 remaining proposal row
+and 690 baseline rows. Baseline is recorded scope, not naming approval.
+
+## Remaining proposed operation mapping
 
 | Current operation | Proposed operation | Result / undo | Reason and source contract |
 | --- | --- | --- | --- |
 | `rbd.TemporaryImmutableObjectCache` | `rbd.StartImmutableObjectCache` | `*rbd.ImmutableObjectCacheLease` / `Restore` | Starts an owned helper in a caller-owned client container; Restore stops the owned daemon and removes its owned files. Applying `ClientOptions` to a native client remains the caller's responsibility; there is no native expiry. [immutable_object_cache.go](../../rbd/immutable_object_cache.go) |
-| `fault.TemporaryNetworkDelay` | `fault.ApplyNetworkProfile` | `*fault.NetworkProfileLease` / `Restore` | The request supports rate, queue, loss, reorder, duplicate and corrupt as well as delay; refuses foreign/overlapping state instead of capturing arbitrary qdiscs. Cluster owns teardown. [network_delay.go](../../fault/network_delay.go) |
-| `fault.TemporaryLinkDelay` | `fault.ApplyLinkProfile` | `*fault.NetworkProfileLease` / `Restore` | Same profile on a named link for caller-owned/standalone targets; caller restores before removing the target or bridge. [network_delay.go](../../fault/network_delay.go) |
-| `rgw.Multisite.TemporaryZoneLinkDelay` | `rgw.Multisite.ApplyZoneLinkProfile` | `*fault.NetworkProfileLease` / `Restore` | The zone helper forwards the full profile and retains multisite-owned cleanup. [network.go](../../rgw/network.go) |
-
-The network operation rows require one coordinated type migration:
-
-| Current type | Proposed type | Reason |
-| --- | --- | --- |
-| `fault.NetworkDelay` | `fault.NetworkProfile` | Describes the complete request, not just its delay field. |
-| `fault.NetworkDelayLease` | `fault.NetworkProfileLease` | Owns the complete installed profile; retains `Restore` and `Status`. |
-| `fault.NetworkDelayStatus` | `fault.NetworkProfileStatus` | Observes the complete installed profile. |
-
-Keep `MaxNetworkDelay`: it limits the delay field, not every kind of profile
-fault. Keep `NetworkRate`, rate units, `NetworkPeer`, `NetworkPacketFault`,
-`NetemHelperImage` and netem sentinel names where they describe their actual
-values/dependency. A broad type-prefix replacement would obscure those limits.
 
 ## Reviewed retention and undo exceptions
 
@@ -185,12 +187,12 @@ values/dependency. A broad type-prefix replacement would obscure those limits.
 2. The ceph policy/auth operation checkpoint is implemented in this revision,
    preserving shared/exclusive admission keys and their reflection tests. Its
    callers, examples, references and migration table use the current names.
-3. Implement CephFS policy and owned-schedule names and the RBD cache helper in
-   separate service-focused PRs with their actual undo/ownership contracts.
-4. Migrate the complete network profile family together, including types,
+3. The CephFS policy and owned-schedule checkpoint is implemented. Implement
+   the remaining RBD cache helper separately with its actual ownership contract.
+4. The complete network profile family is migrated together, including types,
    service helpers, signatures, native callers, discovery tooling, docs and
-   sentinels' error-category behavior. Keep bandwidth/packet/peer/family/plane
-   semantics, severe-rate and replication recovery oracles intact.
+   sentinels' error-category behavior. Bandwidth/packet/peer/family/plane
+   semantics, severe-rate and replication recovery oracles remain intact.
 5. Refresh the catalogue after each implementation checkpoint; remove fulfilled
    proposal keys or record the resulting new baseline rather than keeping stale
    aliases in the proposal map. Keep #14 open until its full scope is satisfied.
@@ -201,9 +203,9 @@ published tag. Do not introduce permanent compatibility aliases automatically.
 No implementation PR may change timers, background workers, admission,
 uncertainty, cleanup, or recovery semantics merely to make its new name true.
 
-For this documentation/test-only checkpoint, verify the inventory, affected
-links, JSON determinism and privacy. It creates no native capability. Later
-rename PRs need affected unit tests and tag compilation. Run native tests where
+For each naming checkpoint, verify the inventory, affected links, JSON
+determinism, privacy, affected unit tests and tag compilation. A source rename
+creates no native capability. Run native tests where
 changed implementation, ownership or discovery warrants them; reuse sufficient
 same-source evidence with its exact commit/scope instead of repeating runtime
 work to turn a naming proposal into a native-support claim.

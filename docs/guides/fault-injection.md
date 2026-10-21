@@ -21,9 +21,9 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A daemon process exits | `Stop`/`Start` on a daemon handle | Closed connections right away | Yes | `Start` |
 | A daemon or client is alive but silent | `fault.Pause` | No replies, no closed connection; down only after heartbeat grace | Yes | `fault.PauseLease.Resume` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
-| Packets that a container sends on one network arrive late | `fault.TemporaryNetworkDelay` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkDelayLease.Restore` |
-| A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
-| Packets that a container sends arrive reordered, duplicated or corrupted | `fault.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
+| Packets that a container sends on one network arrive late | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkProfileLease.Restore` |
+| A container sends on one network at a limited bandwidth | `fault.ApplyNetworkProfile` with `NetworkProfile.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkProfileLease.Restore` |
+| Packets that a container sends arrive reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` with `NetworkProfile.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkProfileLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
@@ -265,13 +265,13 @@ and no fixture restores it.
 
 ## Delaying packets below Ceph
 
-`TemporaryNetworkDelay` delays every packet that one container sends through
+`ApplyNetworkProfile` delays every packet that one container sends through
 its endpoint on one of the cluster's bridges, with the kernel's netem qdisc.
 Ceph does not know about it: the daemon keeps its sessions, and every peer
 sees its answers late, while the container's other bridge and the other
 daemons are unaffected.
 
-This is an opt-in extension. `NetworkDelay.HelperImage` names an image with
+This is an opt-in extension. `NetworkProfile.HelperImage` names an image with
 `tc`, `ip` and `python3`, such as `fault.NetemHelperImage`, which
 [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
 publishes for `linux/amd64` and `linux/arm64`. The module starts that image as
@@ -286,7 +286,7 @@ if cluster != nil {
 if err != nil {
 	t.Fatal(err)
 }
-delay, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -336,7 +336,7 @@ Before it changes anything, the call checks:
 
 ### Selected peers
 
-With `NetworkDelay.Peer`, only the packets that the target sends to that
+With `NetworkProfile.Peer`, only the packets that the target sends to that
 address are delayed, and with `PeerPort` only TCP packets to that destination
 port. The lease owns a `prio` root qdisc, a netem qdisc in its third band and
 one u32 filter that selects the peer's packets; everything else uses the first
@@ -348,7 +348,7 @@ does the same through the IPv6 filter on an IPv6 cluster. The filter matches
 the IP header without options or extension headers, which Ceph's TCP traffic
 does not use.
 
-`NetworkDelay.Peers` selects several peers in one lease, each a
+`NetworkProfile.Peers` selects several peers in one lease, each a
 `fault.NetworkPeer` with an address and an optional TCP port, up to
 `fault.MaxNetworkPeers`. Only one delay is held per endpoint, so a daemon's
 paths to several peers are faulted with one delay that lists them all. The
@@ -363,7 +363,7 @@ it has.
 
 ```golang
 // The MDS loses both OSDs; clients and the MON still reach it.
-cut, err := fault.TemporaryNetworkDelay(ctx, cluster, mds, fault.NetworkDelay{
+cut, err := fault.ApplyNetworkProfile(ctx, cluster, mds, fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peers:       []fault.NetworkPeer{{Addr: osd0}, {Addr: osd1}},
@@ -438,14 +438,14 @@ What to expect:
 
 ### Bandwidth limits
 
-`NetworkDelay.Rate` limits the bandwidth of the packets that the target sends
+`NetworkProfile.Rate` limits the bandwidth of the packets that the target sends
 through its endpoint, on the whole interface or only to the selected peers,
 with netem's rate in the lease's netem qdisc. A `Rate` composes with `Delay`
 and `Loss` in the same qdisc, and `Delay` may then be zero. The lease, its
 selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-limit, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+limit, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -565,7 +565,7 @@ if err != nil {
 	return err
 }
 peer := inspect.NetworkSettings.Networks[source.NetworkName()].IPAddress
-lease, err := fault.TemporaryNetworkDelay(ctx, source, source.OSDs()[0].Container, fault.NetworkDelay{
+lease, err := fault.ApplyNetworkProfile(ctx, source, source.OSDs()[0].Container, fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        peer,
@@ -618,13 +618,13 @@ errors above instead of falling back to another mechanism.
 
 ### Packet faults
 
-`NetworkDelay.Reorder`, `Duplicate` and `Corrupt` add netem's packet faults
+`NetworkProfile.Reorder`, `Duplicate` and `Corrupt` add netem's packet faults
 to the lease's netem qdisc. Each is a `fault.NetworkPacketFault` with a
 `Percent` of the selected packets and an optional `Correlation`. The lease,
 its selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-fault, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+fault, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -755,8 +755,8 @@ clusters keep serving their local clients.
 | `rgw.Multisite.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
 
 The mirror path tests cut one path of a mirror daemon with
-`TemporaryNetworkDelay` and a `Peer` instead of a whole endpoint. For RGW,
-`rgw.Multisite.TemporaryZoneLinkDelay(ctx, zoneName, peerZone, delay)` does
+`ApplyNetworkProfile` and a `Peer` instead of a whole endpoint. For RGW,
+`rgw.Multisite.ApplyZoneLinkProfile(ctx, zoneName, peerZone, delay)` does
 the same on the multisite HTTP network: with the netem helper it drops or
 delays only the packets that one zone's gateway sends to another zone's
 gateway port, so that zone stops reading the peer's changes while the peer
@@ -1278,7 +1278,7 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.
-- [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.TemporaryZoneLinkDelay`.
+- [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.ApplyZoneLinkProfile`.
 - [Host network and native clients](host-network.md): which faults are
   available in host mode.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): handles returned

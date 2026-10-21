@@ -13,12 +13,12 @@ import (
 // endpoint on a bridge network.
 func TestTemporaryLinkDelay(t *testing.T) {
 	peer := []NetworkPeer{{Addr: netip.MustParseAddr("10.88.0.7"), Port: 7480}}
-	link := NetworkDelay{HelperImage: "netem-helper:test", Loss: 100, Peers: peer}
+	link := NetworkProfile{HelperImage: "netem-helper:test", Loss: 100, Peers: peer}
 	planed := link
 	planed.Plane = ceph.PublicNetworkPlane
 	osd := &fakeNetemHelper{id: "osd-0"}
 	for name, test := range map[string]struct {
-		delay   NetworkDelay
+		delay   NetworkProfile
 		network string
 		target  testcontainers.Container
 	}{

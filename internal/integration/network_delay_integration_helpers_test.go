@@ -235,7 +235,7 @@ func testNetworkDelay(t *testing.T) {
 	delayed, other := osds[0], osds[1]
 	slow, fast := objects[delayed.ID], objects[other.ID]
 	payload := delayExec(t, ctx, client, "rados", "-p", delayPool, "get", slow, "/dev/stdout")
-	request := fault.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter}
+	request := fault.NetworkProfile{HelperImage: image, Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter}
 
 	t.Run("delay", func(t *testing.T) {
 		baseline := readDelayObjects(t, ctx, client, slow, fast)
@@ -245,7 +245,7 @@ func testNetworkDelay(t *testing.T) {
 		delayExec(t, ctx, client, "sh", "-c", `rm -f /tmp/delay.stop; python3 /tmp/delay_held.py "$@" > /tmp/delay.log 2> /tmp/delay.err &`, "sh", delayPool, slow, fast)
 		defer delayExec(t, context.WithoutCancel(ctx), client, "touch", "/tmp/delay.stop")
 		time.Sleep(3 * time.Second)
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, request)
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, request)
 		if err != nil {
 			if lease != nil {
 				_ = lease.Restore(context.WithoutCancel(ctx))
@@ -326,7 +326,7 @@ func testNetworkDelay(t *testing.T) {
 		}
 		selective := request
 		selective.Peer = peer
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, selective)
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, selective)
 		if lease != nil {
 			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 		}
@@ -375,7 +375,7 @@ func testNetworkDelay(t *testing.T) {
 		}
 		selective := request
 		selective.Peer = netip.MustParseAddr(address)
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, selective)
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, selective)
 		if lease != nil {
 			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 		}
@@ -422,8 +422,8 @@ func testNetworkDelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		other := cluster.ControlContainer()
-		blackhole := fault.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peer: netip.MustParseAddr(address), Loss: 100}
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, blackhole)
+		blackhole := fault.NetworkProfile{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peer: netip.MustParseAddr(address), Loss: 100}
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, blackhole)
 		if lease != nil {
 			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 		}
@@ -478,7 +478,7 @@ func testNetworkDelay(t *testing.T) {
 		if address, err := other.ContainerIP(ctx); err != nil || slices.ContainsFunc(peers, func(peer fault.NetworkPeer) bool { return peer.Addr.String() == address }) {
 			t.Fatalf("the control container's address %q: %v", address, err)
 		}
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, fault.NetworkDelay{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peers: peers, Loss: 100})
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peers: peers, Loss: 100})
 		if lease != nil {
 			defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 		}
@@ -545,8 +545,8 @@ func testNetworkDelay(t *testing.T) {
 		}
 		selective := request
 		selective.Peer = netip.MustParseAddr(address)
-		for name, delay := range map[string]fault.NetworkDelay{"peer": selective, "interface": request} {
-			lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, delay)
+		for name, delay := range map[string]fault.NetworkProfile{"peer": selective, "interface": request} {
+			lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, delay)
 			if lease != nil {
 				defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 			}
@@ -589,14 +589,14 @@ func testNetworkDelay(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
-		if lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, fault.NetworkDelay{HelperImage: cluster.ControlImage(),
+		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: cluster.ControlImage(),
 			Plane: ceph.PublicNetworkPlane, Delay: delayAmount}); !errors.Is(err, fault.ErrNetemImageUnsupported) || !errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 			t.Fatalf("a helper without tc: %v", err)
 		}
 		// A root qdisc that the test installed is not replaced.
 		owner := startNetemObserver(t, ctx, image, other.Container, true)
 		delayExec(t, ctx, owner, "tc", "qdisc", "add", "dev", "eth0", "root", "handle", "8001:", "tbf", "rate", "1gbit", "burst", "64kb", "latency", "50ms")
-		if lease, err := fault.TemporaryNetworkDelay(ctx, cluster, other.Container, request); err == nil || lease != nil || !strings.Contains(err.Error(), "tbf") {
+		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, other.Container, request); err == nil || lease != nil || !strings.Contains(err.Error(), "tbf") {
 			t.Fatalf("a custom root qdisc: %v", err)
 		}
 		if root := rootQdisc(t, ctx, image, other.Container, "eth0"); root != "tbf 8001:" {
@@ -609,7 +609,7 @@ func testNetworkDelay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if lease, err := fault.TemporaryNetworkDelay(ctx, cluster, stranger, request); err == nil || lease != nil {
+		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, stranger, request); err == nil || lease != nil {
 			t.Fatal("a container outside the cluster's network was delayed")
 		}
 		if helpers := netemHelpers(t, ctx); helpers != 0 {
@@ -619,7 +619,7 @@ func testNetworkDelay(t *testing.T) {
 
 	t.Run("external changes", func(t *testing.T) {
 		// A root qdisc that replaced the lease's is refused by Restore.
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, request)
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -636,7 +636,7 @@ func testNetworkDelay(t *testing.T) {
 			t.Fatalf("Restore after the foreign root left: %v", err)
 		}
 		// A removed helper is replaced, and the qdisc it left is removed.
-		lease, err = fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, request)
+		lease, err = fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -665,7 +665,7 @@ func testNetworkDelay(t *testing.T) {
 
 	t.Run("caller container restart and Terminate", func(t *testing.T) {
 		// A restarted caller container gets a new namespace without the delay.
-		lease, err := fault.TemporaryNetworkDelay(ctx, cluster, client, request)
+		lease, err := fault.ApplyNetworkProfile(ctx, cluster, client, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -689,7 +689,7 @@ func testNetworkDelay(t *testing.T) {
 		}
 		// Terminate removes a delay that is still held from a caller-owned
 		// container before it tears the cluster down.
-		if _, err := fault.TemporaryNetworkDelay(ctx, cluster, client, request); err != nil {
+		if _, err := fault.ApplyNetworkProfile(ctx, cluster, client, request); err != nil {
 			t.Fatal(err)
 		}
 		// The caller's container is still attached, so the bridge stays until
@@ -732,7 +732,7 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 		return endpoint.GlobalIPv6Address
 	}
 	peer, control := ipv6(client), ipv6(cluster.ControlContainer())
-	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, fault.NetworkDelay{HelperImage: image,
+	lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: image,
 		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peer: peer})
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
@@ -816,7 +816,7 @@ func testNetworkDelayMixedPeers(t *testing.T, ctx context.Context, image string,
 	client4, client6 := endpoint(client)
 	control4, control6 := endpoint(cluster.ControlContainer())
 	peers := []fault.NetworkPeer{{Addr: client6}, {Addr: control4}}
-	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, delayed.Container, fault.NetworkDelay{HelperImage: image,
+	lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: image,
 		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peers: peers})
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()

@@ -20,6 +20,12 @@ Stages 2 to 5 start only after this inventory and its contracts are
 reviewed. A decision here that turns out wrong is changed in this document
 first, in the stage that discovers it.
 
+The network rows below retain their extraction-checkpoint spellings. The later
+[naming migration](../guides/upgrading-network-profile-names.md) replaces the
+three delay types with profile types and the three apply entry points with
+`ApplyNetworkProfile`, `ApplyLinkProfile` and `ApplyZoneLinkProfile`. This does
+not change the package decisions or fault contracts recorded here.
+
 ## Decisions
 
 | # | Decision |

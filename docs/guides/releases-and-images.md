@@ -155,7 +155,7 @@ run as separate containers from the same `control` image.
 | Multisite gateways | The `image` argument of `rgw.RunMultisite`, `rgw.RunTopology`, `Multisite.AddZone` and `Multisite.AddZonegroup` (an `rgw` or `all` image) | None |
 | Multisite setup clients (`radosgw-admin`) | `rgw.MultisiteConfig.ControlImage` or `rgw.TopologyConfig.ControlImage` | Each zone cluster's own `ControlImage()` |
 | Your client containers | Your choice; `cluster.ControlImage()` has every Ceph CLI and the Python bindings | None |
-| Netem helper | `fault.NetworkDelay.HelperImage`, selected explicitly (for example `fault.NetemHelperImage`) | None; never uses the Ceph role image implicitly |
+| Netem helper | `fault.NetworkProfile.HelperImage`, selected explicitly (for example `fault.NetemHelperImage`) | None; never uses the Ceph role image implicitly |
 
 If you omit a role override, that role runs from the `Run` image, which must
 then contain the role's components too. With a `control`-only image you must
@@ -297,7 +297,7 @@ baseline feature and no default uses it.
 
 | Extension | API | Helper image | Contract |
 | --- | --- | --- | --- |
-| netem packet delay and loss | `TemporaryNetworkDelay` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `fault.NetemHelperImage` | netem contract 1 with its selector profiles: `sh`, `sleep`, `tc` and `ip` with JSON output, netem, `prio` and u32, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc, and for peers the `prio` qdisc and the u32 classifier |
+| netem packet delay and loss | `ApplyNetworkProfile` (see [Fault injection](fault-injection.md#delaying-packets-below-ceph)) | `fault.NetemHelperImage` | netem contract 1 with its selector profiles: `sh`, `sleep`, `tc` and `ip` with JSON output, netem, `prio` and u32, `python3`; the engine grants `NET_ADMIN` to the helper and has the netem qdisc, and for peers the `prio` qdisc and the u32 classifier |
 
 `NET_ADMIN` is granted only to the opt-in helper, not to the Ceph daemons.
 This extension does not require Docker's privileged mode. It delays or drops

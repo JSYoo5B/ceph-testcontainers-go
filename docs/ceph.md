@@ -862,7 +862,7 @@ Linux) can reach MONs and OSDs directly.
   that itself runs in a bridge-network container cannot use host mode.
 - Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
   and Docker endpoint interruption ([fault.InterruptNetwork](fault.md#interruptnetwork)) and
-  packet delay ([fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay)) are not
+  packet delay ([fault.ApplyNetworkProfile](fault.md#applynetworkprofile)) are not
   available.
 
 [UsesHostNetwork](#useshostnetwork) and [PublicAddress](#publicaddress) report the
@@ -1130,7 +1130,7 @@ identified by its name in the monmap.
 
 ###### Cutting one family of a path
 
-[fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) with a `Peer`, a `PeerPort`
+[fault.ApplyNetworkProfile](fault.md#applynetworkprofile) with a `Peer`, a `PeerPort`
 and `Loss: 100` drops every packet that one container sends to one address
 and port. On a dual-stack cluster, a `Peer` that is a daemon's IPv6 address
 cuts only that family of the path: the same daemon stays reachable over IPv4,
@@ -1140,7 +1140,7 @@ and the container's paths to other daemons are untouched.
 addresses, err := cluster.DaemonAddresses(ctx)
 // osd.1 lists [fd62:93fe:2c9e::4]:6800 first; a native client dials it.
 peer := netip.MustParseAddrPort("[fd62:93fe:2c9e::4]:6800")
-cut, err := fault.TemporaryNetworkDelay(ctx, cluster, client, fault.NetworkDelay{
+cut, err := fault.ApplyNetworkProfile(ctx, cluster, client, fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage, Plane: ceph.PublicNetworkPlane,
 	Peer: peer.Addr(), PeerPort: peer.Port(), Loss: 100})
 // Operations of the client on osd.1 stay pending until cut.Restore(ctx).
@@ -1173,7 +1173,7 @@ and a new session reads back the exact objects. Finally osd.1's container is
 stopped and started: the new process advertises both families again with a
 new nonce, and the same client reads from it over IPv6 on a new connection.
 The test needs the netem
-helper and `NET_ADMIN`, like every `TemporaryNetworkDelay`.
+helper and `NET_ADMIN`, like every `ApplyNetworkProfile`.
 
 #### WithStartupTimeout
 
@@ -1566,7 +1566,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
-| `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
+| `*fault.NetworkProfileLease` | [fault.ApplyNetworkProfile](fault.md#applynetworkprofile) | `Restore` |
 | `*ceph.ClientRevocationHandle` | [RevokeClient](#revokeclient) | `Restore` |
 
 All handles follow the same contract:
@@ -3368,7 +3368,7 @@ with the existing cluster's ownership and cleanup lifetime. Its
 
 Network fault functions and handles are in [`fault`](fault.md). Use
 `fault.InterruptNetwork(ctx, cluster, target, plane)` and
-`fault.TemporaryNetworkDelay(ctx, cluster, target, delay)` with the existing
+`fault.ApplyNetworkProfile(ctx, cluster, target, delay)` with the existing
 cluster; its `Terminate` restores cluster-bound faults.
 
 ### Container Methods: Networking
@@ -3713,7 +3713,7 @@ client, err := testcontainers.Run(ctx, cluster.ControlImage(),
 #### Standalone network faults
 
 [`fault.InterruptLink`](fault.md#standalone-bridge-functions) and
-[`fault.TemporaryLinkDelay`](fault.md#standalone-bridge-functions) operate on
+[`fault.ApplyLinkProfile`](fault.md#standalone-bridge-functions) operate on
 caller-owned bridges. The caller restores their handles before removing the
 container or bridge.
 

@@ -3253,6 +3253,20 @@
       "decision": "baseline"
     },
     {
+      "current": "fault.ApplyLinkProfile",
+      "kind": "function",
+      "signature": "func(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "proposed": "fault.ApplyLinkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ApplyNetworkProfile",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "proposed": "fault.ApplyNetworkProfile",
+      "decision": "baseline"
+    },
+    {
       "current": "fault.BitPerSecond",
       "kind": "const",
       "proposed": "fault.BitPerSecond",
@@ -3351,40 +3365,6 @@
       "decision": "baseline"
     },
     {
-      "current": "fault.NetworkDelay",
-      "kind": "type",
-      "proposed": "fault.NetworkProfile",
-      "decision": "proposal"
-    },
-    {
-      "current": "fault.NetworkDelayLease",
-      "kind": "type",
-      "proposed": "fault.NetworkProfileLease",
-      "decision": "proposal"
-    },
-    {
-      "current": "fault.NetworkDelayLease.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*NetworkDelayLease",
-      "proposed": "fault.NetworkProfileLease.Restore",
-      "decision": "proposal"
-    },
-    {
-      "current": "fault.NetworkDelayLease.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (NetworkDelayStatus, error)",
-      "receiver": "*NetworkDelayLease",
-      "proposed": "fault.NetworkProfileLease.Status",
-      "decision": "proposal"
-    },
-    {
-      "current": "fault.NetworkDelayStatus",
-      "kind": "type",
-      "proposed": "fault.NetworkProfileStatus",
-      "decision": "proposal"
-    },
-    {
       "current": "fault.NetworkInterruption",
       "kind": "type",
       "proposed": "fault.NetworkInterruption",
@@ -3427,6 +3407,40 @@
       "decision": "baseline"
     },
     {
+      "current": "fault.NetworkProfile",
+      "kind": "type",
+      "proposed": "fault.NetworkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease",
+      "kind": "type",
+      "proposed": "fault.NetworkProfileLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*NetworkProfileLease",
+      "proposed": "fault.NetworkProfileLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (NetworkProfileStatus, error)",
+      "receiver": "*NetworkProfileLease",
+      "proposed": "fault.NetworkProfileLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileStatus",
+      "kind": "type",
+      "proposed": "fault.NetworkProfileStatus",
+      "decision": "baseline"
+    },
+    {
       "current": "fault.NetworkRate",
       "kind": "type",
       "proposed": "fault.NetworkRate",
@@ -3460,20 +3474,6 @@
       "receiver": "*PauseLease",
       "proposed": "fault.PauseLease.Resume",
       "decision": "baseline"
-    },
-    {
-      "current": "fault.TemporaryLinkDelay",
-      "kind": "function",
-      "signature": "func(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkDelay) (*NetworkDelayLease, error)",
-      "proposed": "fault.ApplyLinkProfile",
-      "decision": "proposal"
-    },
-    {
-      "current": "fault.TemporaryNetworkDelay",
-      "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkDelay) (*NetworkDelayLease, error)",
-      "proposed": "fault.ApplyNetworkProfile",
-      "decision": "proposal"
     },
     {
       "current": "rbd.Container",
@@ -4361,6 +4361,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.Multisite.ApplyZoneLinkProfile",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error)",
+      "receiver": "*Multisite",
+      "proposed": "rgw.Multisite.ApplyZoneLinkProfile",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.Multisite.BucketSyncStatus",
       "kind": "method",
       "signature": "func(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
@@ -4487,14 +4495,6 @@
       "receiver": "*Multisite",
       "proposed": "rgw.Multisite.SyncStatus",
       "decision": "baseline"
-    },
-    {
-      "current": "rgw.Multisite.TemporaryZoneLinkDelay",
-      "kind": "method",
-      "signature": "func(ctx context.Context, zoneName, peerZone string, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error)",
-      "receiver": "*Multisite",
-      "proposed": "rgw.Multisite.ApplyZoneLinkProfile",
-      "decision": "proposal"
     },
     {
       "current": "rgw.Multisite.Terminate",
