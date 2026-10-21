@@ -162,6 +162,8 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 }
 
 func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
 	cluster, control := newMonitorConfigFixture()
 	primary := newMonitorConfigArchive("retired-primary", "")
 	removed := newMonitorConfigArchive("retired-secondary", "")
@@ -174,7 +176,7 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	cluster.manager = retiredMgr
 	cluster.osds[2] = &OSDContainer{Container: retiredOSD, purged: true}
 	cluster.monitorTerminated = true
-	targets, err := cluster.monitorConfigTargets(t.Context(), control, "removed")
+	targets, err := cluster.monitorConfigTargets(ctx, control, "removed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,12 +185,12 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	}
 	cluster.monitorTerminated = false
 	delete(cluster.monitors, "removed")
-	if targets, err := cluster.monitorConfigTargets(t.Context(), control, "a"); err != nil || len(targets) != 0 {
+	if targets, err := cluster.monitorConfigTargets(ctx, control, "a"); err != nil || len(targets) != 0 {
 		t.Fatal("a just-terminated primary was queued during RemoveMonitor")
 	}
 	cluster.Container = control
 	cluster.services["rgw.same"] = control
-	if targets, err := cluster.monitorConfigTargets(t.Context(), control, ""); err != nil || len(targets) != 0 {
+	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); err != nil || len(targets) != 0 {
 		t.Fatal("control/primary/service aliases were recopied")
 	}
 }
@@ -348,6 +350,8 @@ func TestRefreshMonitorConfigCancellationAfterControlRetainsConfirmedTemplate(t 
 }
 
 func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
 	cluster, control := newMonitorConfigFixture()
 	a := newMonitorConfigArchive("a", "")
 	b := newMonitorConfigArchive("b", "")
@@ -356,7 +360,7 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
 	}
-	targets, err := cluster.monitorConfigTargets(t.Context(), control, "")
+	targets, err := cluster.monitorConfigTargets(ctx, control, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,6 +371,17 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 	}
 	if len(targets) != 2 || !slices.IsSorted(names) || len(slices.Compact(slices.Clone(ids))) != 2 {
 		t.Fatalf("unordered or duplicate archive targets: %v %v", names, ids)
+	}
+}
+
+func TestMonitorConfigInventoryBoundsToolkitPublicationWait(t *testing.T) {
+	cluster, control := newMonitorConfigFixture()
+	cluster.clientPublishMu.Lock()
+	defer cluster.clientPublishMu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); !errors.Is(err, context.DeadlineExceeded) || len(targets) != 0 {
+		t.Fatalf("monitor refresh ignored a blocked toolkit publication: %v %v", targets, err)
 	}
 }
 

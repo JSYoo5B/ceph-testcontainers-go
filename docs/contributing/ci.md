@@ -1188,7 +1188,8 @@ in [Testing](testing.md#one-test).
 The separate roles-v2 consumer workflow builds the candidate image contract
 from the images repository before running existing image-compatibility tests
 with relocated native oracles. `make roles-v2-routing` runs constrained
-ordinary-RBD and RGW-without-client cases. These source files deliberately
+ordinary-RBD, RGW-without-client and stopped-link RBD monitor refresh cases.
+These source files deliberately
 exclude the legacy `ci` tag planner: their images are not legacy published
 roles. `make roles-v2-runtime` retains the existing cache and CephFS/RBD
 automatic scheduling tests on the relocated runtimes. This workflow also

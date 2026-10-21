@@ -434,6 +434,7 @@ scenario-small-osds:
 .PHONY: roles-v2-routing roles-v2-runtime roles-v2-oracles
 roles-v2-routing:
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=30m ./internal/integration -run '^TestRoleImagesV2'
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=15m ./rbd -run '^TestRoleImagesV2MirrorRefresh$$'
 
 # Retain the existing behavioral proofs for role-local cache plugins and MGR
 # scheduling modules. Loading the binaries/modules in a quick check is not enough.
