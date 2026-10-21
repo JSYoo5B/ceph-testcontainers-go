@@ -28,9 +28,10 @@ const (
 	InputVariable = "TC_SUPERVISED_INPUT"
 	// CancelTimeout bounds one Cancel.
 	CancelTimeout = 10 * time.Second
-	// ExecCushion is the time Command leaves after the supervisor's deadline
-	// for it to kill and reap its child and report.
-	ExecCushion = 250 * time.Millisecond
+	// ExecCushion covers Docker exec startup, Python initialization, and the
+	// supervisor's kill/reap/report round trip outside the child's run limit.
+	// A shorter caller deadline still bounds the whole attempt.
+	ExecCushion = 2 * time.Second
 	// LaunchFailedExit is the supervisor's exit code when it could not start
 	// the command because of its program: it does not exist, is not
 	// executable or is not a program (ENOENT, EACCES, ENOEXEC and the like).
