@@ -1190,5 +1190,7 @@ from the images repository before running existing image-compatibility tests
 with relocated native oracles. `make roles-v2-routing` runs constrained
 ordinary-RBD and RGW-without-client cases. These source files deliberately
 exclude the legacy `ci` tag planner: their images are not legacy published
-roles. This workflow also checks the aggregate image independently. It does
+roles. `make roles-v2-runtime` retains the existing cache and CephFS/RBD
+automatic scheduling tests on the relocated runtimes. This workflow also
+checks the aggregate image independently. It does
 not replace existing release/category coverage or qualify unexecuted cells.

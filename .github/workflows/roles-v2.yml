@@ -61,6 +61,8 @@ jobs:
         run: make image-compatibility
       - name: Constrained role routing and client ownership
         run: make roles-v2-routing
+      - name: Existing cache and scheduling behavior on relocated roles
+        run: make roles-v2-runtime
       - name: Independent aggregate image path
         run: |
           id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-all")

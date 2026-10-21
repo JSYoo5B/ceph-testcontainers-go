@@ -431,6 +431,11 @@ scenario-small-osds:
 
 # Explicit candidate-contract routing checks; legacy published-role CI remains
 # independent until roles-v2 images are qualified and adopted.
-.PHONY: roles-v2-routing
+.PHONY: roles-v2-routing roles-v2-runtime
 roles-v2-routing:
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=30m ./internal/integration -run '^TestRoleImagesV2'
+
+# Retain the existing behavioral proofs for role-local cache plugins and MGR
+# scheduling modules. Loading the binaries/modules in a quick check is not enough.
+roles-v2-runtime:
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=40m ./internal/integration -run '^Test(ImmutableObjectCache|CephFSSnapshotSchedule|RBDAutomaticSnapshotSchedule)$$'
