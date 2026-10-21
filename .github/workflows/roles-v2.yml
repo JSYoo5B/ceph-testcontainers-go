@@ -51,6 +51,7 @@ jobs:
           CI_RELEASE_PHASE: ${{ vars.CI_RELEASE_PHASE }}
         run: python3 .github/scripts/roles_v2_plan.py --output artifacts/roles-v2-plan.json
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: roles-v2-plan
           path: artifacts/roles-v2-plan.json
