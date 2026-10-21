@@ -94,6 +94,10 @@ class MessengerEvidenceTests(unittest.TestCase):
     def test_missing_package_pass(self): self.reject(self.events()[:-1])
     def test_repeated_run(self): self.reject(self.events() + self.events())
 
+    def test_package_pass_before_case_completion(self):
+        events = self.events(); events[3], events[4] = events[4], events[3]; self.reject(events)
+
+
     def test_failed_cleanup_after_marker(self):
         events = self.events(); events[3]["Action"] = "fail"; self.reject(events)
 

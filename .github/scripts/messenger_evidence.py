@@ -145,6 +145,7 @@ def validate_stream(raw, root, reference, bindings, expected):
         need(event.get("Action") not in {"fail", "build-fail"}, "failed test/build stream")
         if event.get("Package") != PACKAGE:
             continue
+        need(package_pass == 0, "events after package completion")
         case, action = event.get("Test"), event.get("Action")
         need(case not in finished or action not in {"output", "run"}, "events after test completion")
         if action == "run":
