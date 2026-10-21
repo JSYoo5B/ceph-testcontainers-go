@@ -1,0 +1,25 @@
+{
+  "schema": "ceph-messenger-evidence/v1",
+  "ceph_commit": "7f793731f1b39eb4f465e960113d2363c311b964",
+  "bindings": [
+    {
+      "id": "targeted-command/native-identities",
+      "declarations": [
+        {"kind": "message", "symbol": "MSG_COMMAND"},
+        {"kind": "message", "symbol": "MSG_COMMAND_REPLY"}
+      ],
+      "requirement": "targeted-command/osd-pg-mds",
+      "case": "TestTargetedCommandRecipe",
+      "parent_marker": "TARGETED_COMMAND_RECEIPT",
+      "marker": "MSGR_CASE_RECEIPT",
+      "evidence": "native-state",
+      "context": {
+        "roles": ["osd", "mds", "native-client"],
+        "plane": "public",
+        "authentication": "cephx admin and limited client",
+        "placement": "OSDMap acting set and FSMap rank/GID",
+        "path": "named OSD/PG/MDS commands and refusal outcomes"
+      }
+    }
+  ]
+}

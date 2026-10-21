@@ -55,6 +55,7 @@ import (
 //     cancels it at its timeout, the OSD answers it once it runs again, and
 //     the client drops that reply.
 func TestTargetedCommandRecipe(t *testing.T) {
+	recordEvidence := registerMessengerEvidence(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
@@ -239,6 +240,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("TARGETED_COMMAND_RECEIPT %s", data)
+	recordEvidence(targetedMessengerEvidence(t, ctx, cluster, data, fsid))
 }
 
 func runTargetedProbe(t *testing.T, ctx context.Context, ctr testcontainers.Container, keyring, name string, timeout int, requests ...string) map[string]targetedReply {
