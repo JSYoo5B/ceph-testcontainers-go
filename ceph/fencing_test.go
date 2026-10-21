@@ -1,6 +1,22 @@
 package ceph
 
-import "testing"
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
+)
 
 const blocklistTestAddress = "192.0.2.7:0/1234"
 
@@ -32,5 +48,192 @@ func TestBlocklistDecodePreservesRangesAndRejectsMalformedState(t *testing.T) {
 		if _, err := decodeBlocklistEntries([]byte(malformed)); err == nil {
 			t.Fatal("malformed native blocklist accepted:", malformed)
 		}
+	}
+}
+
+func TestTemporaryBlocklistRestoresOnlyOwnedEntryAndSharesCopies(t *testing.T) {
+	c, native := newBlocklistFixture()
+	other := "192.0.2.7:0/5678"
+	native.entries[other] = time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	prior := native.entries[other]
+	change, err := c.TemporaryBlocklist(t.Context(), "v2:"+blocklistTestAddress, time.Minute)
+	if err != nil || change.Address() != blocklistTestAddress {
+		t.Fatal(err)
+	}
+	if _, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute); err == nil {
+		t.Fatal("overlap accepted")
+	}
+	copy := *change
+	if err := copy.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.entries) != 1 || !native.entries[other].Equal(prior) || len(native.ranges) != 1 {
+		t.Fatal("restoration changed another session or range")
+	}
+	newChange, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := native.removals
+	if err := change.Restore(t.Context()); err != nil || native.removals != before {
+		t.Fatal("stale copy removed a later entry")
+	}
+	if err := newChange.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTemporaryBlocklistRefusesExistingAndOutsideRenewal(t *testing.T) {
+	c, native := newBlocklistFixture()
+	native.entries[blocklistTestAddress] = time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	if change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute); err == nil || change != nil || native.additions != 0 {
+		t.Fatal("existing entry was adopted or renewed")
+	}
+	delete(native.entries, blocklistTestAddress)
+	change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native.entries[blocklistTestAddress] = native.entries[blocklistTestAddress].Add(time.Hour)
+	if err := change.Restore(t.Context()); err == nil || native.removals != 0 {
+		t.Fatal("outside renewal was removed")
+	}
+	// Natural native expiration converges even after outside renewal.
+	delete(native.entries, blocklistTestAddress)
+	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultBlocklist)) != 0 {
+		t.Fatal("native absence not reconciled")
+	}
+}
+
+func TestTemporaryBlocklistLostRepliesAndCanceledApplyAreRecoverable(t *testing.T) {
+	c, native := newBlocklistFixture()
+	ctx, cancel := context.WithCancel(t.Context())
+	native.cancelAfterAdd, native.loseAdd = cancel, true
+	change, err := c.TemporaryBlocklist(ctx, blocklistTestAddress, time.Minute)
+	if err == nil || change == nil || !change.state.known {
+		t.Fatal("canceled apply lost its fresh readback handle")
+	}
+	native.loseRemove = true
+	if err := change.Restore(t.Context()); err == nil || len(native.entries) != 0 {
+		t.Fatal("lost removal reply not preserved")
+	}
+	if err := change.Restore(t.Context()); err != nil || native.removals != 1 {
+		t.Fatal("removal retry did not reconcile absence")
+	}
+}
+
+func TestTemporaryBlocklistUnknownApplyCannotRemovePresentEntry(t *testing.T) {
+	c, native := newBlocklistFixture()
+	native.failReadAfterAdd = true
+	change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute)
+	if err == nil || change == nil || change.state.known {
+		t.Fatal("unknown readback claimed confirmed creation")
+	}
+	if err := change.Restore(t.Context()); err == nil || native.removals != 0 {
+		t.Fatal("unknown creation authorized removal")
+	}
+	delete(native.entries, blocklistTestAddress)
+	if err := change.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blocklistFixture struct {
+	testcontainers.Container
+	entries                                             map[string]time.Time
+	ranges                                              []map[string]string
+	additions, removals                                 int
+	loseAdd, loseRemove, failReadAfterAdd, failNextRead bool
+	cancelAfterAdd                                      context.CancelFunc
+}
+
+func newBlocklistFixture() (*Container, *blocklistFixture) {
+	native := &blocklistFixture{entries: make(map[string]time.Time), ranges: []map[string]string{{"range": "198.51.100.0:0/24", "until": "2026-10-03T08:00:00.123456+0000"}}}
+	return &Container{Container: native, settings: options{startupTimeout: time.Second}}, native
+}
+
+func (f *blocklistFixture) Exec(ctx context.Context, argv []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
+	args := argv[3:]
+	output, code := "", 0
+	switch {
+	case slices.Equal(args, []string{"osd", "blocklist", "ls", "--format", "json"}):
+		if f.failNextRead {
+			f.failNextRead = false
+			return 0, nil, errors.New("lost readback")
+		}
+		entries := make([]map[string]string, 0, len(f.entries))
+		for address, until := range f.entries {
+			entries = append(entries, map[string]string{"addr": address, "until": until.Format("2006-01-02T15:04:05.999999-0700")})
+		}
+		a, _ := json.Marshal(entries)
+		b, _ := json.Marshal(f.ranges)
+		output = string(a) + string(b)
+	case len(args) == 5 && slices.Equal(args[:3], []string{"osd", "blocklist", "add"}):
+		seconds, _ := strconv.ParseFloat(args[4], 64)
+		f.entries[args[3]] = time.Now().UTC().Add(time.Duration(seconds * float64(time.Second))).Truncate(time.Microsecond)
+		f.additions++
+		f.failNextRead = f.failReadAfterAdd
+		if f.cancelAfterAdd != nil {
+			f.cancelAfterAdd()
+		}
+		if f.loseAdd {
+			code = 1
+		}
+	case len(args) == 4 && slices.Equal(args[:3], []string{"osd", "blocklist", "rm"}):
+		delete(f.entries, args[3])
+		f.removals++
+		if f.loseRemove {
+			code = 1
+		}
+	default:
+		return 0, nil, fmt.Errorf("unexpected blocklist command %v", args)
+	}
+	var header [8]byte
+	header[0] = byte(stdcopy.Stdout)
+	binary.BigEndian.PutUint32(header[4:], uint32(len(output)))
+	return code, bytes.NewReader(append(header[:], []byte(output)...)), nil
+}
+
+func TestBlocklistFailedPreflightReleasesReservation(t *testing.T) {
+	c, native := newBlocklistFixture()
+	native.failNextRead = true
+	if change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute); err == nil || change != nil || len(c.faultsOf(faultBlocklist)) != 0 || native.additions != 0 {
+		t.Fatalf("failed preflight retained ownership or mutated: %v", err)
+	}
+	change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute)
+	if err != nil || c.faultsOf(faultBlocklist)[blocklistTestAddress] != change {
+		t.Fatalf("freed reservation was not reusable: %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := change.Restore(ctx); !errors.Is(err, context.Canceled) || c.faultsOf(faultBlocklist)[blocklistTestAddress] != change || native.removals != 0 {
+		t.Fatalf("cancelled restore lost ownership or mutated: %v", err)
+	}
+	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultBlocklist)) != 0 {
+		t.Fatalf("fresh restore did not release ownership: %v", err)
+	}
+}
+
+func TestBlocklistAdmissionDoesNotMutateUnavailableCluster(t *testing.T) {
+	for _, input := range []struct {
+		address  string
+		duration time.Duration
+	}{{"192.0.2.7", time.Minute}, {blocklistTestAddress, time.Millisecond}} {
+		c, native := newBlocklistFixture()
+		if change, err := c.TemporaryBlocklist(t.Context(), input.address, input.duration); err == nil || change != nil || native.additions != 0 || len(c.faultsOf(faultBlocklist)) != 0 {
+			t.Fatalf("invalid request admitted: %v", err)
+		}
+	}
+	c, native := newBlocklistFixture()
+	c.closed = true
+	if change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute); err == nil || change != nil || native.additions != 0 || len(c.faultsOf(faultBlocklist)) != 0 {
+		t.Fatalf("closed cluster admitted: %v", err)
+	}
+	var missing *BlocklistOverride
+	if err := missing.Restore(t.Context()); err == nil {
+		t.Fatal("nil override restored")
 	}
 }

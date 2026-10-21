@@ -3,6 +3,7 @@ package ceph
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOverridesRefuseUntrackedHandlesAndFreeFailedReservations(t *testing.T) {
@@ -29,6 +30,17 @@ func TestOverridesRefuseUntrackedHandlesAndFreeFailedReservations(t *testing.T) 
 		before := ctr.mutations
 		if err := forged.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "not tracked") || ctr.mutations != before {
 			t.Fatalf("an untracked override restored: %v", err)
+		}
+	})
+	t.Run("blocklist", func(t *testing.T) {
+		c, native := newBlocklistFixture()
+		change, err := c.TemporaryBlocklist(t.Context(), blocklistTestAddress, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := &BlocklistOverride{owner: c, address: change.address, state: &blocklistOverrideState{until: change.state.until, known: true}}
+		if err := forged.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "not tracked") || native.removals != 0 {
+			t.Fatalf("an untracked override removed the entry: %v", err)
 		}
 	})
 }

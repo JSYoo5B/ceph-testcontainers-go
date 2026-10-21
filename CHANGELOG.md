@@ -320,11 +320,10 @@ change the API.
 
 ### Changed
 
-- Move `Container.TemporaryBlocklist` to `fault.TemporaryBlocklist(ctx, cluster,
-  address, duration)` and `ceph.BlocklistOverride` to `fault.BlocklistOverride`.
-  `Address` and retryable `Restore` retain their ownership semantics; read-only
-  `BlocklistEntries` and `BlocklistEntry` remain in `ceph`. This intentional
-  next-minor source break has no compatibility aliases; see `docs/fault.md`.
+- Revert the client-session blocklist extraction into `fault`.
+  `Container.TemporaryBlocklist` and `ceph.BlocklistOverride` stay in `ceph`
+  as session-admission controls, preserving expiration ownership and retryable
+  restoration. Network faults and container pause remain in `fault`.
 
 - The CI commands `batchselect` and `tagcatalog` moved from `tools/` to
   `internal/tools/`. They only serve this repository's CI planner, so they

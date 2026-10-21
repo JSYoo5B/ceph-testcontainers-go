@@ -231,7 +231,7 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | `ConnectionConfig()` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `PoolStatus`, `RemovePool`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
 | `Ceph(ctx, args...)`, `ControlContainer()`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
-| `fault.Pause`, `fault.TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
+| `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `TemporaryConfig` | Set any Ceph option and restore it. |
 | `CephVersion()` | Branch on the Ceph release (`"20.2.4"`, `"19.2.5"`). |
 
@@ -360,7 +360,7 @@ for the `exclusive-lock` image feature), or nil when no client holds it.
 
 | Field | Meaning |
 | --- | --- |
-| `Address` | The client's `IP:port/nonce`, the same form that `BlocklistEntries` reports and `fault.TemporaryBlocklist` accepts. |
+| `Address` | The client's `IP:port/nonce`, the same form that `BlocklistEntries` reports and `TemporaryBlocklist` accepts. |
 | `ClientID` | The numeric global ID (`client.<ClientID>`). |
 | `Cookie` | The watch cookie. |
 
@@ -373,7 +373,7 @@ A client that stops answering keeps its watch until the OSD option
 | --- | --- |
 | `ID` | The lock ID. For a managed lock it is `auto <watch cookie>`. |
 | `Locker` | The owner's entity name, for example `client.4235`. |
-| `Address` | The owner's `IP:port/nonce`, usable with `fault.TemporaryBlocklist`. |
+| `Address` | The owner's `IP:port/nonce`, usable with `TemporaryBlocklist`. |
 | `Managed` | True for the librbd exclusive lock; false for advisory locks created with `rbd lock add`. |
 
 ### Backup and restore functions
@@ -1435,7 +1435,7 @@ func TestLockHandover(t *testing.T) {
 	}
 
 	// Fence the frozen owner instead of waiting for its watch to expire.
-	fence, err := fault.TemporaryBlocklist(ctx, cluster, owner.Address, 10*time.Minute)
+	fence, err := cluster.TemporaryBlocklist(ctx, owner.Address, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1462,7 +1462,7 @@ Behaviour to rely on:
 - The blocklist entry that librbd adds when it breaks a lock is not owned by the fixture. It stays until Ceph expires it (one hour by default).
 - The cluster resumes paused containers during `Terminate`, but resume a caller-owned container explicitly before it is removed.
 
-Fault injection primitives (`fault.Pause`, `fault.TemporaryBlocklist`, network
+Fault injection primitives (`fault.Pause`, `TemporaryBlocklist`, network
 interruptions, messenger delays) are described in
 [the fault injection guide](guides/fault-injection.md).
 
@@ -2022,5 +2022,5 @@ See [Classified errors](guides/errors.md#unsupported-features).
 - **Waiting on a stopped daemon.** `WaitReceiverReady()` without names expects every owned daemon, including stopped ones. Name the survivors.
 - **One OSD with replica 1.** `WaitForClean` succeeds, but Ceph reports `POOL_NO_REDUNDANCY`. Tests that require `HEALTH_OK` should use two OSDs and two replicas (the default).
 - **Read-only identity with a writable open.** A normal image open registers a watch and needs write permission. Open read-only.
-- **Lifting a fence too early.** Keep `fault.TemporaryBlocklist` in place until the old lock owner has observed `ESHUTDOWN`.
+- **Lifting a fence too early.** Keep `TemporaryBlocklist` in place until the old lock owner has observed `ESHUTDOWN`.
 - **Cleanup order.** Register the clusters' cleanup before the link's, so the link terminates first. Terminate a non-nil `*Mirror` even after an error.
