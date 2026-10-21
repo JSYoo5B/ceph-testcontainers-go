@@ -112,6 +112,9 @@ func run(ctx context.Context, cfg config) error {
 	if info.Info.OSType != "linux" {
 		return errors.New("require a Linux Docker engine")
 	}
+	if info.Info.CgroupVersion != "1" && info.Info.CgroupVersion != "2" {
+		return fmt.Errorf("unsupported cgroup version %q", info.Info.CgroupVersion)
+	}
 	r := report{Schema: 1, Config: cfg, Platform: "linux/" + runtime.GOARCH, Docker: info.Info.ServerVersion,
 		Kernel: info.Info.KernelVersion, Cgroup: info.Info.CgroupVersion, StorageDriver: info.Info.Driver,
 		CPUs: info.Info.NCPU, MemoryBytes: info.Info.MemTotal, ImageIDs: map[string]string{}}
@@ -142,7 +145,7 @@ func run(ctx context.Context, cfg config) error {
 			slices.Reverse(modes)
 		}
 		for _, mode := range modes {
-			result, trialErr := measureTrial(ctx, docker, cfg, r.ImageIDs, round, mode)
+			result, trialErr := measureTrial(ctx, docker, cfg, r.ImageIDs, round, mode, r.Cgroup)
 			r.Trials = append(r.Trials, result)
 			if err := save(cfg.Output, r); err != nil {
 				return errors.Join(trialErr, err)
@@ -166,7 +169,7 @@ func save(path string, r report) error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-func measureTrial(ctx context.Context, docker *testcontainers.DockerClient, cfg config, images map[string]string, round int, mode string) (result trial, resultErr error) {
+func measureTrial(ctx context.Context, docker *testcontainers.DockerClient, cfg config, images map[string]string, round int, mode, cgroupVersion string) (result trial, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	result = trial{Round: round, Mode: mode, Warmup: round == 0}
@@ -208,7 +211,7 @@ func measureTrial(ctx context.Context, docker *testcontainers.DockerClient, cfg 
 	if owner == "" {
 		return result, errors.New("cluster has no ownership label")
 	}
-	result.Core, err = measurePhase(ctx, docker, owner, cfg)
+	result.Core, err = measurePhase(ctx, docker, owner, cfg, cgroupVersion)
 	if err != nil {
 		return result, err
 	}
@@ -254,7 +257,7 @@ with rados.Rados(conffile='/etc/ceph/ceph.conf') as cluster:
 		return result, fmt.Errorf("RBD proof exit %d: %s: %w", code, detail, err)
 	}
 	result.RBDProofSeconds = time.Since(started).Seconds()
-	result.WithClient, err = measurePhase(ctx, docker, owner, cfg)
+	result.WithClient, err = measurePhase(ctx, docker, owner, cfg, cgroupVersion)
 	if err == nil {
 		clientID := ""
 		if mode == "split" {
@@ -298,7 +301,7 @@ func pause(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func measurePhase(ctx context.Context, docker *testcontainers.DockerClient, owner string, cfg config) (p phase, err error) {
+func measurePhase(ctx context.Context, docker *testcontainers.DockerClient, owner string, cfg config, cgroupVersion string) (p phase, err error) {
 	if err := pause(ctx, cfg.Settle); err != nil {
 		return p, err
 	}
@@ -327,8 +330,12 @@ func measurePhase(ctx context.Context, docker *testcontainers.DockerClient, owne
 			if err != nil || closeErr != nil {
 				return p, errors.Join(err, closeErr)
 			}
+			memory, err := workingSet(value.MemoryStats, cgroupVersion)
+			if err != nil {
+				return p, err
+			}
 			snapshot = append(snapshot, observation{ID: ctr.ID, ImageID: ctr.ImageID, Read: value.Read,
-				CPU: value.CPUStats.CPUUsage.TotalUsage, Memory: value.MemoryStats.Usage, WorkingSet: workingSet(value.MemoryStats)})
+				CPU: value.CPUStats.CPUUsage.TotalUsage, Memory: value.MemoryStats.Usage, WorkingSet: memory})
 		}
 		slices.SortFunc(snapshot, func(a, b observation) int { return strings.Compare(a.ID, b.ID) })
 		p.Snapshots = append(p.Snapshots, snapshot)
@@ -336,15 +343,21 @@ func measurePhase(ctx context.Context, docker *testcontainers.DockerClient, owne
 	return summarize(p)
 }
 
-func workingSet(m container.MemoryStats) uint64 {
-	inactive, ok := m.Stats["inactive_file"]
-	if !ok {
-		inactive = m.Stats["total_inactive_file"]
+func workingSet(m container.MemoryStats, cgroupVersion string) (uint64, error) {
+	var key string
+	switch cgroupVersion {
+	case "1":
+		key = "total_inactive_file"
+	case "2":
+		key = "inactive_file"
+	default:
+		return 0, fmt.Errorf("unsupported cgroup version %q", cgroupVersion)
 	}
+	inactive := m.Stats[key]
 	if inactive < m.Usage {
-		return m.Usage - inactive
+		return m.Usage - inactive, nil
 	}
-	return 0
+	return 0, nil
 }
 
 func summarize(p phase) (phase, error) {
@@ -352,13 +365,19 @@ func summarize(p phase) (phase, error) {
 		return p, errors.New("insufficient statistics")
 	}
 	first := p.Snapshots[0]
-	for _, snapshot := range p.Snapshots {
+	for sample, snapshot := range p.Snapshots {
 		if len(snapshot) != len(first) {
 			return p, errors.New("container inventory changed during phase")
 		}
 		for i, value := range snapshot {
 			if value.ID != first[i].ID || value.ImageID != first[i].ImageID {
 				return p, errors.New("container identity changed during phase")
+			}
+			if sample > 0 {
+				previous := p.Snapshots[sample-1][i]
+				if !value.Read.After(previous.Read) || value.CPU < previous.CPU {
+					return p, errors.New("CPU clock/counter did not advance monotonically")
+				}
 			}
 			p.MeanMemoryBytes += float64(value.Memory) / float64(len(p.Snapshots))
 			p.MeanWorkingSet += float64(value.WorkingSet) / float64(len(p.Snapshots))

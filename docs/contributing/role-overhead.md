@@ -64,7 +64,11 @@ CPU is the sum of each container's CPU-nanosecond delta divided by its actual
 sampling time delta, expressed as percent of **one CPU**. Memory is the mean
 over snapshots of the sum of raw cgroup usage. `MeanWorkingSet` subtracts
 `inactive_file` (cgroup v2) or `total_inactive_file` (v1), clamped to zero;
-it is not process RSS. Retain both memory measures. Shared page accounting
+the engine's recorded cgroup version selects the key even when both exist,
+as distinguished by [Docker's memory accounting](https://docs.docker.com/reference/cli/docker/container/stats/#description).
+Unknown cgroup versions are rejected before cluster allocation. Every adjacent
+sample must advance its timestamp and must not decrease its CPU counter;
+unchanged CPU is valid idle time. Working set is not process RSS. Retain both memory measures. Shared page accounting
 and cache ownership can affect cross-trial results.
 
 This is a **warm, local, idle-container** comparison. It does not flush caches,
@@ -174,3 +178,21 @@ all remains useful when broad features are wanted. A separate public client
 lifecycle type is not needed to obtain this behavior. Pull/unpack latency,
 loaded throughput and Docker/host overhead remain outside this measurement;
 registry publication remains a separate operation.
+
+### Measurement-tool review corrections
+
+The [review of e4efc45](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/29#pullrequestreview-5606518338)
+identified two defects in the tool: it could select the local cache counter
+instead of the hierarchy counter on cgroup v1 when both keys were present,
+and endpoint-only validation could miss intermediate counter/time reversals.
+The implementation now uses the engine's explicit cgroup version and checks
+every adjacent pair. Regression tests cover both keys present on v1/v2,
+underflow, unknown versions, intermediate resets, duplicate/backward clocks,
+and valid idle intervals with equal CPU counters.
+
+The retained experiment used cgroup v2 throughout, and its intermediate
+observations are monotonic. Its published counters and summary values remain
+unchanged. These corrections strengthen future measurement validation; the
+retained native results keep their original `111d5ba`/`7ef514c` provenance
+and are not relabeled as a corrected-head native execution. The smaller
+required image payload is independently established by the stored-layer study.
