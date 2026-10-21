@@ -149,7 +149,7 @@ func testCephFSFlockContention(t *testing.T) {
 	m := startCephFSSingleMDS(t, ctx)
 	const path = "/locks/file"
 	holder := startFlockActor(t, ctx, m, m.client, "/tmp/flock-holder", path, "ex-nb", "un", "ex-nb")
-	contender := startFlockActor(t, ctx, m, m.cluster.ControlContainer(), "/tmp/flock-contender", path, "ex-nb", "ex", "un")
+	contender := startFlockActor(t, ctx, m, toolkitContainer(t, m.cluster), "/tmp/flock-contender", path, "ex-nb", "ex", "un")
 	if holder.client == contender.client || holder.inode != contender.inode {
 		t.Fatalf("holder client.%d inode %d, contender client.%d inode %d", holder.client, holder.inode, contender.client, contender.inode)
 	}

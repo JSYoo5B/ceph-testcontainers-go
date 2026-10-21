@@ -1,6 +1,6 @@
 //go:build (all || integration) && goceph && (!ci || (ci_sdk && (!ci_batch || ci_batch_goceph)))
 
-//ci: timeout=60m job-timeout=70
+//ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 

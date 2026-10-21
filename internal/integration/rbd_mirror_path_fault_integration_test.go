@@ -1,6 +1,6 @@
 //go:build all || (integration && features && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_rbd_mirror_path_fault))))
 
-//ci: timeout=30m job-timeout=40 representative=mirroring
+//ci: timeout=30m job-timeout=40 representative=mirroring image-roles=essential,client,rbd-aux
 
 package integration_test
 

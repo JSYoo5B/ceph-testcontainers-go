@@ -228,7 +228,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if pool == "" {
 		t.Fatal("native zone data pool missing")
 	}
-	objectNames := strings.Fields(string(multiClusterExecOutput(t, ctx, clusters[1].ControlContainer(), "rados", "-p", pool, "ls")))
+	objectNames := strings.Fields(string(multiClusterExecOutput(t, ctx, toolkitContainer(t, clusters[1]), "rados", "-p", pool, "ls")))
 	key := ""
 	for _, name := range objectNames {
 		if strings.Contains(name, "retained") {
@@ -239,7 +239,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if key == "" {
 		t.Fatalf("native replicated object missing: %v", objectNames)
 	}
-	before := multiClusterExecOutput(t, ctx, clusters[1].ControlContainer(), "rados", "-p", pool, "get", key, "-")
+	before := multiClusterExecOutput(t, ctx, toolkitContainer(t, clusters[1]), "rados", "-p", pool, "get", key, "-")
 	if !bytes.Equal(before, seed) {
 		t.Fatal("native stored payload differs from S3 data")
 	}
@@ -264,7 +264,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 		t.Fatal("detached storage adopted as fresh")
 	}
 	rgwAssertZonegroupPeriod(t, ctx, fixture)
-	after := multiClusterExecOutput(t, ctx, clusters[1].ControlContainer(), "rados", "-p", pool, "get", key, "-")
+	after := multiClusterExecOutput(t, ctx, toolkitContainer(t, clusters[1]), "rados", "-p", pool, "get", key, "-")
 	if !bytes.Equal(after, before) {
 		t.Fatal("zone detachment removed or changed retained native object data")
 	}

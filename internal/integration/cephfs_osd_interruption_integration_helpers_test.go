@@ -248,7 +248,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 	if opened.Client == 0 || opened.Inode == 0 || opened.Size != int64(len(base)) {
 		t.Fatalf("writer receipt 1 = %+v", opened)
 	}
-	waiter := startCephFSActor(t, ctx, m.cluster, m.cluster.ControlContainer(), cephFSJournalWaiter, m.fs.FilesystemName, waiterDir, waiterAsok, directory)
+	waiter := startCephFSActor(t, ctx, m.cluster, toolkitContainer(t, m.cluster), cephFSJournalWaiter, m.fs.FilesystemName, waiterDir, waiterAsok, directory)
 	waiting := waiter.receipt(t, ctx, 1)
 	if waiting.Client == 0 || waiting.Client == opened.Client {
 		t.Fatalf("waiter receipt 1 = %+v, writer %+v", waiting, opened)
@@ -343,7 +343,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 				state.mkdir, state.hasMkdir = op, true
 			}
 		}
-		requests, err := m.cluster.RunNativeCommand(probeCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+		requests, err := m.cluster.RunNativeCommand(probeCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 			Argv: []string{"ceph", "--admin-daemon", waiterAsok, "mds_requests"}, Timeout: 30 * time.Second,
 			MaxStdout: 256 << 10, MaxStderr: 16 << 10, Label: "client mds_requests",
 		})
@@ -439,7 +439,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 	waiter.wait(t, ctx)
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := m.cluster.RunNativeCommand(readCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := m.cluster.RunNativeCommand(readCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, m.fs.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})

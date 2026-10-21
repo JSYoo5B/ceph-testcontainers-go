@@ -1,6 +1,6 @@
 //go:build (all || (integration && topology)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_messenger_client_short_tickets)))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 

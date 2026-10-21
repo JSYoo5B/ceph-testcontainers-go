@@ -1,6 +1,6 @@
 //go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_topology))))
 
-//ci: timeout=40m job-timeout=50
+//ci: timeout=40m job-timeout=50 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 
@@ -87,10 +87,10 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			for i := range payload {
 				payload[i] = byte(i)
 			}
-			if err := cluster.ControlContainer().CopyToContainer(ctx, payload, "/tmp/tc-mon-rolling-input", 0o600); err != nil {
+			if err := toolkitContainer(t, cluster).CopyToContainer(ctx, payload, "/tmp/tc-mon-rolling-input", 0o600); err != nil {
 				t.Fatal(err)
 			}
-			topologyExecOutput(t, ctx, cluster.ControlContainer(), "rados", "-p", "tc-mon-rolling", "put", "retained", "/tmp/tc-mon-rolling-input")
+			topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "rados", "-p", "tc-mon-rolling", "put", "retained", "/tmp/tc-mon-rolling-input")
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +121,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				}
 				delete(nodes, "mon."+pair[0])
 				monitorRollingQuorum(t, ctx, cluster, 3)
-				monitorRollingRADOS(t, ctx, cluster.ControlContainer(), payload)
+				monitorRollingRADOS(t, ctx, toolkitContainer(t, cluster), payload)
 				if i != 2 {
 					monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
 				}
@@ -216,7 +216,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
-			monitorRollingRADOS(t, ctx, cluster.ControlContainer(), payload)
+			monitorRollingRADOS(t, ctx, toolkitContainer(t, cluster), payload)
 			t.Log("MON a,b,c -> d,e,f kept 4 -> 3 quorums; running/stopped owned configs and explicit refresh retained private settings and role keys; original MGR/MDS/RGW cold-started with retained RADOS/S3 bytes")
 		})
 	}

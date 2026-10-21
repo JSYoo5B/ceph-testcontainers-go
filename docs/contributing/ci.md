@@ -98,10 +98,10 @@ merely unused, a failed `buildcache` leaves the cache unsaved without failing
 ### Dependency-role consumer coverage
 
 `roles-v2.yml` validates the explicit essential/client/cephfs/rbd-aux/rgw
-contract separately from the published legacy-role category workflows. It
-still builds candidate images from a pinned image-repository commit: role-v2
-registry publication is a separate operation. This workflow does not publish
-images or assume candidate tags are available in the registry.
+contract using published images, as the category workflows now do. Image
+production and qualification belong to `ceph-testcontainers-images`; consumer
+workflows pull and freeze published identities and never rebuild candidate
+images. Registry publication remains a separate operation.
 
 Every PR first runs a small Python planner, which records the complete
 merge-base diff (including deleted and renamed inputs) in the
@@ -112,10 +112,10 @@ cannot silently lose a relevant path to GitHub's path-filter limit.
 | --- | --- |
 | Runtime changes under `ceph/`, `cephfs/`, `rbd/`, `rgw/`, `fault/` or `internal/` | **Smoke**: current supported release (Tentacle 20.2.4), Linux/amd64, `make roles-v2-smoke` |
 | Explicit image selection (`ceph/images*.go`), role-image fixtures/routing tests, `Makefile`, Go dependencies, this workflow/planner, image-matrix release table or cleanup checker | **Full**: every supported release (Tentacle 20.2.4 and Squid 19.2.5), Linux/amd64 and Linux/arm64 |
-| Documentation, standalone `internal/tools/`, the separate `internal/integration/goceph/` module, or unrelated CI tooling alone | **None**: planner records why; no image build or native test is claimed |
+| Documentation, standalone `internal/tools/`, the separate `internal/integration/goceph/` module, or unrelated CI tooling alone | **None**: planner records why; no image preparation or native test is claimed |
 | PR with `ci:full`, or a PR in a `CI_RELEASE_PHASE=true` release phase | **Full**, overriding the file selection |
 | Weekly schedule on `main` | **Full** |
-| Manual dispatch | **Full** by default; `scope=smoke` selects representative coverage; `variant` and `images_ref` remain selectable |
+| Manual dispatch | **Full** by default; `scope=smoke` selects representative coverage; `variant` remains selectable |
 
 A mixed change uses its widest scope. The full-trigger path rules live in
 `.github/scripts/roles_v2_plan.py`; changing the planner itself requires full
@@ -128,7 +128,8 @@ RBD mirror bootstrap refresh) plus five existing single-cluster lifecycle
 paths (cluster, RBD, CephFS, RGW and MGR). These **8 top-level instances**
 exercise every feature role without repeating the complete compatibility,
 scheduling, shared/native-oracle and aggregate-image suites on every commit.
-Other category workflows retain their existing scopes and legacy images.
+Other category workflows retain their existing test scopes and use the same
+published dependency-role contract.
 Smoke is representative role coverage, not full roles-v2 qualification.
 
 Full coverage keeps all previous commands unchanged: split compatibility
@@ -634,7 +635,7 @@ steps in order:
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Resolves the batch's roles of `official-<release>-{control,osd,rgw,mds}` from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64` to immutable image IDs and exports them as `CEPH_TEST_IMAGE`, `CEPH_TEST_OSD_IMAGE`, `CEPH_TEST_RGW_IMAGE`, `CEPH_TEST_MDS_IMAGE`, with `SCENARIO_IMAGE_LAYOUT=roles` and `SCENARIO_IMAGE_ROLES`. A batch gets all four roles unless its `//ci:` line declares `image-roles` (see [Image roles](#image-roles)). Pulls only, never builds. |
+| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Pulls the declared `roles-v2-official-<release>-<role>` images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for native `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, `CEPH_TEST_RGW_IMAGE` plus `SCENARIO_IMAGE_CONTRACT=roles-v2`. Source-owned `image-roles` selects the required subset. Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
@@ -680,16 +681,24 @@ python3 .github/scripts/tag_scenarios.py run --category code --batch pure --dire
 
 ### Image roles
 
-A Ceph batch that needs fewer than the four role images declares them in its
-`//ci:` line. `supervised_command` declares `image-roles=control`: it starts
-one idle control-image container and no cluster. The planner accepts
-`control`, `osd`, `rgw` and `mds`, requires `control`, rejects the field on a
-batch that needs no Ceph, and puts the roles in the matrix as `image_roles`.
-Every other Ceph batch gets all four. The preparation step inspects and pulls
-only the listed roles, so an image that the batch does not use cannot fail
-it. With `SCENARIO_IMAGE_LAYOUT=roles`, `integrationImages` fails for a role
-that was not prepared instead of using the control image. The image
-compatibility matrix always uses all four roles.
+Ceph batches declare their required dependency roles in `//ci:` metadata:
+`essential`, `client`, `cephfs`, `rbd-aux` and `rgw`. The planner requires the
+core role and prepares only that subset. Ordinary RADOS/RBD paths use
+`essential,client`; CephFS adds `cephfs`, RBD mirrors/cache add `rbd-aux`,
+and gateway paths add `rgw`. Mixed-service and broadly shared batches keep
+all five when required. An undeclared Ceph profile conservatively gets all
+five; non-Ceph profiles get none. `supervised_command` and `native_input`
+use only an idle `essential` runtime without a cluster.
+
+The composite action explicitly selects `--contract roles-v2`; no old
+control-image fallback is used. Selected image IDs and the contract marker
+are exported only after complete preparation. `integrationImages` constructs
+`ceph.ImageSet` from those identities and fails when a used feature's role
+is missing. Userspace native oracles run in the client toolkit; daemon-local
+admin sockets and process probes stay in their owning daemon. Two-client
+network tests keep separate client containers rather than collapsing both
+sides onto one executor. Periodic campaign pinning resolves the same five
+published roles to immutable registry digests before repeated attempts.
 
 ### Network modes
 
@@ -1248,14 +1257,14 @@ differ from CI. To isolate one test, use `go test -tags=all -run` as described
 in [Testing](testing.md#one-test).
 
 
-The separate roles-v2 consumer workflow builds the candidate image contract
-from the images repository before running existing image-compatibility tests
-with relocated native oracles. `make roles-v2-routing` runs constrained
-ordinary-RBD, RGW-without-client and stopped-link RBD monitor refresh cases.
-These source files deliberately
-exclude the legacy `ci` tag planner: their images are not legacy published
-roles. `make roles-v2-runtime` retains the existing cache and CephFS/RBD
-automatic scheduling tests on the relocated runtimes. This workflow also
-uses `make roles-v2-oracles` for shared-cluster cleanup, Messenger policy and
-native command behavior, and checks the aggregate image independently. It does
-not replace existing release/category coverage or qualify unexecuted cells.
+The dedicated roles-v2 consumer workflow pulls the published image contract
+before running existing image-compatibility tests with relocated native
+oracles. `make roles-v2-routing` runs constrained ordinary-RBD,
+RGW-without-client and stopped-link RBD monitor refresh cases. These focused
+files remain excluded from the general tag planner to avoid duplicate
+selection; ordinary category CI now also uses the dependency-role images.
+`make roles-v2-runtime` retains native cache and CephFS/RBD scheduling
+coverage; `make roles-v2-oracles` retains shared-cluster cleanup, Messenger
+policy and native command proofs. The aggregate image is checked separately
+through the same supplied-image runner. These checks supplement the existing
+release/category test coverage and do not qualify unexecuted cells.

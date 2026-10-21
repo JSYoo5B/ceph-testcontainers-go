@@ -1,6 +1,6 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_mgr_prometheus))))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 image-roles=essential,client
 
 package integration_test
 

@@ -1,6 +1,6 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rgw_notifications))))
 
-//ci: timeout=20m job-timeout=30 representative=flaky
+//ci: timeout=20m job-timeout=30 representative=flaky image-roles=essential,client,rgw
 
 package integration_test
 

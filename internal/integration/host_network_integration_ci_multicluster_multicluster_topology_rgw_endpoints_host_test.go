@@ -1,6 +1,6 @@
 //go:build all || (integration && hostnetwork && (!ci || (ci_multicluster && (!ci_batch || ci_batch_multicluster_topology_rgw_endpoints_host))))
 
-//ci: timeout=60m job-timeout=70
+//ci: timeout=60m job-timeout=70 image-roles=essential,client,rgw
 
 package integration_test
 

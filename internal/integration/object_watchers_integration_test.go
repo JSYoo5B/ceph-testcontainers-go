@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_rados_fixtures_watchers))))
 
-//ci: timeout=20m job-timeout=30 representative=flaky
+//ci: timeout=20m job-timeout=30 representative=flaky image-roles=essential,client
 
 package integration_test
 
@@ -83,7 +83,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			}
 			notify := func() (int, float64) {
 				t.Helper()
-				code, out, err := sessionExec(ctx, cluster.ControlContainer(), "python3", "-c", radosNotifier, pool, object)
+				code, out, err := sessionExec(ctx, toolkitContainer(t, cluster), "python3", "-c", radosNotifier, pool, object)
 				var result struct {
 					Errno   int     `json:"errno"`
 					Seconds float64 `json:"seconds"`

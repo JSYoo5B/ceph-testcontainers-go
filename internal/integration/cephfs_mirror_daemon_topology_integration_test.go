@@ -1,6 +1,6 @@
 //go:build (all || (integration && multicluster)) && native_regression && (!ci || (ci_optional && (!ci_batch || ci_batch_native_shuffle)))
 
-//ci: timeout=60m job-timeout=70
+//ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs
 
 package integration_test
 

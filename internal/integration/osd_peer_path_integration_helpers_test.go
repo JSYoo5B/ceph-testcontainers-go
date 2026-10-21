@@ -426,7 +426,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 	}); err != nil {
 		t.Fatal("PG active on the replica alone:", err)
 	}
-	read, err := cluster.RunNativeCommand(ctx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(ctx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", heldReader}, Timeout: 2 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "replica-only reader",
 	})
 	if err != nil || read.ExitCode != 0 || !read.Complete() {

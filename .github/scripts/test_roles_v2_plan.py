@@ -128,7 +128,10 @@ class RolesV2PlanTests(unittest.TestCase):
         self.assertEqual(workflow.count("if: matrix.scope == 'full'"), 5)
         for target in ("image-compatibility", "roles-v2-routing", "roles-v2-runtime", "roles-v2-oracles"):
             self.assertIn("run: make " + target, workflow)
-        self.assertIn('CEPH_TEST_RGW_IMAGE="$id" make image-compatibility', workflow)
+        self.assertIn("--layout all", workflow)
+        self.assertIn("Pull and freeze published dependency roles", workflow)
+        self.assertNotIn("Build candidate image contract", workflow)
+        self.assertNotIn("images-source", workflow)
         self.assertIn("check_runtime_cleanup.py snapshot", workflow)
         self.assertIn("if: always() && steps.cleanup.outcome == 'success'", workflow)
         self.assertIn("check_runtime_cleanup.py check", workflow)

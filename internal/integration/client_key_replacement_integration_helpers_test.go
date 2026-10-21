@@ -98,7 +98,7 @@ func prepareHeldObject(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	if err := control.CopyToContainer(ctx, payload, "/tmp/held-object", 0o644); err != nil {
 		t.Fatal(err)
 	}

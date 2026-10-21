@@ -1,6 +1,6 @@
 //go:build all || (integration && topology && (!ci || (ci_topology && (!ci_batch || ci_batch_messenger_secure))))
 
-//ci: timeout=20m job-timeout=30 representative=topology
+//ci: timeout=20m job-timeout=30 representative=topology image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 

@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_mds_path_fault))))
 
-//ci: timeout=35m job-timeout=45
+//ci: timeout=35m job-timeout=45 image-roles=essential,client,cephfs
 
 package integration_test
 

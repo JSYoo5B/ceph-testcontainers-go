@@ -305,7 +305,7 @@ CEPH_TEST_IMAGE=... CEPH_TEST_OSD_IMAGE=... CEPH_TEST_RGW_IMAGE=... CEPH_TEST_MD
 
 ### Reproducing CI's role images
 
-CI runs Ceph batches with the published `official-<release>-{control,osd,rgw,mds}`
+CI runs Ceph batches with the published `roles-v2-official-<release>-<role>`
 role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images`. Resolve them
 locally without running any test:
 
@@ -316,11 +316,11 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 
 Use `--release 19.2.5` for Squid. The script pulls an image only when it is
 missing, never builds one, and refuses an existing `--output-dir`. Its
-`summary.json` lists the four `CEPH_TEST_*` values under
+`summary.json` lists the selected `CEPH_TEST_*` values and `SCENARIO_IMAGE_CONTRACT=roles-v2` under
 `prepared_environment` as immutable local image IDs; export them and run a
 test, the tag runner, or a `scenario-*` target with
-`SCENARIO_IMAGE_LAYOUT=roles`. `--roles control`, as for a batch with
-`image-roles=control`, resolves only the listed roles.
+`SCENARIO_IMAGE_LAYOUT=roles`. `--roles essential`, as for a batch with
+`image-roles=essential`, resolves only the listed roles.
 
 ### Image compatibility checks
 
@@ -498,7 +498,7 @@ in Ceph periodic, so a test must pass on both releases (see
   the receipt kind (`peer` or `directory`); the receiver batch has none. The
   network mode comes from the test's `networkModes`.
 - `image-roles=` lists the published role images that a Ceph batch needs,
-  such as `image-roles=control` for a batch that only starts control-image
+  such as `image-roles=essential` for a batch that only starts core-image
   containers. Roles are `control`, `osd`, `rgw` and `mds`, comma-separated,
   and `control` is required. Without it CI prepares all four. CI then
   prepares only the listed roles, and a test that asks for another role fails

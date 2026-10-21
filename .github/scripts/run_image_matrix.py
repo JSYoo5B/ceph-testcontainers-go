@@ -41,16 +41,16 @@ RELEASES = {release: image for release, _, image in SUPPORTED_RELEASES}
 CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
 RELEASE = "20.2.4"
 OFFICIAL_IMAGE = RELEASES[RELEASE]
-CONTRACT = "legacy"
+CONTRACT = "roles-v2"
 V2_ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
-ROLE_ENV = {
+LEGACY_ROLE_ENV = {
     "control": "CEPH_TEST_IMAGE",
     "osd": "CEPH_TEST_OSD_IMAGE",
     "rgw": "CEPH_TEST_RGW_IMAGE",
     "mds": "CEPH_TEST_MDS_IMAGE",
 }
-LEGACY_ROLE_ENV = ROLE_ENV
+ROLE_ENV = V2_ROLE_ENV
 EXPECTED_TESTS = (
     "TestClusterLifecycle",
     "TestRBDLifecycle",
@@ -71,7 +71,7 @@ RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0
 def parse_arguments(argv=None):
     global CONTRACT, ROLE_ENV
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--contract", choices=("auto", "legacy", "roles-v2"), default="auto")
+    parser.add_argument("--contract", choices=("auto", "legacy", "roles-v2"), default="roles-v2")
     parser.add_argument("--variant", choices=("official", "debian", "ubuntu"), default="official")
     parser.add_argument("--layout", choices=("all", "roles"), default="all")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
@@ -84,7 +84,7 @@ def parse_arguments(argv=None):
     parser.add_argument("--github-env", type=Path,
                         help="Append the resolved role IDs to this file; requires --prepare-only")
     parser.add_argument("--roles",
-                        help="Comma-separated roles to prepare, control included; default all four. "
+                        help="Comma-separated roles to prepare, essential included; default all five dependency roles. "
                              "Requires --prepare-only and --layout roles")
     parser.add_argument("--digests", default="",
                         help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
@@ -116,7 +116,7 @@ def parse_arguments(argv=None):
 
 
 def parse_roles(text):
-    """Return the declared roles in ROLE_ENV order; control is required."""
+    """Return declared roles in contract order, including its core role."""
     roles = text.split(",")
     if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or ("essential" if CONTRACT == "roles-v2" else "control") not in roles:
         raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV) + ", control included")
@@ -234,12 +234,13 @@ def completed_tests(path, module):
 
 def append_role_environment(path, environment, roles=None):
     roles = tuple(ROLE_ENV) if roles is None else roles
-    names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
-    if CONTRACT == "roles-v2":
-        names.append("SCENARIO_IMAGE_CONTRACT")
-    if "control" not in roles or set(environment) != set(names) or any(
-            not isinstance(value, str) or IMAGE_ID.fullmatch(value) is None
-            for value in environment.values()):
+    image_names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
+    names = image_names + (["SCENARIO_IMAGE_CONTRACT"] if CONTRACT == "roles-v2" else [])
+    core = "essential" if CONTRACT == "roles-v2" else "control"
+    if (core not in roles or set(environment) != set(names)
+            or any(not isinstance(environment[name], str)
+                   or IMAGE_ID.fullmatch(environment[name]) is None for name in image_names)
+            or (CONTRACT == "roles-v2" and environment["SCENARIO_IMAGE_CONTRACT"] != "roles-v2")):
         raise RuntimeError("prepared environment must contain exactly the immutable image IDs of the declared roles")
     content = "".join(name + "=" + environment[name] + "\n" for name in names).encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0), 0o600)

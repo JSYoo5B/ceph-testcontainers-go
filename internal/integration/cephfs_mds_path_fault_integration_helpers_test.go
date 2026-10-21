@@ -465,7 +465,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	}
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSPathCutReader, fs.FilesystemName, "/pathcut/file", "/pathcut/created"}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
@@ -523,7 +523,7 @@ func readCephFSObject(t *testing.T, ctx context.Context, cluster *ceph.Container
 	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, time.Minute)
 	defer stop()
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSObjectReader, pool, strconv.FormatUint(inode, 10)}, Timeout: time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "RADOS object reader",
 	})

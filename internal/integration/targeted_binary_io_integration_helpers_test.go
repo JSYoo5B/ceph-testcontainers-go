@@ -604,7 +604,7 @@ func runBinaryProbe(ctx context.Context, ctr testcontainers.Container, args ...s
 // The caller raised debug_ms on osd.0 and every MON.
 func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string, mons map[int]string, mgrGID uint64, mgrName string) map[string]any {
 	t.Helper()
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	const work = "/tmp/tc-binary-io"
 	execOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1"`, "sh", work)
 	result, err := runBinaryProbe(ctx, control, targetedBinaryProbe, work, "0", mgrName, mons[0])
@@ -785,7 +785,7 @@ func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container
 // dropped. The caller raised debug_ms on osd.1.
 func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Container) map[string]any {
 	t.Helper()
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	osd := cluster.OSDs()[1]
 	const work = "/tmp/tc-binary-cancel"
 	execOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1" && cd "$1" && mkfifo ready go cancelled resumed`, "sh", work)

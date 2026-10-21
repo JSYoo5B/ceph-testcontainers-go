@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_messenger_secure_mix))))
 
-//ci: timeout=30m job-timeout=40
+//ci: timeout=30m job-timeout=40 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 

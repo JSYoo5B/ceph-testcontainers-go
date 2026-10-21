@@ -213,6 +213,17 @@ func advanceServiceTopology(t *testing.T, ctx context.Context, cluster *ceph.Con
 	t.Logf("service topology 2 -> 3 -> 2: added osd.%d, removed original osd.%d", added.ID, original.ID)
 }
 
+// toolkitContainer returns an owned client runtime for a second native oracle.
+// Keep daemon-local admin sockets and process observation on their daemon.
+func toolkitContainer(t *testing.T, cluster *ceph.Container) testcontainers.Container {
+	t.Helper()
+	client, err := cluster.ClientContainerContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
 // nativeClientImage relocates independent toolkit oracles without changing
 // arbitrary application images (for example Vault or a custom go-ceph client).
 func nativeClientImage(t *testing.T, legacy string) string {

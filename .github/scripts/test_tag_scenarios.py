@@ -133,8 +133,8 @@ class TagPlannerTests(unittest.TestCase):
         declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=mds,control"]
         plan = engine.discover([fixture(), declared])
         roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
-        self.assertEqual(roles, {"basic": "control,osd,rgw,mds", "control": "control,mds"})
-        self.assertEqual(engine.IMAGE_ROLES, ("control", "osd", "rgw", "mds"))
+        self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "control": "control,mds"})
+        self.assertEqual(engine.IMAGE_ROLES, ("essential", "client", "cephfs", "rbd-aux", "rgw"))
         for value in ("osd", "control,control", "control,client", "control,", "Control"):
             with self.subTest(roles=value), self.assertRaisesRegex(ValueError, "image-roles must list"):
                 declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=" + value]
@@ -200,7 +200,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertIn("native_regression", profile["tags"].split(","))
         self.assertEqual(profile["timeout"], "20m")
         self.assertEqual(profile["job_timeout"], 35)
-        self.assertEqual(profile["image_roles"], "control,osd,rgw,mds")
+        self.assertEqual(profile["image_roles"], "essential,client,cephfs,rbd-aux,rgw")
         self.assertEqual(engine.discover([fixture(), file])["required_executions"], 1)
 
     def test_optional_unknown_batch_never_executes(self):
@@ -672,7 +672,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(len(matrix["include"]), 1)
         self.assertEqual(matrix["include"][0]["category"], "short")
         self.assertEqual(matrix["include"][0]["timeout"], "20m")
-        self.assertEqual(matrix["include"][0]["image_roles"], "control,osd,rgw,mds")
+        self.assertEqual(matrix["include"][0]["image_roles"], "essential,client,cephfs,rbd-aux,rgw")
 
 
 class CompletionTests(unittest.TestCase):
@@ -1378,7 +1378,7 @@ func helper(t *test.T) {}
 
 
 class VersionedRoleDeclarationTests(unittest.TestCase):
-    def test_v2_roles_are_explicit_and_legacy_defaults_are_preserved(self):
+    def test_v2_roles_are_explicit_and_mixed_contracts_are_refused(self):
         declared = fixture()
         declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=client,essential"]
         plan = engine.discover([declared])

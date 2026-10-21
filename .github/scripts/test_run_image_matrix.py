@@ -79,6 +79,9 @@ class Runtime:
 
 class MatrixTests(unittest.TestCase):
     def setUp(self):
+        patcher = mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name) / "module"
@@ -106,7 +109,7 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(runner.subprocess, "Popen", side_effect=self.runtime.popen), \
                 mock.patch.dict(os.environ, env or {}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return runner.main(["--output-dir", str(self.output), *arguments])
+            return runner.main(["--contract", "legacy", "--output-dir", str(self.output), *arguments])
 
     def summary(self):
         return json.loads((self.output / "summary.json").read_text())
@@ -575,10 +578,36 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(runner.image_references("official", "all", release), {"all": official})
                 self.assertEqual(runner.image_references("ubuntu", "roles", release)["osd"],
                                  runner.REGISTRY + ":ubuntu-" + release + "-osd")
-                self.assertEqual(runner.parse_arguments(("--release", release)).release, release)
+                self.assertEqual(runner.parse_arguments(("--contract", "legacy", "--release", release)).release, release)
 
 
 class VersionedRoleSelectionTests(unittest.TestCase):
+    def test_default_cli_is_dependency_roles_and_rejects_legacy_role_names(self):
+        with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
+            args = runner.parse_arguments([])
+            self.assertEqual(args.contract, "roles-v2")
+            self.assertEqual(args.roles, tuple(runner.V2_ROLE_ENV))
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.parse_arguments(["--layout", "roles", "--prepare-only", "--roles", "control"])
+
+    def test_v2_environment_is_atomic_and_contract_marker_is_not_an_image_id(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.multiple(
+                runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            output = Path(directory) / "github-env"
+            env = {"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:" + "1" * 64,
+                   "CEPH_TEST_CLIENT_IMAGE": "sha256:" + "2" * 64,
+                   "SCENARIO_IMAGE_CONTRACT": "roles-v2"}
+            runner.append_role_environment(output, env, ("essential", "client"))
+            lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            self.assertEqual(lines, env)
+            before = output.read_bytes()
+            for change in ({"SCENARIO_IMAGE_CONTRACT": "legacy"},
+                           {"CEPH_TEST_CLIENT_IMAGE": "mutable:tag"},
+                           {"CEPH_TEST_MDS_IMAGE": "sha256:" + "3" * 64}):
+                with self.subTest(change=change), self.assertRaises(RuntimeError):
+                    runner.append_role_environment(output, env | change, ("essential", "client"))
+                self.assertEqual(output.read_bytes(), before)
+
     def test_v2_all_uses_the_versioned_aggregate_for_every_variant(self):
         with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
             for variant in ("official", "debian", "ubuntu"):
@@ -595,7 +624,7 @@ class VersionedRoleSelectionTests(unittest.TestCase):
             self.assertIn(":roles-v2-official-19.2.5-client",refs["client"])
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 runner.parse_arguments(["--contract","roles-v2","--layout","roles","--prepare-only","--roles","client"])
-            legacy = runner.parse_arguments([])
+            legacy = runner.parse_arguments(["--contract", "legacy"])
             self.assertEqual(legacy.contract,"legacy")
             self.assertEqual(tuple(runner.ROLE_ENV),tuple(runner.LEGACY_ROLE_ENV))
 

@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_mirror_initial_daemons))))
 
-//ci: timeout=150m job-timeout=160
+//ci: timeout=150m job-timeout=160 image-roles=essential,client,cephfs,rbd-aux
 
 package integration_test
 

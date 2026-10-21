@@ -347,7 +347,7 @@ func finishHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph
 		t.Fatalf("held writer output: %v: %.512s", err, write.result.Stdout)
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", heldReader}, Timeout: 2 * time.Minute, MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent held reader",
 	})
 	cancel()
