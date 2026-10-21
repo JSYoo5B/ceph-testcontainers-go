@@ -102,6 +102,9 @@ type Container struct {
 	nativeMu          sync.Mutex
 	nativeInvocations map[*nativeInvocation]bool
 	nativeClosed      bool
+	// nativeFenced permanently refuses commands for an OSD instance once removal
+	// starts; a failed removal retains its fence until cleanup is retried.
+	nativeFenced map[string]bool
 	// faults holds the network delays, interruptions, pauses, blocklist
 	// overrides and full ratios override, reserved or held; see
 	// faultRegistry. It is guarded by mu.
@@ -743,6 +746,10 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 
 // RemoveOSD drains an owned OSD, waits for safe-to-destroy, stops it, waits for
 // down, purges it from Ceph and removes its container. It refuses the last OSD.
+// After identity admission, removal fences this Docker instance against new
+// native commands and drains its tracked commands before native mutations. A
+// failed drain retains ownership and its fence for retry; other targets remain
+// admitted. This is permanent removal, not retained-store detach or reopen.
 // Every removal phase verifies the captured registration UUID. External OSD
 // replacement must not race removal: Ceph has no UUID compare-and-swap purge.
 // An uncertain purge response remains tracked; a retry reconciles fresh native
@@ -804,6 +811,11 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 			if remaining <= 1 {
 				return errors.New("cannot remove the last OSD; terminate the cluster instead")
 			}
+		}
+	}
+	if osd.Container != nil {
+		if err := c.fenceNativeTarget(ctx, osd.GetContainerID()); err != nil {
+			return fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 	}
 	if !osd.purged {

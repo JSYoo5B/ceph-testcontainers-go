@@ -320,6 +320,13 @@ change the API.
 
 ### Changed
 
+- Rename CephFS policy methods to `OverrideSessionTimeouts`,
+  `OverrideSubvolumePin` and `OverrideSubvolumeGroupPin`, returning explicit
+  `SessionTimeoutsOverrideHandle` / `PinOverrideHandle` restoration objects.
+  Rename schedule creation to `AddSnapshotSchedule`, retaining
+  `SnapshotScheduleLease`. Ownership, uncertainty and explicit Restore semantics
+  are unchanged; see `docs/guides/upgrading-cephfs-names.md`.
+
 - Rename `Container.TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`
   and `TemporaryMessengerPolicy` to `OverrideConfig`, `OverrideOSDFlag`,
   `OverrideMGRModule` and `OverrideMessengerPolicy`; rename
@@ -354,6 +361,11 @@ change the API.
   removed by `Terminate`. `AddOSD` is unchanged.
 
 ### Fixed
+
+- Fence and drain public native commands for an OSD Docker instance before
+  `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
+  fence after an unconfirmed stop, without closing unrelated targets. This
+  establishes one prerequisite for #6; no retained-store API is added.
 
 - Refuse non-empty unready OSD stores before overwriting a keyring or invoking
   mkfs. Validate local stored numeric ID, OSD UUID and configured cluster FSID

@@ -105,11 +105,11 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if current, err := fs.SessionTimeouts(ctx); err != nil || current != defaults {
 				t.Fatalf("default session timeouts = %+v, %v", current, err)
 			}
-			if change, err := fs.TemporarySessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 29 * time.Second, Autoclose: time.Minute}); change != nil || err == nil {
+			if change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 29 * time.Second, Autoclose: time.Minute}); change != nil || err == nil {
 				t.Fatal("timeout below the native minimum was accepted")
 			}
 			short := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: time.Minute}
-			change, err := fs.TemporarySessionTimeouts(ctx, short)
+			change, err := fs.OverrideSessionTimeouts(ctx, short)
 			if change != nil {
 				t.Cleanup(func() {
 					cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -125,7 +125,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			if current, err := fs.SessionTimeouts(ctx); err != nil || current != short {
 				t.Fatalf("shortened session timeouts = %+v, %v", current, err)
 			}
-			if again, err := fs.TemporarySessionTimeouts(ctx, defaults); again != nil || err == nil {
+			if again, err := fs.OverrideSessionTimeouts(ctx, defaults); again != nil || err == nil {
 				t.Fatal("overlapping session timeouts override was admitted")
 			}
 			// An outside edit is refused instead of overwritten, and Restore

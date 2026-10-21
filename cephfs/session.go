@@ -45,10 +45,10 @@ type Session struct {
 	Caps     int
 }
 
-// SessionTimeoutsOverride owns one temporary change to both session
-// limits of a filesystem. Copies share restoration state. Retain a non-nil
+// SessionTimeoutsOverrideHandle manages restoration of both session limits,
+// retaining prior state and ownership even when application is uncertain. Copies share restoration state. Retain a non-nil
 // result even on error: a lost reply can leave either value changed.
-type SessionTimeoutsOverride struct {
+type SessionTimeoutsOverrideHandle struct {
 	filesystem *Filesystem
 	state      *cephFSSessionTimeoutsState
 }
@@ -95,12 +95,12 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 	return fs.readSessionTimeouts(ctx, fsID)
 }
 
-// TemporarySessionTimeouts sets both limits so a test can observe evicted
+// OverrideSessionTimeouts sets both limits so a test can observe evicted
 // clients in seconds instead of Ceph's default 60 and 300 seconds.
 // Each value must be a whole number of seconds and at least 30 seconds, the
 // native minimum. Only one handle per filesystem may be active. The native CLI
 // changes one value per command, so apply and restore are not atomic.
-func (fs *Filesystem) TemporarySessionTimeouts(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverride, error) {
+func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error) {
 	if err := validateCephFSSessionTimeouts(requested); err != nil {
 		return nil, err
 	}
@@ -118,14 +118,14 @@ func (fs *Filesystem) TemporarySessionTimeouts(ctx context.Context, requested Se
 	}
 	state := &cephFSSessionTimeoutsState{fsID: fsID, previous: previous, applied: requested}
 	fs.sessionTimeouts = state
-	change := &SessionTimeoutsOverride{filesystem: fs, state: state}
+	change := &SessionTimeoutsOverrideHandle{filesystem: fs, state: state}
 	return change, fs.writeSessionTimeouts(ctx, fsID, previous, requested)
 }
 
 // Restore returns both limits to the values captured before the change. It is
 // idempotent across handle copies. A value that is neither the applied nor the
 // captured one is an outside edit and is refused rather than overwritten.
-func (change *SessionTimeoutsOverride) Restore(ctx context.Context) error {
+func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
 		return errors.New("CephFS session timeouts override is unavailable")
 	}

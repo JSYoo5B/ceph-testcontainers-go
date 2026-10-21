@@ -32,7 +32,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
-| The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.TemporarySessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverride.Restore` |
+| The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
 Each of these conditions ends with the cluster: when the test terminates the
@@ -1135,11 +1135,11 @@ For an abrupt loss, `Stop` the OSD instead.
 The MDS evicts a client that stopped answering after `session_timeout` or
 `session_autoclose`, which default to 60 s and 300 s. These are filesystem
 (MDS map) settings, so `OverrideConfig` cannot change them.
-`TemporarySessionTimeouts` shortens them for one filesystem.
+`OverrideSessionTimeouts` shortens them for one filesystem.
 
 ```golang
 fs := cephfs.Filesystems(cluster)[0]
-change, err := fs.TemporarySessionTimeouts(ctx, cephfs.SessionTimeouts{
+change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{
 	Timeout:   30 * time.Second,
 	Autoclose: time.Minute,
 })
@@ -1276,7 +1276,7 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
   `OverrideConfig`, `OverrideOSDFlag`, `TemporaryBlocklist`,
   `OverrideFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
-- [cephfs.md](../cephfs.md): `Filesystem.TemporarySessionTimeouts`,
+- [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.
 - [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.TemporaryZoneLinkDelay`.
 - [Host network and native clients](host-network.md): which faults are

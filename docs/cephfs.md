@@ -928,10 +928,10 @@ refused by the fixture and by Ceph. The source data and completed clones are
 kept. Copies of the handle share the removal state, and a retry reconciles an
 uncertain deletion.
 
-#### TemporarySnapshotSchedule
+#### AddSnapshotSchedule
 
 ```golang
-func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule cephfs.SnapshotSchedule) (*cephfs.SnapshotScheduleLease, error)
+func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule cephfs.SnapshotSchedule) (*cephfs.SnapshotScheduleLease, error)
 ```
 
 Adds a snapshot schedule, and its retention, to one directory through the MGR
@@ -993,7 +993,7 @@ and start as the lease's.
 ```golang
 module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
 // … wait for the active MGR, and set allow_m_granularity for minutes …
-schedule, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{
+schedule, err := fs.AddSnapshotSchedule(ctx, cephfs.SnapshotSchedule{
 	Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2},
 })
 if schedule != nil {
@@ -1120,10 +1120,10 @@ func (fs *Filesystem) SubvolumeGroupPinPolicy(ctx context.Context, group *Subvol
 
 Same as `SubvolumePinPolicy` for an owned group directory.
 
-#### TemporarySubvolumePin
+#### OverrideSubvolumePin
 
 ```golang
-func (fs *Filesystem) TemporarySubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverride, error)
+func (fs *Filesystem) OverrideSubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error)
 ```
 
 Sets one pin field of an owned subvolume with `ceph fs subvolume pin` and
@@ -1144,7 +1144,7 @@ returned, because a canceled call or lost reply can leave the field changed.
 
 ```golang
 // Needs two active ranks, for example Config{ActiveMDS: 2}.
-pin, err := fs.TemporarySubvolumePin(ctx, volume, cephfs.PinSetting{Type: cephfs.PinExport, Value: 1})
+pin, err := fs.OverrideSubvolumePin(ctx, volume, cephfs.PinSetting{Type: cephfs.PinExport, Value: 1})
 if pin != nil {
 	t.Cleanup(func() { _ = pin.Restore(context.Background()) })
 }
@@ -1153,18 +1153,18 @@ if err != nil {
 }
 ```
 
-#### TemporarySubvolumeGroupPin
+#### OverrideSubvolumeGroupPin
 
 ```golang
-func (fs *Filesystem) TemporarySubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverride, error)
+func (fs *Filesystem) OverrideSubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error)
 ```
 
-Same as `TemporarySubvolumePin` for an owned group.
+Same as `OverrideSubvolumePin` for an owned group.
 
-#### PinOverride.Restore
+#### PinOverrideHandle.Restore
 
 ```golang
-func (change *PinOverride) Restore(ctx context.Context) error
+func (change *PinOverrideHandle) Restore(ctx context.Context) error
 ```
 
 Checks that the directory still has the same inode and returns only this field
@@ -1269,10 +1269,10 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 Reads the filesystem's `session_timeout` and `session_autoclose` from the
 MDSMap. Ceph's defaults are 60 and 300 seconds.
 
-#### TemporarySessionTimeouts
+#### OverrideSessionTimeouts
 
 ```golang
-func (fs *Filesystem) TemporarySessionTimeouts(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverride, error)
+func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error)
 ```
 
 Shortens the time the MDS waits for an unresponsive client, so eviction can be
@@ -1296,10 +1296,10 @@ remove it. A new mount, even from the same process, has a new nonce and is not
 affected. See
 [Evict a frozen client](#evict-a-frozen-client).
 
-#### SessionTimeoutsOverride.Restore
+#### SessionTimeoutsOverrideHandle.Restore
 
 ```golang
-func (change *SessionTimeoutsOverride) Restore(ctx context.Context) error
+func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error
 ```
 
 Returns both values to those captured before the change. A value that is
@@ -2455,7 +2455,7 @@ findSession := func(id string) *cephfs.Session {
 	return nil
 }
 
-change, err := fs.TemporarySessionTimeouts(ctx, cephfs.SessionTimeouts{
+change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{
 	Timeout: 30 * time.Second, Autoclose: time.Minute,
 })
 if change != nil {
@@ -2903,7 +2903,7 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 | Behaviour | Default | Effect |
 | --- | --- | --- |
 | `mds_beacon_grace` | 15 s | A dead MDS is replaced only after this grace unless failed with `ceph mds fail`. Without a standby a dead active can stay registered as laggy. |
-| `session_timeout`, `session_autoclose` | 60 s, 300 s | Time until an unresponsive client is evicted; shorten with `TemporarySessionTimeouts` (minimum 30 s). |
+| `session_timeout`, `session_autoclose` | 60 s, 300 s | Time until an unresponsive client is evicted; shorten with `OverrideSessionTimeouts` (minimum 30 s). |
 | Blocklist entry of an evicted client | 1 h | The address stays blocklisted until `BlocklistEntry.Until`; new mounts use a new nonce and are not affected. |
 | `client_mount_timeout` | 300 s | A mount against an unavailable or silent MDS fails with errno 110 after this time. Set it low in probes. |
 | Cluster startup timeout | 3 min | Bounds `Start`, `WaitReady` and `WaitForSubvolumeClone`; change with `ceph.WithStartupTimeout`. |

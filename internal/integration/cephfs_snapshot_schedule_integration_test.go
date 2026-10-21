@@ -30,7 +30,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := cephfs.SnapshotSchedule{Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2}}
-	if lease, err := fs.TemporarySnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+	if lease, err := fs.AddSnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a schedule without the module: %v, %v", lease, err)
 	}
 	module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
@@ -63,7 +63,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	}
 	// Minutes need the module's allow_m_granularity, which the call never
 	// sets.
-	if lease, err := fs.TemporarySnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+	if lease, err := fs.AddSnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a minute schedule without allow_m_granularity: %v, %v", lease, err)
 	}
 	granularity, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"})
@@ -79,7 +79,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := fs.TemporarySnapshotSchedule(ctx, request)
+	lease, err := fs.AddSnapshotSchedule(ctx, request)
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -92,7 +92,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
+	if second, err := fs.AddSnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
 		t.Fatalf("a second schedule of the same directory: %v, %v", second, err)
 	}
 	var status cephfs.SnapshotScheduleStatus
@@ -148,7 +148,7 @@ func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *c
 	}
 	lease := func(schedule cephfs.SnapshotSchedule) *cephfs.SnapshotScheduleLease {
 		t.Helper()
-		lease, err := fs.TemporarySnapshotSchedule(ctx, schedule)
+		lease, err := fs.AddSnapshotSchedule(ctx, schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -214,12 +214,12 @@ func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *c
 	}
 
 	// An existing schedule, and retention that a new schedule would inherit.
-	if refused, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"}); !errors.Is(err, ceph.ErrInvalidRequest) || refused != nil {
+	if refused, err := fs.AddSnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"}); !errors.Is(err, ceph.ErrInvalidRequest) || refused != nil {
 		t.Fatalf("a lease of a directory with a schedule: %v, %v", refused, err)
 	}
 	native("fs", "snap-schedule", "retention", "add", "/", "n", "3")
 	native("fs", "snap-schedule", "remove", "/", "3h")
-	inherited, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"})
+	inherited, err := fs.AddSnapshotSchedule(ctx, cephfs.SnapshotSchedule{Path: "/", Repeat: "4h"})
 	if !errors.Is(err, ceph.ErrInvalidRequest) || inherited == nil {
 		t.Fatalf("a lease of a directory with retention left: %v, %v", inherited, err)
 	}

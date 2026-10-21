@@ -109,11 +109,31 @@ policy, while the four policy overrides remain exclusive-only.
 | `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocationHandle` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
 
 See [the migration guide](../guides/upgrading-ceph-policy-names.md) for the
-source break. This checkpoint fulfills five proposal rows; the catalogue now
-contains 13 remaining proposal rows and 678 baseline rows. Baseline still does
+source break. This checkpoint fulfills five proposal rows; at that checkpoint the catalogue contained
+13 remaining proposal rows and 678 baseline rows. Baseline still does
 not mean a complete naming approval. The remaining query/provisioning/option
 and value audit, excluded fields/interfaces and service/network stages keep
 #14 open.
+
+## Implemented CephFS policy and owned schedule names
+
+This checkpoint changes source names only. Explicit restoration, ownership,
+non-nil error handles, retryability and existing cleanup remain unchanged.
+No expiry, automatic rollback, compatibility alias or package move is added.
+
+| Previous name | Current name | Contract |
+| --- | --- | --- |
+| `cephfs.Filesystem.TemporarySessionTimeouts` | `cephfs.Filesystem.OverrideSessionTimeouts` | `*cephfs.SessionTimeoutsOverrideHandle` / `Restore`; Overrides timeout policy, not the lifetime of this override. [session.go](../../cephfs/session.go) |
+| `cephfs.Filesystem.TemporarySubvolumePin` | `cephfs.Filesystem.OverrideSubvolumePin` | `*cephfs.PinOverrideHandle` / `Restore`; Restores a captured local policy field on the same owned inode; does not guarantee immediate MDS placement. [pin.go](../../cephfs/pin.go) |
+| `cephfs.Filesystem.TemporarySubvolumeGroupPin` | `cephfs.Filesystem.OverrideSubvolumeGroupPin` | `*cephfs.PinOverrideHandle` / `Restore`; Same field/identity contract for an owned group. [pin.go](../../cephfs/pin.go) |
+| `cephfs.Filesystem.TemporarySnapshotSchedule` | `cephfs.Filesystem.AddSnapshotSchedule` | `*cephfs.SnapshotScheduleLease` / `Restore`; Adds an owned schedule/retention set and refuses existing schedules; Restore removes owned additions rather than overwriting an arbitrary prior schedule. [snapshot_schedule.go](../../cephfs/snapshot_schedule.go) |
+| `cephfs.SessionTimeoutsOverride` | `cephfs.SessionTimeoutsOverrideHandle` | Stateful management/restoration handle; no successful-apply guarantee. |
+| `cephfs.PinOverride` | `cephfs.PinOverrideHandle` | Stateful management/restoration handle; no successful-apply guarantee. |
+
+See [the migration guide](../guides/upgrading-cephfs-names.md).
+
+Current branch catalogue: 691 declarations/methods, 9 remaining proposal rows
+and 682 baseline rows. Baseline is recorded scope, not naming approval.
 
 ## Remaining proposed operation and handle mappings
 
@@ -124,10 +144,6 @@ external-edit refusal, retryability and cleanup order during every rename.
 
 | Current operation | Proposed operation | Result / undo | Reason and source contract |
 | --- | --- | --- | --- |
-| `cephfs.Filesystem.TemporarySessionTimeouts` | `cephfs.Filesystem.OverrideSessionTimeouts` | `*cephfs.SessionTimeoutsOverride` / `Restore` | Overrides timeout policy, not the lifetime of this override. [session.go](../../cephfs/session.go) |
-| `cephfs.Filesystem.TemporarySubvolumePin` | `cephfs.Filesystem.OverrideSubvolumePin` | `*cephfs.PinOverride` / `Restore` | Restores a captured local policy field on the same owned inode; does not guarantee immediate MDS placement. [pin.go](../../cephfs/pin.go) |
-| `cephfs.Filesystem.TemporarySubvolumeGroupPin` | `cephfs.Filesystem.OverrideSubvolumeGroupPin` | `*cephfs.PinOverride` / `Restore` | Same field/identity contract for an owned group. [pin.go](../../cephfs/pin.go) |
-| `cephfs.Filesystem.TemporarySnapshotSchedule` | `cephfs.Filesystem.AddSnapshotSchedule` | `*cephfs.SnapshotScheduleLease` / `Restore` | Adds an owned schedule/retention set and refuses existing schedules; Restore removes owned additions rather than overwriting an arbitrary prior schedule. [snapshot_schedule.go](../../cephfs/snapshot_schedule.go) |
 | `rbd.TemporaryImmutableObjectCache` | `rbd.StartImmutableObjectCache` | `*rbd.ImmutableObjectCacheLease` / `Restore` | Starts an owned helper in a caller-owned client container; Restore stops the owned daemon and removes its owned files. Applying `ClientOptions` to a native client remains the caller's responsibility; there is no native expiry. [immutable_object_cache.go](../../rbd/immutable_object_cache.go) |
 | `fault.TemporaryNetworkDelay` | `fault.ApplyNetworkProfile` | `*fault.NetworkProfileLease` / `Restore` | The request supports rate, queue, loss, reorder, duplicate and corrupt as well as delay; refuses foreign/overlapping state instead of capturing arbitrary qdiscs. Cluster owns teardown. [network_delay.go](../../fault/network_delay.go) |
 | `fault.TemporaryLinkDelay` | `fault.ApplyLinkProfile` | `*fault.NetworkProfileLease` / `Restore` | Same profile on a named link for caller-owned/standalone targets; caller restores before removing the target or bridge. [network_delay.go](../../fault/network_delay.go) |
