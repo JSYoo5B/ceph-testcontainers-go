@@ -156,8 +156,12 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		HostConfigModifier: func(h *container.HostConfig) { h.NetworkMode = "none" },
 		Mounts:             testcontainers.ContainerMounts{{Source: testcontainers.DockerVolumeMountSource{Name: name, VolumeOptions: &mount.VolumeOptions{NoCopy: true, Labels: maps.Clone(testcontainers.GenericLabels())}}, Target: "/observed", ReadOnly: true}},
 	}, Started: true})
+	observerRemoved := false
 	if observer != nil {
 		t.Cleanup(func() {
+			if observerRemoved {
+				return
+			}
 			cleanup, done := context.WithTimeout(context.Background(), time.Minute)
 			defer done()
 			if err := observer.Terminate(cleanup); err != nil {
@@ -218,6 +222,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 	if err := observer.Terminate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	observerRemoved = true
 	if err := cluster.Terminate(ctx); err != nil {
 		t.Fatal("volume cleanup retry", err)
 	}
