@@ -3,8 +3,12 @@
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
-Session blocklist and fullness policy remain in `ceph`; the blocklist
-extraction in PR #12 is reverted. Object-error injection remains in `ceph`
+Fullness uses `Container.OverrideFullRatios`, returning
+`*ceph.FullRatiosOverride`, with explicit caller-managed Restore. It has no
+expiry or automatic context/scope restoration. The rejected extraction adds
+no public `fault` API or extra full-ratio session hooks. The broader naming
+pass remains #14, after #9. Session blocklist and fullness policy remain in
+`ceph`; the blocklist extraction in PR #12 is reverted. Object-error injection remains in `ceph`
 for a separately reviewed checkpoint. See the [migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
@@ -22,7 +26,7 @@ first, in the stage that discovers it.
 | --- | --- |
 | D1 | A new public package `github.com/JSYoo5B/ceph-testcontainers-go/fault`, in the same module and release stream. `fault` imports `ceph`; `ceph` never imports `fault`. There is no `fault.Run` and no second fixture lifetime: every cluster-bound fault takes the existing `*ceph.Container`. |
 | D2 | Six entry points are in the extraction inventory: `TemporaryNetworkDelay`, `TemporaryLinkDelay`, both `InterruptNetwork` forms, `PauseContainer` and `InjectObjectDataError`, with their request, status and handle types, constants and netem sentinel errors (35 exported identifiers in all, see [Moves to `fault`](#moves-to-fault)). |
-| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `TemporaryFullRatios`, `FullRatiosOverride`, `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag` and `TemporaryClientRevocation` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
+| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `OverrideFullRatios`, `FullRatiosOverride`, `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag` and `TemporaryClientRevocation` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
 | D4 | Service-package fault helpers (`rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink`, `rgw.Multisite.TemporaryZoneLinkDelay`) stay methods of their fixtures, because they select fixture-owned endpoints and register cleanup with the fixture. Only their return and parameter types change to `fault` types. |
 | D5 | Reversible leases keep their own undo (`Restore` or `Resume`). The one-shot `InjectObjectDataError` keeps returning no handle: its recovery is a rewrite (`RepairPG`) or an OSD restart. No universal `Restore`, `Close` or cleanup interface is introduced. |
 | D6 | Stage 2 adds a ceph-owned fault registry inside `*ceph.Container` and an internal typed facade `internal/faulthook`, registered through `internal/hookreg` the way `internal/servicehook` is. Terminate keeps calling the registered undo functions in today's fixed phase order. No mutex, map or general cleanup registration becomes public. |
@@ -101,7 +105,7 @@ defines its own unexported category error type with the same `Is` rule as
 | --- | --- |
 | `NetworkPlane`, `PublicNetworkPlane`, `ClusterNetworkPlane`, `NetworkName`, `ClusterNetworkName`, `HasSeparateClusterNetwork` | Topology of the cluster's bridges. `fault` request types refer to `ceph.NetworkPlane`. |
 | `(*Container).TemporaryBlocklist`, `BlocklistOverride`, `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Ceph session-admission control and ownership, plus read-only queries (`sharedOpen` for the tenant query). |
-| `(*Container).TemporaryFullRatios`, `FullRatiosOverride`, `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Global OSDMap policy mutation, explicit restoration and read-only query. Override naming stays a separate `ceph` task. |
+| `(*Container).OverrideFullRatios`, `FullRatiosOverride`, `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Global OSDMap policy mutation, explicit restoration and read-only query. The explicit override name is implemented in `ceph`. |
 | `DeepScrubPG`, `RepairPG`, `PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
 | `SetOSDIn`, `RemoveOSD`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
 | `DaemonAddresses`, `HealthDetails`, `PoolPGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
@@ -437,7 +441,7 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 | `ceph.InterruptNetwork(ctx, ctr, name)` | `fault.InterruptLink(ctx, ctr, name)` |
 | `cluster.PauseContainer(ctx, osd)` | `fault.Pause(ctx, cluster, osd)` |
 | `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | Unchanged in `ceph` (session admission) |
-| `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | Unchanged in `ceph` (OSDMap policy; naming reviewed separately) |
+| `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | `cluster.OverrideFullRatios(ctx, ceph.FullRatios{...})` (OSDMap policy in `ceph`) |
 | `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` |
 | `errors.Is(err, ceph.ErrNetemKernelUnsupported)` | `errors.Is(err, fault.ErrNetemKernelUnsupported)`; `errors.Is(err, ceph.ErrEnvironmentUnavailable)` unchanged |
 | `var l *ceph.NetworkInterruption = mirror.InterruptPeerLink(...)` | `var l *fault.NetworkInterruption = mirror.InterruptPeerLink(...)` |

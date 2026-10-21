@@ -132,7 +132,7 @@ func TestFullRatiosTemporaryOrderingNormalizationAndSharedRestore(t *testing.T) 
 			c, ctr := newFullRatiosFixture()
 			previous := ctr.ratios
 			normalized, _ := normalizeFullRatios(requested)
-			change, err := c.TemporaryFullRatios(t.Context(), requested)
+			change, err := c.OverrideFullRatios(t.Context(), requested)
 			if err != nil || change == nil || ctr.ratios != normalized || !ctr.observedOrdered {
 				t.Fatal("requested native tuple not applied with ascending intermediate states", err, ctr.ratios)
 			}
@@ -140,7 +140,7 @@ func TestFullRatiosTemporaryOrderingNormalizationAndSharedRestore(t *testing.T) 
 				t.Fatal("threshold update was duplicated or omitted", ctr.mutations)
 			}
 			before := len(ctr.calls)
-			if overlap, err := c.TemporaryFullRatios(t.Context(), previous); err == nil || overlap != nil || len(ctr.calls) != before {
+			if overlap, err := c.OverrideFullRatios(t.Context(), previous); err == nil || overlap != nil || len(ctr.calls) != before {
 				t.Fatal("overlapping lease reached native reads")
 			}
 			copy := *change
@@ -171,7 +171,7 @@ func TestFullRatiosPartialApplyAndRestoreLostReplies(t *testing.T) {
 					} else {
 						ctr.failBefore = at
 					}
-					change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
+					change, err := c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3})
 					if change == nil || (phase == "apply" && err == nil) || (phase == "restore" && err != nil) {
 						t.Fatal("partial apply lost tracked handle or original failure", err)
 					}
@@ -194,7 +194,7 @@ func TestFullRatiosLostReadbackKeepsOnlyOnePendingTransition(t *testing.T) {
 	c, ctr := newFullRatiosFixture()
 	previous := ctr.ratios
 	ctr.afterMutation = func() { ctr.failDump = true }
-	change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
+	change, err := c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3})
 	if err == nil || change == nil || ctr.mutations != 1 || strings.Contains(err.Error(), "PRIVATE") {
 		t.Fatal("uncertain readback was adopted or lost handle/output safety", err)
 	}
@@ -204,7 +204,7 @@ func TestFullRatiosLostReadbackKeepsOnlyOnePendingTransition(t *testing.T) {
 	}
 
 	c, ctr = newFullRatiosFixture()
-	change, err = c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
+	change, err = c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestFullRatiosNoopAndOutsideTupleRefuseMutation(t *testing.T) {
 		if noop {
 			requested = ctr.ratios
 		}
-		change, err := c.TemporaryFullRatios(t.Context(), requested)
+		change, err := c.OverrideFullRatios(t.Context(), requested)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,7 +241,7 @@ func TestFullRatiosRestoreRetainsCapturedIdentityAndMapEpoch(t *testing.T) {
 	for _, drift := range []string{"bootstrap", "rollback", "unrelated-epoch"} {
 		t.Run(drift, func(t *testing.T) {
 			c, ctr := newFullRatiosFixture()
-			change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
+			change, err := c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,7 +282,7 @@ func TestFullRatiosFailureBeforeRegistrationAndNativeErrorSafety(t *testing.T) {
 		case "native":
 			ctr.failDump = true
 		}
-		change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3})
+		change, err := c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3})
 		if err == nil || change != nil || len(c.faultsOf(faultFullRatios)) != 0 || ctr.mutations != 0 || strings.Contains(err.Error(), "PRIVATE") {
 			t.Fatal("failed initial observation published a lease or native output", unavailable, err)
 		}
@@ -291,7 +291,7 @@ func TestFullRatiosFailureBeforeRegistrationAndNativeErrorSafety(t *testing.T) {
 	if got, err := unavailable.FullRatios(t.Context()); err == nil || got != (FullRatioSnapshot{}) {
 		t.Fatal("nil cluster provided a native observation")
 	}
-	if change, err := unavailable.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3}); err == nil || change != nil {
+	if change, err := unavailable.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3}); err == nil || change != nil {
 		t.Fatal("nil cluster provided an override")
 	}
 	var absent *FullRatiosOverride
@@ -327,13 +327,13 @@ func TestFullRatiosStrictNativeJSONAndFixtureValidation(t *testing.T) {
 			t.Fatal("diagnostic check rejected native zero/equal/misordered values", err)
 		}
 		before := ctr.mutations
-		if change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.1, .2, .3}); err == nil || change != nil || ctr.mutations != before {
+		if change, err := c.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3}); err == nil || change != nil || ctr.mutations != before {
 			t.Fatal("misordered original entered ordered override lifecycle", err)
 		}
 	}
 	for _, values := range []FullRatios{{0, .2, .3}, {.1, .2, 1.01}, {math.NaN(), .2, .3}, {.1, math.Inf(1), .3}, {.2, .1, .3}, {.1, .1 + 1e-12, .3}, {math.SmallestNonzeroFloat64, .2, .3}} {
 		before := len(ctr.calls)
-		if change, err := c.TemporaryFullRatios(t.Context(), values); err == nil || change != nil || len(ctr.calls) != before {
+		if change, err := c.OverrideFullRatios(t.Context(), values); err == nil || change != nil || len(ctr.calls) != before {
 			t.Fatal("invalid/float32-collapsed fixture reached native CLI", values, err)
 		}
 	}
@@ -381,7 +381,7 @@ func TestFullRatiosIdentityCancellationAndBoundedAdmission(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 		done := make(chan error, 1)
-		go func() { _, err := c.TemporaryFullRatios(ctx, FullRatios{.1, .2, .3}); done <- err }()
+		go func() { _, err := c.OverrideFullRatios(ctx, FullRatios{.1, .2, .3}); done <- err }()
 		select {
 		case err := <-done:
 			if !errors.Is(err, context.DeadlineExceeded) || len(ctr.calls) != 0 || len(c.faultsOf(faultFullRatios)) != 0 {
@@ -396,7 +396,7 @@ func TestFullRatiosIdentityCancellationAndBoundedAdmission(t *testing.T) {
 	c, ctr := newFullRatiosFixture()
 	ctx, cancel := context.WithCancel(t.Context())
 	ctr.afterMutation = cancel
-	change, err := c.TemporaryFullRatios(ctx, FullRatios{.1, .2, .3})
+	change, err := c.OverrideFullRatios(ctx, FullRatios{.1, .2, .3})
 	if change == nil || !errors.Is(err, context.Canceled) || ctr.mutations != 1 {
 		t.Fatal("canceled native attempt lost tracked partial fixture", err)
 	}

@@ -13,16 +13,16 @@ func TestOverridesRefuseUntrackedHandlesAndFreeFailedReservations(t *testing.T) 
 		// Failures before registration leave no reservation behind.
 		keyring := c.keyring
 		c.keyring = nil
-		if _, err := c.TemporaryFullRatios(t.Context(), FullRatios{.86, .91, .96}); err == nil || len(c.faultsOf(faultFullRatios)) != 0 {
+		if _, err := c.OverrideFullRatios(t.Context(), FullRatios{.86, .91, .96}); err == nil || len(c.faultsOf(faultFullRatios)) != 0 {
 			t.Fatalf("a failed session kept a reservation: %v", err)
 		}
 		c.keyring = keyring
 		ctr.ratios = FullRatios{NearFull: ordered.Full, BackfillFull: ordered.BackfillFull, Full: ordered.NearFull}
-		if _, err := c.TemporaryFullRatios(t.Context(), FullRatios{.86, .91, .96}); err == nil || len(c.faultsOf(faultFullRatios)) != 0 {
+		if _, err := c.OverrideFullRatios(t.Context(), FullRatios{.86, .91, .96}); err == nil || len(c.faultsOf(faultFullRatios)) != 0 {
 			t.Fatalf("an unordered original kept a reservation: %v", err)
 		}
 		ctr.ratios = ordered
-		change, err := c.TemporaryFullRatios(t.Context(), FullRatios{.86, .91, .96})
+		change, err := c.OverrideFullRatios(t.Context(), FullRatios{.86, .91, .96})
 		if err != nil {
 			t.Fatalf("a freed key stayed refused: %v", err)
 		}

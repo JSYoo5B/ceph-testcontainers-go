@@ -59,7 +59,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 				{"full", "OSD_FULL", ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003}},
 			} {
 				t.Run(fault.name, func(t *testing.T) {
-					handle, err := cluster.TemporaryFullRatios(ctx, fault.ratios)
+					handle, err := cluster.OverrideFullRatios(ctx, fault.ratios)
 					// A failed multi-command application may still own a partial
 					// override. Register its restoration before checking the error.
 					if handle != nil {
@@ -79,7 +79,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 					if applied.FSID != original.FSID || applied.Epoch <= original.Epoch || applied.Ratios != expected {
 						t.Fatalf("native OSDMap ratios differ: %+v expected=%+v", applied, expected)
 					}
-					if overlap, err := cluster.TemporaryFullRatios(ctx, fault.ratios); err == nil || overlap != nil {
+					if overlap, err := cluster.OverrideFullRatios(ctx, fault.ratios); err == nil || overlap != nil {
 						t.Fatal("overlapping full-ratio lease was admitted")
 					}
 					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, true)
