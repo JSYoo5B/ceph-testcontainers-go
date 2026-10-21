@@ -67,7 +67,7 @@ type Filesystem struct {
 	nextMDSIndex        int
 	nativeIdentity      *cephFSNativeIdentity
 	coldMDS             *cephFSColdMDS
-	pinOverrides        map[string]*PinOverride
+	pinOverrides        map[string]*PinOverrideHandle
 	sessionTimeouts     *cephFSSessionTimeoutsState
 	// scheduledPaths holds the directories with a snapshot schedule lease
 	// that is not restored yet.

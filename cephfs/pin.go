@@ -48,15 +48,15 @@ type PinPolicy struct {
 	RandomProbability float64
 }
 
-// PinOverride owns a temporary change to one confirmed owned resource's
-// policy field. Copies share restoration state. Retain a non-nil result even
+// PinOverrideHandle manages restoration of one confirmed owned resource's
+// policy field, retaining prior state and possibly uncertain application. Copies share restoration state. Retain a non-nil result even
 // on error: cancellation or a lost reply can leave native state changed.
 // Explicit Restore returns that field to its prior canonical virtual value;
 // other fields, directories and data are preserved. It refuses a different
 // current field or native resource identity. Same-value outside edits and
 // changes below native text precision cannot be distinguished; do not race
 // external pin edits or delete/recreate the directory while the handle is used.
-type PinOverride struct {
+type PinOverrideHandle struct {
 	filesystem *Filesystem
 	target     cephFSPinTarget
 	setting    PinSetting
@@ -93,18 +93,18 @@ func (fs *Filesystem) SubvolumeGroupPinPolicy(ctx context.Context, group *Subvol
 	return fs.readOwnedPinPolicy(ctx, cephFSPinTarget{identity: group.identity, group: true})
 }
 
-// TemporarySubvolumePin changes one local field using Ceph's volumes command.
+// OverrideSubvolumePin changes one local field using Ceph's volumes command.
 // The native subvolume data path is left intact. Overlapping handles for the
 // same target/field are rejected; independent fields may be changed separately.
-func (fs *Filesystem) TemporarySubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverride, error) {
+func (fs *Filesystem) OverrideSubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error) {
 	if volume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
 	return fs.temporaryPin(ctx, cephFSPinTarget{identity: volume.identity}, setting)
 }
 
-// TemporarySubvolumeGroupPin changes one owned group's local policy field.
-func (fs *Filesystem) TemporarySubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverride, error) {
+// OverrideSubvolumeGroupPin changes one owned group's local policy field.
+func (fs *Filesystem) OverrideSubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error) {
 	if group == nil {
 		return nil, errors.New("subvolume group is unavailable")
 	}
@@ -132,7 +132,7 @@ func (fs *Filesystem) readOwnedPinPolicy(ctx context.Context, target cephFSPinTa
 	return policy, err
 }
 
-func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, setting PinSetting) (*PinOverride, error) {
+func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, setting PinSetting) (*PinOverrideHandle, error) {
 	if err := validateCephFSPinSetting(setting); err != nil {
 		return nil, err
 	}
@@ -159,11 +159,11 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if err := fs.validatePinRank(ctx, fsID, setting); err != nil {
 		return nil, err
 	}
-	change := &PinOverride{filesystem: fs, target: target, setting: setting, state: &cephFSPinOverrideState{
+	change := &PinOverrideHandle{filesystem: fs, target: target, setting: setting, state: &cephFSPinOverrideState{
 		path: base, inode: prior.Inode, previous: cephFSPinValue(prior, setting.Type), applied: canonicalCephFSPinValue(setting),
 	}}
 	if fs.pinOverrides == nil {
-		fs.pinOverrides = make(map[string]*PinOverride)
+		fs.pinOverrides = make(map[string]*PinOverrideHandle)
 	}
 	fs.pinOverrides[key] = change
 	if change.state.previous == change.state.applied {
@@ -182,7 +182,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 // Restore confirms the same owned directory/inode and returns only this field
 // to its previous canonical native value. It is idempotent across handle copies;
 // after an uncertain reply, retry with a fresh context to reconcile readback.
-func (change *PinOverride) Restore(ctx context.Context) error {
+func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.filesystem.cluster == nil || change.state == nil {
 		return errors.New("CephFS pin override is unavailable")
 	}

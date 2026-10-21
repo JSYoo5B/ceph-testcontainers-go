@@ -20,17 +20,13 @@ var updateNaming = flag.Bool("update-api-naming", false, "refresh the source-der
 // These are review proposals, not compatibility aliases or an API rewrite.
 // Only inventory rows below change when a proposal is edited.
 var namingProposals = map[string]string{
-	"cephfs.Filesystem.TemporarySessionTimeouts":   "cephfs.Filesystem.OverrideSessionTimeouts",
-	"cephfs.Filesystem.TemporarySubvolumePin":      "cephfs.Filesystem.OverrideSubvolumePin",
-	"cephfs.Filesystem.TemporarySubvolumeGroupPin": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
-	"cephfs.Filesystem.TemporarySnapshotSchedule":  "cephfs.Filesystem.AddSnapshotSchedule",
-	"rbd.TemporaryImmutableObjectCache":            "rbd.StartImmutableObjectCache",
-	"fault.TemporaryNetworkDelay":                  "fault.ApplyNetworkProfile",
-	"fault.TemporaryLinkDelay":                     "fault.ApplyLinkProfile",
-	"fault.NetworkDelay":                           "fault.NetworkProfile",
-	"fault.NetworkDelayLease":                      "fault.NetworkProfileLease",
-	"fault.NetworkDelayStatus":                     "fault.NetworkProfileStatus",
-	"rgw.Multisite.TemporaryZoneLinkDelay":         "rgw.Multisite.ApplyZoneLinkProfile",
+	"rbd.TemporaryImmutableObjectCache":    "rbd.StartImmutableObjectCache",
+	"fault.TemporaryNetworkDelay":          "fault.ApplyNetworkProfile",
+	"fault.TemporaryLinkDelay":             "fault.ApplyLinkProfile",
+	"fault.NetworkDelay":                   "fault.NetworkProfile",
+	"fault.NetworkDelayLease":              "fault.NetworkProfileLease",
+	"fault.NetworkDelayStatus":             "fault.NetworkProfileStatus",
+	"rgw.Multisite.TemporaryZoneLinkDelay": "rgw.Multisite.ApplyZoneLinkProfile",
 }
 
 type namingEntry struct {

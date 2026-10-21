@@ -43,7 +43,7 @@
   "ceph.CephFSMDSStatus": "cephfs.FilesystemStatus",
   "ceph.CephFSPinDistributed": "cephfs.PinDistributed",
   "ceph.CephFSPinExport": "cephfs.PinExport",
-  "ceph.CephFSPinOverride": "cephfs.PinOverride",
+  "ceph.CephFSPinOverride": "cephfs.PinOverrideHandle",
   "ceph.CephFSPinPolicy": "cephfs.PinPolicy",
   "ceph.CephFSPinRandom": "cephfs.PinRandom",
   "ceph.CephFSPinSetting": "cephfs.PinSetting",

@@ -450,7 +450,7 @@ func testCephFSSessionAdmission(t *testing.T) {
 	}
 
 	// Lifecycle, with renewals every 10 s.
-	change, err := fs.TemporarySessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute})
+	change, err := fs.OverrideSessionTimeouts(ctx, cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute})
 	if change != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

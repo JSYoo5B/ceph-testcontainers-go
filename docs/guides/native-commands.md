@@ -1016,7 +1016,7 @@ cannot even be detected.
 | `auth` changes to identities created by `CreateClient`, or to daemon identities | `UpdateClientCaps`, `DeleteClient`, daemon restarts | `UpdateClientCaps`, `DeleteClient` |
 | `mon add`/`mon remove`, editing `/etc/ceph/ceph.conf` in any container | MON membership and the `mon_host` bookkeeping | `AddMonitor`, `RemoveMonitor`, `RefreshMonitorConfig` |
 | `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `cephfs.Remove` | `ScaleMDS`, `cephfs.Remove` |
-| `fs set session_timeout`/`session_autoclose` | `TemporarySessionTimeouts` | `TemporarySessionTimeouts` |
+| `fs set session_timeout`/`session_autoclose` | `OverrideSessionTimeouts` | `OverrideSessionTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | Subvolume helpers, which check native identity | The typed subvolume helpers |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
