@@ -6,7 +6,7 @@ on:
     inputs:
       images_ref:
         description: Image repository revision implementing roles-v2
-        default: 3f6e8372a54d19a557033911534b3a803ba60a5e
+        default: 7ef514c475d6c789620f7bb6f63318a154ded742
       variant:
         type: choice
         options: [official, debian, ubuntu]
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: JSYoo5B/ceph-testcontainers-images
-          ref: ${{ inputs.images_ref || '3f6e8372a54d19a557033911534b3a803ba60a5e' }}
+          ref: ${{ inputs.images_ref || '7ef514c475d6c789620f7bb6f63318a154ded742' }}
           path: images-source
           persist-credentials: false
       - uses: actions/setup-go@v7
