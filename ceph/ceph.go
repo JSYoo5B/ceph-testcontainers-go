@@ -94,6 +94,7 @@ type Container struct {
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	osdMemory             *osdMemoryStorage
+	osdVolume             *osdVolumeStorage
 	run                   *runVolume
 	config                []byte
 	keyring               []byte
@@ -117,6 +118,9 @@ type Container struct {
 	faults faultRegistry
 	// osdRunner replaces runContainer for OSD containers in tests.
 	osdRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
+	// osdVolumeDocker and osdVolumeRunner replace owned-volume allocation in tests.
+	osdVolumeDocker func(context.Context) (osdMemoryVolumeClient, error)
+	osdVolumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// controlImageID is the ID of the first MON's image, which errors about
 	// the control image's capabilities name.
 	controlImageID string
@@ -126,7 +130,8 @@ type Container struct {
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
-// The file is container-local unless WithOSDInMemoryStorage is selected.
+// The file is container-local unless WithOSDInMemoryStorage or
+// WithOSDVolumeStorage is selected.
 // Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
@@ -177,6 +182,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
 		return nil, invalidRequest("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+	}
+	if settings.osdVolumeStorage && (settings.osdMemorySize != 0 || settings.osdObjectStore == OSDMemStore) {
+		return nil, invalidRequest("WithOSDVolumeStorage requires classic BlueStore and cannot be combined with WithOSDInMemoryStorage")
 	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
@@ -643,6 +651,9 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets m
 	if err != nil {
 		return osdLaunch{}, err
 	}
+	if err := c.ensureOSDVolume(ctx); err != nil {
+		return osdLaunch{}, err
+	}
 	if err := c.ensureOSDMemory(ctx); err != nil {
 		return osdLaunch{}, err
 	}
@@ -694,6 +705,11 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets m
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
 	if c.osdMemory != nil {
 		if err := c.osdMemory.requireFreshOSD(ctx, id); err != nil {
+			return launch, err
+		}
+	}
+	if c.osdVolume != nil {
+		if err := c.osdVolume.requireFreshOSD(ctx, id); err != nil {
 			return launch, err
 		}
 	}
@@ -871,6 +887,11 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	}
 	if c.osdMemory != nil {
 		if err := c.osdMemory.discardOSD(ctx, id); err != nil {
+			return err
+		}
+	}
+	if c.osdVolume != nil {
+		if err := c.osdVolume.discardOSD(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -1070,6 +1091,12 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.osdMemory = nil
 		}
 	}
+	var volumeErr error
+	if c.osdVolume != nil && len(c.osds) == 0 {
+		if volumeErr = c.osdVolume.release(ctx); volumeErr == nil {
+			c.osdVolume = nil
+		}
+	}
 	if c.manager != nil {
 		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
@@ -1134,14 +1161,19 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	}
 
 	errs = append(errs, c.removeLabeledContainers(ctx))
-	// The removed containers can include one that held the OSD memory volume,
-	// such as an OSD or keeper whose create reply was lost.
+	// The removed containers can include a storage user whose create reply
+	// was lost, such as an OSD or an owned storage helper.
 	if memoryErr != nil && c.osdMemory != nil && len(c.osds) == 0 {
 		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
 			c.osdMemory = nil
 		}
 	}
-	errs = append(errs, memoryErr)
+	if volumeErr != nil && c.osdVolume != nil && len(c.osds) == 0 {
+		if volumeErr = c.osdVolume.release(ctx); volumeErr == nil {
+			c.osdVolume = nil
+		}
+	}
+	errs = append(errs, memoryErr, volumeErr)
 	if c.run != nil {
 		if err := c.run.remove(ctx); err != nil {
 			errs = append(errs, err)

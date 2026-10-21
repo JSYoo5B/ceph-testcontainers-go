@@ -21,12 +21,12 @@ catalogue; signatures are not rewritten to pretend the proposed API exists.
 
 | Package | Declared exports |
 | --- | ---: |
-| `ceph` | 301 |
+| `ceph` | 302 |
 | `fault` | 34 |
 | `rbd` | 76 |
 | `cephfs` | 154 |
 | `rgw` | 126 |
-| Total | 691 |
+| Total | 692 |
 
 The catalogue includes functions, methods on exported receiver types, types,
 constants and variables. It scans all non-test Go source files, including
@@ -155,8 +155,8 @@ their names and error categories. No timer, cancellation rollback, permanent
 alias, package move or generic cleanup interface is introduced. See the
 [migration guide](../guides/upgrading-network-profile-names.md).
 
-Current branch catalogue: 691 declarations/methods, 1 remaining proposal row
-and 690 baseline rows. Baseline is recorded scope, not naming approval.
+Current branch catalogue: 692 declarations/methods, 1 remaining proposal row
+and 691 baseline rows. Baseline is recorded scope, not naming approval.
 
 ## Remaining proposed operation mapping
 

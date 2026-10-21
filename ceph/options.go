@@ -28,6 +28,7 @@ type options struct {
 	noInitialManagers      bool
 	blockSize              int64
 	osdMemorySize          int64
+	osdVolumeStorage       bool
 	auth                   AuthConfig
 	osdObjectStore         OSDObjectStore
 	startupTimeout         time.Duration
@@ -272,8 +273,9 @@ const (
 
 // WithOSDObjectStore selects the object store of every OSD in the cluster,
 // including OSDs added later. WithOSDBlockSize sets the capacity of a
-// MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage, which
-// places BlueStore files in memory, and InjectObjectDataError needs BlueStore.
+// MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage or
+// WithOSDVolumeStorage, which place BlueStore files in shared volumes.
+// InjectObjectDataError needs BlueStore.
 func WithOSDObjectStore(store OSDObjectStore) Option {
 	return func(o *options) error {
 		if store != OSDBlueStore && store != OSDMemStore {
@@ -302,6 +304,18 @@ func WithOSDInMemoryStorage(maxBytes int64) Option {
 		o.osdMemorySize = maxBytes
 		return nil
 	}
+}
+
+// WithOSDVolumeStorage keeps classic BlueStore OSD directories in one ordinary
+// Docker-managed local named volume owned by the cluster. Allocation is lazy
+// until the first OSD registration. Unlike tmpfs it needs no live keeper to
+// preserve bytes; an isolated control-image helper manages fresh/purged paths.
+// Terminate removes the volume after its users; a busy/failed removal is retryable.
+// It cannot be combined with MemStore or WithOSDInMemoryStorage. No caller-owned
+// volumes, host mounts or devices are adopted. This does not provide retained
+// detach/reopen, host-reboot durability or a public replacement-container API.
+func WithOSDVolumeStorage() Option {
+	return func(o *options) error { o.osdVolumeStorage = true; return nil }
 }
 
 // WithStartupTimeout bounds bootstrap, readiness and topology operations.
