@@ -6,6 +6,9 @@ Keep published release tags immutable. Make corrections on `main` and publish
 a new version when needed. Use maintained source paths, test names and release
 tags when explaining behavior.
 
+For changes to Ceph behavioral bug compatibility, follow the
+[compatibility policy](docs/contributing/bug-compatibility.md).
+
 ## Privacy review
 
 Before publishing source, documentation, fixtures, commit messages, release notes,
