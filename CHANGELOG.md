@@ -320,6 +320,13 @@ change the API.
 
 ### Changed
 
+- Rename CephFS policy methods to `OverrideSessionTimeouts`,
+  `OverrideSubvolumePin` and `OverrideSubvolumeGroupPin`, returning explicit
+  `SessionTimeoutsOverrideHandle` / `PinOverrideHandle` restoration objects.
+  Rename schedule creation to `AddSnapshotSchedule`, retaining
+  `SnapshotScheduleLease`. Ownership, uncertainty and explicit Restore semantics
+  are unchanged; see `docs/guides/upgrading-cephfs-names.md`.
+
 - Rename `Container.TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`
   and `TemporaryMessengerPolicy` to `OverrideConfig`, `OverrideOSDFlag`,
   `OverrideMGRModule` and `OverrideMessengerPolicy`; rename

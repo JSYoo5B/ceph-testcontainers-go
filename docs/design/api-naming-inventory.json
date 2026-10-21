@@ -2203,6 +2203,14 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs.Filesystem.AddSnapshotSchedule",
+      "kind": "method",
+      "signature": "func(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.AddSnapshotSchedule",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs.Filesystem.AuthorizeSubvolume",
       "kind": "method",
       "signature": "func(ctx context.Context, volume *Subvolume, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error)",
@@ -2288,6 +2296,30 @@
       "signature": "func() []*MDS",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.MDSs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSessionTimeouts",
+      "kind": "method",
+      "signature": "func(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSessionTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSubvolumePin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSubvolumePin",
       "decision": "baseline"
     },
     {
@@ -2465,38 +2497,6 @@
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.Subvolumes",
       "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.TemporarySessionTimeouts",
-      "kind": "method",
-      "signature": "func(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverride, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.OverrideSessionTimeouts",
-      "decision": "proposal"
-    },
-    {
-      "current": "cephfs.Filesystem.TemporarySnapshotSchedule",
-      "kind": "method",
-      "signature": "func(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.AddSnapshotSchedule",
-      "decision": "proposal"
-    },
-    {
-      "current": "cephfs.Filesystem.TemporarySubvolumeGroupPin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverride, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
-      "decision": "proposal"
-    },
-    {
-      "current": "cephfs.Filesystem.TemporarySubvolumePin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverride, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.OverrideSubvolumePin",
-      "decision": "proposal"
     },
     {
       "current": "cephfs.Filesystem.WaitForSubvolumeClone",
@@ -2909,17 +2909,17 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.PinOverride",
+      "current": "cephfs.PinOverrideHandle",
       "kind": "type",
-      "proposed": "cephfs.PinOverride",
+      "proposed": "cephfs.PinOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "cephfs.PinOverride.Restore",
+      "current": "cephfs.PinOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*PinOverride",
-      "proposed": "cephfs.PinOverride.Restore",
+      "receiver": "*PinOverrideHandle",
+      "proposed": "cephfs.PinOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
@@ -3022,17 +3022,17 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.SessionTimeoutsOverride",
+      "current": "cephfs.SessionTimeoutsOverrideHandle",
       "kind": "type",
-      "proposed": "cephfs.SessionTimeoutsOverride",
+      "proposed": "cephfs.SessionTimeoutsOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "cephfs.SessionTimeoutsOverride.Restore",
+      "current": "cephfs.SessionTimeoutsOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*SessionTimeoutsOverride",
-      "proposed": "cephfs.SessionTimeoutsOverride.Restore",
+      "receiver": "*SessionTimeoutsOverrideHandle",
+      "proposed": "cephfs.SessionTimeoutsOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

@@ -179,7 +179,7 @@ var leaseSchedule = SnapshotSchedule{Path: "/", Repeat: "2h", Start: time.Date(2
 func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 	fake := newFakeSnapSchedule()
 	fs := snapScheduleFilesystem(fake)
-	lease, err := fs.TemporarySnapshotSchedule(t.Context(), leaseSchedule)
+	lease, err := fs.AddSnapshotSchedule(t.Context(), leaseSchedule)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 	if err != nil || status.Schedule != "2h" || !status.Start.Equal(leaseSchedule.Start) || !maps.Equal(status.Retention, leaseSchedule.Retention) {
 		t.Fatalf("status %+v, %v", status, err)
 	}
-	if again, err := fs.TemporarySnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || again != nil {
+	if again, err := fs.AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"}); !errors.Is(err, ceph.ErrInvalidRequest) || again != nil {
 		t.Fatalf("a second lease of the directory: %v", err)
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -199,7 +199,7 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 	if err := lease.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	next, err := fs.TemporarySnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"})
+	next, err := fs.AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h"})
 	if err != nil {
 		t.Fatalf("a lease after Restore: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestSnapshotScheduleLeaseLifecycle(t *testing.T) {
 // retryable.
 func TestSnapshotScheduleLeaseRefusesAReplacement(t *testing.T) {
 	fake := newFakeSnapSchedule()
-	lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
+	lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), SnapshotSchedule{Path: "/", Repeat: "1h", Start: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestSnapshotScheduleLeaseResumesCleanup(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := newFakeSnapSchedule()
-			lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), leaseSchedule)
+			lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -296,7 +296,7 @@ func TestSnapshotScheduleLeaseAfterAFailedAdd(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake := newFakeSnapSchedule()
 			fault(fake)
-			lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), leaseSchedule)
+			lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
 			if err == nil || lease == nil {
 				t.Fatalf("%v, %v", lease, err)
 			}
@@ -317,7 +317,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	schedule := SnapshotSchedule{Path: "/", Repeat: "3h", Start: time.Date(2030, 4, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"n": 2}}
 	t.Run("schedule of another repeat", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +333,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	})
 	t.Run("schedule removed natively", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -344,7 +344,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 	})
 	t.Run("schedule removed, another one added", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -366,7 +366,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				fake := newFakeSnapSchedule()
-				lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), schedule)
+				lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), schedule)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -386,7 +386,7 @@ func TestSnapshotScheduleLeaseDirectoryRetention(t *testing.T) {
 func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
 	t.Run("changed rule", func(t *testing.T) {
 		fake := newFakeSnapSchedule()
-		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), leaseSchedule)
+		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,7 +404,7 @@ func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
 		fake := newFakeSnapSchedule()
 		fake.native(t, "fs snap-schedule add / 6h")
 		before := fake.state()
-		if lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), leaseSchedule); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || fake.state() != before {
+		if lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil || fake.state() != before {
 			t.Fatalf("%v, %v, %s", lease, err, fake.state())
 		}
 	})
@@ -413,7 +413,7 @@ func TestSnapshotScheduleLeaseRefusals(t *testing.T) {
 		fake.native(t, "fs snap-schedule add / 6h")
 		fake.native(t, "fs snap-schedule retention add / n 3")
 		fake.native(t, "fs snap-schedule remove / 6h")
-		lease, err := snapScheduleFilesystem(fake).TemporarySnapshotSchedule(t.Context(), leaseSchedule)
+		lease, err := snapScheduleFilesystem(fake).AddSnapshotSchedule(t.Context(), leaseSchedule)
 		if !errors.Is(err, ceph.ErrInvalidRequest) || lease == nil {
 			t.Fatalf("a directory with retention left: %v, %v", lease, err)
 		}

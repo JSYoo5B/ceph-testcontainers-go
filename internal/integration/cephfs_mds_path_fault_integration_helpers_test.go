@@ -220,7 +220,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	// stays far beyond the window, and no other client wants the caps, so
 	// the MDS has no reason to evict.
 	limits := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 5 * time.Minute}
-	change, err := fs.TemporarySessionTimeouts(ctx, limits)
+	change, err := fs.OverrideSessionTimeouts(ctx, limits)
 	if change != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

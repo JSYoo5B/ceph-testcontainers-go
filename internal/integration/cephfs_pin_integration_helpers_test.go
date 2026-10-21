@@ -18,9 +18,9 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, group *cephfs.SubvolumeGroup, setting cephfs.PinSetting) *cephfs.PinOverride {
+func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, group *cephfs.SubvolumeGroup, setting cephfs.PinSetting) *cephfs.PinOverrideHandle {
 	t.Helper()
-	change, err := fs.TemporarySubvolumeGroupPin(ctx, group, setting)
+	change, err := fs.OverrideSubvolumeGroupPin(ctx, group, setting)
 	cephFSPinTrackRestore(t, change)
 	if err != nil {
 		t.Fatal(err)
@@ -28,9 +28,9 @@ func cephFSPinGroupLease(t *testing.T, ctx context.Context, fs *cephfs.Filesyste
 	return change
 }
 
-func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, volume *cephfs.Subvolume, setting cephfs.PinSetting) *cephfs.PinOverride {
+func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesystem, volume *cephfs.Subvolume, setting cephfs.PinSetting) *cephfs.PinOverrideHandle {
 	t.Helper()
-	change, err := fs.TemporarySubvolumePin(ctx, volume, setting)
+	change, err := fs.OverrideSubvolumePin(ctx, volume, setting)
 	cephFSPinTrackRestore(t, change)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func cephFSPinVolumeLease(t *testing.T, ctx context.Context, fs *cephfs.Filesyst
 	return change
 }
 
-func cephFSPinTrackRestore(t *testing.T, change *cephfs.PinOverride) {
+func cephFSPinTrackRestore(t *testing.T, change *cephfs.PinOverrideHandle) {
 	t.Helper()
 	if change == nil {
 		return

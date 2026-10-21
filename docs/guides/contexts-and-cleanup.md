@@ -339,7 +339,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
-| `OverrideConfig`, `OverrideMessengerPolicy`, `RevokeClient`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `OverrideConfig`, `OverrideMessengerPolicy`, `RevokeClient`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -362,8 +362,8 @@ back. Some wrap several native settings:
 | `OverrideMGRModule` | Whether one MGR module is enabled |
 | `OverrideFullRatios` | The nearfull, backfillfull and full ratios |
 | `TemporaryBlocklist` | Adds one exact client-session blocklist entry |
-| `cephfs.Filesystem.TemporarySessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
-| `cephfs.Filesystem.TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | One pin policy field of a subvolume or group |
+| `cephfs.Filesystem.OverrideSessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
+| `cephfs.Filesystem.OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | One pin policy field of a subvolume or group |
 
 They share these rules:
 
@@ -416,7 +416,7 @@ Handle-specific details:
 - `FullRatiosOverride.Restore` accepts only the last tuple it applied, or
   either side of one uncertain command. The native CLI changes one ratio per
   command, so apply and restore are not atomic.
-- `TemporarySessionTimeouts.Restore` refuses a filesystem that was recreated
+- `OverrideSessionTimeouts.Restore` refuses a filesystem that was recreated
   under the same name.
 
 `fault.PauseLease.Resume` and `NetworkInterruption.Restore` follow the same

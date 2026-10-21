@@ -149,7 +149,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 		for _, gate := range []string{"setup", "owner", "control"} {
 			t.Run(operation+"/"+gate, func(t *testing.T) {
 				fs, control, volume, _ := cephFSPinFixture()
-				change := &PinOverride{
+				change := &PinOverrideHandle{
 					filesystem: fs, target: cephFSPinTarget{identity: volume.identity},
 					setting: PinSetting{Type: PinExport, Value: 1},
 					state: &cephFSPinOverrideState{
@@ -157,7 +157,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 					},
 				}
 				key := change.state.path + "\x00" + string(change.setting.Type)
-				fs.pinOverrides = map[string]*PinOverride{key: change}
+				fs.pinOverrides = map[string]*PinOverrideHandle{key: change}
 				control.policies[change.state.path].ExportRank = 1
 				assertCephFSContextAdmissionGate(t, fs.cluster, gate, func(ctx context.Context) error {
 					switch operation {
@@ -165,7 +165,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 						_, err := fs.SubvolumePinPolicy(ctx, volume)
 						return err
 					case "temporary":
-						_, err := fs.TemporarySubvolumePin(ctx, volume, PinSetting{Type: PinDistributed, Value: 1})
+						_, err := fs.OverrideSubvolumePin(ctx, volume, PinSetting{Type: PinDistributed, Value: 1})
 						return err
 					default:
 						return change.Restore(ctx)

@@ -66,7 +66,7 @@ func TestCephFSSessionTimeoutsRefuseInvalidValuesBeforeCommands(t *testing.T) {
 		{Timeout: time.Minute, Autoclose: 1 << 62},
 	} {
 		fs, ctr := sessionFilesystem(t)
-		if change, err := fs.TemporarySessionTimeouts(t.Context(), requested); change != nil || err == nil || len(ctr.Calls) != 0 {
+		if change, err := fs.OverrideSessionTimeouts(t.Context(), requested); change != nil || err == nil || len(ctr.Calls) != 0 {
 			t.Fatalf("%+v: handle=%v error=%v calls=%q", requested, change, err, ctr.Calls)
 		}
 	}
@@ -76,7 +76,7 @@ func TestCephFSSessionTimeoutsRefuseInvalidValuesBeforeCommands(t *testing.T) {
 // the filesystem ID under one name between calls, so these use the fake.
 func TestCephFSSessionTimeoutsRefuseRecreatedFilesystem(t *testing.T) {
 	fs, ctr := sessionFilesystem(t)
-	change, err := fs.TemporarySessionTimeouts(t.Context(), SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 30 * time.Second})
+	change, err := fs.OverrideSessionTimeouts(t.Context(), SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestCephFSSessionTimeoutsRefuseRecreatedFilesystem(t *testing.T) {
 func TestCephFSSessionTimeoutsReportPartialApply(t *testing.T) {
 	fs, ctr := sessionFilesystem(t)
 	ctr.Fail = "fs set app session_autoclose 30"
-	change, err := fs.TemporarySessionTimeouts(t.Context(), SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 30 * time.Second})
+	change, err := fs.OverrideSessionTimeouts(t.Context(), SessionTimeouts{Timeout: 30 * time.Second, Autoclose: 30 * time.Second})
 	if change == nil || err == nil {
 		t.Fatalf("partial apply returned handle=%v error=%v", change, err)
 	}

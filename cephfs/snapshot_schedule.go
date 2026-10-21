@@ -23,7 +23,7 @@ import (
 // weeks, months or years.
 var snapshotSchedulePeriod = regexp.MustCompile(`^[1-9][0-9]*[mhdwMy]$`)
 
-// SnapshotSchedule configures TemporarySnapshotSchedule.
+// SnapshotSchedule configures AddSnapshotSchedule.
 type SnapshotSchedule struct {
 	// Path is the directory to snapshot, an absolute path in the filesystem,
 	// such as "/" or "/data". It must exist.
@@ -109,7 +109,7 @@ func validateSnapshotSchedule(schedule SnapshotSchedule) error {
 
 const snapshotScheduleTime = "2006-01-02T15:04:05"
 
-// TemporarySnapshotSchedule adds a snapshot schedule, and its retention, to a
+// AddSnapshotSchedule adds a snapshot schedule, and its retention, to a
 // directory of the filesystem through the MGR snap_schedule module, which
 // takes "scheduled-…" snapshots in the directory's .snap. It never enables the
 // module: enable it with ceph.Container.OverrideMGRModule first, and wait
@@ -119,7 +119,7 @@ const snapshotScheduleTime = "2006-01-02T15:04:05"
 // directory keeps retention rules after its last schedule is removed: rules
 // that the new schedule inherits are refused with ceph.ErrInvalidRequest
 // after the schedule was added, with a lease that removes it.
-func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error) {
+func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error) {
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err
 	}

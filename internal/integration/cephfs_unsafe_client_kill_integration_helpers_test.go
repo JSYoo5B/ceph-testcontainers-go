@@ -78,7 +78,7 @@ func (h *cephFSUnsafeHold) killActor(t *testing.T, ctx context.Context) string {
 // testCephFSClientKilledDuringUnsafeRequest holds one rename unsafe
 // (holdCephFSUnsafeRename) and SIGKILLs the client's process, so the client
 // never sees the safe reply. Session timeouts are shortened to 30 s and 60 s
-// through TemporarySessionTimeouts before the kill. The MDS keeps the request
+// through OverrideSessionTimeouts before the kill. The MDS keeps the request
 // in flight, unsafe, while the pause holds its journal. After the pause is
 // restored the MDS journals the request and replies to the dead session; the
 // MDS keeps its GID. The session stays open until autoclose, as for an idle
@@ -92,7 +92,7 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	tid := h.held.tid
 
 	short := cephfs.SessionTimeouts{Timeout: 30 * time.Second, Autoclose: time.Minute}
-	change, err := h.fs.TemporarySessionTimeouts(ctx, short)
+	change, err := h.fs.OverrideSessionTimeouts(ctx, short)
 	if change != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
