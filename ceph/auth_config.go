@@ -66,7 +66,7 @@ type AuthConfig struct {
 // WithAuth selects the Cephx key type, the MonMap ciphers and the ticket
 // lifetimes of a new cluster. The settings are part of the bootstrap: the key
 // type and ciphers apply from the first MON, and the lifetimes are written to
-// every daemon's and WithClient container's ceph.conf, so TemporaryConfig
+// every daemon's and WithClient container's ceph.conf, so OverrideConfig
 // cannot change them later. An image without key type support, such as Squid
 // or Tentacle before 20.2.4, accepts a configuration in which every cipher is
 // CipherAES, and Run fails before any daemon starts when one is not.

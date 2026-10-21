@@ -49,7 +49,7 @@ type mgrModuleOverrideState struct {
 	previous, applied, alwaysOn, restored bool
 }
 
-// TemporaryMGRModule changes configured membership without forcing unavailable
+// OverrideMGRModule changes configured membership without forcing unavailable
 // dependencies. It rejects missing/cannot-run metadata on enable, overlapping
 // handles, always-on disable, and disabling volumes or mirroring while relevant
 // filesystems/mirror policies exist. An enabled always-on module accepts only a
@@ -57,8 +57,8 @@ type mgrModuleOverrideState struct {
 // enabled because restoring it would require force-disable. This method verifies
 // membership, not command readiness. External edits must not race apply/restore;
 // Ceph has no module membership CAS or per-module generation.
-func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error) {
-	if gateErr := c.sharedGate("TemporaryMGRModule"); gateErr != nil {
+func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error) {
+	if gateErr := c.sharedGate("OverrideMGRModule"); gateErr != nil {
 		return nil, gateErr
 	}
 	if !mgrModuleNamePattern.MatchString(name) {

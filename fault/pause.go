@@ -35,7 +35,7 @@ type PauseLease struct {
 // its memory, sockets and Ceph identity, and peers see silence rather than a
 // closed connection: a frozen OSD stops answering client operations and
 // heartbeats until its peers report it down after the heartbeat grace. Hold
-// nodown with ceph.Container.TemporaryOSDFlag to keep it up and make client operations wait
+// nodown with ceph.Container.OverrideOSDFlag to keep it up and make client operations wait
 // for their own timeouts or be reported as slow. Host networking is supported.
 //
 // The container that runs this cluster's control CLI is refused because every

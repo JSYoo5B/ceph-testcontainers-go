@@ -654,11 +654,43 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.OverrideConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideConfig",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.OverrideFullRatios",
       "kind": "method",
       "signature": "func(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideFullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideMGRModule",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideMGRModule",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideMessengerPolicy",
+      "kind": "method",
+      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideOSDFlag",
+      "kind": "method",
+      "signature": "func(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideOSDFlag",
       "decision": "baseline"
     },
     {
@@ -790,6 +822,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.RevokeClient",
+      "kind": "method",
+      "signature": "func(ctx context.Context, client *ClientConfig) (*ClientRevocation, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RevokeClient",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.RotateDaemonKey",
       "kind": "method",
       "signature": "func(ctx context.Context, daemon string) (err error)",
@@ -884,46 +924,6 @@
       "receiver": "*Container",
       "proposed": "ceph.Container.TemporaryBlocklist",
       "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.TemporaryClientRevocation",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig) (*ClientRevocation, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RevokeClient",
-      "decision": "proposal"
-    },
-    {
-      "current": "ceph.Container.TemporaryConfig",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideConfig",
-      "decision": "proposal"
-    },
-    {
-      "current": "ceph.Container.TemporaryMGRModule",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMGRModule",
-      "decision": "proposal"
-    },
-    {
-      "current": "ceph.Container.TemporaryMessengerPolicy",
-      "kind": "method",
-      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMessengerPolicy",
-      "decision": "proposal"
-    },
-    {
-      "current": "ceph.Container.TemporaryOSDFlag",
-      "kind": "method",
-      "signature": "func(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideOSDFlag",
-      "decision": "proposal"
     },
     {
       "current": "ceph.Container.Terminate",

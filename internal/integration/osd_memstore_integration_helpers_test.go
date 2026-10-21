@@ -50,7 +50,7 @@ rule replicated_rule {
 func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container, text string) {
 	t.Helper()
 	for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
-		if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -37,16 +37,16 @@ func TestMGRModulesReportMembershipAndNativeDependencies(t *testing.T) {
 	}
 }
 
-func TestTemporaryMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.T) {
+func TestOverrideMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.T) {
 	for _, prior := range []bool{false, true} {
 		ctr := newMGRModuleFixture()
 		ctr.enabled["mirroring"] = prior
 		c := mgrModuleCluster(ctr)
-		change, err := c.TemporaryMGRModule(t.Context(), "mirroring", !prior)
+		change, err := c.OverrideMGRModule(t.Context(), "mirroring", !prior)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.TemporaryMGRModule(t.Context(), "mirroring", prior); err == nil {
+		if _, err := c.OverrideMGRModule(t.Context(), "mirroring", prior); err == nil {
 			t.Fatal("overlap accepted")
 		}
 		copy := *change
@@ -63,7 +63,7 @@ func TestTemporaryMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.
 	}
 }
 
-func TestTemporaryMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T) {
+func TestOverrideMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T) {
 	for _, operation := range []string{"apply", "restore"} {
 		t.Run(operation, func(t *testing.T) {
 			ctr := newMGRModuleFixture()
@@ -72,7 +72,7 @@ func TestTemporaryMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T
 			var change *MGRModuleOverride
 			if operation == "restore" {
 				var err error
-				change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+				change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -84,7 +84,7 @@ func TestTemporaryMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T
 			}
 			if operation == "apply" {
 				var err error
-				change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+				change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
 				if err != nil || change == nil || !ctr.enabled["mirroring"] {
 					t.Fatal("transient native snapshots prevented apply", err)
 				}
@@ -108,7 +108,7 @@ func TestTemporaryMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T
 	}
 }
 
-func TestTemporaryMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *testing.T) {
+func TestOverrideMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *testing.T) {
 	for _, operation := range []string{"apply", "restore"} {
 		for _, failure := range []string{"unavailable", "inconsistent", "canceled-before-read", "canceled-after-read"} {
 			t.Run(operation+"/"+failure, func(t *testing.T) {
@@ -117,7 +117,7 @@ func TestTemporaryMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *t
 				var change *MGRModuleOverride
 				if operation == "restore" {
 					var err error
-					change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+					change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -142,7 +142,7 @@ func TestTemporaryMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *t
 				started := time.Now()
 				var err error
 				if operation == "apply" {
-					change, err = c.TemporaryMGRModule(ctx, "mirroring", true)
+					change, err = c.OverrideMGRModule(ctx, "mirroring", true)
 					if change != nil || len(c.moduleOverrides) != 0 || ctr.enabled["mirroring"] {
 						t.Fatal("failed initial snapshot adopted or changed native membership")
 					}
@@ -169,22 +169,22 @@ func TestTemporaryMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *t
 	}
 }
 
-func TestTemporaryMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
+func TestOverrideMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
 	for _, name := range []string{"--force", "bad name", "mirroring;exit", "unknown", "missing", "broken"} {
 		ctr := newMGRModuleFixture()
 		ctr.enabled["missing"], ctr.enabled["broken"] = false, false
 		ctr.canRun["broken"] = false
 		c := mgrModuleCluster(ctr)
-		if change, err := c.TemporaryMGRModule(t.Context(), name, true); err == nil || change != nil || len(c.moduleOverrides) != 0 || ctr.mutations != 0 {
+		if change, err := c.OverrideMGRModule(t.Context(), name, true); err == nil || change != nil || len(c.moduleOverrides) != 0 || ctr.mutations != 0 {
 			t.Fatal("invalid/unavailable module reached mutation", name)
 		}
 	}
 	ctr := newMGRModuleFixture()
 	c := mgrModuleCluster(ctr)
-	if _, err := c.TemporaryMGRModule(t.Context(), "rbd_support", false); err == nil || ctr.mutations != 0 {
+	if _, err := c.OverrideMGRModule(t.Context(), "rbd_support", false); err == nil || ctr.mutations != 0 {
 		t.Fatal("always-on module disabled")
 	}
-	change, err := c.TemporaryMGRModule(t.Context(), "rbd_support", true)
+	change, err := c.OverrideMGRModule(t.Context(), "rbd_support", true)
 	if err != nil || ctr.mutations != 0 {
 		t.Fatal("always-on no-op rejected", err)
 	}
@@ -200,15 +200,15 @@ func TestTemporaryMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
 	}
 	ctr.forceDisabled["rbd_support"] = true
 	ctr.enabled["rbd_support"] = false
-	if _, err := c.TemporaryMGRModule(t.Context(), "rbd_support", true); err == nil {
+	if _, err := c.OverrideMGRModule(t.Context(), "rbd_support", true); err == nil {
 		t.Fatal("unrestorable always-on enable accepted")
 	}
 }
 
-func TestTemporaryMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *testing.T) {
+func TestOverrideMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	c := mgrModuleCluster(ctr)
-	change, err := c.TemporaryMGRModule(t.Context(), "mirroring", true)
+	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,20 +224,20 @@ func TestTemporaryMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *tes
 	// A non-always-on volumes variant still protects owned and native filesystems.
 	delete(ctr.always, "volumes")
 	c.extensions = map[string]any{"cephfs": testExtension{modules: []string{"volumes"}}}
-	if _, err := c.TemporaryMGRModule(t.Context(), "volumes", false); err == nil {
+	if _, err := c.OverrideMGRModule(t.Context(), "volumes", false); err == nil {
 		t.Fatal("owned filesystem's volumes module disabled")
 	}
 	c.extensions = nil
 	ctr.filesystems = 1
-	if _, err := c.TemporaryMGRModule(t.Context(), "volumes", false); err == nil {
+	if _, err := c.OverrideMGRModule(t.Context(), "volumes", false); err == nil {
 		t.Fatal("native filesystem's volumes module disabled")
 	}
 }
 
-func TestTemporaryMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
+func TestOverrideMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	c := mgrModuleCluster(ctr)
-	change, err := c.TemporaryMGRModule(t.Context(), "mirroring", false)
+	change, err := c.OverrideMGRModule(t.Context(), "mirroring", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,11 +247,11 @@ func TestTemporaryMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
 	}
 }
 
-func TestTemporaryMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
+func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctr.failAfter = "enable"
 	c := mgrModuleCluster(ctr)
-	change, err := c.TemporaryMGRModule(t.Context(), "mirroring", true)
+	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
 	if err == nil || change == nil || !ctr.enabled["mirroring"] || len(c.moduleOverrides) != 1 {
 		t.Fatal("uncertain apply lost handle")
 	}
@@ -265,7 +265,7 @@ func TestTemporaryMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 		t.Fatal("native completed restore wasn't reconciled")
 	}
 	ctr.failDumpAt = ctr.dumps + 2
-	change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+	change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
 	if err != nil || change == nil {
 		t.Fatal("transient apply readback did not converge", err)
 	}
@@ -273,7 +273,7 @@ func TestTemporaryMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctr.failDumpFrom = ctr.dumps + 2
-	change, err = c.TemporaryMGRModule(t.Context(), "mirroring", true)
+	change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
 	if err == nil || change == nil || len(c.moduleOverrides) != 1 {
 		t.Fatal("lost persistent apply readback lost handle")
 	}
@@ -283,11 +283,11 @@ func TestTemporaryMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	}
 }
 
-func TestTemporaryMGRModuleRestorationRequiresRunnableMetadata(t *testing.T) {
+func TestOverrideMGRModuleRestorationRequiresRunnableMetadata(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctr.enabled["mirroring"] = true
 	c := mgrModuleCluster(ctr)
-	change, err := c.TemporaryMGRModule(t.Context(), "mirroring", false)
+	change, err := c.OverrideMGRModule(t.Context(), "mirroring", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,12 +344,12 @@ func TestWaitMGRModuleReadyProbesCommandsAndStopsOnClosedOrCanceled(t *testing.T
 	}
 }
 
-func TestTemporaryMGRModuleCancellationKeepsAppliedHandleWithFreshReadback(t *testing.T) {
+func TestOverrideMGRModuleCancellationKeepsAppliedHandleWithFreshReadback(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctx, cancel := context.WithCancel(t.Context())
 	ctr.cancelOnSet = cancel
 	c := mgrModuleCluster(ctr)
-	change, err := c.TemporaryMGRModule(ctx, "mirroring", true)
+	change, err := c.OverrideMGRModule(ctx, "mirroring", true)
 	if !errors.Is(err, context.Canceled) || change == nil || !ctr.enabled["mirroring"] {
 		t.Fatal("canceled apply lost native state/handle", err)
 	}

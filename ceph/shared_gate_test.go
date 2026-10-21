@@ -101,7 +101,7 @@ func zeroArguments(method reflect.Type) []reflect.Value {
 
 func TestSharedGateOpensForTheModuleAndUnsharedClusters(t *testing.T) {
 	var unshared Container
-	if err := unshared.sharedGate("TemporaryConfig"); err != nil {
+	if err := unshared.sharedGate("OverrideConfig"); err != nil {
 		t.Fatalf("an unshared cluster refused: %v", err)
 	}
 	var nilCluster *Container

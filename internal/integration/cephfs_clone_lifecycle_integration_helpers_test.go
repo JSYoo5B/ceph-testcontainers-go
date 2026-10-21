@@ -50,7 +50,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	// event when a new clone wakes its inner condition-variable loop.
 	temporaryConfig := func(name, value string) *ceph.ConfigOverride {
 		t.Helper()
-		change, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
+		change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
 		if change != nil {
 			t.Cleanup(func() {
 				restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)

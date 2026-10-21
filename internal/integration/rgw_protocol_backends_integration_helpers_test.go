@@ -65,7 +65,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 		{Section: "client.admin", Name: "rgw_crypt_require_ssl", Value: "false"},
 	}
 	for _, setting := range settings {
-		change, err := cluster.TemporaryConfig(ctx, setting)
+		change, err := cluster.OverrideConfig(ctx, setting)
 		if change != nil {
 			t.Cleanup(func() {
 				cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)

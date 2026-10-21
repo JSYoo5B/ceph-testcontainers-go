@@ -25,10 +25,10 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
 | Packets that a container sends arrive reordered, duplicated or corrupted | `fault.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
-| A daemon drops or delays messages from one kind of peer | `TemporaryConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
-| An OSD runs a client's write after the client gave up | `TemporaryConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
+| A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
+| An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
-| A failed OSD stays up or in | `TemporaryOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverride.Restore` |
+| A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverride.Restore` |
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
@@ -95,7 +95,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 | --- | --- | --- |
 | MON | `cluster.Monitors()[i]` | Use `ceph.WithMonitorCount(3)` or more. With one MON, the MON container is also the control container that runs every fixture command, so stopping it makes every fixture call fail until it starts again. `WaitForQuorum` waits for a majority of the current monmap. |
 | MGR | `cluster.Managers()[i]` | Use `ceph.WithManagerCount(2)` so a standby takes over. `ManagerStatus` reports the active name. |
-| OSD | `cluster.OSDs()[i]` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `TemporaryOSDFlag` to avoid data movement during long outages. |
+| OSD | `cluster.OSDs()[i]` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `OverrideOSDFlag` to avoid data movement during long outages. |
 | MDS | `fs.MDSs()[i]` | Configure `StandbyMDS` so a standby takes the rank. Use `fs.MDSStatus` to see who holds each rank; `fs.WaitReady` also waits for the requested standby capacity, so restart the stopped daemon before calling it. |
 | RGW | `rgw.Gateways(cluster)[i]` | In bridge mode Docker can assign a new mapped port on restart. Call `S3Endpoint` again after `Start`. |
 | RBD and CephFS mirror daemons | `mirror.Daemons()[i]` | `rbd.MirrorDaemon.Status` reports the native leader election. |
@@ -111,7 +111,7 @@ identity. Peers do not see a closed connection; they only stop getting
 replies. Use it to reproduce an unresponsive OSD, MDS or client.
 
 ```golang
-hold, err := cluster.TemporaryOSDFlag(ctx, "nodown", true)
+hold, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
 if hold != nil {
 	defer hold.Restore(cleanupCtx)
 }
@@ -156,13 +156,13 @@ OSD stalls writes for every PG.
   wait until the client's own `rados_osd_op_timeout` and then fail with
   ETIMEDOUT (errno 110). The surviving primary reports the operations it is
   waiting on as `SLOW_OPS` after `osd_op_complaint_time` (30 s by default);
-  lower it with `TemporaryConfig` (section `osd`). The frozen OSD cannot report
+  lower it with `OverrideConfig` (section `osd`). The frozen OSD cannot report
   its own slow operations.
 - Without `nodown`, peers report the OSD down after the heartbeat grace
   (20 s by default) and degraded I/O resumes once the MON marks it down. The
   MON needs `mon_osd_min_down_reporters` reporters (2 by default). A cluster
   with only two OSDs has one possible reporter, so set
-  `mon_osd_min_down_reporters=1` in section `mon` with `TemporaryConfig`;
+  `mon_osd_min_down_reporters=1` in section `mon` with `OverrideConfig`;
   otherwise the OSD is only marked down after `mon_osd_report_timeout`
   (900 s by default).
 - After `Resume`, the OSD notices it was marked down and rejoins.
@@ -795,14 +795,14 @@ or `WaitSyncReady` and compare the data.
 
 ## Dropping or delaying messages
 
-Ceph's messenger has built-in fault options. Set them with `TemporaryConfig`
+Ceph's messenger has built-in fault options. Set them with `OverrideConfig`
 to make a daemon drop or delay messages from one kind of peer. The options
 exist in both the Tentacle and Squid official images, need no container
 privileges and work on host networking.
 
 ```golang
 // osd.1 drops client messages. It keeps talking to its peers and stays up.
-hold, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: fmt.Sprintf("osd.%d", cluster.OSDs()[1].ID),
 	Name:    "ms_blackhole_client",
 	Value:   "true",
@@ -824,7 +824,7 @@ for _, setting := range []ceph.ConfigSetting{
 	{Section: "osd", Name: "ms_inject_delay_probability", Value: "1"},
 	{Section: "osd", Name: "ms_inject_delay_max", Value: "2"},
 } {
-	hold, err := cluster.TemporaryConfig(ctx, setting)
+	hold, err := cluster.OverrideConfig(ctx, setting)
 	if hold != nil {
 		defer hold.Restore(cleanupCtx)
 	}
@@ -854,7 +854,7 @@ for _, setting := range []ceph.ConfigSetting{
 	{Section: "osd.0", Name: "osd_debug_inject_dispatch_delay_duration", Value: "2"},
 	{Section: "osd.0", Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 } {
-	hold, err := cluster.TemporaryConfig(ctx, setting)
+	hold, err := cluster.OverrideConfig(ctx, setting)
 	if hold != nil {
 		defer hold.Restore(cleanupCtx)
 	}
@@ -929,7 +929,7 @@ status, err := fs.MDSStatus(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-hold, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "mds." + status.Active[0].Name,
 	Name:    "ms_blackhole_client",
 	Value:   "true",
@@ -946,7 +946,7 @@ if err != nil {
 
 - Never set `ms_blackhole_client` on MONs (section `mon`, `mon.<name>` or
   `global`). The fixture's control CLI is a client too. If the MON drops client
-  messages, `TemporaryConfig` cannot confirm the change and `Restore` cannot
+  messages, `OverrideConfig` cannot confirm the change and `Restore` cannot
   reach the MON, so nothing can undo it.
 - Avoid the same option on MGRs. Fixture commands handled by the MGR
   (subvolumes, MGR modules, PG statistics) stop for the same reason.
@@ -995,14 +995,14 @@ if err != nil {
 
 ## Holding OSD map flags
 
-`TemporaryOSDFlag` sets or clears one global OSD map flag and remembers the
+`OverrideOSDFlag` sets or clears one global OSD map flag and remembers the
 previous state. Supported flags: `noup`, `nodown`, `noout`, `noin`,
 `nobackfill`, `norebalance`, `norecover`, `noscrub`, `nodeep-scrub`,
 `nosnaptrim` and `noautoscale`. The composite `pause` flag and irreversible
 compatibility flags are not supported.
 
 ```golang
-flag, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+flag, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 if flag != nil {
 	defer flag.Restore(cleanupCtx)
 }
@@ -1134,7 +1134,7 @@ For an abrupt loss, `Stop` the OSD instead.
 
 The MDS evicts a client that stopped answering after `session_timeout` or
 `session_autoclose`, which default to 60 s and 300 s. These are filesystem
-(MDS map) settings, so `TemporaryConfig` cannot change them.
+(MDS map) settings, so `OverrideConfig` cannot change them.
 `TemporarySessionTimeouts` shortens them for one filesystem.
 
 ```golang
@@ -1273,7 +1273,7 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 - [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
-  `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryBlocklist`,
+  `OverrideConfig`, `OverrideOSDFlag`, `TemporaryBlocklist`,
   `OverrideFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.TemporarySessionTimeouts`,

@@ -1,0 +1,56 @@
+# Upgrading ceph policy and auth operation names
+
+For the next minor release, update these calls together with your imports and
+local wrappers. All methods remain on `*ceph.Container`. Published releases
+keep their original APIs; no compatibility aliases are added on main.
+
+| Previous call | Current call | Unchanged result and undo |
+| --- | --- | --- |
+| `cluster.TemporaryConfig(ctx, setting)` | `cluster.OverrideConfig(ctx, setting)` | `*ceph.ConfigOverride` / `Restore(ctx)` |
+| `cluster.TemporaryOSDFlag(ctx, flag, enabled)` | `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `*ceph.OSDFlagOverride` / `Restore(ctx)` |
+| `cluster.TemporaryMGRModule(ctx, name, enabled)` | `cluster.OverrideMGRModule(ctx, name, enabled)` | `*ceph.MGRModuleOverride` / `Restore(ctx)` |
+| `cluster.TemporaryMessengerPolicy(ctx, policy)` | `cluster.OverrideMessengerPolicy(ctx, policy)` | `*ceph.MessengerPolicyOverride` / `Restore(ctx)` |
+| `cluster.TemporaryClientRevocation(ctx, client)` | `cluster.RevokeClient(ctx, client)` | `*ceph.ClientRevocation` / `Restore(ctx)` |
+
+The first four names describe saved policy with explicit restoration, matching
+`OverrideFullRatios`. RevokeClient describes the actual auth removal; its handle
+can restore the same owned key/capabilities. `DeleteClient` remains permanent
+deletion. RevokeClient has no new Tenant counterpart and does not immediately
+kill every authenticated MON/MGR/OSD session; native ticket renewal and existing
+release-specific session behavior remain unchanged.
+
+These are identifier changes, not new timers or automatic context/scope undo.
+Retain a non-nil handle returned with an error: a cancelled or failed command
+may have committed. Use a fresh bounded context to retry Restore when needed.
+If abandoning the fixture, terminate the disposable cluster. Do not infer
+restoration of each individual policy from the general Terminate lifetime.
+
+```go
+change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+    Section: "osd", Name: "osd_max_backfills", Value: "2",
+})
+if change != nil {
+    defer func() {
+        cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+        defer cancel()
+        if err := change.Restore(cleanup); err != nil {
+            t.Error(err)
+        }
+    }()
+}
+if err != nil {
+    t.Fatal(err)
+}
+```
+
+Update wrapper names, interface method declarations, mocks and admission-error
+assertions if they mention the old identifier. Shared-cluster policy is unchanged:
+the four overrides remain exclusive-only, and RevokeClient retains its existing
+tenant-restricted admission. No method set gains an additional legacy alias.
+Service containers inherit the renamed ceph methods through their embedded
+`*ceph.Container`; their own service APIs are not renamed in this checkpoint.
+
+`TemporaryBlocklist` still has a real native duration/expiry and stays in `ceph`.
+`OverrideFullRatios`, Pause/Resume, native input Close and the proposed service
+and network names are not changed here. The [naming inventory](../design/api-naming.md)
+distinguishes implemented names from proposals and unreviewed baseline entries.

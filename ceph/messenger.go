@@ -21,7 +21,7 @@ const (
 	MessengerV2Secure
 	// MessengerV2Only listens on and advertises only Messenger v2, like
 	// MessengerV2Secure, but keeps the connection modes configurable: Ceph's
-	// defaults, WithMessengerPolicy, TemporaryMessengerPolicy and
+	// defaults, WithMessengerPolicy, OverrideMessengerPolicy and
 	// WithClientMessengerPolicy select them, as with MessengerDefault.
 	MessengerV2Only
 )

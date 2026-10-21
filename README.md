@@ -41,8 +41,9 @@ reference for every package is also available with `go doc` and on
 pkg.go.dev.
 
 The proposed cross-package naming convention and source inventory are tracked
-in [API naming](docs/design/api-naming.md). Proposal names are not current APIs;
-use the package references above for the implemented surface.
+in [API naming](docs/design/api-naming.md). Remaining proposal names are not
+current APIs; use the package references above for the implemented surface.
+The [ceph policy naming migration](docs/guides/upgrading-ceph-policy-names.md) lists this checkpoint's implemented old-to-new calls.
 
 ## Requirements
 

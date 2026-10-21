@@ -40,7 +40,7 @@ func TestPoolPGRelocation(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal("prepare small OSDs without startup benchmark", err)
 			}
 			fast, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{DeviceClass: "fast"})
@@ -152,7 +152,7 @@ func TestPoolPGRelocation(t *testing.T) {
 					}
 				})
 				for _, flag := range []string{"nobackfill", "norecover"} {
-					hold, err := cluster.TemporaryOSDFlag(ctx, flag, true)
+					hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 					if hold != nil {
 						holds = append(holds, hold)
 					}

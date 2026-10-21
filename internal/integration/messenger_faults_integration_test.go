@@ -207,7 +207,7 @@ func messengerFaultConfig(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	t.Cleanup(restore)
 	for _, setting := range settings {
-		override, err := cluster.TemporaryConfig(ctx, setting)
+		override, err := cluster.OverrideConfig(ctx, setting)
 		if override != nil {
 			overrides = append(overrides, override)
 		}

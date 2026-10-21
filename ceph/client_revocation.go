@@ -40,7 +40,7 @@ func (r ClientRevocation) String() string {
 // GoString excludes credentials from formatted Go representations as well.
 func (r ClientRevocation) GoString() string { return r.String() }
 
-// TemporaryClientRevocation removes a client identity that this cluster
+// RevokeClient removes a client identity that this cluster
 // created from the MONs until Restore puts back exactly its key and
 // capabilities, so that a test can observe its rejection and then the
 // recovery of the same credentials. The identity must still have the key of
@@ -60,11 +60,11 @@ func (r ClientRevocation) GoString() string { return r.String() }
 //
 // The removal and the restoration are fenced like the import of
 // ReplaceClientKey. A failed call settles the MONs and reports what they
-// hold. When that stays uncertain, TemporaryClientRevocation returns the
+// hold. When that stays uncertain, RevokeClient returns the
 // revocation with the error, and Restore settles first and then restores.
 // The cluster needs no Restore before Terminate.
-func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ClientConfig) (*ClientRevocation, error) {
-	if gateErr := c.sharedGate("TemporaryClientRevocation"); gateErr != nil {
+func (c *Container) RevokeClient(ctx context.Context, client *ClientConfig) (*ClientRevocation, error) {
+	if gateErr := c.sharedGate("RevokeClient"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := c.lockTopology(ctx); err != nil {

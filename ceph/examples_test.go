@@ -53,7 +53,7 @@ func ExampleRun_services() {
 	_ = rgw.Gateways(cluster)
 }
 
-func ExampleContainer_TemporaryConfig() {
+func ExampleContainer_OverrideConfig() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 	defer func() {
@@ -64,7 +64,7 @@ func ExampleContainer_TemporaryConfig() {
 	if err != nil {
 		panic(err)
 	}
-	change, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+	change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 		Section: "osd", Name: "osd_max_backfills", Value: "1",
 	})
 	if change != nil {

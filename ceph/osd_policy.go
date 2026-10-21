@@ -126,14 +126,14 @@ type osdFlagOverrideState struct {
 	previous, applied, restored bool
 }
 
-// TemporaryOSDFlag changes one reversible global flag while remembering its
+// OverrideOSDFlag changes one reversible global flag while remembering its
 // prior state. Supported flags are noup, nodown, noout, noin, nobackfill,
 // norebalance, norecover, noscrub, nodeep-scrub, nosnaptrim and noautoscale.
 // Composite pause and irreversible compatibility flags are excluded. Overlapping
 // handles for a flag are refused. External edits to the same flag must not race
 // apply/restore: a boolean flag has no generation and Ceph provides no CAS.
-func (c *Container) TemporaryOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error) {
-	if gateErr := c.sharedGate("TemporaryOSDFlag"); gateErr != nil {
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error) {
+	if gateErr := c.sharedGate("OverrideOSDFlag"); gateErr != nil {
 		return nil, gateErr
 	}
 	if !slices.Contains(reversibleOSDFlags, flag) {

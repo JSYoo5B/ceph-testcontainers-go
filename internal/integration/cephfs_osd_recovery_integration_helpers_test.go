@@ -63,11 +63,11 @@ fs.shutdown()
 publish(2 + len(chunks), closed=True, **closing)
 `
 
-// holdOSDFlag sets a global OSD flag through TemporaryOSDFlag and registers
+// holdOSDFlag sets a global OSD flag through OverrideOSDFlag and registers
 // its restoration before it returns.
 func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag string) *ceph.OSDFlagOverride {
 	t.Helper()
-	hold, err := cluster.TemporaryOSDFlag(ctx, flag, true)
+	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 	if hold != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

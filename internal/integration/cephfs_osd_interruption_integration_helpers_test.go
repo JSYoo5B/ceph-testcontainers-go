@@ -219,7 +219,7 @@ func objecterRequests(ctx context.Context, cluster *ceph.Container, ctr testcont
 }
 
 // testCephFSOSDInterruption freezes, with fault.Pause and nodown held
-// through TemporaryOSDFlag, the acting primary OSD of the first object of a
+// through OverrideOSDFlag, the acting primary OSD of the first object of a
 // live client's file, while a second live client in another container waits
 // to make a directory. Every PG of the two-OSD cluster includes that OSD, so
 // both the file's data and the MDS's journal stall at it. The writer's
@@ -275,7 +275,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 		t.Fatalf("writer has data ops in flight before the pause: %v: %s", err, raw)
 	}
 
-	hold, err := m.cluster.TemporaryOSDFlag(ctx, "nodown", true)
+	hold, err := m.cluster.OverrideOSDFlag(ctx, "nodown", true)
 	if hold != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

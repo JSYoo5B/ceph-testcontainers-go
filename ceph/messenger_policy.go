@@ -81,7 +81,7 @@ func (policy MessengerPolicy) settings() ([]ConfigSetting, error) {
 // WithMessengerPolicy selects the connection modes that MONs, MGRs and OSDs
 // accept from clients. Run stores the policy in the central configuration
 // right after the first MON starts, before any other daemon, so every daemon
-// starts with it. TemporaryMessengerPolicy changes it on a running cluster.
+// starts with it. OverrideMessengerPolicy changes it on a running cluster.
 // It cannot be combined with MessengerV2Secure, whose local configuration
 // fixes every mode.
 func WithMessengerPolicy(policy MessengerPolicy) Option {
@@ -110,21 +110,21 @@ func (c *Container) applyMessengerPolicy(ctx context.Context) error {
 }
 
 // MessengerPolicyOverride holds the configuration overrides of one
-// TemporaryMessengerPolicy call.
+// OverrideMessengerPolicy call.
 type MessengerPolicyOverride struct {
 	overrides []*ConfigOverride
 }
 
-// TemporaryMessengerPolicy changes the connection modes that the running
-// daemons accept from clients. Each non-nil field becomes a TemporaryConfig
+// OverrideMessengerPolicy changes the connection modes that the running
+// daemons accept from clients. Each non-nil field becomes a OverrideConfig
 // override of the policy's option; nil fields stay as they are. The daemons
 // apply the change to new connections without a restart, and established
 // connections keep their mode. A non-nil result returned with an error holds
 // the overrides that were made and must be restored. A policy that selects no
 // valid mode, and any policy with MessengerV2Secure, is refused with
 // ErrInvalidRequest before any change.
-func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error) {
-	if gateErr := c.sharedGate("TemporaryMessengerPolicy"); gateErr != nil {
+func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error) {
+	if gateErr := c.sharedGate("OverrideMessengerPolicy"); gateErr != nil {
 		return nil, gateErr
 	}
 	settings, err := policy.settings()
@@ -139,7 +139,7 @@ func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy Messeng
 	}
 	result := &MessengerPolicyOverride{}
 	for _, setting := range settings {
-		override, err := c.TemporaryConfig(ctx, setting)
+		override, err := c.OverrideConfig(ctx, setting)
 		if override != nil {
 			result.overrides = append(result.overrides, override)
 		}

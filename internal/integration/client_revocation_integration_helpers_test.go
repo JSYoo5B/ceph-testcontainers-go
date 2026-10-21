@@ -45,7 +45,7 @@ func testClientRevocation(t *testing.T) {
 			holder := startClientContainer(t, ctx, cluster, client)
 			startHeldSession(t, ctx, holder, client, "reconnect")
 			revokedAt := containerTime(t, ctx, holder)
-			revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+			revocation, err := cluster.RevokeClient(ctx, client)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func testClientRevocation(t *testing.T) {
 		holder := startClientContainer(t, ctx, cluster, client)
 		startHeldSession(t, ctx, holder, client, "hold")
 		revokedAt := containerTime(t, ctx, holder)
-		revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+		revocation, err := cluster.RevokeClient(ctx, client)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +158,7 @@ func testClientRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := authEntry(t, ctx, cluster, client.Name())
-		revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+		revocation, err := cluster.RevokeClient(ctx, client)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func testClientRevocation(t *testing.T) {
 		original := authEntry(t, ctx, cluster, client.Name())
 		holder := startClientContainer(t, ctx, cluster, client)
 		mons := monitorOverrides(t, ctx, cluster)
-		revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+		revocation, err := cluster.RevokeClient(ctx, client)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -203,7 +203,7 @@ func testClientRevocation(t *testing.T) {
 		// a revocation that Restore undoes, also after a canceled Restore.
 		for _, delay := range []time.Duration{50 * time.Millisecond, 300 * time.Millisecond, time.Second, 3 * time.Second} {
 			callCtx, callCancel := context.WithTimeout(ctx, delay)
-			revocation, err := cluster.TemporaryClientRevocation(callCtx, client)
+			revocation, err := cluster.RevokeClient(callCtx, client)
 			callCancel()
 			if revocation == nil {
 				t.Logf("a revocation canceled after %v did not apply: %v", delay, err)

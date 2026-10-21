@@ -68,7 +68,7 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 	return c.configuration(ctx)
 }
 
-// TemporaryConfig sets one central database entry and records its native
+// OverrideConfig sets one central database entry and records its native
 // normalized value. It preserves absence separately from inherited defaults,
 // and rejects overlapping handles for the same section/mask/name. On command or
 // readback failure, the handle remains tracked for Restore. Never race external
@@ -78,8 +78,8 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // bootstrap policy. MessengerV2Only reserves ms_bind_msgr1/2 the same way and
 // leaves the mode options free. Select a MessengerMode when creating a new
 // cluster instead.
-func (c *Container) TemporaryConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
-	if gateErr := c.sharedGate("TemporaryConfig"); gateErr != nil {
+func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
+	if gateErr := c.sharedGate("OverrideConfig"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := ctx.Err(); err != nil {

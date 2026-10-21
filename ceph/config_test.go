@@ -17,15 +17,15 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func TestTemporaryConfigRestoresAbsenceAndKeepsMaskedInheritedValues(t *testing.T) {
+func TestOverrideConfigRestoresAbsenceAndKeepsMaskedInheritedValues(t *testing.T) {
 	ctr := &configFixture{entries: []ConfigEntry{{Section: "global", Name: "osd_max_backfills", Value: "3"}, {Section: "osd", Mask: "class:ssd", Name: "osd_max_backfills", Value: "4"}}}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd-max-backfills", Value: "2"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd-max-backfills", Value: "2"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	copy := *change
-	if _, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "5"}); err == nil {
+	if _, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "5"}); err == nil {
 		t.Fatal("overlapping override accepted")
 	}
 	if err := copy.Restore(t.Context()); err != nil {
@@ -39,10 +39,10 @@ func TestTemporaryConfigRestoresAbsenceAndKeepsMaskedInheritedValues(t *testing.
 	}
 }
 
-func TestTemporaryConfigUsesNativeNormalizedValueAndExistingEntry(t *testing.T) {
+func TestOverrideConfigUsesNativeNormalizedValueAndExistingEntry(t *testing.T) {
 	ctr := &configFixture{entries: []ConfigEntry{{Section: "osd", Mask: "class:ssd", Name: "osd_recovery_sleep", Value: "0"}}, normalized: "1"}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Mask: "class:ssd", Name: "osd_recovery_sleep", Value: "1.000"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Mask: "class:ssd", Name: "osd_recovery_sleep", Value: "1.000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,16 +55,16 @@ func TestTemporaryConfigUsesNativeNormalizedValueAndExistingEntry(t *testing.T) 
 	}
 }
 
-func TestTemporaryConfigPreservesModuleOptionsAndStoredStrings(t *testing.T) {
+func TestOverrideConfigPreservesModuleOptionsAndStoredStrings(t *testing.T) {
 	module := ConfigEntry{Section: "mgr", Name: "mgr/volumes/pause_cloning", Value: "false"}
 	foreign := ConfigEntry{Section: "client.example", Name: "key", Value: "stored\nstring"}
 	ctr := &configFixture{entries: []ConfigEntry{module, foreign}}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "mgr", Name: module.Name, Value: "true"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "mgr", Name: module.Name, Value: "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"})
+	other, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +80,10 @@ func TestTemporaryConfigPreservesModuleOptionsAndStoredStrings(t *testing.T) {
 	}
 }
 
-func TestTemporaryConfigRefusesOutsideEditsAndSanitizesValues(t *testing.T) {
+func TestOverrideConfigRefusesOutsideEditsAndSanitizesValues(t *testing.T) {
 	ctr := &configFixture{}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "client.example", Name: "debug_ms", Value: "PRIVATE-VALUE"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "client.example", Name: "debug_ms", Value: "PRIVATE-VALUE"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,10 +105,10 @@ func TestTemporaryConfigRefusesOutsideEditsAndSanitizesValues(t *testing.T) {
 	}
 }
 
-func TestTemporaryConfigLostApplyAndRestoreRepliesConverge(t *testing.T) {
+func TestOverrideConfigLostApplyAndRestoreRepliesConverge(t *testing.T) {
 	ctr := &configFixture{failAfter: "set"}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "debug_osd", Value: "2"})
 	if change == nil || err == nil || strings.Contains(err.Error(), "PRIVATE-ERROR") {
 		t.Fatal("lost reply lost handle or leaked values")
 	}
@@ -123,10 +123,10 @@ func TestTemporaryConfigLostApplyAndRestoreRepliesConverge(t *testing.T) {
 	}
 }
 
-func TestTemporaryConfigLostNormalizedReadbackRequiresInspection(t *testing.T) {
+func TestOverrideConfigLostNormalizedReadbackRequiresInspection(t *testing.T) {
 	ctr := &configFixture{normalized: "7200", failDumpAt: 2}
 	c := configCluster(ctr)
-	change, err := c.TemporaryConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd_scrub_min_interval", Value: "7200.0000"})
+	change, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd_scrub_min_interval", Value: "7200.0000"})
 	if err == nil || change == nil || change.state.known {
 		t.Fatal("lost readback didn't preserve an uncertain handle")
 	}
@@ -140,10 +140,10 @@ func TestTemporaryConfigLostNormalizedReadbackRequiresInspection(t *testing.T) {
 	}
 }
 
-func TestTemporaryConfigValidationAndMaskCanonicalization(t *testing.T) {
+func TestOverrideConfigValidationAndMaskCanonicalization(t *testing.T) {
 	for _, setting := range []ConfigSetting{{Section: "global|mon", Name: "debug_ms"}, {Section: "global.a", Name: "debug_ms"}, {Section: "osd", Name: "--option"}, {Section: "osd", Name: "debug_ms", Value: "bad\nvalue"}, {Section: "osd", Name: "debug_ms", Mask: "host:a/rack:b"}, {Section: "osd", Name: "debug_ms", Mask: "class:ssd/class:hdd"}} {
 		ctr := &configFixture{}
-		if _, err := configCluster(ctr).TemporaryConfig(t.Context(), setting); err == nil || len(ctr.calls) != 0 {
+		if _, err := configCluster(ctr).OverrideConfig(t.Context(), setting); err == nil || len(ctr.calls) != 0 {
 			t.Fatal("invalid setting reached Ceph")
 		}
 	}

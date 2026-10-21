@@ -1,8 +1,9 @@
 # Public API naming: inventory and proposed conventions
 
-Status: first review checkpoint for #14, based on the public surface after
-#15 merged. This checkpoint records current declarations and proposed names;
-it changes no runtime API. #9 is closed, but its remaining object-error wording
+Status: #14's inventory/convention checkpoint was introduced by #17. This
+revision implements the first ceph policy/auth operation names below; the
+remaining rows are proposals. The source catalogue records the current branch.
+#9 is closed, but its remaining object-error wording
 does not authorize another package move. This audit preserves the current
 placement of `ceph.Container.InjectObjectDataError`, session fencing and fullness.
 The [package boundary](fault-package.md) remains independent of naming.
@@ -83,7 +84,30 @@ Updating the map/catalogue does not implement any runtime rename.
    options unless a concrete conflict justifies a separate proposal. A
    descriptive query name does not need an added `Get` prefix by default.
 
-## Proposed operation and handle mappings
+## Implemented ceph policy/auth checkpoint
+
+These source renames preserve their implementations, handles and undo methods.
+They add no expiry, context-cancellation rollback, background restoration or
+new package move. RevokeClient remains a Container operation; no Tenant revoke
+method is introduced. Its shared admission remains the existing tenant-restricted
+policy, while the four policy overrides remain exclusive-only.
+
+| Previous operation | Current operation | Result / undo | Preserved contract |
+| --- | --- | --- | --- |
+| `ceph.Container.TemporaryConfig` | `ceph.Container.OverrideConfig` | `*ceph.ConfigOverride` / `Restore` | Captures/restores one central config key, including prior absence; no TTL. [config.go](../../ceph/config.go) |
+| `ceph.Container.TemporaryOSDFlag` | `ceph.Container.OverrideOSDFlag` | `*ceph.OSDFlagOverride` / `Restore` | Saves global OSDMap flag state; does not schedule restoration. [osd_policy.go](../../ceph/osd_policy.go) |
+| `ceph.Container.TemporaryMGRModule` | `ceph.Container.OverrideMGRModule` | `*ceph.MGRModuleOverride` / `Restore` | Owns a change to module enablement, not an expiring module. [mgr_modules.go](../../ceph/mgr_modules.go) |
+| `ceph.Container.TemporaryMessengerPolicy` | `ceph.Container.OverrideMessengerPolicy` | `*ceph.MessengerPolicyOverride` / `Restore` | Changes allowed runtime policy; does not replace the fixture's fixed bootstrap mode. [messenger_policy.go](../../ceph/messenger_policy.go) |
+| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocation` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
+
+See [the migration guide](../guides/upgrading-ceph-policy-names.md) for the
+source break. This checkpoint fulfills five proposal rows; the catalogue now
+contains 13 remaining proposal rows and 678 baseline rows. Baseline still does
+not mean a complete naming approval. The remaining query/provisioning/option
+and value audit, excluded fields/interfaces and service/network stages keep
+#14 open.
+
+## Remaining proposed operation and handle mappings
 
 All rows below are proposals for later implementation PRs. Handles and undo
 methods stay named as shown unless an explicit type rename appears. Preserve
@@ -92,11 +116,6 @@ external-edit refusal, retryability and cleanup order during every rename.
 
 | Current operation | Proposed operation | Result / undo | Reason and source contract |
 | --- | --- | --- | --- |
-| `ceph.Container.TemporaryConfig` | `ceph.Container.OverrideConfig` | `*ceph.ConfigOverride` / `Restore` | Captures/restores one central config key, including prior absence; no TTL. [config.go](../../ceph/config.go) |
-| `ceph.Container.TemporaryOSDFlag` | `ceph.Container.OverrideOSDFlag` | `*ceph.OSDFlagOverride` / `Restore` | Saves global OSDMap flag state; does not schedule restoration. [osd_policy.go](../../ceph/osd_policy.go) |
-| `ceph.Container.TemporaryMGRModule` | `ceph.Container.OverrideMGRModule` | `*ceph.MGRModuleOverride` / `Restore` | Owns a change to module enablement, not an expiring module. [mgr_modules.go](../../ceph/mgr_modules.go) |
-| `ceph.Container.TemporaryMessengerPolicy` | `ceph.Container.OverrideMessengerPolicy` | `*ceph.MessengerPolicyOverride` / `Restore` | Changes allowed runtime policy; does not replace the fixture's fixed bootstrap mode. [messenger_policy.go](../../ceph/messenger_policy.go) |
-| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocation` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
 | `cephfs.Filesystem.TemporarySessionTimeouts` | `cephfs.Filesystem.OverrideSessionTimeouts` | `*cephfs.SessionTimeoutsOverride` / `Restore` | Overrides timeout policy, not the lifetime of this override. [session.go](../../cephfs/session.go) |
 | `cephfs.Filesystem.TemporarySubvolumePin` | `cephfs.Filesystem.OverrideSubvolumePin` | `*cephfs.PinOverride` / `Restore` | Restores a captured local policy field on the same owned inode; does not guarantee immediate MDS placement. [pin.go](../../cephfs/pin.go) |
 | `cephfs.Filesystem.TemporarySubvolumeGroupPin` | `cephfs.Filesystem.OverrideSubvolumeGroupPin` | `*cephfs.PinOverride` / `Restore` | Same field/identity contract for an owned group. [pin.go](../../cephfs/pin.go) |
@@ -139,9 +158,9 @@ values/dependency. A broad type-prefix replacement would obscure those limits.
    regenerating the catalogue. Review the remaining baseline query/provisioning,
    option, data-type and constant names before claiming the whole naming audit
    complete; field/interface-member naming needs its own expanded inventory.
-2. Implement ceph policy/auth operation names as one bounded PR, preserving
-   shared/exclusive admission keys and their reflection tests. Update callers,
-   examples, references and an explicit old-to-new migration table together.
+2. The ceph policy/auth operation checkpoint is implemented in this revision,
+   preserving shared/exclusive admission keys and their reflection tests. Its
+   callers, examples, references and migration table use the current names.
 3. Implement CephFS policy and owned-schedule names and the RBD cache helper in
    separate service-focused PRs with their actual undo/ownership contracts.
 4. Migrate the complete network profile family together, including types,

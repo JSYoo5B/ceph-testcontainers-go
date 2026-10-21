@@ -39,7 +39,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 				{Section: "client.admin", Name: "rgw_usage_log_tick_interval", Value: "1"},
 				{Section: "client.admin", Name: "rgw_usage_log_flush_threshold", Value: "1"},
 			} {
-				change, err := cluster.TemporaryConfig(ctx, setting)
+				change, err := cluster.OverrideConfig(ctx, setting)
 				if change != nil {
 					t.Cleanup(func() {
 						cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)

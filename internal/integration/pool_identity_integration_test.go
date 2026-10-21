@@ -42,7 +42,7 @@ func TestNativePoolReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			permission, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
+			permission, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
 			if permission != nil {
 				t.Cleanup(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)

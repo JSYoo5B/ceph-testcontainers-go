@@ -319,7 +319,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	if victim == nil {
 		t.Fatalf("no replica besides primary osd.%d: %+v", primary, clean)
 	}
-	noout, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if noout != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -347,7 +347,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 			// A short log that is trimmed at every write leaves the replica's
 			// last entry behind the log tail.
 			for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-				override, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+				override, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
 				if override != nil {
 					t.Cleanup(func() {
 						restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -376,7 +376,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 		spec := fmt.Sprintf("%s:%d", phase.prefix, phase.count)
 		recoveryRun(t, ctx, cluster, client, "write", spec)
 		prefixes = append(prefixes, spec)
-		hold, err := cluster.TemporaryOSDFlag(ctx, phase.flag, true)
+		hold, err := cluster.OverrideOSDFlag(ctx, phase.flag, true)
 		if hold != nil {
 			t.Cleanup(func() {
 				restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

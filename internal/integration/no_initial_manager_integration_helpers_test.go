@@ -256,7 +256,7 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 	if err != nil || slices.Contains(flags, "noout") {
 		t.Fatal("fresh fixture has no exact unmodified noout baseline", err)
 	}
-	flag, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+	flag, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	flagActive := flag != nil
 	restoreCondition := func() {
 		if !flagActive {

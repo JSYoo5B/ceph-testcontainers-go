@@ -111,7 +111,7 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 // even when deletion fails.
 func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) {
 	if override := c.configOverrides[configOverrideKey(allowPoolDeleteSetting)]; override != nil && !override.state.restored {
-		return errors.New("restore the TemporaryConfig override of mon_allow_pool_delete before RemovePool")
+		return errors.New("restore the OverrideConfig override of mon_allow_pool_delete before RemovePool")
 	}
 	entries, err := c.configuration(ctx)
 	if err != nil {

@@ -31,7 +31,7 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
 			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
-			if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {

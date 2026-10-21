@@ -77,7 +77,7 @@ already did.
 Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
-Examples are `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`,
+Examples are `OverrideConfig`, `OverrideOSDFlag`, `OverrideMGRModule`,
 `TemporaryBlocklist` and their `Restore` methods, `SetOSDIn`, `SetPoolQuota`,
 `SetPoolReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, `rgw.Gateway.Admin`, and descriptor getters such as
@@ -339,7 +339,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
-| `TemporaryConfig`, `TemporaryMessengerPolicy`, `TemporaryClientRevocation`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `OverrideConfig`, `OverrideMessengerPolicy`, `RevokeClient`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -355,11 +355,11 @@ back. Some wrap several native settings:
 
 | Method | Changes |
 | --- | --- |
-| `TemporaryConfig` | One central configuration entry (section, optional mask, name) |
-| `TemporaryMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
-| `TemporaryClientRevocation` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
-| `TemporaryOSDFlag` | One global OSD map flag |
-| `TemporaryMGRModule` | Whether one MGR module is enabled |
+| `OverrideConfig` | One central configuration entry (section, optional mask, name) |
+| `OverrideMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
+| `RevokeClient` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
+| `OverrideOSDFlag` | One global OSD map flag |
+| `OverrideMGRModule` | Whether one MGR module is enabled |
 | `OverrideFullRatios` | The nearfull, backfillfull and full ratios |
 | `TemporaryBlocklist` | Adds one exact client-session blocklist entry |
 | `cephfs.Filesystem.TemporarySessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
@@ -370,9 +370,9 @@ They share these rules:
 - **One handle per target.** A second override of the same key, flag, module,
   filesystem or pin field is refused while the first is active, even when it
   would set the same value.
-- **The original state is recorded exactly.** `TemporaryConfig` distinguishes
+- **The original state is recorded exactly.** `OverrideConfig` distinguishes
   an absent entry from one that is set, so `Restore` removes an entry that did
-  not exist instead of pinning the inherited default. `TemporaryOSDFlag`
+  not exist instead of pinning the inherited default. `OverrideOSDFlag`
   remembers whether the flag was already set.
 - **Copies share state.** Copying a handle does not create a second override.
 - **`Restore` is idempotent.** After a successful restore, further calls on any
@@ -395,19 +395,19 @@ They share these rules:
 
 Handle-specific details:
 
-- `TemporaryConfig` records the value as Ceph normalized it, which can differ
+- `OverrideConfig` records the value as Ceph normalized it, which can differ
   from the string you passed. A key set by `ceph.WithConfigFile` cannot be changed
   this way, because local files take precedence over the configuration
   database. Ticket lifetimes written by `WithAuth` also take precedence over
   later central overrides. `MessengerV2Only` reserves `ms_bind_msgr1` and
   `ms_bind_msgr2`; `MessengerV2Secure` reserves those and its six mode
   settings. Refusals of these Messenger settings match `ErrInvalidRequest`.
-- `TemporaryMessengerPolicy` uses `TemporaryConfig` overrides, restoring in
+- `OverrideMessengerPolicy` uses `OverrideConfig` overrides, restoring in
   reverse order. Application can partly succeed, so keep a non-nil handle
   returned with an error. An empty policy, an unknown connection mode and any
   use under `MessengerV2Secure` are refused before any change with
   `ErrInvalidRequest`.
-- `TemporaryClientRevocation.Restore` refuses an identity recreated outside
+- `RevokeClient.Restore` refuses an identity recreated outside
   the fixture with another key or capabilities. `DeleteClient` makes the
   removal permanent instead of restoring it.
 - `TemporaryBlocklist.Restore` removes only the entry it created. An entry
@@ -441,7 +441,7 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 | `AddMonitor` that joined but could not update every daemon's `ceph.conf` | `RefreshMonitorConfig(ctx)`; do not add the same name again. |
 | `RemovePool` | Retry; it finishes removing whichever owned resources remain. |
 | `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount` | Inspect `PoolStatus`; commands may have partly succeeded. |
-| `UpdateClientCaps`, `DeleteClient`, `ReplaceClientKey`, `TemporaryClientRevocation` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientCapabilities` or auth state before relying on a change. |
+| `UpdateClientCaps`, `DeleteClient`, `ReplaceClientKey`, `RevokeClient` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientCapabilities` or auth state before relying on a change. |
 | `RotateDaemonKey` | Keep the failure and inspect the daemon/auth state; the operation fences submitted MON commands and reconciles its keyring files. Do not replace keys with a raw command while it runs. |
 | `cephfs.Remove` | Retry; it continues with whatever remains. |
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |

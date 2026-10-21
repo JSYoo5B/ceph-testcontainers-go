@@ -52,7 +52,7 @@ func TestMGRModules(t *testing.T) {
 			}
 			apply := func(name string, enabled bool) *ceph.MGRModuleOverride {
 				t.Helper()
-				change, err := cluster.TemporaryMGRModule(ctx, name, enabled)
+				change, err := cluster.OverrideMGRModule(ctx, name, enabled)
 				if change != nil {
 					t.Cleanup(func() {
 						cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
@@ -74,7 +74,7 @@ func TestMGRModules(t *testing.T) {
 				t.Fatalf("native rbd_support prerequisites missing: %+v", rbdModule)
 			}
 			rbdLease := apply("rbd_support", true)
-			if _, err := cluster.TemporaryMGRModule(ctx, "rbd_support", false); err == nil {
+			if _, err := cluster.OverrideMGRModule(ctx, "rbd_support", false); err == nil {
 				t.Fatal("always-on disable accepted")
 			}
 			if err := cluster.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
@@ -110,7 +110,7 @@ func TestMGRModules(t *testing.T) {
 			if !lookup("mirroring").Enabled {
 				t.Fatal("mirroring membership was not enabled")
 			}
-			if _, err := cluster.TemporaryMGRModule(ctx, "mirroring", true); err == nil {
+			if _, err := cluster.OverrideMGRModule(ctx, "mirroring", true); err == nil {
 				t.Fatal("overlap accepted")
 			}
 			fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "tc-mgr-module-fs"})
@@ -128,7 +128,7 @@ func TestMGRModules(t *testing.T) {
 			if err := mirrorLease.Restore(ctx); err == nil || !lookup("mirroring").Enabled {
 				t.Fatal("native mirroring policy was not protected")
 			}
-			if _, err := cluster.TemporaryMGRModule(ctx, "volumes", false); err == nil {
+			if _, err := cluster.OverrideMGRModule(ctx, "volumes", false); err == nil {
 				t.Fatal("CephFS volumes module disable accepted")
 			}
 			cephCommand(t, ctx, cluster, "fs", "mirror", "disable", fs.FilesystemName)

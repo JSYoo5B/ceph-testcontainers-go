@@ -117,12 +117,12 @@ func TestRemovePoolRefusesActivePermissionOverride(t *testing.T) {
 	f := newCephStateFake()
 	f.AddFixturePool("data", false)
 	cluster := removalCluster(f)
-	override, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
+	override, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
 	if override == nil {
-		t.Fatalf("TemporaryConfig did not return a tracked handle: %v", err)
+		t.Fatalf("OverrideConfig did not return a tracked handle: %v", err)
 	}
 	before := f.Snapshot()
-	if err := cluster.RemovePool(t.Context(), "data"); err == nil || !strings.Contains(err.Error(), "TemporaryConfig override") {
+	if err := cluster.RemovePool(t.Context(), "data"); err == nil || !strings.Contains(err.Error(), "OverrideConfig override") {
 		t.Fatalf("RemovePool error = %v", err)
 	}
 	if after := f.Snapshot(); after != before {
