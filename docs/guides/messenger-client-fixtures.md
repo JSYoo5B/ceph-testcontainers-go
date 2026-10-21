@@ -943,3 +943,7 @@ python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
 - **Stopping a daemon abruptly.** `Stop` sends SIGTERM and waits. Kill a
   container through the Docker API for a crash; see
   [Fault injection](fault-injection.md).
+
+The [declaration/native-case evidence join](../design/messenger-evidence.md)
+connects a bounded reference family to validated post-cleanup receipts without
+promoting fixture availability into wire coverage or consumer implementation.

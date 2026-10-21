@@ -8,6 +8,13 @@ change the API.
 
 ### Added
 
+- Add the first machine-validated Messenger declaration/requirement/case join.
+  The existing targeted-command recipe emits a source/build/image-bound receipt
+  only after successful owned cleanup. An offline validator rejects incomplete,
+  stale or mixed evidence and keeps unmapped/unexecuted scope visible. This
+  bounded native-state increment does not claim wire or consumer completion;
+  see `docs/design/messenger-evidence.md`.
+
 - `TestCephFSFuseMount`, in the new optional batch `cephfs_fuse` (build tag
   `cephfs_fuse`, outside every required check), mounts a
   path-restricted CephX identity's directory with `ceph-fuse` from the
