@@ -128,7 +128,7 @@ class TagPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting"):
             engine.discover([fixture(), second])
 
-    def test_image_roles_are_declared_per_batch_and_default_to_all_four(self):
+    def test_image_roles_are_declared_per_batch_and_default_to_all_five(self):
         declared = fixture(path="internal/integration/control_test.go", tests=("TestControl",), batch="control")
         declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=cephfs,essential"]
         plan = engine.discover([fixture(), declared])

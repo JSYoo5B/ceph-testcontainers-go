@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_dual_stack_family_cut))))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rbd-aux,rgw
+//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 

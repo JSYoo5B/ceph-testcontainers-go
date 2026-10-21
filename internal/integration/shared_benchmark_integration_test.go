@@ -1,6 +1,6 @@
 //go:build (all || integration) && ((shared_benchmark && !ci) || (ci_optional && (!ci_batch || ci_batch_shared_benchmark)))
 
-//ci: timeout=60m job-timeout=75 image-roles=essential,client,cephfs,rbd-aux,rgw
+//ci: timeout=60m job-timeout=75 image-roles=essential,client
 
 package integration_test
 
