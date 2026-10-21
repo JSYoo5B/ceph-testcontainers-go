@@ -134,6 +134,21 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(report["tests"]["results"]), 9)
         self.assertFalse(self.runtime.pulled)
 
+    def test_v2_preparation_exports_only_selected_ids_and_contract(self):
+        github_env = self.root / "github-env"
+        self.assertEqual(self.invoke(["--contract", "roles-v2", "--layout", "roles", "--prepare-only",
+                                      "--roles", "essential,client", "--github-env", str(github_env)]), 0)
+        report = self.summary()
+        self.assertEqual(set(report["images"]), {"essential", "client"})
+        prepared = report["prepared_environment"]
+        self.assertEqual(prepared["SCENARIO_IMAGE_CONTRACT"], "roles-v2")
+        self.assertEqual(set(prepared), {"CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "SCENARIO_IMAGE_CONTRACT"})
+        self.assertEqual(dict(line.split("=", 1) for line in github_env.read_text().splitlines()), prepared)
+        self.assertTrue(report["preparation_passed"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertIsNone(self.runtime.make_environment)
+        self.assertTrue(all(":roles-v2-official-" in item["reference"] for item in report["images"].values()))
+
     def test_all_six_reference_mappings(self):
         for variant in ("official", "debian", "ubuntu"):
             for layout in ("all", "roles"):

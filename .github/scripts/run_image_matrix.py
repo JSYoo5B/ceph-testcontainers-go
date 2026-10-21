@@ -119,7 +119,8 @@ def parse_roles(text):
     """Return declared roles in contract order, including its core role."""
     roles = text.split(",")
     if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or ("essential" if CONTRACT == "roles-v2" else "control") not in roles:
-        raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV) + ", control included")
+        raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV)
+                         + ", " + ("essential" if CONTRACT == "roles-v2" else "control") + " included")
     return tuple(role for role in ROLE_ENV if role in roles)
 
 

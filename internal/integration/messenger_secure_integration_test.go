@@ -135,7 +135,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mds := range fs.MDSs() {
-				data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(t, ctx, cluster))
+				data := topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(t, ctx, cluster))
 				t.Logf("MSGR2_NATIVE %s", data)
 			}
 			inspection, err := gateway.Inspect(ctx)
@@ -148,7 +148,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			}
 			// ServiceMap GID plus hostname/frontend binds server-side OSD
 			// connections to this owned gateway, not an unrelated CLI client.
-			data = topologyExecOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(t, ctx, cluster))
+			data = topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_RGW %s", data)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
 			s3.request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)

@@ -224,7 +224,7 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 func checkProfileClientModes(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, want string) {
 	t.Helper()
 	var modes []string
-	if err := json.Unmarshal([]byte(execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
+	if err := json.Unmarshal([]byte(execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
 		t.Fatal(err)
 	}
 	switch {
@@ -288,7 +288,7 @@ func checkPausedButOpen(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		Open   bool   `json:"open"`
 		Banner string `json:"banner"`
 	}
-	out := execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", probeOpenPort, address)
+	out := execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", probeOpenPort, address)
 	if err := json.Unmarshal([]byte(out), &probe); err != nil || !probe.Open || probe.Banner != "" {
 		t.Fatalf("paused %s at %s: %s", name, address, out)
 	}

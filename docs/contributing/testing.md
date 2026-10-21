@@ -233,7 +233,16 @@ With parallel runs, `-v` output interleaves `=== PAUSE`, `=== CONT` and
 
 ## Choosing images
 
-The integration tests read these variables:
+CI sets `SCENARIO_IMAGE_CONTRACT=roles-v2` and supplies the selected immutable
+image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`,
+`CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE` and `CEPH_TEST_RGW_IMAGE`.
+Essential hosts MON/MGR/OSD; userspace commands and Python oracles use client;
+CephFS, mirror/cache and RGW features require their declared optional runtime.
+Missing roles fail rather than falling back to the core image. The
+[supplied-image runner](#reproducing-cis-role-images) prepares these identities.
+
+For an explicit aggregate image or historical single-image comparison, leave
+that contract marker unset. The integration tests then read these variables:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -241,7 +250,7 @@ The integration tests read these variables:
 | `CEPH_TEST_OSD_IMAGE` | `CEPH_TEST_IMAGE` | OSD daemons (`ceph.WithOSDImage`). |
 | `CEPH_TEST_RGW_IMAGE` | `CEPH_TEST_IMAGE` | RGW gateways (`rgw.WithImage`, `rgw.RunMultisite`, `rgw.RunTopology`). |
 | `CEPH_TEST_MDS_IMAGE` | `CEPH_TEST_IMAGE` | MDS daemons (`cephfs.WithMDSImage`). |
-| `CEPH_TEST_RBD_CLIENT_IMAGE` | control image | Alternative native RBD client for `TestRBDClientFeatures`. The tag runner and the fixture Make targets unset it, so the control image itself is verified. |
+| `CEPH_TEST_RBD_CLIENT_IMAGE` | selected client toolkit (or aggregate image) | Alternative native RBD client for `TestRBDClientFeatures`. The tag runner and the fixture Make targets unset it, so the selected toolkit itself is verified. |
 | `CEPH_TEST_VAULT_IMAGE` | `hashicorp/vault:1.21.4` | Vault server for the RGW SSE-KMS backend tests. |
 | `CEPH_TEST_PARALLEL` | unset (sequential) | Concurrency limit for opted-in tests. |
 | `CEPH_TEST_HOST_TCP_REQUIRED` | unset | `1` makes the host-network tests require direct TCP reachability of every advertised MON/MGR/OSD port from the test process. |
@@ -499,12 +508,12 @@ in Ceph periodic, so a test must pass on both releases (see
   network mode comes from the test's `networkModes`.
 - `image-roles=` lists the published role images that a Ceph batch needs,
   such as `image-roles=essential` for a batch that only starts core-image
-  containers. Roles are `control`, `osd`, `rgw` and `mds`, comma-separated,
-  and `control` is required. Without it CI prepares all four. CI then
-  prepares only the listed roles, and a test that asks for another role fails
-  with an error instead of falling back to the control image. Use
-  `controlImage(t)` in such a batch rather than `integrationImages(t)`, which
-  needs all four.
+  containers. Roles are `essential`, `client`, `cephfs`, `rbd-aux` and `rgw`,
+  comma-separated, with `essential` required. Without a declaration CI
+  conservatively prepares all five. Missing feature roles fail explicitly.
+  Ordinary RADOS/RBD uses `essential,client`, CephFS adds `cephfs`, mirrors/cache
+  add `rbd-aux`, and gateway paths add `rgw`. Keep native client commands in
+  the toolkit and daemon-local sockets in their owning daemon.
 - `representative=<theme>` puts the batch into the representative set that
   Ceph periodic's campaign repeats (see
   [ci.md](ci.md#representative-campaign)). The theme is one of `topology`,

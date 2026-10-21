@@ -437,7 +437,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
 	// The MON's client connections, the fixture CLI's among them, use CRC.
 	var modes []string
-	if err := json.Unmarshal([]byte(execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", messengerClientModes, "mon.a")), &modes); err != nil {
+	if err := json.Unmarshal([]byte(execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerClientModes, "mon.a")), &modes); err != nil {
 		t.Fatal(err)
 	}
 	switch {

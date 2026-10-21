@@ -48,7 +48,7 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 			t.Fatalf("OSD %d does not advertise v2-only public/cluster addresses", osd.ID)
 		}
 	}
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	var daemons []string
 	for _, mon := range cluster.Monitors() {
 		daemons = append(daemons, "mon."+mon.DaemonName)
