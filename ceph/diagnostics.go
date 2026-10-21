@@ -276,6 +276,13 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 		add("control", "cli", snapshot.control)
 	}
 	c.controlMu.RUnlock()
+	if err := diagnosticLock(ctx, c.clientPublishMu.TryRLock); err != nil {
+		return snapshot, err
+	}
+	if c.featureClient != nil {
+		add("client", "toolkit", c.featureClient)
+	}
+	c.clientPublishMu.RUnlock()
 	if err := diagnosticLock(ctx, c.configMu.TryRLock); err != nil {
 		return snapshot, err
 	}

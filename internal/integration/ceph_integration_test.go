@@ -76,7 +76,7 @@ func TestClusterLifecycle(t *testing.T) {
 	originalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "initial-pool-clean")
 
 	// A separate container proves MON discovery and direct OSD connectivity.
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)

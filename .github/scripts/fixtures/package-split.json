@@ -31,6 +31,10 @@
   [
    "\\b([A-Za-z_]\\w*)\\.InitRBDPool\\(ctx, ",
    "rbd.InitPool(ctx, \\1, "
+  ],
+  [
+   "\\bcephfs\\.RunMirror\\(ctx, source\\.ControlImage\\(\\), ",
+   "cephfs.RunMirror(ctx, nativeMirrorImage(t, \"cephfs\", source.ControlImage()), "
   ]
  ],
  "description": "API move from the ceph and multicluster packages to the ceph, cephfs, rgw and rbd packages. Retained producer sources predate the move; comparisons apply these exact qualified identifier and former Container method rewrites, then gofmt, and keep every other byte significant.",
@@ -166,5 +170,6 @@
   "multicluster.RunRBDMirror": "rbd.RunMirror",
   "multicluster.RunRGWMultisite": "rgw.RunMultisite",
   "multicluster.RunRGWTopology": "rgw.RunTopology"
- }
+ },
+ "role_image_routing_note": "The nativeMirrorImage wrapper preserves the original image in legacy mode. This source projection does not turn the retained native logs into roles-v2 execution evidence."
 }

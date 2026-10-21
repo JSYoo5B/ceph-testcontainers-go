@@ -77,7 +77,7 @@ func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	if err := controlReady(c); err != nil {
+	if err := controlReady(ctx, c); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
@@ -87,11 +87,11 @@ func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 		spec = append(spec, "--namespace", namespace)
 	}
 	name := imageSpec(pool, namespace, image)
-	watchers, err := servicehook.Command(ctx, servicehook.CLI(c), append([]string{"rbd", "status"}, spec...)...)
+	watchers, err := servicehook.ClientCommand(ctx, c, append([]string{"rbd", "status"}, spec...)...)
 	if err != nil {
 		return nil, fmt.Errorf("read watchers of RBD image %s: %w", name, err)
 	}
-	locks, err := servicehook.Command(ctx, servicehook.CLI(c), append([]string{"rbd", "lock", "ls"}, spec...)...)
+	locks, err := servicehook.ClientCommand(ctx, c, append([]string{"rbd", "lock", "ls"}, spec...)...)
 	if err != nil {
 		return nil, fmt.Errorf("read locks of RBD image %s: %w", name, err)
 	}

@@ -65,7 +65,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	// Cluster/filesystem setup above stays separate from multicluster setup.
 	// The source control runtime supplies the userspace mirror daemon.
 	mirrorImage := source.ControlImage()
-	mirror, err := cephfs.RunMirror(ctx, mirrorImage, cephfs.MirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", mirrorImage), cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},

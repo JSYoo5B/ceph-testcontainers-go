@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
- "github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 func readOSDMap(t *testing.T, ctx context.Context, cluster *ceph.Container) osdMap {

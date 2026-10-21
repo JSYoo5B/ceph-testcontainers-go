@@ -66,7 +66,7 @@ time.sleep(1200)
 		}
 		gateways[i] = s3HTTPClient{endpoint: endpoint, accessKey: rgwGateway.AccessKey, secretKey: rgwGateway.SecretKey,
 			region: rgwGateway.Region, http: &http.Client{Timeout: 15 * time.Second}}
-		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+		client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import http.client"})),
 		)

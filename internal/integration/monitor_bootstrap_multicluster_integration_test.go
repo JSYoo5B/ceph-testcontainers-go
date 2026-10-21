@@ -75,7 +75,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				multiClusterExecOutput(t, ctx, client, command...)
 			}
 			fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
-			mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
+			mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
 				Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName,
 				DestinationFilesystem: destinationFS.FilesystemName, Directories: []string{"/federation"},
 			})

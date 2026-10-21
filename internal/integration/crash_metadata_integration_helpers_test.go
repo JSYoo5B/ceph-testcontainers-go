@@ -71,7 +71,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)

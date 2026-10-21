@@ -102,7 +102,7 @@ func ownClusterRADOSTest(t *testing.T, image string, run []testcontainers.Contai
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctr, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

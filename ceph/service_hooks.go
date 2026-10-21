@@ -37,6 +37,14 @@ func (serviceHooks) TryLock(c *Container) bool { return c.mu.TryLock() }
 func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settings.startupTimeout }
 
 // CLI returns the container that runs Ceph CLI commands, or nil.
+func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...string) ([]byte, error) {
+	target, err := c.clientContainerContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return command(ctx, target, args...)
+}
+
 func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliContainer() }
 
 // Closed reports a terminated cluster.
@@ -161,10 +169,19 @@ func (serviceHooks) ScriptFile(name string) testcontainers.ContainerFile { retur
 // ServiceImage returns the image selected for a service role.
 func (serviceHooks) ServiceImage(c *Container, role string) string {
 	switch role {
+	case "client":
+		return c.Images().Client
+	case "rbd-aux":
+		return c.Images().RBDAux
+	case "essential":
+		return c.Images().Essential
 	case "rgw":
 		return c.settings.rgwImage
 	case "mds":
 		return c.settings.mdsImage
+	}
+	if c.UsesRoleImages() {
+		return ""
 	}
 	return c.settings.controlImage
 }
@@ -172,6 +189,7 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 // WithServiceImage selects the image for a service role.
 func (serviceHooks) WithServiceImage(role, image string) Option {
 	return func(o *options) error {
+		o.legacyImageOverride = true
 		if strings.TrimSpace(image) == "" {
 			return fmt.Errorf("%s image must not be blank", strings.ToUpper(role))
 		}

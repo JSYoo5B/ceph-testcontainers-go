@@ -100,7 +100,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					// journal enrollment, even while journaling images are mirrored.
 					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "plain", false)
 					mirrorImage := source.ControlImage()
-					link, err := rbd.RunMirror(ctx, mirrorImage, rbd.MirrorConfig{
+					link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbd.MirrorConfig{
 						Source: source, Destination: destination, Pool: pool, Scope: tc.scope,
 						SourceNamespace: tc.sourceNamespace, DestinationNamespace: tc.destinationNamespace,
 					})

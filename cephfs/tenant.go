@@ -168,7 +168,7 @@ type tenantScriptResult struct {
 
 func tenantScript(ctx context.Context, c *ceph.Container, args ...string) (tenantScriptResult, error) {
 	var result tenantScriptResult
-	data, err := servicehook.Command(ctx, servicehook.CLI(c), append([]string{"python3", "-c", tenantGroupScript}, args...)...)
+	data, err := servicehook.ClientCommand(ctx, c, append([]string{"python3", "-c", tenantGroupScript}, args...)...)
 	if err != nil {
 		return result, fmt.Errorf("cephfs tenant %s: %w", args[0], err)
 	}

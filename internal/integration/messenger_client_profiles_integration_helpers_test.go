@@ -155,7 +155,7 @@ type profileClient struct {
 
 func startProfileClient(t *testing.T, ctx context.Context, cluster *ceph.Container, identity *ceph.ClientConfig, opts ...ceph.ClientContainerOption) profileClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClientIdentity(identity, opts...), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClientIdentity(identity, opts...), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

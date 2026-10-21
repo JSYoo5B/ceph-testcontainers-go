@@ -365,7 +365,7 @@ func (mirror *Mirror) loadFilesystemIdentity(ctx context.Context) error {
 // different GIDs. Resolve each owned process through its exact admin-socket
 // rados_inst address and the native mirror index object's watcher list.
 func (mirror *Mirror) ownedFilesystemWatcherIDs(ctx context.Context) (map[string]bool, error) {
-	control, err := mirror.source.ControlContainerContext(ctx)
+	control, err := mirror.source.ClientContainerContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS source control handle: %w", err)
 	}
@@ -1371,4 +1371,16 @@ func validCephFSMirrorFilesystemName(name string) bool {
 		}
 	}
 	return true
+}
+
+// RunMirrorWithImages selects the source cluster's CephFS daemon runtime.
+func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+	if config.Source == nil || config.Destination == nil || !config.Source.UsesRoleImages() || !config.Destination.UsesRoleImages() {
+		return nil, invalid(fmt.Errorf("roles-v2 clusters are required"))
+	}
+	image := config.Source.Images().CephFS
+	if image == "" {
+		return nil, invalid(fmt.Errorf("cephfs image is required"))
+	}
+	return RunMirror(ctx, image, config, opts...)
 }

@@ -39,7 +39,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 		ceph.WithIdleEntrypoint())
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)

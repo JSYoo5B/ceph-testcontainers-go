@@ -1,0 +1,77 @@
+name: roles-v2 consumer
+on:
+  pull_request:
+    paths: ['ceph/**', 'rbd/**', 'cephfs/**', 'rgw/**', 'internal/**', '.github/scripts/**', '.github/workflows/roles-v2.yml']
+  workflow_dispatch:
+    inputs:
+      images_ref:
+        description: Image repository revision implementing roles-v2
+        default: feat/dependency-roles
+      variant:
+        type: choice
+        options: [official, debian, ubuntu]
+        default: official
+env:
+  GOPROXY: 'https://proxy.golang.org|direct'
+permissions:
+  contents: read
+concurrency:
+  group: roles-v2-consumer-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['20.2.4', '19.2.5']
+        architecture: [amd64, arm64]
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      VARIANT: ${{ inputs.variant || 'official' }}
+      RELEASE: ${{ matrix.release }}
+      SCENARIO_IMAGE_CONTRACT: roles-v2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: JSYoo5B/ceph-testcontainers-images
+          ref: ${{ inputs.images_ref || 'feat/dependency-roles' }}
+          path: images-source
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build candidate image contract
+        run: make -C images-source roles-v2-images V2_VARIANT="$VARIANT" CEPH_RELEASE="$RELEASE" PLATFORM=linux/${{ matrix.architecture }}
+      - name: Freeze independent role identities
+        run: |
+          roles=(essential client cephfs rbd-aux rgw)
+          variables=(CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE)
+          for i in "${!roles[@]}"; do
+            id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-${roles[$i]}")
+            echo "${variables[$i]}=$id" >> "$GITHUB_ENV"
+          done
+      - name: Existing compatibility tests with relocated oracles
+        run: make image-compatibility
+      - name: Constrained role routing and client ownership
+        run: make roles-v2-routing
+      - name: Independent aggregate image path
+        run: |
+          id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-all")
+          CEPH_TEST_ESSENTIAL_IMAGE="$id" CEPH_TEST_CLIENT_IMAGE="$id" \
+          CEPH_TEST_CEPHFS_IMAGE="$id" CEPH_TEST_RBD_AUX_IMAGE="$id" \
+          CEPH_TEST_RGW_IMAGE="$id" make image-compatibility
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: roles-v2-consumer-${{ matrix.release }}-${{ matrix.architecture }}
+          path: |
+            artifacts
+            images-source/artifacts
+          retention-days: 14

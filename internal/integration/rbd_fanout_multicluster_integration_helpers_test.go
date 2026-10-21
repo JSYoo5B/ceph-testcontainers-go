@@ -55,7 +55,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 			t.Fatalf("third fanout cluster is not independent: FSID=%s other=%s error=%v", current.FSID, previous.FSID, err)
 		}
 	}
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 	if client != nil {
@@ -76,7 +76,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *rbd.Mirror {
 	t.Helper()
 	image := a.ControlImage()
-	link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
+	link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", image), rbd.MirrorConfig{
 		Source: a, Destination: destination, Pool: pool, SourceSite: "a", DestinationSite: destinationSite,
 	})
 	if link != nil {

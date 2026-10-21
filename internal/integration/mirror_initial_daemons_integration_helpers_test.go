@@ -158,7 +158,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	link, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if link != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -298,7 +298,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers, factoryCalls atomic.Int32
-	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
 		factoryCalls.Add(1)
 		client, err := testcontainers.NewDockerClientWithOpts(ctx)
 		if err != nil {

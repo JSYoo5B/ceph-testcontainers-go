@@ -427,3 +427,10 @@ scenario-osd-memory:
 
 scenario-small-osds:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_SMALL_OSDS_TIMEOUT) -run '$(SCENARIO_SMALL_OSDS_TESTS)' ./internal/integration
+
+
+# Explicit candidate-contract routing checks; legacy published-role CI remains
+# independent until roles-v2 images are qualified and adopted.
+.PHONY: roles-v2-routing
+roles-v2-routing:
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=30m ./internal/integration -run '^TestRoleImagesV2'

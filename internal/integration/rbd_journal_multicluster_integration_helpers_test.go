@@ -124,7 +124,7 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 func rbdJournalRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbd.Mirror {
 	t.Helper()
 	image := source.ControlImage()
-	link, err := rbd.RunMirror(ctx, image, rbd.MirrorConfig{
+	link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", image), rbd.MirrorConfig{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite, Mode: rbd.MirrorModeJournal,
 	})

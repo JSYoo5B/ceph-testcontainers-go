@@ -125,7 +125,7 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-family", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)

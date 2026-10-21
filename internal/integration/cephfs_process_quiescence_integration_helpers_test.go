@@ -68,7 +68,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 		customizerCalls.Add(1)
 		return nil
 	})
-	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{directory}, DaemonCount: 1,

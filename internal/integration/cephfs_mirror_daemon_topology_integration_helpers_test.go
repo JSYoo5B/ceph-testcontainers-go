@@ -61,7 +61,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	initial := checkpoint("initial")
 	image := source.ControlImage()
-	mirror, err := cephfs.RunMirror(ctx, image, cephfs.MirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", image), cephfs.MirrorConfig{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,

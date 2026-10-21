@@ -419,7 +419,7 @@ func testDualStackReplacement(t *testing.T) {
 		return dualStackTopology{addresses: addresses, mds: *current, fsEpoch: fsMapEpoch(t, ctx, cluster)}
 	}
 
-	retainedCtr, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	retainedCtr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, retainedCtr)
 	if err != nil {
 		t.Fatal(err)

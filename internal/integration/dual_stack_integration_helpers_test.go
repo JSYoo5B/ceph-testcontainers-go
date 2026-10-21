@@ -233,7 +233,7 @@ func testDualStackAddressFamily(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +347,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)

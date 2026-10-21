@@ -68,13 +68,13 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 					topologySnapshotQueue(t, releaseOwner, func(callCtx context.Context) (topologySnapshotPartial, error) {
 						switch kind {
 						case "rbd":
-							result, err := rbd.RunMirror(callCtx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
+							result, err := rbd.RunMirror(callCtx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "cephfs":
-							result, err := cephfs.RunMirror(callCtx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
+							result, err := cephfs.RunMirror(callCtx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
 							if result == nil {
 								return nil, err
 							}

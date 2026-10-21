@@ -28,7 +28,9 @@ type MultisiteConfig struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
 	ControlImage                                  string
-	destinationZonegroup                          string
+	// SetupImage explicitly selects the RGW administration runtime.
+	SetupImage           string
+	destinationZonegroup string
 }
 
 // Multisite owns two gateways and their CLI clients. Bridge mode adds a
@@ -64,6 +66,13 @@ type Multisite struct {
 // image supplies only the RGW role; setup clients use the clusters' control
 // images unless ControlImage explicitly overrides them.
 func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
+	if config.SetupImage != "" {
+		if config.ControlImage != "" {
+			return nil, invalid(fmt.Errorf("SetupImage and ControlImage cannot be combined"))
+		}
+		config.ControlImage = config.SetupImage
+		config.SetupImage = ""
+	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
@@ -307,7 +316,14 @@ func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opt
 func rgwControlImage(override string, cluster interface{ ControlImage() string }) (string, error) {
 	image := override
 	if image == "" && cluster != nil {
-		image = cluster.ControlImage()
+		if roles, ok := cluster.(interface {
+			UsesRoleImages() bool
+			Images() ceph.ImageSet
+		}); ok && roles.UsesRoleImages() {
+			image = roles.Images().RGW
+		} else {
+			image = cluster.ControlImage()
+		}
 	}
 	if strings.TrimSpace(image) == "" {
 		return "", fmt.Errorf("RGW control image must not be empty")

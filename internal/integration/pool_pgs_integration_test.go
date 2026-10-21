@@ -98,7 +98,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	client, err := testcontainers.Run(ctx, image, cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
 	}

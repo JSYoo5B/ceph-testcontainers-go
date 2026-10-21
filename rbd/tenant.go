@@ -48,7 +48,7 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	data, err := servicehook.Command(ctx, servicehook.CLI(c), "ceph", "--connect-timeout", "5", "osd", "pool", "application", "get", pool, "--format", "json")
+	data, err := servicehook.ClientCommand(ctx, c, "ceph", "--connect-timeout", "5", "osd", "pool", "application", "get", pool, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("inspect RBD pool %q: %w", pool, err)
 	}
@@ -67,7 +67,7 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "namespace", "create", "--pool", pool, "--namespace", namespace); err != nil {
+	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "create", "--pool", pool, "--namespace", namespace); err != nil {
 		return nil, fmt.Errorf("create RBD namespace %q: %w", namespace, err)
 	}
 	scope := "profile rbd pool=" + pool + " namespace=" + namespace
@@ -164,7 +164,7 @@ finally:
 `
 
 func releaseTenantNamespace(ctx context.Context, c *ceph.Container, pool, namespace string) ([]string, error) {
-	data, err := servicehook.Command(ctx, servicehook.CLI(c), "python3", "-c", tenantReleaseScript, pool, namespace, fmt.Sprint(tenantWatchWait))
+	data, err := servicehook.ClientCommand(ctx, c, "python3", "-c", tenantReleaseScript, pool, namespace, fmt.Sprint(tenantWatchWait))
 	if err != nil {
 		return nil, fmt.Errorf("remove RBD namespace %q: %w", namespace, err)
 	}
@@ -211,7 +211,7 @@ finally:
 // probeTenantNamespaces lists the RBD namespaces of a shared cluster, each
 // owned by the tenant of its name.
 func probeTenantNamespaces(ctx context.Context, c *ceph.Container) (map[string]string, error) {
-	data, err := servicehook.Command(ctx, servicehook.CLI(c), "python3", "-c", tenantProbeScript)
+	data, err := servicehook.ClientCommand(ctx, c, "python3", "-c", tenantProbeScript)
 	if err != nil {
 		return nil, fmt.Errorf("list RBD namespaces: %w", err)
 	}

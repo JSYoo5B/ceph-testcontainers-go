@@ -44,7 +44,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{
+			mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{
 				Source: source, Destination: destination, Pool: pool,
 			})
 			if mirror != nil {
@@ -132,7 +132,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
+			mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
 			})

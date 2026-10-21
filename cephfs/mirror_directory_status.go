@@ -87,7 +87,7 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Mi
 		}
 		return result, ctx.Err()
 	}
-	control, err := mirror.source.ControlContainerContext(ctx)
+	control, err := mirror.source.ClientContainerContext(ctx)
 	if err != nil {
 		return result, cephFSObserveQuery("read CephFS filesystem watchers", err)
 	}
