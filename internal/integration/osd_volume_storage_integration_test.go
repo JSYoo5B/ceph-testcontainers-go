@@ -139,7 +139,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	osdMemoryWaitState(t, ctx, cluster, false)
+	osdVolumeWaitState(t, ctx, cluster, current, false)
 	seconds := 1
 	if _, err := docker.Client.ContainerStop(ctx, helper.ID, mobycl.ContainerStopOptions{Timeout: &seconds}); err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 			t.Fatal("restart changed container")
 		}
 	}
-	osdMemoryWaitState(t, ctx, cluster, true)
+	osdVolumeWaitState(t, ctx, cluster, current, true)
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}

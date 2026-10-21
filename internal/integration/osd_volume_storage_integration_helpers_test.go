@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/google/uuid"
@@ -108,4 +109,37 @@ print('verified')`, pool, phase)
 		t.Fatal("known native payload differs")
 	}
 	t.Logf("OSD_VOLUME_BYTES phase=%s bytes=1048583 verified=true", phase)
+}
+
+// Match the actual owned registration set; this fixture grows beyond two OSDs.
+func osdVolumeWaitState(t *testing.T, parent context.Context, cluster *ceph.Container, expected map[int]string, up bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	defer cancel()
+	for {
+		if up {
+			for _, osd := range cluster.OSDs() {
+				state, err := osd.State(ctx)
+				if err != nil || state == nil || !state.Running {
+					t.Fatal("restarted volume OSD exited", err)
+				}
+			}
+		}
+		states, err := cluster.OSDStates(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready := len(states) == len(expected)
+		for _, state := range states {
+			ready = ready && expected[state.ID] == state.UUID && state.Up == up && state.In
+		}
+		if ready {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("owned volume OSD membership did not converge", ctx.Err())
+		case <-time.After(time.Second):
+		}
+	}
 }
