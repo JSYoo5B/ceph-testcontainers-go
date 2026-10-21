@@ -1,5 +1,11 @@
 # Measuring dependency-role overhead
 
+The integrated role split addresses **unnecessary image payload**: workloads
+select the capabilities they use and omit optional service/tool dependencies.
+The stored-layer measurements below establish that improvement. This follow-up
+measures the lifecycle/resource tradeoff of using a separate lazy client
+container after the images are already available locally.
+
 `internal/tools/roleoverhead` compares an explicit aggregate selection with
 essential + client through the real Go consumer. It starts one MON, one MGR
 and one file-backed BlueStore OSD, without optional services. No product
@@ -73,6 +79,27 @@ from earlier storage or functionality results.
 
 ## Recorded experiment, 2026-10-22
 
+### Primary result: less unnecessary image payload
+
+The earlier final-image measurements count actual gzip Docker-save layer
+payloads, with shared layers counted once, in decimal MB. Essential + client
+supports ordinary RADOS/RBD without pulling in the optional daemon/tool
+capabilities retained by all. The selected image IDs in this follow-up match
+those size-study images.
+
+| Role-image selection | Official-derived 19.2.5 | Debian 19.2.5 | Ubuntu 19.2.5 | Alpine 19.2.4 experimental |
+| --- | ---: | ---: | ---: | ---: |
+| all | 185.83 | 188.68 | 166.29 | 114.23 |
+| essential + client, shared-layer union | 162.18 | 156.90 | 140.93 | 59.80 |
+| Reduction relative to all | 12.7% | 16.8% | 15.3% | 47.7% |
+
+These reductions isolate role selection relative to the new pruned all image.
+Larger reductions against the installed source also include file pruning.
+The compressed payload reduction is measured; actual pull, unpack and
+deployment-ready time improvements require separate cold-distribution timing.
+
+### Warm-container experiment: cost of the additional executor
+
 The [per-trial dataset](role-overhead-results.json) contains five measured
 pairs and one excluded warmup pair per variant: **40 measured trials plus
 8 warmups**. All 48 native RBD proofs and 48 owned-container cleanup checks
@@ -129,11 +156,21 @@ startup/command CPU. The dataset also retains the pre-client phase, ranges,
 original report hashes, immutable IDs and cleanup results. Raw counters were
 independently recomputed and checked against the summary before publication.
 
-The supported conclusion is **selective image storage savings with a small
-lazy-executor cost**. This experiment establishes no reduction in warm start
-time or idle CPU/memory. Pruning unused image files does not remove the core
-daemon workload. Keep split selection for workloads that benefit from omitted
-capabilities; all remains useful when the broad toolkit/features are wanted.
-A separate public client lifecycle type is not needed to obtain this behavior.
-Cold distribution and Docker/host overhead remain unmeasured; registry
-publication remains a separate operation.
+This experiment characterizes the added executor's lifecycle and idle cost.
+The first split-client call creates/starts a container and checks Ceph
+connectivity/version; the idle phase then includes that additional process.
+The small aggregate differences also include normal run variation and cache
+accounting. Docker daemon resource use was not measured separately, so the
+entire difference cannot be assigned to Docker itself.
+
+Both selections execute the same core daemons and RBD workload. Omitting
+unused image files does not itself remove that running work. Consequently,
+the absence of a CPU/memory reduction in this warm experiment is not evidence
+that image lightweighting failed, or a verdict on its overall performance.
+The established improvement is **smaller required image payload**, accompanied
+by the measured cost of a lazy client container when that client is used.
+Keep split selection for workloads that benefit from omitted capabilities;
+all remains useful when broad features are wanted. A separate public client
+lifecycle type is not needed to obtain this behavior. Pull/unpack latency,
+loaded throughput and Docker/host overhead remain outside this measurement;
+registry publication remains a separate operation.
