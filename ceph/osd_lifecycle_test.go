@@ -426,6 +426,8 @@ type osdLifecycleDaemon struct {
 	afterStop           func()
 }
 
+func (daemon *osdLifecycleDaemon) GetContainerID() string { return "osd-lifecycle-3" }
+
 func (daemon *osdLifecycleDaemon) Stop(ctx context.Context, _ *time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err

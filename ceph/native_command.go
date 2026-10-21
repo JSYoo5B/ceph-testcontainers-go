@@ -39,6 +39,8 @@ var ErrNativeCommandIncomplete = errors.New("native command did not complete wit
 // command.
 var errNativeTerminated = errors.New("ceph cluster is terminated")
 
+var errNativeTargetRemoved = errors.New("native command target is being removed")
+
 // errClusterTerminated refuses a request to a terminated cluster.
 var errClusterTerminated error = &categoryError{text: "ceph cluster is terminated", kind: ErrInvalidRequest}
 
@@ -219,8 +221,11 @@ func (e *NativeCommandUnstoppedError) Stop(ctx context.Context) error {
 type nativeInvocation struct {
 	owner  *Container
 	target testcontainers.Container
-	label  string
-	cancel context.CancelCauseFunc
+	// targetID captures the Docker instance at admission rather than reading a
+	// possibly mutable wrapper again while draining invocations.
+	targetID string
+	label    string
+	cancel   context.CancelCauseFunc
 	// stopCommand confirms that the command of marker no longer runs:
 	// supervised.Cancel, or supervised.CancelShell for a shell supervisor.
 	stopCommand func(ctx context.Context, ctr testcontainers.Container, label, marker string) error
@@ -418,11 +423,15 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
+	inv := &nativeInvocation{owner: c, target: target, targetID: target.GetContainerID(), label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
 	c.nativeMu.Lock()
 	if c.nativeClosed {
 		c.nativeMu.Unlock()
 		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
+	}
+	if c.nativeFenced[inv.targetID] {
+		c.nativeMu.Unlock()
+		return NativeCommandResult{}, invalidRequest("%s target is fenced for OSD removal", label)
 	}
 	if command.Input != nil && !command.Input.claimed.CompareAndSwap(false, true) {
 		c.nativeMu.Unlock()
@@ -462,8 +471,9 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 	}
 	c.nativeMu.Unlock()
 	close(inv.done)
-	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
-		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
+	if cause := context.Cause(runCtx); err != nil && ctx.Err() == nil &&
+		(errors.Is(cause, errNativeTerminated) || errors.Is(cause, errNativeTargetRemoved)) {
+		err = fmt.Errorf("%s: %w: %w", label, cause, err)
 	}
 	err = safeNativeError(err)
 	switch {
@@ -479,7 +489,7 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 	case errors.As(err, &exit) && exit.Code == supervised.LaunchUnavailableExit:
 		return NativeCommandResult{}, &OperationError{Kind: ErrEnvironmentUnavailable, Op: label,
 			Err: errors.New("the program could not be started for want of a process or memory, or because a security policy refused it")}
-	case err != nil && ctx.Err() == nil && !errors.Is(err, errNativeTerminated):
+	case err != nil && ctx.Err() == nil && !errors.Is(err, errNativeTerminated) && !errors.Is(err, errNativeTargetRemoved):
 		// The command may have run: its outcome is unknown.
 		return NativeCommandResult{}, classifyNativeBackend(err, true)
 	case err != nil:
@@ -651,7 +661,39 @@ func (c *Container) cancelNativeInvocations() []*nativeInvocation {
 // they could not confirm as stopped. It keeps those it cannot stop and returns
 // their errors.
 func (c *Container) stopNativeInvocations(ctx context.Context) []error {
-	pending := c.cancelNativeInvocations()
+	return c.stopNativeCalls(ctx, c.cancelNativeInvocations())
+}
+
+// fenceNativeTarget closes admission and drains exactly one Docker instance.
+// It never sets nativeClosed: unrelated targets and later distinct instances
+// remain usable. An unconfirmed stop stays tracked and the fence remains for
+// retry. The caller serializes the removal under the cluster topology lock.
+func (c *Container) fenceNativeTarget(ctx context.Context, id string) error {
+	if id == "" {
+		return invalidRequest("OSD removal needs an identified container")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.nativeMu.Lock()
+	if c.nativeFenced == nil {
+		c.nativeFenced = make(map[string]bool)
+	}
+	c.nativeFenced[id] = true
+	var pending []*nativeInvocation
+	for inv := range c.nativeInvocations {
+		if inv.targetID == id {
+			pending = append(pending, inv)
+		}
+	}
+	c.nativeMu.Unlock()
+	for _, inv := range pending {
+		inv.cancel(errNativeTargetRemoved)
+	}
+	return errors.Join(c.stopNativeCalls(ctx, pending)...)
+}
+
+func (c *Container) stopNativeCalls(ctx context.Context, pending []*nativeInvocation) []error {
 	var errs []error
 	for _, inv := range pending {
 		// A canceled call returns within its own stop budget.

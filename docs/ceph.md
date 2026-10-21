@@ -2102,6 +2102,20 @@ osd, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{
 
 #### RemoveOSD
 
+After identity and last-OSD admission, removal permanently fences that Docker
+instance from new public `RunNativeCommand` calls and drains its tracked native
+commands before reweight/out/stop/purge. A command admitted before the fence
+must pass a second admission check before dispatch. An unconfirmed stop or
+cancelled drain retains the invocation, OSD ownership and fence for a fresh
+removal retry. Commands targeting other instances remain admitted. This does
+not close cluster-wide native admission.
+
+This increment does not add retained-store detach/reopen, attachment leases or
+fault-handle fencing. Internal service shell admission and raw Docker handles
+keep their existing contracts; raw references are not revoked by a Go admission
+fence. `RemoveOSD` still confirms container cleanup after permanent purge.
+
+
 ```golang
 func (c *Container) RemoveOSD(ctx context.Context, id int) error
 ```

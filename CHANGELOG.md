@@ -355,6 +355,11 @@ change the API.
 
 ### Fixed
 
+- Fence and drain public native commands for an OSD Docker instance before
+  `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
+  fence after an unconfirmed stop, without closing unrelated targets. This
+  establishes one prerequisite for #6; no retained-store API is added.
+
 - `rgw.Multisite.WaitBucketSyncReady` returns the last status it read when the
   wait ends; an attempt that failed or was canceled afterwards no longer
   replaces it with an empty one. Its unit test no longer depends on a 20 ms
