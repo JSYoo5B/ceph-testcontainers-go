@@ -36,7 +36,11 @@ handles returned with errors; restore remains retryable after uncertain results.
 The error categories remain in `ceph`; the moved sentinels still match them
 with `errors.Is`.
 
-Session blocklist and full-ratio policy belong to `ceph`, including their
+Fullness policy uses
+[`Container.OverrideFullRatios`](ceph.md#overridefullratios), returning
+`*ceph.FullRatiosOverride`, with explicit caller-managed `Restore` and no
+expiry or context/scope-exit undo. Session blocklist and full-ratio policy
+belong to `ceph`, including their
 mutation APIs and restoration handles. They use Ceph control-plane operations
 to change admission or policy; testing failure outcomes does not move these
 controls into `fault`. The blocklist extraction in PR #12 is reverted.

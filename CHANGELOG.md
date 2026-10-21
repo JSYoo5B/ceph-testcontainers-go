@@ -320,6 +320,13 @@ change the API.
 
 ### Changed
 
+- Rename `Container.TemporaryFullRatios` to `Container.OverrideFullRatios`,
+  retaining `ceph.FullRatiosOverride` and its retryable `Restore`. This is an
+  OSDMap policy override in `ceph`, with explicit caller-managed restoration,
+  no expiry and no undo on context cancellation. Query/value types and existing
+  ownership/recovery semantics are unchanged. The next-minor source break has
+  no compatibility alias; see `docs/ceph.md#overridefullratios`.
+
 - Revert the client-session blocklist extraction into `fault`.
   `Container.TemporaryBlocklist` and `ceph.BlocklistOverride` stay in `ceph`
   as session-admission controls, preserving expiration ownership and retryable

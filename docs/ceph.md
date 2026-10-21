@@ -1505,7 +1505,7 @@ that only read state stay available.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `TemporaryClientRevocation`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `TemporaryConfig`, `TemporaryOSDFlag`, `OverrideFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1562,7 +1562,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.ConfigOverride` | [TemporaryConfig](#temporaryconfig) | `Restore` |
 | `*ceph.OSDFlagOverride` | [TemporaryOSDFlag](#temporaryosdflag) | `Restore` |
 | `*ceph.MGRModuleOverride` | [TemporaryMGRModule](#temporarymgrmodule) | `Restore` |
-| `*ceph.FullRatiosOverride` | [TemporaryFullRatios](#temporaryfullratios) | `Restore` |
+| `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
@@ -3226,11 +3226,24 @@ reported as they are. These ratios are OSDMap policy, separate from central
 configuration and pool quotas, and do not say whether any OSD has reported
 fullness.
 
-#### TemporaryFullRatios
+#### OverrideFullRatios
+
+For the next minor release, rename
+`cluster.TemporaryFullRatios(ctx, ratios)` to
+`cluster.OverrideFullRatios(ctx, ratios)`. The return type remains
+`*ceph.FullRatiosOverride`; `Restore` and its ownership/retry semantics are
+unchanged. There is no compatibility alias. Published releases keep their APIs.
 
 ```golang
-func (c *Container) TemporaryFullRatios(ctx context.Context, requested ceph.FullRatios) (*ceph.FullRatiosOverride, error)
+func (c *Container) OverrideFullRatios(ctx context.Context, requested ceph.FullRatios) (*ceph.FullRatiosOverride, error)
 ```
+
+This is a cluster policy override in `ceph`, even when lower thresholds are
+used to induce FULL or ENOSPC in a test. It has no expiry, timer or implicit
+scope-exit restoration. Cancelling the apply context does not undo committed
+changes. Keep a non-nil handle even when apply returns an error, and explicitly
+call `FullRatiosOverride.Restore` with a fresh context as needed, or terminate
+the disposable cluster. `Terminate` does not reset individual thresholds.
 
 Applies the three ratios and restores all three with `Restore`. Requested values
 must be finite and satisfy `0 < NearFull < BackfillFull < Full <= 1` after float32
@@ -3895,7 +3908,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `ConfigOverride` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryConfig](#temporaryconfig) |
 | `OSDFlagOverride` | `Restore(ctx) error` | [TemporaryOSDFlag](#temporaryosdflag) |
 | `MGRModuleOverride` | `Restore(ctx) error` | [TemporaryMGRModule](#temporarymgrmodule) |
-| `FullRatiosOverride` | `Restore(ctx) error` | [TemporaryFullRatios](#temporaryfullratios) |
+| `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
@@ -3926,7 +3939,7 @@ See the [handle contract](#container-methods).
 | `HealthSnapshot`, `HealthCheck`, `HealthMute` | [HealthDetails](#healthdetails) |
 | `ObjectWatcher` | [ObjectWatchers](#objectwatchers) |
 | `BlocklistEntry` | [BlocklistEntries](#blocklistentries) |
-| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [TemporaryFullRatios](#temporaryfullratios) |
+| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [OverrideFullRatios](#overridefullratios) |
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
 
@@ -4404,7 +4417,7 @@ reuses its original rule, which also makes it removable with `RemovePool` again.
 ### Fill the cluster with low full ratios
 
 ```golang
-change, err := cluster.TemporaryFullRatios(ctx, ceph.FullRatios{
+change, err := cluster.OverrideFullRatios(ctx, ceph.FullRatios{
 	NearFull: 0.0001, BackfillFull: 0.0002, Full: 0.0003,
 })
 if change != nil {

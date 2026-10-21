@@ -373,7 +373,7 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 		}
 	}
 
-	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "Pause", "TemporaryFullRatios", "InjectObjectDataError"} {
+	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "Pause", "InjectObjectDataError"} {
 		if _, ok := sharedFaultPolicies["fault."+method]; !ok {
 			t.Errorf("fault.%s has no shared policy", method)
 		}

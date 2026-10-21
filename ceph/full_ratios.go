@@ -70,15 +70,20 @@ type fullRatiosOverrideState struct {
 	token *faultEntry
 }
 
-// TemporaryFullRatios applies finite thresholds satisfying
+// OverrideFullRatios applies finite thresholds satisfying
 // 0 < NearFull < BackfillFull < Full <= 1 after native float32 normalization.
 // The original map must also have this ordering. Overlapping handles are
 // refused, including no-op leases. Each intermediate commit preserves ordering.
 // Success verifies map values, not OSD reports or client write availability.
 // External writers must not race apply/restore: Ceph has no threshold CAS and
 // writes equal to owned values cannot be distinguished from this fixture.
-func (c *Container) TemporaryFullRatios(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error) {
-	if gateErr := c.sharedGate("TemporaryFullRatios"); gateErr != nil {
+//
+// This is an explicit OSDMap policy override, with no expiry or automatic
+// scope-exit restoration. Context cancellation does not undo committed changes.
+// The caller must retain non-nil error handles and call Restore with a fresh
+// context when needed, or terminate the disposable cluster.
+func (c *Container) OverrideFullRatios(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error) {
+	if gateErr := c.sharedGate("OverrideFullRatios"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := ctx.Err(); err != nil {
