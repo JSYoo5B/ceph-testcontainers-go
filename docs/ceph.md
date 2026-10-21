@@ -1505,7 +1505,7 @@ that only read state stay available.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `TemporaryClientRevocation`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1562,8 +1562,8 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.ConfigOverride` | [TemporaryConfig](#temporaryconfig) | `Restore` |
 | `*ceph.OSDFlagOverride` | [TemporaryOSDFlag](#temporaryosdflag) | `Restore` |
 | `*ceph.MGRModuleOverride` | [TemporaryMGRModule](#temporarymgrmodule) | `Restore` |
-| `*fault.FullRatiosOverride` | [fault.TemporaryFullRatios](fault.md#temporaryfullratios) | `Restore` |
-| `*fault.BlocklistOverride` | [fault.TemporaryBlocklist](fault.md#temporaryblocklist) | `Restore` |
+| `*ceph.FullRatiosOverride` | [TemporaryFullRatios](#temporaryfullratios) | `Restore` |
+| `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
@@ -3187,9 +3187,26 @@ evicts a client). Each `ceph.BlocklistEntry` has `Address`, `Range` (true for a
 CIDR range) and `Until` (the MON's absolute expiration time). Listing grants no
 ownership to remove an entry.
 
-Dedicated client fencing is documented under
-[fault.TemporaryBlocklist](fault.md#temporaryblocklist). The read-only
-`BlocklistEntries` query stays here.
+#### TemporaryBlocklist
+
+```golang
+func (c *Container) TemporaryBlocklist(ctx context.Context, address string, duration time.Duration) (*ceph.BlocklistOverride, error)
+```
+
+Fences one specific client session for `duration` (at least one second). The
+address must be the session's exact `IP:port/nonce` with a nonzero nonce, so
+other clients on the same host are unaffected. Get it from the client after it
+connects (librados `rados_getaddrs`, go-ceph `Conn.GetAddrs`), from
+[ObjectWatchers](#objectwatchers), from an RBD lock owner or from a CephFS
+session. A v1/v2 address vector is accepted only when all entries denote the same
+IP, port and nonce. Bare IPs, CIDR ranges, nonce zero and existing entries are
+refused.
+
+`Restore` removes only this entry (`Address()` returns it), after checking the
+captured expiration; an entry renewed by someone else is refused, and natural
+expiry counts as removed. After removal, OSDs admit the address again, but how the
+session recovers depends on the client library; with librados both the existing
+session and a new connection recover. See [Fence one client session](#fence-one-client-session).
 
 ### Container Methods: Full ratios
 
@@ -3209,9 +3226,24 @@ reported as they are. These ratios are OSDMap policy, separate from central
 configuration and pool quotas, and do not say whether any OSD has reported
 fullness.
 
-Dedicated fullness injection is documented under
-[fault.TemporaryFullRatios](fault.md#temporaryfullratios). `FullRatios` and
-`FullRatioSnapshot` remain the read-only OSDMap policy types in `ceph`.
+#### TemporaryFullRatios
+
+```golang
+func (c *Container) TemporaryFullRatios(ctx context.Context, requested ceph.FullRatios) (*ceph.FullRatiosOverride, error)
+```
+
+Applies the three ratios and restores all three with `Restore`. Requested values
+must be finite and satisfy `0 < NearFull < BackfillFull < Full <= 1` after float32
+normalization (inputs that collapse to equal values are refused), and the current
+map must also be ordered. The CLI changes one ratio per command; the helper orders
+the commands so that every intermediate state stays ordered, so apply and restore
+are not atomic. Only one handle per cluster is allowed, including no-op requests.
+
+Low ratios reproduce full conditions with a small amount of existing data; the
+module does not fill real devices. Success verifies the map, not OSD reports:
+wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
+[HealthDetails](#healthdetails). See
+[Fill the cluster with low full ratios](#fill-the-cluster-with-low-full-ratios).
 
 ### Container Methods: Scrub inconsistencies
 
@@ -3863,8 +3895,8 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `ConfigOverride` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryConfig](#temporaryconfig) |
 | `OSDFlagOverride` | `Restore(ctx) error` | [TemporaryOSDFlag](#temporaryosdflag) |
 | `MGRModuleOverride` | `Restore(ctx) error` | [TemporaryMGRModule](#temporarymgrmodule) |
-| `fault.FullRatiosOverride` | `Restore(ctx) error` | [fault.TemporaryFullRatios](fault.md#temporaryfullratios) |
-| `fault.BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [fault.TemporaryBlocklist](fault.md#temporaryblocklist) |
+| `FullRatiosOverride` | `Restore(ctx) error` | [TemporaryFullRatios](#temporaryfullratios) |
+| `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
 | `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
@@ -3894,7 +3926,7 @@ See the [handle contract](#container-methods).
 | `HealthSnapshot`, `HealthCheck`, `HealthMute` | [HealthDetails](#healthdetails) |
 | `ObjectWatcher` | [ObjectWatchers](#objectwatchers) |
 | `BlocklistEntry` | [BlocklistEntries](#blocklistentries) |
-| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [fault.TemporaryFullRatios](fault.md#temporaryfullratios) |
+| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [TemporaryFullRatios](#temporaryfullratios) |
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
 
@@ -4372,7 +4404,7 @@ reuses its original rule, which also makes it removable with `RemovePool` again.
 ### Fill the cluster with low full ratios
 
 ```golang
-change, err := fault.TemporaryFullRatios(ctx, cluster, ceph.FullRatios{
+change, err := cluster.TemporaryFullRatios(ctx, ceph.FullRatios{
 	NearFull: 0.0001, BackfillFull: 0.0002, Full: 0.0003,
 })
 if change != nil {
@@ -4444,7 +4476,7 @@ inconsistency.
 ```golang
 // address is the client's own session address, e.g. from rados_getaddrs or
 // go-ceph Conn.GetAddrs: "172.19.0.6:0/3461995546".
-fence, err := fault.TemporaryBlocklist(ctx, cluster, address, time.Minute)
+fence, err := cluster.TemporaryBlocklist(ctx, address, time.Minute)
 if fence != nil {
 	defer fence.Restore(context.Background())
 }

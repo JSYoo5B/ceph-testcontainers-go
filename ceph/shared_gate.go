@@ -134,7 +134,9 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"SetPoolPlacement":         sharedExclusive,
 	"SetPoolQuota":             sharedExclusive,
 	"SetPoolReplication":       sharedExclusive,
+	"TemporaryBlocklist":       sharedExclusive,
 	"TemporaryConfig":          sharedExclusive,
+	"TemporaryFullRatios":      sharedExclusive,
 	"TemporaryMGRModule":       sharedExclusive,
 	"TemporaryMessengerPolicy": sharedExclusive,
 	"TemporaryOSDFlag":         sharedExclusive,
@@ -202,7 +204,6 @@ var sharedFaultPolicies = map[string]sharedPolicy{
 	"fault.TemporaryNetworkDelay": sharedExclusive,
 	"fault.InterruptNetwork":      sharedExclusive,
 	"fault.Pause":                 sharedExclusive,
-	"fault.TemporaryBlocklist":    sharedExclusive,
 	"fault.TemporaryFullRatios":   sharedExclusive,
 	"fault.InjectObjectDataError": sharedRecycle,
 }

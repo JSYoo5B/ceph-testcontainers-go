@@ -1,8 +1,6 @@
 // Package fault injects dedicated faults into an existing Ceph fixture.
-// Cluster-bound operations use ceph.Run's lifetime. Terminate restores network
-// faults and resumes containers; blocklist and full-ratios overrides end with
-// the disposable cluster, or are explicitly restored while it runs. Standalone link operations
-// are restored by their caller.
+// Cluster-bound operations use ceph.Run's lifetime and are restored by its
+// Terminate. Standalone link operations are restored by their caller.
 package fault
 
 import (

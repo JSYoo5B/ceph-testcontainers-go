@@ -76,7 +76,8 @@ everything but a 404 or 410, which once failed a whole batch at compilation.
 The Go jobs share one module cache, keyed by `go.sum`. The `Plan` job of each
 runtime workflow restores it and, when it is missing, downloads every module
 with `tag_scenarios.py modules` and saves it. Runtime jobs start only after
-`Plan`, and Code checks jobs only restore it. `setup-go`'s own cache is off:
+`Plan`, and Code checks jobs only restore it, including both Go versions of
+the vulnerability check. `setup-go`'s own cache is off:
 it keeps whatever the first job to finish under a key had, which once was a
 `Plan` job with almost no modules, so every later compile downloaded its
 modules again.
@@ -160,9 +161,19 @@ most precise level reported:
 
 The job runs with the module's minimum Go (`1.26.x`) and the current release
 (`1.27.x`), because the standard library's findings depend on the toolchain,
-and uploads every scan as `vulncheck-go-<version>`. Every `setup-go` step of
-the workflows sets `check-latest: true`, so a runner's cached older patch is
-not used: Go 1.26.8, for example, has eleven standard-library vulnerabilities
+and uploads every scan as `vulncheck-go-<version>`. Both versions restore the
+same module cache as the runtime jobs, rather than saving the dependencies
+again per toolchain. They also restore the runtime build-cache key for their
+exact Go version. A successful default-branch scan saves a missing build
+cache, including for the newer toolchain; pull requests only restore it.
+Cache-save failures do not change the scan's result. The build cache
+contains no module sources. Scanner or nested-probe modules
+absent from the shared module cache are downloaded on demand. Cache hits
+never skip a scan, cache its verdict or retain the vulnerability database:
+every run invokes govulncheck against the current advisories.
+
+Every `setup-go` step of the workflows sets `check-latest: true`, so a
+runner's cached older patch is not used: Go 1.26.8, for example, has eleven standard-library vulnerabilities
 that the check reports and that 1.26.9 fixes. `go.mod` also names
 `toolchain go1.26.9`, so a `go` command of an older 1.26 patch switches to it
 in this repository (with the default `GOTOOLCHAIN=auto`). The `toolchain`
@@ -966,6 +977,15 @@ falls back to libcephfs. Outside the tag runner, build it with the
 | `plan-<category>` | `tag-plan.json` from the `Plan` job, and `modules/` when it downloaded the modules |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage, and the `code` batch results (Code checks) |
 
+Every upload explicitly retains its artifact for 7 days, or 14 days if the
+job or its current composite action has already failed when the upload runs.
+Image identities and plans
+uploaded before a later test failure keep their original 7-day expiry;
+the final native and cleanup diagnostics use the failure retention.
+The periodic `History` job still downloads the current run's artifacts
+before storing its rows on the durable `scenario-history` branch. Retention
+applies to new uploads only; existing artifacts keep their recorded expiry.
+
 `native/report.json` has these fields of interest:
 
 - `classification`:
@@ -1073,7 +1093,7 @@ campaign downloads the run's `tag-scenario-*` artifacts and runs
 branch. It stores the rows in `rows/<run-id>-<run-attempt>.jsonl`, one file
 per run attempt that is only ever appended to, rewrites `summary.json`, and
 pushes the commit. A branch keeps the history without expiry (artifacts
-expire after at most 90 days and caches are evicted), needs no service
+expire after 7 or 14 days and caches are evicted), needs no service
 outside the repository, and makes every update a reviewable commit. A row
 without a run identity is skipped with a warning; a row that conflicts with
 a stored one fails the job and changes nothing.

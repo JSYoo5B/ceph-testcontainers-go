@@ -1008,9 +1008,9 @@ cannot even be detected.
 | --- | --- | --- |
 | `config set`/`config rm` on a key held by a `TemporaryConfig` handle | That handle's `Restore` | `TemporaryConfig` |
 | `osd set`/`osd unset` of a global flag | `TemporaryOSDFlag` | `TemporaryOSDFlag` |
-| `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `fault.TemporaryFullRatios` | `fault.TemporaryFullRatios` |
+| `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `TemporaryFullRatios` | `TemporaryFullRatios` |
 | `mgr module enable`/`disable` | `TemporaryMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `TemporaryMGRModule` |
-| `osd blocklist add`/`rm` of an entry a handle owns | `fault.TemporaryBlocklist` | `fault.TemporaryBlocklist` |
+| `osd blocklist add`/`rm` of an entry a handle owns | `TemporaryBlocklist` | `TemporaryBlocklist` |
 | Deleting, renaming or changing owned pools, their CRUSH rules or EC profiles | `CreatePool` descriptors, `RemovePool`, `SetPool*`, which check the native pool ID | `SetPoolReplication`, `SetPoolQuota`, `SetPoolPGCount`, `SetPoolPlacement`, `RemovePool` |
 | `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `SetOSDIn`, `RemoveOSD`, which check the OSD's UUID | `SetOSDIn`, `RemoveOSD` |
 | `auth` changes to identities created by `CreateClient`, or to daemon identities | `UpdateClientCaps`, `DeleteClient`, daemon restarts | `UpdateClientCaps`, `DeleteClient` |

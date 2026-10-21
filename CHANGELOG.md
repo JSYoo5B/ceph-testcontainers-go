@@ -320,18 +320,10 @@ change the API.
 
 ### Changed
 
-- Move `Container.TemporaryFullRatios` to `fault.TemporaryFullRatios(ctx,
-  cluster, ratios)` and its handle to `fault.FullRatiosOverride`. Read-only
-  `FullRatios`, `FullRatioSnapshot` and the query remain in `ceph`. Ordered
-  transitions, uncertain-result reconciliation, FSID/epoch checks and retryable
-  `Restore` are preserved. This next-minor source break has no compatibility
-  aliases; see `docs/fault.md`.
-
-- Move `Container.TemporaryBlocklist` to `fault.TemporaryBlocklist(ctx, cluster,
-  address, duration)` and `ceph.BlocklistOverride` to `fault.BlocklistOverride`.
-  `Address` and retryable `Restore` retain their ownership semantics; read-only
-  `BlocklistEntries` and `BlocklistEntry` remain in `ceph`. This intentional
-  next-minor source break has no compatibility aliases; see `docs/fault.md`.
+- Revert the client-session blocklist extraction into `fault`.
+  `Container.TemporaryBlocklist` and `ceph.BlocklistOverride` stay in `ceph`
+  as session-admission controls, preserving expiration ownership and retryable
+  restoration. Network faults and container pause remain in `fault`.
 
 - The CI commands `batchselect` and `tagcatalog` moved from `tools/` to
   `internal/tools/`. They only serve this repository's CI planner, so they

@@ -67,18 +67,7 @@ type Held struct {
 	Complete func(context.Context) (bool, error)
 }
 
-// FullRatiosSession is the internal view of one captured control handle and
-// bootstrap FSID. It never re-enters the topology gate or switches control.
-type FullRatiosSession = interface {
-	Read(context.Context) (ceph.FullRatioSnapshot, error)
-	Command(context.Context, ...string) ([]byte, error)
-	Identity() string
-}
-
 type hooks interface {
-	CaptureFullRatiosSession(ctx context.Context, c *ceph.Container) (FullRatiosSession, error)
-	NormalizeBlocklistSession(address string) (string, error)
-	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	TestFaults(c *ceph.Container, kind string) map[string]any
 	Admit(c *ceph.Container, op string) error
 	Reserve(ctx context.Context, c *ceph.Container, kind, key string) (any, any, error)
@@ -227,19 +216,4 @@ func OnlyMissingHostResource(err error) bool { return get().OnlyMissingHostResou
 // TestFaults snapshots the registry for unit tests. Call with the cluster mutex held.
 func TestFaults(c *ceph.Container, kind Kind) map[string]any {
 	return get().TestFaults(c, string(kind))
-}
-
-// NormalizeBlocklistSession validates and canonicalizes an exact client session.
-func NormalizeBlocklistSession(address string) (string, error) {
-	return get().NormalizeBlocklistSession(address)
-}
-
-// BlocklistEntries reads native fencing state with the topology gate held.
-func BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error) {
-	return get().BlocklistEntries(ctx, c)
-}
-
-// CaptureFullRatiosSession captures one control/identity pair with the topology gate held.
-func CaptureFullRatiosSession(ctx context.Context, c *ceph.Container) (FullRatiosSession, error) {
-	return get().CaptureFullRatiosSession(ctx, c)
 }

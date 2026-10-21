@@ -365,7 +365,7 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 	for op, policy := range sharedFaultPolicies {
 		method, ok := strings.CutPrefix(op, "fault.")
 		expected := sharedMethodPolicies[method]
-		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" || method == "Pause" || method == "TemporaryBlocklist" || method == "TemporaryFullRatios" {
+		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" || method == "Pause" {
 			expected = sharedExclusive
 		}
 		if !ok || policy != expected {
@@ -373,7 +373,7 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 		}
 	}
 
-	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "Pause", "TemporaryBlocklist", "TemporaryFullRatios", "InjectObjectDataError"} {
+	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "Pause", "TemporaryFullRatios", "InjectObjectDataError"} {
 		if _, ok := sharedFaultPolicies["fault."+method]; !ok {
 			t.Errorf("fault.%s has no shared policy", method)
 		}

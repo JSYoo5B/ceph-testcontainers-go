@@ -3,10 +3,9 @@
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
-Blocklist fencing is also extracted as `fault.TemporaryBlocklist` and
-`fault.BlocklistOverride`; its read-only query remains in `ceph`. Fullness
-uses `fault.TemporaryFullRatios` and `fault.FullRatiosOverride`, with query
-types and parsing still in `ceph`. Object errors remain for the next checkpoint. See the [migration guide](../fault.md) for the current API.
+Session blocklist and fullness policy remain in `ceph`; the blocklist
+extraction in PR #12 is reverted. Object-error injection remains in `ceph`
+for a separately reviewed checkpoint. See the [migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
@@ -22,8 +21,8 @@ first, in the stage that discovers it.
 | # | Decision |
 | --- | --- |
 | D1 | A new public package `github.com/JSYoo5B/ceph-testcontainers-go/fault`, in the same module and release stream. `fault` imports `ceph`; `ceph` never imports `fault`. There is no `fault.Run` and no second fixture lifetime: every cluster-bound fault takes the existing `*ceph.Container`. |
-| D2 | Eight entry points move: `TemporaryNetworkDelay`, `TemporaryLinkDelay`, both `InterruptNetwork` forms, `PauseContainer`, `TemporaryBlocklist`, `TemporaryFullRatios` and `InjectObjectDataError`, with their request, status and handle types, constants and netem sentinel errors (42 exported identifiers in all, see [Moves to `fault`](#moves-to-fault)). |
-| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag` and `TemporaryClientRevocation` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
+| D2 | Six entry points are in the extraction inventory: `TemporaryNetworkDelay`, `TemporaryLinkDelay`, both `InterruptNetwork` forms, `PauseContainer` and `InjectObjectDataError`, with their request, status and handle types, constants and netem sentinel errors (35 exported identifiers in all, see [Moves to `fault`](#moves-to-fault)). |
+| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `TemporaryFullRatios`, `FullRatiosOverride`, `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag` and `TemporaryClientRevocation` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
 | D4 | Service-package fault helpers (`rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink`, `rgw.Multisite.TemporaryZoneLinkDelay`) stay methods of their fixtures, because they select fixture-owned endpoints and register cleanup with the fixture. Only their return and parameter types change to `fault` types. |
 | D5 | Reversible leases keep their own undo (`Restore` or `Resume`). The one-shot `InjectObjectDataError` keeps returning no handle: its recovery is a rewrite (`RepairPG`) or an OSD restart. No universal `Restore`, `Close` or cleanup interface is introduced. |
 | D6 | Stage 2 adds a ceph-owned fault registry inside `*ceph.Container` and an internal typed facade `internal/faulthook`, registered through `internal/hookreg` the way `internal/servicehook` is. Terminate keeps calling the registered undo functions in today's fixed phase order. No mutex, map or general cleanup registration becomes public. |
@@ -45,8 +44,13 @@ rbd, cephfs, rgw, internal/multicluster ──imports──▶ fault, ceph
   query APIs, and normal scrub and recovery (`DeepScrubPG`, `RepairPG`,
   `PGInconsistencies`, `WaitForPGClean`).
 - `fault` owns dedicated fault operations: netem delay, loss, rate and
-  packet faults; endpoint interruption; container pause; blocklist fencing;
-  temporary fullness; injected object errors.
+  packet faults; endpoint interruption; container pause; dedicated object-error
+  injection subject to its own reviewed checkpoint.
+- Session blocklisting changes Ceph admission state, and full ratios change
+  Ceph OSDMap policy. Their mutation APIs and restoration handles stay in `ceph`,
+  alongside their queries. A test using these controls to induce failure does
+  not make them external fault APIs. Shared internal tracking does not determine
+  the public package. Full-ratio override naming is a separate bounded task.
 - `fault` may reuse `ceph` controls (for example a fault recipe built on
   `TemporaryConfig`), but a `Temporary` prefix alone does not move an API.
 
@@ -58,13 +62,8 @@ Proposed names are the stage 3 and stage 4 starting point; final spelling
 is decided in those stages. Cluster-bound functions take the cluster as the
 second parameter. The pause extraction chooses `fault.Pause` and
 `*fault.PauseLease` as the final public names, with `Resume` unchanged.
-The tables below retain the original stage 1 names. Blocklist extraction keeps
-its plain topology mutex wait, expiration-based ownership and explicit Restore;
-Terminate does not gain a per-entry blocklist undo. Internal hooks reuse the
-ceph-owned query parser and exact-session normalizer. Fullness extraction
-uses a typed internal view of the captured control/FSID session, reusing the
-query parser and command error classification; its mutation journal and
-normalization move to `fault`.
+The tables below retain the original stage 1 names for moving APIs. The
+blocklist and fullness moves are excluded by the revised package policy.
 
 | Today (`ceph`) | Proposed (`fault`) | Source |
 | --- | --- | --- |
@@ -73,8 +72,6 @@ normalization move to `fault`.
 | `(*Container).InterruptNetwork(ctx, ctr, NetworkPlane)` | `InterruptNetwork(ctx, cluster, ctr, ceph.NetworkPlane)` | `ceph/network.go:(*Container).InterruptNetwork` |
 | `InterruptNetwork(ctx, ctr, name)` | `InterruptLink(ctx, ctr, network)` (renamed: one package cannot hold both forms) | `ceph/network.go:InterruptNetwork` |
 | `(*Container).PauseContainer(ctx, ctr)` | `PauseContainer(ctx, cluster, ctr)` | `ceph/pause.go:PauseContainer` |
-| `(*Container).TemporaryBlocklist(ctx, address, duration)` | `TemporaryBlocklist(ctx, cluster, address, duration)` | `ceph/fencing.go:TemporaryBlocklist` |
-| `(*Container).TemporaryFullRatios(ctx, FullRatios)` | `TemporaryFullRatios(ctx, cluster, ceph.FullRatios)` | `ceph/full_ratios.go:TemporaryFullRatios` |
 | `(*Container).InjectObjectDataError(ctx, pool, object, osdID)` | `InjectObjectDataError(ctx, cluster, pool, object, osdID)` | `ceph/scrub.go:InjectObjectDataError` |
 
 Types, methods, constants and variables that move with them:
@@ -83,13 +80,13 @@ Types, methods, constants and variables that move with them:
 | --- | --- | --- |
 | Request types | `NetworkDelay` (all fields, including `Rate`, `QueueLimit`, `Reorder`, `Duplicate`, `Corrupt`), `NetworkPeer`, `NetworkRate`, `NetworkPacketFault` | `ceph/network_delay.go` |
 | Status type | `NetworkDelayStatus` | `ceph/network_delay.go` |
-| Handle types | `NetworkDelayLease`, `NetworkInterruption`, `ContainerPause`, `BlocklistOverride`, `FullRatiosOverride` | `network_delay.go`, `network.go`, `pause.go`, `fencing.go`, `full_ratios.go` |
-| Handle methods | `NetworkDelayLease.Restore`, `.Status`; `NetworkInterruption.Restore`; `ContainerPause.Resume`; `BlocklistOverride.Restore`, `.Address`; `FullRatiosOverride.Restore` | same files |
+| Handle types | `NetworkDelayLease`, `NetworkInterruption`, `ContainerPause` | `network_delay.go`, `network.go`, `pause.go` |
+| Handle methods | `NetworkDelayLease.Restore`, `.Status`; `NetworkInterruption.Restore`; `ContainerPause.Resume` | same files |
 | Value methods | `NetworkRate.String`, `NetworkPacketFault.IsZero`, `NetworkPacketFault.String` | `ceph/network_delay.go` |
 | Constants | `NetemHelperImage`, `MaxNetworkDelay`, `MaxNetworkPeers`, `BitPerSecond`, `KilobitPerSecond`, `MegabitPerSecond`, `GigabitPerSecond`, `MinNetworkRate`, `MaxNetworkRate`, `DefaultNetworkQueueLimit`, `MaxNetworkQueueLimit` | `ceph/network_delay.go` |
 | Sentinel errors | `ErrNetemImageUnsupported`, `ErrNetemPermissionDenied`, `ErrNetemKernelUnsupported` | `ceph/network_delay.go` |
 
-Count: 8 entry points, 10 types, 10 methods, 11 constants, 3 variables.
+Count: 6 entry points, 8 types, 7 methods, 11 constants, 3 variables.
 
 The sentinels keep their categories: `errors.Is(err, ceph.ErrImageCapability)`
 and `errors.Is(err, ceph.ErrEnvironmentUnavailable)` stay true. `fault`
@@ -103,8 +100,8 @@ defines its own unexported category error type with the same `Is` rule as
 | Identifier | Reason |
 | --- | --- |
 | `NetworkPlane`, `PublicNetworkPlane`, `ClusterNetworkPlane`, `NetworkName`, `ClusterNetworkName`, `HasSeparateClusterNetwork` | Topology of the cluster's bridges. `fault` request types refer to `ceph.NetworkPlane`. |
-| `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Read-only query with a tenant counterpart (`sharedOpen`). |
-| `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Query of OSDMap policy. `FullRatios` is also the request type of `fault.TemporaryFullRatios`. |
+| `(*Container).TemporaryBlocklist`, `BlocklistOverride`, `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Ceph session-admission control and ownership, plus read-only queries (`sharedOpen` for the tenant query). |
+| `(*Container).TemporaryFullRatios`, `FullRatiosOverride`, `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Global OSDMap policy mutation, explicit restoration and read-only query. Override naming stays a separate `ceph` task. |
 | `DeepScrubPG`, `RepairPG`, `PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
 | `SetOSDIn`, `RemoveOSD`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
 | `DaemonAddresses`, `HealthDetails`, `PoolPGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
@@ -439,8 +436,8 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 | `cluster.InterruptNetwork(ctx, ctr, ceph.PublicNetworkPlane)` | `fault.InterruptNetwork(ctx, cluster, ctr, ceph.PublicNetworkPlane)` |
 | `ceph.InterruptNetwork(ctx, ctr, name)` | `fault.InterruptLink(ctx, ctr, name)` |
 | `cluster.PauseContainer(ctx, osd)` | `fault.Pause(ctx, cluster, osd)` |
-| `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | `fault.TemporaryBlocklist(ctx, cluster, addr, time.Minute)` |
-| `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | `fault.TemporaryFullRatios(ctx, cluster, ceph.FullRatios{...})` |
+| `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | Unchanged in `ceph` (session admission) |
+| `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | Unchanged in `ceph` (OSDMap policy; naming reviewed separately) |
 | `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` |
 | `errors.Is(err, ceph.ErrNetemKernelUnsupported)` | `errors.Is(err, fault.ErrNetemKernelUnsupported)`; `errors.Is(err, ceph.ErrEnvironmentUnavailable)` unchanged |
 | `var l *ceph.NetworkInterruption = mirror.InterruptPeerLink(...)` | `var l *fault.NetworkInterruption = mirror.InterruptPeerLink(...)` |
@@ -476,7 +473,7 @@ above. Stage 5 confirms or overturns this explicitly.
 | --- | --- | --- | --- |
 | 2. Internal boundary | Nothing public. Adds `ceph/fault_registry.go`, `ceph/fault_hooks.go`, `internal/faulthook`, `hookreg.Fault`, `sharedFaultPolicies`; rewrites the eight entry points and `terminate` onto them. | Atomic reservation against `closed`; settle-after-close self-restore with `errNativeTerminated`; handles returned with errors; previous-handle replies of interruption and pause; nil replies of delay, blocklist and full ratios overlap; token identity on release; phase order and lock mode per phase; `blockedNetworks`; retryable Terminate; lock ordering table. | Existing unit tests unchanged and passing (`network_delay*_test.go`, `network_link_delay_test.go`, `network_packet_faults_test.go`, `network_rate_test.go`, `pause_test.go`, `fencing_test.go`, `full_ratios_test.go`, `scrub_test.go`, `ceph_test.go` Terminate cases, `context_lock_test.go`, `shared_gate_test.go`). New registry tests: reserve after close, double reserve, settle after close, release by stale token, phase order with a failing undo per phase, retry after failure, concurrent `Restore` and `Terminate` under `-race`. Full pre-push check. No native run needed: no Docker behavior changes. |
 | 3. Network faults | `fault` package with netem delay (cluster and link), interruption (cluster and link), their types, constants and sentinels, netem backend and its test seam; unit tests move with them; rbd, cephfs, rgw, `internal/multicluster`, `internal/dockerbridge` and integration call sites change in the same change. | Helper capability and kernel admission, peer, port and address-family selection, exact qdisc and filter ownership, foreign-state refusal, `Gone` detection, IPv4-only standalone interruption, helper labels, caller-owned obligations of link faults. | Unit tests in `fault`; the `Admit` enumeration test; `go vet`, race, lint, script tests. Native: `TestNetworkDelay`, `TestNetworkDelayPeerIPv6`, `TestNetworkBandwidth`, `TestNetworkBandwidthIPv6`, `TestNetworkBandwidthSevere`, `TestNetworkPacketFaults`, `TestNetworkPacketFaultsIPv6`, `TestOSDReplicationPeerPathCut`, `TestDualStackFamilyCut`, `TestSeparateClusterNetworksAndInterruptions`, `TestSeparateIPv6ClusterNetworksAndInterruptions`, `TestOSDHeartbeatFailure`, `TestFiveMonitorQuorumAndNetworkRecovery`, `TestRBDMirrorBandwidthCatchUp`, `TestMultiClusterRBDPeerNetworkInterruption`, `TestMultiClusterRGWPeerNetworkTopology`, `TestMultiClusterRGWZoneLinkPathCut`, `TestRBDMirrorPeerPathCut`, `TestCephFSMirrorPeerPathCut`, `TestCephFSClientMDSPathCut`, `TestCephFSMDSOSDPathCut` and `TestCephFSMDSOSDsPathCut`, on bridge and host network where they run today, with source and image identities and cleanup recorded. |
-| 4. Remaining families | Pause, blocklist, full ratios, object error, each in its own bounded change. | Control-container refusal and paused-state refusal; blocklist session normalization, refusal to adopt or renew, expiry-as-absence, `Until` identity, detached readback; full ratios ordered steps, `pending` reconciliation and FSID identity; object error preconditions, `sharedRecycle`, and its recovery by rewrite or restart. `TemporaryConfig`, `TemporaryOSDFlag` and the rest stay. | Moved unit tests; native `TestPausedOSDFaults`, `TestClientFencing`, `TestOSDFullRatios`, `TestScrubInconsistency`, and the CephFS and RBD fixtures that pause or fence. |
+| 4. Remaining families | Pause and dedicated object error, each in its own bounded change. Blocklist and fullness remain in `ceph`. | Control-container/paused-state refusal, object-error preconditions, `sharedRecycle` and recovery by rewrite or restart. Preserve blocklist expiration/token ownership and full-ratio ordered reconciliation in `ceph`; their public package stays unchanged. | Moved pause/object-error tests; native `TestPausedOSDFaults` and `TestScrubInconsistency`. Verify restored blocklist callers with `TestClientFencing` and `TestRBDPausedLockOwner`. |
 | 5. Public migration | Examples, `docs/fault.md` (new API page), `internal/apiinventory` gains `"fault": "docs/fault.md"`, `docs/ceph.md`, service pages, the fault guide, the upgrade guide and CHANGELOG. | Explicit wrapper decision; before and after call forms; scenario discovery and declaration selection still reach the moved code. | `internal/apiinventory` test; `tag_scenarios.py` plan and `replay_declaration_selection.py` show the netem and fault batches selected for a change under `fault/` (paths outside `internal/integration` fall back to all batches today, so a new public package must not narrow selection). |
 
 ## Risks
@@ -513,5 +510,5 @@ above. Stage 5 confirms or overturns this explicitly.
   carries rate and packet faults.
 - Whether `TemporaryOSDFlag` should be re-exported from `fault` for
   discoverability (decision here: no, documentation links suffice).
-- Whether stage 4 may switch `TemporaryBlocklist` to a context-aware lock;
-  the default is to keep today's behavior.
+- A future `ceph.TemporaryBlocklist` lock change requires its own review;
+  reverting the package extraction preserves the current plain mutex wait.

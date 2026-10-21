@@ -26,6 +26,7 @@ runs:
       if: ${{ always() && (inputs.phase == 'check' || steps.inspect.outcome == 'failure') }}
       uses: actions/upload-artifact@v7
       with:
+        retention-days: ${{ (job.status == 'failure' || steps.inspect.outcome == 'failure') && 14 || 7 }}
         name: ${{ inputs.phase == 'snapshot' && format('{0}-baseline', inputs.artifact_name) || inputs.artifact_name }}
         path: ${{ inputs.directory }}/
         if-no-files-found: error

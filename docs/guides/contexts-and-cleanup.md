@@ -78,7 +78,7 @@ Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
 Examples are `TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`,
-`fault.TemporaryBlocklist` and their `Restore` methods, `SetOSDIn`, `SetPoolQuota`,
+`TemporaryBlocklist` and their `Restore` methods, `SetOSDIn`, `SetPoolQuota`,
 `SetPoolReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, `rgw.Gateway.Admin`, and descriptor getters such as
 `OSDs()` and `Monitors()`. Some cleanup steps also use their own short context,
@@ -339,7 +339,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
-| `TemporaryConfig`, `TemporaryMessengerPolicy`, `TemporaryClientRevocation`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `fault.TemporaryFullRatios`, `fault.TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `TemporaryConfig`, `TemporaryMessengerPolicy`, `TemporaryClientRevocation`, `TemporaryOSDFlag`, `TemporaryMGRModule`, `TemporaryFullRatios`, `TemporaryBlocklist`, `cephfs` `TemporarySessionTimeouts`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -360,8 +360,8 @@ back. Some wrap several native settings:
 | `TemporaryClientRevocation` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
 | `TemporaryOSDFlag` | One global OSD map flag |
 | `TemporaryMGRModule` | Whether one MGR module is enabled |
-| `fault.TemporaryFullRatios` | The nearfull, backfillfull and full ratios |
-| `fault.TemporaryBlocklist` | Adds one exact client-session blocklist entry |
+| `TemporaryFullRatios` | The nearfull, backfillfull and full ratios |
+| `TemporaryBlocklist` | Adds one exact client-session blocklist entry |
 | `cephfs.Filesystem.TemporarySessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
 | `cephfs.Filesystem.TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | One pin policy field of a subvolume or group |
 
@@ -410,10 +410,10 @@ Handle-specific details:
 - `TemporaryClientRevocation.Restore` refuses an identity recreated outside
   the fixture with another key or capabilities. `DeleteClient` makes the
   removal permanent instead of restoring it.
-- `fault.BlocklistOverride.Restore` removes only the entry it created. An entry
+- `TemporaryBlocklist.Restore` removes only the entry it created. An entry
   that expired on its own counts as removed; an entry whose expiry someone
   renewed is refused.
-- `fault.FullRatiosOverride.Restore` accepts only the last tuple it applied, or
+- `TemporaryFullRatios.Restore` accepts only the last tuple it applied, or
   either side of one uncertain command. The native CLI changes one ratio per
   command, so apply and restore are not atomic.
 - `TemporarySessionTimeouts.Restore` refuses a filesystem that was recreated

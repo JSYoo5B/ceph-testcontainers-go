@@ -11,7 +11,6 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 func TestOSDFullRatios(t *testing.T) {
@@ -51,7 +50,7 @@ func TestOSDFullRatios(t *testing.T) {
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=True)`, fullRatiosRADOSProbe, phase)
 			}
 			probe(t, "seed")
-			for _, scenario := range []struct {
+			for _, fault := range []struct {
 				name, code string
 				ratios     ceph.FullRatios
 			}{
@@ -59,8 +58,8 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 				{"backfillfull", "OSD_BACKFILLFULL", ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .95}},
 				{"full", "OSD_FULL", ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003}},
 			} {
-				t.Run(scenario.name, func(t *testing.T) {
-					handle, err := fault.TemporaryFullRatios(ctx, cluster, scenario.ratios)
+				t.Run(fault.name, func(t *testing.T) {
+					handle, err := cluster.TemporaryFullRatios(ctx, fault.ratios)
 					// A failed multi-command application may still own a partial
 					// override. Register its restoration before checking the error.
 					if handle != nil {
@@ -76,15 +75,15 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 						t.Fatal("apply full ratios", err)
 					}
 					applied := integrationFullRatios(t, ctx, cluster)
-					expected := ceph.FullRatios{NearFull: float64(float32(scenario.ratios.NearFull)), BackfillFull: float64(float32(scenario.ratios.BackfillFull)), Full: float64(float32(scenario.ratios.Full))}
+					expected := ceph.FullRatios{NearFull: float64(float32(fault.ratios.NearFull)), BackfillFull: float64(float32(fault.ratios.BackfillFull)), Full: float64(float32(fault.ratios.Full))}
 					if applied.FSID != original.FSID || applied.Epoch <= original.Epoch || applied.Ratios != expected {
 						t.Fatalf("native OSDMap ratios differ: %+v expected=%+v", applied, expected)
 					}
-					if overlap, err := fault.TemporaryFullRatios(ctx, cluster, scenario.ratios); err == nil || overlap != nil {
+					if overlap, err := cluster.TemporaryFullRatios(ctx, fault.ratios); err == nil || overlap != nil {
 						t.Fatal("overlapping full-ratio lease was admitted")
 					}
-					waitFullRatioHealth(t, ctx, cluster, original.FSID, scenario.code, true)
-					probe(t, scenario.name)
+					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, true)
+					probe(t, fault.name)
 					copy := *handle
 					if err := copy.Restore(ctx); err != nil {
 						t.Fatal("restore via copied handle", err)
@@ -96,13 +95,13 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 					if restored.FSID != original.FSID || restored.Ratios != original.Ratios || restored.Epoch < applied.Epoch {
 						t.Fatalf("native full ratios not restored: before=%+v after=%+v", original, restored)
 					}
-					waitFullRatioHealth(t, ctx, cluster, original.FSID, scenario.code, false)
-					probe(t, "resumed-"+scenario.name)
+					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, false)
+					probe(t, "resumed-"+fault.name)
 					state, err := cluster.PoolStatus(ctx, "tc-full-ratios")
 					if err != nil || state.ID != pool.ID || state.Size != pool.Size || state.PGNum != pool.PGNum || state.Quota != pool.Quota {
 						t.Fatalf("ratio override changed pool identity/policy: %+v %v", state, err)
 					}
-					t.Logf("FULL_RATIOS phase=%s fsid=%s pool_id=%d native_epoch=%d→%d→%d native_match=true original_ratios_restored=true", scenario.name, original.FSID, pool.ID, original.Epoch, applied.Epoch, restored.Epoch)
+					t.Logf("FULL_RATIOS phase=%s fsid=%s pool_id=%d native_epoch=%d→%d→%d native_match=true original_ratios_restored=true", fault.name, original.FSID, pool.ID, original.Epoch, applied.Epoch, restored.Epoch)
 				})
 			}
 		})
