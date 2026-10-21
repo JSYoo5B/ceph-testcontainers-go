@@ -10,6 +10,10 @@ keyring and invoke mkfs. A non-empty store without that marker could therefore
 have its existing keyring overwritten before mkfs failed. A marker with foreign
 local identities skipped initialization and entered the daemon directly.
 
+The [launch recipe](osd-launch-recipes.md) separately reconstructs fresh file
+Readers and admits one container-creation attempt. Neither preparation rule
+establishes retained-store ownership.
+
 ## Admission rules
 
 - Validate a numeric OSD ID and a non-nil UUID before constructing the data path

@@ -602,11 +602,11 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	return launch.osd, c.assignOSDDeviceClass(ctx, launch.osd)
 }
 
-// osdLaunch is an OSD that Ceph has registered and c.osds owns, with the
-// options of its container, which does not exist yet.
+// osdLaunch is a registered, owned OSD and its immutable creation recipe.
+// Copies share the recipe's single-attempt guard; they do not authorize replay.
 type osdLaunch struct {
-	osd     *OSDContainer
-	options []testcontainers.ContainerCustomizer
+	osd    *OSDContainer
+	recipe *osdLaunchRecipe
 }
 
 // registerOSD allocates the next OSD ID with a new key and records the OSD in
@@ -682,41 +682,40 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets m
 		buckets[config.Host] = true
 	}
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
-	launch.options = []testcontainers.ContainerCustomizer{
-		c.adminClient(), testcontainers.WithEntrypoint("/bin/sh", "/tc/osd.sh"), testcontainers.WithCmd(),
-		testcontainers.WithEnv(map[string]string{
-			"CEPH_OSD_ID": strconv.Itoa(id), "CEPH_OSD_UUID": osdUUID, "CEPH_OSD_HOST": config.Host,
-			"CEPH_OSD_ROOT": config.Root, "CEPH_OSD_RACK": config.Rack, "CEPH_OSD_DEVICE_CLASS": config.DeviceClass,
-		}),
-		testcontainers.WithFiles(scriptFile("osd"), textFile("/etc/ceph/osd.keyring", keyring, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", fmt.Sprintf("/var/run/ceph/ceph-osd.%d.asok", id)}).WithStartupTimeout(c.settings.startupTimeout)),
-	}
 	if c.osdMemory != nil {
 		if err := c.osdMemory.requireFreshOSD(ctx, id); err != nil {
 			return launch, err
 		}
-		launch.options = append(launch.options, c.osdMemory.mount("/var/lib/ceph/osd"))
 	}
 	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
 		return launch, err
 	}
-	launch.options = append(launch.options, c.runMount()...)
-	if c.clusterNetwork != nil {
-		launch.options = append(launch.options, network.WithNetworkName(nil, c.clusterNetwork.Name))
-	}
-	launch.options = append(launch.options, c.ownedLabel())
+	launch.recipe = c.newOSDLaunchRecipe(osd, keyring)
 	return launch, nil
 }
 
 // startOSD creates and starts the container of a registered OSD and records
 // it in the OSD's handle, also when the start then fails. It does not use
-// c.mu, so that Run can start several OSDs at once.
+// c.mu, so that Run can start several OSDs at once. The topology caller holds
+// c.mu until every start joins; a launch admits only one creation attempt.
 func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
+	if launch.osd == nil || launch.recipe == nil {
+		return errors.New("OSD launch preparation is incomplete")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !launch.recipe.started.CompareAndSwap(false, true) {
+		return fmt.Errorf("osd.%d creation was already attempted; do not replay its launch", launch.osd.ID)
+	}
+	if launch.osd.Container != nil {
+		return fmt.Errorf("osd.%d already has a container; do not rebind its handle", launch.osd.ID)
+	}
 	run := c.osdRunner
 	if run == nil {
 		run = runContainer
 	}
-	ctr, err := run(ctx, c.settings.osdImage, launch.options...)
+	ctr, err := run(ctx, launch.recipe.image, launch.recipe)
 	if ctr != nil {
 		launch.osd.Container = ctr
 	}
