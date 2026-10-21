@@ -355,6 +355,12 @@ change the API.
 
 ### Fixed
 
+- Refuse non-empty unready OSD stores before overwriting a keyring or invoking
+  mkfs. Validate local stored numeric ID, OSD UUID and configured cluster FSID
+  before same-container restart, and retain partial initialization for cleanup
+  rather than replaying mkfs. This is a bootstrap-admission prerequisite for #6,
+  not a retained-store/replacement-container API.
+
 - `rgw.Multisite.WaitBucketSyncReady` returns the last status it read when the
   wait ends; an attempt that failed or was canceled afterwards no longer
   replaces it with an empty one. Its unit test no longer depends on a 20 ms

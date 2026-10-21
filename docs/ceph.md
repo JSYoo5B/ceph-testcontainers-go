@@ -2068,6 +2068,14 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 ```
 
+OSD bootstrap initializes only an empty directory. It refuses non-empty partial
+stores without a regular ready marker before copying the launch keyring or
+running mkfs. A ready store must have matching numeric ID, OSD UUID and configured
+cluster FSID, with non-empty regular identity/keyring files, before daemon
+startup. Failed initialization is not automatically replayed. See
+[bootstrap admission](design/osd-bootstrap-admission.md) for the exact checks
+and limits; this does not introduce retained-store detach/reopen support.
+
 #### AddOSD
 
 ```golang
