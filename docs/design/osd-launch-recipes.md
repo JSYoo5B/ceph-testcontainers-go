@@ -10,7 +10,7 @@ Same-container Stop/Start remains available through its existing handle.
 An OSD registration records its owned descriptor before container creation.
 After the existing fresh-store and admin-socket preparation succeeds, its launch
 captures config/admin credentials, OSD keyring, numeric ID/UUID/placement, image
-reference, network/volume names, ownership label and startup timeout as values.
+reference, network/volume names (including the optional ordinary OSD volume), ownership label and startup timeout as values.
 The topology caller holds the cluster lock while preparing and starting OSDs;
 concurrent initial starts use distinct recipes. Config bytes are copied under
 the config lock. The bootstrap script remains the compiled embedded script.
@@ -52,3 +52,7 @@ Native checks separately exercise actual initial/runtime OSD creation, selected
 bridge/host and disk/tmpfs profiles, and same-container restart/readback. A
 passing fresh launch does not close #6's different-container, single-replica
 known-byte oracle, current MON-registration validation or exclusive attachment.
+
+The ordinary volume backend is described in
+[OSD volume storage](osd-volume-storage.md); it does not change this one-attempt
+launch contract.
