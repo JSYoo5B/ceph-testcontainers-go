@@ -40,6 +40,10 @@ to `ceph.Run` together, and their `Container` embeds `*ceph.Container`. The API
 reference for every package is also available with `go doc` and on
 pkg.go.dev.
 
+The proposed cross-package naming convention and source inventory are tracked
+in [API naming](docs/design/api-naming.md). Proposal names are not current APIs;
+use the package references above for the implemented surface.
+
 ## Requirements
 
 - Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
