@@ -4829,7 +4829,8 @@ Client identity type is introduced: ClientConfig, WithClientIdentity and
 RunNativeCommand retain their existing ownership and credential contracts.
 The method exposes an administrative handle and is refused on shared clusters.
 
-RBD/CephFS feature operations use the client toolkit while local daemon socket
+RBD/CephFS feature operations, `ObjectWatchers` and `PGInconsistencies` use
+the client toolkit while local daemon socket
 and file operations stay with that daemon. Ordinary RBD needs no rbd-aux
 image. RGW administration uses the RGW runtime and is not a mandatory client
 capability. Combine matching Ceph releases and validate custom image closures

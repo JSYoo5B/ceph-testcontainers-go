@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestImageSetSelectionDoesNotFallback(t *testing.T) {
@@ -26,6 +27,16 @@ func TestRoleImagesRejectLegacyOverridesBeforeAllocation(t *testing.T) {
 	c, err := RunWithImages(t.Context(), ImageSet{Essential: "core"}, WithOSDImage("legacy"))
 	if c != nil || !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("allocated or wrong refusal: %v %v", c, err)
+	}
+}
+
+func TestRADOSInspectionRequiresToolkitInsteadOfCoreFallback(t *testing.T) {
+	c := &Container{Container: &monitorLifecycleDaemon{}, settings: options{startupTimeout: time.Second, imageSet: &ImageSet{Essential: "core"}}}
+	if _, err := c.PGInconsistencies(t.Context(), "7.0"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("scrub inspection fell back to core: %v", err)
+	}
+	if _, err := c.ObjectWatchers(t.Context(), "pool", "", "object"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("watcher inspection fell back to core: %v", err)
 	}
 }
 

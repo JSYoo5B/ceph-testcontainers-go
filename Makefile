@@ -441,4 +441,4 @@ roles-v2-runtime:
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=40m ./internal/integration -run '^Test(ImmutableObjectCache|CephFSSnapshotSchedule|RBDAutomaticSnapshotSchedule)$$'
 
 roles-v2-oracles:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration -count=1 -v -timeout=40m ./internal/integration -run '^Test(SharedCluster|SharedClusterServices|MessengerPolicy|NativeCommands)$$'
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration -count=1 -v -timeout=40m ./internal/integration -run '^Test(SharedCluster|SharedClusterServices|MessengerPolicy|NativeCommands|ScrubInconsistency|PausedObjectWatcher)$$'
