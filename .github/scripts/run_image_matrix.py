@@ -149,7 +149,7 @@ def image_references(variant, layout, release, roles=None):
     if layout == "all":
         if tuple(roles) != tuple(ROLE_ENV):
             raise ValueError("the all layout serves all four roles")
-        reference = RELEASES[release] if variant == "official" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
+        reference = RELEASES[release] if variant == "official" and CONTRACT == "legacy" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
         return {"all": reference}
     return {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
             for role in ROLE_ENV if role in roles}
