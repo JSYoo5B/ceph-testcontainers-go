@@ -25,6 +25,7 @@ type osdLaunchRecipe struct {
 	hostNetwork                             bool
 	publicAddress, publicNetwork            string
 	clusterNetwork, runVolume, memoryVolume string
+	dataVolume                              string
 	owner                                   string
 	timeout                                 time.Duration
 	started                                 atomic.Bool
@@ -48,6 +49,9 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	}
 	if c.osdMemory != nil {
 		r.memoryVolume = c.osdMemory.name
+	}
+	if c.osdVolume != nil {
+		r.dataVolume = c.osdVolume.name
 	}
 	return r
 }
@@ -75,6 +79,9 @@ func (r *osdLaunchRecipe) Customize(req *testcontainers.GenericContainerRequest)
 	}
 	if r.memoryVolume != "" {
 		opts = append(opts, osdLaunchVolume(r.memoryVolume, "/var/lib/ceph/osd", true))
+	}
+	if r.dataVolume != "" {
+		opts = append(opts, osdLaunchVolume(r.dataVolume, "/var/lib/ceph/osd", true))
 	}
 	if r.runVolume != "" {
 		opts = append(opts, osdLaunchVolume(r.runVolume, adminSocketDir, false))

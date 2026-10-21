@@ -335,6 +335,8 @@ Starts only the MON and MGR topology. Add storage later with
   (for example `TOO_FEW_OSDS`) until OSDs join.
 - With [WithOSDInMemoryStorage](#withosdinmemorystorage), the tmpfs volume is
   created on the first `AddOSD`.
+- [WithOSDVolumeStorage](#withosdvolumestorage) also defers its ordinary
+  named volume until the first `AddOSD`.
 - Removing the last OSD is still refused later.
 
 Use it for MON-only or MGR-only tests, bootstrap-ordering tests, and to apply OSD
@@ -506,7 +508,40 @@ the logical sizes.
   (compatible Docker Desktop engines work). Rootless or managed engines may
   refuse it. No host path, privileged container or extra image is needed.
 
-The default (without this option) remains a container-local sparse file per OSD.
+Without either storage-volume option, the default remains a container-local
+sparse file per OSD.
+
+#### WithOSDVolumeStorage
+
+```golang
+ceph.WithOSDVolumeStorage()
+```
+
+Keeps classic BlueStore OSD directories in one ordinary Docker local named
+volume owned by the cluster. Each OSD still gets its own sparse file with
+[WithOSDBlockSize](#withosdblocksize) as its logical capacity. Unlike the tmpfs
+option, bytes do not depend on a live keeper. This option cannot be combined
+with MemStore or `WithOSDInMemoryStorage`; invalid combinations fail before
+resource allocation.
+
+The first OSD allocates a unique volume and an isolated idle helper from the
+control image. The helper has no network or cluster credentials and manages
+fresh and purged directories. A stopped or restarted helper refuses further
+storage operations before new OSD registration; it is not automatically replaced.
+Existing OSDs can still stop/start with their original containers.
+
+`RemoveOSD` drains and purges the native registration, removes its container,
+then discards only its directory. `Terminate` removes all owned OSDs and the
+helper before deleting the volume without force. A failed or busy deletion
+retains ownership for another `Terminate` call. Changed volume metadata is
+refused before directory operations or deletion. Never externally modify or
+attach this owned volume while using the cluster.
+
+There is no caller-supplied volume, host path, device or driver option. This
+backend does not expose retained detach/reopen, replacement-container recovery,
+exclusive attachment or host-reboot durability. `Terminate` always discards its
+owned volume. See [the storage design](design/osd-volume-storage.md) for the
+remaining lifecycle work in #6.
 
 #### WithOSDObjectStore
 
@@ -527,8 +562,8 @@ argument is a `ceph.OSDObjectStore`:
   OSDs. A stopped OSD keeps its data across `Stop` and `Start`; an OSD that is
   killed, or whose container is removed, loses it.
 - MemStore cannot be combined with
-  [WithOSDInMemoryStorage](#withosdinmemorystorage), which keeps BlueStore files
-  in memory, and [InjectObjectDataError](#injectobjectdataerror) needs
+  [WithOSDInMemoryStorage](#withosdinmemorystorage) or
+  [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [InjectObjectDataError](#injectobjectdataerror) needs
   BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 

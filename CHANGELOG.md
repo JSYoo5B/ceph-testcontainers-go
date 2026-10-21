@@ -8,6 +8,13 @@ change the API.
 
 ### Added
 
+- `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
+  ordinary cluster-owned Docker local named volume, allocated on the first OSD.
+  Purged OSD directories are discarded only after container removal; busy volume
+  deletion stays retryable through `Terminate`. This is the storage backend
+  increment for #6, without a public retained detach/reopen API. See
+  `docs/design/osd-volume-storage.md`.
+
 - Add the first machine-validated Messenger declaration/requirement/case join.
   The existing targeted-command recipe emits a source/build/image-bound receipt
   only after successful owned cleanup. An offline validator rejects incomplete,

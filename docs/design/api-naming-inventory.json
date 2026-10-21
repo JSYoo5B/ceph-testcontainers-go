@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 301,
+    "ceph": 302,
     "cephfs": 154,
     "fault": 34,
     "rbd": 76,
@@ -2105,6 +2105,13 @@
       "kind": "function",
       "signature": "func(store OSDObjectStore) Option",
       "proposed": "ceph.WithOSDObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDVolumeStorage",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithOSDVolumeStorage",
       "decision": "baseline"
     },
     {
