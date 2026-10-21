@@ -1377,5 +1377,16 @@ func helper(t *test.T) {}
         self.assertTrue(engine.evaluate(catalog[0]["constraint"], {"all"}))
 
 
+class VersionedRoleDeclarationTests(unittest.TestCase):
+    def test_v2_roles_are_explicit_and_legacy_defaults_are_preserved(self):
+        declared = fixture()
+        declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=client,essential"]
+        plan = engine.discover([declared])
+        self.assertEqual(plan["include"][0]["image_roles"],"essential,client")
+        declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential,control"]
+        with self.assertRaisesRegex(ValueError,"cannot be mixed"):
+            engine.discover([declared])
+
+
 if __name__ == "__main__":
     unittest.main()

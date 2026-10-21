@@ -10,6 +10,8 @@ import (
 )
 
 type options struct {
+	imageSet               *ImageSet
+	legacyImageOverride    bool
 	osds                   int
 	initialOSDs            []OSDConfig
 	initialOSDsExplicit    bool
@@ -150,6 +152,7 @@ func WithHostAddress(address string) Option {
 // If omitted, OSDs use the image passed to Run. Use matching Ceph versions.
 func WithOSDImage(image string) Option {
 	return func(o *options) error {
+		o.legacyImageOverride = true
 		if strings.TrimSpace(image) == "" {
 			return fmt.Errorf("OSD image must not be blank")
 		}

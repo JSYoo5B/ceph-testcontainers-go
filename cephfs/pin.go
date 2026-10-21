@@ -369,7 +369,7 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 }
 
 func (fs *Filesystem) readPinPolicy(ctx context.Context, base string) (*PinPolicy, error) {
-	control, err := fs.cluster.ControlContainerContext(ctx)
+	control, err := fs.cluster.ClientContainerContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS pin CLI container: %w", err)
 	}

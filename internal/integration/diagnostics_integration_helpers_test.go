@@ -99,7 +99,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 
 	t.Run("partial-container-error", func(t *testing.T) {
 		image, _ := integrationImages(t)
-		removed, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+		removed, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 			ceph.WithIdleEntrypoint())
 		if removed != nil {
 			testcontainers.CleanupContainer(t, removed)

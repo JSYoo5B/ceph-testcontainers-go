@@ -41,6 +41,8 @@ RELEASES = {release: image for release, _, image in SUPPORTED_RELEASES}
 CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
 RELEASE = "20.2.4"
 OFFICIAL_IMAGE = RELEASES[RELEASE]
+CONTRACT = "legacy"
+V2_ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
 ROLE_ENV = {
     "control": "CEPH_TEST_IMAGE",
@@ -48,6 +50,7 @@ ROLE_ENV = {
     "rgw": "CEPH_TEST_RGW_IMAGE",
     "mds": "CEPH_TEST_MDS_IMAGE",
 }
+LEGACY_ROLE_ENV = ROLE_ENV
 EXPECTED_TESTS = (
     "TestClusterLifecycle",
     "TestRBDLifecycle",
@@ -66,7 +69,9 @@ RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0
 
 
 def parse_arguments(argv=None):
+    global CONTRACT, ROLE_ENV
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--contract", choices=("auto", "legacy", "roles-v2"), default="auto")
     parser.add_argument("--variant", choices=("official", "debian", "ubuntu"), default="official")
     parser.add_argument("--layout", choices=("all", "roles"), default="all")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
@@ -85,6 +90,11 @@ def parse_arguments(argv=None):
                         help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
                              "Requires --layout roles")
     args = parser.parse_args(argv)
+    if args.contract == "auto":
+        args.contract = "roles-v2" if args.roles and "essential" in args.roles.split(",") else "legacy"
+    CONTRACT = args.contract
+    ROLE_ENV = V2_ROLE_ENV if CONTRACT == "roles-v2" else LEGACY_ROLE_ENV
+
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
     if args.roles is None:
@@ -108,7 +118,7 @@ def parse_arguments(argv=None):
 def parse_roles(text):
     """Return the declared roles in ROLE_ENV order; control is required."""
     roles = text.split(",")
-    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "control" not in roles:
+    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or ("essential" if CONTRACT == "roles-v2" else "control") not in roles:
         raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV) + ", control included")
     return tuple(role for role in ROLE_ENV if role in roles)
 
@@ -132,15 +142,16 @@ def pin_references(references, digests):
             for role, reference in references.items()}
 
 
-def image_references(variant, layout, release, roles=tuple(ROLE_ENV)):
+def image_references(variant, layout, release, roles=None):
+    roles = tuple(ROLE_ENV) if roles is None else roles
     if release not in RELEASES or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
         raise ValueError("unsupported image matrix cell")
     if layout == "all":
         if tuple(roles) != tuple(ROLE_ENV):
             raise ValueError("the all layout serves all four roles")
-        reference = RELEASES[release] if variant == "official" else REGISTRY + ":" + variant + "-" + release + "-all"
+        reference = RELEASES[release] if variant == "official" and CONTRACT == "legacy" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
         return {"all": reference}
-    return {role: REGISTRY + ":" + variant + "-" + release + "-" + role
+    return {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
             for role in ROLE_ENV if role in roles}
 
 
@@ -221,8 +232,11 @@ def completed_tests(path, module):
             "package_failure": package_failure, "passed": passed}
 
 
-def append_role_environment(path, environment, roles=tuple(ROLE_ENV)):
+def append_role_environment(path, environment, roles=None):
+    roles = tuple(ROLE_ENV) if roles is None else roles
     names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
+    if CONTRACT == "roles-v2":
+        names.append("SCENARIO_IMAGE_CONTRACT")
     if "control" not in roles or set(environment) != set(names) or any(
             not isinstance(value, str) or IMAGE_ID.fullmatch(value) is None
             for value in environment.values()):
@@ -361,6 +375,8 @@ def main(argv=None):
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]
                     for role in args.roles}
         environment = {ROLE_ENV[role]: image for role, image in selected.items()}
+        if CONTRACT == "roles-v2":
+            environment["SCENARIO_IMAGE_CONTRACT"] = "roles-v2"
         if args.prepare_only:
             summary["prepared_environment"] = environment
             if args.github_env is not None:
@@ -370,6 +386,8 @@ def main(argv=None):
             code = 0
         else:
             env = os.environ.copy()
+            if CONTRACT == "legacy":
+                env.pop("SCENARIO_IMAGE_CONTRACT", None)
             # Inherited make options can request dry runs or extra goals. This
             # runner invokes exactly the checked-in compatibility target.
             for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "GOFLAGS"):

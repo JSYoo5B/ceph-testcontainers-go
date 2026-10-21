@@ -69,7 +69,7 @@ func TestRBDClientFeatures(t *testing.T) {
 			if custom := os.Getenv("CEPH_TEST_RBD_CLIENT_IMAGE"); custom != "" {
 				image = custom
 			}
-			client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
+			client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if client != nil {

@@ -65,7 +65,7 @@ func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func
 	}
 	// A fresh CLI process in an old setup client may no longer find any monitor
 	// after full rolling replacement. Verify policy through the cluster's current
-	// control instead of requiring the file being repaired to work beforehand.
+	// toolkit instead of requiring the file being repaired to work beforehand.
 	if err := m.checkRBDMonitorRefreshIdentities(ctx); err != nil {
 		return err
 	}
@@ -88,9 +88,9 @@ func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func
 	return errors.Join(problems...)
 }
 
-// Called under m.mu. Native reads take neither a cluster topology mutex nor a
-// setup-client dependency. Keep the original pool, base and selected namespace
-// identity guard even when only local bootstrap files are being refreshed.
+// Called under m.mu. Toolkit selection may wait for cluster topology; policy
+// reads do not depend on a setup client whose bootstrap is being repaired.
+// Keep the original pool, base and selected namespace identity guards.
 func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -104,12 +104,12 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		{m.config.Source, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source},
 		{m.config.Destination, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination},
 	} {
-		control, err := site.cluster.ControlContainerContext(ctx)
+		control, err := site.cluster.ClientContainerContext(ctx)
 		if err != nil {
-			return fmt.Errorf("inspect RBD mirror cluster control handle: %w", err)
+			return fmt.Errorf("inspect RBD mirror cluster toolkit handle: %w", err)
 		}
 		if control == nil {
-			return errors.New("RBD mirror cluster control container is unavailable")
+			return errors.New("RBD mirror cluster toolkit container is unavailable")
 		}
 		if err := readRBDMirrorObservedPool(ctx, control, m.config.Pool, site.poolID); err != nil {
 			return err

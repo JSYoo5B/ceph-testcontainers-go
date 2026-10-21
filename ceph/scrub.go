@@ -245,11 +245,11 @@ func (c *Container) PGInconsistencies(ctx context.Context, pgid string) ([]Incon
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	control, err := c.controlContainerContext(ctx)
+	client, err := c.clientContainerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	data, err := command(ctx, control, "rados", "list-inconsistent-obj", pgid, "--format=json")
+	data, err := command(ctx, client, "rados", "list-inconsistent-obj", pgid, "--format=json")
 	if err != nil {
 		return nil, err
 	}

@@ -2024,3 +2024,12 @@ See [Classified errors](guides/errors.md#unsupported-features).
 - **Read-only identity with a writable open.** A normal image open registers a watch and needs write permission. Open read-only.
 - **Lifting a fence too early.** Keep `TemporaryBlocklist` in place until the old lock owner has observed `ESHUTDOWN`.
 - **Cleanup order.** Register the clusters' cleanup before the link's, so the link terminates first. Terminate a non-nil `*Mirror` even after an error.
+
+
+### RunMirrorWithImages
+
+`RunMirrorWithImages` selects the matching auxiliary daemon runtime from explicit
+roles-v2 clusters, preserving later daemon additions and existing mirror
+lifecycle/ownership. RBD setup clients use each cluster's client image;
+CephFS MGR modules remain in essential. The legacy `RunMirror` image argument
+continues to work with legacy clusters.

@@ -162,11 +162,10 @@ func TestSharedClusterServices(t *testing.T) {
 			t.Fatalf("the cluster changed from %s to %s", fsid, got)
 		}
 		cluster := servicehook.TenantCluster(checker)
-		control := servicehook.CLI(cluster)
 		var namespaces []json.RawMessage
-		decodeCommand(t, ctx, control, &namespaces, "rbd", "namespace", "ls", "--pool", sharedRBDPool, "--format", "json")
+		decodeCommand(t, ctx, cluster, &namespaces, "rbd", "namespace", "ls", "--pool", sharedRBDPool, "--format", "json")
 		var groups []json.RawMessage
-		decodeCommand(t, ctx, control, &groups, "ceph", "fs", "subvolumegroup", "ls", "tc-cephfs", "--format", "json")
+		decodeCommand(t, ctx, cluster, &groups, "ceph", "fs", "subvolumegroup", "ls", "tc-cephfs", "--format", "json")
 		gateways := rgw.Gateways(cluster)
 		if len(gateways) != 1 {
 			t.Fatalf("%d gateways", len(gateways))
@@ -195,8 +194,7 @@ func TestSharedClusterServices(t *testing.T) {
 		leaseRBD(t, ctx, tenant)
 		// An admin path that the gate does not cover adds a namespace that
 		// belongs to no tenant.
-		control := servicehook.CLI(servicehook.TenantCluster(tenant))
-		if _, err := servicehook.Command(ctx, control, "rbd", "namespace", "create", "--pool", sharedRBDPool, "--namespace", "stray"); err != nil {
+		if _, err := servicehook.ClientCommand(ctx, servicehook.TenantCluster(tenant), "rbd", "namespace", "create", "--pool", sharedRBDPool, "--namespace", "stray"); err != nil {
 			t.Fatal(err)
 		}
 		dirty.finish()

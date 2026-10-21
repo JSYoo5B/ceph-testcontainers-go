@@ -48,7 +48,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+			client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 			if client != nil {

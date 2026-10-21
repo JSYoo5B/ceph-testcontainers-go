@@ -39,14 +39,19 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu              sync.Mutex
-	controlMu       sync.RWMutex
-	configMu        sync.RWMutex
-	configOverrides map[string]*ConfigOverrideHandle
-	flagOverrides   map[string]*OSDFlagOverrideHandle
-	moduleOverrides map[string]*MGRModuleOverrideHandle
-	controlPlane    testcontainers.Container
-	cephVersion     string
+	mu                     sync.Mutex
+	controlMu              sync.RWMutex
+	configMu               sync.RWMutex
+	configOverrides        map[string]*ConfigOverrideHandle
+	flagOverrides          map[string]*OSDFlagOverrideHandle
+	moduleOverrides        map[string]*MGRModuleOverrideHandle
+	controlPlane           testcontainers.Container
+	clientMu               sync.Mutex
+	clientPublishMu        sync.RWMutex
+	featureClient          testcontainers.Container
+	featureClientReady     bool
+	featureClientAttempted bool
+	cephVersion            string
 	// authFences records, per auth entity, what an earlier RotateDaemonKey
 	// or client key change left uncertain; see authFence.
 	authFences map[string]*authFence
@@ -100,9 +105,10 @@ type Container struct {
 
 	// nativeMu guards the RunNativeCommand calls that run or whose command
 	// is not confirmed as stopped, and whether Terminate refuses new ones.
-	nativeMu          sync.Mutex
-	nativeInvocations map[*nativeInvocation]bool
-	nativeClosed      bool
+	nativeMu            sync.Mutex
+	nativeInvocations   map[*nativeInvocation]bool
+	nativeClosed        bool
+	clientStartupCancel context.CancelFunc // guarded by nativeMu
 	// nativeFenced permanently refuses commands for an OSD instance once removal
 	// starts; a failed removal retains its fence until cleanup is retried.
 	nativeFenced map[string]bool
@@ -152,6 +158,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
 			}
 		}
+	}
+	if err := configureImages(&settings); err != nil {
+		return nil, invalidRequest("image set: %v", err)
 	}
 	if settings.hostAddressSet && !settings.hostNetwork {
 		return nil, invalidRequest("WithHostAddress requires WithHostNetwork")
@@ -225,7 +234,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.run.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, img, uuid.NewString(), opts...)
+	mon, err := c.runMonitor(ctx, settings.controlImage, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
@@ -319,9 +328,10 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 	return nil
 }
 
-// ControlImage returns the image selected for MON/MGR and auxiliary CLI/client
-// containers. It is fixed by Run and remains available after termination.
-// Multicluster setup clients use this image instead of a daemon-only RGW image.
+// ControlImage returns the legacy broad control image, or the essential image
+// in roles-v2. It remains available after termination. The essential image does
+// not promise general toolkit or RGW setup capabilities. Use Images for explicit
+// role selection, including Client and RGW administration runtimes.
 func (c *Container) ControlImage() string {
 	if c == nil {
 		return ""
@@ -991,6 +1001,9 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	if c.closed {
 		return nil, errClusterTerminated
 	}
+	if strings.TrimSpace(image) == "" {
+		return nil, invalidRequest("image is required for service %s", name)
+	}
 	if _, exists := c.services[name]; exists {
 		return nil, fmt.Errorf("ceph service %s already started", name)
 	}
@@ -1131,6 +1144,22 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
+	if err := lockTopologyMutex(ctx, &c.clientMu); err != nil {
+		errs = append(errs, err)
+	} else {
+		if c.featureClient != nil {
+			if err := c.featureClient.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+			} else {
+				c.clientPublishMu.Lock()
+				c.featureClient = nil
+				c.clientPublishMu.Unlock()
+				c.featureClientReady = false
+			}
+		}
+		c.clientMu.Unlock()
+	}
+
 	errs = append(errs, c.removeLabeledContainers(ctx))
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.

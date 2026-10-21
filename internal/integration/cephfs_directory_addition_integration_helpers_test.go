@@ -80,7 +80,7 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	seedCheckpoint := checkpoint(seed, "seed-before-zero-inventory")
 	const site = "directory-addition-target"
 	var customizers atomic.Int32
-	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
 		Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{seed}, DaemonCount: 1,
 	}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))

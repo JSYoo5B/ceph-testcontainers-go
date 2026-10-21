@@ -48,7 +48,7 @@ func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	if err := controlReady(c); err != nil {
+	if err := controlReady(ctx, c); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
@@ -56,7 +56,7 @@ func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 	if _, err := inspectPool(ctx, c, poolName, false); err != nil {
 		return err
 	}
-	if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "pool", "init", "--pool", poolName); err != nil {
+	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "pool", "init", "--pool", poolName); err != nil {
 		return fmt.Errorf("initialize RBD pool %q: %w", poolName, err)
 	}
 	// Some Ceph CLI versions return success even when librbd pool_init fails.
@@ -81,7 +81,7 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	if err := controlReady(c); err != nil {
+	if err := controlReady(ctx, c); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
@@ -98,7 +98,7 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 		return nil, invalid(fmt.Errorf("RBD namespace %q in pool %q already exists", name, poolName))
 	}
 	ns := &Namespace{owner: c, poolName: poolName, name: name, poolID: poolID, state: &rbdNamespaceState{}}
-	if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "namespace", "create", "--pool", poolName, "--namespace", name); err != nil {
+	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "create", "--pool", poolName, "--namespace", name); err != nil {
 		return ns, fmt.Errorf("create RBD namespace %q: %w", name, err)
 	}
 	ns.state.created = true
@@ -114,7 +114,7 @@ func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	if err := controlReady(c); err != nil {
+	if err := controlReady(ctx, c); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
@@ -135,7 +135,7 @@ func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]
 func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) error {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	if err := controlReady(c); err != nil {
+	if err := controlReady(ctx, c); err != nil {
 		return err
 	}
 	if ns == nil || ns.owner != c || ns.state == nil || !ns.state.created {
@@ -161,7 +161,7 @@ func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 		ns.state.removed = true
 		return nil // Reconcile an applied removal after an uncertain CLI error.
 	}
-	if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "namespace", "remove", "--pool", ns.poolName, "--namespace", ns.name); err != nil {
+	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "remove", "--pool", ns.poolName, "--namespace", ns.name); err != nil {
 		return fmt.Errorf("remove RBD namespace %q: %w", ns.name, err)
 	}
 	ns.state.removed = true
@@ -175,7 +175,15 @@ func validateResourceName(kind, name string) error {
 	return nil
 }
 
-func controlReady(c *ceph.Container) error {
+func controlReady(ctx context.Context, c *ceph.Container) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Callers already hold the topology lock. Actual toolkit startup happens
+	// through ClientCommand under that lock, after read-only pool validation.
+	if c.UsesRoleImages() && c.Images().Client == "" {
+		return invalid(errors.New("client image is required for this operation"))
+	}
 	if servicehook.Closed(c) {
 		return invalid(errors.New("ceph cluster is terminated"))
 	}
@@ -218,7 +226,7 @@ func inspectPool(ctx context.Context, c *ceph.Container, poolName string, initia
 			if _, ok := pool.Applications["rbd"]; !ok {
 				return 0, fmt.Errorf("pool %q is not initialized for RBD", poolName)
 			}
-			if _, err := servicehook.Command(ctx, servicehook.CLI(c), "rados", "--pool", poolName, "stat", "rbd_trash"); err != nil {
+			if _, err := servicehook.ClientCommand(ctx, c, "rados", "--pool", poolName, "stat", "rbd_trash"); err != nil {
 				return 0, fmt.Errorf("verify RBD initialization object in pool %q: %w", poolName, err)
 			}
 		}
@@ -228,7 +236,7 @@ func inspectPool(ctx context.Context, c *ceph.Container, poolName string, initia
 }
 
 func nativeNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]string, error) {
-	data, err := servicehook.Command(ctx, servicehook.CLI(c), "rbd", "namespace", "list", "--pool", poolName, "--format", "json")
+	data, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "list", "--pool", poolName, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("list RBD namespaces in pool %q: %w", poolName, err)
 	}

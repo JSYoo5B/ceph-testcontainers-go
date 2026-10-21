@@ -241,7 +241,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, "roles-v2.yml", *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         self.assertEqual(set(self.ENTRY_POINTS), self.GATING | self.SCOPED)
         self.assertNotIn("test.yml", self.workflows)

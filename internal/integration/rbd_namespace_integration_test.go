@@ -106,7 +106,7 @@ func TestRBDNamespaces(t *testing.T) {
 				t.Fatalf("native RBD read-only capabilities differ: %+v error=%v", caps, err)
 			}
 			image, _ := integrationImages(t)
-			client, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(identity),
+			client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if client != nil {
@@ -122,7 +122,7 @@ func TestRBDNamespaces(t *testing.T) {
 subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, check=True)`,
 					rbdNamespaceScopedProbe, pool, identity.Name(), identity.KeyringPath())
 			}
-			readerClient, err := testcontainers.Run(ctx, image, cluster.WithClientIdentity(reader),
+			readerClient, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(reader),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if readerClient != nil {

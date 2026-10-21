@@ -2,10 +2,10 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 302,
-    "cephfs": 154,
+    "ceph": 308,
+    "cephfs": 155,
     "fault": 34,
-    "rbd": 76,
+    "rbd": 77,
     "rgw": 126
   },
   "entries": [
@@ -350,6 +350,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.ClientContainerContext",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (testcontainers.Container, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ClientContainerContext",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.ClusterNetworkName",
       "kind": "method",
       "signature": "func() string",
@@ -523,6 +531,14 @@
       "signature": "func(ctx context.Context) (HealthSnapshot, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.HealthDetails",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Images",
+      "kind": "method",
+      "signature": "func() ImageSet",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Images",
       "decision": "baseline"
     },
     {
@@ -950,6 +966,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.UsesRoleImages",
+      "kind": "method",
+      "signature": "func() bool",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.UsesRoleImages",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.WaitForClean",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -1239,6 +1263,12 @@
       "current": "ceph.HealthSnapshot",
       "kind": "type",
       "proposed": "ceph.HealthSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageSet",
+      "kind": "type",
+      "proposed": "ceph.ImageSet",
       "decision": "baseline"
     },
     {
@@ -1726,6 +1756,13 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.RunWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "ceph.RunWithImages",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.SharedCluster",
       "kind": "type",
       "proposed": "ceph.SharedCluster",
@@ -2000,6 +2037,13 @@
       "kind": "function",
       "signature": "func() testcontainers.CustomizeRequestOption",
       "proposed": "ceph.WithIdleEntrypoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithImages",
+      "kind": "function",
+      "signature": "func(images ImageSet) Option",
+      "proposed": "ceph.WithImages",
       "decision": "baseline"
     },
     {
@@ -3017,6 +3061,13 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs.RunMirrorWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "cephfs.RunMirrorWithImages",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs.Session",
       "kind": "type",
       "proposed": "cephfs.Session",
@@ -3964,6 +4015,13 @@
       "kind": "function",
       "signature": "func(ctx context.Context, image string, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
       "proposed": "rbd.RunMirror",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.RunMirrorWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "rbd.RunMirrorWithImages",
       "decision": "baseline"
     },
     {

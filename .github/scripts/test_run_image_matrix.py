@@ -578,5 +578,27 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(runner.parse_arguments(("--release", release)).release, release)
 
 
+class VersionedRoleSelectionTests(unittest.TestCase):
+    def test_v2_all_uses_the_versioned_aggregate_for_every_variant(self):
+        with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            for variant in ("official", "debian", "ubuntu"):
+                self.assertEqual(runner.image_references(variant, "all", "19.2.5"),
+                                 {"all": runner.REGISTRY + ":roles-v2-" + variant + "-19.2.5-all"})
+
+    def test_auto_contract_follows_explicit_v2_roles_and_never_legacy_fallback(self):
+        with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
+            args = runner.parse_arguments(["--layout","roles","--prepare-only","--roles","essential,client"])
+            self.assertEqual(args.contract,"roles-v2")
+            self.assertEqual(args.roles,("essential","client"))
+            refs = runner.image_references("official","roles","19.2.5",args.roles)
+            self.assertEqual(set(refs),{"essential","client"})
+            self.assertIn(":roles-v2-official-19.2.5-client",refs["client"])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.parse_arguments(["--contract","roles-v2","--layout","roles","--prepare-only","--roles","client"])
+            legacy = runner.parse_arguments([])
+            self.assertEqual(legacy.contract,"legacy")
+            self.assertEqual(tuple(runner.ROLE_ENV),tuple(runner.LEGACY_ROLE_ENV))
+
+
 if __name__ == "__main__":
     unittest.main()

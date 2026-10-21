@@ -4804,3 +4804,39 @@ See [Releases and images](guides/releases-and-images.md) for details.
   credentials.
 - `WaitForClean` and other waits are capped by `WithStartupTimeout` even if your
   context allows more time.
+
+
+## Explicit roles-v2 images
+
+`RunWithImages(ctx, ImageSet{Essential: core, Client: tools, CephFS: fs,
+RBDAux: mirrors, RGW: gateway}, opts...)` uses the versioned essential,
+client, cephfs, rbd-aux and rgw contracts. `ImageSet{All: image}` explicitly
+maps every responsibility to one image. Essential is mandatory; omitted
+optional roles fail when requested and never fall back to the core image.
+Legacy `Run` and image override options retain their original semantics and
+cannot be mixed with `RunWithImages`.
+
+`Images()` returns the effective selections; `UsesRoleImages()` distinguishes
+this mode. `ControlImage()` remains the legacy accessor and in roles-v2 names
+the essential image, which does not promise general client tools. Use
+`Images().Client` for independently owned userspace clients.
+
+`ClientContainerContext` lazily creates and reuses a fixture-owned general
+client executor in roles-v2. The cluster terminates partial and successful
+starts. Initial attachment is serialized with MON topology changes and honors
+the caller's cancellation while waiting. Legacy mode returns the current control executor. Core administration
+continues to use the existing MON/stable multi-MON control context. No public
+Client identity type is introduced: ClientConfig, WithClientIdentity and
+RunNativeCommand retain their existing ownership and credential contracts.
+The method exposes an administrative handle and is refused on shared clusters.
+
+RBD/CephFS feature operations, `ObjectWatchers` and `PGInconsistencies` use
+the client toolkit while local daemon socket
+and file operations stay with that daemon. Ordinary RBD needs no rbd-aux
+image. RGW administration uses the RGW runtime and is not a mandatory client
+capability. Combine matching Ceph releases and validate custom image closures
+with the images repository's roles-v2 checker before use.
+
+`WithImages(images)` provides the same explicit mode for existing service Run
+entry points; pass images.Essential as their image argument. It rejects a
+mismatched Run image and legacy image override options.

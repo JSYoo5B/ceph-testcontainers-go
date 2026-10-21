@@ -1183,3 +1183,16 @@ python3 .github/scripts/tag_scenarios.py run \
 Local runs are sequential unless you set `CEPH_TEST_PARALLEL`, so timing can
 differ from CI. To isolate one test, use `go test -tags=all -run` as described
 in [Testing](testing.md#one-test).
+
+
+The separate roles-v2 consumer workflow builds the candidate image contract
+from the images repository before running existing image-compatibility tests
+with relocated native oracles. `make roles-v2-routing` runs constrained
+ordinary-RBD, RGW-without-client and stopped-link RBD monitor refresh cases.
+These source files deliberately
+exclude the legacy `ci` tag planner: their images are not legacy published
+roles. `make roles-v2-runtime` retains the existing cache and CephFS/RBD
+automatic scheduling tests on the relocated runtimes. This workflow also
+uses `make roles-v2-oracles` for shared-cluster cleanup, Messenger policy and
+native command behavior, and checks the aggregate image independently. It does
+not replace existing release/category coverage or qualify unexecuted cells.

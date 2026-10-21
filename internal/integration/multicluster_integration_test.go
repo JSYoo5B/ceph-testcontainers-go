@@ -91,7 +91,7 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 	t.Logf("independent clusters: source FSID=%s OSDs=%d; destination FSID=%s OSDs=%d", a.FSID, a.OSDMap.NumOSDs, b.FSID, b.OSDMap.NumOSDs)
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
-		client, err := testcontainers.Run(ctx, image, cluster.WithClient(),
+		client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 		)

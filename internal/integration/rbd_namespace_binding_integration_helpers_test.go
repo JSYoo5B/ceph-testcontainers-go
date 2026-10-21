@@ -113,7 +113,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	owner, err := rbd.RunMirror(ctx, source.ControlImage(), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	owner, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if owner != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)

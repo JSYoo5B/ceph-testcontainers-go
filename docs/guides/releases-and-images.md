@@ -331,3 +331,24 @@ provided.
 - [rbd.md](../rbd.md): `RunMirror`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's
   own suites against another image or release.
+
+## Versioned dependency roles
+
+`ceph.RunWithImages` and `ceph.WithImages` opt into `ceph.ImageSet` with
+Essential, Client, CephFS, RBDAux and RGW fields, or the exclusive All field.
+Use `roles-v2-<variant>-<release>-<role>` images from the images repository.
+Legacy Run/img and role overrides keep their semantics; don't combine legacy
+overrides with an explicit image set. No optional role falls back to core.
+
+Core administration still uses MON/stable multi-MON CLI. RBD/CephFS toolkit
+commands select a lazy fixture-owned client executor; external clients remain
+caller-owned. RBD mirrors select rbd-aux for the daemon and client for setup;
+CephFS mirrors select cephfs. RGW setup/admin uses rgw. Ordinary RBD and backup
+need no rbd-aux, and generic client no longer requires RGW administration.
+Cache clients must select rbd-aux so the local daemon, plugin and librbd share
+the socket. MGR modules and OSD plugins stay with essential.
+
+The compatibility runner accepts `--contract roles-v2`; all and split layouts
+remain independent. Native client and mirror fixtures select their actual
+execution roles instead of reusing ControlImage. Existing published tags and
+legacy-role CI remain separate regression paths.

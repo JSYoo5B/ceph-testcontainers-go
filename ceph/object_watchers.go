@@ -45,7 +45,11 @@ func (c *Container) ObjectWatchers(ctx context.Context, pool, namespace, object 
 		args = append(args, "--namespace", namespace)
 	}
 	// rados ignores --format for listwatchers and always prints text.
-	data, err := command(ctx, c.cliContainer(), append(args, "listwatchers", object)...)
+	client, err := c.clientContainerContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	data, err := command(ctx, client, append(args, "listwatchers", object)...)
 	if err != nil {
 		return nil, fmt.Errorf("list watchers of object %q in pool %q: %w", object, pool, err)
 	}

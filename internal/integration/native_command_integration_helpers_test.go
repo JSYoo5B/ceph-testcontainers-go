@@ -483,7 +483,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			t.Fatalf("a missing pool returned %v", err)
 		}
 		control := cluster.ControlContainer()
-		if _, err := servicehook.Command(ctx, control, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
+		if _, err := servicehook.Command(ctx, client, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
 			!errors.As(err, &failure) || failure.Program != "rados" || failure.Errno != "ENOENT" {
 			t.Fatalf("rados on a missing pool returned %v", err)
 		}
@@ -583,7 +583,7 @@ func startNative(ctx context.Context, cluster *ceph.Container, target testcontai
 // startNativeHelper starts a caller-owned container attached to the cluster.
 func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	helper, err := testcontainers.Run(ctx, cluster.ControlImage(), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)

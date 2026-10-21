@@ -472,7 +472,11 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	c.config = template
 	c.configMu.Unlock()
 	var errs []error
-	for _, target := range c.monitorConfigTargets(control, removedName) {
+	targets, err := c.monitorConfigTargets(ctx, control, removedName)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			break
@@ -537,13 +541,18 @@ type monitorConfigTarget struct {
 
 // The topology caller holds c.mu. Deduplicate the generic service handles and
 // filesystem/gateway descriptors without calling accessors that re-lock c.mu.
-func (c *Container) monitorConfigTargets(control testcontainers.Container, removedName string) []monitorConfigTarget {
+func (c *Container) monitorConfigTargets(ctx context.Context, control testcontainers.Container, removedName string) ([]monitorConfigTarget, error) {
 	var candidates []monitorConfigTarget
+	client, err := c.featureClientSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
 	add := func(name string, ctr testcontainers.Container) {
 		if ctr != nil {
 			candidates = append(candidates, monitorConfigTarget{name: name, container: ctr})
 		}
 	}
+	add("client", client)
 	if !c.monitorTerminated && removedName != "a" {
 		add("mon.a", c.Container)
 	}
@@ -585,7 +594,7 @@ func (c *Container) monitorConfigTargets(control testcontainers.Container, remov
 		seen[id] = true
 		targets = append(targets, target)
 	}
-	return targets
+	return targets, nil
 }
 
 const monitorConfigMaxBytes = 1 << 20

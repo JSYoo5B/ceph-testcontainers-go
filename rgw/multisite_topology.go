@@ -41,6 +41,7 @@ type TopologyConfig struct {
 	Zones                            []ZoneConfig
 	Realm, Zonegroup, MetadataMaster string
 	ControlImage                     string
+	SetupImage                       string
 	Zonegroups                       []ZonegroupConfig
 	MasterZonegroup                  string
 }
@@ -79,6 +80,13 @@ type rgwZoneState struct {
 // image selects RGW gateways; each setup client uses its cluster's control
 // image unless ControlImage supplies a shared override.
 func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
+	if config.SetupImage != "" {
+		if config.ControlImage != "" {
+			return nil, invalid(fmt.Errorf("SetupImage and ControlImage cannot be combined"))
+		}
+		config.ControlImage = config.SetupImage
+		config.SetupImage = ""
+	}
 	zones, err := prepareRGWTopology(ctx, image, config)
 	if err != nil {
 		return nil, err

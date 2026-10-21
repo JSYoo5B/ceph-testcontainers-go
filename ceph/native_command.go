@@ -552,7 +552,16 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
-	closed, owned := c.closed, c.ownsNativeTarget(target.GetContainerID())
+	closed := c.closed
+	if closed {
+		c.mu.Unlock()
+		return errClusterTerminated
+	}
+	owned, err := c.ownsNativeTargetContext(ctx, target.GetContainerID())
+	if err != nil {
+		c.mu.Unlock()
+		return err
+	}
 	networks := []string{}
 	if c.network != nil {
 		networks = append(networks, c.network.Name)
@@ -614,31 +623,40 @@ func classifyNativeBackend(err error, dispatched bool) error {
 // ownsNativeTarget reports whether id is a container of this cluster. The
 // caller holds c.mu.
 func (c *Container) ownsNativeTarget(id string) bool {
+	owned, _ := c.ownsNativeTargetContext(context.Background(), id)
+	return owned
+}
+
+func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (bool, error) {
 	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
 	if matches(c.Container) || matches(c.manager) {
-		return true
+		return true, nil
 	}
 	for _, mon := range c.monitors {
 		if mon != nil && matches(mon.Container) {
-			return true
+			return true, nil
 		}
 	}
 	for _, mgr := range c.managers {
 		if mgr != nil && matches(mgr.Container) {
-			return true
+			return true, nil
 		}
 	}
 	for _, osd := range c.osds {
 		if osd != nil && matches(osd.Container) {
-			return true
+			return true, nil
 		}
 	}
 	for _, ctr := range c.services {
 		if matches(ctr) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	client, err := c.featureClientSnapshot(ctx)
+	if err != nil {
+		return false, err
+	}
+	return matches(client), nil
 }
 
 // cancelNativeInvocations refuses new native commands, cancels the running
@@ -649,7 +667,11 @@ func (c *Container) cancelNativeInvocations() []*nativeInvocation {
 	c.nativeMu.Lock()
 	c.nativeClosed = true
 	pending := slices.Collect(maps.Keys(c.nativeInvocations))
+	clientCancel := c.clientStartupCancel
 	c.nativeMu.Unlock()
+	if clientCancel != nil {
+		clientCancel()
+	}
 	for _, inv := range pending {
 		inv.cancel(errNativeTerminated)
 	}

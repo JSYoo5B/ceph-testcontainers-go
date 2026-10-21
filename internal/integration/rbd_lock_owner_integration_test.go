@@ -70,7 +70,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, first := newServiceClusterWithOptions(t, image, opts...)
-			second, err := testcontainers.Run(ctx, image, cluster.WithClient(), ceph.WithIdleEntrypoint(),
+			second, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 			if second != nil {
 				testcontainers.CleanupContainer(t, second)

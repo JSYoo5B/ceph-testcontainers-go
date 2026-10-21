@@ -240,7 +240,7 @@ func (m *Mirror) detectNamespaceMapping(ctx context.Context) error {
 		m.legacyCLI[client] = !mapping
 	}
 	for _, cluster := range []*ceph.Container{m.config.Source, m.config.Destination} {
-		control, err := cluster.ControlContainerContext(ctx)
+		control, err := cluster.ClientContainerContext(ctx)
 		if err != nil {
 			return fmt.Errorf("inspect RBD mirror cluster control handle: %w", err)
 		}
@@ -274,7 +274,7 @@ func (m *Mirror) namespaceMappingUnsupported(ctx context.Context, client testcon
 	image := client
 	if m.legacyCluster(cluster) {
 		refusal.Target, refusal.Version = site+" cluster", cluster.CephVersion()
-		image, _ = cluster.ControlContainerContext(ctx)
+		image, _ = cluster.ClientContainerContext(ctx)
 	}
 	if image != nil {
 		if inspect, err := image.Inspect(ctx); err == nil && inspect != nil {

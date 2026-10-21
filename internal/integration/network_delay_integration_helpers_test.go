@@ -460,7 +460,7 @@ func testNetworkDelay(t *testing.T) {
 		// OSD and the control container's read from the dropped OSD answer.
 		// After Restore both clients read it again.
 		clientImage, _ := integrationImages(t)
-		second, err := testcontainers.Run(ctx, clientImage, cluster.WithClient(), ceph.WithIdleEntrypoint(),
+		second, err := testcontainers.Run(ctx, nativeClientImage(t, clientImage), cluster.WithClient(), ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 		testcontainers.CleanupContainer(t, second)
 		if err != nil {

@@ -2910,3 +2910,12 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 
 Context handling, cleanup ordering and partial results are covered in
 [Contexts and cleanup](guides/contexts-and-cleanup.md).
+
+
+### RunMirrorWithImages
+
+`RunMirrorWithImages` selects the matching auxiliary daemon runtime from explicit
+roles-v2 clusters, preserving later daemon additions and existing mirror
+lifecycle/ownership. RBD setup clients use each cluster's client image;
+CephFS MGR modules remain in essential. The legacy `RunMirror` image argument
+continues to work with legacy clusters.

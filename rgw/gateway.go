@@ -82,6 +82,9 @@ func removeGateway(ctx context.Context, c *ceph.Container, name string) error {
 // are applied last; preserve the required command, network and listener settings.
 // A non-nil result returned with an error remains owned by the cluster for cleanup.
 func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
+	if c.UsesRoleImages() && c.Images().RGW == "" {
+		return nil, invalid(fmt.Errorf("rgw image is required before gateway setup"))
+	}
 	config, err := normalizeRGWConfig(config)
 	if err != nil {
 		return nil, err

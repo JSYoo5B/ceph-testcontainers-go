@@ -36,6 +36,7 @@ type hooks interface {
 	Unlock(c *ceph.Container)
 	TryLock(c *ceph.Container) bool
 	StartupTimeout(c *ceph.Container) time.Duration
+	ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
 	TenantCluster(t *ceph.Tenant) *ceph.Container
@@ -381,4 +382,9 @@ func TestApply(opts ...ceph.Option) ([]Bootstrap, error) { return get().TestAppl
 // the prepared service bootstraps.
 func TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []Bootstrap, error) {
 	return get().TestPrepare(osds, noInitialOSDs, pools, opts...)
+}
+
+// ClientCommand executes feature tools in the selected toolkit runtime.
+func ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error) {
+	return get().ClientCommand(ctx, c, args...)
 }

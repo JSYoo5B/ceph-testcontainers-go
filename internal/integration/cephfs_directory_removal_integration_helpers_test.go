@@ -65,7 +65,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 	}
 	initial := checkpoint("before-directory-removal")
 	const destinationSite = "directory-release-target"
-	mirror, err := cephfs.RunMirror(ctx, source.ControlImage(), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: destinationSite, Directories: directories, DaemonCount: 2})
+	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: destinationSite, Directories: directories, DaemonCount: 2})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

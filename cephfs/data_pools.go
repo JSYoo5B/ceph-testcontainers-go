@@ -453,7 +453,7 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 			}
 		}
 	}
-	control, err := fs.cluster.ControlContainerContext(ctx)
+	control, err := fs.cluster.ClientContainerContext(ctx)
 	if err != nil {
 		return fmt.Errorf("select data pool CLI container: %w", err)
 	}

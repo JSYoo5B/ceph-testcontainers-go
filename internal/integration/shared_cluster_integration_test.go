@@ -141,10 +141,8 @@ func TestSharedCluster(t *testing.T) {
 		dirty := &cleanupTB{TB: t}
 		tenant := shared.Lease(dirty)
 		cluster := servicehook.TenantCluster(tenant)
-		// An admin path that the gate does not cover: the CLI container
-		// that the module itself uses.
-		control := servicehook.CLI(cluster)
-		if _, err := servicehook.Command(ctx, control, "rados", "-p", ceph.SharedPool, "put", "stray", "/etc/hostname"); err != nil {
+		// An internal admin path that bypasses the public shared-cluster gate.
+		if _, err := servicehook.ClientCommand(ctx, cluster, "rados", "-p", ceph.SharedPool, "put", "stray", "/etc/hostname"); err != nil {
 			t.Fatal(err)
 		}
 		dirty.finish()

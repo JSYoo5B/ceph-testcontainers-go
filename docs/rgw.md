@@ -3085,3 +3085,9 @@ See [guides/releases-and-images.md](guides/releases-and-images.md).
 - Automatic failover, request routing between zones and recovery point
   guarantees; WAN latency and partial network partitions between zones.
 - NFS, SMB and other gateways besides RGW.
+
+
+For roles-v2 clusters, multisite setup clients default to each cluster's RGW
+image. `SetupImage` explicitly overrides that runtime; it cannot be combined
+with the legacy `ControlImage` override. Gateway-local `Admin` remains in
+the gateway with its realm/zone scope and lifecycle checks.
