@@ -200,7 +200,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if cluster.MessengerMode() != mode {
 			t.Fatal("cluster bootstrap mode changed")
 		}
-		if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := cluster.AddOSD(ctx); err != nil {

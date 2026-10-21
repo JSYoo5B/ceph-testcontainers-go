@@ -85,12 +85,18 @@ func TestSharedCluster(t *testing.T) {
 			t.Fatal("the tenant has no cluster")
 		}
 		for name, call := range map[string]func() error{
-			"Ceph":             func() error { _, err := cluster.Ceph(ctx, "status"); return err },
-			"TemporaryConfig":  func() error { _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"}); return err },
-			"TemporaryOSDFlag": func() error { _, err := cluster.TemporaryOSDFlag(ctx, "noout", true); return err },
-			"CreatePool":       func() error { _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "gated"}); return err },
-			"CreateClient":     func() error { _, err := cluster.CreateClient(ctx, "gated", ceph.ClientCaps{Mon: "allow *"}); return err },
-			"AddOSD":           func() error { _, err := cluster.AddOSD(ctx); return err },
+			"Ceph": func() error { _, err := cluster.Ceph(ctx, "status"); return err },
+			"OverrideConfig": func() error {
+				_, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
+				return err
+			},
+			"OverrideOSDFlag": func() error { _, err := cluster.OverrideOSDFlag(ctx, "noout", true); return err },
+			"CreatePool":      func() error { _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "gated"}); return err },
+			"CreateClient": func() error {
+				_, err := cluster.CreateClient(ctx, "gated", ceph.ClientCaps{Mon: "allow *"})
+				return err
+			},
+			"AddOSD": func() error { _, err := cluster.AddOSD(ctx); return err },
 			"ControlContainerContext": func() error {
 				_, err := cluster.ControlContainerContext(ctx)
 				return err
@@ -217,8 +223,8 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if err != nil || status.FSID != fsid {
 		t.Fatalf("the exclusive lease got cluster %s (%v), want the shared %s", status.FSID, err, fsid)
 	}
-	if _, err := cluster.TemporaryOSDFlag(ctx, "noout", true); err != nil {
-		t.Fatalf("TemporaryOSDFlag under an exclusive lease: %v", err)
+	if _, err := cluster.OverrideOSDFlag(ctx, "noout", true); err != nil {
+		t.Fatalf("OverrideOSDFlag under an exclusive lease: %v", err)
 	}
 	if _, err := cluster.Ceph(ctx, "osd", "set", "noscrub"); err != nil {
 		t.Fatalf("Ceph under an exclusive lease: %v", err)

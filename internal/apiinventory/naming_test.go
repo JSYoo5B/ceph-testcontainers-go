@@ -20,11 +20,6 @@ var updateNaming = flag.Bool("update-api-naming", false, "refresh the source-der
 // These are review proposals, not compatibility aliases or an API rewrite.
 // Only inventory rows below change when a proposal is edited.
 var namingProposals = map[string]string{
-	"ceph.Container.TemporaryConfig":               "ceph.Container.OverrideConfig",
-	"ceph.Container.TemporaryOSDFlag":              "ceph.Container.OverrideOSDFlag",
-	"ceph.Container.TemporaryMGRModule":            "ceph.Container.OverrideMGRModule",
-	"ceph.Container.TemporaryMessengerPolicy":      "ceph.Container.OverrideMessengerPolicy",
-	"ceph.Container.TemporaryClientRevocation":     "ceph.Container.RevokeClient",
 	"cephfs.Filesystem.TemporarySessionTimeouts":   "cephfs.Filesystem.OverrideSessionTimeouts",
 	"cephfs.Filesystem.TemporarySubvolumePin":      "cephfs.Filesystem.OverrideSubvolumePin",
 	"cephfs.Filesystem.TemporarySubvolumeGroupPin": "cephfs.Filesystem.OverrideSubvolumeGroupPin",

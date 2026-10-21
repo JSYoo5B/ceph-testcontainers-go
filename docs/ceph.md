@@ -471,7 +471,7 @@ benchmark that can write about 100 objects of 4 MiB (400 MiB) before deleting
 them. That alone fills a 64 to 256 MiB file, BlueStore aborts the OSD, and `Run`
 times out waiting for it. For small OSDs, start with
 [WithNoInitialOSDs](#withnoinitialosds), set `osd_mclock_skip_benchmark` with
-[TemporaryConfig](#temporaryconfig), then add OSDs. The option itself never
+[OverrideConfig](#overrideconfig), then add OSDs. The option itself never
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
 
@@ -566,14 +566,14 @@ rados_osd_op_timeout = 25
 - The merged file becomes `/etc/ceph/ceph.conf` before the first MON creates its
   store. Every MON, MGR, OSD, MDS and RGW, every `WithClient` container and
   [ConnectionConfig](#connectionconfig) get it, so bootstrap-only settings work.
-  It does not change a running cluster; use [TemporaryConfig](#temporaryconfig)
+  It does not change a running cluster; use [OverrideConfig](#overrideconfig)
   for that.
 - An entry replaces the fixture's default for the same section and key. Spaces,
   `-` and `_` in key names are equivalent, as in Ceph. Several files are merged in
   order, later files overriding earlier ones key by key, so a shared base file
   plus a per-test file works.
 - Ceph gives local files precedence over the MON configuration database. A key set
-  in this file cannot be changed later by `TemporaryConfig` or `ceph config set`;
+  in this file cannot be changed later by `OverrideConfig` or `ceph config set`;
   leave keys you want to change during the test out of the file.
 - RGW runs as `client.admin`, so RGW settings belong in `[client]` or
   `[client.admin]`. `[client.rgw.*]` sections do not apply.
@@ -624,7 +624,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [TemporaryMessengerPolicy](#temporarymessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [OverrideMessengerPolicy](#overridemessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -653,7 +653,7 @@ describe to these options:
 | All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
 | `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
 | `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
-| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [TemporaryConfig](#temporaryconfig) can change them |
+| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [OverrideConfig](#overrideconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
 With `MessengerV2Secure`, the global `ceph.conf` sets `ms_cluster_mode`,
@@ -670,7 +670,7 @@ In both v2 modes:
 - Later daemons, `WithClient` and `WithClientIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
-- [TemporaryConfig](#temporaryconfig) refuses `ms_bind_msgr1` and
+- [OverrideConfig](#overrideconfig) refuses `ms_bind_msgr1` and
   `ms_bind_msgr2` in every section and mask with `ErrInvalidRequest`, because
   the local file would override them anyway. With `MessengerV2Secure` it also
   refuses the six mode options.
@@ -728,7 +728,7 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
 - Lifetimes keep fractions of a second and are written to the `[global]` section
   of the bootstrap `ceph.conf`. Every daemon, `WithClient` container and
   [ConnectionConfig](#connectionconfig) gets them, and
-  [TemporaryConfig](#temporaryconfig) cannot change them later. MONs rotate
+  [OverrideConfig](#overrideconfig) cannot change them later. MONs rotate
   service secrets on their tick, so lifetimes of a few seconds also need a
   shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
 - Keep `MonTicketTTL` at ten seconds or more. MON clients check their tickets
@@ -784,7 +784,7 @@ daemon accepts, so a daemon cannot force `secure` on a client that prefers
   daemon restarts.
 - Connections between daemons keep their defaults, so the cluster itself and the
   fixture's own CLI keep working under every policy.
-- [TemporaryMessengerPolicy](#temporarymessengerpolicy) changes the policy on a
+- [OverrideMessengerPolicy](#overridemessengerpolicy) changes the policy on a
   running cluster. The daemons apply it to new connections without a restart.
 - It cannot be combined with `MessengerV2Secure`, whose local configuration
   fixes every mode.
@@ -1447,14 +1447,14 @@ leases.
 
 `Exclusive` lends a test the whole shared cluster: the `*ceph.Container`, with
 every method available except `Terminate`. Use it for a test that needs what
-the tenant gate refuses, such as `TemporaryConfig`, OSD flags, pool changes,
+the tenant gate refuses, such as `OverrideConfig`, OSD flags, pool changes,
 the raw `Ceph` CLI or `AddOSD`, in a package whose other tests share the
 cluster:
 
 ```golang
 func TestRecoversWithNoout(t *testing.T) {
 	cluster := shared.Exclusive(t)
-	if _, err := cluster.TemporaryOSDFlag(t.Context(), "noout", true); err != nil {
+	if _, err := cluster.OverrideOSDFlag(t.Context(), "noout", true); err != nil {
 		t.Fatal(err)
 	}
 	osd, err := cluster.AddOSD(t.Context())
@@ -1504,8 +1504,8 @@ that only read state stay available.
 
 | Methods | Why they are refused |
 | --- | --- |
-| `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `TemporaryClientRevocation`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `TemporaryConfig`, `TemporaryOSDFlag`, `OverrideFullRatios`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
+| `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1559,15 +1559,15 @@ Methods that change cluster state temporarily return a restoration handle:
 
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
-| `*ceph.ConfigOverride` | [TemporaryConfig](#temporaryconfig) | `Restore` |
-| `*ceph.OSDFlagOverride` | [TemporaryOSDFlag](#temporaryosdflag) | `Restore` |
-| `*ceph.MGRModuleOverride` | [TemporaryMGRModule](#temporarymgrmodule) | `Restore` |
+| `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
+| `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
+| `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
-| `*ceph.ClientRevocation` | [TemporaryClientRevocation](#temporaryclientrevocation) | `Restore` |
+| `*ceph.ClientRevocationHandle` | [RevokeClient](#revokeclient) | `Restore` |
 
 All handles follow the same contract:
 
@@ -1590,7 +1590,7 @@ Restore in `t.Cleanup` with a context that is still live. `t.Context()` is
 canceled before cleanup functions run:
 
 ```golang
-change, err := cluster.TemporaryConfig(ctx, setting)
+change, err := cluster.OverrideConfig(ctx, setting)
 if change != nil {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -2153,10 +2153,10 @@ Lists the exact global OSDMap flag tokens, including Ceph's internal
 compatibility flags (for example `sortbitwise`). Per-OSD, CRUSH-node and
 device-class flags are separate native state.
 
-#### TemporaryOSDFlag
+#### OverrideOSDFlag
 
 ```golang
-func (c *Container) TemporaryOSDFlag(ctx context.Context, flag string, enabled bool) (*ceph.OSDFlagOverride, error)
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*ceph.OSDFlagOverrideHandle, error)
 ```
 
 Sets or clears one global OSDMap flag and remembers its prior state. Supported
@@ -2168,7 +2168,7 @@ stays set) and never touches other flags. While set, flags such as `noout` raise
 the `OSDMAP_FLAGS` health warning (per-OSD flags raise `OSD_FLAGS` instead).
 
 ```golang
-hold, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+hold, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 ```
 
 ### Container Methods: Pools
@@ -2287,7 +2287,7 @@ Success means the pool references the rule; data moves asynchronously. Until PG
 reports reflect the new map, [WaitForClean](#waitforclean) can succeed on the old
 placement, so poll [PoolPGs](#poolpgs) for the expected up/acting sets. To hold
 the move incomplete, set both `nobackfill` and `norecover` with
-[TemporaryOSDFlag](#temporaryosdflag): small PGs recover through the PG log
+[OverrideOSDFlag](#overrideosdflag): small PGs recover through the PG log
 instead of backfill, so `nobackfill` alone does not stop them. EC pools are
 refused because their rule is bound to the EC profile.
 
@@ -2349,7 +2349,7 @@ long-lived cluster can give each test its own pool without reaching PG limits.
   `tc-<pool>-placement-<hash>` rule with `SetPoolPlacement` is refused; move it
   back to its original placement first. Placement rules are not removed.
 - `mon_allow_pool_delete` is enabled in the central configuration only during the
-  removal and then restored. It is refused while a `TemporaryConfig` handle holds
+  removal and then restored. It is refused while an `OverrideConfig` handle holds
   that key, and a config file that sets it to `false` blocks removal.
 - A retry after an error removes whatever owned resources remain. An unknown name
   is an error.
@@ -2472,7 +2472,7 @@ select its identity, for example `rados --id reader ...`,
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
 creations and revoked identities are rejected, and so are descriptors whose key
 [ReplaceClientKey](#replaceclientkey) replaced, whose identity
-[TemporaryClientRevocation](#temporaryclientrevocation) removed until its
+[RevokeClient](#revokeclient) removed until its
 `Restore`, or whose identity has a change that is not resolved yet. You own the container. The options are those of
 [WithClient](#withclient).
 
@@ -2641,10 +2641,10 @@ or revoke a client after a failed `AuthorizeSubvolume` or
 `DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
 only the state at that moment.
 
-#### TemporaryClientRevocation
+#### RevokeClient
 
 ```golang
-func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocation, error)
+func (c *Container) RevokeClient(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocationHandle, error)
 ```
 
 Removes an identity created by this cluster from the MONs until `Restore`
@@ -2653,7 +2653,7 @@ the rejection of a client and then its return with the same credentials. The
 identity keeps its name and key type, and the descriptor is not recreated.
 
 ```golang
-revocation, err := cluster.TemporaryClientRevocation(ctx, client)
+revocation, err := cluster.RevokeClient(ctx, client)
 // ... check that the client is rejected ...
 err = revocation.Restore(ctx)
 ```
@@ -2665,7 +2665,7 @@ While the identity is revoked:
 - [WithClientIdentity](#withclientidentity),
   [ClientCapabilities](#clientcapabilities),
   [UpdateClientCaps](#updateclientcaps), [ReplaceClientKey](#replaceclientkey)
-  and another `TemporaryClientRevocation` refuse the descriptor.
+  and another `RevokeClient` refuse the descriptor.
 - [CreateClient](#createclient) refuses the name.
 - [DeleteClient](#deleteclient) makes the removal permanent, after which
   `Restore` fails.
@@ -2707,7 +2707,7 @@ MONs and reports what they hold:
 
 - A removal that did not apply returns no handle, and the descriptor stays
   usable.
-- When the outcome stays uncertain, `TemporaryClientRevocation` returns the
+- When the outcome stays uncertain, `RevokeClient` returns the
   handle with the error, and `Restore` settles first and then restores.
 
 The cluster needs no `Restore` before `Terminate`. The handle's `String` and
@@ -2847,10 +2847,10 @@ already current. Do not edit the file concurrently.
 
 ### Container Methods: Configuration
 
-#### TemporaryConfig
+#### OverrideConfig
 
 ```golang
-func (c *Container) TemporaryConfig(ctx context.Context, setting ceph.ConfigSetting) (*ceph.ConfigOverride, error)
+func (c *Container) OverrideConfig(ctx context.Context, setting ceph.ConfigSetting) (*ceph.ConfigOverrideHandle, error)
 ```
 
 Sets one entry in the MON configuration database (`ceph config set`) and records
@@ -2869,7 +2869,7 @@ the same section, mask and name are refused. See the
 [handle contract](#container-methods) for errors and retries.
 
 ```golang
-change, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "osd", Name: "osd_max_backfills", Value: "1",
 })
 if change != nil {
@@ -2930,10 +2930,10 @@ module metadata: `Name`, `Enabled`, `AlwaysOn`, `ForceDisabled`, `Available`
 (Ceph's dependency or load diagnostic). `Enabled` and `CanRun` do not prove that
 a module's commands are ready.
 
-#### TemporaryMGRModule
+#### OverrideMGRModule
 
 ```golang
-func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverride, error)
+func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverrideHandle, error)
 ```
 
 Enables or disables one module and restores its original membership with
@@ -2979,7 +2979,7 @@ func (c *Container) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, er
 
 Scrapes the active manager's `prometheus` module once and returns its
 samples parsed from the Prometheus text exposition format. It never enables
-the module: enable it with [TemporaryMGRModule](#temporarymgrmodule) and wait
+the module: enable it with [OverrideMGRModule](#overridemgrmodule) and wait
 until [ManagerServices](#managerservices) lists `prometheus`; until then the
 call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
 control container, at the address that `ManagerServices` advertises, and is
@@ -3126,19 +3126,19 @@ Returns the bootstrap policy selected with [WithMessengerMode](#withmessengermod
 (`ceph.MessengerDefault` for a nil container). It does not inspect effective
 settings or live connections.
 
-#### TemporaryMessengerPolicy
+#### OverrideMessengerPolicy
 
 ```golang
-func (c *Container) TemporaryMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverride, error)
+func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverrideHandle, error)
 ```
 
 Changes the connection modes that the running daemons accept from clients (see
 [WithMessengerPolicy](#withmessengerpolicy) for the fields). Each non-nil field
-becomes a [TemporaryConfig](#temporaryconfig) override of its option; nil fields
+becomes a [OverrideConfig](#overrideconfig) override of its option; nil fields
 stay as they are.
 
 ```golang
-override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{
+override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{
 	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
 })
 if override != nil {
@@ -3148,11 +3148,11 @@ if override != nil {
 
 - The daemons apply the change to new connections without a restart.
   Established connections keep their mode.
-- `MessengerPolicyOverride.Restore` returns every option to its previous value,
+- `MessengerPolicyOverrideHandle.Restore` returns every option to its previous value,
   including the bootstrap policy. It is idempotent and can be retried.
 - A non-nil result returned with an error holds the overrides that were made;
   restore it.
-- A single daemon, such as only `osd.0`, is changed with `TemporaryConfig` and
+- A single daemon, such as only `osd.0`, is changed with `OverrideConfig` and
   the option in the table, with the daemon name as `Section`. It takes
   precedence over the daemon type's entry.
 - A policy that selects no valid mode, and any policy on a `MessengerV2Secure`
@@ -3333,7 +3333,7 @@ Daemon handles (`Monitors()`, `Managers()`, `OSDs()`, and the MDS and RGW handle
 of the service packages) support `Stop` and `Start`: the process ends and peers
 see the connection close. The dedicated operations in [`fault`](fault.md) add other failure shapes. For
 Messenger-level delays and dropped messages (`ms_blackhole_*`,
-`ms_inject_delay_*` through `TemporaryConfig`), OSD flags, client blocklisting
+`ms_inject_delay_*` through `OverrideConfig`), OSD flags, client blocklisting
 and full ratios, see [Fault injection](guides/fault-injection.md).
 
 #### Container pause faults
@@ -3905,14 +3905,14 @@ The cluster owns the auth database; containers you attach with it are yours.
 
 | Type | Methods | Created by |
 | --- | --- | --- |
-| `ConfigOverride` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryConfig](#temporaryconfig) |
-| `OSDFlagOverride` | `Restore(ctx) error` | [TemporaryOSDFlag](#temporaryosdflag) |
-| `MGRModuleOverride` | `Restore(ctx) error` | [TemporaryMGRModule](#temporarymgrmodule) |
+| `ConfigOverrideHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
+| `OSDFlagOverrideHandle` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
+| `MGRModuleOverrideHandle` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
 | `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
-| `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [TemporaryClientRevocation](#temporaryclientrevocation) |
+| `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [RevokeClient](#revokeclient) |
 
 See the [handle contract](#container-methods).
 
@@ -3930,7 +3930,7 @@ See the [handle contract](#container-methods).
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [PoolPGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientCapabilities](#clientcapabilities), [UpdateClientCaps](#updateclientcaps) |
 | `ClientOption` | [CreateClient](#createclient), [ReplaceClientKey](#replaceclientkey) |
-| `ConfigSetting` | [TemporaryConfig](#temporaryconfig) |
+| `ConfigSetting` | [OverrideConfig](#overrideconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
 | `Status` | [Status](#status) |
@@ -4161,7 +4161,7 @@ if err != nil {
 // Keep OSDs from moving themselves into host buckets or setting a device
 // class when they start, so the installed map stays as written.
 for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
-	if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+	if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -4238,7 +4238,7 @@ if err != nil {
 	t.Fatal(err)
 }
 // No Restore: Terminate disposes of the configuration database.
-if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true",
 }); err != nil {
 	t.Fatal(err)
@@ -4284,7 +4284,7 @@ for _, setting := range []ceph.ConfigSetting{
 	{Section: "osd", Name: "osd_recovery_sleep_hdd", Value: "0"},
 	{Section: "osd", Name: "osd_recovery_sleep_degraded_hdd", Value: "0"},
 } {
-	if _, err := cluster.TemporaryConfig(ctx, setting); err != nil {
+	if _, err := cluster.OverrideConfig(ctx, setting); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -4342,7 +4342,7 @@ in [rbd](rbd.md) and [cephfs](cephfs.md).
 ### Keep an OSD down without data movement
 
 ```golang
-hold, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+hold, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 if hold != nil {
 	defer hold.Restore(context.Background())
 }
@@ -4393,7 +4393,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 // ... write objects with the client
 for _, flag := range []string{"nobackfill", "norecover"} {
-	hold, err := cluster.TemporaryOSDFlag(ctx, flag, true)
+	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 	if hold != nil {
 		defer hold.Restore(context.Background())
 	}
@@ -4539,7 +4539,7 @@ unchanged.
 ### Scrape the MGR Prometheus exporter
 
 ```golang
-module, err := cluster.TemporaryMGRModule(ctx, "prometheus", true)
+module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
 if module != nil {
 	defer module.Restore(context.Background())
 }
@@ -4567,7 +4567,7 @@ manager's URL.
 
 In host mode all managers share the host network, so give each manager its own
 port and bind the public address before enabling the module (using
-[TemporaryConfig](#temporaryconfig)). With the default settings and two
+[OverrideConfig](#overrideconfig)). With the default settings and two
 managers, `ManagerServices` stayed empty and no manager served metrics:
 
 ```golang
@@ -4638,7 +4638,7 @@ cluster's containers:
 | A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
-| Any central option | [TemporaryConfig](#temporaryconfig), so it is restored |
+| Any central option | [OverrideConfig](#overrideconfig), so it is restored |
 | Commands inside one daemon's container | `cluster.OSDs()[0].Exec(ctx, []string{...})` (OSD images may not contain the `ceph` CLI) |
 | `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](rgw.md) package |
 
@@ -4696,7 +4696,7 @@ examples.
   Poll observations with a deadline rather than asserting immediately.
 - `MGR_DOWN` appears only after `mon_mgr_mkfs_grace` (2 minutes) on a new
   cluster, and `SLOW_OPS` after `osd_op_complaint_time` (30 seconds). Lower such
-  values with `TemporaryConfig` when a test needs them sooner.
+  values with `OverrideConfig` when a test needs them sooner.
 - Changed capabilities and revoked identities take effect for new connections;
   existing sessions may keep their tickets.
 - After `SetPoolPlacement` or `SetPoolPGCount`, `WaitForClean` can pass before
@@ -4735,7 +4735,7 @@ See [Releases and images](guides/releases-and-images.md) for details.
   clean.
 - Small `WithOSDBlockSize` values with initial OSDs make `Run` time out (see
   [Run small OSDs](#run-small-osds)).
-- A key set with `WithConfigFile` cannot be changed with `TemporaryConfig`;
+- A key set with `WithConfigFile` cannot be changed with `OverrideConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `RemovePool`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
   `t.Cleanup` for `Restore`, `RemovePool` and `CollectDiagnostics`.

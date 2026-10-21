@@ -21,7 +21,7 @@ const minCephFSSessionTimeout = 30 * time.Second
 // Once another client asks for its capabilities, the MDS evicts it as soon as
 // Timeout passes. With Ceph's default mds_session_blocklist_on_timeout the
 // evicted address is blocklisted. These are filesystem settings, not central
-// configuration, so TemporaryConfig cannot change them. Native values are
+// configuration, so OverrideConfig cannot change them. Native values are
 // whole seconds.
 type SessionTimeouts struct {
 	Timeout, Autoclose time.Duration

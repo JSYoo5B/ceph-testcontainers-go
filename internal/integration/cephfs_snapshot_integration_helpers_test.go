@@ -61,9 +61,9 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	// Delay the native worker so even a small clone exposes source protection
 	// and caller timeout behavior. The first job captures this delay before
 	// the setting is restored for subsequent jobs.
-	temporaryConfig := func(name, value string) *ceph.ConfigOverride {
+	temporaryConfig := func(name, value string) *ceph.ConfigOverrideHandle {
 		t.Helper()
-		change, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
+		change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
 		if change != nil {
 			t.Cleanup(func() {
 				restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)

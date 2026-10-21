@@ -95,7 +95,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 		// evidence.
 		offsets := make([]int, len(osds))
 		for _, setting := range phase.settings {
-			override, err := cluster.TemporaryConfig(ctx, setting)
+			override, err := cluster.OverrideConfig(ctx, setting)
 			if err != nil {
 				t.Fatalf("%s: %s: %v", phase.name, setting.Name, err)
 			}

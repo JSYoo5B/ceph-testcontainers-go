@@ -29,7 +29,7 @@ error.
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
 | `ceph.ErrNativeFailure` | A native command ran and failed | `ceph osd pool get missing size` exits with `ENOENT` |
-| `ceph.ErrSharedCluster` | A cluster that a `SharedCluster` shares refused the method before any change | `TemporaryConfig`, `Ceph` or `Terminate` on a shared cluster; see [Shared cluster](../ceph.md#shared-cluster) |
+| `ceph.ErrSharedCluster` | A cluster that a `SharedCluster` shares refused the method before any change | `OverrideConfig`, `Ceph` or `Terminate` on a shared cluster; see [Shared cluster](../ceph.md#shared-cluster) |
 
 The categories are disjoint for a single failure. An error joined from
 several failures, such as a failed change and a failed restoration, can match

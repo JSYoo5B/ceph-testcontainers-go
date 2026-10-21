@@ -31,7 +31,7 @@ type SnapshotSchedule struct {
 	// Repeat is how often a snapshot is taken: a positive number and one of
 	// m (minutes), h, d, w, M (months) or y, such as "6h" or "1m". The module
 	// takes minutes only while mgr/snap_schedule/allow_m_granularity is true,
-	// which TemporaryConfig can set for a test.
+	// which OverrideConfig can set for a test.
 	Repeat string
 	// Start is the schedule's first time slot; the zero time leaves the
 	// module's default, midnight of the day the schedule is added, in UTC.
@@ -112,7 +112,7 @@ const snapshotScheduleTime = "2006-01-02T15:04:05"
 // TemporarySnapshotSchedule adds a snapshot schedule, and its retention, to a
 // directory of the filesystem through the MGR snap_schedule module, which
 // takes "scheduled-…" snapshots in the directory's .snap. It never enables the
-// module: enable it with ceph.Container.TemporaryMGRModule first, and wait
+// module: enable it with ceph.Container.OverrideMGRModule first, and wait
 // until the active MGR, which restarts to load it, answers again. A disabled
 // module is ceph.ErrInvalidRequest, and so is a directory that already has a
 // schedule or another lease. The module keeps retention per directory, and a
@@ -134,7 +134,7 @@ func (fs *Filesystem) TemporarySnapshotSchedule(ctx context.Context, schedule Sn
 		}
 	}
 	if !enabled {
-		return nil, invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with TemporaryMGRModule"))
+		return nil, invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with OverrideMGRModule"))
 	}
 	if strings.HasSuffix(schedule.Repeat, "m") {
 		data, err := fs.cluster.Ceph(ctx, "config", "get", "mgr", "mgr/snap_schedule/allow_m_granularity")

@@ -38,7 +38,7 @@ func TestCephFSPins(t *testing.T) {
 				{Section: "mds", Name: "mds_export_ephemeral_random", Value: "true"},
 				{Section: "mds", Name: "mds_export_ephemeral_random_max", Value: "1"},
 			} {
-				change, err := cluster.TemporaryConfig(ctx, setting)
+				change, err := cluster.OverrideConfig(ctx, setting)
 				if change != nil {
 					t.Cleanup(func() {
 						cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

@@ -311,7 +311,7 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `WithClientIdentity(client)` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
 | `CreateClient`, `DeleteClient` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
 | `ConnectionConfig()` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
-| `TemporaryConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
+| `OverrideConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `RemovePool`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
@@ -947,11 +947,11 @@ directory's `.snap`.
 
 The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
 - while the `snap_schedule` module is disabled. Enable it with
-  [TemporaryMGRModule](ceph.md#temporarymgrmodule), and wait until the active
+  [OverrideMGRModule](ceph.md#overridemgrmodule), and wait until the active
   MGR, which restarts to load the module, answers again;
 - a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
   `true`. The module refuses minutes otherwise; set it with
-  [TemporaryConfig](ceph.md#temporaryconfig) for a test;
+  [OverrideConfig](ceph.md#overrideconfig) for a test;
 - a directory that already has a schedule, which the lease would not own,
   or another lease from this filesystem value.
 
@@ -991,7 +991,7 @@ reply was lost, `Restore` takes the only schedule with the requested repeat
 and start as the lease's.
 
 ```golang
-module, err := cluster.TemporaryMGRModule(ctx, "snap_schedule", true)
+module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
 // … wait for the active MGR, and set allow_m_granularity for minutes …
 schedule, err := fs.TemporarySnapshotSchedule(ctx, cephfs.SnapshotSchedule{
 	Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2},
@@ -1139,7 +1139,7 @@ Only one handle per directory and field may be active; different fields can be
 changed independently. Setting a policy does not prove its effect: ephemeral
 pinning is controlled by MDS options such as
 `mds_export_ephemeral_distributed`, which you can change with
-`cluster.TemporaryConfig`. Keep a non-nil handle even when an error is
+`cluster.OverrideConfig`. Keep a non-nil handle even when an error is
 returned, because a canceled call or lost reply can leave the field changed.
 
 ```golang
@@ -1284,7 +1284,7 @@ tested in seconds. `SessionTimeouts` has two fields:
 | `Autoclose` | `session_autoclose` | When nobody wants its capabilities, the session stays `open` (Ceph's default `mds_defer_session_stale=true` does not even mark it stale) and is evicted after `Autoclose`. |
 
 Both values must be whole seconds and at least 30 seconds (Ceph's minimum). They
-are filesystem settings in the MDSMap, so `TemporaryConfig` cannot change them.
+are filesystem settings in the MDSMap, so `OverrideConfig` cannot change them.
 Only one handle per filesystem may be active. Ceph changes one value per
 command, so applying and restoring are not atomic; keep a non-nil handle
 returned with an error and restore it.
@@ -2528,7 +2528,7 @@ health returns to `HEALTH_OK`; Ceph evicts before it would raise
 `MDS_CLIENT_LATE_RELEASE`. The blocklist entry expires by itself (one hour by
 default) and is not removed by `Restore`. To test eviction
 without blocklisting, set `mds_session_blocklist_on_timeout` to `false` with
-`cluster.TemporaryConfig` (section `mds`).
+`cluster.OverrideConfig` (section `mds`).
 
 ### Keep an MDS active while it drops client messages
 
@@ -2558,7 +2558,7 @@ if err != nil {
 	t.Fatal(err)
 }
 active := status.Active[0]
-hold, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "mds." + active.Name, Name: "ms_blackhole_client", Value: "true",
 })
 if hold != nil {
@@ -2587,7 +2587,7 @@ Notes:
 - Use a new client process for each phase. The effect on sessions that were
   already open is not covered by this recipe.
 - Never set `ms_blackhole_client` on the MON, the MGR or the `client` section:
-  the fixture's own CLI is a client, so `TemporaryConfig` and `Restore` would
+  the fixture's own CLI is a client, so `OverrideConfig` and `Restore` would
   hang.
 - `ms_inject_delay_type`, `ms_inject_delay_probability` and
   `ms_inject_delay_max` add random delays instead of dropping messages.
@@ -2730,7 +2730,7 @@ out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "dump_ops_in
 _, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10))
 
 // Central configuration for every MDS, restored by the handle
-hold, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "mds", Name: "mds_session_blocklist_on_timeout", Value: "false",
 })
 ```

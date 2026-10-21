@@ -134,7 +134,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	stats.sample(ctx, owned)
 	osdMemoryPhase(t, "seed-128MiB", started)
 	started = time.Now()
-	noout, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if err != nil {
 		t.Fatal(err)
 	}

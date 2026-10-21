@@ -650,7 +650,7 @@ After a clean stop of the OSD that holds shard 1, `PoolPGs` reported the PG as
 `Acting`. Reads returned the same bytes, rebuilt from the other shards, and a
 write under a snapshot context still preserved a clone. After the OSD started
 again and recovery finished, every byte and version was unchanged. Hold
-`noout` with `TemporaryOSDFlag` while the OSD is stopped.
+`noout` with `OverrideOSDFlag` while the OSD is stopped.
 
 `TestRADOSErasureCodedOutcomes` in `internal/integration` runs these cases
 with an independent reader client.
@@ -660,14 +660,14 @@ with an independent reader client.
 | Need | Use |
 | --- | --- |
 | Inspect stored central configuration | `cluster.Configuration(ctx)` returns exact entries, including masked ones |
-| Change any option for the duration of a test | `cluster.TemporaryConfig(ctx, ceph.ConfigSetting{...})` and `Restore` |
+| Change any option for the duration of a test | `cluster.OverrideConfig(ctx, ceph.ConfigSetting{...})` and `Restore` |
 | Options that must be present at bootstrap | `ceph.WithConfigFile(path)` |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_complaint_time")` or `cluster.Ceph(ctx, "tell", "osd.0", "config", "get", "osd_op_complaint_time")` |
 
-`TemporaryConfig` accepts any option, not only those the module knows:
+`OverrideConfig` accepts any option, not only those the module knows:
 
 ```golang
-change, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{
+change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
 	Section: "osd",
 	Mask:    "class:ssd",
 	Name:    "osd_scrub_min_interval",
@@ -1006,10 +1006,10 @@ cannot even be detected.
 
 | Native change | Conflicts with | Prefer |
 | --- | --- | --- |
-| `config set`/`config rm` on a key held by a `TemporaryConfig` handle | That handle's `Restore` | `TemporaryConfig` |
-| `osd set`/`osd unset` of a global flag | `TemporaryOSDFlag` | `TemporaryOSDFlag` |
+| `config set`/`config rm` on a key held by an `OverrideConfig` handle | That handle's `Restore` | `OverrideConfig` |
+| `osd set`/`osd unset` of a global flag | `OverrideOSDFlag` | `OverrideOSDFlag` |
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `OverrideFullRatios` | `OverrideFullRatios` |
-| `mgr module enable`/`disable` | `TemporaryMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `TemporaryMGRModule` |
+| `mgr module enable`/`disable` | `OverrideMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `OverrideMGRModule` |
 | `osd blocklist add`/`rm` of an entry a handle owns | `TemporaryBlocklist` | `TemporaryBlocklist` |
 | Deleting, renaming or changing owned pools, their CRUSH rules or EC profiles | `CreatePool` descriptors, `RemovePool`, `SetPool*`, which check the native pool ID | `SetPoolReplication`, `SetPoolQuota`, `SetPoolPGCount`, `SetPoolPlacement`, `RemovePool` |
 | `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `SetOSDIn`, `RemoveOSD`, which check the OSD's UUID | `SetOSDIn`, `RemoveOSD` |
@@ -1021,7 +1021,7 @@ cannot even be detected.
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbd.Mirror` operations, which compare captured policies | `rbd.Mirror` methods, `Rebootstrap` |
-| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `TemporaryConfig` refuses them | Choose `WithMessengerMode` at `Run` |
+| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `OverrideConfig` refuses them | Choose `WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 
 Resources you create natively (pools, images, users, buckets, CRUSH rules)
@@ -1051,7 +1051,7 @@ and refuse to overwrite outside edits.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
-  `ControlContainer`, `ControlImage`, `Configuration`, `TemporaryConfig`,
+  `ControlContainer`, `ControlImage`, `Configuration`, `OverrideConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd.md](../rbd.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
@@ -1060,6 +1060,6 @@ and refuse to overwrite outside edits.
 - [rgw.md](../rgw.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
   `DestinationAdmin`, `ZoneAdmin`.
 - [Fault injection](fault-injection.md): messenger options and other faults set
-  through `TemporaryConfig`.
+  through `OverrideConfig`.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): `Restore`
   semantics and partial failures.

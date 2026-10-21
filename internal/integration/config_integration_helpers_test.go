@@ -60,9 +60,9 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		}
 		return nil
 	}
-	apply := func(setting ceph.ConfigSetting) *ceph.ConfigOverride {
+	apply := func(setting ceph.ConfigSetting) *ceph.ConfigOverrideHandle {
 		t.Helper()
-		change, err := cluster.TemporaryConfig(ctx, setting)
+		change, err := cluster.OverrideConfig(ctx, setting)
 		if err != nil {
 			if change != nil {
 				_ = change.Restore(context.WithoutCancel(ctx))
@@ -71,7 +71,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		}
 		return change
 	}
-	restore := func(change *ceph.ConfigOverride) {
+	restore := func(change *ceph.ConfigOverrideHandle) {
 		t.Helper()
 		if err := change.Restore(ctx); err != nil {
 			t.Fatal(err)
@@ -107,7 +107,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 	if entry := lookup(who, "class:ssd"); entry == nil || !equalSeconds(entry.Value, "7200") {
 		t.Fatalf("native number was not normalized: %+v", entry)
 	}
-	if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: who, Mask: "class:ssd", Name: option, Value: "900"}); err == nil {
+	if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: who, Mask: "class:ssd", Name: option, Value: "900"}); err == nil {
 		t.Fatal("overlapping exact config override accepted")
 	}
 	checkRuntime(osds[0], "7200")

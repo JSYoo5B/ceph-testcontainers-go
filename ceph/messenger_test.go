@@ -77,7 +77,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 				cluster := configCluster(control)
 				cluster.settings.messengerMode = MessengerV2Secure
 				scope.Name, scope.Value = name, "PRIVATE-SETTING-VALUE"
-				change, err := cluster.TemporaryConfig(t.Context(), scope)
+				change, err := cluster.OverrideConfig(t.Context(), scope)
 				if err == nil || change != nil || len(control.calls) != 0 || len(cluster.configOverrides) != 0 {
 					t.Fatalf("secure bootstrap %s/%s/%s acquired an override or ran native commands", scope.Section, scope.Mask, scope.Name)
 				}
@@ -93,7 +93,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 		control := &configFixture{}
 		cluster := configCluster(control)
 		cluster.settings.messengerMode = MessengerV2Secure
-		change, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "global", Name: name, Value: "1"})
+		change, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "global", Name: name, Value: "1"})
 		if err != nil || change == nil {
 			t.Fatalf("unrelated setting %s was treated as secure bootstrap policy: %v", name, err)
 		}
@@ -103,7 +103,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 	}
 	control := &configFixture{}
 	cluster := configCluster(control)
-	change, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_client_mode", Value: "secure"})
+	change, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_client_mode", Value: "secure"})
 	if err != nil || change == nil {
 		t.Fatal("default bootstrap lost its existing central-configuration behavior", err)
 	}
@@ -121,7 +121,7 @@ func TestMessengerV2OnlyReservesOnlyProtocolOptions(t *testing.T) {
 			cluster := configCluster(control)
 			cluster.settings.messengerMode = MessengerV2Only
 			scope.Name, scope.Value = name, "true"
-			change, err := cluster.TemporaryConfig(t.Context(), scope)
+			change, err := cluster.OverrideConfig(t.Context(), scope)
 			if !errors.Is(err, ErrInvalidRequest) || change != nil || len(control.calls) != 0 || !strings.Contains(err.Error(), "MessengerV2Only") {
 				t.Fatalf("v2-only bootstrap allowed %s/%s/%s or ran native commands: %v", scope.Section, scope.Mask, scope.Name, err)
 			}
@@ -131,7 +131,7 @@ func TestMessengerV2OnlyReservesOnlyProtocolOptions(t *testing.T) {
 		control := &configFixture{}
 		cluster := configCluster(control)
 		cluster.settings.messengerMode = MessengerV2Only
-		change, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "mon", Name: name, Value: "crc"})
+		change, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "mon", Name: name, Value: "crc"})
 		if err != nil || change == nil {
 			t.Fatalf("v2-only bootstrap refused %s: %v", name, err)
 		}
@@ -152,7 +152,7 @@ func TestMessengerBootstrapGuardPreservesCallerContext(t *testing.T) {
 		{Section: "invalid", Name: "ms_client_mode", Value: "crc"},
 		{Section: "global", Name: "debug_ms", Value: "1"},
 	} {
-		change, err := cluster.TemporaryConfig(ctx, setting)
+		change, err := cluster.OverrideConfig(ctx, setting)
 		if !errors.Is(err, context.Canceled) || change != nil || len(control.calls) != 0 {
 			t.Fatal("canceled caller was replaced by validation/policy errors or ran native commands", err)
 		}
@@ -164,18 +164,18 @@ func TestMessengerBootstrapGuardPreservesCallerContext(t *testing.T) {
 	short, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer stop()
 	started := time.Now()
-	change, err := cluster.TemporaryConfig(short, ConfigSetting{Section: "global", Name: "debug_ms", Value: "1"})
+	change, err := cluster.OverrideConfig(short, ConfigSetting{Section: "global", Name: "debug_ms", Value: "1"})
 	if !errors.Is(err, context.DeadlineExceeded) || change != nil || len(control.calls) != 0 || time.Since(started) > time.Second {
 		t.Fatal("configuration admission ignored the caller deadline", err)
 	}
-	if change, err := cluster.TemporaryConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_bind_msgr1", Value: "true"}); err == nil || change != nil || len(control.calls) != 0 {
+	if change, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_bind_msgr1", Value: "true"}); err == nil || change != nil || len(control.calls) != 0 {
 		t.Fatal("secure bootstrap refusal waited for topology or ran a native command")
 	}
 	var unavailable *Container
-	if change, err := unavailable.TemporaryConfig(ctx, ConfigSetting{Section: "global", Name: "ms_client_mode"}); !errors.Is(err, context.Canceled) || change != nil {
+	if change, err := unavailable.OverrideConfig(ctx, ConfigSetting{Section: "global", Name: "ms_client_mode"}); !errors.Is(err, context.Canceled) || change != nil {
 		t.Fatal("nil cluster hid the caller cancellation", err)
 	}
-	if change, err := unavailable.TemporaryConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_client_mode"}); err == nil || change != nil {
+	if change, err := unavailable.OverrideConfig(t.Context(), ConfigSetting{Section: "global", Name: "ms_client_mode"}); err == nil || change != nil {
 		t.Fatal("nil cluster acquired a central override")
 	}
 }

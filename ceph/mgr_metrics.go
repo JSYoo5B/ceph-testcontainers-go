@@ -85,7 +85,7 @@ func (m ManagerMetrics) Value(name string, labels map[string]string) (float64, e
 
 // ManagerMetrics scrapes the active manager's prometheus module once and
 // parses the Prometheus text exposition format. It never enables the module:
-// enable it with TemporaryMGRModule first, and wait until ManagerServices
+// enable it with OverrideMGRModule first, and wait until ManagerServices
 // lists it. A module that serves no endpoint is ErrInvalidRequest. The
 // scrape runs in the control container, on the cluster's network, at the
 // address that ManagerServices advertises; it is bounded to 30 seconds and
@@ -98,7 +98,7 @@ func (c *Container) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) 
 	}
 	endpoint := services["prometheus"]
 	if endpoint == "" {
-		return ManagerMetrics{}, invalidRequest("the MGR prometheus module serves no metrics: enable it with TemporaryMGRModule and wait for ManagerServices")
+		return ManagerMetrics{}, invalidRequest("the MGR prometheus module serves no metrics: enable it with OverrideMGRModule and wait for ManagerServices")
 	}
 	if !strings.HasSuffix(endpoint, "/") {
 		endpoint += "/"

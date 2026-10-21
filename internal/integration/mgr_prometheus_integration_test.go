@@ -67,7 +67,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 				}
 			})
 			for _, setting := range settings {
-				change, err := cluster.TemporaryConfig(ctx, setting)
+				change, err := cluster.OverrideConfig(ctx, setting)
 				if change != nil {
 					restores = append(restores, change.Restore)
 				}
@@ -75,7 +75,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 					t.Fatal(setting.Name, err)
 				}
 			}
-			module, err := cluster.TemporaryMGRModule(ctx, "prometheus", true)
+			module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
 			if module != nil {
 				restores = append(restores, module.Restore)
 			}
@@ -193,7 +193,7 @@ func TestManagerMetrics(t *testing.T) {
 			t.Fatal("ManagerMetrics enabled the prometheus module")
 		}
 	}
-	module, err := cluster.TemporaryMGRModule(ctx, "prometheus", true)
+	module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
 	if module != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

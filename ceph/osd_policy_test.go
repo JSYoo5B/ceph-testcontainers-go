@@ -74,18 +74,18 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 	}
 }
 
-func TestTemporaryOSDFlagRestoresOriginalAndLeavesOtherTokens(t *testing.T) {
+func TestOverrideOSDFlagRestoresOriginalAndLeavesOtherTokens(t *testing.T) {
 	for _, original := range []bool{false, true} {
 		ctr := &osdPolicyFixture{flags: []string{"sortbitwise", "noscrub", "noout-unrelated"}}
 		if original {
 			ctr.flags = append(ctr.flags, "noout")
 		}
 		c := osdPolicyCluster(ctr)
-		change, err := c.TemporaryOSDFlag(t.Context(), "noout", !original)
+		change, err := c.OverrideOSDFlag(t.Context(), "noout", !original)
 		if err != nil || slices.Contains(ctr.flags, "noout") != !original {
 			t.Fatal("temporary flag was not applied", err)
 		}
-		if _, err := c.TemporaryOSDFlag(t.Context(), "noout", original); err == nil {
+		if _, err := c.OverrideOSDFlag(t.Context(), "noout", original); err == nil {
 			t.Fatal("overlapping flag lease accepted")
 		}
 		copy := *change
@@ -102,10 +102,10 @@ func TestTemporaryOSDFlagRestoresOriginalAndLeavesOtherTokens(t *testing.T) {
 	}
 }
 
-func TestTemporaryOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
+func TestOverrideOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
 	ctr := &osdPolicyFixture{failAfter: "set"}
 	c := osdPolicyCluster(ctr)
-	change, err := c.TemporaryOSDFlag(t.Context(), "norecover", true)
+	change, err := c.OverrideOSDFlag(t.Context(), "norecover", true)
 	if change == nil || err == nil || !slices.Contains(ctr.flags, "norecover") {
 		t.Fatal("uncertain apply lost restoration handle")
 	}
@@ -120,10 +120,10 @@ func TestTemporaryOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
 	}
 }
 
-func TestTemporaryOSDFlagRejectsOutsideChangesToNoopLease(t *testing.T) {
+func TestOverrideOSDFlagRejectsOutsideChangesToNoopLease(t *testing.T) {
 	ctr := &osdPolicyFixture{flags: []string{"noout"}}
 	c := osdPolicyCluster(ctr)
-	change, err := c.TemporaryOSDFlag(t.Context(), "noout", true)
+	change, err := c.OverrideOSDFlag(t.Context(), "noout", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestTemporaryOSDFlagRejectsOutsideChangesToNoopLease(t *testing.T) {
 func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
 	for _, flag := range []string{"pause", "pauserd", "full", "pglog_hardlimit", "norecover,noout", "noout ", "--noout", ""} {
 		ctr := &osdPolicyFixture{}
-		if _, err := osdPolicyCluster(ctr).TemporaryOSDFlag(t.Context(), flag, true); err == nil || len(ctr.calls) != 0 {
+		if _, err := osdPolicyCluster(ctr).OverrideOSDFlag(t.Context(), flag, true); err == nil || len(ctr.calls) != 0 {
 			t.Fatal("unsupported/composite flag reached Ceph", flag)
 		}
 	}
@@ -151,7 +151,7 @@ func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
 			t.Fatal("malformed native dump accepted", raw)
 		}
 	}
-	var unavailable *OSDFlagOverride
+	var unavailable *OSDFlagOverrideHandle
 	if err := unavailable.Restore(t.Context()); err == nil {
 		t.Fatal("nil override accepted")
 	}

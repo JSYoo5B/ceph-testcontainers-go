@@ -69,7 +69,7 @@ func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
 	}
 	control := &poolFixtureContainer{Output: map[string]string{}}
 	c := &Container{Container: control, settings: options{startupTimeout: time.Second, messengerMode: MessengerV2Secure}}
-	if _, err := c.TemporaryMessengerPolicy(t.Context(), MessengerPolicy{OSDs: []MessengerConnectionMode{MessengerCRC}}); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
+	if _, err := c.OverrideMessengerPolicy(t.Context(), MessengerPolicy{OSDs: []MessengerConnectionMode{MessengerCRC}}); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
 		t.Fatalf("temporary policy under MessengerV2Secure: %v, calls %v", err, control.Calls)
 	}
 	c.settings.messengerMode = MessengerV2Only
@@ -77,7 +77,7 @@ func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
 		"empty":        {},
 		"unknown mode": {OSDs: []MessengerConnectionMode{"plain"}},
 	} {
-		if _, err := c.TemporaryMessengerPolicy(t.Context(), policy); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
+		if _, err := c.OverrideMessengerPolicy(t.Context(), policy); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
 			t.Fatalf("%s temporary policy: %v, calls %v", name, err, control.Calls)
 		}
 	}

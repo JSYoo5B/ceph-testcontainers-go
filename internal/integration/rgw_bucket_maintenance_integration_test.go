@@ -34,7 +34,7 @@ func TestRGWBucketMaintenance(t *testing.T) {
 			cluster, _ := newServiceCluster(t, opts...)
 			// Keep the owned queue under this recipe's explicit process step.
 			// Otherwise the native background worker can consume it first.
-			reshardConfig, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_dynamic_resharding", Value: "false"})
+			reshardConfig, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_dynamic_resharding", Value: "false"})
 			if err != nil {
 				t.Fatal(err)
 			}

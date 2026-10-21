@@ -639,7 +639,7 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 		return
 	}
 	// Make the MGRs secure, restart both and check that they kept the mode.
-	override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: modeSecure})
+	override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: modeSecure})
 	if override != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

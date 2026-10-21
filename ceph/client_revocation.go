@@ -6,11 +6,12 @@ import (
 	"fmt"
 )
 
-// ClientRevocation is a temporary removal of a client identity that this
-// cluster created; Restore puts back the same key and capabilities. It holds
-// the original credentials privately and never prints them. Copies of a
-// revocation share its state.
-type ClientRevocation struct {
+// ClientRevocationHandle manages removal and restoration of a client identity
+// that this cluster created. It retains ownership and possibly uncertain apply
+// state; a non-nil handle does not guarantee a successful removal. Restore puts
+// back the same key and capabilities. It holds the original credentials
+// privately and never prints them. Copies share its state.
+type ClientRevocationHandle struct {
 	owner *Container
 	state *clientRevocationState
 }
@@ -27,10 +28,10 @@ type clientRevocationState struct {
 }
 
 // Name returns the revoked entity, for example client.reader.
-func (r *ClientRevocation) Name() string { return r.state.client.name }
+func (r *ClientRevocationHandle) Name() string { return r.state.client.name }
 
 // String deliberately excludes credentials.
-func (r ClientRevocation) String() string {
+func (r ClientRevocationHandle) String() string {
 	if r.state == nil {
 		return "temporary revocation of a Cephx client"
 	}
@@ -38,9 +39,9 @@ func (r ClientRevocation) String() string {
 }
 
 // GoString excludes credentials from formatted Go representations as well.
-func (r ClientRevocation) GoString() string { return r.String() }
+func (r ClientRevocationHandle) GoString() string { return r.String() }
 
-// TemporaryClientRevocation removes a client identity that this cluster
+// RevokeClient removes a client identity that this cluster
 // created from the MONs until Restore puts back exactly its key and
 // capabilities, so that a test can observe its rejection and then the
 // recovery of the same credentials. The identity must still have the key of
@@ -60,11 +61,11 @@ func (r ClientRevocation) GoString() string { return r.String() }
 //
 // The removal and the restoration are fenced like the import of
 // ReplaceClientKey. A failed call settles the MONs and reports what they
-// hold. When that stays uncertain, TemporaryClientRevocation returns the
+// hold. When that stays uncertain, RevokeClient returns the
 // revocation with the error, and Restore settles first and then restores.
 // The cluster needs no Restore before Terminate.
-func (c *Container) TemporaryClientRevocation(ctx context.Context, client *ClientConfig) (*ClientRevocation, error) {
-	if gateErr := c.sharedGate("TemporaryClientRevocation"); gateErr != nil {
+func (c *Container) RevokeClient(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error) {
+	if gateErr := c.sharedGate("RevokeClient"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := c.lockTopology(ctx); err != nil {
@@ -78,7 +79,7 @@ func (c *Container) TemporaryClientRevocation(ctx context.Context, client *Clien
 		return nil, err
 	}
 	state := &clientRevocationState{client: client, original: current}
-	revocation := &ClientRevocation{owner: c, state: state}
+	revocation := &ClientRevocationHandle{owner: c, state: state}
 	if c.clientRevocations == nil {
 		c.clientRevocations = make(map[string]*clientRevocationState)
 	}
@@ -100,7 +101,7 @@ func (c *Container) TemporaryClientRevocation(ctx context.Context, client *Clien
 // again with another key or other capabilities, and one that DeleteClient
 // removed for good. The restoration is fenced like the removal: when its
 // outcome stays uncertain, the next Restore settles first.
-func (r *ClientRevocation) Restore(ctx context.Context) error {
+func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	if r == nil || r.owner == nil || r.state == nil {
 		return errors.New("client revocation is unavailable")
 	}

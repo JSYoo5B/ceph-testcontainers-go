@@ -35,11 +35,12 @@ func (c *Container) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	return c.mgrModules(ctx)
 }
 
-// MGRModuleOverride restores one module's original enabled state. Copies share
+// MGRModuleOverrideHandle manages restoration of one module's original enabled
+// state, retaining ownership even when application is uncertain. Copies share
 // lifecycle state. Restore explicitly when the test condition ends; termination
 // disposes of the entire cluster. A non-nil handle returned with an error must
 // also be restored or the cluster terminated.
-type MGRModuleOverride struct {
+type MGRModuleOverrideHandle struct {
 	owner *Container
 	name  string
 	state *mgrModuleOverrideState
@@ -49,7 +50,7 @@ type mgrModuleOverrideState struct {
 	previous, applied, alwaysOn, restored bool
 }
 
-// TemporaryMGRModule changes configured membership without forcing unavailable
+// OverrideMGRModule changes configured membership without forcing unavailable
 // dependencies. It rejects missing/cannot-run metadata on enable, overlapping
 // handles, always-on disable, and disabling volumes or mirroring while relevant
 // filesystems/mirror policies exist. An enabled always-on module accepts only a
@@ -57,8 +58,8 @@ type mgrModuleOverrideState struct {
 // enabled because restoring it would require force-disable. This method verifies
 // membership, not command readiness. External edits must not race apply/restore;
 // Ceph has no module membership CAS or per-module generation.
-func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error) {
-	if gateErr := c.sharedGate("TemporaryMGRModule"); gateErr != nil {
+func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*MGRModuleOverrideHandle, error) {
+	if gateErr := c.sharedGate("OverrideMGRModule"); gateErr != nil {
 		return nil, gateErr
 	}
 	if !mgrModuleNamePattern.MatchString(name) {
@@ -93,11 +94,11 @@ func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled
 			return nil, err
 		}
 	}
-	change := &MGRModuleOverride{owner: c, name: name, state: &mgrModuleOverrideState{
+	change := &MGRModuleOverrideHandle{owner: c, name: name, state: &mgrModuleOverrideState{
 		previous: module.Enabled, applied: enabled, alwaysOn: module.AlwaysOn,
 	}}
 	if c.moduleOverrides == nil {
-		c.moduleOverrides = make(map[string]*MGRModuleOverride)
+		c.moduleOverrides = make(map[string]*MGRModuleOverrideHandle)
 	}
 	c.moduleOverrides[name] = change
 	if module.Enabled == enabled {
@@ -121,7 +122,7 @@ func (c *Container) TemporaryMGRModule(ctx context.Context, name string, enabled
 // dependency metadata before enabling and current filesystem/mirror usage before
 // disabling. No-op leases refuse an outside change. Outside writes equal to the
 // applied or previous boolean state cannot be distinguished and must not race.
-func (change *MGRModuleOverride) Restore(ctx context.Context) error {
+func (change *MGRModuleOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.owner == nil || change.state == nil {
 		return errors.New("MGR module override is unavailable")
 	}
@@ -177,7 +178,7 @@ func (change *MGRModuleOverride) Restore(ctx context.Context) error {
 	return nil
 }
 
-func (change *MGRModuleOverride) finish() {
+func (change *MGRModuleOverrideHandle) finish() {
 	change.state.restored = true
 	delete(change.owner.moduleOverrides, change.name)
 }

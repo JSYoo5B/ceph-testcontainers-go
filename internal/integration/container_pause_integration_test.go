@@ -38,7 +38,7 @@ func TestPausedOSDFaults(t *testing.T) {
 				{Section: "mon", Name: "mon_osd_min_down_reporters", Value: "1"},
 				{Section: "osd", Name: "osd_op_complaint_time", Value: "2"},
 			} {
-				if _, err := cluster.TemporaryConfig(ctx, setting); err != nil {
+				if _, err := cluster.OverrideConfig(ctx, setting); err != nil {
 					t.Fatal("prepare", setting.Name, err)
 				}
 			}
@@ -68,7 +68,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			}
 
 			t.Run("frozen_up", func(t *testing.T) {
-				hold, err := cluster.TemporaryOSDFlag(ctx, "nodown", true)
+				hold, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
 				if hold != nil {
 					t.Cleanup(func() { restoreFlag(t, hold) })
 				}
@@ -131,7 +131,7 @@ func TestPausedOSDFaults(t *testing.T) {
 	}
 }
 
-func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverride) {
+func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverrideHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := hold.Restore(ctx); err != nil {

@@ -74,7 +74,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err != nil || slices.Contains(initialFlags, "noout") {
 				t.Fatal("fresh noout=false state required for the auto-out positive control", err)
 			}
-			interval, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_osd_down_out_interval", Value: "3"})
+			interval, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_osd_down_out_interval", Value: "3"})
 			if interval != nil {
 				t.Cleanup(func() {
 					if err := interval.Restore(context.Background()); err != nil {
@@ -87,12 +87,12 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			}
 			// Keep the other auto-out guards fixed across noout=true/false, so the
 			// same down OSD is the positive control for the flag's native effect.
-			var controlSettings []*ceph.ConfigOverride
+			var controlSettings []*ceph.ConfigOverrideHandle
 			for _, setting := range []ceph.ConfigSetting{
 				{Section: "mon", Name: "mon_osd_down_out_subtree_limit", Value: ""},
 				{Section: "mon", Name: "mon_osd_adjust_down_out_interval", Value: "false"},
 			} {
-				change, err := cluster.TemporaryConfig(ctx, setting)
+				change, err := cluster.OverrideConfig(ctx, setting)
 				if change != nil {
 					controlSettings = append(controlSettings, change)
 					t.Cleanup(func() {
@@ -105,7 +105,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 					t.Fatal(err)
 				}
 			}
-			noout, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+			noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 			if noout != nil {
 				t.Cleanup(func() {
 					if err := noout.Restore(context.Background()); err != nil {
@@ -168,7 +168,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			probe("restarted")
 			// Preserve an original native flag, including the disable-and-restore path.
 			cephCommand(t, ctx, cluster, "osd", "set", "noout")
-			disabled, err := cluster.TemporaryOSDFlag(ctx, "noout", false)
+			disabled, err := cluster.OverrideOSDFlag(ctx, "noout", false)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -150,7 +150,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 
 	// A temporary policy applies to new connections without a restart, and
 	// Restore brings back the bootstrap policy.
-	override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeCRC, OSDs: modeCRC})
+	override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeCRC, OSDs: modeCRC})
 	if err != nil {
 		if override != nil {
 			_ = override.Restore(ctx)
@@ -176,7 +176,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 	osdSecure.expect(t, ctx, "restored", "accepted", "tell", "osd.0", "version")
 
 	// One daemon's own entry takes precedence over its type's policy.
-	single, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd.0", Name: "ms_service_mode", Value: "crc"})
+	single, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd.0", Name: "ms_service_mode", Value: "crc"})
 	if err != nil {
 		if single != nil {
 			_ = single.Restore(ctx)
@@ -209,7 +209,7 @@ func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.Co
 	inherited := startPolicyClient(t, ctx, cluster, "inherited", cluster.WithClient())
 	crc.expect(t, ctx, "secure-only", "rejected", "mon", "stat")
 	inherited.expect(t, ctx, "secure-only", "accepted", "mon", "stat")
-	if _, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeCRC}); err == nil {
+	if _, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeCRC}); err == nil {
 		t.Fatal("a temporary policy was accepted with MessengerV2Secure")
 	}
 	t.Log("MessengerV2Secure: a CRC-only client policy is rejected by the MON; a client without a policy connects")
@@ -375,7 +375,7 @@ print(json.dumps(modes))
 `
 
 // waitEffectiveMode waits until each daemon runs with option set to want.
-// TemporaryConfig confirms the central database; a daemon applies the change
+// OverrideConfig confirms the central database; a daemon applies the change
 // when the MON delivers it.
 func waitEffectiveMode(t *testing.T, ctx context.Context, cluster *ceph.Container, option, want string, daemons ...string) {
 	t.Helper()
@@ -470,7 +470,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	override, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeSecure})
+	override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeSecure})
 	if override != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -499,7 +499,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	secure.expect(t, ctx, "restored", "rejected", "mon", "stat")
 
 	// MONs that accept CRC with MGRs that accept only secure.
-	mixed, err := cluster.TemporaryMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: modeSecure})
+	mixed, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: modeSecure})
 	if mixed != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

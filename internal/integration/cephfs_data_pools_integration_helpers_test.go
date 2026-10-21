@@ -162,7 +162,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if original, err := cluster.PoolStatus(ctx, replaced); err != nil || original.ID != stale.ID {
 		t.Fatal("empty candidate pool changed before the owned native replacement", err)
 	}
-	permission, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
+	permission, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
 	if permission != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)

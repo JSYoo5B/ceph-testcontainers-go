@@ -1004,7 +1004,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	if daemon == nil {
 		t.Fatalf("active mds.%s is not owned", old.Name)
 	}
-	window, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
+	window, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
 	if window != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -1813,7 +1813,7 @@ type cephFSUnsafeHold struct {
 	actor    *cephFSActorRun
 	baseline cephFSActorReceipt
 	renamed  cephFSActorReceipt
-	pause    *ceph.ConfigOverride
+	pause    *ceph.ConfigOverrideHandle
 	held     cephFSUnsafeObservation
 }
 
@@ -1854,12 +1854,12 @@ func startCephFSSingleMDS(t *testing.T, ctx context.Context, opts ...testcontain
 	return m
 }
 
-// pauseJournal sets mds_log_pause through TemporaryConfig and waits until the
+// pauseJournal sets mds_log_pause through OverrideConfig and waits until the
 // running MDS applies it. The restoration is registered before it returns, so
 // it is in place before the caller admits an operation.
-func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverride {
+func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverrideHandle {
 	t.Helper()
-	pause, err := m.cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
+	pause, err := m.cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
 	if pause != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -1974,7 +1974,7 @@ func (h *cephFSUnsafeHold) historicRename(t *testing.T, ctx context.Context, mds
 
 // holdCephFSUnsafeRename starts a cluster with one filesystem and one active
 // MDS, and an actor with a fsynced file. It sets mds_log_pause through
-// TemporaryConfig, reads it back from the running daemon, and lets the actor
+// OverrideConfig, reads it back from the running daemon, and lets the actor
 // rename the file once. The rename must return with the early reply, and
 // twice, 3 s apart, the MDS must list the client's request in flight after
 // "early_replied" and without "journal_committed" while the client's admin

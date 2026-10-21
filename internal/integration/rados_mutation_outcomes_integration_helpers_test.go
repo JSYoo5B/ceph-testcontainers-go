@@ -242,7 +242,7 @@ func osdUpFrom(t *testing.T, ctx context.Context, cluster *ceph.Container, id in
 // operation waits several times delay before it runs.
 func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string, delay time.Duration) func() {
 	t.Helper()
-	var holds []*ceph.ConfigOverride
+	var holds []*ceph.ConfigOverrideHandle
 	restore := func() {
 		for i := len(holds) - 1; i >= 0; i-- {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -258,7 +258,7 @@ func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_duration", Value: fmt.Sprint(delay.Seconds())},
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 	} {
-		hold, err := cluster.TemporaryConfig(ctx, setting)
+		hold, err := cluster.OverrideConfig(ctx, setting)
 		if hold != nil {
 			holds = append(holds, hold)
 		}

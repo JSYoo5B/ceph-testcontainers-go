@@ -33,7 +33,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if lease, err := fs.TemporarySnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a schedule without the module: %v, %v", lease, err)
 	}
-	module, err := cluster.TemporaryMGRModule(ctx, "snap_schedule", true)
+	module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
 	if module != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -66,7 +66,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if lease, err := fs.TemporarySnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a minute schedule without allow_m_granularity: %v, %v", lease, err)
 	}
-	granularity, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"})
+	granularity, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"})
 	if granularity != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -143,7 +143,9 @@ func testSnapshotScheduleOwnership(t *testing.T, ctx context.Context, cluster *c
 		}
 		return string(out)
 	}
-	statusJSON := func() string { return strings.TrimSpace(native("fs", "snap-schedule", "status", "/", "--format", "json")) }
+	statusJSON := func() string {
+		return strings.TrimSpace(native("fs", "snap-schedule", "status", "/", "--format", "json"))
+	}
 	lease := func(schedule cephfs.SnapshotSchedule) *cephfs.SnapshotScheduleLease {
 		t.Helper()
 		lease, err := fs.TemporarySnapshotSchedule(ctx, schedule)

@@ -800,7 +800,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}()
 	turn := func(script string) { execOutput(t, ctx, control, "sh", "-c", script, "sh", work) }
 	turn(`cat "$1/ready"`)
-	nodown, err := cluster.TemporaryOSDFlag(ctx, "nodown", true)
+	nodown, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -189,7 +189,7 @@ returned by `ceph.Run` directly.
 
 Server-side RGW options are read when a gateway starts. When a test needs such
 options (lifecycle clock, usage log, STS key, KMS backend), create the cluster
-with `ceph.Run`, apply the options with `TemporaryConfig`, and then call
+with `ceph.Run`, apply the options with `OverrideConfig`, and then call
 `rgw.Start`. Most recipes under [Examples](#examples) follow this pattern.
 
 #### Image
@@ -301,7 +301,7 @@ cluster's only gateway, such as the `default` gateway of a `Run` without
 gateway from `Gateways` instead.
 
 The `Container` also embeds `*ceph.Container`. Its cluster methods
-(`TemporaryConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
+(`OverrideConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
 `PublicAddress`, `UsesHostNetwork`, `CephVersion` and so on) are documented in
 [ceph.md](ceph.md).
 
@@ -1788,7 +1788,7 @@ func startCluster(t *testing.T, opts ...testcontainers.ContainerCustomizer) *cep
 func applyConfig(t *testing.T, cluster *ceph.Container, settings ...ceph.ConfigSetting) {
 	t.Helper()
 	for _, setting := range settings {
-		change, err := cluster.TemporaryConfig(t.Context(), setting)
+		change, err := cluster.OverrideConfig(t.Context(), setting)
 		if change != nil {
 			t.Cleanup(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -2970,7 +2970,7 @@ The fixture never grants the global `admin` flag.
 
 ### Ceph options for RGW
 
-- `cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_...", Value: "..."})`
+- `cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_...", Value: "..."})`
   before `rgw.Start`. Many RGW options take effect only when the gateway
   starts; to apply such a change to a running gateway, restart it
   (`Stop`/`Start`) and resolve `S3Endpoint` again.

@@ -40,7 +40,7 @@ func TestPoolPGRelocation(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal("prepare small OSDs without startup benchmark", err)
 			}
 			fast, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{DeviceClass: "fast"})
@@ -141,7 +141,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			t.Run("held_relocation", func(t *testing.T) {
 				// Small PG logs make Ceph recover the moved objects through the
 				// log instead of backfill, so norecover must be held as well.
-				var holds []*ceph.OSDFlagOverride
+				var holds []*ceph.OSDFlagOverrideHandle
 				t.Cleanup(func() {
 					restoreCtx, restoreCancel := context.WithTimeout(context.Background(), time.Minute)
 					defer restoreCancel()
@@ -152,7 +152,7 @@ func TestPoolPGRelocation(t *testing.T) {
 					}
 				})
 				for _, flag := range []string{"nobackfill", "norecover"} {
-					hold, err := cluster.TemporaryOSDFlag(ctx, flag, true)
+					hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 					if hold != nil {
 						holds = append(holds, hold)
 					}

@@ -80,7 +80,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original cluster identity unavailable")
 	}
 	if skipBenchmark {
-		if _, err := cluster.TemporaryConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 			t.Fatal("explicit lightweight preparation failed", err)
 		}
 	}
@@ -125,7 +125,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original pool identity unavailable", err)
 	}
 	smallOSDData(t, ctx, cluster, fsid, pool.Name, poolState.ID, "seed")
-	noout, err := cluster.TemporaryOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if err != nil {
 		t.Fatal(err)
 	}
