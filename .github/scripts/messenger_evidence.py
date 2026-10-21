@@ -139,6 +139,7 @@ def validate_stream(raw, root, reference, bindings, expected):
     output, runs, passes = {}, {}, {}
     package_pass = 0
     finished = set()
+    lifecycle = {binding["case"]: "pending" for binding in bindings.values()}
     for line in raw.splitlines():
         event = loads(line)
         need(isinstance(event, dict), "event must be an object")
@@ -148,6 +149,17 @@ def validate_stream(raw, root, reference, bindings, expected):
         need(package_pass == 0, "events after package completion")
         case, action = event.get("Test"), event.get("Action")
         need(case not in finished or action not in {"output", "run"}, "events after test completion")
+        if case in lifecycle:
+            # Bind all chunks to this unique execution window, including chunks
+            # without a complete marker. Later run/pass counts cannot make
+            # pre-run bytes into evidence from the actual execution.
+            if action == "run":
+                need(lifecycle[case] == "pending", "bound test did not run exactly once")
+                lifecycle[case] = "running"
+            else:
+                need(lifecycle[case] == "running", "event outside bound test execution")
+                if action in {"pass", "skip"}:
+                    lifecycle[case] = "finished"
         if action == "run":
             runs[case] = runs.get(case, 0) + 1
         if action == "output":

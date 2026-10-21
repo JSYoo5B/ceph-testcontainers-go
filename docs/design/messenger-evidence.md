@@ -85,7 +85,11 @@ uncertain mutation merely to obtain a successful receipt.
 The validator checks JSON duplicate keys, source identity, unique execution,
 complete markers and SHA-256 binding, matching FSID/OSD UUIDs, PG/acting and MDS
 generation, native/auth refusal outcomes, cleanup and terminal pass events.
-Split output chunks are reassembled. Missing, repeated, stale, truncated or
+Bound cases have an explicit pending/running/finished lifecycle. Their output
+and other events must follow the unique run and precede terminal pass/skip;
+pre-run receipt bytes cannot be joined to a later run/pass. Split parent and
+case-output chunks are reassembled only within that running interval. A skipped
+case never supplies a successful receipt. Missing, repeated, stale, truncated or
 mixed evidence fails; streams over 64 MiB are refused. Unknown case receipts
 are not silently counted as another case. Without execution, reports keep
 `unexecuted_bindings`; unmapped declarations always stay visible. Reports

@@ -74,10 +74,56 @@ class MessengerEvidenceTests(unittest.TestCase):
         self.assertEqual(result["unexecuted_bindings"], list(self.bindings))
 
     def test_split_output_reassembles(self):
+        for index in (1, 2):
+            with self.subTest(output=index):
+                events = self.events()
+                line = events[index]["Output"]
+                events[index:index + 1] = [self.event("output", self.case, Output=line[:150]),
+                                           self.event("output", self.case, Output=line[150:])]
+                self.check(events)
+
+    def test_running_case_can_pause_and_continue(self):
         events = self.events()
-        line = events[2]["Output"]
-        events[2:3] = [self.event("output", self.case, Output=line[:150]), self.event("output", self.case, Output=line[150:])]
+        events[1:1] = [self.event("pause", self.case), self.event("cont", self.case),
+                       self.event("output", self.case, Output="ordinary running output\n")]
         self.check(events)
+
+    def test_receipts_before_run(self):
+        events = self.events()
+        self.reject([events[1], events[2], events[0], events[3], events[4]])
+
+    def test_parent_output_before_run(self):
+        events = self.events()
+        self.reject([events[1], events[0], events[2], events[3], events[4]])
+
+    def test_case_output_before_run(self):
+        events = self.events()
+        with self.assertRaisesRegex(m.EvidenceError, "outside bound test execution"):
+            self.check([events[2], events[0], events[1], events[3], events[4]])
+
+    def test_split_receipt_starts_before_run(self):
+        for index in (1, 2):
+            with self.subTest(output=index):
+                events = self.events()
+                line = events[index]["Output"]
+                events[index]["Output"] = line[150:]
+                self.reject([self.event("output", self.case, Output=line[:150])] + events)
+
+    def test_ordinary_output_before_run(self):
+        self.reject([self.event("output", self.case, Output="stale prelude\n")] + self.events())
+
+    def test_output_after_skip(self):
+        events = self.events()
+        events.insert(2, self.event("skip", self.case))
+        self.reject(events)
+
+    def test_skip_before_run(self):
+        self.reject([self.event("skip", self.case)] + self.events())
+
+    def test_pause_after_pass(self):
+        events = self.events()
+        events.insert(4, self.event("pause", self.case))
+        self.reject(events)
 
     def test_missing_case_marker(self):
         events = self.events(); del events[2]; self.reject(events)
