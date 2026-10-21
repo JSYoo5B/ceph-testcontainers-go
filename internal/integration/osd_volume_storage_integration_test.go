@@ -154,7 +154,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	observer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
 		Image: image, Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
 		HostConfigModifier: func(h *container.HostConfig) { h.NetworkMode = "none" },
-		Mounts:             testcontainers.ContainerMounts{{Source: testcontainers.DockerVolumeMountSource{Name: name, VolumeOptions: &mount.VolumeOptions{NoCopy: true}}, Target: "/observed", ReadOnly: true}},
+		Mounts:             testcontainers.ContainerMounts{{Source: testcontainers.DockerVolumeMountSource{Name: name, VolumeOptions: &mount.VolumeOptions{NoCopy: true, Labels: maps.Clone(testcontainers.GenericLabels())}}, Target: "/observed", ReadOnly: true}},
 	}, Started: true})
 	if observer != nil {
 		t.Cleanup(func() {
