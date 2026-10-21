@@ -131,7 +131,7 @@ func TestPausedOSDFaults(t *testing.T) {
 	}
 }
 
-func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverride) {
+func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverrideHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := hold.Restore(ctx); err != nil {

@@ -4,13 +4,30 @@ For the next minor release, update these calls together with your imports and
 local wrappers. All methods remain on `*ceph.Container`. Published releases
 keep their original APIs; no compatibility aliases are added on main.
 
-| Previous call | Current call | Unchanged result and undo |
+| Previous call | Current call | Current management handle / unchanged undo |
 | --- | --- | --- |
-| `cluster.TemporaryConfig(ctx, setting)` | `cluster.OverrideConfig(ctx, setting)` | `*ceph.ConfigOverride` / `Restore(ctx)` |
-| `cluster.TemporaryOSDFlag(ctx, flag, enabled)` | `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `*ceph.OSDFlagOverride` / `Restore(ctx)` |
-| `cluster.TemporaryMGRModule(ctx, name, enabled)` | `cluster.OverrideMGRModule(ctx, name, enabled)` | `*ceph.MGRModuleOverride` / `Restore(ctx)` |
-| `cluster.TemporaryMessengerPolicy(ctx, policy)` | `cluster.OverrideMessengerPolicy(ctx, policy)` | `*ceph.MessengerPolicyOverride` / `Restore(ctx)` |
-| `cluster.TemporaryClientRevocation(ctx, client)` | `cluster.RevokeClient(ctx, client)` | `*ceph.ClientRevocation` / `Restore(ctx)` |
+| `cluster.TemporaryConfig(ctx, setting)` | `cluster.OverrideConfig(ctx, setting)` | `*ceph.ConfigOverrideHandle` / `Restore(ctx)` |
+| `cluster.TemporaryOSDFlag(ctx, flag, enabled)` | `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `*ceph.OSDFlagOverrideHandle` / `Restore(ctx)` |
+| `cluster.TemporaryMGRModule(ctx, name, enabled)` | `cluster.OverrideMGRModule(ctx, name, enabled)` | `*ceph.MGRModuleOverrideHandle` / `Restore(ctx)` |
+| `cluster.TemporaryMessengerPolicy(ctx, policy)` | `cluster.OverrideMessengerPolicy(ctx, policy)` | `*ceph.MessengerPolicyOverrideHandle` / `Restore(ctx)` |
+| `cluster.TemporaryClientRevocation(ctx, client)` | `cluster.RevokeClient(ctx, client)` | `*ceph.ClientRevocationHandle` / `Restore(ctx)` |
+
+Explicit return-type declarations, slices, interfaces and wrappers must also
+migrate these management objects:
+
+| Previous type | Current type |
+| --- | --- |
+| `ceph.ConfigOverride` | `ceph.ConfigOverrideHandle` |
+| `ceph.OSDFlagOverride` | `ceph.OSDFlagOverrideHandle` |
+| `ceph.MGRModuleOverride` | `ceph.MGRModuleOverrideHandle` |
+| `ceph.MessengerPolicyOverride` | `ceph.MessengerPolicyOverrideHandle` |
+| `ceph.ClientRevocation` | `ceph.ClientRevocationHandle` |
+
+Each handle retains prior state, ownership and possibly partial or uncertain
+application for explicit restoration. The suffix distinguishes the management
+object from input configuration or observed values; it guarantees neither a
+successful apply nor automatic cleanup. Copies retain their existing shared
+state. No legacy type aliases are added.
 
 The first four names describe saved policy with explicit restoration, matching
 `OverrideFullRatios`. RevokeClient describes the actual auth removal; its handle

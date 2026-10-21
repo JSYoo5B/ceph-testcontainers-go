@@ -25,10 +25,10 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A container sends on one network at a limited bandwidth | `fault.TemporaryNetworkDelay` with `NetworkDelay.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkDelayLease.Restore` |
 | Packets that a container sends arrive reordered, duplicated or corrupted | `fault.TemporaryNetworkDelay` with `NetworkDelay.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkDelayLease.Restore` |
 | Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
-| A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverride.Restore` |
-| An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverride.Restore` |
+| A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
+| An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
-| A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverride.Restore` |
+| A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverrideHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |

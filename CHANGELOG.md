@@ -323,9 +323,11 @@ change the API.
 - Rename `Container.TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`
   and `TemporaryMessengerPolicy` to `OverrideConfig`, `OverrideOSDFlag`,
   `OverrideMGRModule` and `OverrideMessengerPolicy`; rename
-  `Container.TemporaryClientRevocation` to `RevokeClient`. Existing return
-  handles, explicit `Restore`, admission and uncertainty/retry semantics are
-  unchanged. These next-minor source breaks add no compatibility aliases or
+  `Container.TemporaryClientRevocation` to `RevokeClient`. Rename their management
+  types to `ConfigOverrideHandle`, `OSDFlagOverrideHandle`,
+  `MGRModuleOverrideHandle`, `MessengerPolicyOverrideHandle` and
+  `ClientRevocationHandle`. Handle state, explicit `Restore`, admission and
+  uncertainty/retry semantics are unchanged. These next-minor source breaks add no compatibility aliases or
   automatic expiry; see `docs/guides/upgrading-ceph-policy-names.md`.
 
 - Rename `Container.TemporaryFullRatios` to `Container.OverrideFullRatios`,

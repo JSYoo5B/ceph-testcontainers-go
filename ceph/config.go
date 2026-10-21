@@ -31,11 +31,12 @@ type ConfigEntry struct {
 	CanUpdateAtRuntime bool   `json:"can_update_at_runtime"`
 }
 
-// ConfigOverride restores one exact database entry. Copies share lifecycle
-// state. Restore explicitly when the test condition should end; cluster
+// ConfigOverrideHandle manages restoration of one exact database entry, retaining
+// prior state and ownership even when application is uncertain. Copies share
+// lifecycle state. Restore explicitly when the test condition should end; cluster
 // termination disposes of the entire configuration database. A non-nil handle
 // returned with an error must also be restored or the cluster terminated.
-type ConfigOverride struct {
+type ConfigOverrideHandle struct {
 	owner   *Container
 	setting ConfigSetting
 	state   *configOverrideState
@@ -49,12 +50,12 @@ type configOverrideState struct {
 }
 
 // String names the override's section and option without its values.
-func (change ConfigOverride) String() string {
+func (change ConfigOverrideHandle) String() string {
 	return "Ceph config override " + configWho(change.setting) + " " + change.setting.Name
 }
 
 // GoString formats the override like String.
-func (change ConfigOverride) GoString() string { return change.String() }
+func (change ConfigOverrideHandle) GoString() string { return change.String() }
 
 // Configuration lists exact central database entries, including masked entries.
 // Use native config show/daemon config get to inspect a running daemon's effective
@@ -78,7 +79,7 @@ func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // bootstrap policy. MessengerV2Only reserves ms_bind_msgr1/2 the same way and
 // leaves the mode options free. Select a MessengerMode when creating a new
 // cluster instead.
-func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error) {
+func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (*ConfigOverrideHandle, error) {
 	if gateErr := c.sharedGate("OverrideConfig"); gateErr != nil {
 		return nil, gateErr
 	}
@@ -115,9 +116,9 @@ func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (
 	if err != nil {
 		return nil, err
 	}
-	change := &ConfigOverride{owner: c, setting: setting, state: &configOverrideState{previous: findConfigEntry(entries, setting)}}
+	change := &ConfigOverrideHandle{owner: c, setting: setting, state: &configOverrideState{previous: findConfigEntry(entries, setting)}}
 	if c.configOverrides == nil {
-		c.configOverrides = make(map[string]*ConfigOverride)
+		c.configOverrides = make(map[string]*ConfigOverrideHandle)
 	}
 	c.configOverrides[key] = change
 	if change.state.previous != nil && change.state.previous.Value == setting.Value {
@@ -149,7 +150,7 @@ func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (
 // absent. It refuses a different current value to preserve outside edits. After
 // an uncertain restore reply, retrying reconciles the native state first. Same
 // value outside writes cannot be distinguished; external edits must not race.
-func (change *ConfigOverride) Restore(ctx context.Context) error {
+func (change *ConfigOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.owner == nil || change.state == nil {
 		return errors.New("configuration override is unavailable")
 	}
@@ -206,7 +207,7 @@ func (change *ConfigOverride) Restore(ctx context.Context) error {
 	return nil
 }
 
-func (change *ConfigOverride) finish() {
+func (change *ConfigOverrideHandle) finish() {
 	change.state.restored = true
 	delete(change.owner.configOverrides, configOverrideKey(change.setting))
 }

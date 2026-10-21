@@ -141,7 +141,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			t.Run("held_relocation", func(t *testing.T) {
 				// Small PG logs make Ceph recover the moved objects through the
 				// log instead of backfill, so norecover must be held as well.
-				var holds []*ceph.OSDFlagOverride
+				var holds []*ceph.OSDFlagOverrideHandle
 				t.Cleanup(func() {
 					restoreCtx, restoreCancel := context.WithTimeout(context.Background(), time.Minute)
 					defer restoreCancel()

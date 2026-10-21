@@ -80,13 +80,21 @@ Updating the map/catalogue does not implement any runtime rename.
 6. Keep native domain operations such as backup restore and one-shot error
    injection distinct from fixture rollback. An injection does not acquire a
    reversible handle merely to match the naming convention.
-7. Keep standard Testcontainers `Run`, `Container` and functional `WithX`
+7. Name stateful management/restoration objects so callers can distinguish them
+   from configuration input and observed values. The five ceph operations below
+   return explicit `Handle` types retaining prior state, ownership and possibly
+   partial or uncertain application. `Handle` promises no successful apply, timer
+   or automatic cleanup. Verb-object operations and noun-phrase types are valid;
+   shared words or their order alone are not defects. Do not force past-participle
+   names or mechanically suffix unrelated Lease/resource types. Other management
+   types, including `FullRatiosOverride`, remain for the later #14 audit.
+8. Keep standard Testcontainers `Run`, `Container` and functional `WithX`
    options unless a concrete conflict justifies a separate proposal. A
    descriptive query name does not need an added `Get` prefix by default.
 
 ## Implemented ceph policy/auth checkpoint
 
-These source renames preserve their implementations, handles and undo methods.
+These source renames preserve their implementations, handle state and undo methods.
 They add no expiry, context-cancellation rollback, background restoration or
 new package move. RevokeClient remains a Container operation; no Tenant revoke
 method is introduced. Its shared admission remains the existing tenant-restricted
@@ -94,11 +102,11 @@ policy, while the four policy overrides remain exclusive-only.
 
 | Previous operation | Current operation | Result / undo | Preserved contract |
 | --- | --- | --- | --- |
-| `ceph.Container.TemporaryConfig` | `ceph.Container.OverrideConfig` | `*ceph.ConfigOverride` / `Restore` | Captures/restores one central config key, including prior absence; no TTL. [config.go](../../ceph/config.go) |
-| `ceph.Container.TemporaryOSDFlag` | `ceph.Container.OverrideOSDFlag` | `*ceph.OSDFlagOverride` / `Restore` | Saves global OSDMap flag state; does not schedule restoration. [osd_policy.go](../../ceph/osd_policy.go) |
-| `ceph.Container.TemporaryMGRModule` | `ceph.Container.OverrideMGRModule` | `*ceph.MGRModuleOverride` / `Restore` | Owns a change to module enablement, not an expiring module. [mgr_modules.go](../../ceph/mgr_modules.go) |
-| `ceph.Container.TemporaryMessengerPolicy` | `ceph.Container.OverrideMessengerPolicy` | `*ceph.MessengerPolicyOverride` / `Restore` | Changes allowed runtime policy; does not replace the fixture's fixed bootstrap mode. [messenger_policy.go](../../ceph/messenger_policy.go) |
-| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocation` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
+| `ceph.Container.TemporaryConfig` | `ceph.Container.OverrideConfig` | `*ceph.ConfigOverrideHandle` / `Restore` | Captures/restores one central config key, including prior absence; no TTL. [config.go](../../ceph/config.go) |
+| `ceph.Container.TemporaryOSDFlag` | `ceph.Container.OverrideOSDFlag` | `*ceph.OSDFlagOverrideHandle` / `Restore` | Saves global OSDMap flag state; does not schedule restoration. [osd_policy.go](../../ceph/osd_policy.go) |
+| `ceph.Container.TemporaryMGRModule` | `ceph.Container.OverrideMGRModule` | `*ceph.MGRModuleOverrideHandle` / `Restore` | Owns a change to module enablement, not an expiring module. [mgr_modules.go](../../ceph/mgr_modules.go) |
+| `ceph.Container.TemporaryMessengerPolicy` | `ceph.Container.OverrideMessengerPolicy` | `*ceph.MessengerPolicyOverrideHandle` / `Restore` | Changes allowed runtime policy; does not replace the fixture's fixed bootstrap mode. [messenger_policy.go](../../ceph/messenger_policy.go) |
+| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocationHandle` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
 
 See [the migration guide](../guides/upgrading-ceph-policy-names.md) for the
 source break. This checkpoint fulfills five proposal rows; the catalogue now

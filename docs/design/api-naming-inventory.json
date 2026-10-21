@@ -178,41 +178,41 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientRevocation",
+      "current": "ceph.ClientRevocationHandle",
       "kind": "type",
-      "proposed": "ceph.ClientRevocation",
+      "proposed": "ceph.ClientRevocationHandle",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientRevocation.GoString",
+      "current": "ceph.ClientRevocationHandle.GoString",
       "kind": "method",
       "signature": "func() string",
-      "receiver": "ClientRevocation",
-      "proposed": "ceph.ClientRevocation.GoString",
+      "receiver": "ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.GoString",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientRevocation.Name",
+      "current": "ceph.ClientRevocationHandle.Name",
       "kind": "method",
       "signature": "func() string",
-      "receiver": "*ClientRevocation",
-      "proposed": "ceph.ClientRevocation.Name",
+      "receiver": "*ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.Name",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientRevocation.Restore",
+      "current": "ceph.ClientRevocationHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*ClientRevocation",
-      "proposed": "ceph.ClientRevocation.Restore",
+      "receiver": "*ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.Restore",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientRevocation.String",
+      "current": "ceph.ClientRevocationHandle.String",
       "kind": "method",
       "signature": "func() string",
-      "receiver": "ClientRevocation",
-      "proposed": "ceph.ClientRevocation.String",
+      "receiver": "ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.String",
       "decision": "baseline"
     },
     {
@@ -228,33 +228,33 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverride",
+      "current": "ceph.ConfigOverrideHandle",
       "kind": "type",
-      "proposed": "ceph.ConfigOverride",
+      "proposed": "ceph.ConfigOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverride.GoString",
+      "current": "ceph.ConfigOverrideHandle.GoString",
       "kind": "method",
       "signature": "func() string",
-      "receiver": "ConfigOverride",
-      "proposed": "ceph.ConfigOverride.GoString",
+      "receiver": "ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.GoString",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverride.Restore",
+      "current": "ceph.ConfigOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*ConfigOverride",
-      "proposed": "ceph.ConfigOverride.Restore",
+      "receiver": "*ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverride.String",
+      "current": "ceph.ConfigOverrideHandle.String",
       "kind": "method",
       "signature": "func() string",
-      "receiver": "ConfigOverride",
-      "proposed": "ceph.ConfigOverride.String",
+      "receiver": "ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.String",
       "decision": "baseline"
     },
     {
@@ -656,7 +656,7 @@
     {
       "current": "ceph.Container.OverrideConfig",
       "kind": "method",
-      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverride, error)",
+      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideConfig",
       "decision": "baseline"
@@ -672,7 +672,7 @@
     {
       "current": "ceph.Container.OverrideMGRModule",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverride, error)",
+      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideMGRModule",
       "decision": "baseline"
@@ -680,7 +680,7 @@
     {
       "current": "ceph.Container.OverrideMessengerPolicy",
       "kind": "method",
-      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverride, error)",
+      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideMessengerPolicy",
       "decision": "baseline"
@@ -688,7 +688,7 @@
     {
       "current": "ceph.Container.OverrideOSDFlag",
       "kind": "method",
-      "signature": "func(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error)",
+      "signature": "func(ctx context.Context, flag string, enabled bool) (*OSDFlagOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideOSDFlag",
       "decision": "baseline"
@@ -824,7 +824,7 @@
     {
       "current": "ceph.Container.RevokeClient",
       "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig) (*ClientRevocation, error)",
+      "signature": "func(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.RevokeClient",
       "decision": "baseline"
@@ -1260,17 +1260,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.MGRModuleOverride",
+      "current": "ceph.MGRModuleOverrideHandle",
       "kind": "type",
-      "proposed": "ceph.MGRModuleOverride",
+      "proposed": "ceph.MGRModuleOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "ceph.MGRModuleOverride.Restore",
+      "current": "ceph.MGRModuleOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*MGRModuleOverride",
-      "proposed": "ceph.MGRModuleOverride.Restore",
+      "receiver": "*MGRModuleOverrideHandle",
+      "proposed": "ceph.MGRModuleOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
@@ -1368,17 +1368,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.MessengerPolicyOverride",
+      "current": "ceph.MessengerPolicyOverrideHandle",
       "kind": "type",
-      "proposed": "ceph.MessengerPolicyOverride",
+      "proposed": "ceph.MessengerPolicyOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "ceph.MessengerPolicyOverride.Restore",
+      "current": "ceph.MessengerPolicyOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*MessengerPolicyOverride",
-      "proposed": "ceph.MessengerPolicyOverride.Restore",
+      "receiver": "*MessengerPolicyOverrideHandle",
+      "proposed": "ceph.MessengerPolicyOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
@@ -1564,17 +1564,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.OSDFlagOverride",
+      "current": "ceph.OSDFlagOverrideHandle",
       "kind": "type",
-      "proposed": "ceph.OSDFlagOverride",
+      "proposed": "ceph.OSDFlagOverrideHandle",
       "decision": "baseline"
     },
     {
-      "current": "ceph.OSDFlagOverride.Restore",
+      "current": "ceph.OSDFlagOverrideHandle.Restore",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
-      "receiver": "*OSDFlagOverride",
-      "proposed": "ceph.OSDFlagOverride.Restore",
+      "receiver": "*OSDFlagOverrideHandle",
+      "proposed": "ceph.OSDFlagOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

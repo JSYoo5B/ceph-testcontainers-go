@@ -87,7 +87,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			}
 			// Keep the other auto-out guards fixed across noout=true/false, so the
 			// same down OSD is the positive control for the flag's native effect.
-			var controlSettings []*ceph.ConfigOverride
+			var controlSettings []*ceph.ConfigOverrideHandle
 			for _, setting := range []ceph.ConfigSetting{
 				{Section: "mon", Name: "mon_osd_down_out_subtree_limit", Value: ""},
 				{Section: "mon", Name: "mon_osd_adjust_down_out_interval", Value: "false"},

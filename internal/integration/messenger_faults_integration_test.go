@@ -194,7 +194,7 @@ type messengerFaultMount struct {
 // them; cleanup also restores them if the test stops first.
 func messengerFaultConfig(t *testing.T, ctx context.Context, cluster *ceph.Container, settings ...ceph.ConfigSetting) func() {
 	t.Helper()
-	var overrides []*ceph.ConfigOverride
+	var overrides []*ceph.ConfigOverrideHandle
 	restore := func() {
 		for _, override := range overrides {
 			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)

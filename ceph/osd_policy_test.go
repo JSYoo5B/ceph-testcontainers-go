@@ -151,7 +151,7 @@ func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
 			t.Fatal("malformed native dump accepted", raw)
 		}
 	}
-	var unavailable *OSDFlagOverride
+	var unavailable *OSDFlagOverrideHandle
 	if err := unavailable.Restore(t.Context()); err == nil {
 		t.Fatal("nil override accepted")
 	}

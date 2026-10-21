@@ -112,11 +112,13 @@ func (c *Container) OSDFlags(ctx context.Context) ([]string, error) {
 	return slices.Clone(dump.flags), nil
 }
 
-// OSDFlagOverride restores one global OSDMap flag. Copies share lifecycle state.
+// OSDFlagOverrideHandle manages restoration of one global OSDMap flag, retaining
+// prior state and ownership even when application is uncertain. Copies share
+// lifecycle state.
 // Restore explicitly when the condition should end; termination disposes of
 // the entire OSDMap. A non-nil handle returned with an error remains tracked and
 // must be restored or the cluster terminated. Unrelated flags are never changed.
-type OSDFlagOverride struct {
+type OSDFlagOverrideHandle struct {
 	owner *Container
 	flag  string
 	state *osdFlagOverrideState
@@ -132,7 +134,7 @@ type osdFlagOverrideState struct {
 // Composite pause and irreversible compatibility flags are excluded. Overlapping
 // handles for a flag are refused. External edits to the same flag must not race
 // apply/restore: a boolean flag has no generation and Ceph provides no CAS.
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverride, error) {
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverrideHandle, error) {
 	if gateErr := c.sharedGate("OverrideOSDFlag"); gateErr != nil {
 		return nil, gateErr
 	}
@@ -153,9 +155,9 @@ func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bo
 	if err != nil {
 		return nil, err
 	}
-	change := &OSDFlagOverride{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, flag), applied: enabled}}
+	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, flag), applied: enabled}}
 	if c.flagOverrides == nil {
-		c.flagOverrides = make(map[string]*OSDFlagOverride)
+		c.flagOverrides = make(map[string]*OSDFlagOverrideHandle)
 	}
 	c.flagOverrides[flag] = change
 	if change.state.previous == enabled {
@@ -178,7 +180,7 @@ func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bo
 // reconciles a lost restoration reply before another native mutation. A no-op
 // lease refuses an outside change rather than overwriting it. Outside writes
 // indistinguishable from applied/prior boolean states cannot be detected.
-func (change *OSDFlagOverride) Restore(ctx context.Context) error {
+func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.owner == nil || change.state == nil {
 		return errors.New("OSD flag override is unavailable")
 	}
@@ -223,7 +225,7 @@ func (change *OSDFlagOverride) Restore(ctx context.Context) error {
 	return nil
 }
 
-func (change *OSDFlagOverride) finish() {
+func (change *OSDFlagOverrideHandle) finish() {
 	change.state.restored = true
 	delete(change.owner.flagOverrides, change.flag)
 }

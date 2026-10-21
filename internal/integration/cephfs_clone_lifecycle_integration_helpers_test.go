@@ -48,7 +48,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	// The native delay leaves a deterministic pending window. pause_cloning is
 	// unsuitable here: Tentacle's idle worker can consume the pause cancellation
 	// event when a new clone wakes its inner condition-variable loop.
-	temporaryConfig := func(name, value string) *ceph.ConfigOverride {
+	temporaryConfig := func(name, value string) *ceph.ConfigOverrideHandle {
 		t.Helper()
 		change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
 		if change != nil {

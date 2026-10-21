@@ -1559,15 +1559,15 @@ Methods that change cluster state temporarily return a restoration handle:
 
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
-| `*ceph.ConfigOverride` | [OverrideConfig](#overrideconfig) | `Restore` |
-| `*ceph.OSDFlagOverride` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
-| `*ceph.MGRModuleOverride` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
+| `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
+| `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
+| `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
 | `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkDelayLease` | [fault.TemporaryNetworkDelay](fault.md#temporarynetworkdelay) | `Restore` |
-| `*ceph.ClientRevocation` | [RevokeClient](#revokeclient) | `Restore` |
+| `*ceph.ClientRevocationHandle` | [RevokeClient](#revokeclient) | `Restore` |
 
 All handles follow the same contract:
 
@@ -2156,7 +2156,7 @@ device-class flags are separate native state.
 #### OverrideOSDFlag
 
 ```golang
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*ceph.OSDFlagOverride, error)
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*ceph.OSDFlagOverrideHandle, error)
 ```
 
 Sets or clears one global OSDMap flag and remembers its prior state. Supported
@@ -2349,7 +2349,7 @@ long-lived cluster can give each test its own pool without reaching PG limits.
   `tc-<pool>-placement-<hash>` rule with `SetPoolPlacement` is refused; move it
   back to its original placement first. Placement rules are not removed.
 - `mon_allow_pool_delete` is enabled in the central configuration only during the
-  removal and then restored. It is refused while a `OverrideConfig` handle holds
+  removal and then restored. It is refused while an `OverrideConfig` handle holds
   that key, and a config file that sets it to `false` blocks removal.
 - A retry after an error removes whatever owned resources remain. An unknown name
   is an error.
@@ -2644,7 +2644,7 @@ only the state at that moment.
 #### RevokeClient
 
 ```golang
-func (c *Container) RevokeClient(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocation, error)
+func (c *Container) RevokeClient(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocationHandle, error)
 ```
 
 Removes an identity created by this cluster from the MONs until `Restore`
@@ -2850,7 +2850,7 @@ already current. Do not edit the file concurrently.
 #### OverrideConfig
 
 ```golang
-func (c *Container) OverrideConfig(ctx context.Context, setting ceph.ConfigSetting) (*ceph.ConfigOverride, error)
+func (c *Container) OverrideConfig(ctx context.Context, setting ceph.ConfigSetting) (*ceph.ConfigOverrideHandle, error)
 ```
 
 Sets one entry in the MON configuration database (`ceph config set`) and records
@@ -2933,7 +2933,7 @@ a module's commands are ready.
 #### OverrideMGRModule
 
 ```golang
-func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverride, error)
+func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverrideHandle, error)
 ```
 
 Enables or disables one module and restores its original membership with
@@ -3129,7 +3129,7 @@ settings or live connections.
 #### OverrideMessengerPolicy
 
 ```golang
-func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverride, error)
+func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverrideHandle, error)
 ```
 
 Changes the connection modes that the running daemons accept from clients (see
@@ -3148,7 +3148,7 @@ if override != nil {
 
 - The daemons apply the change to new connections without a restart.
   Established connections keep their mode.
-- `MessengerPolicyOverride.Restore` returns every option to its previous value,
+- `MessengerPolicyOverrideHandle.Restore` returns every option to its previous value,
   including the bootstrap policy. It is idempotent and can be retried.
 - A non-nil result returned with an error holds the overrides that were made;
   restore it.
@@ -3905,14 +3905,14 @@ The cluster owns the auth database; containers you attach with it are yours.
 
 | Type | Methods | Created by |
 | --- | --- | --- |
-| `ConfigOverride` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
-| `OSDFlagOverride` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
-| `MGRModuleOverride` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
+| `ConfigOverrideHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
+| `OSDFlagOverrideHandle` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
+| `MGRModuleOverrideHandle` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
 | `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
-| `ClientRevocation` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [RevokeClient](#revokeclient) |
+| `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [RevokeClient](#revokeclient) |
 
 See the [handle contract](#container-methods).
 

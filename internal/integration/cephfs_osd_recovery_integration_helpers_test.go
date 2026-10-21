@@ -65,7 +65,7 @@ publish(2 + len(chunks), closed=True, **closing)
 
 // holdOSDFlag sets a global OSD flag through OverrideOSDFlag and registers
 // its restoration before it returns.
-func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag string) *ceph.OSDFlagOverride {
+func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag string) *ceph.OSDFlagOverrideHandle {
 	t.Helper()
 	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 	if hold != nil {

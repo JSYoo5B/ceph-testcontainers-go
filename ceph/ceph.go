@@ -42,9 +42,9 @@ type Container struct {
 	mu              sync.Mutex
 	controlMu       sync.RWMutex
 	configMu        sync.RWMutex
-	configOverrides map[string]*ConfigOverride
-	flagOverrides   map[string]*OSDFlagOverride
-	moduleOverrides map[string]*MGRModuleOverride
+	configOverrides map[string]*ConfigOverrideHandle
+	flagOverrides   map[string]*OSDFlagOverrideHandle
+	moduleOverrides map[string]*MGRModuleOverrideHandle
 	controlPlane    testcontainers.Container
 	cephVersion     string
 	// authFences records, per auth entity, what an earlier RotateDaemonKey

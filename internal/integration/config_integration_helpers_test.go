@@ -60,7 +60,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		}
 		return nil
 	}
-	apply := func(setting ceph.ConfigSetting) *ceph.ConfigOverride {
+	apply := func(setting ceph.ConfigSetting) *ceph.ConfigOverrideHandle {
 		t.Helper()
 		change, err := cluster.OverrideConfig(ctx, setting)
 		if err != nil {
@@ -71,7 +71,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		}
 		return change
 	}
-	restore := func(change *ceph.ConfigOverride) {
+	restore := func(change *ceph.ConfigOverrideHandle) {
 		t.Helper()
 		if err := change.Restore(ctx); err != nil {
 			t.Fatal(err)

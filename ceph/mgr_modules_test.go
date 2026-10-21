@@ -69,7 +69,7 @@ func TestOverrideMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T)
 			ctr := newMGRModuleFixture()
 			c := mgrModuleCluster(ctr)
 			c.settings.startupTimeout = 3 * time.Second
-			var change *MGRModuleOverride
+			var change *MGRModuleOverrideHandle
 			if operation == "restore" {
 				var err error
 				change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
@@ -114,7 +114,7 @@ func TestOverrideMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *te
 			t.Run(operation+"/"+failure, func(t *testing.T) {
 				ctr := newMGRModuleFixture()
 				c := mgrModuleCluster(ctr)
-				var change *MGRModuleOverride
+				var change *MGRModuleOverrideHandle
 				if operation == "restore" {
 					var err error
 					change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)

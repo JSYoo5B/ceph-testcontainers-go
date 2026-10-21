@@ -1006,7 +1006,7 @@ cannot even be detected.
 
 | Native change | Conflicts with | Prefer |
 | --- | --- | --- |
-| `config set`/`config rm` on a key held by a `OverrideConfig` handle | That handle's `Restore` | `OverrideConfig` |
+| `config set`/`config rm` on a key held by an `OverrideConfig` handle | That handle's `Restore` | `OverrideConfig` |
 | `osd set`/`osd unset` of a global flag | `OverrideOSDFlag` | `OverrideOSDFlag` |
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `OverrideFullRatios` | `OverrideFullRatios` |
 | `mgr module enable`/`disable` | `OverrideMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `OverrideMGRModule` |

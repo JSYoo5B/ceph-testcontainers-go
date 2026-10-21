@@ -1813,7 +1813,7 @@ type cephFSUnsafeHold struct {
 	actor    *cephFSActorRun
 	baseline cephFSActorReceipt
 	renamed  cephFSActorReceipt
-	pause    *ceph.ConfigOverride
+	pause    *ceph.ConfigOverrideHandle
 	held     cephFSUnsafeObservation
 }
 
@@ -1857,7 +1857,7 @@ func startCephFSSingleMDS(t *testing.T, ctx context.Context, opts ...testcontain
 // pauseJournal sets mds_log_pause through OverrideConfig and waits until the
 // running MDS applies it. The restoration is registered before it returns, so
 // it is in place before the caller admits an operation.
-func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverride {
+func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverrideHandle {
 	t.Helper()
 	pause, err := m.cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
 	if pause != nil {

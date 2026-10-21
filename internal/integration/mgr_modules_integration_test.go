@@ -50,7 +50,7 @@ func TestMGRModules(t *testing.T) {
 					}
 				}
 			}
-			apply := func(name string, enabled bool) *ceph.MGRModuleOverride {
+			apply := func(name string, enabled bool) *ceph.MGRModuleOverrideHandle {
 				t.Helper()
 				change, err := cluster.OverrideMGRModule(ctx, name, enabled)
 				if change != nil {
