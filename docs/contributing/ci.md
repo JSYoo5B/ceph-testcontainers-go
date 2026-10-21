@@ -1192,5 +1192,6 @@ ordinary-RBD and RGW-without-client cases. These source files deliberately
 exclude the legacy `ci` tag planner: their images are not legacy published
 roles. `make roles-v2-runtime` retains the existing cache and CephFS/RBD
 automatic scheduling tests on the relocated runtimes. This workflow also
-checks the aggregate image independently. It does
+uses `make roles-v2-oracles` for shared-cluster cleanup, Messenger policy and
+native command behavior, and checks the aggregate image independently. It does
 not replace existing release/category coverage or qualify unexecuted cells.

@@ -483,7 +483,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			t.Fatalf("a missing pool returned %v", err)
 		}
 		control := cluster.ControlContainer()
-		if _, err := servicehook.Command(ctx, control, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
+		if _, err := servicehook.Command(ctx, client, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
 			!errors.As(err, &failure) || failure.Program != "rados" || failure.Errno != "ENOENT" {
 			t.Fatalf("rados on a missing pool returned %v", err)
 		}

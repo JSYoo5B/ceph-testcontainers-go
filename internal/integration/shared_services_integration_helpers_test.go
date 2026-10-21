@@ -118,11 +118,11 @@ func tenantS3(t *testing.T, ctx context.Context, user *rgw.TenantUser) s3HTTPCli
 		http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-// decodeCommand runs a CLI command in the control container and decodes
+// decodeCommand runs a CLI command in the cluster's toolkit and decodes
 // its JSON output.
-func decodeCommand(t *testing.T, ctx context.Context, control testcontainers.Container, into any, args ...string) {
+func decodeCommand(t *testing.T, ctx context.Context, cluster *ceph.Container, into any, args ...string) {
 	t.Helper()
-	data, err := servicehook.Command(ctx, control, args...)
+	data, err := servicehook.ClientCommand(ctx, cluster, args...)
 	if err != nil {
 		t.Fatalf("%s: %v", strings.Join(args, " "), err)
 	}
