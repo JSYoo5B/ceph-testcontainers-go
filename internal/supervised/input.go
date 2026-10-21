@@ -138,6 +138,12 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 // that a signal killed, or whose cleanup failed, leaves its invocation
 // unconfirmed (see Unconfirmed) also when the run ended meanwhile.
 func RunInput(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, input Input, argv ...string) (Report, error) {
+	return RunInputWithExecCushion(ctx, ctr, label, processLimit, ExecCushion, stdoutLimit, stderrLimit, input, argv...)
+}
+
+// RunInputWithExecCushion is RunInput with the startup/report allowance of
+// RunWithExecCushion. The caller's deadline still bounds the whole attempt.
+func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, label string, processLimit, execCushion time.Duration, stdoutLimit, stderrLimit int, input Input, argv ...string) (Report, error) {
 	var finish sync.Once
 	finished := func() { finish.Do(func() { close(input.Finished) }) }
 	defer finished()
@@ -147,14 +153,17 @@ func RunInput(ctx context.Context, ctr testcontainers.Container, label string, p
 	if ctr == nil {
 		return Report{}, errors.New("ceph control container is unavailable")
 	}
+	if execCushion <= 0 {
+		return Report{}, errors.New("exec cushion must be positive")
+	}
 	if input.Limit <= 0 || input.Writes == nil || input.Closed == nil || input.Finished == nil {
 		return Report{}, fmt.Errorf("%s input is incomplete", label)
 	}
-	attempt, cancel := context.WithTimeout(ctx, processLimit+ExecCushion)
+	attempt, cancel := context.WithTimeout(ctx, processLimit+execCushion)
 	defer cancel()
 	deadline, _ := attempt.Deadline()
 	remaining := time.Until(deadline)
-	cushion := min(ExecCushion, remaining/4)
+	cushion := min(execCushion, remaining/4)
 	seconds := min(processLimit, remaining-cushion).Seconds()
 	if seconds <= 0 {
 		return Report{}, context.DeadlineExceeded

@@ -28,10 +28,9 @@ const (
 	InputVariable = "TC_SUPERVISED_INPUT"
 	// CancelTimeout bounds one Cancel.
 	CancelTimeout = 10 * time.Second
-	// ExecCushion covers Docker exec startup, Python initialization, and the
-	// supervisor's kill/reap/report round trip outside the child's run limit.
-	// A shorter caller deadline still bounds the whole attempt.
-	ExecCushion = 2 * time.Second
+	// ExecCushion is the default reporting allowance for short control reads.
+	// Native command execution supplies its separate startup/report allowance.
+	ExecCushion = 250 * time.Millisecond
 	// LaunchFailedExit is the supervisor's exit code when it could not start
 	// the command because of its program: it does not exist, is not
 	// executable or is not a program (ENOENT, EACCES, ENOEXEC and the like).
@@ -314,19 +313,30 @@ func Command(ctx context.Context, ctr testcontainers.Container, label string, pr
 // supervisor's report, also for a run that timed out or was truncated, and an
 // error only when it has no complete report.
 func Run(ctx context.Context, ctr testcontainers.Container, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (Report, error) {
+	return RunWithExecCushion(ctx, ctr, label, processLimit, ExecCushion, stdoutLimit, stderrLimit, argv...)
+}
+
+// RunWithExecCushion runs like Run with a separate allowance for Docker exec
+// startup, interpreter initialization and returning the timeout report. It
+// does not lengthen processLimit or a shorter caller deadline. Control reads
+// keep Run's small default so their enclosing retry budgets remain available.
+func RunWithExecCushion(ctx context.Context, ctr testcontainers.Container, label string, processLimit, execCushion time.Duration, stdoutLimit, stderrLimit int, argv ...string) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
 	}
 	if ctr == nil {
 		return Report{}, errors.New("ceph control container is unavailable")
 	}
+	if execCushion <= 0 {
+		return Report{}, errors.New("exec cushion must be positive")
+	}
 	// The child expires first, leaving time to kill/reap and return its envelope.
 	// WithTimeout also preserves an earlier caller deadline without extending it.
-	attempt, cancel := context.WithTimeout(ctx, processLimit+ExecCushion)
+	attempt, cancel := context.WithTimeout(ctx, processLimit+execCushion)
 	defer cancel()
 	deadline, _ := attempt.Deadline()
 	remaining := time.Until(deadline)
-	cushion := min(ExecCushion, remaining/4)
+	cushion := min(execCushion, remaining/4)
 	seconds := min(processLimit, remaining-cushion).Seconds()
 	if seconds <= 0 {
 		return Report{}, context.DeadlineExceeded
