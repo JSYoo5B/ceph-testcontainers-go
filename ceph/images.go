@@ -117,8 +117,19 @@ func configureImages(o *options) error {
 // roles-v2 it is allocated once on first use and owned by the cluster. Legacy
 // clusters continue to execute client tools in the existing control container.
 func (c *Container) ClientContainerContext(ctx context.Context) (testcontainers.Container, error) {
+	if c == nil {
+		return nil, fmt.Errorf("ceph cluster is unavailable")
+	}
 	if err := c.sharedGate("ClientContainerContext"); err != nil {
 		return nil, err
+	}
+	// Initial attachment must observe one MON configuration: a concurrent
+	// topology refresh cannot inventory a toolkit that has not been created yet.
+	if c.UsesRoleImages() && c.Images().Client != "" && c.Images().Client != c.Images().Essential {
+		if err := c.lockTopology(ctx); err != nil {
+			return nil, err
+		}
+		defer c.mu.Unlock()
 	}
 	return c.clientContainerContext(ctx)
 }

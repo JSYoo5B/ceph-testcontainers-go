@@ -4823,7 +4823,8 @@ the essential image, which does not promise general client tools. Use
 
 `ClientContainerContext` lazily creates and reuses a fixture-owned general
 client executor in roles-v2. The cluster terminates partial and successful
-starts. Legacy mode returns the current control executor. Core administration
+starts. Initial attachment is serialized with MON topology changes and honors
+the caller's cancellation while waiting. Legacy mode returns the current control executor. Core administration
 continues to use the existing MON/stable multi-MON control context. No public
 Client identity type is introduced: ClientConfig, WithClientIdentity and
 RunNativeCommand retain their existing ownership and credential contracts.

@@ -43,7 +43,7 @@ func ownRoleCluster(t *testing.T, c *ceph.Container) {
 // back to. Its toolkit executor survives MON membership changes independently.
 func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
 	images := ceph.ImageSet{Essential: explicitRoleImage(t, "CEPH_TEST_ESSENTIAL_IMAGE"), Client: explicitRoleImage(t, "CEPH_TEST_CLIENT_IMAGE")}
-	c, err := ceph.RunWithImages(t.Context(), images, rbd.WithPools(ceph.PoolConfig{Name: "v2-rbd"}))
+	c, err := ceph.RunWithImages(t.Context(), images, ceph.WithOSDCount(1))
 	ownRoleCluster(t, c)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +58,12 @@ func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
 	code, _, err := client.Exec(t.Context(), []string{"sh", "-c", "! command -v radosgw-admin && ! command -v rbd-mirror && ! command -v ceph-mon"})
 	if err != nil || code != 0 {
 		t.Fatalf("client is not a constrained toolkit: exit %d %v", code, err)
+	}
+	if _, err := c.CreatePool(t.Context(), ceph.PoolConfig{Name: "v2-rbd", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rbd.InitPool(t.Context(), c, "v2-rbd"); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := c.AddMonitor(t.Context(), "b"); err != nil {
 		t.Fatal(err)

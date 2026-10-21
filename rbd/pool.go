@@ -176,10 +176,13 @@ func validateResourceName(kind, name string) error {
 }
 
 func controlReady(ctx context.Context, c *ceph.Container) error {
-	if c.UsesRoleImages() {
-		if _, err := c.ClientContainerContext(ctx); err != nil {
-			return err
-		}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Callers already hold the topology lock. Actual toolkit startup happens
+	// through ClientCommand under that lock, after read-only pool validation.
+	if c.UsesRoleImages() && c.Images().Client == "" {
+		return invalid(errors.New("client image is required for this operation"))
 	}
 	if servicehook.Closed(c) {
 		return invalid(errors.New("ceph cluster is terminated"))

@@ -113,3 +113,14 @@ func TestToolkitPublicationWaitHonorsCancellation(t *testing.T) {
 		t.Fatalf("publication ignored canceled caller: %v", err)
 	}
 }
+
+func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
+	c := &Container{settings: options{imageSet: &ImageSet{Essential: "core", Client: "toolkit"}}}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if ctr, err := c.ClientContainerContext(ctx); ctr != nil || !errors.Is(err, context.DeadlineExceeded) || c.featureClientAttempted {
+		t.Fatalf("attachment raced a topology change or ignored its deadline: %v %v", ctr, err)
+	}
+}
