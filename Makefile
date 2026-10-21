@@ -431,7 +431,12 @@ scenario-small-osds:
 
 # Explicit candidate-contract routing checks; legacy published-role CI remains
 # independent until roles-v2 images are qualified and adopted.
-.PHONY: roles-v2-routing roles-v2-runtime roles-v2-oracles
+.PHONY: roles-v2-smoke roles-v2-routing roles-v2-runtime roles-v2-oracles
+# Representative single-cluster paths cover every feature role; routing adds
+# constrained client/essential, RGW administration and the rbd-aux mirror.
+roles-v2-smoke: roles-v2-routing
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=20m ./internal/integration -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle)$$'
+
 roles-v2-routing:
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=30m ./internal/integration -run '^TestRoleImagesV2'
 	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=15m ./rbd -run '^TestRoleImagesV2MirrorRefresh$$'
