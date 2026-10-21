@@ -21,7 +21,7 @@ type modelFault struct {
 	failures int
 	done     bool
 	// releases models a network delay lease: a successful undo releases the
-	// registry entry, as NetworkDelayLease.Restore does through release.
+	// registry entry, as NetworkProfileLease.Restore does through release.
 	releases bool
 	log      *[]string
 }
@@ -365,7 +365,7 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 	for op, policy := range sharedFaultPolicies {
 		method, ok := strings.CutPrefix(op, "fault.")
 		expected := sharedMethodPolicies[method]
-		if method == "TemporaryNetworkDelay" || method == "InterruptNetwork" || method == "Pause" {
+		if method == "ApplyNetworkProfile" || method == "InterruptNetwork" || method == "Pause" {
 			expected = sharedExclusive
 		}
 		if !ok || policy != expected {
@@ -373,13 +373,13 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 		}
 	}
 
-	for _, method := range []string{"TemporaryNetworkDelay", "InterruptNetwork", "Pause", "InjectObjectDataError"} {
+	for _, method := range []string{"ApplyNetworkProfile", "InterruptNetwork", "Pause", "InjectObjectDataError"} {
 		if _, ok := sharedFaultPolicies["fault."+method]; !ok {
 			t.Errorf("fault.%s has no shared policy", method)
 		}
 	}
 	c := &Container{}
-	if err := c.admitFault("fault.TemporaryNetworkDelay"); err != nil {
+	if err := c.admitFault("fault.ApplyNetworkProfile"); err != nil {
 		t.Fatalf("a cluster of its own refused a fault: %v", err)
 	}
 	if err := c.admitFault("fault.Unknown"); !errors.Is(err, ErrInvalidRequest) {

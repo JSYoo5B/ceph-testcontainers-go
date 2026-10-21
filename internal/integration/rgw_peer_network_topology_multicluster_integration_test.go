@@ -187,7 +187,7 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 		pids[zone.Name] = state.Pid
 	}
 
-	lease, err := fixture.TemporaryZoneLinkDelay(ctx, "b", "a", fault.NetworkDelay{HelperImage: netem, Loss: 100})
+	lease, err := fixture.ApplyZoneLinkProfile(ctx, "b", "a", fault.NetworkProfile{HelperImage: netem, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)

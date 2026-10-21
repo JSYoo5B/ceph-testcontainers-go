@@ -25,7 +25,7 @@ func newDelayTestCluster(backend netemBackend, osd testcontainers.Container, hos
 	*view.NetworkRemoved = true // synthetic bridge; no Docker removal
 	return &delayTestCluster{Container: c, backend: backend}
 }
-func (c *delayTestCluster) TemporaryNetworkDelay(ctx context.Context, target testcontainers.Container, delay NetworkDelay) (*NetworkDelayLease, error) {
+func (c *delayTestCluster) ApplyNetworkProfile(ctx context.Context, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryNetworkDelay(ctx, c.Container, target, delay, c.backend)
 }
 func (c *delayTestCluster) faultsOf(kind faulthook.Kind) (result map[string]any) {

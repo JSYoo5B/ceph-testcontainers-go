@@ -32,8 +32,8 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 		"ApplySyncGroup":     func(ctx context.Context) error { return f.ApplySyncGroup(ctx, group) },
 		"SetSyncGroupStatus": func(ctx context.Context) error { return f.SetSyncGroupStatus(ctx, group, SyncEnabled) },
 		"InterruptZoneLink":  func(ctx context.Context) error { _, err := f.InterruptZoneLink(ctx, "queued"); return err },
-		"TemporaryZoneLinkDelay": func(ctx context.Context) error {
-			_, err := f.TemporaryZoneLinkDelay(ctx, "queued", "peer", fault.NetworkDelay{HelperImage: "netem-helper:test", Loss: 100})
+		"ApplyZoneLinkProfile": func(ctx context.Context) error {
+			_, err := f.ApplyZoneLinkProfile(ctx, "queued", "peer", fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100})
 			return err
 		},
 		"Terminate": func(ctx context.Context) error { return f.Terminate(ctx) },

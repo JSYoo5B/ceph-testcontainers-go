@@ -20,13 +20,7 @@ var updateNaming = flag.Bool("update-api-naming", false, "refresh the source-der
 // These are review proposals, not compatibility aliases or an API rewrite.
 // Only inventory rows below change when a proposal is edited.
 var namingProposals = map[string]string{
-	"rbd.TemporaryImmutableObjectCache":    "rbd.StartImmutableObjectCache",
-	"fault.TemporaryNetworkDelay":          "fault.ApplyNetworkProfile",
-	"fault.TemporaryLinkDelay":             "fault.ApplyLinkProfile",
-	"fault.NetworkDelay":                   "fault.NetworkProfile",
-	"fault.NetworkDelayLease":              "fault.NetworkProfileLease",
-	"fault.NetworkDelayStatus":             "fault.NetworkProfileStatus",
-	"rgw.Multisite.TemporaryZoneLinkDelay": "rgw.Multisite.ApplyZoneLinkProfile",
+	"rbd.TemporaryImmutableObjectCache": "rbd.StartImmutableObjectCache",
 }
 
 type namingEntry struct {

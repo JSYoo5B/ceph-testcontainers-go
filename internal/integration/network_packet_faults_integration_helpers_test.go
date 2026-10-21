@@ -121,21 +121,21 @@ func deltas(before, after transportSnapshot) string {
 // which keeps packets small.
 type packetFaultProfile struct {
 	name    string
-	fault   fault.NetworkDelay
+	fault   fault.NetworkProfile
 	effects [][]string
 	reads   int
 }
 
 var packetFaultProfiles = []packetFaultProfile{
-	{"reorder", fault.NetworkDelay{Delay: 10 * time.Millisecond, Reorder: fault.NetworkPacketFault{Percent: 25}}, [][]string{reorderCounters}, 1},
-	{"duplicate", fault.NetworkDelay{Duplicate: fault.NetworkPacketFault{Percent: 50}}, [][]string{duplicateCounters}, 4},
-	{"corrupt", fault.NetworkDelay{Corrupt: fault.NetworkPacketFault{Percent: 5}}, [][]string{corruptCounters}, 8},
+	{"reorder", fault.NetworkProfile{Delay: 10 * time.Millisecond, Reorder: fault.NetworkPacketFault{Percent: 25}}, [][]string{reorderCounters}, 1},
+	{"duplicate", fault.NetworkProfile{Duplicate: fault.NetworkPacketFault{Percent: 50}}, [][]string{duplicateCounters}, 4},
+	{"corrupt", fault.NetworkProfile{Corrupt: fault.NetworkPacketFault{Percent: 5}}, [][]string{corruptCounters}, 8},
 }
 
 // composedProfile composes a duplicate with a correlation and a corrupt
 // with a delay and a rate in the same netem qdisc.
 var composedProfile = packetFaultProfile{"duplicate+corrupt with delay and rate",
-	fault.NetworkDelay{Delay: 5 * time.Millisecond, Rate: 256 * fault.MegabitPerSecond,
+	fault.NetworkProfile{Delay: 5 * time.Millisecond, Rate: 256 * fault.MegabitPerSecond,
 		Duplicate: fault.NetworkPacketFault{Percent: 30, Correlation: 25}, Corrupt: fault.NetworkPacketFault{Percent: 5}},
 	[][]string{duplicateCounters, corruptCounters}, 2}
 
@@ -217,7 +217,7 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	t.Helper()
 	request := profile.fault
 	request.HelperImage, request.Plane, request.Peer = p.image, ceph.PublicNetworkPlane, p.peer
-	lease, err := fault.TemporaryNetworkDelay(ctx, p.cluster, p.limited.Container, request)
+	lease, err := fault.ApplyNetworkProfile(ctx, p.cluster, p.limited.Container, request)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}

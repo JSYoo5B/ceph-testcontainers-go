@@ -35,18 +35,18 @@ func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*fa
 	return nil, invalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
 }
 
-// TemporaryZoneLinkDelay delays or drops, below RGW, the packets that the
+// ApplyZoneLinkProfile applies netem shaping, below RGW, to packets that the
 // gateway of zoneName sends to the gateway of peerZone on the private
 // multisite bridge: to the peer gateway's bridge address and the port of its
 // peer endpoint. Those carry the requests that zoneName makes of peerZone,
 // its sync reads and its notifications. Connections that peerZone opens to
 // zoneName answer from zoneName's own port and stay unselected, so peerZone
 // keeps syncing from zoneName; the zones' local endpoints and other links
-// are untouched. It is fault.TemporaryLinkDelay with the opt-in netem helper:
-// delay names the helper and the delay, jitter or loss, and leaves Plane,
+// are untouched. It is fault.ApplyLinkProfile with the opt-in netem helper:
+// delay names the helper and shaping fields, and leaves Plane,
 // Peer, PeerPort and Peers empty, which the fixture fills in. The fixture
 // restores the lease when it terminates; restore it earlier to end the fault.
-func (f *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZone string, delay fault.NetworkDelay) (*fault.NetworkDelayLease, error) {
+func (f *Multisite) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
 	}
@@ -98,7 +98,7 @@ func (f *Multisite) TemporaryZoneLinkDelay(ctx context.Context, zoneName, peerZo
 		return nil, fmt.Errorf("the gateway of RGW zone %s has no address on the multisite bridge %s", peerZone, f.httpNetwork.Name)
 	}
 	delay.Peers = []fault.NetworkPeer{{Addr: address, Port: uint16(port)}}
-	lease, err := fault.TemporaryLinkDelay(ctx, zone.Gateway, f.httpNetwork.Name, delay)
+	lease, err := fault.ApplyLinkProfile(ctx, zone.Gateway, f.httpNetwork.Name, delay)
 	if lease != nil {
 		f.owned.AddCleanup("restore RGW zone link delay", lease.Restore)
 	}

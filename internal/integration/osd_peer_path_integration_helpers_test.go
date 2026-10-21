@@ -224,7 +224,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 	receipt.Window.MinReporters = monConfigGet(t, ctx, cluster, "mon", "mon_osd_min_down_reporters")
 
 	// Cut only osd.P's packets to osd.R's cluster address.
-	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, containers[primary].Container, fault.NetworkDelay{
+	lease, err := fault.ApplyNetworkProfile(ctx, cluster, containers[primary].Container, fault.NetworkProfile{
 		HelperImage: image, Plane: ceph.ClusterNetworkPlane, Peer: clusterIP[replica], Loss: 100,
 	})
 	if lease != nil {

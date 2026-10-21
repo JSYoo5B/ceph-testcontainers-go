@@ -121,7 +121,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	// osd.0 drops every packet it sends to the daemon's address on the
 	// source network, and only those: the daemon's requests reach the OSD,
 	// its replies do not. The source MON and MDS still reach the daemon.
-	lease, err := fault.TemporaryNetworkDelay(ctx, source, osd.Container, fault.NetworkDelay{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
+	lease, err := fault.ApplyNetworkProfile(ctx, source, osd.Container, fault.NetworkProfile{HelperImage: netem, Plane: ceph.PublicNetworkPlane, Peer: peer, Loss: 100})
 	if lease != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

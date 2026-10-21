@@ -729,10 +729,10 @@ func delayCluster(netem *fakeNetem) (*delayTestCluster, *fakeNetemHelper) {
 	return cluster, osd
 }
 
-var testDelay = NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 200 * time.Millisecond, Jitter: 20 * time.Millisecond}
+var testDelay = NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 200 * time.Millisecond, Jitter: 20 * time.Millisecond}
 
 func TestNetworkDelayValidation(t *testing.T) {
-	for name, delay := range map[string]NetworkDelay{
+	for name, delay := range map[string]NetworkProfile{
 		"no helper":       {Plane: ceph.PublicNetworkPlane, Delay: time.Second},
 		"no plane":        {HelperImage: "h", Delay: time.Second},
 		"too short":       {HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Microsecond},
@@ -744,7 +744,7 @@ func TestNetworkDelayValidation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); err == nil || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay); err == nil || lease != nil {
 				t.Fatalf("accepted %+v", delay)
 			}
 			if len(netem.helpers) != 0 {
@@ -757,7 +757,7 @@ func TestNetworkDelayValidation(t *testing.T) {
 func TestNetworkDelayAppliesAndRestores(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +776,7 @@ func TestNetworkDelayAppliesAndRestores(t *testing.T) {
 	if err != nil || !status.Applied || status.Gone || status.Delay != testDelay.Delay || status.Jitter != testDelay.Jitter || status.Packets == 0 {
 		t.Fatalf("status %+v, %v", status, err)
 	}
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil {
+	if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); err == nil {
 		t.Fatal("a second delay of the same endpoint was accepted")
 	}
 	if err := lease.Restore(t.Context()); err != nil {
@@ -791,7 +791,7 @@ func TestNetworkDelayAppliesAndRestores(t *testing.T) {
 	if _, err := lease.Status(t.Context()); err == nil {
 		t.Fatal("Status of a restored delay")
 	}
-	again, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	again, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatalf("a new delay after Restore: %v", err)
 	}
@@ -815,7 +815,7 @@ func TestNetworkDelayRefusesUnsupportedHelpers(t *testing.T) {
 			netem := newFakeNetem()
 			tc.setup(netem)
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if !errors.Is(err, tc.want) || !errors.Is(err, tc.kind) || lease != nil {
 				t.Fatalf("got %v, lease %v; want %v", err, lease, tc.want)
 			}
@@ -855,7 +855,7 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 			setup(netem.targets["osd-0"])
 			before := netem.root("osd-0")
 			cluster, osd := delayCluster(netem)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("returned %v, lease %v", err, lease)
 			}
 			if name != "custom root" && name != "not on the plane" && len(netem.helpers) != 0 {
@@ -874,7 +874,7 @@ func TestNetworkDelayRefusesTargets(t *testing.T) {
 	netem := newFakeNetem()
 	osd := &fakeNetemHelper{id: "osd-0"}
 	cluster := newDelayTestCluster(netem, osd, true)
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || len(netem.helpers) != 0 {
+	if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); !errors.Is(err, ceph.ErrInvalidRequest) || len(netem.helpers) != 0 {
 		t.Fatalf("a host-network cluster: %v", err)
 	}
 }
@@ -887,18 +887,18 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	unselected := testDelay
 	unselected.HelperImage = ""
 	var missing *ceph.OperationError
-	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, unselected); !errors.As(err, &missing) || missing.Kind != ceph.ErrImageCapability ||
+	if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, unselected); !errors.As(err, &missing) || missing.Kind != ceph.ErrImageCapability ||
 		missing.Capability != "netem extension" || errors.Is(err, ErrNetemImageUnsupported) || lease != nil || len(netem.helpers) != 0 {
 		t.Fatalf("an unselected extension returned %v", err)
 	}
-	for name, change := range map[string]func(*NetworkDelay){
-		"no delay":      func(d *NetworkDelay) { d.Delay = 0 },
-		"long jitter":   func(d *NetworkDelay) { d.Jitter = 2 * d.Delay },
-		"unknown plane": func(d *NetworkDelay) { d.Plane = "storage" },
+	for name, change := range map[string]func(*NetworkProfile){
+		"no delay":      func(d *NetworkProfile) { d.Delay = 0 },
+		"long jitter":   func(d *NetworkProfile) { d.Jitter = 2 * d.Delay },
+		"unknown plane": func(d *NetworkProfile) { d.Plane = "storage" },
 	} {
 		request := testDelay
 		change(&request)
-		if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Fatalf("%s returned %v", name, err)
 		}
 	}
@@ -907,7 +907,7 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	netem.onAdd = func(func() supervised.Report) (supervised.Report, error) {
 		return supervised.Report{ExitCode: 2, Stderr: []byte("RTNETLINK answers: Invalid argument")}, nil
 	}
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	var failure *ceph.NativeFailure
 	if !errors.As(err, &failure) || failure.Program != "tc" || failure.ExitCode != 2 || failure.Reason != "RTNETLINK answers: Invalid argument" ||
 		errors.Is(err, ceph.ErrImageCapability) || errors.Is(err, ceph.ErrEnvironmentUnavailable) || lease != nil {
@@ -920,7 +920,7 @@ func TestNetworkDelayClassifiesSelectionAndNativeFailures(t *testing.T) {
 	netem = newFakeNetem()
 	netem.slowPreflight = true
 	cluster, osd = delayCluster(netem)
-	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || classifiedError(err) || !strings.Contains(err.Error(), "timed out") ||
+	if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); err == nil || classifiedError(err) || !strings.Contains(err.Error(), "timed out") ||
 		lease != nil || netem.liveHelpers() != 0 {
 		t.Fatalf("a slow preflight returned %v, lease %v", err, lease)
 	}
@@ -935,7 +935,7 @@ func TestNetworkDelayCanceledApplyKeepsALease(t *testing.T) {
 		return supervised.Report{}, context.Canceled
 	}
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if !errors.Is(err, context.Canceled) || classifiedError(err) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -959,7 +959,7 @@ func TestNetworkDelayUnconfirmedApplyIsFenced(t *testing.T) {
 	}
 	netem.cancelErr = errors.New("the helper is frozen")
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if lease == nil || err == nil || lease.pending != "m1" {
 		t.Fatalf("got %+v, %v", lease, err)
 	}
@@ -982,7 +982,7 @@ func TestNetworkDelayUnconfirmedApplyIsFenced(t *testing.T) {
 func TestNetworkDelayRestoreRefusesAReplacedRoot(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1005,7 +1005,7 @@ func TestNetworkDelayRestoreRefusesAReplacedRoot(t *testing.T) {
 func TestNetworkDelayEndsWithARestart(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1034,7 +1034,7 @@ func TestNetworkDelayEndsWithARestart(t *testing.T) {
 func TestNetworkDelayEndsWithAReconnect(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1064,7 +1064,7 @@ func TestNetworkDelayRestoreReplacesALostHelper(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1086,7 +1086,7 @@ func TestNetworkDelayRestoreReplacesALostHelper(t *testing.T) {
 func TestNetworkDelayTerminate(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err != nil {
+	if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.Terminate(t.Context()); err != nil {
@@ -1104,7 +1104,7 @@ func TestNetworkDelayTerminate(t *testing.T) {
 		}
 		return apply(), nil
 	}
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if !errors.Is(err, nativeTerminated()) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -1119,11 +1119,11 @@ func TestNetworkDelayReservesTheEndpoint(t *testing.T) {
 	cluster, osd := delayCluster(netem)
 	second := make(chan error, 1)
 	netem.onAdd = func(apply func() supervised.Report) (supervised.Report, error) {
-		_, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+		_, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 		second <- err
 		return apply(), nil
 	}
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1145,7 +1145,7 @@ func (h *fakeNetemHelper) Terminate(context.Context, ...testcontainers.Terminate
 func TestNetworkDelayReserveDuringRestore(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1160,7 +1160,7 @@ func TestNetworkDelayReserveDuringRestore(t *testing.T) {
 	<-removing
 	second := make(chan error, 1)
 	go func() {
-		_, err := cluster.TemporaryNetworkDelay(context.Background(), osd, testDelay)
+		_, err := cluster.ApplyNetworkProfile(context.Background(), osd, testDelay)
 		second <- err
 	}()
 	select {
@@ -1173,9 +1173,9 @@ func TestNetworkDelayReserveDuringRestore(t *testing.T) {
 		select {
 		case <-restored:
 		case <-time.After(2 * time.Second):
-			t.Fatal("TemporaryNetworkDelay and Restore deadlocked")
+			t.Fatal("ApplyNetworkProfile and Restore deadlocked")
 		}
-		t.Fatal("TemporaryNetworkDelay waited for a lease that is being restored")
+		t.Fatal("ApplyNetworkProfile waited for a lease that is being restored")
 	}
 	close(proceed)
 	if err := <-restored; err != nil {
@@ -1193,7 +1193,7 @@ func TestNetworkDelayFollowsTheInterfaceIndex(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1220,7 +1220,7 @@ func TestNetworkDelayCanceledPreflightRemovesItsHelper(t *testing.T) {
 	cluster, osd := delayCluster(netem)
 	ctx, cancel := context.WithCancel(t.Context())
 	netem.onStart = func(container.NetworkMode) { cancel() }
-	if lease, err := cluster.TemporaryNetworkDelay(ctx, osd, testDelay); !errors.Is(err, context.Canceled) || lease != nil {
+	if lease, err := cluster.ApplyNetworkProfile(ctx, osd, testDelay); !errors.Is(err, context.Canceled) || lease != nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
 	if len(netem.helpers) == 0 || netem.liveHelpers() != 0 {
@@ -1233,7 +1233,7 @@ func TestNetworkDelayCanceledPreflightRemovesItsHelper(t *testing.T) {
 func TestNetworkDelayReplacesTheHelperFromTheCheckedImage(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1263,7 +1263,7 @@ func TestNetworkDelayRefusesAHelperOfAnotherImage(t *testing.T) {
 			netem.tags["sha256:helper"] = "sha256:other"
 		}
 	}
-	if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay); err == nil || lease != nil {
+	if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay); err == nil || lease != nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
 	if netem.liveHelpers() != 0 || netem.root("osd-0") != nil {
@@ -1310,7 +1310,7 @@ func TestNetworkDelayRefusesMalformedPreflightReports(t *testing.T) {
 			netem := newFakeNetem()
 			netem.editPreflight = edit
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 			if err == nil || lease != nil {
 				t.Fatalf("got %v, %v", lease, err)
 			}

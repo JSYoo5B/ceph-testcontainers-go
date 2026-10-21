@@ -13,7 +13,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
-var peerDelay = func() NetworkDelay {
+var peerDelay = func() NetworkProfile {
 	delay := testDelay
 	delay.Peer, delay.PeerPort = netip.MustParseAddr("10.88.0.7"), 6800
 	return delay
@@ -29,7 +29,7 @@ func (n *fakeNetem) eth0(id string) *fakeLink {
 func TestPeerNetworkDelayAppliesTheHierarchyAndRestores(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, peerDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, peerDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,14 +72,14 @@ func TestPeerNetworkDelayIPv6NeedsAnIPv6Endpoint(t *testing.T) {
 	delay.Peer = netip.MustParseAddr("fd62:93fe:2c9e::3")
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	if _, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if _, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("IPv6 peer of an IPv4-only endpoint: %v", err)
 	}
 	if netem.liveHelpers() != 0 || netem.eth0("osd-0").root != nil {
 		t.Fatal("a refused delay changed something")
 	}
 	netem.targets["osd-0"].address6 = netip.MustParseAddr("fd62:93fe:2c9e::2")
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestPeerNetworkDelayPartialApplyIsRestored(t *testing.T) {
 				return supervised.Report{}, false
 			}
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, peerDelay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, peerDelay)
 			if err == nil || lease == nil {
 				t.Fatalf("a partial apply returned %v, %v", lease, err)
 			}
@@ -131,11 +131,11 @@ func TestPeerNetworkDelayPartialApplyIsRestored(t *testing.T) {
 }
 
 func TestPeerNetworkDelayValidation(t *testing.T) {
-	for name, edit := range map[string]func(*NetworkDelay){
-		"port without peer": func(d *NetworkDelay) { d.Peer = netip.Addr{} },
-		"mapped peer":       func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
-		"zoned peer":        func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
-		"unspecified peer":  func(d *NetworkDelay) { d.Peer = netip.IPv4Unspecified() },
+	for name, edit := range map[string]func(*NetworkProfile){
+		"port without peer": func(d *NetworkProfile) { d.Peer = netip.Addr{} },
+		"mapped peer":       func(d *NetworkProfile) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
+		"zoned peer":        func(d *NetworkProfile) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
+		"unspecified peer":  func(d *NetworkProfile) { d.Peer = netip.IPv4Unspecified() },
 	} {
 		delay := peerDelay
 		edit(&delay)
@@ -190,7 +190,7 @@ func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
 // lease, and succeeds once the owner removed it.
 func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 	for name, tc := range map[string]struct {
-		delay  NetworkDelay
+		delay  NetworkProfile
 		attach func(link *fakeLink, root string) func()
 	}{
 		"filter": {peerDelay, func(link *fakeLink, root string) func() {
@@ -222,7 +222,7 @@ func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, tc.delay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, tc.delay)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -265,11 +265,11 @@ func TestPeerNetworkDelayRestoreKeepsForeignState(t *testing.T) {
 // TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot keeps the ownership
 // check to what removing the root removes: an ingress qdisc is not under it.
 func TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot(t *testing.T) {
-	for name, delay := range map[string]NetworkDelay{"peer": peerDelay, "interface": testDelay} {
+	for name, delay := range map[string]NetworkProfile{"peer": peerDelay, "interface": testDelay} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -292,17 +292,17 @@ func TestNetworkDelayRestoreIgnoresQdiscsOutsideTheRoot(t *testing.T) {
 
 func TestNetworkDelayLossValidation(t *testing.T) {
 	for name, test := range map[string]struct {
-		delay NetworkDelay
+		delay NetworkProfile
 		ok    bool
 	}{
-		"loss alone":           {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100}, true},
-		"loss with a delay":    {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Loss: 12.5}, true},
-		"no delay and no loss": {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane}, false},
-		"loss over 100":        {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100.5}, false},
-		"negative loss":        {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Loss: -1}, false},
-		"NaN loss":             {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: math.NaN()}, false},
-		"jitter without delay": {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Jitter: time.Millisecond, Loss: 50}, false},
-		"a delay below 1ms":    {NetworkDelay{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Microsecond, Loss: 50}, false},
+		"loss alone":           {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100}, true},
+		"loss with a delay":    {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Loss: 12.5}, true},
+		"no delay and no loss": {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane}, false},
+		"loss over 100":        {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: 100.5}, false},
+		"negative loss":        {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Loss: -1}, false},
+		"NaN loss":             {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Loss: math.NaN()}, false},
+		"jitter without delay": {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Jitter: time.Millisecond, Loss: 50}, false},
+		"a delay below 1ms":    {NetworkProfile{HelperImage: "h", Plane: ceph.PublicNetworkPlane, Delay: time.Microsecond, Loss: 50}, false},
 	} {
 		if err := validateNetworkDelay(test.delay); (err == nil) != test.ok {
 			t.Errorf("%s: %v", name, err)
@@ -313,8 +313,8 @@ func TestNetworkDelayLossValidation(t *testing.T) {
 func TestPeerNetworkDelayBlackhole(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	blackhole := NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Peer: peerDelay.Peer, Loss: 100}
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, blackhole)
+	blackhole := NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Peer: peerDelay.Peer, Loss: 100}
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, blackhole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,8 +335,8 @@ func TestPeerNetworkDelayBlackhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A whole-interface loss with a delay.
-	partial := NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 5 * time.Millisecond, Loss: 25}
-	lease, err = cluster.TemporaryNetworkDelay(t.Context(), osd, partial)
+	partial := NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 5 * time.Millisecond, Loss: 25}
+	lease, err = cluster.ApplyNetworkProfile(t.Context(), osd, partial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,19 +351,19 @@ func TestPeerNetworkDelayBlackhole(t *testing.T) {
 // A loss without a delay keeps every selection check: an invalid Peer or a
 // PeerPort without one is refused before any helper or tc command.
 func TestNetworkDelayLossKeepsSelectionChecks(t *testing.T) {
-	loss := NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Loss: 100}
-	for name, edit := range map[string]func(*NetworkDelay){
-		"port without peer": func(d *NetworkDelay) { d.PeerPort = 6800 },
-		"mapped peer":       func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
-		"zoned peer":        func(d *NetworkDelay) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
-		"unspecified peer":  func(d *NetworkDelay) { d.Peer = netip.IPv4Unspecified() },
+	loss := NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Loss: 100}
+	for name, edit := range map[string]func(*NetworkProfile){
+		"port without peer": func(d *NetworkProfile) { d.PeerPort = 6800 },
+		"mapped peer":       func(d *NetworkProfile) { d.Peer = netip.MustParseAddr("::ffff:10.88.0.7") },
+		"zoned peer":        func(d *NetworkProfile) { d.Peer = netip.MustParseAddr("fe80::1%eth0") },
+		"unspecified peer":  func(d *NetworkProfile) { d.Peer = netip.IPv4Unspecified() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			delay := loss
 			edit(&delay)
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 			if !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("%+v: %v, %v", delay, lease, err)
 			}
@@ -373,10 +373,10 @@ func TestNetworkDelayLossKeepsSelectionChecks(t *testing.T) {
 		})
 	}
 	// The valid loss-only requests still apply, whole-interface and to a peer.
-	for _, delay := range []NetworkDelay{loss, {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Loss: 100, Peer: peerDelay.Peer, PeerPort: 6800}} {
+	for _, delay := range []NetworkProfile{loss, {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Loss: 100, Peer: peerDelay.Peer, PeerPort: 6800}} {
 		netem := newFakeNetem()
 		cluster, osd := delayCluster(netem)
-		lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, delay)
+		lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, delay)
 		if err != nil {
 			t.Fatalf("%+v: %v", delay, err)
 		}

@@ -8,7 +8,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
-func ExampleTemporaryNetworkDelay() {
+func ExampleApplyNetworkProfile() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 	if cluster != nil {
@@ -17,7 +17,7 @@ func ExampleTemporaryNetworkDelay() {
 	if err != nil {
 		panic(err)
 	}
-	lease, err := fault.TemporaryNetworkDelay(ctx, cluster, cluster.OSDs()[0], fault.NetworkDelay{
+	lease, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
 		HelperImage: fault.NetemHelperImage, Plane: ceph.PublicNetworkPlane, Delay: 100 * time.Millisecond,
 	})
 	if lease != nil {

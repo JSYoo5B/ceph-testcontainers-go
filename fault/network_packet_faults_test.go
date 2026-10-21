@@ -19,7 +19,7 @@ import (
 // faultRequests are packet faults of each supported shape: a reorder with
 // its delay, a duplicate without a delay, a corrupt with a rate and a loss,
 // and all three through the selective hierarchy of peers of both families.
-var faultRequests = map[string]NetworkDelay{
+var faultRequests = map[string]NetworkProfile{
 	"reorder": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond,
 		Reorder: NetworkPacketFault{Percent: 25, Correlation: 50}},
 	"duplicate": {HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Duplicate: NetworkPacketFault{Percent: 10, Correlation: 30}},
@@ -31,7 +31,7 @@ var faultRequests = map[string]NetworkDelay{
 }
 
 // requestedFault is the request's fault for a netem keyword.
-func requestedFault(request NetworkDelay, name string) NetworkPacketFault {
+func requestedFault(request NetworkProfile, name string) NetworkPacketFault {
 	for _, fault := range request.packetFaults() {
 		if fault.name == name {
 			return fault.fault
@@ -41,27 +41,27 @@ func requestedFault(request NetworkDelay, name string) NetworkPacketFault {
 }
 
 func TestNetworkPacketFaultValidation(t *testing.T) {
-	base := NetworkDelay{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond}
-	for name, change := range map[string]func(*NetworkDelay){
-		"reorder without a delay":     func(d *NetworkDelay) { d.Delay, d.Loss, d.Reorder.Percent = 0, 1, 25 },
-		"reorder with jitter":         func(d *NetworkDelay) { d.Jitter, d.Reorder.Percent = time.Millisecond, 25 },
-		"reorder with a rate":         func(d *NetworkDelay) { d.Rate, d.Reorder.Percent = MinNetworkRate, 25 },
-		"reorder over 100":            func(d *NetworkDelay) { d.Reorder.Percent = 100.5 },
-		"negative duplicate":          func(d *NetworkDelay) { d.Duplicate.Percent = -1 },
-		"NaN corrupt":                 func(d *NetworkDelay) { d.Corrupt.Percent = math.NaN() },
-		"correlation over 100":        func(d *NetworkDelay) { d.Duplicate = NetworkPacketFault{Percent: 1, Correlation: 101} },
-		"negative correlation":        func(d *NetworkDelay) { d.Corrupt = NetworkPacketFault{Percent: 1, Correlation: -1} },
-		"NaN correlation":             func(d *NetworkDelay) { d.Reorder = NetworkPacketFault{Percent: 1, Correlation: math.NaN()} },
-		"correlation without percent": func(d *NetworkDelay) { d.Corrupt.Correlation = 10 },
-		"short delay with duplicate":  func(d *NetworkDelay) { d.Delay, d.Duplicate.Percent = time.Microsecond, 1 },
-		"jitter, no delay, duplicate": func(d *NetworkDelay) { d.Delay, d.Jitter, d.Duplicate.Percent = 0, time.Millisecond, 1 },
+	base := NetworkProfile{HelperImage: "netem-helper:test", Plane: ceph.PublicNetworkPlane, Delay: 10 * time.Millisecond}
+	for name, change := range map[string]func(*NetworkProfile){
+		"reorder without a delay":     func(d *NetworkProfile) { d.Delay, d.Loss, d.Reorder.Percent = 0, 1, 25 },
+		"reorder with jitter":         func(d *NetworkProfile) { d.Jitter, d.Reorder.Percent = time.Millisecond, 25 },
+		"reorder with a rate":         func(d *NetworkProfile) { d.Rate, d.Reorder.Percent = MinNetworkRate, 25 },
+		"reorder over 100":            func(d *NetworkProfile) { d.Reorder.Percent = 100.5 },
+		"negative duplicate":          func(d *NetworkProfile) { d.Duplicate.Percent = -1 },
+		"NaN corrupt":                 func(d *NetworkProfile) { d.Corrupt.Percent = math.NaN() },
+		"correlation over 100":        func(d *NetworkProfile) { d.Duplicate = NetworkPacketFault{Percent: 1, Correlation: 101} },
+		"negative correlation":        func(d *NetworkProfile) { d.Corrupt = NetworkPacketFault{Percent: 1, Correlation: -1} },
+		"NaN correlation":             func(d *NetworkProfile) { d.Reorder = NetworkPacketFault{Percent: 1, Correlation: math.NaN()} },
+		"correlation without percent": func(d *NetworkProfile) { d.Corrupt.Correlation = 10 },
+		"short delay with duplicate":  func(d *NetworkProfile) { d.Delay, d.Duplicate.Percent = time.Microsecond, 1 },
+		"jitter, no delay, duplicate": func(d *NetworkProfile) { d.Delay, d.Jitter, d.Duplicate.Percent = 0, time.Millisecond, 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := delayCluster(netem)
 			request := base
 			change(&request)
-			if lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
+			if lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 				t.Fatalf("accepted %+v: %v", request, err)
 			}
 			if len(netem.helpers) != 0 || len(cluster.faultsOf(faulthook.NetworkDelay)) != 0 {
@@ -74,7 +74,7 @@ func TestNetworkPacketFaultValidation(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	for _, request := range []NetworkDelay{
+	for _, request := range []NetworkProfile{
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Corrupt: NetworkPacketFault{Percent: 100, Correlation: 100}},
 		{HelperImage: "x", Plane: ceph.PublicNetworkPlane, Delay: time.Millisecond, Jitter: time.Millisecond, Duplicate: NetworkPacketFault{Percent: 1}, Rate: MinNetworkRate},
 	} {
@@ -101,7 +101,7 @@ func TestNetworkPacketFaultsApplyAndRestore(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := rateCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestNetworkDelayWithoutFaultsNeedsNoFaults(t *testing.T) {
 	netem.faultUnparsed = "reorder"
 	netem.faultIgnored = map[string]bool{"reorder": true, "duplicate": true, "corrupt": true, "gap": true}
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestNetworkPacketFaultPreflight(t *testing.T) {
 					netem := newFakeNetem()
 					tc.setup(netem, fault)
 					cluster, osd := rateCluster(netem)
-					lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+					lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 					if !errors.Is(err, tc.want) || !errors.Is(err, tc.kind) || lease != nil {
 						t.Fatalf("got %v, lease %v; want %v", err, lease, tc.want)
 					}
@@ -201,7 +201,7 @@ func TestNetworkPacketFaultPreflight(t *testing.T) {
 	netem := newFakeNetem()
 	netem.faultIgnored = map[string]bool{"gap": true}
 	cluster, osd := rateCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, faultRequests["reorder"])
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, faultRequests["reorder"])
 	if !errors.Is(err, ErrNetemKernelUnsupported) || !strings.Contains(err.Error(), "gap") || lease != nil {
 		t.Fatalf("got %v, lease %v", err, lease)
 	}
@@ -239,7 +239,7 @@ func TestNetworkPacketFaultKernelMismatchKeepsTheLease(t *testing.T) {
 					}
 				}
 				cluster, osd := rateCluster(netem)
-				lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+				lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 				if err == nil || lease == nil || !strings.Contains(err.Error(), ignored) {
 					t.Fatalf("got %v, %v", lease, err)
 				}
@@ -274,7 +274,7 @@ func TestNetworkPacketFaultUnrequestedFaultFailsTheApply(t *testing.T) {
 		return report, nil
 	}
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, testDelay)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, testDelay)
 	if err == nil || lease == nil || !strings.Contains(err.Error(), "duplicate 1%") {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -289,7 +289,7 @@ func TestNetworkPacketFaultStatusReportsTheKernelsFaults(t *testing.T) {
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
 	request := faultRequests["reorder"]
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestNetworkPacketFaultForeignMembers(t *testing.T) {
 
 	netem := newFakeNetem()
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, faultRequests["duplicate"])
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, faultRequests["duplicate"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestNetworkPacketFaultRestoreKeepsForeignState(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			netem := newFakeNetem()
 			cluster, osd := rateCluster(netem)
-			lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+			lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -393,7 +393,7 @@ func TestNetworkPacketFaultUncertainApply(t *testing.T) {
 		return supervised.Report{}, context.Canceled
 	}
 	cluster, osd := delayCluster(netem)
-	lease, err := cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+	lease, err := cluster.ApplyNetworkProfile(t.Context(), osd, request)
 	if !errors.Is(err, context.Canceled) || lease == nil {
 		t.Fatalf("got %v, %v", lease, err)
 	}
@@ -413,7 +413,7 @@ func TestNetworkPacketFaultUncertainApply(t *testing.T) {
 	}
 	netem.cancelErr = errors.New("the helper is frozen")
 	cluster, osd = delayCluster(netem)
-	lease, err = cluster.TemporaryNetworkDelay(t.Context(), osd, request)
+	lease, err = cluster.ApplyNetworkProfile(t.Context(), osd, request)
 	if lease == nil || err == nil || lease.pending != "m1" {
 		t.Fatalf("got %+v, %v", lease, err)
 	}

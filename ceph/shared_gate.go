@@ -201,7 +201,7 @@ func (c *Container) sharedGate(method string) error {
 // *Container method that implements it today, so moving an operation out of
 // package ceph does not move it out of the gate.
 var sharedFaultPolicies = map[string]sharedPolicy{
-	"fault.TemporaryNetworkDelay": sharedExclusive,
+	"fault.ApplyNetworkProfile":   sharedExclusive,
 	"fault.InterruptNetwork":      sharedExclusive,
 	"fault.Pause":                 sharedExclusive,
 	"fault.InjectObjectDataError": sharedRecycle,
