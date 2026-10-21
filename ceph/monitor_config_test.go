@@ -110,9 +110,11 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	osd := newMonitorConfigArchive("osd-3", "[osd.3]\ncluster addr = 172.20.0.8\n")
 	rgw := newMonitorConfigArchive("rgw-default", "[client.admin]\nrgw frontends = beast port=7480\n")
 	mds := newMonitorConfigArchive("mds-a", "[mds.a]\nmds join fs = test-fs\n")
+	client := newMonitorConfigArchive("feature-client", "[client.admin]\nclient cache size = 32\n")
 	caller := newMonitorConfigArchive("caller-owned", "[client.test]\nkeyring = /private/keyring\n")
 	cluster.Container = mon
 	cluster.controlPlane = control
+	cluster.featureClient = client
 	cluster.monitors["b"] = &MonitorContainer{Container: second, DaemonName: "b"}
 	cluster.managers["a"] = &ManagerContainer{Container: mgr, DaemonName: "a"}
 	cluster.manager = mgr
@@ -122,7 +124,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": mds}},
 	}
-	all := []*monitorConfigArchive{control, mon, second, mgr, osd, rgw, mds}
+	all := []*monitorConfigArchive{control, mon, second, mgr, osd, rgw, mds, client}
 	before := make(map[string]string)
 	for _, daemon := range all {
 		before[daemon.id] = string(daemon.config)
@@ -172,18 +174,21 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	cluster.manager = retiredMgr
 	cluster.osds[2] = &OSDContainer{Container: retiredOSD, purged: true}
 	cluster.monitorTerminated = true
-	targets := cluster.monitorConfigTargets(control, "removed")
+	targets, err := cluster.monitorConfigTargets(t.Context(), control, "removed")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(targets) != 0 {
 		t.Fatalf("retired or uncreated containers were queued for refresh: %v", targets)
 	}
 	cluster.monitorTerminated = false
 	delete(cluster.monitors, "removed")
-	if targets := cluster.monitorConfigTargets(control, "a"); len(targets) != 0 {
+	if targets, err := cluster.monitorConfigTargets(t.Context(), control, "a"); err != nil || len(targets) != 0 {
 		t.Fatal("a just-terminated primary was queued during RemoveMonitor")
 	}
 	cluster.Container = control
 	cluster.services["rgw.same"] = control
-	if targets := cluster.monitorConfigTargets(control, ""); len(targets) != 0 {
+	if targets, err := cluster.monitorConfigTargets(t.Context(), control, ""); err != nil || len(targets) != 0 {
 		t.Fatal("control/primary/service aliases were recopied")
 	}
 }
@@ -351,7 +356,10 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
 	}
-	targets := cluster.monitorConfigTargets(control, "")
+	targets, err := cluster.monitorConfigTargets(t.Context(), control, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var names, ids []string
 	for _, target := range targets {
 		names = append(names, target.name)
