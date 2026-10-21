@@ -327,6 +327,12 @@ change the API.
 
 ### Changed
 
+- OSD launch preparation captures immutable input values and reconstructs fresh
+  file Readers and request state. Copies of a launch share one creation-attempt
+  guard, so an uncertain start is not replayed and an existing descriptor is
+  not rebound. Partial containers remain owned for cleanup. This is an internal
+  prerequisite for #6, without a public retained-store or replacement API.
+
 - Network fault APIs use `fault.NetworkProfile`, `NetworkProfileLease` and
   `NetworkProfileStatus`, with `ApplyNetworkProfile`, `ApplyLinkProfile` and
   `rgw.Multisite.ApplyZoneLinkProfile`. This is a source-breaking rename of
