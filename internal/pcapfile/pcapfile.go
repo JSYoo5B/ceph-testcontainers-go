@@ -236,6 +236,11 @@ func (v *validator) run(limits Limits) (Report, error) {
 	record := make([]byte, recordHeaderBytes)
 	for {
 		n, err := v.fill(record)
+		// A reader may return bytes together with an error: the error comes
+		// first, so that the bound never hides an I/O failure.
+		if err != nil && !errors.Is(err, errShort) {
+			return report, err
+		}
 		if v.capped() {
 			return report, nil
 		}
@@ -244,9 +249,6 @@ func (v *validator) run(limits Limits) (Report, error) {
 				return verdict(report, Valid, ""), nil
 			}
 			return verdict(report, Malformed, fmt.Sprintf("record %d header cut off after %d of %d bytes", report.Packets+1, n, recordHeaderBytes)), nil
-		}
-		if err != nil {
-			return report, err
 		}
 		index := report.Packets + 1
 		subsecond, captured, original := order.Uint32(record[4:]), order.Uint32(record[8:]), order.Uint32(record[12:])

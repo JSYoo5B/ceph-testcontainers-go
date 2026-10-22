@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -336,5 +337,34 @@ func TestCompleteMarksWholeFileDigests(t *testing.T) {
 	report, err := Validate(&failingReader{data: valid[:10], err: errors.New("synthetic")}, Limits{})
 	if err == nil || report.Complete {
 		t.Fatalf("read error: %+v %v", report, err)
+	}
+}
+
+// bytesWithError returns its data in one read together with err, as an
+// io.Reader may.
+type bytesWithError struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *bytesWithError) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, r.err
+	}
+	r.done = true
+	return copy(p, r.data), r.err
+}
+
+// A read error that arrives with bytes past the bound is still returned;
+// the report keeps the prefix read before it.
+func TestReadErrorWithBytesIsNotHiddenByTheBound(t *testing.T) {
+	header := newCapture(binary.LittleEndian, magicMicro).bytes()
+	failure := errors.New("synthetic read failure")
+	reader := io.MultiReader(bytes.NewReader(header), &bytesWithError{data: []byte{1, 2}, err: failure})
+	report, err := Validate(reader, Limits{MaxFileBytes: fileHeaderBytes + 1})
+	if !errors.Is(err, failure) || report.Status == LimitExceeded || report.Complete || report.BytesRead != fileHeaderBytes+1 ||
+		report.ByteOrder != "little" || report.SHA256 != digest(append(bytes.Clone(header), 1)) {
+		t.Fatalf("report %+v err %v", report, err)
 	}
 }
