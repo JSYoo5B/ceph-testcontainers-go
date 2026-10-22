@@ -822,6 +822,60 @@ rows without a complete configuration identity are listed with the reason.
 Rows of two checked-out trees are two configurations, also when only the CI
 policy differs; the key is never relaxed to merge them.
 
+Which cache a job restored decides what its setup and compile time mean, so
+a cost comparison also needs the cache state of every sample. `fetch` reads
+no job log by default. With `--cache-logs N` it reads at most N job logs per
+call, oldest run first because logs expire, of the jobs that have a cache
+step (`Restore ... cache`, `Save ... cache` or an unnamed `actions/cache`
+step). `--cache-log-jobs REGEX` adds jobs by name, such as BuildKit image
+builds in `ceph-testcontainers-images`. GitHub serves only a whole job log,
+so only its cache lines are stored, without timestamps, in
+`cachelogs/<job id>.json`: each `actions/cache` step section, the
+`go version` line, the runner's `Cache mode` and BuildKit cache lines. An
+expired log is stored as unavailable and not read again; any other failed
+request is counted and read on the next call.
+
+```sh
+python3 .github/scripts/ci_measurements.py fetch --cache /tmp/ci-cache --repo JSYoo5B/ceph-testcontainers-go \
+  --since 2026-10-20 --cache-logs 50
+python3 .github/scripts/ci_measurements.py caches --cache /tmp/ci-cache \
+  --repo JSYoo5B/ceph-testcontainers-go --output /tmp/caches.json
+```
+
+`caches` lists one row per cache operation of every job that held a runner,
+keyed by repository, run ID, run attempt and job ID, with the workflow, job,
+event (`pull_request`, `push`, ...) and head branch, the cache kind
+(`go-module`, `go-build`, `registry` or `other`), the operation (`restore`,
+`save`, BuildKit `import` or `export`), the exact key or cache reference, the
+Go toolchain and platform of the job, whether the operation was requested and
+its outcome. Only a log line sets an outcome:
+
+| Outcome | Evidence |
+| --- | --- |
+| `hit` | `Cache restored from key` naming the input key; a BuildKit cache manifest import that reached `done` |
+| `partial-restore` | `Cache restored from key` naming another key (a `restore-keys` prefix) |
+| `miss` | `Cache not found for input keys`; a BuildKit import `ERROR` saying `not found` |
+| `restore-failed` | `Failed to restore`, an `##[error]` in a restore step, or any other BuildKit import `ERROR` |
+| `saved` | `Cache saved with key`; a BuildKit `writing cache ... manifest ... done` |
+| `save-skipped` | the save step's own conclusion is `skipped` (requested is false) |
+| `save-failed` | `Failed to save`, a refused cache reservation, an `##[error]` in a save step, or a BuildKit `ERROR` or `WARNING` of the export |
+| `unknown` | a requested operation whose log states none of these, or a cache step whose log was not fetched or has expired |
+
+A green job or a green save step is never read as a write.
+`continue-on-error: true` and BuildKit's `ignore-error=true` keep a job green
+after a failed save, and such a save is `save-failed` when its log says so and
+`unknown` when the log is missing. A registry `hit` is the import of a cache
+manifest; which stages it served is a separate question that the ledger does
+not answer.
+
+`cohorts` reads the same ledger from the cache directory. Each sample carries
+the cache condition of its job: every restore or import as `kind=outcome`,
+such as `go-build=hit,go-module=hit`, or `no cache restore`. Each
+configuration also lists `by_cache`, the same outcome ledger and passed-only
+ranges per condition. The configuration's own ranges stay as they are, and a
+sample without a fetched log is in an `unknown` condition rather than in a
+guessed one.
+
 ## Periodic runs
 
 `Ceph periodic` runs every runtime category on the role images of every

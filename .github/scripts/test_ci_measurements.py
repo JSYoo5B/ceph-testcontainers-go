@@ -445,3 +445,263 @@ class CohortTests(unittest.TestCase):
         self.assertEqual((result["rows"], result["joined"], result["configs"][0]["attempts"]), (2, 2, 2))
         self.assertIn("| recovery-rbd-12345678 | 20.2.4 | - | ", printed.getvalue())
         self.assertIn("passed 2", printed.getvalue())
+
+
+MODULE_KEY = "go-modules-Linux-" + "e" * 64
+BUILD_KEY = "go-build-Linux-1.26.10-" + "e" * 64
+CACHE_REF = "ghcr.io/owner/images:buildcache-debian-20.2.4-amd64-control"
+
+
+def log_text(*lines):
+    """A job log as GitHub serves it: a byte order mark, then timestamped lines."""
+    return "﻿" + "\n".join("2026-10-20T23:34:{:02d}.1234567Z {}".format(index % 60, line)
+                                for index, line in enumerate(lines)) + "\n"
+
+
+def cache_section(action, key, path, *results):
+    return ("##[group]Run actions/cache/{}@v6".format(action), "with:", "  path: " + path, "  key: " + key,
+            "  enableCrossOsArchive: false", "##[endgroup]") + results
+
+
+GO_LOG = log_text(
+    "Current runner version: '2.338.0'", "Cache mode: write",
+    "##[group]Run actions/setup-go@v7", "go version go1.26.10 linux/amd64",
+    *cache_section("restore", MODULE_KEY, "~/go/pkg/mod", "Cache hit for: " + MODULE_KEY,
+                   "Cache restored successfully", "Cache restored from key: " + MODULE_KEY),
+    *cache_section("restore", BUILD_KEY, "~/.cache/go-build",
+                   "Cache restored from key: go-build-Linux-1.26.9-" + "e" * 64),
+    "##[group]Run make vulncheck", "No vulnerabilities found.",
+    # continue-on-error: the step and the job stay green after this warning.
+    *cache_section("save", BUILD_KEY, "~/.cache/go-build",
+                   "##[warning]Failed to save: Unable to reserve cache with key " + BUILD_KEY
+                   + ", another job may be creating this cache."),
+    "##[group]Run actions/upload-artifact@v7")
+COLD_LOG = log_text(
+    "Cache mode: write", "go version go1.27.3 linux/amd64",
+    *cache_section("restore", MODULE_KEY, "~/go/pkg/mod", "Cache not found for input keys: " + MODULE_KEY),
+    *cache_section("restore", BUILD_KEY, "~/.cache/go-build",
+                   "##[warning]Failed to restore: Cache service responded with 503"),
+    *cache_section("save", MODULE_KEY, "~/go/pkg/mod", "Sent 1 of 1 (100.0%)", "Cache saved with key: " + MODULE_KEY),
+    # A save that ran and stated neither a write nor a failure.
+    *cache_section("save", BUILD_KEY, "~/.cache/go-build", "Sent 0 of 1 (0.0%)"))
+BUILDX_LOG = log_text(
+    "Cache mode: write", "##[group]Run ./build-images.sh",
+    "#7 importing cache manifest from " + CACHE_REF + "-mon",
+    "#7 ERROR: failed to configure registry cache importer: " + CACHE_REF + "-mon: not found",
+    "#8 importing cache manifest from " + CACHE_REF + "-osd",
+    "#8 ERROR: failed to configure registry cache importer: unexpected status 500",
+    # ignore-error=true: the build and the job stay green after this error.
+    "#17 exporting cache to registry", "#17 preparing build cache for export done",
+    "#17 ERROR: failed to push " + CACHE_REF + "-osd: denied: permission_denied",
+    "#7 importing cache manifest from " + CACHE_REF,
+    "#7 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+    "#10 CACHED", "#15 exporting cache to registry", "#15 sending cache export 0.2s done",
+    "#15 writing cache image manifest sha256:" + "2" * 64 + " 0.0s done", "#15 DONE 0.2s",
+    "#9 importing cache manifest from " + CACHE_REF + "-rgw",
+    "#9 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+    "#16 exporting cache to registry", "#16 preparing build cache for export done")
+
+
+def cache_job(identifier, *steps, name="Vulnerability check", conclusion="success"):
+    """A green job with the given (step name, conclusion) cache steps."""
+    return {"id": identifier, "name": name, "run_attempt": 1, "status": "completed", "conclusion": conclusion,
+            "created_at": at(0), "started_at": at(1), "completed_at": at(5),
+            "steps": [step("Set up job", at(1), at(1, 5))]
+            + [{**step(step_name, at(2), at(2, 5)), "conclusion": step_conclusion}
+               for step_name, step_conclusion in steps]}
+
+
+def excerpt(text):
+    lines, truncated = measure.cache_excerpt(text)
+    return {"lines": lines, "truncated": truncated}
+
+
+class CacheLedgerTests(unittest.TestCase):
+    """Cache operations come from log lines only, never from a green job."""
+
+    def outcomes(self, text):
+        return [(entry["kind"], entry["operation"], entry["key"], entry["outcome"])
+                for entry in measure.cache_entries(measure.cache_excerpt(text)[0])]
+
+    def test_go_restores_and_an_ignored_save_failure(self):
+        self.assertEqual(self.outcomes(GO_LOG), [("go-module", "restore", MODULE_KEY, "hit"),
+                                                 ("go-build", "restore", BUILD_KEY, "partial-restore"),
+                                                 ("go-build", "save", BUILD_KEY, "save-failed")])
+        entry = measure.cache_entries(measure.cache_excerpt(GO_LOG)[0])[0]
+        self.assertEqual((entry["toolchain"], entry["platform"], entry["cache_mode"]),
+                         ("go1.26.10", "linux/amd64", "write"))
+
+    def test_misses_failed_restores_confirmed_and_unconfirmed_saves(self):
+        self.assertEqual(self.outcomes(COLD_LOG), [("go-module", "restore", MODULE_KEY, "miss"),
+                                                   ("go-build", "restore", BUILD_KEY, "restore-failed"),
+                                                   ("go-module", "save", MODULE_KEY, "saved"),
+                                                   ("go-build", "save", BUILD_KEY, "unknown")])
+
+    def test_registry_imports_and_exports_including_an_ignored_export_error(self):
+        self.assertEqual(self.outcomes(BUILDX_LOG), [("registry", "import", CACHE_REF + "-mon", "miss"),
+                                                     ("registry", "import", CACHE_REF + "-osd", "restore-failed"),
+                                                     ("registry", "export", CACHE_REF + "-osd", "save-failed"),
+                                                     ("registry", "import", CACHE_REF, "hit"),
+                                                     ("registry", "export", CACHE_REF, "saved"),
+                                                     ("registry", "import", CACHE_REF + "-rgw", "hit"),
+                                                     ("registry", "export", CACHE_REF + "-rgw", "unknown")])
+
+    def test_the_excerpt_keeps_only_cache_lines_without_timestamps(self):
+        lines, truncated = measure.cache_excerpt(GO_LOG)
+        self.assertFalse(truncated)
+        self.assertEqual(lines[:2], ["Cache mode: write", "go version go1.26.10 linux/amd64"])
+        self.assertNotIn("No vulnerabilities found.", lines)
+        self.assertNotIn("Current runner version: '2.338.0'", lines)
+        lines, truncated = measure.cache_excerpt(log_text(*cache_section("restore", MODULE_KEY, "~/go/pkg/mod",
+                                                                         *["Received"] * 500)))
+        self.assertEqual((len(lines), truncated), (measure.CACHE_EXCERPT_LINES, True))
+
+    def test_ledger_rows_without_a_log_are_unknown_and_skipped_saves_are_not_writes(self):
+        runs = [run(11, "Code checks", "h", at(0)), {**run(12, "Code checks", "h2", at(0), event="push"),
+                                                       "head_branch": "main"}]
+        jobs = {"11": [cache_job(21, ("Restore the Go module cache", "success"),
+                                 ("Save the Go build cache", "skipped")),
+                       cache_job(22, ("Restore the Go module cache", "success")),
+                       cache_job(23, ("Restore the Go module cache", "success"))],
+                "12": [cache_job(31, ("Restore the Go module cache", "success"), ("Restore the Go build cache",
+                                                                                 "success"),
+                                 ("Save the Go build cache", "success"))]}
+        logs = {"22": {"unavailable": "HTTP 410"}, "23": excerpt(COLD_LOG), "31": excerpt(GO_LOG)}
+        rows = measure.cache_ledger(runs, jobs, logs, "owner/repo")
+        summary = [(row["job_id"], row["event"], row["kind"], row["operation"], row["requested"], row["outcome"],
+                    row["evidence_source"]) for row in rows]
+        self.assertEqual(summary, [
+            ("21", "pull_request", "go-module", "restore", True, "unknown", "none"),
+            ("21", "pull_request", "go-build", "save", False, "save-skipped", "step"),
+            ("22", "pull_request", "go-module", "restore", True, "unknown", "none"),
+            ("23", "pull_request", "go-module", "restore", True, "miss", "log"),
+            ("23", "pull_request", "go-build", "restore", True, "restore-failed", "log"),
+            ("23", "pull_request", "go-module", "save", True, "saved", "log"),
+            ("23", "pull_request", "go-build", "save", True, "unknown", "log"),
+            ("31", "push", "go-module", "restore", True, "hit", "log"),
+            ("31", "push", "go-build", "restore", True, "partial-restore", "log"),
+            # The job and its save step are green; the log says nothing was written.
+            ("31", "push", "go-build", "save", True, "save-failed", "log")])
+        self.assertEqual(rows[2]["evidence"], "log unavailable: HTTP 410")
+        self.assertEqual({row["repository"] for row in rows}, {"owner/repo"})
+        self.assertEqual(rows[-1]["head_branch"], "main")
+        conditions = measure.ledger_by_job(rows)
+        self.assertEqual(measure.cache_condition(conditions[("12", "1", "31")]),
+                         "go-build=partial-restore,go-module=hit")
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "21")]), "go-module=unknown")
+        self.assertEqual(measure.cache_condition(()), "no cache restore")
+        self.assertLessEqual({row["outcome"] for row in rows}, set(measure.CACHE_OUTCOMES))
+
+    def test_every_outcome_is_named(self):
+        texts = (GO_LOG, COLD_LOG, BUILDX_LOG)
+        found = {entry["outcome"] for text in texts for entry in measure.cache_entries(measure.cache_excerpt(text)[0])}
+        self.assertEqual(found | {"save-skipped"}, set(measure.CACHE_OUTCOMES))
+
+    def test_fetch_reads_no_log_unless_asked_and_then_a_bounded_number_once(self):
+        calls = []
+
+        def api(path, jq):
+            if "/jobs?" in path:
+                run_id = int(path.split("/runs/")[1].split("/")[0])
+                return [cache_job(run_id * 10 + index, ("Restore the Go module cache", "success"))
+                        for index in range(2)] + [cache_job(run_id * 10 + 5, name="Lint")]
+            return [run(11, "Code checks", "h", at(0)), run(12, "Code checks", "h2", at(1))]
+
+        def log(repo, job_id):
+            calls.append(job_id)
+            if job_id == 111:
+                raise LookupError("HTTP 410: logs expired")
+            if job_id == 120:
+                raise ValueError("HTTP 502")
+            return GO_LOG
+
+        with tempfile.TemporaryDirectory() as directory:
+            day, today = date(2026, 10, 16), date(2026, 10, 18)
+            options = {"today": today, "api": api, "compare": lambda repo, base, head: "ahead", "log": log,
+                       "workers": 1}
+            measure.fetch(directory, "o/r", day, day, [], **options)
+            self.assertEqual(calls, [])
+            first = measure.fetch(directory, "o/r", day, day, [], cache_logs=3, **options)
+            self.assertEqual(first, {"cache logs": 1, "unavailable cache logs": 1, "failed requests": 1})
+            self.assertEqual(calls, [110, 111, 120])
+            stored = measure.load_cache_logs(directory)
+            self.assertEqual(sorted(stored), ["110", "111"])
+            self.assertEqual(stored["111"]["unavailable"], "HTTP 410: logs expired")
+            self.assertTrue(all("2026-10-20T" not in line for line in stored["110"]["lines"]))
+            calls.clear()
+            measure.fetch(directory, "o/r", day, day, [], cache_logs=5, **options)
+            # Only the failed and the not yet read logs; a job without a cache step is never read.
+            self.assertEqual(calls, [120, 121])
+            calls.clear()
+            measure.fetch(directory, "o/r", day, day, [], cache_logs=5, cache_log_jobs="^Lint$", **options)
+            self.assertEqual(calls, [115, 120, 125])
+
+    def test_cli_lists_the_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            for name in ("runs", "jobs", "cachelogs"):
+                (cache / name).mkdir()
+            (cache / "runs" / "2026-10-17.json").write_text(json.dumps([run(11, "Code checks", "h", at(0))]))
+            (cache / "jobs" / "11.json").write_text(json.dumps([cache_job(21, ("Restore the Go module cache",
+                                                                               "success"))]))
+            (cache / "cachelogs" / "21.json").write_text(json.dumps(excerpt(GO_LOG)))
+            output = cache / "caches.json"
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()) as printed:
+                self.assertEqual(measure.main(["caches", "--cache", str(cache), "--repo", "owner/repo",
+                                               "--output", str(output)]), 0)
+            result = json.loads(output.read_text())
+            self.assertEqual((result["jobs"], result["logs"], len(result["rows"])), (1, 1, 3))
+            self.assertIn("| go-build | save | save-failed | 1 |", printed.getvalue())
+            self.assertIn("| 11 | 1 | Vulnerability check | pull_request | go-module | restore | " + MODULE_KEY
+                          + " | go1.26.10 | hit |", printed.getvalue())
+            with unittest.mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(measure.main(["fetch", "--cache", str(cache), "--repo", "o/r",
+                                               "--since", "2026-10-16", "--cache-logs", "-1"]), 1)
+
+
+class CohortCacheTests(unittest.TestCase):
+    """Split a configuration's joined samples by the cache condition of their jobs."""
+
+    setUp = CohortTests.setUp
+    attempt = CohortTests.attempt
+
+    def test_samples_carry_their_cache_condition_and_split_without_changing_ranges(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 7), self.attempt(102, 202, 9),
+                self.attempt(103, 203, 2, "failed")]
+        for run_id in ("100", "101", "102", "103"):
+            self.jobs[run_id][0]["steps"].insert(1, step("Restore the Go build cache", at(1), at(1, 5)))
+        logs = {"200": excerpt(GO_LOG), "201": excerpt(GO_LOG), "202": excerpt(COLD_LOG)}
+        ledger = measure.cache_ledger(self.runs, self.jobs, logs, "owner/repo")
+        plain = measure.cohorts(self.runs, self.jobs, rows, "owner/repo")
+        result = measure.cohorts(self.runs, self.jobs, rows, "owner/repo", ledger)
+        config, before = result["configs"][0], plain["configs"][0]
+        self.assertNotIn("by_cache", before)
+        self.assertEqual((config["passed"], config["outcomes"]), (before["passed"], before["outcomes"]))
+        self.assertEqual([sample["cache_condition"] for sample in config["samples"]],
+                         ["go-build=partial-restore,go-module=hit", "go-build=partial-restore,go-module=hit",
+                          "go-build=restore-failed,go-module=miss", "go-build=unknown"])
+        warm = config["by_cache"]["go-build=partial-restore,go-module=hit"]
+        self.assertEqual((warm["attempts"], warm["passed"]["native"]),
+                         (2, {"count": 2, "min": 300.0, "median": 300.0, "max": 420.0}))
+        self.assertEqual(config["by_cache"]["go-build=unknown"]["outcomes"],
+                         {"assertion_failure": {"attempts": 1, "runner_seconds": 360.0}})
+        self.assertEqual(config["by_cache"]["go-build=unknown"]["passed"]["duration"]["count"], 0)
+        self.assertIn("| go-build=restore-failed,go-module=miss | 1 | passed 1 | ",
+                      measure.cohorts_markdown(result))
+
+    def test_cli_joins_the_ledger_from_the_cache(self):
+        rows = [self.attempt(100, 200, 5)]
+        cache, history = self.root / "cache", self.root / "history"
+        for name in ("runs", "jobs", "cachelogs"):
+            (cache / name).mkdir(parents=True)
+        (cache / "runs" / "2026-10-17.json").write_text(json.dumps(self.runs))
+        (cache / "jobs" / "100.json").write_text(json.dumps(self.jobs["100"]))
+        (cache / "cachelogs" / "200.json").write_text(json.dumps(excerpt(COLD_LOG)))
+        (history / "rows").mkdir(parents=True)
+        (history / "rows" / "100-1.jsonl").write_text(json.dumps(rows[0]) + "\n")
+        output = self.root / "cohorts.json"
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(measure.main(["cohorts", "--cache", str(cache), "--history", str(history),
+                                           "--repo", "owner/repo", "--output", str(output)]), 0)
+        sample = json.loads(output.read_text())["configs"][0]["samples"][0]
+        self.assertEqual(sample["cache_condition"], "go-build=restore-failed,go-module=miss")
