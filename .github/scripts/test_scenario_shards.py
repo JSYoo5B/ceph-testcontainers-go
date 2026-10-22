@@ -239,6 +239,22 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertEqual(set(runner.CODENAMES), set(runner.RELEASES))
         self.assertEqual(len(set(runner.CODENAMES.values())), len(runner.CODENAMES))
 
+    def test_runtime_profiles_consume_dependency_roles_without_legacy_core_fallback(self):
+        profiles = self.plan["include"]
+        for profile in profiles:
+            if not profile["requires_ceph"]:
+                self.assertEqual(profile["image_roles"], "")
+                continue
+            roles = profile["image_roles"].split(",")
+            self.assertEqual(roles[0], "essential", profile["id"])
+            self.assertTrue(set(roles) <= {"essential", "client", "cephfs", "rbd-aux", "rgw"}, profile["id"])
+        scoped = {profile["batch"]: profile["image_roles"] for profile in profiles}
+        self.assertEqual(scoped["daemon_addresses"], "essential,client")
+        self.assertEqual(scoped["supervised_command"], "essential")
+        self.assertEqual(scoped["native_input"], "essential,client")
+        self.assertEqual(scoped["rbd_namespaces"], "essential,client,rbd-aux")
+        self.assertEqual(scoped["rados_fixtures"], "essential,client,cephfs")
+
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
                     self.RELEASE_MATRIX, self.COMMAND, "roles-v2.yml", *self.ENTRY_POINTS}

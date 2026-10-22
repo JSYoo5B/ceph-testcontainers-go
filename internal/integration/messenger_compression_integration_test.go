@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_messenger_receipts))))
 
-//ci: timeout=30m job-timeout=45
+//ci: timeout=30m job-timeout=45 image-roles=essential,client,cephfs
 
 package integration_test
 
@@ -172,7 +172,7 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 		if dump {
 			arg = "1"
 		}
-		out := execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", messengerCompressionProbe, pool, "compressible-"+phase.name, arg)
+		out := execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerCompressionProbe, pool, "compressible-"+phase.name, arg)
 		var probe struct {
 			ClientGlobalID uint64                                `json:"client_global_id"`
 			Bytes          int                                   `json:"bytes"`

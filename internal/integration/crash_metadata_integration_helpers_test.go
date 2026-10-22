@@ -76,6 +76,16 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Initialize only this fresh, idle caller helper's directory, including
+	// any package-owned crash/posted skeleton. Daemon crash files stay intact.
+	// Use its writable rootfs so Docker's archive API observes the same path
+	// as Exec, without renaming an overlay lower-layer directory.
+	execCommand(t, ctx, helper, "python3", "-c", `import os, shutil
+p = '/var/lib/ceph/crash'
+if os.path.exists(p):
+    shutil.rmtree(p)
+os.makedirs(p)
+`)
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
 	osds := cluster.OSDs()
 
@@ -93,15 +103,19 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	if after := dockerObjects(t, ctx, docker); after.containers != before.containers || after.volumes != before.volumes {
 		t.Fatalf("collection changed Docker objects: %+v -> %+v", before, after)
 	}
-	// A caller's container is read whatever it is called, also when it is
-	// described like the cluster's own control container.
+	// A caller's absent directory is read whatever it is called, also when
+	// described like the cluster's own control container. Only the empty
+	// directory created above is removed, then recreated for crash collection.
+	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
 		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
-			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryEmpty
+			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryAbsent
 		}) {
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
+
+	execCommand(t, ctx, helper, "mkdir", "/var/lib/ceph/crash")
 
 	crashDaemon(t, ctx, cluster.ManagerContainer())
 	crashDaemon(t, ctx, osds[0].Container)

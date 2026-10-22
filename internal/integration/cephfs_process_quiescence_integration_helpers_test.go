@@ -511,11 +511,11 @@ func cephFSOriginalProcessSession(ctx context.Context, daemon *cephfs.MirrorDaem
 // Parse the complete result, including unrelated/new identities. Never infer
 // old GID retirement by searching only its old address or current inventory.
 func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, pool string) (map[string]string, error) {
-	control, err := source.ControlContainerContext(ctx)
+	client, err := source.ClientContainerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	data, err := cephFSOriginalProcessExec(ctx, control, "rados", "--pool", pool, "listwatchers", "cephfs_mirror")
+	data, err := cephFSOriginalProcessExec(ctx, client, "rados", "--pool", pool, "listwatchers", "cephfs_mirror")
 	if err != nil {
 		return nil, err
 	}

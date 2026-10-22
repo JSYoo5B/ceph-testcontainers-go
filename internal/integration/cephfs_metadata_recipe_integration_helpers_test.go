@@ -589,7 +589,7 @@ func checkCephFSRecipe(t *testing.T, recipe cephFSRecipeTable, data, source, vic
 func checkCephFSRecipeNamespace(t *testing.T, ctx context.Context, cluster *ceph.Container, filesystem, root string, actorClient uint64, recipe cephFSRecipeTable, data, source, value []byte, entries int) uint64 {
 	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSMetadataReader, filesystem, root}, Timeout: 2 * time.Minute,
 		MaxStdout: 256 << 10, MaxStderr: 64 << 10, Label: "independent CephFS metadata reader",
 	})

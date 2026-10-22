@@ -140,7 +140,7 @@ equivalent to `rbd.Run` with explicit pools.
 
 Use the second argument in the `Run` function to set a valid Docker image.
 
-The default is `ceph.DefaultImage`, the official Ceph Tentacle image
+The default is `ceph.DefaultImage`, the pruned Tentacle aggregate image
 `quay.io/ceph/ceph:v20.2.4` pinned by its multi-architecture digest
 (linux/amd64 and linux/arm64).
 

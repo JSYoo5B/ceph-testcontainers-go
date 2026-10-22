@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_layout_receipts))))
 
-//ci: timeout=20m job-timeout=35
+//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs
 
 package integration_test
 
@@ -157,7 +157,7 @@ func TestCephFSLayoutReceipt(t *testing.T) {
 	overwritten := receipt.Layout.apply(head, writes[2].Offset, writes[2].data)
 	prefix := strconv.FormatUint(receipt.Inode, 16) + "."
 	var names, want []string
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	for _, name := range radosListing(t, ctx, control, receipt.Pool, namespace) {
 		if strings.HasPrefix(name, prefix) {
 			names = append(names, name)

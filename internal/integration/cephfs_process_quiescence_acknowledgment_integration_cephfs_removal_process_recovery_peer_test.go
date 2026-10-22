@@ -1,6 +1,6 @@
 //go:build integration && multicluster && ci && ci_recovery && ci_batch && ci_batch_cephfs_removal_process_recovery_peer
 
-//ci: timeout=60m job-timeout=70 checker=recovery case=peer
+//ci: timeout=60m job-timeout=70 checker=recovery case=peer image-roles=essential,client,cephfs
 
 package integration_test
 

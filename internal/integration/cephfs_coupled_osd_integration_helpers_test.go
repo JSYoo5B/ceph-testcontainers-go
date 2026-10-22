@@ -248,7 +248,7 @@ func testCephFSBlocklistEpochBarrier(t *testing.T) {
 	if opened.Client == 0 || opened.Inode == 0 || opened.Size != int64(len(base)) {
 		t.Fatalf("receipt 1 = %+v", opened)
 	}
-	observer := startCephFSActor(t, ctx, m.cluster, m.cluster.ControlContainer(), cephFSBarrierObserver, m.fs.FilesystemName, observerDir, observerAsok, path, hex.EncodeToString([]byte("observer marker")))
+	observer := startCephFSActor(t, ctx, m.cluster, toolkitContainer(t, m.cluster), cephFSBarrierObserver, m.fs.FilesystemName, observerDir, observerAsok, path, hex.EncodeToString([]byte("observer marker")))
 	watching := observer.receipt(t, ctx, 1)
 	if watching.Client == opened.Client || watching.Inode != opened.Inode {
 		t.Fatalf("observer receipt 1 = %+v, actor %+v", watching, opened)
@@ -273,7 +273,7 @@ func testCephFSBlocklistEpochBarrier(t *testing.T) {
 	if _, listed := mapBefore.Blocklist[session.Address]; listed {
 		t.Fatalf("%s is blocklisted before the eviction", session.Address)
 	}
-	observerBefore, err := clientAdminStatus(ctx, m.cluster, m.cluster.ControlContainer(), observerAsok)
+	observerBefore, err := clientAdminStatus(ctx, m.cluster, toolkitContainer(t, m.cluster), observerAsok)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func testCephFSBlocklistEpochBarrier(t *testing.T) {
 	if read.Inode != opened.Inode || read.Size != int64(len(base)) || read.Full != hex.EncodeToString(base) {
 		t.Fatalf("observer read %+v, want only the %d fsynced bytes", read, len(base))
 	}
-	observed := waitClientStatus(t, ctx, m.cluster, m.cluster.ControlContainer(), observerAsok, "barrier", func(status cephFSClientStatus) bool {
+	observed := waitClientStatus(t, ctx, m.cluster, toolkitContainer(t, m.cluster), observerAsok, "barrier", func(status cephFSClientStatus) bool {
 		return status.Barrier >= fenced
 	})
 	if observed.Barrier != fenced || observed.Blocklisted || observed.OSDEpoch < fenced {
@@ -502,7 +502,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	pool := cephFSDataPool(t, ctx, m, opened.Inode)
 	notFull := waitPoolFull(t, ctx, m.cluster, pool, false)
 	writeCtx, stopWrite := context.WithTimeout(ctx, 2*time.Minute)
-	written, err := m.cluster.RunNativeCommand(writeCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+	written, err := m.cluster.RunNativeCommand(writeCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSProbeWriter, m.fs.FilesystemName, hex.EncodeToString(probeBytes), probe, reprobe}, Timeout: 2 * time.Minute,
 		MaxStdout: 4096, MaxStderr: 64 << 10, Label: "CephFS probe writer",
 	})
@@ -565,7 +565,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 
 	whole := append(slices.Clone(base), tail...)
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := m.cluster.RunNativeCommand(readCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := m.cluster.RunNativeCommand(readCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, m.fs.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})

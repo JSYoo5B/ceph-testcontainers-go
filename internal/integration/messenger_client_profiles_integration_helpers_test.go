@@ -224,7 +224,7 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 func checkProfileClientModes(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, want string) {
 	t.Helper()
 	var modes []string
-	if err := json.Unmarshal([]byte(execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
+	if err := json.Unmarshal([]byte(execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
 		t.Fatal(err)
 	}
 	switch {
@@ -288,7 +288,7 @@ func checkPausedButOpen(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		Open   bool   `json:"open"`
 		Banner string `json:"banner"`
 	}
-	out := execOutput(t, ctx, cluster.ControlContainer(), "python3", "-c", probeOpenPort, address)
+	out := execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", probeOpenPort, address)
 	if err := json.Unmarshal([]byte(out), &probe); err != nil || !probe.Open || probe.Banner != "" {
 		t.Fatalf("paused %s at %s: %s", name, address, out)
 	}
@@ -785,7 +785,8 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	crc.expect(t, ctx, "crc only", "accepted", "pg", "stat")
 	crc.expect(t, ctx, "crc only", "accepted", "tell", "osd.0", "version")
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
-	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read && cmp /tmp/object /tmp/read")
+	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
+	assertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
 	if cluster.UsesHostNetwork() {
 		checkHostProcessReachesDaemons(t, ctx, cluster)

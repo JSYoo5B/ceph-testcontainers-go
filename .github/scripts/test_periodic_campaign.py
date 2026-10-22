@@ -46,7 +46,7 @@ class PinTests(unittest.TestCase):
         self.assertEqual(run_image_matrix.parse_digests(text), digests)
 
     def test_an_unresolvable_or_malformed_tag_fails_the_pinning(self):
-        reference = run_image_matrix.image_references("official", "roles", "20.2.4")["osd"]
+        reference = run_image_matrix.image_references("official", "roles", "20.2.4")["essential"]
         with self.assertRaisesRegex(RuntimeError, "cannot resolve"):
             campaign.pin("20.2.4", self.registry([reference]))
         for stdout in ("{}", "[]", "not json", json.dumps({"digest": "sha256:short"})):

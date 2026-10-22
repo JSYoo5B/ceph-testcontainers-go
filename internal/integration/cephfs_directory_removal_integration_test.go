@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster && (!ci || (ci_recovery && (!ci_batch || ci_batch_cephfs_removal_directory_release))))
 
-//ci: timeout=60m job-timeout=70
+//ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs
 
 package integration_test
 

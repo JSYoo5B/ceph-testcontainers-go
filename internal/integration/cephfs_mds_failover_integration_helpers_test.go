@@ -144,7 +144,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	m := startCephFSStandbyFailover(t, ctx)
 	const path = "/failover-locks/file"
 	holder := startFlockActor(t, ctx, m.cephFSSingleMDS, m.client, "/tmp/failover-holder", path, "ex-nb", "un", "ex-nb")
-	contender := startFlockActor(t, ctx, m.cephFSSingleMDS, m.cluster.ControlContainer(), "/tmp/failover-contender", path, "ex-nb", "ex-nb", "ex", "un")
+	contender := startFlockActor(t, ctx, m.cephFSSingleMDS, toolkitContainer(t, m.cluster), "/tmp/failover-contender", path, "ex-nb", "ex-nb", "ex", "un")
 	if holder.client == contender.client || holder.inode != contender.inode {
 		t.Fatalf("holder client.%d inode %d, contender client.%d inode %d", holder.client, holder.inode, contender.client, contender.inode)
 	}

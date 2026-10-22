@@ -92,7 +92,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: image, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

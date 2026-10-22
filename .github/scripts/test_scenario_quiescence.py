@@ -79,6 +79,27 @@ def diagnostic_rewrites(source, rewrites=None):
     return source
 
 
+
+def client_watcher_routing(source):
+    """Relocate only the retained independent RADOS watcher command.
+
+    The historical run/source hashes remain untouched. This declared source
+    migration is not new native execution evidence. MON command counters,
+    daemon-local sockets and every watcher parsing/assertion byte stay bound.
+    """
+    old = ("func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, pool string) (map[string]string, error) {\n"
+           "\tcontrol, err := source.ControlContainerContext(ctx)\n"
+           "\tif err != nil {\n\t\treturn nil, err\n\t}\n"
+           '\tdata, err := cephFSOriginalProcessExec(ctx, control, "rados", "--pool", pool, "listwatchers", "cephfs_mirror")\n')
+    new = old.replace("control, err := source.ControlContainerContext(ctx)",
+                      "client, err := source.ClientContainerContext(ctx)").replace(
+                          'cephFSOriginalProcessExec(ctx, control, "rados"',
+                          'cephFSOriginalProcessExec(ctx, client, "rados"')
+    if source.count(old) != 1:
+        raise ValueError("client watcher routing must match the retained RADOS probe exactly once")
+    return source.replace(old, new, 1)
+
+
 def producer_parent(source, parent):
     # These retained producer parents contain only their nested t.Run loops;
     # gofmt keeps the sole function-closing brace at column zero.
@@ -156,7 +177,7 @@ class QuiescenceCoverageTests(unittest.TestCase):
         self.assertEqual(passes[2], checker.PARENT + "/bridge/peer")
 
     def test_split_producer_parent_and_shared_assertions_preserve_original_declarations(self):
-        retained = diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text()))
+        retained = client_watcher_routing(diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text())))
         root = Path(__file__).resolve().parents[2] / "internal/integration"
         current_parent = (root / "cephfs_process_quiescence_integration_test.go").read_text()
         current_helpers = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
@@ -165,6 +186,23 @@ class QuiescenceCoverageTests(unittest.TestCase):
         helper = "testCephFSOriginalProcessQuiescence"
         self.assertEqual(retained_declaration_layout(producer_helpers(retained, helper)),
                          retained_declaration_layout(producer_helpers(current_helpers, helper)))
+
+    def test_client_watcher_routing_binds_only_the_exact_userspace_probe(self):
+        retained = diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text()))
+        rewritten = client_watcher_routing(retained)
+        self.assertEqual(rewritten.count("source.ClientContainerContext(ctx)"), 1)
+        # The original MON command counter is still selected on control.
+        self.assertIn("control, err := source.ControlContainerContext(ctx)", rewritten)
+        self.assertIn('"rados", "--pool", pool, "listwatchers", "cephfs_mirror"', rewritten)
+        for invalid in (rewritten, retained + retained,
+                        retained.replace('"rados", "--pool", pool, "listwatchers"',
+                                         '"rados", "--pool", "foreign", "listwatchers"')):
+            with self.assertRaisesRegex(ValueError, "exactly once"):
+                client_watcher_routing(invalid)
+        # A parser/assertion change must still fail declaration parity.
+        modified = rewritten.replace('len(fields) != 3', 'len(fields) != 2')
+        self.assertNotEqual(retained_declaration_layout(rewritten),
+                            retained_declaration_layout(modified))
 
     def test_diagnostic_rewrites_replace_one_error_branch_exactly_once(self):
         branch = "\tif err != nil {\n\t\treturn err\n\t}\n"

@@ -98,7 +98,8 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	checkMemStoreLegacyPool(t, ctx, cluster, pool.Name)
 
 	// The client writes and reads through the single PG on osd.0.
-	execCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read && cmp /tmp/object /tmp/read")
+	execCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read")
+	assertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/read")
 	out, err := cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
 	var mapping struct {
 		PGID   string `json:"pgid"`
@@ -121,7 +122,8 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "sh", "-c", "rados -p tc-legacy get legacy /tmp/after && cmp /tmp/object /tmp/after")
+	execCommand(t, ctx, client, "sh", "-c", "rados -p tc-legacy get legacy /tmp/after")
+	assertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/after")
 	assertLegacyCRUSHMap(t, ctx, cluster)
 	t.Logf("MemStore osd.0 with the legacy CRUSH map served pool %s (1 PG %s, size 1, no hashpspool) before and after a clean restart", pool.Name, mapping.PGID)
 }

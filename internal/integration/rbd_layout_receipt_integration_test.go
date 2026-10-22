@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_layout_receipts))))
 
-//ci: timeout=20m job-timeout=35
+//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs
 
 package integration_test
 
@@ -217,7 +217,7 @@ func TestRBDLayoutReceipt(t *testing.T) {
 	receipt.SnapID = snap
 
 	// The headers, read through librados alone.
-	control := cluster.ControlContainer()
+	control := toolkitContainer(t, cluster)
 	var headers map[string]rbdLayoutImage
 	layoutResult(t, execOutput(t, ctx, control, "python3", "-c", rbdHeaderScript, pool, namespace, "parent", "clone"), &headers)
 	for _, want := range []struct {

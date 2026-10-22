@@ -33,11 +33,8 @@ CHECKERS = {
 }
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*\Z")
 # Published role images, in the order of their CEPH_TEST_* variables. A Ceph
-# batch that declares no image-roles gets all four.
-LEGACY_IMAGE_ROLES = ("control", "osd", "rgw", "mds")
-V2_IMAGE_ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
-IMAGE_ROLES = LEGACY_IMAGE_ROLES
-ALL_IMAGE_ROLES = tuple(dict.fromkeys(LEGACY_IMAGE_ROLES + V2_IMAGE_ROLES))
+# batch that declares no image-roles gets all five dependency roles.
+IMAGE_ROLES = ("essential", "client", "cephfs", "rbd-aux", "rgw")
 # Docker network modes a test can declare with networkModes(t, ...).
 NETWORKS = ("host", "bridge")
 NETWORK_SCOPES = ("default", "all")
@@ -153,14 +150,11 @@ def parse_metadata(file):
     image_roles = None
     if "image-roles" in values:
         roles = values["image-roles"].split(",")
-        if (any(role not in ALL_IMAGE_ROLES for role in roles) or len(roles) != len(set(roles))
-                or ("essential" if any(r in roles for r in ("essential", "client", "cephfs", "rbd-aux")) else "control") not in roles):
+        if (any(role not in IMAGE_ROLES for role in roles) or len(roles) != len(set(roles))
+                or "essential" not in roles):
             raise ValueError(file["path"] + ": image-roles must list distinct roles of "
-                             + ",".join(IMAGE_ROLES) + ", control included")
-        role_order = V2_IMAGE_ROLES if "essential" in roles else LEGACY_IMAGE_ROLES
-        if any(role not in role_order for role in roles):
-            raise ValueError(file["path"] + ": legacy and roles-v2 declarations cannot be mixed")
-        image_roles = ",".join(role for role in role_order if role in roles)
+                             + ",".join(IMAGE_ROLES) + ", essential included")
+        image_roles = ",".join(role for role in IMAGE_ROLES if role in roles)
     return {"timeout": values["timeout"], "job_timeout": job_timeout,
             "checker": checker, "case": case, "image_roles": image_roles, "representative": representative}
 
@@ -183,14 +177,14 @@ def checker_case(checker, network, kind, path="checker"):
 
 
 def resolve_image_roles(profile):
-    """Give a Ceph profile its declared roles, or all four; others get none."""
+    """Give a Ceph profile its declared roles, or all five; others get none."""
     declared = profile["image_roles"]
     if not profile["requires_ceph"]:
         if declared is not None:
             raise ValueError(profile["profile"] + ": image-roles needs a Ceph runtime profile")
         profile["image_roles"] = ""
     elif declared is None:
-        profile["image_roles"] = ",".join(LEGACY_IMAGE_ROLES)
+        profile["image_roles"] = ",".join(IMAGE_ROLES)
 
 
 def package_path(file):

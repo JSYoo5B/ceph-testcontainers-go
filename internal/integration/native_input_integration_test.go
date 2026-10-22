@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_native_input))))
 
-//ci: timeout=15m job-timeout=25 image-roles=control
+//ci: timeout=15m job-timeout=25 image-roles=essential,client
 
 package integration_test
 

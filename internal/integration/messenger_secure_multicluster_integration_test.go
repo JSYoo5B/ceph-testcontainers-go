@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_messenger_secure_mix))))
 
-//ci: timeout=30m job-timeout=40
+//ci: timeout=30m job-timeout=40 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
 
@@ -273,7 +273,7 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 		mode = "secure"
 	}
 	for _, daemon := range daemons {
-		data := mixedMessengerExec(t, ctx, cluster.ControlContainer(), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(t, ctx, cluster))
+		data := mixedMessengerExec(t, ctx, toolkitContainer(t, cluster), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR_MIX_NATIVE %s", data)
 	}
 }

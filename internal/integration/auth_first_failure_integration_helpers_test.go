@@ -672,9 +672,21 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatalf("no active MGR: %+v, %v", status, err)
 	}
 	target := "mgr." + status.ActiveName
+	wrong, err := cluster.CreateClient(ctx, "auth-first-failure-wrong", ceph.ClientCaps{Mon: "allow r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, wrongKeyring, err := wrong.ConnectionConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongKeyring = bytes.ReplaceAll(wrongKeyring, []byte("["+wrong.Name()+"]"), []byte("[client.admin]"))
+	if err := client.CopyToContainer(ctx, wrongKeyring, "/tmp/wrong.keyring", 0o600); err != nil {
+		t.Fatal("copy deliberately wrong keyring failed")
+	}
 	attempted := time.Now().UTC()
 	tested, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-		Argv:    []string{"sh", "-c", `ceph-authtool --create-keyring /tmp/wrong.keyring --gen-key -n client.admin >/dev/null && exec ceph --keyring /tmp/wrong.keyring --connect-timeout 10 tell "$1" version`, "sh", target},
+		Argv:    []string{"ceph", "--keyring", "/tmp/wrong.keyring", "--connect-timeout", "10", "tell", target, "version"},
 		Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 16 << 10, Label: "tested authentication",
 	})
 	// Tentacle's MonClient logs "(13) Permission denied" and Squid's

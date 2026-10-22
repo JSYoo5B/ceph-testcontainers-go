@@ -1,6 +1,6 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rados_mutation_contracts))))
 
-//ci: timeout=25m job-timeout=35
+//ci: timeout=25m job-timeout=35 image-roles=essential,client
 
 package integration_test
 

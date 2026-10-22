@@ -33,7 +33,7 @@ class RolesV2PlanTests(unittest.TestCase):
                                  ("none", 0, {"include": []}))
 
     def test_contract_changes_retain_every_release_and_architecture(self):
-        paths = ("ceph/images.go", "ceph/images_test.go", "Makefile", "go.mod", "go.sum",
+        paths = (".github/ceph-role-images.json", "ceph/images.go", "ceph/images_test.go", "Makefile", "go.mod", "go.sum",
                  ".github/workflows/roles-v2.yml", ".github/scripts/roles_v2_plan.py",
                  ".github/scripts/test_roles_v2_plan.py", ".github/scripts/check_runtime_cleanup.py",
                  ".github/scripts/run_image_matrix.py",
@@ -128,7 +128,10 @@ class RolesV2PlanTests(unittest.TestCase):
         self.assertEqual(workflow.count("if: matrix.scope == 'full'"), 5)
         for target in ("image-compatibility", "roles-v2-routing", "roles-v2-runtime", "roles-v2-oracles"):
             self.assertIn("run: make " + target, workflow)
-        self.assertIn('CEPH_TEST_RGW_IMAGE="$id" make image-compatibility', workflow)
+        self.assertIn("--layout all", workflow)
+        self.assertIn("Pull and freeze published dependency roles", workflow)
+        self.assertNotIn("Build candidate image contract", workflow)
+        self.assertNotIn("images-source", workflow)
         self.assertIn("check_runtime_cleanup.py snapshot", workflow)
         self.assertIn("if: always() && steps.cleanup.outcome == 'success'", workflow)
         self.assertIn("check_runtime_cleanup.py check", workflow)

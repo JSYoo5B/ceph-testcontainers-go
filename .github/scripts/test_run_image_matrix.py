@@ -79,6 +79,9 @@ class Runtime:
 
 class MatrixTests(unittest.TestCase):
     def setUp(self):
+        patcher = mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name) / "module"
@@ -87,6 +90,7 @@ class MatrixTests(unittest.TestCase):
         self.write("go.mod", "module " + MODULE + "\n\ngo 1.25.0\n")
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
+        self.write(".github/ceph-role-images.json", (SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
         self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.OFFICIAL_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
         self.write("ceph/internal/scripts/control.sh", "#!/bin/sh\n")
@@ -106,16 +110,14 @@ class MatrixTests(unittest.TestCase):
                 mock.patch.object(runner.subprocess, "Popen", side_effect=self.runtime.popen), \
                 mock.patch.dict(os.environ, env or {}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return runner.main(["--output-dir", str(self.output), *arguments])
+            return runner.main(["--contract", "legacy", "--output-dir", str(self.output), *arguments])
 
     def summary(self):
         return json.loads((self.output / "summary.json").read_text())
 
-    def test_default_matches_official_image_and_all_pins_four_components(self):
+    def test_explicit_legacy_all_still_pins_four_components(self):
         self.assertEqual(runner.ROLE_ENV, {"control": "CEPH_TEST_IMAGE", "osd": "CEPH_TEST_OSD_IMAGE",
                                           "rgw": "CEPH_TEST_RGW_IMAGE", "mds": "CEPH_TEST_MDS_IMAGE"})
-        original = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
-        self.assertIn('const DefaultImage = "' + runner.OFFICIAL_IMAGE + '"', original)
         self.assertEqual(self.invoke(env={name: "unrelated:mutable" for name in runner.ROLE_ENV.values()}), 0)
         report = self.summary()
         self.assertEqual(report["images"]["all"]["reference"], runner.OFFICIAL_IMAGE)
@@ -130,6 +132,21 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(report["test_exit_code"], 0)
         self.assertEqual(len(report["tests"]["results"]), 9)
         self.assertFalse(self.runtime.pulled)
+
+    def test_v2_preparation_exports_only_selected_ids_and_contract(self):
+        github_env = self.root / "github-env"
+        self.assertEqual(self.invoke(["--contract", "roles-v2", "--layout", "roles", "--prepare-only",
+                                      "--roles", "essential,client", "--github-env", str(github_env)]), 0)
+        report = self.summary()
+        self.assertEqual(set(report["images"]), {"essential", "client"})
+        prepared = report["prepared_environment"]
+        self.assertEqual(prepared["SCENARIO_IMAGE_CONTRACT"], "roles-v2")
+        self.assertEqual(set(prepared), {"CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "SCENARIO_IMAGE_CONTRACT"})
+        self.assertEqual(dict(line.split("=", 1) for line in github_env.read_text().splitlines()), prepared)
+        self.assertTrue(report["preparation_passed"])
+        self.assertEqual(report["runtime_result"], "not_run")
+        self.assertIsNone(self.runtime.make_environment)
+        self.assertTrue(all(":roles-v2-official-" in item["reference"] for item in report["images"].values()))
 
     def test_all_six_reference_mappings(self):
         for variant in ("official", "debian", "ubuntu"):
@@ -575,15 +592,69 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(runner.image_references("official", "all", release), {"all": official})
                 self.assertEqual(runner.image_references("ubuntu", "roles", release)["osd"],
                                  runner.REGISTRY + ":ubuntu-" + release + "-osd")
-                self.assertEqual(runner.parse_arguments(("--release", release)).release, release)
+                self.assertEqual(runner.parse_arguments(("--contract", "legacy", "--release", release)).release, release)
 
 
 class VersionedRoleSelectionTests(unittest.TestCase):
+    def test_default_aggregate_matches_the_published_multiarch_library_pin(self):
+        source = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
+        self.assertIn('const DefaultImage = "' + runner.DEFAULT_IMAGE + '"', source)
+        self.assertRegex(runner.DEFAULT_IMAGE, r":roles-v2-official-20\.2\.4-all@sha256:[0-9a-f]{64}$")
+        with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            self.assertEqual(runner.image_references("official", "all", runner.RELEASE), {"all": runner.DEFAULT_IMAGE})
+
+    def test_all_official_role_refs_pin_one_checked_in_publication(self):
+        with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            for release in runner.RELEASES:
+                pins = runner.published_role_pins(release)
+                refs = runner.image_references("official", "roles", release)
+                self.assertEqual(set(refs), set(runner.V2_ROLE_ENV))
+                for role, ref in refs.items():
+                    self.assertTrue(ref.endswith("@" + pins[role]))
+                override = "sha256:" + "f" * 64
+                changed = runner.pin_references(refs, {"essential": override})
+                self.assertEqual(changed["essential"].count("@"), 1)
+                self.assertTrue(changed["essential"].endswith("@" + override))
+                self.assertEqual(changed["client"], refs["client"])
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(runner, "ROOT", Path(directory)):
+                root = Path(directory)
+                (root / ".github").mkdir()
+                (root / ".github/ceph-role-images.json").write_text(json.dumps({"schema": 1, "contract": "roles-v2", "images": {}}))
+                with self.assertRaisesRegex(ValueError, "pins are incomplete"):
+                    runner.image_references("official", "roles", "20.2.4")
+
+    def test_default_cli_is_dependency_roles_and_rejects_legacy_role_names(self):
+        with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
+            args = runner.parse_arguments([])
+            self.assertEqual(args.contract, "roles-v2")
+            self.assertEqual(args.roles, tuple(runner.V2_ROLE_ENV))
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.parse_arguments(["--layout", "roles", "--prepare-only", "--roles", "control"])
+
+    def test_v2_environment_is_atomic_and_contract_marker_is_not_an_image_id(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.multiple(
+                runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            output = Path(directory) / "github-env"
+            env = {"CEPH_TEST_ESSENTIAL_IMAGE": "sha256:" + "1" * 64,
+                   "CEPH_TEST_CLIENT_IMAGE": "sha256:" + "2" * 64,
+                   "SCENARIO_IMAGE_CONTRACT": "roles-v2"}
+            runner.append_role_environment(output, env, ("essential", "client"))
+            lines = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            self.assertEqual(lines, env)
+            before = output.read_bytes()
+            for change in ({"SCENARIO_IMAGE_CONTRACT": "legacy"},
+                           {"CEPH_TEST_CLIENT_IMAGE": "mutable:tag"},
+                           {"CEPH_TEST_MDS_IMAGE": "sha256:" + "3" * 64}):
+                with self.subTest(change=change), self.assertRaises(RuntimeError):
+                    runner.append_role_environment(output, env | change, ("essential", "client"))
+                self.assertEqual(output.read_bytes(), before)
+
     def test_v2_all_uses_the_versioned_aggregate_for_every_variant(self):
         with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
             for variant in ("official", "debian", "ubuntu"):
                 self.assertEqual(runner.image_references(variant, "all", "19.2.5"),
-                                 {"all": runner.REGISTRY + ":roles-v2-" + variant + "-19.2.5-all"})
+                                 {"all": runner.REGISTRY + ":roles-v2-" + variant + "-19.2.5-all"
+                                  + ("@" + runner.published_role_pins("19.2.5")["all"] if variant == "official" else "")})
 
     def test_auto_contract_follows_explicit_v2_roles_and_never_legacy_fallback(self):
         with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
@@ -595,7 +666,7 @@ class VersionedRoleSelectionTests(unittest.TestCase):
             self.assertIn(":roles-v2-official-19.2.5-client",refs["client"])
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 runner.parse_arguments(["--contract","roles-v2","--layout","roles","--prepare-only","--roles","client"])
-            legacy = runner.parse_arguments([])
+            legacy = runner.parse_arguments(["--contract", "legacy"])
             self.assertEqual(legacy.contract,"legacy")
             self.assertEqual(tuple(runner.ROLE_ENV),tuple(runner.LEGACY_ROLE_ENV))
 

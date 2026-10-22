@@ -217,7 +217,7 @@ func readRecoveryObjects(t *testing.T, ctx context.Context, cluster *ceph.Contai
 		Count  int    `json:"count"`
 		SHA256 string `json:"sha256"`
 	}
-	out := recoveryRun(t, ctx, cluster, cluster.ControlContainer(), append([]string{"read"}, prefixes...)...)
+	out := recoveryRun(t, ctx, cluster, toolkitContainer(t, cluster), append([]string{"read"}, prefixes...)...)
 	if err := json.Unmarshal([]byte(out), &read); err != nil || read.SHA256 != expectedRecoveryDigest(prefixes...) {
 		t.Fatalf("independent read of %v: %s, %v", prefixes, out, err)
 	}

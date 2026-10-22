@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "contract": "roles-v2",
+  "image_revision": "992cf0ba2b87ce4629d74688b59cc17dd4d73370",
+  "publication_runs": {
+    "20.2.4": 39705335194,
+    "19.2.5": 39705355376
+  },
+  "images": {
+    "20.2.4": {
+      "essential": "sha256:84eca012affba59083096c866a3cabdd06271a4100c97734397f640f1a7296dd",
+      "client": "sha256:c215640571b2c65422195393028e49f3605f1b8b9014a7c17e4922b866823b3d",
+      "cephfs": "sha256:bf25a2d2a15e66a20d20769b18622f5cb5806fd464f13b1f268ffccfc534fd07",
+      "rbd-aux": "sha256:46fee22b26b7d7b023280257c62812f1dcb63602662403cf80f3820256ae0ce7",
+      "rgw": "sha256:209a3e13efcaafbdd14f4ab5acd0c9daf42d518f76c0832b8983172b4b3646cc",
+      "all": "sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
+    },
+    "19.2.5": {
+      "essential": "sha256:b7a14c49cd687e543c6b1f84740980142eebcbf9d78abe33673b0dd02a1ac8d2",
+      "client": "sha256:f99249d3b6596ac1d6d1954d805169b3ab3c332e89f70e4c20062f06013e4a22",
+      "cephfs": "sha256:f67e8c049ef4700fcbcea081f9ce270057866bbfee630c264466fe9a3c24924a",
+      "rbd-aux": "sha256:1fce8e0e0b317a95885b14d519e5d2135d8199c50842cb1025c2665cacae0318",
+      "rgw": "sha256:49423581277962dbbd48f72e727d811d2d4050b41bf6eafac0e3518c07d08c42",
+      "all": "sha256:c0dc7cc715710309af9f9452d9d6a607fafc55ee03e9bce586d38cb0e596f64f"
+    }
+  }
+}

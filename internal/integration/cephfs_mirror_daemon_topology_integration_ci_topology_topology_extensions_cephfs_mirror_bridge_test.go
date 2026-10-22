@@ -1,6 +1,6 @@
 //go:build all || (integration && multicluster && (!ci || (ci_topology && (!ci_batch || ci_batch_topology_extensions_cephfs_mirror_bridge))))
 
-//ci: timeout=40m job-timeout=50
+//ci: timeout=40m job-timeout=50 image-roles=essential,client,cephfs
 
 package integration_test
 

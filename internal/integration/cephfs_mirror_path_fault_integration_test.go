@@ -1,6 +1,6 @@
 //go:build all || (integration && features && multicluster && (!ci || (ci_multicluster && (!ci_batch || ci_batch_cephfs_mirror_path_fault))))
 
-//ci: timeout=30m job-timeout=40
+//ci: timeout=30m job-timeout=40 image-roles=essential,client,cephfs
 
 package integration_test
 

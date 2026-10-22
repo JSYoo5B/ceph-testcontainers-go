@@ -591,7 +591,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		t.Fatalf("cluster state %s after the cuts, %s before", after, state)
 	}
 	// A new session reads both objects.
-	code, reader, err = cluster.ControlContainer().Exec(ctx, []string{"timeout", "120", "python3", "-c", dualStackOracle, pool, objects[0], objects[1]}, tcexec.Multiplexed())
+	code, reader, err = toolkitContainer(t, cluster).Exec(ctx, []string{"timeout", "120", "python3", "-c", dualStackOracle, pool, objects[0], objects[1]}, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
 	}

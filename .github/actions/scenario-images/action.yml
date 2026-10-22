@@ -8,8 +8,8 @@ inputs:
     description: Ceph release published by ceph-testcontainers-images
     default: '20.2.4'
   roles:
-    description: Comma-separated role images that the batch declares, control included
-    default: 'control,osd,rgw,mds'
+    description: Comma-separated role images that the batch declares, essential included
+    default: 'essential,client,cephfs,rbd-aux,rgw'
   digests:
     description: Comma-separated role=sha256:<digest> pins of the role tags; empty pulls the tags
     default: ''
@@ -25,7 +25,7 @@ runs:
         SCENARIO_DIGESTS: ${{ inputs.digests }}
       run: |
         python3 "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py" \
-          --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
+          --contract roles-v2 --variant official --layout roles --release "$SCENARIO_RELEASE" --prepare-only \
           --roles "$SCENARIO_ROLES" --digests "$SCENARIO_DIGESTS" \
           --platform linux/amd64 --github-env "$GITHUB_ENV" \
           --output-dir artifacts/scenario-images

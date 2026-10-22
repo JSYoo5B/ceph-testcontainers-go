@@ -217,15 +217,15 @@ func cachedCapability(t *testing.T, cluster *ceph.Container, id capabilityID, pr
 }
 
 // detectRBDNamespaceMapping reads the usage of "rbd mirror pool enable" in
-// the control image, as the fixture does before it maps namespaces.
+// the client runtime, as the fixture does before it maps namespaces.
 func detectRBDNamespaceMapping(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
 	return cachedCapability(t, cluster, capabilityRBDNamespaceMapping, func() bool {
-		control, err := cluster.ControlContainerContext(ctx)
+		client, err := cluster.ClientContainerContext(ctx)
 		if err != nil {
-			t.Fatalf("select the control container for capability %q: %v", capabilityRBDNamespaceMapping, err)
+			t.Fatalf("select the client container for capability %q: %v", capabilityRBDNamespaceMapping, err)
 		}
-		return strings.Contains(execOutput(t, ctx, control, "rbd", "help", "mirror", "pool", "enable"), "--remote-namespace")
+		return strings.Contains(execOutput(t, ctx, client, "rbd", "help", "mirror", "pool", "enable"), "--remote-namespace")
 	})
 }
 

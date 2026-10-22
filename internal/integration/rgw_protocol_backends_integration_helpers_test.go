@@ -131,7 +131,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, g
 	// A brand-new RGW role metadata pool does not yet exist. Native role
 	// list returns ENOENT before its formatter flushes; probe the exact role
 	// instead and preserve the exit code through the public container API.
-	rgwBackendRequireRoleAbsent(t, ctx, cluster, roleName)
+	rgwBackendRequireRoleAbsent(t, ctx, gateways[0], roleName)
 	created := rgwBackendAdmin(t, ctx, gateways[0], "role", "create", "--role-name", roleName, "--path", "/fixture/", "--assume-role-policy-doc", trust, "--format", "json")
 	var role rgwBackendRole
 	if json.Unmarshal(created, &role) != nil || role.ID == "" || role.Name != roleName || !strings.HasSuffix(role.ARN, "role/fixture/"+roleName) {
@@ -834,13 +834,12 @@ func rgwBackendCleanupDelete(ctx context.Context, client s3HTTPClient, path stri
 	return nil
 }
 
-func rgwBackendRequireRoleAbsent(t *testing.T, parent context.Context, cluster *ceph.Container, name string) {
+func rgwBackendRequireRoleAbsent(t *testing.T, parent context.Context, gateway *rgw.Gateway, name string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	// This recipe uses a fresh standalone default zone. CLI belongs to the
-	// control image; the separate RGW role is not required to contain it.
-	code, reader, err := cluster.Container.Exec(ctx, []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--format", "json", "role", "get", "--role-name", name}, tcexec.Multiplexed())
+	// Query the fresh standalone default zone with its RGW administration runtime.
+	code, reader, err := gateway.Exec(ctx, []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--format", "json", "role", "get", "--role-name", name}, tcexec.Multiplexed())
 	if err != nil || ctx.Err() != nil {
 		t.Fatal("RGW backend native role get failed (output redacted)")
 	}

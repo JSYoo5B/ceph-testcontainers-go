@@ -1,6 +1,6 @@
 //go:build all || (integration && diagnostics && (!ci || (ci_topology && (!ci_batch || ci_batch_diagnostics))))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 

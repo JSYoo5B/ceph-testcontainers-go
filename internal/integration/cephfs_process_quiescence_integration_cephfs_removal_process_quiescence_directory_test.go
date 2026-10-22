@@ -1,6 +1,6 @@
 //go:build integration && multicluster && ci && ci_recovery && ci_batch && ci_batch_cephfs_removal_process_quiescence_directory
 
-//ci: timeout=60m job-timeout=70 checker=quiescence case=directory
+//ci: timeout=60m job-timeout=70 checker=quiescence case=directory image-roles=essential,client,cephfs
 
 package integration_test
 

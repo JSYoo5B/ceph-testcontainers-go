@@ -121,7 +121,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if opened.Client == 0 || opened.Inode == 0 || opened.Size != int64(len(base)) {
 		t.Fatalf("writer receipt 1 = %+v", opened)
 	}
-	waiter := startCephFSActor(t, ctx, m.cluster, m.cluster.ControlContainer(), cephFSJournalWaiter, m.fs.FilesystemName, waiterDir, waiterAsok, directory)
+	waiter := startCephFSActor(t, ctx, m.cluster, toolkitContainer(t, m.cluster), cephFSJournalWaiter, m.fs.FilesystemName, waiterDir, waiterAsok, directory)
 	waiting := waiter.receipt(t, ctx, 1)
 	if waiting.Client == 0 || waiting.Client == opened.Client {
 		t.Fatalf("waiter receipt 1 = %+v, writer %+v", waiting, opened)
@@ -197,7 +197,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	for _, client := range []struct {
 		session cephfs.Session
 		ctr     string
-	}{{writerSession, m.client.GetContainerID()}, {waiterSession, m.cluster.ControlContainer().GetContainerID()}} {
+	}{{writerSession, m.client.GetContainerID()}, {waiterSession, toolkitContainer(t, m.cluster).GetContainerID()}} {
 		address, _, _ := strings.Cut(client.session.Address, "/")
 		if ip := addressIP(t, address); ip == mdsIP || isOSDIP(ip) {
 			t.Fatalf("client.%d in %s shares an address with the MDS or the OSD: %s", client.session.ID, client.ctr[:12], ip)
@@ -287,7 +287,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 				state.mkdir, state.hasMkdir = op, true
 			}
 		}
-		if state.pending, err = clientRequests(probeCtx, m.cluster, m.cluster.ControlContainer(), waiterAsok); err != nil {
+		if state.pending, err = clientRequests(probeCtx, m.cluster, toolkitContainer(t, m.cluster), waiterAsok); err != nil {
 			return state, false, err
 		}
 		cache, err := m.cluster.RunNativeCommand(probeCtx, m.client, ceph.NativeCommand{
@@ -428,7 +428,7 @@ func readCephFSIndependently(t *testing.T, ctx context.Context, m *cephFSSingleM
 	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
-	read, err := m.cluster.RunNativeCommand(readCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := m.cluster.RunNativeCommand(readCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, m.fs.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})

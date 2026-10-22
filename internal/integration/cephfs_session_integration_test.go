@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_fixtures_sessions))))
 
-//ci: timeout=25m job-timeout=35
+//ci: timeout=25m job-timeout=35 image-roles=essential,client,cephfs
 
 package integration_test
 
@@ -219,7 +219,7 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 		go func() {
 			// The control container runs the second client, so the frozen
 			// holder cannot block it at the container level.
-			code, out, err := sessionExec(ctx, p.cluster.ControlContainer(), "python3", "-c", cephFSSessionReader, p.fs.FilesystemName, path)
+			code, out, err := sessionExec(ctx, toolkitContainer(t, p.cluster), "python3", "-c", cephFSSessionReader, p.fs.FilesystemName, path)
 			var result readResult
 			if err != nil || code != 0 || json.Unmarshal([]byte(lastLine(out)), &result) != nil {
 				readErrs <- strconv.Itoa(code) + " " + out

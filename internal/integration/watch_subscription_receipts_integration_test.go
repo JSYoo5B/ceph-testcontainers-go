@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_watch_subscriptions))))
 
-//ci: timeout=20m job-timeout=35
+//ci: timeout=20m job-timeout=35 image-roles=essential,client
 
 package integration_test
 

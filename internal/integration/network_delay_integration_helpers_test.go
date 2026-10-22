@@ -319,7 +319,7 @@ func testNetworkDelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		peer := netip.MustParseAddr(address)
-		other := cluster.ControlContainer()
+		other := toolkitContainer(t, cluster)
 		otherAddress, err := other.ContainerIP(ctx)
 		if err != nil || otherAddress == address {
 			t.Fatalf("the control container's address %q: %v", otherAddress, err)
@@ -421,7 +421,7 @@ func testNetworkDelay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		other := cluster.ControlContainer()
+		other := toolkitContainer(t, cluster)
 		blackhole := fault.NetworkProfile{HelperImage: image, Plane: ceph.PublicNetworkPlane, Peer: netip.MustParseAddr(address), Loss: 100}
 		lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, blackhole)
 		if lease != nil {
@@ -474,7 +474,7 @@ func testNetworkDelay(t *testing.T) {
 			}
 			peers = append(peers, fault.NetworkPeer{Addr: netip.MustParseAddr(address)})
 		}
-		other := cluster.ControlContainer()
+		other := toolkitContainer(t, cluster)
 		if address, err := other.ContainerIP(ctx); err != nil || slices.ContainsFunc(peers, func(peer fault.NetworkPeer) bool { return peer.Addr.String() == address }) {
 			t.Fatalf("the control container's address %q: %v", address, err)
 		}
@@ -731,7 +731,7 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 		}
 		return endpoint.GlobalIPv6Address
 	}
-	peer, control := ipv6(client), ipv6(cluster.ControlContainer())
+	peer, control := ipv6(client), ipv6(toolkitContainer(t, cluster))
 	lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: image,
 		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peer: peer})
 	if lease != nil {
@@ -745,7 +745,7 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 		t.Fatalf("status of the IPv6 peer delay: %+v, %v", status, err)
 	}
 	during := readDelayObjects(t, ctx, client, slow, fast)
-	elsewhere := readDelayObjects(t, ctx, cluster.ControlContainer(), slow)
+	elsewhere := readDelayObjects(t, ctx, toolkitContainer(t, cluster), slow)
 	counted, err := lease.Status(ctx)
 	if err != nil || counted.Packets == 0 {
 		t.Fatalf("netem counted %d selected packets: %v", counted.Packets, err)
@@ -814,7 +814,7 @@ func testNetworkDelayMixedPeers(t *testing.T, ctx context.Context, image string,
 		return settings.IPAddress, settings.GlobalIPv6Address
 	}
 	client4, client6 := endpoint(client)
-	control4, control6 := endpoint(cluster.ControlContainer())
+	control4, control6 := endpoint(toolkitContainer(t, cluster))
 	peers := []fault.NetworkPeer{{Addr: client6}, {Addr: control4}}
 	lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: image,
 		Plane: ceph.PublicNetworkPlane, Delay: delayAmount, Jitter: delayJitter, Peers: peers})
@@ -850,7 +850,7 @@ func testNetworkDelayMixedPeers(t *testing.T, ctx context.Context, image string,
 		t.Fatalf("the kernel shows the filters %v: %s", leaves, status.Filters)
 	}
 	during := readDelayObjects(t, ctx, client, slow, fast)
-	elsewhere := readDelayObjects(t, ctx, cluster.ControlContainer(), slow)
+	elsewhere := readDelayObjects(t, ctx, toolkitContainer(t, cluster), slow)
 	prober := startNetemObserver(t, ctx, image, delayed.Container, false)
 	var probes []connectProbe
 	if err := json.Unmarshal([]byte(delayExec(t, ctx, prober, "python3", "-c", connectProbeScript, control4.String(), client4.String())), &probes); err != nil || len(probes) != 2 {

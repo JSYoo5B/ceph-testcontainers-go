@@ -109,7 +109,7 @@ func newBandwidthFixture(t *testing.T, ctx context.Context, customizers ...testc
 	}
 	limited := cluster.OSDs()[0]
 	object, sha256 := putBandwidthObject(t, ctx, cluster, client, limited.ID, "bulk", bandwidthObject)
-	return bandwidthFixture{image: image, cluster: cluster, client: client, control: cluster.ControlContainer(), limited: limited, object: object, sha256: sha256}
+	return bandwidthFixture{image: image, cluster: cluster, client: client, control: toolkitContainer(t, cluster), limited: limited, object: object, sha256: sha256}
 }
 
 // putBandwidthObject writes size random bytes to an object, named with

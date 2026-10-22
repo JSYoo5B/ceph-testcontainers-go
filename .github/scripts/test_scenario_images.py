@@ -23,9 +23,11 @@ import run_image_matrix as runner
 ROOT = Path(__file__).resolve().parents[2]
 ROLES = ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE",
          "CEPH_TEST_MDS_IMAGE")
+V2_ENV = ("CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_CEPHFS_IMAGE", "CEPH_TEST_RBD_AUX_IMAGE", "CEPH_TEST_RGW_IMAGE")
 CONSUMERS = ("CEPH_TEST_RBD_CLIENT_IMAGE", "CEPH_TEST_VAULT_IMAGE")
 IMAGES = {name: "sha256:" + digit * 64
           for name, digit in zip(ROLES, "1234")}
+IMAGES.update({name: "sha256:" + digit * 64 for name, digit in zip(V2_ENV, "56789")})
 # Historical manual targets, never the source of CI membership.
 MANUAL_SCENARIOS = (
     "scenario-default", "scenario-topology", "scenario-multicluster-topology",
@@ -456,7 +458,7 @@ class ScenarioImageTests(unittest.TestCase):
         commands = [shlex.split(line) for line in logical_lines if line.strip()]
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
-             "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
+             "--contract", "roles-v2", "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
              "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
@@ -471,7 +473,7 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(upload, "if-no-files-found"), "error")
         return script
 
-    def run_composite(self, code, roles="control,osd,rgw,mds", digests=""):
+    def run_composite(self, code, roles="essential,client,cephfs,rbd-aux,rgw", digests=""):
         script = self.composite_script()
         with tempfile.TemporaryDirectory(prefix="scenario images ") as directory:
             root = Path(directory)
@@ -507,7 +509,7 @@ class ScenarioImageTests(unittest.TestCase):
             arguments = json.loads(calls.read_text())
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
-                "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
+                "--contract", "roles-v2", "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
                 "--roles", roles, "--digests", digests,
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
@@ -515,7 +517,7 @@ class ScenarioImageTests(unittest.TestCase):
             return result, existing, environment_file.read_text()
 
     def test_composite_selects_layout_only_after_successful_preparation(self):
-        for roles, names in (("control,osd,rgw,mds", ROLES), ("control", ROLES[:1])):
+        for roles, names in (("essential,client,cephfs,rbd-aux,rgw", V2_ENV), ("essential", V2_ENV[:1])):
             with self.subTest(roles=roles):
                 result, existing, actual = self.run_composite(0, roles)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -525,8 +527,8 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertEqual(actual.count("SCENARIO_IMAGE_LAYOUT=roles\n"), 1)
 
     def test_composite_passes_campaign_digest_pins_as_one_argument(self):
-        pins = "control=sha256:" + "a" * 64 + ",osd=sha256:" + "b" * 64
-        result, _, _ = self.run_composite(0, "control,osd", pins)
+        pins = "essential=sha256:" + "a" * 64 + ",client=sha256:" + "b" * 64
+        result, _, _ = self.run_composite(0, "essential,client", pins)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_composite_failed_preparation_never_selects_roles(self):

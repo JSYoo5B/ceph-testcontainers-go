@@ -1,6 +1,6 @@
 //go:build (all || integration) && ((cephfs_fuse && !ci) || (ci_optional && (!ci_batch || ci_batch_cephfs_fuse)))
 
-//ci: timeout=20m job-timeout=30
+//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs
 
 // The ceph-fuse client containers need /dev/fuse, CAP_SYS_ADMIN and an
 // unconfined AppArmor profile, which no required CI environment is proven

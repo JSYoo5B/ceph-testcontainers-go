@@ -587,7 +587,7 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	}
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, renamed}, Timeout: 2 * time.Minute,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
@@ -858,7 +858,7 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 	// until the state below is observed: once it closes, the MDS may make the
 	// holder the loner again and give the capabilities back.
 	started := time.Now()
-	contender := startCephFSActor(t, ctx, cluster, cluster.ControlContainer(), cephFSContender, fs.FilesystemName, "/tmp/contender-actor",
+	contender := startCephFSActor(t, ctx, cluster, toolkitContainer(t, cluster), cephFSContender, fs.FilesystemName, "/tmp/contender-actor",
 		path, strconv.Itoa(offset), hex.EncodeToString(payload))
 	wrote := contender.receipt(t, ctx, 1)
 	took := time.Since(started)
@@ -911,7 +911,7 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 		t.Fatalf("holder saw %+v, want %x", acted, want)
 	}
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, renamed}, Timeout: 2 * time.Minute,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
@@ -1112,7 +1112,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	actor.wait(t, ctx)
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
@@ -1380,7 +1380,7 @@ func cephFSDirectoryPin(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	t.Helper()
 	runCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
 	defer stop()
-	result, err := cluster.RunNativeCommand(runCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	result, err := cluster.RunNativeCommand(runCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: append([]string{"python3", "-c", cephFSDirPin, filesystem, path, action}, value...), Timeout: 2 * time.Minute,
 		MaxStdout: 4 << 10, MaxStderr: 64 << 10, Label: "CephFS directory pin",
 	})
@@ -1485,7 +1485,7 @@ func testCephFSLiveRankMigration(t *testing.T) {
 		t.Fatalf("the fd read inode %d, %d bytes %s, want inode %d and %d records", stopped.Inode, stopped.Size, stopped.Full, baseline.Inode, stopped.Count)
 	}
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := cluster.RunNativeCommand(readCtx, cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := cluster.RunNativeCommand(readCtx, toolkitContainer(t, cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, fs.FilesystemName, path}, Timeout: 2 * time.Minute,
 		MaxStdout: 256 << 10, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})
@@ -2029,7 +2029,7 @@ func holdCephFSUnsafeRename(t *testing.T, ctx context.Context) *cephFSUnsafeHold
 func (h *cephFSUnsafeHold) readNamespace(t *testing.T, ctx context.Context) uint64 {
 	t.Helper()
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := h.cluster.RunNativeCommand(readCtx, h.cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := h.cluster.RunNativeCommand(readCtx, toolkitContainer(t, h.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", `import cephfs,json,sys
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
@@ -2450,7 +2450,7 @@ func testCephFSFlushingCapReplay(t *testing.T) {
 	}
 
 	readCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
-	read, err := m.cluster.RunNativeCommand(readCtx, m.cluster.ControlContainer(), ceph.NativeCommand{
+	read, err := m.cluster.RunNativeCommand(readCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSIndependentReader, m.fs.FilesystemName, "/flush/file"}, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "independent CephFS reader",
 	})

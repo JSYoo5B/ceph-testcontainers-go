@@ -181,7 +181,7 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 	holder := startCephFSActor(t, ctx, cluster, client, cephFSLeaseHolder, fs.FilesystemName, "/tmp/lease-holder", "/"+dir, "/"+moved)
 	holderID := holder.receipt(t, ctx, 1).Client
 	session := cephFSRetainedSession(t, ctx, fs, holderID, 0)
-	renamer := startCephFSActor(t, ctx, cluster, cluster.ControlContainer(), cephFSLeaseRenamer, fs.FilesystemName, "/tmp/lease-renamer", "/"+dir, "/"+moved)
+	renamer := startCephFSActor(t, ctx, cluster, toolkitContainer(t, cluster), cephFSLeaseRenamer, fs.FilesystemName, "/tmp/lease-renamer", "/"+dir, "/"+moved)
 	created := renamer.receipt(t, ctx, 1)
 	if created.Client == holderID {
 		t.Fatalf("holder and renamer share client.%d", holderID)

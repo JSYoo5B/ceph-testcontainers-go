@@ -12,9 +12,6 @@ on:
         type: choice
         options: [full, smoke]
         default: full
-      images_ref:
-        description: Image repository revision implementing roles-v2
-        default: 7ef514c475d6c789620f7bb6f63318a154ded742
       variant:
         type: choice
         options: [official, debian, ubuntu]
@@ -73,25 +70,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          repository: JSYoo5B/ceph-testcontainers-images
-          ref: ${{ inputs.images_ref || '7ef514c475d6c789620f7bb6f63318a154ded742' }}
-          path: images-source
-          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Build candidate image contract
-        run: make -C images-source roles-v2-images V2_VARIANT="$VARIANT" CEPH_RELEASE="$RELEASE" PLATFORM=linux/${{ matrix.architecture }}
-      - name: Freeze independent role identities
-        run: |
-          roles=(essential client cephfs rbd-aux rgw)
-          variables=(CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE)
-          for i in "${!roles[@]}"; do
-            id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-${roles[$i]}")
-            echo "${variables[$i]}=$id" >> "$GITHUB_ENV"
-          done
+      - name: Pull and freeze published dependency roles
+        run: >-
+          python3 .github/scripts/run_image_matrix.py --contract roles-v2
+          --variant "$VARIANT" --release "$RELEASE" --layout roles
+          --platform linux/${{ matrix.architecture }} --prepare-only
+          --github-env "$GITHUB_ENV" --output-dir artifacts/roles-v2-images
       - name: Snapshot test resources
         id: cleanup
         run: python3 .github/scripts/check_runtime_cleanup.py snapshot --directory artifacts/roles-v2-cleanup
@@ -112,11 +99,10 @@ jobs:
         run: make roles-v2-oracles
       - name: Independent aggregate image path
         if: matrix.scope == 'full'
-        run: |
-          id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-all")
-          CEPH_TEST_ESSENTIAL_IMAGE="$id" CEPH_TEST_CLIENT_IMAGE="$id" \
-          CEPH_TEST_CEPHFS_IMAGE="$id" CEPH_TEST_RBD_AUX_IMAGE="$id" \
-          CEPH_TEST_RGW_IMAGE="$id" make image-compatibility
+        run: >-
+          python3 .github/scripts/run_image_matrix.py --contract roles-v2
+          --variant "$VARIANT" --release "$RELEASE" --layout all
+          --platform linux/${{ matrix.architecture }} --output-dir artifacts/roles-v2-all
       - name: Check test resource cleanup
         if: always() && steps.cleanup.outcome == 'success'
         run: python3 .github/scripts/check_runtime_cleanup.py check --directory artifacts/roles-v2-cleanup
@@ -126,5 +112,4 @@ jobs:
           name: roles-v2-consumer-${{ matrix.scope }}-${{ matrix.release }}-${{ matrix.architecture }}
           path: |
             artifacts
-            images-source/artifacts
           retention-days: 14

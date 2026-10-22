@@ -1,6 +1,6 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_cluster_fixtures))))
 
-//ci: timeout=40m job-timeout=50
+//ci: timeout=40m job-timeout=50 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 
@@ -61,7 +61,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1], ControlImage: image})
+	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1]})
 	if fixture != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

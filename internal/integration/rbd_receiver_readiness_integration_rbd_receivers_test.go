@@ -1,6 +1,6 @@
 //go:build integration && multicluster && ci && ci_recovery && ci_batch && ci_batch_rbd_receivers
 
-//ci: timeout=90m job-timeout=100 checker=receivers
+//ci: timeout=90m job-timeout=100 checker=receivers image-roles=essential,client,rbd-aux
 
 package integration_test
 

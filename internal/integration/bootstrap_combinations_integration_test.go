@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_topology && (!ci_batch || ci_batch_bootstrap_combinations))))
 
-//ci: timeout=30m job-timeout=40
+//ci: timeout=30m job-timeout=40 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 
@@ -109,7 +109,8 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			if test.check != nil {
 				test.check(t, ctx, cluster)
 			}
-			execOutput(t, ctx, client, "sh", "-c", `printf combination > /tmp/in && rados --pool "$1" put probe /tmp/in && rados --pool "$1" get probe /tmp/out && cmp /tmp/in /tmp/out`, "sh", test.pool)
+			execOutput(t, ctx, client, "sh", "-c", `printf combination > /tmp/in && rados --pool "$1" put probe /tmp/in && rados --pool "$1" get probe /tmp/out`, "sh", test.pool)
+			assertContainerFilesEqual(t, ctx, client, "/tmp/in", "/tmp/out")
 			if test.pool == "rbd" {
 				execOutput(t, ctx, client, "rbd", "create", "rbd/disk", "--size", "16M")
 				if info := execOutput(t, ctx, client, "rbd", "info", "rbd/disk"); !strings.Contains(info, "size 16 MiB") {

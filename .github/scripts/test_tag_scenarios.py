@@ -128,19 +128,19 @@ class TagPlannerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicting"):
             engine.discover([fixture(), second])
 
-    def test_image_roles_are_declared_per_batch_and_default_to_all_four(self):
+    def test_image_roles_are_declared_per_batch_and_default_to_all_five(self):
         declared = fixture(path="internal/integration/control_test.go", tests=("TestControl",), batch="control")
-        declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=mds,control"]
+        declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=cephfs,essential"]
         plan = engine.discover([fixture(), declared])
         roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
-        self.assertEqual(roles, {"basic": "control,osd,rgw,mds", "control": "control,mds"})
-        self.assertEqual(engine.IMAGE_ROLES, ("control", "osd", "rgw", "mds"))
+        self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "control": "essential,cephfs"})
+        self.assertEqual(engine.IMAGE_ROLES, ("essential", "client", "cephfs", "rbd-aux", "rgw"))
         for value in ("osd", "control,control", "control,client", "control,", "Control"):
             with self.subTest(roles=value), self.assertRaisesRegex(ValueError, "image-roles must list"):
                 declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=" + value]
                 engine.discover([declared])
         # One batch declares one set, like its budget.
-        declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=control"]
+        declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential"]
         same_batch = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
         declared_batch = fixture(path="internal/integration/control_test.go", tests=("TestControl",))
         declared_batch["metadata"] = declared["metadata"]
@@ -153,7 +153,7 @@ class TagPlannerTests(unittest.TestCase):
                       category="environment", batch="sdk")
         self.assertEqual([profile["image_roles"] for profile in engine.discover([code, sdk])["include"]], ["", ""])
         for file in (code, sdk):
-            file["metadata"] = ["timeout=20m job-timeout=35 image-roles=control"]
+            file["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential"]
             with self.subTest(path=file["path"]), self.assertRaisesRegex(ValueError, "needs a Ceph runtime profile"):
                 engine.discover([file])
 
@@ -200,7 +200,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertIn("native_regression", profile["tags"].split(","))
         self.assertEqual(profile["timeout"], "20m")
         self.assertEqual(profile["job_timeout"], 35)
-        self.assertEqual(profile["image_roles"], "control,osd,rgw,mds")
+        self.assertEqual(profile["image_roles"], "essential,client,cephfs,rbd-aux,rgw")
         self.assertEqual(engine.discover([fixture(), file])["required_executions"], 1)
 
     def test_optional_unknown_batch_never_executes(self):
@@ -672,7 +672,7 @@ class TagPlannerTests(unittest.TestCase):
         self.assertEqual(len(matrix["include"]), 1)
         self.assertEqual(matrix["include"][0]["category"], "short")
         self.assertEqual(matrix["include"][0]["timeout"], "20m")
-        self.assertEqual(matrix["include"][0]["image_roles"], "control,osd,rgw,mds")
+        self.assertEqual(matrix["include"][0]["image_roles"], "essential,client,cephfs,rbd-aux,rgw")
 
 
 class CompletionTests(unittest.TestCase):
@@ -1378,13 +1378,13 @@ func helper(t *test.T) {}
 
 
 class VersionedRoleDeclarationTests(unittest.TestCase):
-    def test_v2_roles_are_explicit_and_legacy_defaults_are_preserved(self):
+    def test_v2_roles_are_explicit_and_mixed_contracts_are_refused(self):
         declared = fixture()
         declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=client,essential"]
         plan = engine.discover([declared])
         self.assertEqual(plan["include"][0]["image_roles"],"essential,client")
         declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential,control"]
-        with self.assertRaisesRegex(ValueError,"cannot be mixed"):
+        with self.assertRaisesRegex(ValueError,"image-roles must list"):
             engine.discover([declared])
 
 

@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_default))))
 
-//ci: timeout=20m job-timeout=35
+//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 
@@ -67,7 +67,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 	}
 	client := s3HTTPClient{endpoint: endpoint, accessKey: gateway.AccessKey, secretKey: gateway.SecretKey, region: gateway.Region,
 		http: &http.Client{Timeout: 60 * time.Second}}
-	control := cluster.Container.Container
+	control := toolkitContainer(t, cluster.Container)
 	rados := func(args ...string) string {
 		t.Helper()
 		return execOutput(t, ctx, control, append([]string{"rados"}, args...)...)
