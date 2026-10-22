@@ -100,7 +100,8 @@ this policy or filled with placeholder IDs:
 
 1. Audit existing bug-specific version assumptions separately from capability
    checks and release-format adaptations. Record evidence and affected operations
-   before migrating a branch; no such exhaustive audit is claimed here.
+   before migrating a branch. The [audit](../design/bug-compatibility-audit.md)
+   of the current source found no branch that needs a bug tag.
 2. Register a concrete tag in the catalogue with its authoritative bug link,
    ordinary/alternate contract, confirmed image boundaries and selection advice.
    Do not invent an upstream issue number or register this naming template.

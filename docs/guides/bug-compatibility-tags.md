@@ -1,9 +1,9 @@
 # Supported Ceph bug compatibility tags
 
 No bug-ID compatibility tags are registered. There is no supported tag to
-enable from this page. Existing release-specific behavior has not been
-exhaustively classified or migrated, and no ordinary/compatibility build pair
-exists.
+enable from this page. The [audit](../design/bug-compatibility-audit.md) of the
+current source classifies every release-specific branch and found none that
+needs a tag; no ordinary/compatibility build pair exists.
 
 The machine-readable record is
 [`bug-compatibility-tags.json`](bug-compatibility-tags.json). The CI planner
