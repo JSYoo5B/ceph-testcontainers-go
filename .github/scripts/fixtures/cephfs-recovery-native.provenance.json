@@ -1,15 +1,5 @@
 {
-  "download_argv": [
-    "gh",
-    "run",
-    "view",
-    "37804783231",
-    "--job",
-    "113415201234",
-    "--log"
-  ],
   "fixture_sha256": "8484f868d055303102b4b4662282465205ff7f2f6a9560ce5edacfcad403cd4f",
-  "job_id": 113415201234,
   "original_line_numbers": [
     390,
     391,
@@ -135,8 +125,5 @@
   "original_log_sha256": "9e5822b823dc0bceb45e81562fdb6f98dbc3accd14a927b5f49e22e46de274d0",
   "original_test_file_sha256": "2ccd8c84e1a7fc32f7785b5f02db459e2da078e554177a7686b6ae66c0d9a47e",
   "projection": "Only original Go RUN/PASS/package and native proof lines; original order and durations retained. This aggregate parser fixture is not a newly executed one-leaf scenario.",
-  "run_id": 37804783231,
-  "run_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37804783231",
-  "schema": "ceph-cephfs-recovery-parser-fixture/v1",
-  "source_sha": "4da274413513d68d42acb5548869663c031538ea"
+  "schema": "ceph-cephfs-recovery-parser-fixture/v1"
 }

@@ -135,7 +135,7 @@ type authMonitorObservation struct {
 }
 
 // authManagerObservation is one MGR: its MgrMap GID, its container instance,
-// and the global IDs of its MON sessions, split as after #75 into the beacon
+// and the global IDs of its MON sessions, split into the beacon
 // session (con_type "mgr") and the clients of its modules. GID 0 means that
 // the MgrMap could not be read.
 type authManagerObservation struct {

@@ -264,8 +264,7 @@
           "asserts": "with nodown a paused OSD stays up while writes end in ETIMEDOUT and SLOW_OPS appears; without nodown it is marked down and degraded I/O works"
         }
       ],
-      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain.",
-      "owner": "#17"
+      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain."
     },
     {
       "id": "messenger/keepalive-ack-reconnect",

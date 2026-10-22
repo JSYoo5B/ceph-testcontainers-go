@@ -870,7 +870,7 @@ expect the MgrMap to move several epochs between the two reported ones.
 lists the environment requirements of the ceph-msgr-go SPEC (a pinned
 commit), each with the Ceph symbols it concerns, its status (`covered`,
 `partial` or `uncovered`), the tests and receipt markers that prove it, and,
-when it is not covered, the gap and the issue that owns it. The symbols come
+when it is not covered, the gap and, if one tracks it, the issue that owns it. The symbols come
 from [`messenger_reference.json`](../../internal/integration/testdata/messenger_reference.json),
 the OSD operations, message types and feature bits that the pinned Ceph
 headers declare, with their source lines; feature aliases of one bit and

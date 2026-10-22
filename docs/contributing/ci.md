@@ -410,22 +410,6 @@ that has it, copy the cache and a clone with the pull request heads
 (`git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'`), and pass
 `--offline` and the same `--ref`.
 
-In a replay of 60 pull requests, the selection
-kept 1170 of 2288 Ceph short jobs (51%); 31 pull requests ran fewer than
-every batch. Of 31 failed batch jobs, 5 were selected and the other 26 are
-explained, so the script exits with status 0:
-
-| Failed jobs | Explanation |
-| --- | --- |
-| 19 | infrastructure: `actions/setup-go` could not be downloaded, no step ran |
-| 1 | infrastructure: `ENOTFOUND` while finalizing an artifact during image preparation, no test ran |
-| 1 | infrastructure: the Docker daemon failed to create a network before the scenario started |
-| 1 | CephFS mirror release hang in the MGR `mirroring` module, subsequently fixed |
-| 1 | `radosgw-admin` hang, cause not established; the command is now bounded |
-| 1 | `TestImmutableObjectCache` promotion race, subsequently fixed |
-| 1 (`short/messenger_policy`) | the `ceph` CLI lost the MON client's `handle_auth_bad_method` line that the check required; the check was corrected |
-| 1 (`short/rbd_fixtures_mirror_scope`) | infrastructure: a host-wide I/O stall of the runner held both OSDs' BlueStore commits for up to 84 s |
-
 Changes outside `internal/integration`, such as the public packages and
 `.github/`, still select every batch.
 
