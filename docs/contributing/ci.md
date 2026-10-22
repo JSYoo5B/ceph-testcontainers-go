@@ -289,7 +289,10 @@ selection excludes stays in its batch's `sources`; the other path owns its
 tests. For every profile and for each package's `all` build, the planner
 toggles each bug tag that a test file of the package names and requires the
 same test names: both paths must keep the same tests in the same batch. A bug
-tag that adds, removes, renames or moves a test refuses the plan.
+tag that adds, removes, renames or moves a test refuses the plan. A toggle
+that would make two conflicting tags active together is skipped, because the
+selection refuses that combination: the comparison covers only selections
+that can be planned.
 
 The selection applies to the whole test binary, so every profile of the plan
 gets the selected tags. They are part of the profile's `tags`, and so of its

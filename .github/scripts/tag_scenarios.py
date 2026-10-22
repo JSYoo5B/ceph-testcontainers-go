@@ -87,7 +87,7 @@ BUG_STATUSES = ("supported", "retired")
 # A file names a few bug tags at most; its branches are enumerated.
 MAX_FILE_BUG_TAGS = 4
 GO_BUILD_LINE = re.compile(r"^//go:build\s+(.+)$", re.MULTILINE)
-NO_BUGS = {"registered": frozenset(), "retired": frozenset(), "selected": ()}
+NO_BUGS = {"registered": frozenset(), "retired": frozenset(), "selected": (), "conflicts": frozenset()}
 
 
 def go_environment():
@@ -187,7 +187,7 @@ def bug_selection(registry, selection):
             raise ValueError("conflicting bug compatibility tags: " + ", ".join(sorted(pair)))
     return {"registered": frozenset(name for name, entry in registry["tags"].items() if entry["status"] == "supported"),
             "retired": frozenset(name for name, entry in registry["tags"].items() if entry["status"] != "supported"),
-            "selected": tuple(sorted(names))}
+            "selected": tuple(sorted(names)), "conflicts": frozenset(registry["conflicts"])}
 
 
 def file_bug_tags(file, bugs):
@@ -350,7 +350,9 @@ def same_inventory_under_bugs(catalog, package, tags, bugs, label):
 
     Toggling each registered bug tag that a file of the package names must
     keep the same compiled test names: an ordinary path and its
-    compatibility path assert the same contract under one name."""
+    compatibility path assert the same contract under one name. A toggle
+    that would activate a declared conflict is skipped: bug_selection refuses
+    that combination, so it is never planned."""
     names = sorted({name for file in catalog if file["tests"] and package_path(file) == package
                     for name in file_bug_tags(file, bugs)})
     if not names:
@@ -359,6 +361,8 @@ def same_inventory_under_bugs(catalog, package, tags, bugs, label):
     expected = selected_tests(catalog, package, ",".join(sorted(selected)))
     for name in names:
         toggled = selected ^ {name}
+        if any(pair <= toggled for pair in bugs["conflicts"]):
+            continue
         if selected_tests(catalog, package, ",".join(sorted(toggled))) != expected:
             raise ValueError(label + ": bug compatibility tag " + name + " changes the selected tests; "
                              "both paths must keep the same test names")

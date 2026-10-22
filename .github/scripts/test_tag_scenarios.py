@@ -1512,6 +1512,27 @@ class BugCompatibilitySelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changes the selected tests"):
             engine.discover(renamed, bugs)
 
+    def test_conflicting_alternatives_compare_only_valid_selections(self):
+        ordinary, first = bug_branches(BUG_A)
+        second = bug_branches(BUG_B)[1]
+        ordinary["tags"].append(BUG_B)
+        ordinary["constraint"] = combine("and", ordinary["constraint"], negate(tag(BUG_B)))
+        catalog = [ordinary, first, second]
+        registry = bug_registry(conflicts=((BUG_A, BUG_B),))
+        for selection in ("", BUG_A, BUG_B):
+            with self.subTest(selection=selection):
+                plan = engine.discover(catalog, engine.bug_selection(registry, selection))
+                self.assertEqual(plan["required_parents"]["./internal/integration"], ["TestNewFeature"])
+                profile = plan["include"][0]
+                self.assertEqual(engine.selected_tests(catalog, profile["package"], profile["tags"]),
+                                 ["TestNewFeature"])
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            engine.bug_selection(registry, BUG_A + "," + BUG_B)
+        # Without the declaration A+B is a reachable selection; it would compile
+        # both alternates, so the planner must still compare it.
+        with self.assertRaisesRegex(ValueError, "duplicate test declaration"):
+            engine.discover(catalog, engine.bug_selection(bug_registry(), BUG_A))
+
     def test_compatibility_path_in_another_batch_is_refused(self):
         ordinary, compatibility = bug_branches()
         moved = bug_branches(batch="moved")[1]
