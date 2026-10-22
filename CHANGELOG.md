@@ -451,6 +451,14 @@ change the API.
 
 ### Continuous integration
 
+- The tag planner no longer collects `ceph_bug_<id>` tags as capabilities,
+  so a bug tag in a test constraint cannot enable a workaround in every
+  profile. `tag_scenarios.py --bug-compatibility` takes an explicit selection
+  and validates it against `docs/guides/bug-compatibility-tags.json`, which
+  registers no tag yet. The ordinary and compatibility test files of a bug
+  must keep the same test names in the same batch; the selection is part of
+  each profile's tags, build key and history identity. No workflow passes a
+  selection, so CI behavior is unchanged (#24).
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts

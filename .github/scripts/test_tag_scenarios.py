@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -1399,6 +1400,210 @@ class VersionedRoleDeclarationTests(unittest.TestCase):
         declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential,control"]
         with self.assertRaisesRegex(ValueError,"image-roles must list"):
             engine.discover([declared])
+
+
+# Synthetic bug IDs: test inputs only, never registered in the catalogue.
+BUG_A, BUG_B = "ceph_bug_synthetic_a", "ceph_bug_synthetic_b"
+
+
+def bug_registry(supported=(BUG_A, BUG_B), retired=(), conflicts=()):
+    entries = [{"tag": name, "tracker": "https://example.invalid/" + name, "status": "supported",
+                "sources": ["rbd/" + name + ".go"]} for name in supported]
+    entries += [{"tag": name, "tracker": "https://example.invalid/" + name, "status": "retired", "sources": []}
+                for name in retired]
+    return engine.bug_registry({"schema": engine.BUG_REGISTRY_SCHEMA, "tags": entries,
+                                "conflicts": [list(pair) for pair in conflicts]})
+
+
+def bug_branches(name=BUG_A, tests=("TestNewFeature",), batch="basic", stem="new", category="short"):
+    """An ordinary test file and its compatibility path for one bug."""
+    ordinary = fixture(path="internal/integration/" + stem + "_test.go", tests=tests, category=category, batch=batch)
+    compatibility = fixture(path="internal/integration/" + stem + "_" + name + "_test.go", tests=tests,
+                            category=category, batch=batch)
+    ordinary["constraint"] = combine("and", ordinary["constraint"], negate(tag(name)))
+    compatibility["constraint"] = combine("and", compatibility["constraint"], tag(name))
+    for file in (ordinary, compatibility):
+        file["tags"].append(name)
+    return [ordinary, compatibility]
+
+
+class BugCompatibilitySelectionTests(unittest.TestCase):
+    def test_bug_tags_in_source_are_never_promoted_to_capabilities(self):
+        catalog = bug_branches() + [fixture(path="internal/integration/unrelated_test.go",
+                                            tests=("TestUnrelated",), batch="unrelated")]
+        bugs = engine.bug_selection(bug_registry(), "")
+        self.assertNotIn(BUG_A, engine.capability_tags(catalog))
+        plan = engine.discover(catalog, bugs)
+        for profile in plan["include"]:
+            self.assertNotIn(BUG_A, profile["tags"].split(","))
+            self.assertEqual(profile["bug_compatibility"], [])
+        self.assertEqual(plan["bug_compatibility"], [])
+        self.assertNotIn(BUG_A, plan["capability_tags"])
+
+    def test_no_selection_compiles_the_ordinary_path_and_lists_both_sources(self):
+        plan = engine.discover(bug_branches(), engine.bug_selection(bug_registry(), ""))
+        profile = plan["include"][0]
+        self.assertEqual(plan["required_executions"], 1)
+        self.assertEqual(plan["required_parents"]["./internal/integration"], ["TestNewFeature"])
+        self.assertEqual(profile["sources"], ["internal/integration/new_ceph_bug_synthetic_a_test.go",
+                                              "internal/integration/new_test.go"])
+        catalog = bug_branches()
+        compiled = [file["path"] for file in catalog
+                    if engine.evaluate(file["constraint"], set(profile["tags"].split(",")))]
+        self.assertEqual(compiled, ["internal/integration/new_test.go"])
+
+    def test_selection_compiles_only_the_selected_compatibility_paths(self):
+        catalog = bug_branches() + bug_branches(BUG_B, tests=("TestOther",), batch="other", stem="other")
+        for selection, expected in (("", set()), (BUG_A, {BUG_A}), (BUG_B, {BUG_B}),
+                                    (BUG_B + "," + BUG_A, {BUG_A, BUG_B})):
+            with self.subTest(selection=selection):
+                plan = engine.discover(catalog, engine.bug_selection(bug_registry(), selection))
+                self.assertEqual(plan["bug_compatibility"], sorted(expected))
+                self.assertEqual(plan["required_executions"], 2)
+                for profile in plan["include"]:
+                    tags = set(profile["tags"].split(","))
+                    self.assertEqual(tags & {BUG_A, BUG_B}, expected)
+                    compiled = sorted(file["path"] for file in catalog if engine.evaluate(file["constraint"], tags))
+                    paths = {"basic": ("new", BUG_A), "other": ("other", BUG_B)}[profile["batch"]]
+                    suffix = "_" + paths[1] if paths[1] in expected else ""
+                    self.assertEqual(compiled, ["internal/integration/" + paths[0] + suffix + "_test.go"])
+
+    def test_invalid_selection_is_refused_before_discovery(self):
+        registry = bug_registry(retired=("ceph_bug_synthetic_old",), conflicts=((BUG_A, BUG_B),))
+        cases = {"ceph_bug_synthetic_typo": "unregistered", "integration": "not a bug compatibility tag",
+                 BUG_A + "," + BUG_A: "twice", "ceph_bug_synthetic_old": "retired",
+                 BUG_A + "," + BUG_B: "conflicting"}
+        for selection, message in cases.items():
+            with self.subTest(selection=selection), self.assertRaisesRegex(ValueError, message):
+                engine.bug_selection(registry, selection)
+        self.assertEqual(engine.bug_selection(registry, " , ")["selected"], ())
+        self.assertEqual(engine.bug_selection(registry, BUG_A)["selected"], (BUG_A,))
+
+    def test_cli_refuses_an_invalid_selection_before_reading_sources(self):
+        with patch.object(engine, "load_catalog") as catalog, patch("sys.stderr", new=io.StringIO()) as error:
+            self.assertEqual(engine.main(["plan", "--bug-compatibility", "ceph_bug_synthetic_typo"]), 1)
+        catalog.assert_not_called()
+        self.assertIn("unregistered bug compatibility tag", error.getvalue())
+
+    def test_unregistered_or_retired_bug_tag_in_source_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "unregistered bug compatibility tag"):
+            engine.discover(bug_branches("ceph_bug_synthetic_typo"), engine.bug_selection(bug_registry(), ""))
+        with self.assertRaisesRegex(ValueError, "unregistered bug compatibility tag"):
+            engine.discover(bug_branches())
+        retired = bug_registry(supported=(), retired=(BUG_A,))
+        with self.assertRaisesRegex(ValueError, "retired bug compatibility tag still guards"):
+            engine.discover(bug_branches(), engine.bug_selection(retired, ""))
+
+    def test_bug_tag_cannot_select_tests(self):
+        bugs = engine.bug_selection(bug_registry(), "")
+        # The planner characterization in #24: a test enabled by all or the bug.
+        selector = fixture()
+        selector["tags"].append(BUG_A)
+        selector["constraint"] = combine("and", selector["constraint"], combine("or", tag("all"), tag(BUG_A)))
+        unrelated = fixture(path="internal/integration/unrelated_test.go", tests=("TestUnrelated",),
+                            batch="unrelated")
+        with self.assertRaisesRegex(ValueError, "changes the selected tests"):
+            engine.discover([selector, unrelated], bugs)
+        # Only one path declares the test, so one selection loses it.
+        with self.assertRaisesRegex(ValueError, "changes the selected tests"):
+            engine.discover([bug_branches()[1], unrelated], bugs)
+        renamed = bug_branches()
+        renamed[1]["tests"] = ["TestNewFeatureWorkaround"]
+        with self.assertRaisesRegex(ValueError, "changes the selected tests"):
+            engine.discover(renamed, bugs)
+
+    def test_compatibility_path_in_another_batch_is_refused(self):
+        ordinary, compatibility = bug_branches()
+        moved = bug_branches(batch="moved")[1]
+        with self.assertRaisesRegex(ValueError, "changes the selected tests"):
+            engine.discover([ordinary, moved], engine.bug_selection(bug_registry(), ""))
+        self.assertEqual(engine.discover([ordinary, compatibility],
+                                         engine.bug_selection(bug_registry(), BUG_A))["required_profiles"], 1)
+
+    def test_optional_profile_carries_the_selection_and_keeps_its_contract(self):
+        files = bug_branches(batch="native_bug", category="optional")
+        for file in files:
+            file["tags"].append("native_regression")
+            file["constraint"] = combine("and", file["constraint"], tag("native_regression"))
+        for selection in ("", BUG_A):
+            with self.subTest(selection=selection):
+                plan = engine.discover_optional(files, engine.bug_selection(bug_registry(), selection))
+                self.assertEqual(plan["bug_compatibility"], [selection] if selection else [])
+                self.assertEqual(BUG_A in plan["include"][0]["tags"].split(","), bool(selection))
+
+    def test_verify_compiles_the_all_and_category_builds_with_the_selection(self):
+        catalog = bug_branches()
+        plan = engine.discover(catalog, engine.bug_selection(bug_registry(), BUG_A))
+        requested = []
+
+        def inventory(package, tags, root=None):
+            requested.append(tags)
+            return engine.selected_tests(catalog, package, tags)
+        with patch.object(engine, "compile_inventory", side_effect=inventory):
+            engine.verify(catalog, plan)
+        self.assertEqual(requested[0], "all," + BUG_A)
+        self.assertTrue(all(BUG_A in tags.split(",") for tags in requested))
+
+    def test_binary_of_another_selection_fails_its_receipt_check(self):
+        catalog = bug_branches()
+        ordinary = engine.discover(catalog, engine.bug_selection(bug_registry(), ""))["include"][0]
+        selected = engine.discover(catalog, engine.bug_selection(bug_registry(), BUG_A))["include"][0]
+        self.assertEqual(ordinary["id"], selected["id"])
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            report = {"schema": engine.SCHEMA, "passed": True, "profile": ordinary,
+                      "binary": {"binary": engine.binary_name(ordinary["package"])}}
+            (directory / "compile-report.json").write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "belongs to another profile"):
+                engine.verified_binary(directory, selected, ["TestNewFeature"])
+
+
+class BugCompatibilityRegistryTests(unittest.TestCase):
+    def test_malformed_registry_is_refused(self):
+        def document(**changes):
+            entry = {"tag": BUG_A, "tracker": "https://example.invalid/a", "status": "supported",
+                     "sources": ["rbd/a.go"]}
+            entry.update(changes)
+            return {"schema": engine.BUG_REGISTRY_SCHEMA, "tags": [entry], "conflicts": []}
+        cases = [({"schema": "other", "tags": [], "conflicts": []}, "unknown schema"),
+                 ({"schema": engine.BUG_REGISTRY_SCHEMA, "tags": []}, "exactly schema"),
+                 (document(tag="bug_a"), "ceph_bug_<id>"), (document(tag="ceph_bug_A"), "ceph_bug_<id>"),
+                 (document(tag="ceph_bug_a_"), "ceph_bug_<id>"), (document(tracker="tracker 1"), "https"),
+                 (document(status="draft"), "status"), (document(sources=[]), "names its source"),
+                 (document(sources=["../x.go"]), "repository Go files"),
+                 (document(sources=["rbd/a.go", "rbd/a.go"]), "repository Go files"),
+                 (document(extra=True), "exactly tag")]
+        twice = document()
+        twice["tags"].append(dict(twice["tags"][0]))
+        cases.append((twice, "registered twice"))
+        for pair, message in (([BUG_A, BUG_A], "two distinct"), ([BUG_A, BUG_B], "two distinct")):
+            conflict = document()
+            conflict["conflicts"] = [pair]
+            cases.append((conflict, message))
+        for value, message in cases:
+            with self.subTest(message=message, value=value), self.assertRaisesRegex(ValueError, message):
+                engine.bug_registry(value)
+
+    def test_registered_sources_must_constrain_on_their_tag(self):
+        registry = bug_registry(supported=(BUG_A,))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "missing"):
+                engine.bug_registry_sources(registry, root)
+            source = root / "rbd" / (BUG_A + ".go")
+            source.parent.mkdir()
+            source.write_text("//go:build !" + BUG_A + "x\n\npackage rbd\n")
+            with self.assertRaisesRegex(ValueError, "does not constrain"):
+                engine.bug_registry_sources(registry, root)
+            source.write_text("//go:build !" + BUG_A + "\n\npackage rbd\n")
+            engine.bug_registry_sources(registry, root)
+
+    def test_checked_in_registry_matches_the_catalogue(self):
+        registry = engine.load_bug_registry()
+        engine.bug_registry_sources(registry)
+        catalogue = (engine.ROOT / "docs/guides/bug-compatibility-tags.md").read_text()
+        documented = set(re.findall(r"`(ceph_bug_[a-z0-9_]+)`", catalogue))
+        self.assertEqual(documented, set(registry["tags"]))
 
 
 if __name__ == "__main__":
