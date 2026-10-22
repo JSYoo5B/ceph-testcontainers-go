@@ -620,10 +620,18 @@ class CacheLedgerTests(unittest.TestCase):
         action = log_text("##[group]Run docker/build-push-action@v7", "with:",
                           "  cache-to: type=registry,ref=" + destination + ",mode=max", "##[endgroup]", *build)
         self.assertEqual(self.outcomes(action)[-1], ("registry", "export", destination, "saved"))
-        # A variable reference, two destinations, or a cache-to of an
-        # earlier step name no destination.
+        # A variable reference, two destinations, a literal beside a variable
+        # or a non-registry destination, or a cache-to of an earlier step name
+        # no destination.
         for text in (log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=$cache_ref image",
                               *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=registry,ref=$dynamic_ref image", *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=local,dest=/cache image", *build),
+                     log_text("##[group]Run docker/build-push-action@v7", "with:",
+                              "  cache-to: type=registry,ref=" + destination + ",mode=max",
+                              "  cache-to: type=registry,ref=${{ env.CACHE_REF }}", "##[endgroup]", *build),
                      log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
                               + " --cache-to=type=registry,ref=registry.example/other:cache image", *build),
                      log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination

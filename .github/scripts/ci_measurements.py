@@ -839,9 +839,17 @@ GO_VERSION = re.compile(r"^go version (go\S+) (\S+/\S+)$")
 BUILDX_LINE = re.compile(r"^#(\d+) (.*)$")
 BUILDX_CACHE = re.compile(r"cache manifest|writing cache|exporting cache|sending cache export|ERROR|WARNING")
 CACHE_STEP = re.compile(r"^(Restore|Save)\b.*\bcache\b|^(Run|Post Run) actions/cache", re.IGNORECASE)
-# An explicit registry cache destination: --cache-to / cache-to with a
-# literal ref (one that names a shell or expression variable is not one).
-CACHE_TO = re.compile(r"cache-to[=:]\s*\S*?\bref=([^,\s\"']+)")
+# Every cache-to destination of a step, as written: --cache-to=... or a
+# cache-to: input. Its literal registry ref is its identity; a destination
+# without a ref, or one naming a shell or expression variable, is unresolved.
+CACHE_TO = re.compile(r"cache-to[=:]\s*([^\s\"']+)")
+CACHE_TO_REF = re.compile(r"\bref=([^,\s\"']+)")
+
+
+def cache_to_ref(target):
+    """The literal registry ref of one cache-to destination, or None."""
+    ref = CACHE_TO_REF.search(target)
+    return ref.group(1) if ref and "$" not in ref.group(1) else None
 
 
 def cache_excerpt(text):
@@ -887,8 +895,10 @@ def cache_entries(lines):
 
     "exporting cache to registry" names no destination, and a build may
     import several references and export to another one. An export's key is
-    the literal cache-to ref of its step when the step names exactly one,
-    and None otherwise; it is never taken from an import."""
+    the literal cache-to ref of its step when the step names exactly one
+    destination and that one is literal, and None otherwise: an unresolved
+    destination beside a literal one still makes the export ambiguous. It is
+    never taken from an import."""
     entries, mode, toolchain, platform = [], None, None, None
     current, in_inputs, imports, exports, destinations = None, False, {}, {}, set()
 
@@ -902,11 +912,10 @@ def cache_entries(lines):
             toolchain, platform = version.groups()
         if line.startswith("Cache mode: "):
             mode = line.split(": ", 1)[1]
-        for reference in CACHE_TO.findall(line):
-            if "$" not in reference:
-                destinations.add(reference)
         if line.startswith("##[group]Run "):
-            current, destinations = None, {reference for reference in CACHE_TO.findall(line) if "$" not in reference}
+            current, destinations = None, set()
+        destinations.update(CACHE_TO.findall(line))
+        if line.startswith("##[group]Run "):
             if line.startswith("##[group]Run actions/cache"):
                 current = {"source": "actions/cache", "operation": "save" if "/save@" in line else "restore",
                            "key": None, "path": None, "toolchain": toolchain, "platform": platform,
@@ -949,7 +958,8 @@ def cache_entries(lines):
             entries.append(imports[vertex])
         elif text.startswith("exporting cache to registry"):
             exports[vertex] = {"source": "buildx", "operation": "export",
-                               "key": next(iter(destinations)) if len(destinations) == 1 else None, "path": None,
+                               "key": cache_to_ref(next(iter(destinations))) if len(destinations) == 1 else None,
+                               "path": None,
                                "toolchain": None, "platform": None, "cache_mode": mode, "requested": True,
                                "outcome": "unknown", "evidence": None}
             imports.pop(vertex, None)
