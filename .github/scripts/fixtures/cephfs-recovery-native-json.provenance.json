@@ -1,12 +1,21 @@
 {
   "binary_sha256": "d3f467a0603e2bbfe11ddf493a5ebec76672ee77559a184115d3680432d160f4",
+  "evidence_role": "historical parser control: a projection of a retained run of the archived predecessor repository. It is not current-source native acceptance and not evidence that this repository's code ran.",
   "fixture_sha256": "a63c3a38f3766f71185912f6b6ee3b9ac68890f72155826881c24b55807ee0b3",
+  "historical_origin": {
+    "repository": "archived predecessor repository",
+    "availability": "unavailable: none of the identities listed in unavailable resolves in this repository (its commits are absent and its run and job URLs return 404). They stay as recorded so that the execution remains distinguishable from an unmodified source run.",
+    "source_sha": "4da274413513d68d42acb5548869663c031538ea",
+    "unavailable": [
+      "source_sha"
+    ]
+  },
   "native_argv": [
     "go",
     "test",
     "-mod=readonly",
-    "-overlay=/private/tmp/ceph-slow-scenario-wpq-20261009/overlay.json",
-    "-exec=/private/tmp/ceph-slow-scenario-wpq-20261009/runner-controls/exec_frozen.py",
+    "-overlay=<redacted temporary directory>/overlay.json",
+    "-exec=<redacted temporary directory>/runner-controls/exec_frozen.py",
     "-json",
     "-tags=integration,features,topology,hostnetwork,multicluster",
     "-count=1",
@@ -14,6 +23,7 @@
     "-timeout=60m",
     "./internal/integration"
   ],
+  "native_argv_redaction": "The producing host's temporary run directory in -overlay and -exec is replaced by <redacted temporary directory>; every argument, its order and the overlay hash are otherwise as executed.",
   "native_exit_code": 0,
   "native_receipt_sha256": "10cd7892d3fe804d6662145ac7ed8a854a84e04cee152cb10174e060e7ecab1d",
   "original_line_numbers": [
@@ -65,6 +75,5 @@
   "original_test_file_sha256": "2ccd8c84e1a7fc32f7785b5f02db459e2da078e554177a7686b6ae66c0d9a47e",
   "overlay_sha256": "41c74c8d60a68b1651056c75b7845670d58a2e7cc69b3d2d9995101c97c10617",
   "projection": "Original JSON lifecycle, RUN/PASS/package Output and native proof records only, in exact original order. Root executed bridge/peer default-scheduler scenario with a frozen phase-measurement overlay. This parser control is not a new native run or evidence for performance by itself.",
-  "schema": "ceph-cephfs-recovery-json-parser-fixture/v1",
-  "source_sha": "4da274413513d68d42acb5548869663c031538ea"
+  "schema": "ceph-cephfs-recovery-json-parser-fixture/v1"
 }

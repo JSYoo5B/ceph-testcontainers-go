@@ -115,13 +115,16 @@ with `all || (...)`, so `all` wins over capability and CI tags. That is why
 use the [tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` build tag
 has nothing to do with the Ceph `all` role image.
 
-The planned [bug-ID compatibility selection](bug-compatibility.md) is a
-separate implementation choice from these test selectors. `all` must not
-implicitly select bug workarounds. The
+[Bug-ID compatibility selection](bug-compatibility.md) is a separate
+implementation choice from these test selectors. `all` must not implicitly
+select bug workarounds, and the planner never collects a `ceph_bug_` tag as a
+capability. The CI runner takes an explicit `--bug-compatibility` selection
+that must name registered tags (see
+[Bug compatibility selection](ci.md#bug-compatibility-selection)). The
 [supported-tag catalogue](../guides/bug-compatibility-tags.md) currently has no
-registered tags; no additional build configuration is implemented by that policy
-checkpoint. Future pairs must retain the same test contracts and prove which
-path was selected, alongside the actual image/build identity.
+registered tags, so the only accepted selection is empty. Future pairs must
+retain the same test contracts and prove which path was selected, alongside
+the actual image/build identity.
 
 ## Running integration tests
 

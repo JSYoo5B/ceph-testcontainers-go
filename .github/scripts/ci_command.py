@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse, authorize and validate a pull request comment command (#116).
+"""Parse, authorize and validate a pull request comment command.
 
 A comment line
 

@@ -11,7 +11,7 @@ import (
 
 // MON tickets of 1.5 seconds and service tickets of 12 seconds, with a
 // one-second MON tick. With MON tickets this short, Ceph can abort a MGR that
-// renews late while it loads its modules (#23), so the profile runs only on
+// renews late while it loads its modules, so the profile runs only on
 // request. It checks the bootstrap, the lifetimes the daemons and a client
 // run with, and a MON and a MGR command; Ceph does not keep MGR commands
 // working for long with these lifetimes (see the Messenger client fixtures

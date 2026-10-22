@@ -1,7 +1,20 @@
 {
+  "evidence_role": "historical parser control: a projection of a retained run of the archived predecessor repository. It is not current-source native acceptance and not evidence that this repository's code ran.",
   "fixture_sha256": "3fca13fbf5168c41d748a452f076686334b5e8f4c7392a27ef8bc8d438cacef2",
-  "job_id": 113282432657,
-  "job_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37766891332/job/113282432657",
+  "historical_origin": {
+    "repository": "archived predecessor repository",
+    "availability": "unavailable: none of the identities listed in unavailable resolves in this repository (its commits are absent and its run and job URLs return 404). They stay as recorded so that the execution remains distinguishable from an unmodified source run.",
+    "source_sha": "3ac07fe9525e5442fb646fdd67a92d321e0bc89d",
+    "run_id": 37766891332,
+    "job_id": 113282432657,
+    "job_url": "https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/37766891332/job/113282432657",
+    "unavailable": [
+      "source_sha",
+      "run_id",
+      "job_id",
+      "job_url"
+    ]
+  },
   "original_line_numbers": [
     2,
     3,
@@ -78,7 +91,5 @@
   ],
   "original_test_file_sha256": "28785dffbc9f06237d70821b21e59595c186a9633e1f5bf129be021aec802703",
   "original_test_log_sha256": "2cc9630d45564b0516ff552e9cff84ca3a309055c6f9a949586f3456e2156403",
-  "run_id": 37766891332,
-  "source_sha": "3ac07fe9525e5442fb646fdd67a92d321e0bc89d",
   "transformation": "Select exact original Go RUN/PASS/package and native byte/absence/process-evidence lines in original order; no event content, timer or identity is rewritten. Tests select a one-leaf view from this aggregate fixture. This is a retained-producer parser control, not a newly executed one-leaf CI job or a current-source native success claim."
 }

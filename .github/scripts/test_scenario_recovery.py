@@ -65,9 +65,16 @@ class RecoveryCoverageTests(unittest.TestCase):
     def test_actual_producer_source_and_preorder_are_bound(self):
         provenance = json.loads(PROVENANCE.read_text())
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(), provenance["fixture_sha256"])
-        self.assertEqual(provenance["source_sha"], "4da274413513d68d42acb5548869663c031538ea")
-        self.assertEqual(provenance["run_id"], 37804783231)
-        self.assertEqual(provenance["job_id"], 113415201234)
+        # The producing run belongs to the archived predecessor: its
+        # identities stay as recorded, marked unavailable, and the fixture
+        # stays a historical parser control.
+        origin = provenance["historical_origin"]
+        self.assertEqual(origin["source_sha"], "4da274413513d68d42acb5548869663c031538ea")
+        self.assertEqual(origin["run_id"], 37804783231)
+        self.assertEqual(origin["job_id"], 113415201234)
+        self.assertEqual(sorted(origin["unavailable"]), ["download_argv", "job_id", "run_id", "run_url", "source_sha"])
+        self.assertTrue(origin["availability"].startswith("unavailable:"))
+        self.assertTrue(provenance["evidence_role"].startswith("historical parser control"))
         self.assertEqual(len(provenance["original_line_numbers"]), 120)
         self.assertEqual(provenance["original_line_numbers"], sorted(set(provenance["original_line_numbers"])))
         self.assertEqual(hashlib.sha256(SOURCE_FIXTURE.read_bytes()).hexdigest(),
@@ -75,7 +82,7 @@ class RecoveryCoverageTests(unittest.TestCase):
         # Both independently retained native formats share this original
         # producer, rather than being rebound to today's split-file bytes.
         json_provenance = json.loads(JSON_PROVENANCE.read_text())
-        self.assertEqual(json_provenance["source_sha"], provenance["source_sha"])
+        self.assertEqual(json_provenance["historical_origin"]["source_sha"], origin["source_sha"])
         self.assertEqual(json_provenance["original_test_file_sha256"],
                          provenance["original_test_file_sha256"])
         passes = re.findall(r"^\s*--- PASS: (\S+) ", FIXTURE.read_text(), re.M)
@@ -237,6 +244,16 @@ class RecoveryJSONCoverageTests(unittest.TestCase):
         self.assertEqual(provenance["original_log_bytes"], 156031)
         self.assertEqual(provenance["native_exit_code"], 0)
         self.assertIn("-json", provenance["native_argv"])
+        # The frozen overlay and runner stay in the command as executed; only
+        # the producing host's temporary directory is a marked placeholder.
+        redacted = "<redacted temporary directory>"
+        self.assertIn("-overlay=" + redacted + "/overlay.json", provenance["native_argv"])
+        self.assertIn("-exec=" + redacted + "/runner-controls/exec_frozen.py", provenance["native_argv"])
+        self.assertIn(redacted, provenance["native_argv_redaction"])
+        self.assertFalse([arg for arg in provenance["native_argv"] if "/tmp/" in arg or "/private/" in arg])
+        self.assertEqual(provenance["overlay_sha256"], "41c74c8d60a68b1651056c75b7845670d58a2e7cc69b3d2d9995101c97c10617")
+        self.assertEqual(provenance["historical_origin"]["unavailable"], ["source_sha"])
+        self.assertTrue(provenance["evidence_role"].startswith("historical parser control"))
         self.assertEqual(len(provenance["original_line_numbers"]), 42)
         self.assertEqual(provenance["original_line_numbers"], sorted(set(provenance["original_line_numbers"])))
         passes = [row["Test"] for row in self.rows if row["Action"] == "pass" and "Test" in row]
