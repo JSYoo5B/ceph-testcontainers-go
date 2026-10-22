@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -252,4 +253,27 @@ func nativeMirrorImage(t *testing.T, role, legacy string) string {
 		t.Fatalf("missing roles-v2 %s mirror runtime", role)
 	}
 	return image
+}
+
+// assertContainerFilesEqual compares the exact retained bytes without requiring
+// an optional diffutils package in the client runtime.
+func assertContainerFilesEqual(t *testing.T, ctx context.Context, ctr testcontainers.Container, first, second string) {
+	t.Helper()
+	read := func(path string) []byte {
+		t.Helper()
+		stream, err := ctr.CopyFileFromContainer(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Close()
+		data, err := io.ReadAll(stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	expected, actual := read(first), read(second)
+	if !bytes.Equal(expected, actual) {
+		t.Fatalf("container file bytes differ: %s (%d bytes), %s (%d bytes)", first, len(expected), second, len(actual))
+	}
 }

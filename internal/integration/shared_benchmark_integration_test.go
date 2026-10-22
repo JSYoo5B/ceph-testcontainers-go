@@ -80,7 +80,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 	t.Logf("shared cluster benchmark:\n%s", strings.Join(report, "\n"))
 }
 
-const benchmarkRADOS = `rados --id "$1" -p "$2" -N "$3" put object /etc/hostname && rados --id "$1" -p "$2" -N "$3" get object /tmp/object && cmp /etc/hostname /tmp/object`
+const benchmarkRADOS = `rados --id "$1" -p "$2" -N "$3" put object /etc/hostname && rados --id "$1" -p "$2" -N "$3" get object /tmp/object && python3 -c 'from pathlib import Path; assert Path("/etc/hostname").read_bytes() == Path("/tmp/object").read_bytes(), "RADOS bytes differ"'`
 
 // ownClusterRADOSTest is the small test with a cluster of its own.
 func ownClusterRADOSTest(t *testing.T, image string, run []testcontainers.ContainerCustomizer) {

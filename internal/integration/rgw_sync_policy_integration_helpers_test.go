@@ -29,7 +29,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if image == "" {
 		image = controlImage
 	}
-	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: controlImage, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

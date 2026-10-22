@@ -23,9 +23,9 @@ import (
 func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
+	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
 	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
-		ControlImage: control, Zonegroup: "us", MetadataMaster: "a",
+		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
 	})
 	rgwTopologyCleanup(t, fixture)
@@ -155,9 +155,9 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	netem := netemImage(t)
-	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
+	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
 	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
-		ControlImage: control, Zonegroup: "us", MetadataMaster: "a",
+		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
 	})
 	rgwTopologyCleanup(t, fixture)

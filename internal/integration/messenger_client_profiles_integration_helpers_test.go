@@ -785,7 +785,8 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	crc.expect(t, ctx, "crc only", "accepted", "pg", "stat")
 	crc.expect(t, ctx, "crc only", "accepted", "tell", "osd.0", "version")
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
-	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read && cmp /tmp/object /tmp/read")
+	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
+	assertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
 	if cluster.UsesHostNetwork() {
 		checkHostProcessReachesDaemons(t, ctx, cluster)

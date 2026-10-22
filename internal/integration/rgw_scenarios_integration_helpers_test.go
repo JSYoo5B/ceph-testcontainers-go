@@ -37,7 +37,7 @@ func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*rgw.Multi
 	if image == "" {
 		image = controlImage
 	}
-	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, ControlImage: controlImage, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
+	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

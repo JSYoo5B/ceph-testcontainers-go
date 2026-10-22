@@ -61,7 +61,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1], ControlImage: image})
+	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1]})
 	if fixture != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

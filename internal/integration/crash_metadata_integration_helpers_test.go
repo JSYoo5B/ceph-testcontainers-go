@@ -86,7 +86,11 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("collection before any crash: %v; %+v", err, report)
 	}
 	for _, result := range report.Containers {
-		if result.Outcome != ceph.CrashDirectoryEmpty || result.State != "running" {
+		expected := ceph.CrashDirectoryEmpty
+		if result.Role == "client" && cluster.UsesRoleImages() && cluster.Images().Client != cluster.Images().Essential {
+			expected = ceph.CrashDirectoryAbsent
+		}
+		if result.Outcome != expected || result.State != "running" {
 			t.Fatalf("%s %s before any crash: %+v", result.Role, result.Name, result)
 		}
 	}

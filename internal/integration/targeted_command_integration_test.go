@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_messenger_receipts))))
 
-//ci: timeout=30m job-timeout=45 image-roles=essential,client
+//ci: timeout=30m job-timeout=45 image-roles=essential,client,cephfs
 
 package integration_test
 

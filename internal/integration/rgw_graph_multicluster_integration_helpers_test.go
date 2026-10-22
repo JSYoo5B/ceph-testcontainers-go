@@ -63,7 +63,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	// than assuming that the first caller-provided storage cluster is master.
 	fixture, err := rgw.RunTopology(ctx, rgwImage, rgw.TopologyConfig{
 		Zones:          []rgw.ZoneConfig{{Name: "b", Cluster: clusters[1]}, {Name: "c", Cluster: clusters[2]}, {Name: "a", Cluster: clusters[0]}},
-		MetadataMaster: "a", ControlImage: controlImage,
+		MetadataMaster: "a",
 	})
 	if fixture != nil {
 		t.Cleanup(func() {

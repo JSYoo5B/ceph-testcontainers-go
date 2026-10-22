@@ -146,8 +146,8 @@ func testRGWInitialZonegroupsTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, host)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{ControlImage: control, MasterZonegroup: "us", Zonegroups: []rgw.ZonegroupConfig{
+	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, host)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{MasterZonegroup: "us", Zonegroups: []rgw.ZonegroupConfig{
 		{Name: "eu", MasterZone: "c", Zones: []rgw.ZoneConfig{{Name: "c", Cluster: clusters[1]}}},
 		{Name: "us", MasterZone: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}}},
 	}})
@@ -172,8 +172,8 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	control, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 3, host)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{ControlImage: control, Zonegroup: "us", MetadataMaster: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
+	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 3, host)
+	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{Zonegroup: "us", MetadataMaster: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)

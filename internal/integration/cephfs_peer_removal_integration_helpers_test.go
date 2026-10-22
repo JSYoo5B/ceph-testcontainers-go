@@ -217,11 +217,11 @@ func cephFSReadRemovalWitness(t *testing.T, ctx context.Context, source *ceph.Co
 	if hasCommand != present {
 		t.Fatal("independent EXACT old peer command registration disagrees")
 	}
-	control, err := source.ControlContainerContext(ctx)
+	client, err := source.ClientContainerContext(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	watcherData := multiClusterExecOutput(t, ctx, control, "rados", "--pool", filesystem.MetadataPool, "listwatchers", "cephfs_mirror")
+	watcherData := multiClusterExecOutput(t, ctx, client, "rados", "--pool", filesystem.MetadataPool, "listwatchers", "cephfs_mirror")
 	gid := ""
 	for _, line := range strings.Split(strings.TrimSpace(string(watcherData)), "\n") {
 		fields := strings.Fields(line)

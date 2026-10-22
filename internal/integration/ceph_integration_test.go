@@ -186,9 +186,8 @@ func TestBootstrapFailureCleanup(t *testing.T) {
 func TestRunMissingImage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	_, opts := integrationImages(t)
 	const missing = "ceph-testcontainers-go.invalid/missing:0"
-	cluster, err := ceph.Run(ctx, missing, opts...)
+	cluster, err := ceph.Run(ctx, missing)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}
