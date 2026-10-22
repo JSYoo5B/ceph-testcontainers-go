@@ -71,14 +71,16 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint(),
+		testcontainers.WithTmpfs(map[string]string{"/var/lib/ceph": "rw,size=16m"}))
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The caller fixture controls this directory independently of package
-	// layout: both daemon-free and map-tool clients must exercise the same
-	// empty/absent outcomes without changing a daemon's actual crash files.
+	// The caller fixture uses a fresh tmpfs parent independently of package
+	// layout (including a preinstalled crash/posted directory). Both client
+	// layouts exercise the same empty/absent outcomes without changing a
+	// daemon's actual crash files or renaming an overlay lower-layer tree.
 	execCommand(t, ctx, helper, "mkdir", "-p", "/var/lib/ceph/crash")
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
 	osds := cluster.OSDs()
@@ -98,9 +100,8 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("collection changed Docker objects: %+v -> %+v", before, after)
 	}
 	// A caller's absent directory is read whatever it is called, also when
-	// described like the cluster's own control container. Remove only this
-	// confirmed-empty helper directory: renaming a directory from an image's
-	// lower overlay layer can fail with EXDEV even within the same parent.
+	// described like the cluster's own control container. Only the empty
+	// directory created above is removed, then recreated for crash collection.
 	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
