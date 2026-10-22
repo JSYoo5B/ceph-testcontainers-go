@@ -336,6 +336,29 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(result, {"run lists": 1, "failed requests": 1, "marker answers": 1})
             self.assertFalse((Path(directory) / "jobs" / "11.json").exists())
 
+    def test_report_leaves_out_the_jobs_that_fetch_keeps_for_cancelled_runs(self):
+        def api(path, jq):
+            if "/runs/13/jobs?" in path:
+                # A superseded run whose job held a runner beside run 11's.
+                return [runtime_job("Scenarios / a", at(0), at(1), 2, conclusion="cancelled")]
+            if "/jobs?" in path:
+                return [runtime_job("Scenarios / a", at(0), at(1), 2)]
+            return [run(11, "Ceph short", "h", at(0)), run(13, "Ceph short", "h3", at(0), conclusion="cancelled")]
+
+        with tempfile.TemporaryDirectory() as directory:
+            day = date(2026, 10, 16)
+            fetched = measure.fetch(directory, "o/r", day, day, MARKERS, today=date(2026, 10, 18), api=api,
+                                    compare=lambda repo, base, head: "ahead")
+            # Both runs' jobs; marker answers only for the uncancelled head.
+            self.assertEqual(fetched, {"run lists": 1, "job lists": 2, "marker answers": 1})
+            with_cancelled = measure.report(directory, MARKERS)
+            (Path(directory) / "jobs" / "13.json").unlink()
+            without_cancelled = measure.report(directory, MARKERS)
+        self.assertEqual(with_cancelled, without_cancelled)
+        self.assertEqual(with_cancelled["skipped_executions"], {"cancelled run": 1})
+        self.assertEqual(with_cancelled["peak_concurrency"], measure.peak_concurrency(
+            [runtime_job("Scenarios / a", at(0), at(1), 2)]))
+
     def test_markers_are_named_commits_in_order(self):
         self.assertEqual(measure.parse_markers(["x=" + "1" * 40]), [{"name": "x", "sha": "1" * 40}])
         for bad in (["x"], ["baseline=" + "1" * 40], ["x=" + "1" * 40, "x=" + "2" * 40]):
@@ -446,6 +469,37 @@ class CohortTests(unittest.TestCase):
         self.assertIn("| recovery-rbd-12345678 | 20.2.4 | - | ", printed.getvalue())
         self.assertIn("passed 2", printed.getvalue())
 
+    def test_fetch_keeps_cancelled_runs_for_the_outcome_ledger(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 7, "cancelled"), self.attempt(101, 202, 9)]
+        # Run 101 was cancelled: job 201 was cancelled after it held a runner,
+        # and its sibling job 202 passed before the cancellation.
+        self.runs[1]["conclusion"] = "cancelled"
+        self.jobs["101"][0]["conclusion"] = "cancelled"
+        listed = [{**entry, "status": "completed"} for entry in self.runs]
+        calls = []
+
+        def api(path, jq):
+            calls.append(path)
+            if "/jobs?" in path:
+                return self.jobs[path.split("/runs/")[1].split("/")[0]]
+            return listed
+
+        cache = self.root / "cache"
+        day = date(2026, 10, 17)
+        fetched = measure.fetch(cache, "owner/repo", day, day, [], today=date(2026, 10, 18), api=api,
+                                compare=lambda repo, base, head: "ahead")
+        self.assertEqual(fetched, {"run lists": 1, "job lists": 2, "marker answers": 1})
+        self.assertIn("repos/owner/repo/actions/runs/101/jobs?filter=all&per_page=100", calls)
+        result = measure.cohorts(measure.load_runs(cache), measure.load_jobs(cache), rows, "owner/repo")
+        self.assertEqual((result["rows"], result["joined"]), (3, 3))
+        self.assertEqual((result["unmatched_rows"], result["unmatched_jobs"]), ([], []))
+        config = result["configs"][0]
+        self.assertEqual(config["outcomes"], {"cancelled": {"attempts": 1, "runner_seconds": 660.0},
+                                              "passed": {"attempts": 2, "runner_seconds": 1320.0}})
+        # The cancelled attempt's 7 native minutes stay out of the passed range.
+        self.assertEqual(config["passed"]["native"], {"count": 2, "min": 300.0, "median": 300.0, "max": 540.0})
+        self.assertEqual([(sample["job_id"], sample["kind"]) for sample in config["samples"]],
+                         [("200", "passed"), ("201", "cancelled"), ("202", "passed")])
 
 MODULE_KEY = "go-modules-Linux-" + "e" * 64
 BUILD_KEY = "go-build-Linux-1.26.10-" + "e" * 64
@@ -706,6 +760,31 @@ class CacheLedgerTests(unittest.TestCase):
             calls.clear()
             measure.fetch(directory, "o/r", day, day, [], cache_logs=5, cache_log_jobs="^Lint$", **options)
             self.assertEqual(calls, [115, 120, 125])
+
+    def test_fetch_reads_cache_logs_of_cancelled_runs_too(self):
+        calls = []
+        cancelled = cache_job(120, ("Restore the Go module cache", "success"), conclusion="cancelled")
+        # Cancelled while queued: no step, so it held no runner and has no log.
+        queued = {**cache_job(121, conclusion="cancelled"), "steps": []}
+
+        def api(path, jq):
+            if "/jobs?" in path:
+                return [cancelled, queued]
+            return [run(12, "Code checks", "h", at(0), conclusion="cancelled")]
+
+        def log(repo, job_id):
+            calls.append(job_id)
+            return COLD_LOG
+
+        with tempfile.TemporaryDirectory() as directory:
+            day = date(2026, 10, 16)
+            fetched = measure.fetch(directory, "o/r", day, day, [], today=date(2026, 10, 18), api=api,
+                                    compare=lambda repo, base, head: "ahead", cache_logs=5, log=log)
+            self.assertEqual(fetched, {"run lists": 1, "job lists": 1, "cache logs": 1})
+            self.assertEqual(calls, [120])
+            rows = measure.cache_ledger(measure.load_runs(directory), measure.load_jobs(directory),
+                                        measure.load_cache_logs(directory), "o/r")
+            self.assertEqual(rows[0]["outcome"], "miss")
 
     def test_cli_lists_the_ledger(self):
         with tempfile.TemporaryDirectory() as directory:

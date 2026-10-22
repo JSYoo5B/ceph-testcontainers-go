@@ -6,6 +6,16 @@ change the API.
 
 ## Unreleased
 
+### API naming
+
+- Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
+  `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
+  error ownership and cleanup stay unchanged; there is no automatic expiry or
+  compatibility alias. See `docs/guides/upgrading-rbd-cache-name.md`.
+- Record the remaining public declaration/member retention decisions, including
+  dependency-role APIs, and bind that review to generated source catalogues.
+  Inventory regeneration alone cannot approve later API changes.
+
 ### Added
 
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
@@ -175,7 +185,7 @@ change the API.
   client's other paths complete. After `Restore` the operation completes on
   the same connection, without a new client instance or a blocklist entry.
 
-- `rbd.TemporaryImmutableObjectCache` starts the RBD immutable object cache
+- `rbd.StartImmutableObjectCache` starts the RBD immutable object cache
   daemon in a client container and returns a lease with `ClientOptions`,
   `Status` (cached objects and bytes, the daemon's RADOS reads), `Stop` (clients
   fall back to RADOS) and `Restore`. It needs the daemon and the librbd
@@ -331,6 +341,15 @@ change the API.
   `REPLAY` of the same client ID and TID, and an independent client reads the
   result. The [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
   guide lists the receipt and what it leaves out.
+- `TestOSDBackoffReceipt`, in the new recovery batch `osd_backoff`, makes a
+  primary send a PG-wide backoff to a retained python-rados client: with
+  `noout` set and a non-primary replica of a replicas/min_size 3 pool stopped,
+  the PG peers but cannot go active. The client's and the primary's
+  `debug_ms` logs join BLOCK, ACK_BLOCK and UNBLOCK by connection, OSD, PG,
+  backoff ID and range, and the original read returns the seeded bytes once
+  the replica is back. The `client-osd/backoff` coverage row becomes partial;
+  object-scoped backoffs stay uncovered (#5). See
+  [OSD backoff](docs/guides/messenger-client-fixtures.md#osd-backoff).
 
 ### Changed
 
@@ -389,6 +408,21 @@ change the API.
   removed by `Terminate`. `AddOSD` is unchanged.
 
 ### Fixed
+
+- `TestRGWPlacementRealmStorageClasses` no longer accepts replica bytes that
+  arrive after a read's deadline. Its replica wait reads through the shared
+  bounded observation with a 30-second read bound inside the unchanged
+  four-minute budget, and a failure names the last sample: HTTP status, S3
+  error code (`NoSuchKey` or `NoSuchBucket`), byte count and SHA-256 (#2).
+
+- The same replica wait now ends at the next probe when the source gateway
+  exits, is removed or restarts, instead of polling the rest of the
+  four-minute budget. It binds the source container ID and process start time
+  before the replicated write, inspects it read-only within 10 seconds per
+  probe, and reports the last replica sample with the source state. Paused and
+  restarting sources are named, not treated as crashes, and inspect errors are
+  counted rather than read as healthy. Exact replica bytes remain the only
+  success (#2).
 
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
@@ -456,7 +490,8 @@ change the API.
   joined attempts by `scenario_history.config_key`. Each configuration keeps
   an outcome ledger of attempts and runner seconds for every outcome, and
   timing ranges of its passed attempts only. Rows and jobs that do not join
-  are listed with the reason (#1).
+  are listed with the reason (#1). `fetch` now stores the jobs of cancelled
+  runs for that ledger, while `report` still leaves cancelled runs out.
 
 - `ci_measurements.py fetch --cache-logs N` stores the cache lines of at
   most N job logs, and the new `caches` command lists a cache-state ledger

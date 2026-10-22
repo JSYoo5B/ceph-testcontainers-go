@@ -1,0 +1,20 @@
+{
+  "schema": "ceph-api-naming-review/v1",
+  "declarations_sha256": "0cb21d7f1c24c19dd887174ebf01bf4eb317bb8c1d0c5f25863b05b2dcc4a56f",
+  "members_sha256": "3a2dc7e14413c71dd636ef7d8b7eda1a381a0d3d39eb2a1e574f1714d4fe396e",
+  "declarations": {
+    "ceph": 306,
+    "cephfs": 155,
+    "fault": 34,
+    "rbd": 77,
+    "rgw": 126
+  },
+  "members": {
+    "ceph": 323,
+    "cephfs": 247,
+    "fault": 64,
+    "rbd": 94,
+    "rgw": 204
+  },
+  "review": "api-naming-audit.md"
+}
