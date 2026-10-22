@@ -6,6 +6,16 @@ change the API.
 
 ## Unreleased
 
+### API naming
+
+- Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
+  `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
+  error ownership and cleanup stay unchanged; there is no automatic expiry or
+  compatibility alias. See `docs/guides/upgrading-rbd-cache-name.md`.
+- Record the remaining public declaration/member retention decisions, including
+  dependency-role APIs, and bind that review to generated source catalogues.
+  Inventory regeneration alone cannot approve later API changes.
+
 ### Added
 
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
@@ -175,7 +185,7 @@ change the API.
   client's other paths complete. After `Restore` the operation completes on
   the same connection, without a new client instance or a blocklist entry.
 
-- `rbd.TemporaryImmutableObjectCache` starts the RBD immutable object cache
+- `rbd.StartImmutableObjectCache` starts the RBD immutable object cache
   daemon in a client container and returns a lease with `ClientOptions`,
   `Status` (cached objects and bytes, the daemon's RADOS reads), `Stop` (clients
   fall back to RADOS) and `Restore`. It needs the daemon and the librbd
