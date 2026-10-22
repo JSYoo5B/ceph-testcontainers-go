@@ -11,31 +11,34 @@ import (
 )
 
 // Client and primary log lines of one PG-wide backoff, in the format that
-// the messenger prints at debug_ms 1 and the Objecter at debug_objecter 1:
+// the messenger prints at debug_ms 1 and the Objecter at debug_objecter 1.
+// The BLOCK, ACK_BLOCK, UNBLOCK and reply lines follow those that
+// TestOSDBackoffReceipt logged on quay.io/ceph/ceph:v20.2.4, with other
+// addresses, IDs and epochs; the rest are written in the same format:
 // read tid 3 of backoff-read is blocked by osd.1 with id 1 at epoch 25,
 // acknowledged at epoch 25, unblocked at epoch 27 and answered afterwards.
 // Unrelated MON and OSD traffic stays in between.
 var (
 	backoffClientSample = []string{
-		`2026-10-22T05:10:01.100+0000 7f1c0b7fe640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:2 2.0 2:9a3f0c1e:::backoff-read:head [stat] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e24) v8 -- 0x55d0c8e1a400 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:01.104+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 1 ==== osd_op_reply(2 backoff-read [stat] v0'0 uv1 ondisk = 0) v8 ==== 160+0+16 (crc 0 0 0) 0x7f1bf4003a10 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:20.310+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== mon.0 v2:172.18.0.3:3300/0 9 ==== osd_map(25..25 src has 1..25) v4 ==== 1432+0+0 (secure 0 0 0) 0x7f1bf4004f20 con 0x55d0c8dd9800`,
-		`2026-10-22T05:10:21.002+0000 7f1c0b7fe640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:3 2.0 2:9a3f0c1e:::backoff-read:head [read 0~16385] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e25) v8 -- 0x55d0c8e1b800 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:21.006+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 2 ==== osd_backoff(2.0 block id 1 [2:00000000::::head,MAX) e25) v1 ==== 115+0+0 (crc 0 0 0) 0x7f1bf4005b30 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:21.006+0000 7f1c0affd640 10 client.4321.objecter handle_osd_backoff osd_backoff(2.0 block id 1 [2:00000000::::head,MAX) e25) v1`,
-		`2026-10-22T05:10:21.006+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_backoff(2.0 ack-block id 1 [2:00000000::::head,MAX) e25) v1 -- 0x7f1bf4006c40 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:36.420+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== mon.0 v2:172.18.0.3:3300/0 10 ==== osd_map(26..27 src has 1..27) v4 ==== 2210+0+0 (secure 0 0 0) 0x7f1bf4007d50 con 0x55d0c8dd9800`,
-		`2026-10-22T05:10:37.512+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 3 ==== osd_backoff(2.0 unblock id 1 [2:00000000::::head,MAX) e27) v1 ==== 115+0+0 (crc 0 0 0) 0x7f1bf4008e60 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:37.512+0000 7f1c0affd640 10 client.4321.objecter handle_osd_backoff unblock backoff 2.0 id 1 [2:00000000::::head,MAX)`,
-		`2026-10-22T05:10:37.512+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:3 2.0 2:9a3f0c1e:::backoff-read:head [read 0~16385] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e27) v8 -- 0x55d0c8e1c000 con 0x55d0c8e18000`,
-		`2026-10-22T05:10:38.020+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 4 ==== osd_op_reply(3 backoff-read [read 0~16384 out=16384b] v0'0 uv1 ondisk = 0) v8 ==== 160+0+16384 (crc 0 0 0) 0x7f1bf4009f70 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:01.100+0000 7f1c0b7fe640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:2 2.0 2:9a3f0c1e:::backoff-read:head [stat] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e24) -- 0x55d0c8e1a400 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:01.104+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 1 ==== osd_op_reply(2 backoff-read [stat] v0'0 uv1 ondisk = 0) ==== 160+0+16 (crc 0 0 0) 0x7f1bf4003a10 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:20.310+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== mon.0 v2:172.18.0.3:3300/0 9 ==== osd_map(25..25 src has 1..25) ==== 1432+0+0 (secure 0 0 0) 0x7f1bf4004f20 con 0x55d0c8dd9800`,
+		`2026-10-22T05:10:21.002+0000 7f1c0b7fe640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:3 2.0 2:9a3f0c1e:::backoff-read:head [read 0~16385] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e25) -- 0x55d0c8e1b800 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:21.006+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 2 ==== osd_backoff(2.0 block id 1 [2:00000000::::0,MAX) e25) ==== 115+0+0 (crc 0 0 0) 0x7f1bf4005b30 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:21.006+0000 7f1c0affd640 10 client.4321.objecter handle_osd_backoff osd_backoff(2.0 block id 1 [2:00000000::::0,MAX) e25)`,
+		`2026-10-22T05:10:21.006+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_backoff(2.0 ack-block id 1 [2:00000000::::0,MAX) e25) -- 0x7f1bf4006c40 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:36.420+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== mon.0 v2:172.18.0.3:3300/0 10 ==== osd_map(26..27 src has 1..27) ==== 2210+0+0 (secure 0 0 0) 0x7f1bf4007d50 con 0x55d0c8dd9800`,
+		`2026-10-22T05:10:37.512+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 3 ==== osd_backoff(2.0 unblock id 1 [2:00000000::::0,MAX) e27) ==== 115+0+0 (crc 0 0 0) 0x7f1bf4008e60 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:37.512+0000 7f1c0affd640 10 client.4321.objecter handle_osd_backoff unblock backoff 2.0 id 1 [2:00000000::::0,MAX)`,
+		`2026-10-22T05:10:37.512+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 --> [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] -- osd_op(unknown.0.0:3 2.0 2:9a3f0c1e:::backoff-read:head [read 0~16385] snapc 0=[] ondisk+read+known_if_redirected+supports_pool_eio e27) -- 0x55d0c8e1c000 con 0x55d0c8e18000`,
+		`2026-10-22T05:10:38.020+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 4 ==== osd_op_reply(3 backoff-read [read 0~16384 out=16384b] v0'0 uv1 ondisk = 0) ==== 160+0+16384 (crc 0 0 0) 0x7f1bf4009f70 con 0x55d0c8e18000`,
 	}
 	backoffPrimarySample = []string{
-		`2026-10-22T05:10:01.102+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 1 ==== osd_op(client.4321.0:2 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e24) v8 ==== 196+0+0 (crc 0 0 0) 0x5612d0a3c000 con 0x5612d09f4800`,
-		`2026-10-22T05:10:21.004+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 2 ==== osd_op(client.4321.0:3 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e25) v8 ==== 196+0+0 (crc 0 0 0) 0x5612d0a3d400 con 0x5612d09f4800`,
-		`2026-10-22T05:10:21.005+0000 7f0e1effd640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] --> 172.18.0.2:0/2208442118 -- osd_backoff(2.0 block id 1 [2:00000000::::head,MAX) e25) v1 -- 0x5612d0a3e800 con 0x5612d09f4800`,
-		`2026-10-22T05:10:21.008+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 3 ==== osd_backoff(2.0 ack-block id 1 [2:00000000::::head,MAX) e25) v1 ==== 115+0+0 (crc 0 0 0) 0x5612d0a3fc00 con 0x5612d09f4800`,
-		`2026-10-22T05:10:30.660+0000 7f0e2cff9640  1 -- [v2:172.18.0.5:6802/1418922307,v1:172.18.0.5:6803/1418922307] <== osd.0 v2:172.18.0.4:6802/88231045 12 ==== pg_notify2(2.0 2.0 (query:27 sent:27 ...) e27/27) v1 ==== 1065+0+0 (crc 0 0 0) 0x5612d0a41000 con 0x5612d09f6c00`,
+		`2026-10-22T05:10:01.102+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 1 ==== osd_op(client.4321.0:2 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e24) ==== 196+0+0 (crc 0 0 0) 0x5612d0a3c000 con 0x5612d09f4800`,
+		`2026-10-22T05:10:21.004+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 2 ==== osd_op(client.4321.0:3 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e25) ==== 196+0+0 (crc 0 0 0) 0x5612d0a3d400 con 0x5612d09f4800`,
+		`2026-10-22T05:10:21.005+0000 7f0e1effd640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] --> 172.18.0.2:0/2208442118 -- osd_backoff(2.0 block id 1 [2:00000000::::0,MAX) e25) -- 0x5612d0a3e800 con 0x5612d09f4800`,
+		`2026-10-22T05:10:21.008+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 3 ==== osd_backoff(2.0 ack-block id 1 [2:00000000::::0,MAX) e25) ==== 115+0+0 (crc 0 0 0) 0x5612d0a3fc00 con 0x5612d09f4800`,
+		`2026-10-22T05:10:30.660+0000 7f0e2cff9640  1 -- [v2:172.18.0.5:6802/1418922307,v1:172.18.0.5:6803/1418922307] <== osd.0 v2:172.18.0.4:6802/88231045 12 ==== pg_notify2(2.0 2.0 (query:27 sent:27 ...) e27/27) ==== 1065+0+0 (crc 0 0 0) 0x5612d0a41000 con 0x5612d09f6c00`,
 	}
 	backoffSampleTarget = backoffTarget{Client: "client.4321", Primary: "osd.1", PGID: "2.0", Object: "backoff-read"}
 )
@@ -88,7 +91,7 @@ func TestParseBackoffLog(t *testing.T) {
 	}
 	block := events[3]
 	if block.Peer != "osd.1" || block.Addr != "172.18.0.5:6800/1418922307" || block.Local != "172.18.0.2:0/2208442118" || block.Seq != 2 ||
-		block.PGID != "2.0" || block.ID != 1 || block.Begin != "2:00000000::::head" || block.End != "MAX" || block.Epoch != 25 {
+		block.PGID != "2.0" || block.ID != 1 || block.Begin != "2:00000000::::0" || block.End != "MAX" || block.Epoch != 25 {
 		t.Fatalf("block = %+v", block)
 	}
 	if read := events[2]; read.Tid != 3 || read.Object != "backoff-read" || read.Ops != "read 0~16385" || read.Source != "unknown.0" {
@@ -102,7 +105,7 @@ func TestParseBackoffLog(t *testing.T) {
 		primary[3].Op != "ack-block" || primary[3].Peer != "client.4321" || primary[3].Addr != "172.18.0.2:0/2208442118" {
 		t.Fatalf("primary events %+v", primary)
 	}
-	errorReply := parseBackoffLog([]string{`2026-10-22T05:10:38.020+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 4 ==== osd_op_reply(3 backoff-read [read 0~16385] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) v8 ==== 160+0+0 (crc 0 0 0) 0x7f1bf4009f70 con 0x55d0c8e18000`})
+	errorReply := parseBackoffLog([]string{`2026-10-22T05:10:38.020+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.1 v2:172.18.0.5:6800/1418922307 4 ==== osd_op_reply(3 backoff-read [read 0~16385] v0'0 uv0 ondisk = -2 ((2) No such file or directory)) ==== 160+0+0 (crc 0 0 0) 0x7f1bf4009f70 con 0x55d0c8e18000`})
 	if len(errorReply) != 1 || errorReply[0].Result != -2 {
 		t.Fatalf("error reply %+v", errorReply)
 	}
@@ -120,7 +123,7 @@ func TestBindBackoffChain(t *testing.T) {
 	}
 	// Before the replica returns, the chain binds up to ACK_BLOCK and is not
 	// yet released.
-	held := withoutLines(backoffClientSample, "unblock", "e27) v8", "out=16384b")
+	held := withoutLines(backoffClientSample, "unblock", "e27) --", "out=16384b")
 	heldEvents := parseBackoffLog(held)
 	if chain, err := bindBackoffBlock(heldEvents, parseBackoffLog(backoffPrimarySample), backoffSampleTarget); err != nil || chain.released(heldEvents) {
 		t.Fatalf("held chain released=%t: %v", chain.released(heldEvents), err)
@@ -134,7 +137,7 @@ func TestBindBackoffChain(t *testing.T) {
 		want            string
 	}{
 		"no read":           {withoutLines(backoffClientSample, "[read 0~16385]"), backoffPrimarySample, "no read of backoff-read"},
-		"missing BLOCK":     {withoutLines(backoffClientSample, "block id 1 [2:00000000::::head,MAX) e25) v1 ===="), backoffPrimarySample, "no BLOCK"},
+		"missing BLOCK":     {withoutLines(backoffClientSample, "block id 1 [2:00000000::::0,MAX) e25) ===="), backoffPrimarySample, "no BLOCK"},
 		"BLOCK of other PG": {backoffLines(t, backoffClientSample, "osd_backoff(2.0 block", "osd_backoff(2.1 block"), backoffPrimarySample, "no BLOCK"},
 		"BLOCK from other OSD": {backoffLines(t, backoffClientSample, "<== osd.1 v2:172.18.0.5:6800/1418922307 2 ====", "<== osd.2 v2:172.18.0.6:6800/77 2 ===="),
 			backoffPrimarySample, "no BLOCK"},
@@ -142,18 +145,18 @@ func TestBindBackoffChain(t *testing.T) {
 		"ACK_BLOCK other id": {backoffClientSample, backoffLines(t, backoffPrimarySample, "ack-block id 1", "ack-block id 2"), "no ACK_BLOCK"},
 		"ACK_BLOCK other client": {backoffClientSample, backoffLines(t, backoffPrimarySample, "<== client.4321 172.18.0.2:0/2208442118 3", "<== client.4400 172.18.0.2:0/2208442118 3"),
 			"no ACK_BLOCK"},
-		"ACK_BLOCK other epoch": {backoffClientSample, backoffLines(t, backoffPrimarySample, "ack-block id 1 [2:00000000::::head,MAX) e25", "ack-block id 1 [2:00000000::::head,MAX) e27"),
+		"ACK_BLOCK other epoch": {backoffClientSample, backoffLines(t, backoffPrimarySample, "ack-block id 1 [2:00000000::::0,MAX) e25", "ack-block id 1 [2:00000000::::0,MAX) e27"),
 			"carries epoch 27"},
 		"ACK_BLOCK on another connection": {backoffClientSample, withoutLines(backoffPrimarySample, "client.4321.0:3"), "connection that carried read tid 3"},
-		"missing UNBLOCK":                 {withoutLines(backoffClientSample, "unblock id 1 [2:00000000::::head,MAX) e27) v1 ===="), backoffPrimarySample, "no UNBLOCK"},
+		"missing UNBLOCK":                 {withoutLines(backoffClientSample, "unblock id 1 [2:00000000::::0,MAX) e27) ===="), backoffPrimarySample, "no UNBLOCK"},
 		"UNBLOCK other id":                {backoffLines(t, backoffClientSample, "unblock id 1", "unblock id 2"), backoffPrimarySample, "other UNBLOCK ids [2]"},
-		"UNBLOCK other range":             {backoffLines(t, backoffClientSample, "unblock id 1 [2:00000000::::head,MAX)", "unblock id 1 [2:00000000::::head,2:80000000::::head)"), backoffPrimarySample, "no UNBLOCK"},
-		"UNBLOCK older epoch":             {backoffLines(t, backoffClientSample, "unblock id 1 [2:00000000::::head,MAX) e27", "unblock id 1 [2:00000000::::head,MAX) e24"), backoffPrimarySample, "precedes BLOCK epoch"},
-		"reply before UNBLOCK": {append(withoutLines(backoffClientSample, "unblock id 1 [2:00000000::::head,MAX) e27) v1 ====", "out=16384b"),
+		"UNBLOCK other range":             {backoffLines(t, backoffClientSample, "unblock id 1 [2:00000000::::0,MAX)", "unblock id 1 [2:00000000::::0,2:80000000::::0)"), backoffPrimarySample, "no UNBLOCK"},
+		"UNBLOCK older epoch":             {backoffLines(t, backoffClientSample, "unblock id 1 [2:00000000::::0,MAX) e27", "unblock id 1 [2:00000000::::0,MAX) e24"), backoffPrimarySample, "precedes BLOCK epoch"},
+		"reply before UNBLOCK": {append(withoutLines(backoffClientSample, "unblock id 1 [2:00000000::::0,MAX) e27) ====", "out=16384b"),
 			strings.Replace(backoffClientSample[11], " 4 ==== ", " 3 ==== ", 1), strings.Replace(backoffClientSample[8], " 3 ==== ", " 4 ==== ", 1)),
 			backoffPrimarySample, "answered before the UNBLOCK"},
 		"no reply":      {withoutLines(backoffClientSample, "out=16384b"), backoffPrimarySample, "no reply to read tid 3"},
-		"failed reply":  {backoffLines(t, backoffClientSample, "ondisk = 0) v8 ==== 160+0+16384", "ondisk = -5) v8 ==== 160+0+16384"), backoffPrimarySample, "result -5"},
+		"failed reply":  {backoffLines(t, backoffClientSample, "ondisk = 0) ==== 160+0+16384", "ondisk = -5) ==== 160+0+16384"), backoffPrimarySample, "result -5"},
 		"reset between": {slices.Insert(slices.Clone(backoffClientSample), 8, `2026-10-22T05:10:30.000+0000 7f1c0affd640  1 client.4321.objecter ms_handle_reset 0x55d0c8e18000 session 0x55d0c8e19000 osd.1`), backoffPrimarySample, "changed between BLOCK"},
 		"reconnect between": {backoffLines(t, backoffClientSample, "<== osd.1 v2:172.18.0.5:6800/1418922307 3 ====", "<== osd.1 v2:172.18.0.5:6800/1418922307 1 ===="),
 			backoffPrimarySample, "changed between BLOCK"},
@@ -170,8 +173,8 @@ func TestBackoffChainNoise(t *testing.T) {
 	stale := []string{
 		// An earlier connection of the same client to the primary carried
 		// an ACK_BLOCK with the same ID, for another read.
-		`2026-10-22T05:09:50.000+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 1 ==== osd_op(client.4321.0:1 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e23) v8 ==== 196+0+0 (crc 0 0 0) 0x5612d0a3c000 con 0x5612d09f2000`,
-		`2026-10-22T05:09:50.004+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 2 ==== osd_backoff(2.0 ack-block id 1 [2:00000000::::head,MAX) e25) v1 ==== 115+0+0 (crc 0 0 0) 0x5612d0a3fc00 con 0x5612d09f2000`,
+		`2026-10-22T05:09:50.000+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 1 ==== osd_op(client.4321.0:1 2.0 2.783cfc59 (undecoded) ondisk+read+known_if_redirected+supports_pool_eio e23) ==== 196+0+0 (crc 0 0 0) 0x5612d0a3c000 con 0x5612d09f2000`,
+		`2026-10-22T05:09:50.004+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 2 ==== osd_backoff(2.0 ack-block id 1 [2:00000000::::0,MAX) e25) ==== 115+0+0 (crc 0 0 0) 0x5612d0a3fc00 con 0x5612d09f2000`,
 	}
 	primary := append(slices.Clone(stale), backoffPrimarySample...)
 	client := slices.Clone(backoffClientSample)
@@ -180,7 +183,7 @@ func TestBackoffChainNoise(t *testing.T) {
 	client = slices.Insert(client, 3,
 		`2026-10-22T05:10:20.400+0000 7f1c0affd640  1 client.4321.objecter ms_handle_reset 0x55d0c8e30000 session 0x55d0c8e31000 osd.2`,
 		`2026-10-22T05:10:20.500+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== mon.0 v2:172.18.0.3:3300/0 1 ==== mon_map magic: 0 v1 ==== 467+0+0 (secure 0 0 0) 0x7f1bf4004f20 con 0x55d0c8dd9c00`,
-		`2026-10-22T05:10:20.600+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.2 v2:172.18.0.6:6800/77 1 ==== osd_backoff(3.0 block id 1 [3:00000000::::head,MAX) e25) v1 ==== 115+0+0 (crc 0 0 0) 0x7f1bf4005b30 con 0x55d0c8e30000`,
+		`2026-10-22T05:10:20.600+0000 7f1c0affd640  1 -- 172.18.0.2:0/2208442118 <== osd.2 v2:172.18.0.6:6800/77 1 ==== osd_backoff(3.0 block id 1 [3:00000000::::0,MAX) e25) ==== 115+0+0 (crc 0 0 0) 0x7f1bf4005b30 con 0x55d0c8e30000`,
 	)
 	chain, err := bindBackoffSample(client, primary)
 	if err != nil {

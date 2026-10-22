@@ -178,7 +178,7 @@ func (e backoffEvent) sameRange(other backoffEvent) bool {
 // from the client's address on the connection that also carried the read.
 // Backoff IDs are per session, so an ID alone joins nothing.
 func bindBackoffBlock(client, primary []backoffEvent, target backoffTarget) (backoffChain, error) {
-	var chain backoffChain
+	chain := backoffChain{ExtraBlocks: []backoffEvent{}, Reconnects: []backoffEvent{}}
 	read := slices.IndexFunc(client, func(e backoffEvent) bool {
 		return e.Kind == "osd_op" && e.Dir == "out" && e.Object == target.Object && strings.HasPrefix(e.Ops, "read ")
 	})
