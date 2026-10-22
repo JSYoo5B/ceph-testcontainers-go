@@ -98,9 +98,10 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("collection changed Docker objects: %+v -> %+v", before, after)
 	}
 	// A caller's absent directory is read whatever it is called, also when
-	// described like the cluster's own control container. Preserve the empty
-	// tree while testing absence, then restore it for the crash collection.
-	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rename('/var/lib/ceph/crash', '/var/lib/ceph/crash.tc-held')`)
+	// described like the cluster's own control container. Remove only this
+	// confirmed-empty helper directory: renaming a directory from an image's
+	// lower overlay layer can fail with EXDEV even within the same parent.
+	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
 		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
@@ -109,7 +110,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
 
-	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rename('/var/lib/ceph/crash.tc-held', '/var/lib/ceph/crash')`)
+	execCommand(t, ctx, helper, "mkdir", "/var/lib/ceph/crash")
 
 	crashDaemon(t, ctx, cluster.ManagerContainer())
 	crashDaemon(t, ctx, osds[0].Container)
