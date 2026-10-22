@@ -18,6 +18,14 @@ change the API.
 
 ### Added
 
+- `ceph.Container.MonitorsContext` and `OSDsContext` list the owned MONs and
+  OSDs like `Monitors` and `OSDs`, but stop waiting for a concurrent topology
+  change when `ctx` ends, as `ManagersContext` already did. The MON
+  replacement diagnostics of `TestMultiClusterMonitorBootstrapRefresh` use
+  them for the quorum wait, every snapshot, the warm-daemon identities and
+  the log traces, so a held topology mutex no longer outlives the failure
+  bundle's bound (#4).
+
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
   ordinary cluster-owned Docker local named volume, allocated on the first OSD.
   Purged OSD directories are discarded only after container removal; busy volume
@@ -350,6 +358,14 @@ change the API.
   the replica is back. The `client-osd/backoff` coverage row becomes partial;
   object-scoped backoffs stay uncovered (#5). See
   [OSD backoff](docs/guides/messenger-client-fixtures.md#osd-backoff).
+- The feasibility report `docs/research/bluestore-block-faults.md` records a
+  bounded probe of a test-owned sparse file, loop device and device-mapper
+  mapping on a hosted Linux runner, without Ceph: separate read, write and
+  flush delays, `EIO` from `error` and direction-specific `flakey` windows,
+  verified restore with exact readback, and owned cleanup. A whole-device
+  delay left `dmsetup resume` timed out after the kernel had installed the
+  table. The report gives a conditional go for proving OSD attachment in a
+  separate step (#7). The probe and its workflow are research tooling, not API.
 
 ### Changed
 
@@ -499,6 +515,13 @@ change the API.
   must keep the same test names in the same batch; the selection is part of
   each profile's tags, build key and history identity. No workflow passes a
   selection, so CI behavior is unchanged (#24).
+- `tagged-runtime.yml` takes one `bug_compatibility` input, empty by default,
+  and passes it as an argument to every planner command of the run. The Plan
+  job refuses an invalid selection before any runtime job starts, and a
+  runtime job whose recomputed profile tags differ from its matrix entry's
+  fails before building. History rows record the selection, refuse receipts
+  of another selection, and the job summary shows it beside the role image
+  IDs. No caller passes the input, so CI behavior is unchanged (#24).
 
 - `ci_measurements.py cohorts` joins measured runtime jobs to their saved
   history rows by repository, run ID, run attempt and job ID, and groups the

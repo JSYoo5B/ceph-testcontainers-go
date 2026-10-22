@@ -14,7 +14,7 @@ import (
 )
 
 func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
-	for _, getter := range []string{"config", "managers"} {
+	for _, getter := range []string{"config", "managers", "monitors", "osds"} {
 		t.Run(getter, func(t *testing.T) {
 			cluster := &Container{}
 			assertContextLockQueued(t, &cluster.mu, func(ctx context.Context) error {
@@ -24,6 +24,10 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 					_, _, err = cluster.ConnectionConfigContext(ctx)
 				case "managers":
 					_, err = cluster.ManagersContext(ctx)
+				case "monitors":
+					_, err = cluster.MonitorsContext(ctx)
+				case "osds":
+					_, err = cluster.OSDsContext(ctx)
 				}
 				return err
 			})
@@ -107,6 +111,41 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 	}
 }
 
+func TestMonitorAndOSDContextsMatchTheirLegacyGetters(t *testing.T) {
+	primary := &testcontainers.DockerContainer{}
+	c, b := &MonitorContainer{DaemonName: "c"}, &MonitorContainer{DaemonName: "b"}
+	osd0, osd2 := &OSDContainer{ID: 0}, &OSDContainer{ID: 2}
+	cluster := &Container{Container: primary, monitors: map[string]*MonitorContainer{"c": c, "b": b},
+		osds: map[int]*OSDContainer{2: osd2, 0: osd0}}
+	for _, terminated := range []bool{false, true} {
+		cluster.monitorTerminated = terminated
+		monitors, err := cluster.MonitorsContext(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy := cluster.Monitors()
+		if len(monitors) != len(legacy) {
+			t.Fatalf("terminated=%v: monitors %v, legacy %v", terminated, monitors, legacy)
+		}
+		for i := range monitors {
+			if monitors[i].DaemonName != legacy[i].DaemonName || monitors[i].Container != legacy[i].Container {
+				t.Fatalf("terminated=%v: monitor %d is %+v, legacy %+v", terminated, i, monitors[i], legacy[i])
+			}
+		}
+		if want := map[bool]int{false: 3, true: 2}[terminated]; len(monitors) != want || monitors[len(monitors)-1] != c {
+			t.Fatalf("terminated=%v: monitor membership/order %v", terminated, monitors)
+		}
+	}
+	osds, err := cluster.OSDsContext(t.Context())
+	if err != nil || len(osds) != 2 || osds[0] != osd0 || osds[1] != osd2 {
+		t.Fatalf("osd descriptors/order: %v %v", osds, err)
+	}
+	osds[0] = nil
+	if cluster.osds[0] != osd0 {
+		t.Fatal("osd snapshot modified ownership map")
+	}
+}
+
 func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T) {
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -116,6 +155,12 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 	}
 	if _, err := cluster.ManagersContext(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("managers: %v", err)
+	}
+	if _, err := cluster.MonitorsContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("monitors: %v", err)
+	}
+	if _, err := cluster.OSDsContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("osds: %v", err)
 	}
 	if _, _, err := cluster.ConnectionConfigContext(t.Context()); err != nil {
 		t.Fatal(err)

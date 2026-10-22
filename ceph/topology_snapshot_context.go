@@ -57,6 +57,38 @@ func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, e
 	return result, nil
 }
 
+// MonitorsContext returns the owned MON membership sorted by daemon name,
+// like Monitors, waiting for the topology only while ctx remains active.
+func (c *Container) MonitorsContext(ctx context.Context) ([]*MonitorContainer, error) {
+	if gateErr := c.sharedGate("MonitorsContext"); gateErr != nil {
+		return nil, gateErr
+	}
+	if c == nil {
+		return nil, errors.New("ceph cluster is unavailable")
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
+	defer c.mu.Unlock()
+	return c.monitorsLocked(), nil
+}
+
+// OSDsContext returns the owned OSD descriptors sorted by ID, like OSDs,
+// waiting for the topology only while ctx remains active.
+func (c *Container) OSDsContext(ctx context.Context) ([]*OSDContainer, error) {
+	if gateErr := c.sharedGate("OSDsContext"); gateErr != nil {
+		return nil, gateErr
+	}
+	if c == nil {
+		return nil, errors.New("ceph cluster is unavailable")
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
+	defer c.mu.Unlock()
+	return c.osdsLocked(), nil
+}
+
 // ControlContainerContext returns the stable CLI handle while bounding a
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
