@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_recovery && (!ci_batch || ci_batch_container_pause))))
 
-//ci: timeout=25m job-timeout=35 representative=recovery image-roles=essential,client
+//ci: timeout=25m job-timeout=35 representative=recovery image-roles=essential,client,cephfs
 
 package integration_test
 
