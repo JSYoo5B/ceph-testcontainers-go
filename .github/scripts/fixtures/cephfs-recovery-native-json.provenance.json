@@ -5,8 +5,6 @@
     "go",
     "test",
     "-mod=readonly",
-    "-overlay=/private/tmp/ceph-slow-scenario-wpq-20261009/overlay.json",
-    "-exec=/private/tmp/ceph-slow-scenario-wpq-20261009/runner-controls/exec_frozen.py",
     "-json",
     "-tags=integration,features,topology,hostnetwork,multicluster",
     "-count=1",
@@ -63,7 +61,6 @@
   "original_log_bytes": 156031,
   "original_log_sha256": "ca2e4d6145b9f0144b0f3634906d066ea76870e1adf293a2c23768ee1505dbb2",
   "original_test_file_sha256": "2ccd8c84e1a7fc32f7785b5f02db459e2da078e554177a7686b6ae66c0d9a47e",
-  "overlay_sha256": "41c74c8d60a68b1651056c75b7845670d58a2e7cc69b3d2d9995101c97c10617",
   "projection": "Original JSON lifecycle, RUN/PASS/package Output and native proof records only, in exact original order. Root executed bridge/peer default-scheduler scenario with a frozen phase-measurement overlay. This parser control is not a new native run or evidence for performance by itself.",
   "schema": "ceph-cephfs-recovery-json-parser-fixture/v1"
 }
