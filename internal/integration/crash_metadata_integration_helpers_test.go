@@ -76,6 +76,10 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	if err != nil {
 		t.Fatal(err)
 	}
+	helperOutcome := ceph.CrashDirectoryEmpty
+	if cluster.UsesRoleImages() && cluster.Images().Client != cluster.Images().Essential {
+		helperOutcome = ceph.CrashDirectoryAbsent
+	}
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
 	osds := cluster.OSDs()
 
@@ -87,8 +91,8 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	}
 	for _, result := range report.Containers {
 		expected := ceph.CrashDirectoryEmpty
-		if result.Role == "client" && cluster.UsesRoleImages() && cluster.Images().Client != cluster.Images().Essential {
-			expected = ceph.CrashDirectoryAbsent
+		if result.ContainerID == helper.GetContainerID() {
+			expected = helperOutcome
 		}
 		if result.Outcome != expected || result.State != "running" {
 			t.Fatalf("%s %s before any crash: %+v", result.Role, result.Name, result)
@@ -102,7 +106,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
 		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
-			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryEmpty
+			return result.ContainerID == helper.GetContainerID() && result.Outcome == helperOutcome
 		}) {
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
@@ -143,7 +147,11 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Logf("%s: crash %s at %s, Ceph %s, exit code %d, image %s; ignored entries %d", name, record.CrashID, record.Timestamp, record.CephVersion, result.ExitCode, result.ImageID, result.IgnoredEntries)
 	}
 	for name, state := range map[string]string{"osd.1": "exited", "mon.a": "running", "client.helper": "running"} {
-		if result := results[name]; result.Outcome != ceph.CrashDirectoryEmpty || result.State != state {
+		expected := ceph.CrashDirectoryEmpty
+		if name == "client.helper" {
+			expected = helperOutcome
+		}
+		if result := results[name]; result.Outcome != expected || result.State != state {
 			t.Fatalf("%s: %+v", name, result)
 		}
 	}
