@@ -889,8 +889,10 @@ builds in `ceph-testcontainers-images`. GitHub serves only a whole job log,
 so only its cache lines are stored, without timestamps, in
 `cachelogs/<job id>.json`: every step header, each `actions/cache` step
 section, the `go version` line, the runner's `Cache mode`, lines naming a
-`cache-to` destination and BuildKit cache lines, at most 400 lines (the
-excerpt records whether it was truncated). An
+`cache-to` destination, the continuation targets of a multiline `cache-to:`
+input and BuildKit cache lines, at most 400 lines (the excerpt records
+whether it was truncated). A `cache-to` line cut at the 500-character line
+width is marked as cut. An
 expired log is stored as unavailable and not read again; any other failed
 request is counted and read on the next call.
 
@@ -917,10 +919,12 @@ cut). An empty excerpt therefore leaves the steps `unknown`, never
 
 BuildKit's `exporting cache to registry` names no destination, and one build
 may import several references and export to another. An export's key is the
-literal `ref=` of a `--cache-to` or `cache-to:` input of its own step when
-the step names exactly one. A reference through a variable, two
-destinations or none leave the key empty; it is never taken from an
-import.
+literal `ref=` of its own step's cache-to selection when that selection is
+exactly one destination. The selection gathers every `--cache-to=<target>`,
+separate `--cache-to <target>` argument (as `build-push-action` emits them),
+`cache-to:` input and its continuation lines. A reference through a
+variable, a destination without a ref, two destinations, none, or a cut
+`cache-to` line leave the key empty; it is never taken from an import.
 
 Only a log line sets an outcome:
 

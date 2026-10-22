@@ -842,8 +842,21 @@ CACHE_STEP = re.compile(r"^(Restore|Save)\b.*\bcache\b|^(Run|Post Run) actions/c
 # Every cache-to destination of a step, as written: --cache-to=... or a
 # cache-to: input. Its literal registry ref is its identity; a destination
 # without a ref, or one naming a shell or expression variable, is unresolved.
-CACHE_TO = re.compile(r"cache-to[=:]\s*([^\s\"']+)")
+# Written --cache-to=<target>, as the separate arguments --cache-to <target>
+# that build-push-action emits, or as a cache-to: input whose further
+# targets follow on continuation lines.
+CACHE_TO = re.compile(r"cache-to(?:[=:]|\s+)\s*([^\s\"']+)")
 CACHE_TO_REF = re.compile(r"\bref=([^,\s\"']+)")
+CACHE_TO_INPUT = re.compile(r"^\s+cache-to:")
+# An action input line ("  key: value") or a log command ends a multiline
+# cache-to input.
+ACTION_INPUT = re.compile(r"^  [A-Za-z0-9_-]+:")
+# Marks an excerpt line naming a cache-to destination that was cut at the
+# excerpt width: a destination may be missing from it.
+CUT_MARK = " [cut]"
+# The excerpt keeps a continuation target of a multiline cache-to input
+# under this prefix, so that the ledger reads it without the lines around.
+CACHE_TO_CONTINUED = "  cache-to+ "
 
 
 def cache_to_ref(target):
@@ -857,15 +870,25 @@ def cache_excerpt(text):
     every step header, each actions/cache step section (inputs and results),
     the Go toolchain line, the runner's cache mode, lines naming a cache-to
     destination and BuildKit cache lines. Returns (lines, truncated)."""
-    lines, section = [], False
+    lines, section, cache_to_input = [], False, False
     for raw in text.splitlines():
         line = LOG_TIMESTAMP.sub("", raw, count=1).rstrip()
         header = line.startswith("##[group]Run ")
         if header:
             section = line.startswith("##[group]Run actions/cache")
+        if header or line.startswith("##[") or ACTION_INPUT.match(line):
+            cache_to_input = bool(CACHE_TO_INPUT.match(line))
+            continuation = False
+        else:
+            # The further targets of a multiline cache-to input.
+            continuation = cache_to_input and bool(line.strip())
         buildx = BUILDX_LINE.match(line)
         if (header or section or line.startswith("Cache mode: ") or GO_VERSION.match(line) or "cache-to" in line
-                or (buildx and BUILDX_CACHE.search(buildx.group(2)))):
+                or continuation or (buildx and BUILDX_CACHE.search(buildx.group(2)))):
+            if continuation:
+                line = CACHE_TO_CONTINUED + line.strip()
+            if len(line) > CACHE_EXCERPT_WIDTH and "cache-to" in line:
+                line = line[:CACHE_EXCERPT_WIDTH - len(CUT_MARK)] + CUT_MARK
             lines.append(line[:CACHE_EXCERPT_WIDTH])
     return lines[:CACHE_EXCERPT_LINES], len(lines) > CACHE_EXCERPT_LINES
 
@@ -914,7 +937,12 @@ def cache_entries(lines):
             mode = line.split(": ", 1)[1]
         if line.startswith("##[group]Run "):
             current, destinations = None, set()
+        if line.startswith(CACHE_TO_CONTINUED):
+            destinations.add(line[len(CACHE_TO_CONTINUED):].removesuffix(CUT_MARK))
         destinations.update(CACHE_TO.findall(line))
+        if line.endswith(CUT_MARK) and "cache-to" in line:
+            # A cut line may hide another destination.
+            destinations.add(CUT_MARK)
         if line.startswith("##[group]Run "):
             if line.startswith("##[group]Run actions/cache"):
                 current = {"source": "actions/cache", "operation": "save" if "/save@" in line else "restore",

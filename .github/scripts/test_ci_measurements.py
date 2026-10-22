@@ -638,6 +638,37 @@ class CacheLedgerTests(unittest.TestCase):
                               + " first", "##[group]Run docker buildx build second", *build)):
             self.assertEqual(self.outcomes(text)[-1], ("registry", "export", None, "saved"))
 
+    def test_separate_argument_and_multiline_cache_to_selections_are_kept_whole(self):
+        a, b = "registry.example/a:cache", "registry.example/b:cache"
+        build = ("#20 exporting cache to registry", "#20 writing cache image manifest sha256:" + "4" * 64 + " done",
+                 "#21 exporting cache to registry", "#21 writing cache image manifest sha256:" + "5" * 64 + " done")
+        command = ("[command]/usr/bin/docker buildx build --cache-to type=registry,ref=" + a
+                   + " --cache-to type=registry,ref=" + b + " --push .")
+        # build-push-action: a multiline cache-to input, then its command with
+        # separate --cache-to arguments.
+        multiline = log_text("##[group]Run docker/build-push-action@v7", "with:",
+                             "  cache-to: type=registry,ref=" + a, "type=registry,ref=" + b, "  push: true",
+                             "##[endgroup]", command, *build)
+        lines, truncated = measure.cache_excerpt(multiline)
+        self.assertFalse(truncated)
+        self.assertIn("  cache-to+ type=registry,ref=" + b, lines)
+        self.assertEqual([outcome[2] for outcome in self.outcomes(multiline)], [None, None])
+        # Either half alone still names both destinations.
+        for text in (log_text("##[group]Run docker/build-push-action@v7", "with:", "  cache-to: type=registry,ref=" + a,
+                              "type=registry,ref=" + b, "##[endgroup]", *build),
+                     log_text("##[group]Run docker/build-push-action@v7", command, *build)):
+            self.assertEqual([outcome[2] for outcome in self.outcomes(text)], [None, None])
+        # One separate --cache-to argument is a single explicit destination.
+        single = log_text("##[group]Run docker/build-push-action@v7",
+                          "[command]/usr/bin/docker buildx build --cache-to type=registry,ref=" + a + " --push .", *build)
+        self.assertEqual([outcome[2] for outcome in self.outcomes(single)], [a, a])
+        # A cache-to line cut at the excerpt width may hide a destination.
+        cut = log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + a + " "
+                       + "x" * measure.CACHE_EXCERPT_WIDTH + " --cache-to=type=registry,ref=" + b, *build)
+        lines, _ = measure.cache_excerpt(cut)
+        self.assertTrue(any(line.endswith(measure.CUT_MARK) for line in lines))
+        self.assertEqual([outcome[2] for outcome in self.outcomes(cut)], [None, None])
+
     def test_the_excerpt_keeps_only_cache_lines_without_timestamps(self):
         lines, truncated = measure.cache_excerpt(GO_LOG)
         self.assertFalse(truncated)
