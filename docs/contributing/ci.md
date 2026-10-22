@@ -100,8 +100,11 @@ merely unused, a failed `buildcache` leaves the cache unsaved without failing
 `roles-v2.yml` validates the explicit essential/client/cephfs/rbd-aux/rgw
 contract using published images, as the category workflows now do. Image
 production and qualification belong to `ceph-testcontainers-images`; consumer
-workflows pull and freeze published identities and never rebuild candidate
-images. Registry publication remains a separate operation.
+workflows pull the checked-in index digests from `.github/ceph-role-images.json`
+and freeze native local IDs; they never rebuild candidate images. Registry
+publication remains a separate operation. Updating that pin file selects a
+full consumer campaign. A new default release also updates `ceph.DefaultImage`
+and the supplied-image runner's matching aggregate pin.
 
 Every PR first runs a small Python planner, which records the complete
 merge-base diff (including deleted and renamed inputs) in the
@@ -111,7 +114,7 @@ cannot silently lose a relevant path to GitHub's path-filter limit.
 | Changed input or trigger | Native coverage |
 | --- | --- |
 | Runtime changes under `ceph/`, `cephfs/`, `rbd/`, `rgw/`, `fault/` or `internal/` | **Smoke**: current supported release (Tentacle 20.2.4), Linux/amd64, `make roles-v2-smoke` |
-| Explicit image selection (`ceph/images*.go`), role-image fixtures/routing tests, `Makefile`, Go dependencies, this workflow/planner, image-matrix release table or cleanup checker | **Full**: every supported release (Tentacle 20.2.4 and Squid 19.2.5), Linux/amd64 and Linux/arm64 |
+| Explicit image selection (`ceph/images*.go`), role-image fixtures/routing tests, `Makefile`, Go dependencies, this workflow/planner, published digest pins, image-matrix release table or cleanup checker | **Full**: every supported release (Tentacle 20.2.4 and Squid 19.2.5), Linux/amd64 and Linux/arm64 |
 | Documentation, standalone `internal/tools/`, the separate `internal/integration/goceph/` module, or unrelated CI tooling alone | **None**: planner records why; no image preparation or native test is claimed |
 | PR with `ci:full`, or a PR in a `CI_RELEASE_PHASE=true` release phase | **Full**, overriding the file selection |
 | Weekly schedule on `main` | **Full** |

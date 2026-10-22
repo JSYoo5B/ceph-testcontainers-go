@@ -20,7 +20,7 @@ FULL_PATHS = (
     "internal/integration/role_images_v2*", "rbd/*role_images_v2*",
     ".github/workflows/roles-v2.yml", ".github/scripts/*roles_v2*",
     ".github/scripts/check_runtime_cleanup.py", ".github/scripts/run_image_matrix.py",
-    "Makefile", "go.mod", "go.sum",
+    ".github/ceph-role-images.json", "Makefile", "go.mod", "go.sum",
 )
 RUNTIME_ROOTS = ("ceph/", "cephfs/", "rbd/", "rgw/", "fault/", "internal/")
 EXCLUDED_ROOTS = ("internal/tools/", "internal/integration/goceph/")

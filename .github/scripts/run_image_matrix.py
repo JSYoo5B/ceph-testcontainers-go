@@ -140,8 +140,19 @@ def pin_references(references, digests):
     """Pin each role tag to its registry digest, so that every attempt of a
     campaign pulls the same manifest even when the tag moves. A pinned role
     that this run does not prepare is ignored."""
-    return {role: reference + "@" + digests[role] if role in digests else reference
+    return {role: reference.split("@", 1)[0] + "@" + digests[role] if role in digests else reference
             for role, reference in references.items()}
+
+
+def published_role_pins(release):
+    """Checked-in index digests of one qualified publication generation."""
+    data = json.loads((ROOT / ".github/ceph-role-images.json").read_text())
+    pins = data.get("images", {}).get(release, {})
+    if (data.get("schema") != 1 or data.get("contract") != "roles-v2"
+            or set(pins) != set(V2_ROLE_ENV) | {"all"}
+            or any(not isinstance(value, str) or DIGEST.fullmatch(value) is None for value in pins.values())):
+        raise ValueError("published dependency-role pins are incomplete or invalid for " + release)
+    return pins
 
 
 def image_references(variant, layout, release, roles=None):
@@ -152,11 +163,16 @@ def image_references(variant, layout, release, roles=None):
         if tuple(roles) != tuple(ROLE_ENV):
             raise ValueError("the all layout serves every role of the selected contract")
         reference = RELEASES[release] if variant == "official" and CONTRACT == "legacy" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
-        if CONTRACT == "roles-v2" and variant == "official" and release == RELEASE:
-            reference = DEFAULT_IMAGE
-        return {"all": reference}
-    return {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
-            for role in ROLE_ENV if role in roles}
+        references = {"all": reference}
+    else:
+        references = {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
+                      for role in ROLE_ENV if role in roles}
+    if CONTRACT == "roles-v2" and variant == "official":
+        pins = published_role_pins(release)
+        references = {role: reference + "@" + pins[role] for role, reference in references.items()}
+        if layout == "all" and release == RELEASE and references["all"] != DEFAULT_IMAGE:
+            raise ValueError("default aggregate does not match the published role pins")
+    return references
 
 
 def native_platform(info):
@@ -174,7 +190,8 @@ def source_manifest(root):
     # Hash the actual checkout inputs rather than treating a caller's revision
     # label as proof of unmodified source. Generated output is never included.
     paths = {root / "Makefile", root / "go.mod", root / "go.sum",
-             root / ".github/scripts/run_image_matrix.py"}
+             root / ".github/scripts/run_image_matrix.py",
+             root / ".github/ceph-role-images.json"}
     for directory in ("ceph", "cephfs", "rgw", "rbd", "internal"):
         paths.update((root / directory).rglob("*.go"))
     paths.update(path for path in (root / "ceph/internal/scripts").rglob("*") if path.is_file())

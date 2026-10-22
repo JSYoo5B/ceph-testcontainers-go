@@ -33,7 +33,7 @@ class RolesV2PlanTests(unittest.TestCase):
                                  ("none", 0, {"include": []}))
 
     def test_contract_changes_retain_every_release_and_architecture(self):
-        paths = ("ceph/images.go", "ceph/images_test.go", "Makefile", "go.mod", "go.sum",
+        paths = (".github/ceph-role-images.json", "ceph/images.go", "ceph/images_test.go", "Makefile", "go.mod", "go.sum",
                  ".github/workflows/roles-v2.yml", ".github/scripts/roles_v2_plan.py",
                  ".github/scripts/test_roles_v2_plan.py", ".github/scripts/check_runtime_cleanup.py",
                  ".github/scripts/run_image_matrix.py",

@@ -90,6 +90,7 @@ class MatrixTests(unittest.TestCase):
         self.write("go.mod", "module " + MODULE + "\n\ngo 1.25.0\n")
         self.write("go.sum", "example\n")
         self.write(".github/scripts/run_image_matrix.py", SCRIPT.read_text())
+        self.write(".github/ceph-role-images.json", (SCRIPT.parents[2] / ".github/ceph-role-images.json").read_text())
         self.write("ceph/ceph.go", 'package ceph\nconst DefaultImage = "' + runner.OFFICIAL_IMAGE + '"\n')
         self.write("internal/integration/lifecycle.go", "package integration\n")
         self.write("ceph/internal/scripts/control.sh", "#!/bin/sh\n")
@@ -602,6 +603,26 @@ class VersionedRoleSelectionTests(unittest.TestCase):
         with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
             self.assertEqual(runner.image_references("official", "all", runner.RELEASE), {"all": runner.DEFAULT_IMAGE})
 
+    def test_all_official_role_refs_pin_one_checked_in_publication(self):
+        with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            for release in runner.RELEASES:
+                pins = runner.published_role_pins(release)
+                refs = runner.image_references("official", "roles", release)
+                self.assertEqual(set(refs), set(runner.V2_ROLE_ENV))
+                for role, ref in refs.items():
+                    self.assertTrue(ref.endswith("@" + pins[role]))
+                override = "sha256:" + "f" * 64
+                changed = runner.pin_references(refs, {"essential": override})
+                self.assertEqual(changed["essential"].count("@"), 1)
+                self.assertTrue(changed["essential"].endswith("@" + override))
+                self.assertEqual(changed["client"], refs["client"])
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(runner, "ROOT", Path(directory)):
+                root = Path(directory)
+                (root / ".github").mkdir()
+                (root / ".github/ceph-role-images.json").write_text(json.dumps({"schema": 1, "contract": "roles-v2", "images": {}}))
+                with self.assertRaisesRegex(ValueError, "pins are incomplete"):
+                    runner.image_references("official", "roles", "20.2.4")
+
     def test_default_cli_is_dependency_roles_and_rejects_legacy_role_names(self):
         with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
             args = runner.parse_arguments([])
@@ -632,7 +653,8 @@ class VersionedRoleSelectionTests(unittest.TestCase):
         with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
             for variant in ("official", "debian", "ubuntu"):
                 self.assertEqual(runner.image_references(variant, "all", "19.2.5"),
-                                 {"all": runner.REGISTRY + ":roles-v2-" + variant + "-19.2.5-all"})
+                                 {"all": runner.REGISTRY + ":roles-v2-" + variant + "-19.2.5-all"
+                                  + ("@" + runner.published_role_pins("19.2.5")["all"] if variant == "official" else "")})
 
     def test_auto_contract_follows_explicit_v2_roles_and_never_legacy_fallback(self):
         with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
