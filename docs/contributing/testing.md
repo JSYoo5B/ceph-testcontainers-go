@@ -663,7 +663,13 @@ Other release differences, kept out of the table on purpose:
   output. The warm MGRs, OSDs and MDS daemons run with `debug_monc 10/10` from
   the start of the replacement to the end of the test. The MDS socket is
   reached with the `ceph` CLI in the MDS's own container; an MDS image without
-  the CLI leaves the MDS observations marked incomplete. When a later step
+  the CLI leaves the MDS observations marked incomplete. The recorder lists
+  the owned MONs, MGRs and OSDs with `MonitorsContext`, `ManagersContext` and
+  `OSDsContext`, each within one query bound. While another operation holds
+  the topology, the bundle records `list monitors: ...` (or managers, osds)
+  as incomplete instead of waiting, keeps the observations that need no
+  membership, and leaves a debug window whose daemon it cannot identify
+  `skipped: identity unavailable`. When a later step
   fails, for example the CephFS observation after the mirror restarts, the
   cleanup logs a bundle for the phase `after replacement` before the fixture
   is removed. Otherwise the cleanup restores the exact prior level on the same
