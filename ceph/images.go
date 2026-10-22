@@ -40,14 +40,15 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// RunWithImages starts a cluster with explicit role images.
+// RunWithImages starts a cluster with explicit role images. Service image options
+// in opts override the corresponding role in images.
 func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	images, err := images.normalized()
 	if err != nil {
 		return nil, invalidRequest("image set: %v", err)
 	}
 
-	return Run(ctx, images.Essential, append(opts, WithImages(images))...)
+	return Run(ctx, images.Essential, append([]testcontainers.ContainerCustomizer{WithImages(images)}, opts...)...)
 }
 
 // WithImages selects role images. Essential must equal the Run image.

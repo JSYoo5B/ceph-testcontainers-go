@@ -23,6 +23,45 @@ func TestImageSetSelectionDoesNotFallback(t *testing.T) {
 	}
 }
 
+func TestRunWithImagesAppliesServiceOverridesAfterBaseSet(t *testing.T) {
+	for _, role := range []string{"rgw", "mds"} {
+		for _, selection := range []string{"missing", "replacement", "aggregate"} {
+			t.Run(role+"/"+selection, func(t *testing.T) {
+				images := ImageSet{Essential: "core", Client: "toolkit"}
+				switch selection {
+				case "replacement":
+					images.RGW, images.CephFS = "old-gateway", "old-mds"
+				case "aggregate":
+					images = ImageSet{All: "complete"}
+				}
+				original := images
+				var effective *options
+				capture := Option(func(o *options) error { effective = o; return nil })
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				cluster, err := RunWithImages(ctx, images,
+					(serviceHooks{}).WithServiceImage(role, "selected-service"), capture)
+				if cluster != nil || !errors.Is(err, context.Canceled) {
+					t.Fatalf("valid role selection did not reach canceled admission: %v %v", cluster, err)
+				}
+				if effective == nil || effective.imageSet == nil {
+					t.Fatal("base image set was not applied")
+				}
+				selected, runtime := effective.imageSet.RGW, effective.rgwImage
+				if role == "mds" {
+					selected, runtime = effective.imageSet.CephFS, effective.mdsImage
+				}
+				if selected != "selected-service" || runtime != selected {
+					t.Fatalf("service override lost: role=%q runtime=%q", selected, runtime)
+				}
+				if images != original {
+					t.Fatal("caller image set was modified")
+				}
+			})
+		}
+	}
+}
+
 func TestRADOSInspectionRequiresToolkitInsteadOfCoreFallback(t *testing.T) {
 	c := &Container{Container: &monitorLifecycleDaemon{}, settings: options{startupTimeout: time.Second, imageSet: &ImageSet{Essential: "core"}}}
 	if _, err := c.PGInconsistencies(t.Context(), "7.0"); !errors.Is(err, ErrInvalidRequest) {
