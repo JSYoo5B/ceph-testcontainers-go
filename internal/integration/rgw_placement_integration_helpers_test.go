@@ -22,12 +22,25 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTPClient, path string, payload []byte) {
+// rgwPlacementBindSource captures the source gateway's container and process
+// start before the replicated write, within one inspection bound.
+func rgwPlacementBindSource(t *testing.T, parent context.Context, gateway *rgw.Gateway) rgwReplicaSource {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, rgwPlacementReplicaBounds.Inspect)
+	defer cancel()
+	source, err := rgwReplicaBindSource(ctx, gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
+func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTPClient, source rgwReplicaSource, path string, payload []byte) {
 	t.Helper()
 	// A shutdown/reload can abort native lease coroutines without unlocking.
 	// v20.2.4's unchanged 120s lease, 30s backoff and 20s metadata/data polls
 	// therefore need more time than the ordinary one-minute S3 policy fixture.
-	seen, err := rgwReplicaConverged(parent, client, path, payload, rgwPlacementReplicaBounds)
+	seen, err := rgwReplicaConverged(parent, client, source, path, payload, rgwPlacementReplicaBounds)
 	if err != nil {
 		t.Fatalf("native realm replica did not converge: %v", err)
 	}
@@ -35,8 +48,9 @@ func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTP
 }
 
 // rgwPlacementReplicaBounds keep the four-minute convergence budget; one
-// read of the small replicated object is bounded well inside it.
-var rgwPlacementReplicaBounds = rgwReplicaBounds{Wait: 4 * time.Minute, Read: 30 * time.Second, Interval: time.Second}
+// probe of the small replicated object is bounded well inside it, and its
+// source inspection takes at most 10 seconds of that probe.
+var rgwPlacementReplicaBounds = rgwReplicaBounds{Wait: 4 * time.Minute, Read: 30 * time.Second, Inspect: 10 * time.Second, Interval: time.Second}
 
 func rgwPlacementSafeDiagnostic(data []byte, gateway *rgw.Gateway) string {
 	text := string(data)

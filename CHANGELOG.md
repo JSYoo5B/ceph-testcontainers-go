@@ -396,6 +396,15 @@ change the API.
   four-minute budget, and a failure names the last sample: HTTP status, S3
   error code (`NoSuchKey` or `NoSuchBucket`), byte count and SHA-256 (#2).
 
+- The same replica wait now ends at the next probe when the source gateway
+  exits, is removed or restarts, instead of polling the rest of the
+  four-minute budget. It binds the source container ID and process start time
+  before the replicated write, inspects it read-only within 10 seconds per
+  probe, and reports the last replica sample with the source state. Paused and
+  restarting sources are named, not treated as crashes, and inspect errors are
+  counted rather than read as healthy. Exact replica bytes remain the only
+  success (#2).
+
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
   fence after an unconfirmed stop, without closing unrelated targets. This
