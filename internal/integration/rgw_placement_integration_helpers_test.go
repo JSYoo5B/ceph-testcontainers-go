@@ -22,42 +22,35 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTPClient, path string, payload []byte) {
+// rgwPlacementBindSource captures the source gateway's container and process
+// start before the replicated write, within one inspection bound.
+func rgwPlacementBindSource(t *testing.T, parent context.Context, gateway *rgw.Gateway) rgwReplicaSource {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, rgwPlacementReplicaBounds.Inspect)
+	defer cancel()
+	source, err := rgwReplicaBindSource(ctx, gateway)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
+
+func rgwPlacementWaitReplica(t *testing.T, parent context.Context, client s3HTTPClient, source rgwReplicaSource, path string, payload []byte) {
 	t.Helper()
 	// A shutdown/reload can abort native lease coroutines without unlocking.
 	// v20.2.4's unchanged 120s lease, 30s backoff and 20s metadata/data polls
 	// therefore need more time than the ordinary one-minute S3 policy fixture.
-	ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
-	defer cancel()
-	started := time.Now()
-	var last string
-	for {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.endpoint+path, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		client.sign(request, nil, time.Now().UTC())
-		response, err := client.http.Do(request)
-		if err == nil {
-			body, readErr := io.ReadAll(response.Body)
-			_ = response.Body.Close()
-			if readErr == nil && response.StatusCode == http.StatusOK && bytes.Equal(body, payload) {
-				t.Logf("native realm STANDARD_IA replica matched all %d bytes after %s", len(payload), time.Since(started).Round(time.Millisecond))
-				return
-			}
-			var failure struct{ Code, Message string }
-			_ = xml.Unmarshal(body, &failure)
-			last = fmt.Sprintf("HTTP=%d code=%s message=%s bytes=%d expected=%d read=%v", response.StatusCode, failure.Code, failure.Message, len(body), len(payload), readErr)
-		} else {
-			last = err.Error()
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("native realm replica did not converge after %s: %s error=%v", time.Since(started).Round(time.Millisecond), last, ctx.Err())
-		case <-time.After(time.Second):
-		}
+	seen, err := rgwReplicaConverged(parent, client, source, path, payload, rgwPlacementReplicaBounds)
+	if err != nil {
+		t.Fatalf("native realm replica did not converge: %v", err)
 	}
+	t.Logf("native realm STANDARD_IA replica matched all %d bytes after %s", len(payload), seen.Elapsed.Round(time.Millisecond))
 }
+
+// rgwPlacementReplicaBounds keep the four-minute convergence budget; one
+// probe of the small replicated object is bounded well inside it, and its
+// source inspection takes at most 10 seconds of that probe.
+var rgwPlacementReplicaBounds = rgwReplicaBounds{Wait: 4 * time.Minute, Read: 30 * time.Second, Inspect: 10 * time.Second, Interval: time.Second}
 
 func rgwPlacementSafeDiagnostic(data []byte, gateway *rgw.Gateway) string {
 	text := string(data)

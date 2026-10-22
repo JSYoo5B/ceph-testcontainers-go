@@ -864,6 +864,54 @@ The MON commands are read from the MONs' own command list (`ceph mon -h`,
 `ceph mgr -h`) before anything changes. The MGR failover restarts the MGR, so
 expect the MgrMap to move several epochs between the two reported ones.
 
+## OSD backoff
+
+`TestOSDBackoffReceipt` makes a primary send a PG-wide backoff
+(`CEPH_MSG_OSD_BACKOFF`) to a native client whose connection negotiated
+`CEPH_FEATURE_RADOS_BACKOFF`, and logs `OSD_BACKOFF_RECEIPT`. In both
+supported releases `PrimaryLogPG::do_request` backs off a whole PG that is
+peered but not active, so the recipe needs no optional backoff or peering
+debug switch:
+
+1. A one-PG pool on three OSDs with three replicas and `min_size` 3 holds one
+   object of known bytes. The test waits for `active+clean` and records the
+   PG, acting set and primary.
+2. The primary's `debug_ms` is raised to 1 through a configuration override.
+   A retained python-rados client with `debug_ms=1` and `debug_objecter=10`
+   in its own log file stats the object, which opens its session with the
+   primary.
+3. With `noout` held, a non-primary replica stops. The PG must become peered
+   without `active`, without that replica and under the same primary; a PG
+   that never gets there fails the setup. `min_size` is never lowered.
+4. The client submits one asynchronous read. Before the replica starts again,
+   the client's log must show a BLOCK of the PG from the primary after the
+   read, and the primary's log the client's ACK_BLOCK on the connection that
+   carried the read. The read must still be pending and the PG still held.
+5. The replica starts. The client must receive the UNBLOCK, the primary must
+   answer the original read only after it, with result 0, and the read must
+   return the seeded length and SHA-256. The PG must be clean again under the
+   same primary, and `noout` and `debug_ms` are restored with bounded
+   contexts of their own.
+
+The chain is joined by the client's address and entity, the primary, the PG,
+the backoff ID and the range. Backoff IDs count per OSD session, so the ID
+alone joins nothing, and an ACK_BLOCK from an earlier connection of the same
+client is ignored. ACK_BLOCK must carry the BLOCK's epoch; UNBLOCK carries
+the epoch of its release, which may be later. A connection is told apart by
+the sender's address, its message sequence number and the Objecter's
+`ms_handle_reset`; a reconnect between BLOCK and UNBLOCK leaves the chain
+unjoined. Other BLOCKs and reconnects stay in the receipt as `extra_blocks`
+and `reconnects`. The receipt also keeps the placement before, during and
+after the hold with its OSD map epochs, the read's duration, the OSD and
+client image IDs, the release, the platform, the CI run and attempt, and the
+cleanup outcomes. `OSD_BACKOFF_RAW` lines hold the joined log lines.
+
+A PG backoff can also be released on an interval change, so the UNBLOCK alone
+proves neither recovery nor a completed read; the recipe requires the read's
+own result. It does not cover object-scoped backoffs (a degraded or unfound
+object), and a pull request runs it on Tentacle only. The log parsing is
+tested without Docker in `messenger_backoff_fixture_test.go`.
+
 ## Coverage manifest
 
 [`internal/integration/testdata/messenger_coverage.json`](../../internal/integration/testdata/messenger_coverage.json)

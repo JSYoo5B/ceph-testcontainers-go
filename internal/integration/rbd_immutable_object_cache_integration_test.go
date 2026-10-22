@@ -63,14 +63,14 @@ func TestImmutableObjectCache(t *testing.T) {
 	}
 	want := checksum("parent@base", nil)
 
-	lease, err := rbd.TemporaryImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id})
+	lease, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id})
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second, err := rbd.TemporaryImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: "/var/cache/other"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
+	if second, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: id, Path: "/var/cache/other"}); !errors.Is(err, ceph.ErrInvalidRequest) || second != nil {
 		t.Fatalf("a second daemon on the same socket: %v", err)
 	}
 	if status, err := lease.Status(ctx); err != nil || !status.Running || status.CachedObjects != 0 || status.RADOSReads != 0 {

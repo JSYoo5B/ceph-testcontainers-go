@@ -29,7 +29,7 @@
         }
       ],
       "gap": "msgr2.1 is asserted only from messenger dump (Ceph 20) and only for sessions of OSDs; MDS and RGW binds are not checked.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "messenger/secure-mode",
@@ -146,7 +146,7 @@
         }
       ],
       "gap": "No native client lacking the feature is refused or admitted; only the pool flags are checked.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "messenger/address-families",
@@ -245,7 +245,7 @@
         }
       ],
       "gap": "The bundle keeps the refusal but leaves its cause unclassified.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "messenger/fault-injection",
@@ -278,7 +278,7 @@
       "evidence": "none",
       "cases": [],
       "gap": "No recipe records a native connection's keepalive, ACK sequence or reset; MDS session reconnect is covered under client-mds.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "client-mon-mgr/mon-commands",
@@ -695,7 +695,7 @@
         }
       ],
       "gap": "Sparse reads have no native receipt: neither python-rados nor the rados CLI of the official image issues CEPH_OSD_OP_SPARSE_READ (only the C++ API and librbd do).",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "client-osd/backoff",
@@ -705,11 +705,17 @@
         "CEPH_MSG_OSD_BACKOFF",
         "CEPH_FEATURE_RADOS_BACKOFF"
       ],
-      "status": "uncovered",
-      "evidence": "none",
-      "cases": [],
-      "gap": "No recipe makes an OSD send a backoff and records it.",
-      "owner": "#159"
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestOSDBackoffReceipt",
+          "receipt": "OSD_BACKOFF_RECEIPT",
+          "asserts": "a PG-wide backoff: with noout and a non-primary replica of a replicas/min_size 3 pool stopped, the PG is peered but not active under the same primary; one asynchronous python-rados read gets a BLOCK of the whole PG from the primary in the client's debug_ms log, and the primary logs the client's ACK_BLOCK with the same PG, ID, range and epoch on the connection that carried the read, both before the replica starts again; the client then receives the UNBLOCK with the same PG, ID and range at the same or a later epoch on the same connection, the original read is answered only after it, and it returns the seeded length and SHA-256; extra BLOCKs and reconnects are kept in the receipt"
+        }
+      ],
+      "gap": "Only the PG-wide backoff of a peered but inactive PG has a recipe. No recipe makes an OSD send an object-scoped backoff (a degraded or unfound object, osd_backoff_on_degraded), and the recipe's native result is per release: a pull request runs it on Tentacle only.",
+      "owner": "#5"
     },
     {
       "id": "client-osd/blocklist-and-full",
@@ -876,7 +882,7 @@
         }
       ],
       "gap": "POSIX (fcntl) record locks have a receipt only through an opt-in ceph-fuse mount, which needs /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance; fcntl lock state across an MDS failover has no receipt.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "client-mds/snapshots",
@@ -898,7 +904,7 @@
         }
       ],
       "gap": "Snapshot realm updates to a live client are not recorded.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "client-mds/multi-rank-and-standby",
@@ -962,7 +968,7 @@
       "evidence": "none",
       "cases": [],
       "gap": "No recipe sets a quota against a live client or records client metrics or reclaim.",
-      "owner": "#159"
+      "owner": "#5"
     },
     {
       "id": "rbd/image-io",
@@ -1071,7 +1077,7 @@
       ],
       "status": "partial",
       "gap": "Arbitrary bytes are echoed byte for byte only over the MON session (config-key set/get, CRUSH set/get) and the MGR session (crash post/info); on the named-target MSG_COMMAND path the receiver proves the input length of an ignored 1 MiB buffer and the reply carries a JSON buffer, because no admin-socket command of the official image reads arbitrary input or returns binary output.",
-      "owner": "#159",
+      "owner": "#5",
       "evidence": "native-state",
       "cases": [
         {
@@ -1357,7 +1363,7 @@
         }
       ],
       "gap": "Peering and scrub run as outcomes; no recipe observes these messages or their per-step state.",
-      "owner": "#159"
+      "owner": "#5"
     }
   ]
 }
