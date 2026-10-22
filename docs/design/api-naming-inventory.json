@@ -4010,11 +4010,11 @@
       "decision": "baseline"
     },
     {
-      "current": "rbd.TemporaryImmutableObjectCache",
+      "current": "rbd.StartImmutableObjectCache",
       "kind": "function",
       "signature": "func(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)",
       "proposed": "rbd.StartImmutableObjectCache",
-      "decision": "proposal"
+      "decision": "baseline"
     },
     {
       "current": "rbd.TenantNamespace",
