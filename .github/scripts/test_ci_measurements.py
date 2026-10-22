@@ -500,3 +500,397 @@ class CohortTests(unittest.TestCase):
         self.assertEqual(config["passed"]["native"], {"count": 2, "min": 300.0, "median": 300.0, "max": 540.0})
         self.assertEqual([(sample["job_id"], sample["kind"]) for sample in config["samples"]],
                          [("200", "passed"), ("201", "cancelled"), ("202", "passed")])
+
+MODULE_KEY = "go-modules-Linux-" + "e" * 64
+BUILD_KEY = "go-build-Linux-1.26.10-" + "e" * 64
+CACHE_REF = "ghcr.io/owner/images:buildcache-debian-20.2.4-amd64-control"
+
+
+def log_text(*lines):
+    """A job log as GitHub serves it: a byte order mark, then timestamped lines."""
+    return "﻿" + "\n".join("2026-10-20T23:34:{:02d}.1234567Z {}".format(index % 60, line)
+                                for index, line in enumerate(lines)) + "\n"
+
+
+def cache_section(action, key, path, *results):
+    return ("##[group]Run actions/cache/{}@v6".format(action), "with:", "  path: " + path, "  key: " + key,
+            "  enableCrossOsArchive: false", "##[endgroup]") + results
+
+
+GO_LOG = log_text(
+    "Current runner version: '2.338.0'", "Cache mode: write",
+    "##[group]Run actions/setup-go@v7", "go version go1.26.10 linux/amd64",
+    *cache_section("restore", MODULE_KEY, "~/go/pkg/mod", "Cache hit for: " + MODULE_KEY,
+                   "Cache restored successfully", "Cache restored from key: " + MODULE_KEY),
+    *cache_section("restore", BUILD_KEY, "~/.cache/go-build",
+                   "Cache restored from key: go-build-Linux-1.26.9-" + "e" * 64),
+    "##[group]Run make vulncheck", "No vulnerabilities found.",
+    # continue-on-error: the step and the job stay green after this warning.
+    *cache_section("save", BUILD_KEY, "~/.cache/go-build",
+                   "##[warning]Failed to save: Unable to reserve cache with key " + BUILD_KEY
+                   + ", another job may be creating this cache."),
+    "##[group]Run actions/upload-artifact@v7")
+COLD_LOG = log_text(
+    "Cache mode: write", "go version go1.27.3 linux/amd64",
+    *cache_section("restore", MODULE_KEY, "~/go/pkg/mod", "Cache not found for input keys: " + MODULE_KEY),
+    *cache_section("restore", BUILD_KEY, "~/.cache/go-build",
+                   "##[warning]Failed to restore: Cache service responded with 503"),
+    *cache_section("save", MODULE_KEY, "~/go/pkg/mod", "Sent 1 of 1 (100.0%)", "Cache saved with key: " + MODULE_KEY),
+    # A save that ran and stated neither a write nor a failure.
+    *cache_section("save", BUILD_KEY, "~/.cache/go-build", "Sent 0 of 1 (0.0%)"))
+BUILDX_LOG = log_text(
+    "Cache mode: write", "##[group]Run ./build-images.sh",
+    "#7 importing cache manifest from " + CACHE_REF + "-mon",
+    "#7 ERROR: failed to configure registry cache importer: " + CACHE_REF + "-mon: not found",
+    "#8 importing cache manifest from " + CACHE_REF + "-osd",
+    "#8 ERROR: failed to configure registry cache importer: unexpected status 500",
+    # ignore-error=true: the build and the job stay green after this error.
+    "#17 exporting cache to registry", "#17 preparing build cache for export done",
+    "#17 ERROR: failed to push " + CACHE_REF + "-osd: denied: permission_denied",
+    "#7 importing cache manifest from " + CACHE_REF,
+    "#7 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+    "#10 CACHED", "#15 exporting cache to registry", "#15 sending cache export 0.2s done",
+    "#15 writing cache image manifest sha256:" + "2" * 64 + " 0.0s done", "#15 DONE 0.2s",
+    "#9 importing cache manifest from " + CACHE_REF + "-rgw",
+    "#9 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+    "#16 exporting cache to registry", "#16 preparing build cache for export done")
+
+
+def cache_job(identifier, *steps, name="Vulnerability check", conclusion="success"):
+    """A green job with the given (step name, conclusion) cache steps."""
+    return {"id": identifier, "name": name, "run_attempt": 1, "status": "completed", "conclusion": conclusion,
+            "created_at": at(0), "started_at": at(1), "completed_at": at(5),
+            "steps": [step("Set up job", at(1), at(1, 5))]
+            + [{**step(step_name, at(2), at(2, 5)), "conclusion": step_conclusion}
+               for step_name, step_conclusion in steps]}
+
+
+def excerpt(text):
+    lines, truncated = measure.cache_excerpt(text)
+    return {"lines": lines, "truncated": truncated}
+
+
+class CacheLedgerTests(unittest.TestCase):
+    """Cache operations come from log lines only, never from a green job."""
+
+    def outcomes(self, text):
+        return [(entry["kind"], entry["operation"], entry["key"], entry["outcome"])
+                for entry in measure.cache_entries(measure.cache_excerpt(text)[0])]
+
+    def test_go_restores_and_an_ignored_save_failure(self):
+        self.assertEqual(self.outcomes(GO_LOG), [("go-module", "restore", MODULE_KEY, "hit"),
+                                                 ("go-build", "restore", BUILD_KEY, "partial-restore"),
+                                                 ("go-build", "save", BUILD_KEY, "save-failed")])
+        entry = measure.cache_entries(measure.cache_excerpt(GO_LOG)[0])[0]
+        self.assertEqual((entry["toolchain"], entry["platform"], entry["cache_mode"]),
+                         ("go1.26.10", "linux/amd64", "write"))
+
+    def test_misses_failed_restores_confirmed_and_unconfirmed_saves(self):
+        self.assertEqual(self.outcomes(COLD_LOG), [("go-module", "restore", MODULE_KEY, "miss"),
+                                                   ("go-build", "restore", BUILD_KEY, "restore-failed"),
+                                                   ("go-module", "save", MODULE_KEY, "saved"),
+                                                   ("go-build", "save", BUILD_KEY, "unknown")])
+
+    def test_registry_imports_and_exports_including_an_ignored_export_error(self):
+        # The step names no literal cache-to ref, so no export has a known
+        # destination, although each follows an import of a matching name.
+        self.assertEqual(self.outcomes(BUILDX_LOG), [("registry", "import", CACHE_REF + "-mon", "miss"),
+                                                     ("registry", "import", CACHE_REF + "-osd", "restore-failed"),
+                                                     ("registry", "export", None, "save-failed"),
+                                                     ("registry", "import", CACHE_REF, "hit"),
+                                                     ("registry", "export", None, "saved"),
+                                                     ("registry", "import", CACHE_REF + "-rgw", "hit"),
+                                                     ("registry", "export", None, "unknown")])
+
+    def test_an_export_destination_is_only_an_explicit_cache_to_ref(self):
+        source, base, destination = "registry.example/source:cache", "registry.example/base:cache", \
+            "registry.example/dest:cache"
+        build = ("#6 importing cache manifest from " + source,
+                 "#6 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+                 "#7 importing cache manifest from " + base,
+                 "#7 ERROR: failed to configure registry cache importer: " + base + ": not found",
+                 "#20 exporting cache to registry", "#20 writing cache image manifest sha256:" + "3" * 64 + " done")
+        explicit = log_text("##[group]Run docker buildx build --cache-from=type=registry,ref=" + source
+                            + " --cache-from=type=registry,ref=" + base + " --cache-to=type=registry,ref="
+                            + destination + ",mode=max image", *build)
+        self.assertEqual(self.outcomes(explicit), [("registry", "import", source, "hit"),
+                                                   ("registry", "import", base, "miss"),
+                                                   ("registry", "export", destination, "saved")])
+        # A cache-to input of an action, read from its "with:" block.
+        action = log_text("##[group]Run docker/build-push-action@v7", "with:",
+                          "  cache-to: type=registry,ref=" + destination + ",mode=max", "##[endgroup]", *build)
+        self.assertEqual(self.outcomes(action)[-1], ("registry", "export", destination, "saved"))
+        # A variable reference, two destinations, a literal beside a variable
+        # or a non-registry destination, or a cache-to of an earlier step name
+        # no destination.
+        for text in (log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=$cache_ref image",
+                              *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=registry,ref=$dynamic_ref image", *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=local,dest=/cache image", *build),
+                     log_text("##[group]Run docker/build-push-action@v7", "with:",
+                              "  cache-to: type=registry,ref=" + destination + ",mode=max",
+                              "  cache-to: type=registry,ref=${{ env.CACHE_REF }}", "##[endgroup]", *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=registry,ref=registry.example/other:cache image", *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " first", "##[group]Run docker buildx build second", *build)):
+            self.assertEqual(self.outcomes(text)[-1], ("registry", "export", None, "saved"))
+
+    def test_separate_argument_and_multiline_cache_to_selections_are_kept_whole(self):
+        a, b = "registry.example/a:cache", "registry.example/b:cache"
+        build = ("#20 exporting cache to registry", "#20 writing cache image manifest sha256:" + "4" * 64 + " done",
+                 "#21 exporting cache to registry", "#21 writing cache image manifest sha256:" + "5" * 64 + " done")
+        command = ("[command]/usr/bin/docker buildx build --cache-to type=registry,ref=" + a
+                   + " --cache-to type=registry,ref=" + b + " --push .")
+        # build-push-action: a multiline cache-to input, then its command with
+        # separate --cache-to arguments.
+        multiline = log_text("##[group]Run docker/build-push-action@v7", "with:",
+                             "  cache-to: type=registry,ref=" + a, "type=registry,ref=" + b, "  push: true",
+                             "##[endgroup]", command, *build)
+        lines, truncated = measure.cache_excerpt(multiline)
+        self.assertFalse(truncated)
+        self.assertIn("  cache-to+ type=registry,ref=" + b, lines)
+        self.assertEqual([outcome[2] for outcome in self.outcomes(multiline)], [None, None])
+        # Either half alone still names both destinations.
+        for text in (log_text("##[group]Run docker/build-push-action@v7", "with:", "  cache-to: type=registry,ref=" + a,
+                              "type=registry,ref=" + b, "##[endgroup]", *build),
+                     log_text("##[group]Run docker/build-push-action@v7", command, *build)):
+            self.assertEqual([outcome[2] for outcome in self.outcomes(text)], [None, None])
+        # One separate --cache-to argument is a single explicit destination.
+        single = log_text("##[group]Run docker/build-push-action@v7",
+                          "[command]/usr/bin/docker buildx build --cache-to type=registry,ref=" + a + " --push .", *build)
+        self.assertEqual([outcome[2] for outcome in self.outcomes(single)], [a, a])
+        # A cache-to line cut at the excerpt width may hide a destination.
+        cut = log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + a + " "
+                       + "x" * measure.CACHE_EXCERPT_WIDTH + " --cache-to=type=registry,ref=" + b, *build)
+        lines, _ = measure.cache_excerpt(cut)
+        self.assertTrue(any(line.endswith(measure.CUT_MARK) for line in lines))
+        self.assertEqual([outcome[2] for outcome in self.outcomes(cut)], [None, None])
+
+    def test_the_excerpt_keeps_only_cache_lines_without_timestamps(self):
+        lines, truncated = measure.cache_excerpt(GO_LOG)
+        self.assertFalse(truncated)
+        self.assertEqual(lines[:3], ["Cache mode: write", "##[group]Run actions/setup-go@v7",
+                                     "go version go1.26.10 linux/amd64"])
+        self.assertIn("##[group]Run make vulncheck", lines)
+        self.assertNotIn("No vulnerabilities found.", lines)
+        self.assertNotIn("Current runner version: '2.338.0'", lines)
+        lines, truncated = measure.cache_excerpt(log_text(*cache_section("restore", MODULE_KEY, "~/go/pkg/mod",
+                                                                         *["Received"] * 500)))
+        self.assertEqual((len(lines), truncated), (measure.CACHE_EXCERPT_LINES, True))
+
+    def test_ledger_rows_without_a_log_are_unknown_and_skipped_saves_are_not_writes(self):
+        runs = [run(11, "Code checks", "h", at(0)), {**run(12, "Code checks", "h2", at(0), event="push"),
+                                                       "head_branch": "main"}]
+        jobs = {"11": [cache_job(21, ("Restore the Go module cache", "success"),
+                                 ("Save the Go build cache", "skipped")),
+                       cache_job(22, ("Restore the Go module cache", "success")),
+                       cache_job(23, ("Restore the Go module cache", "success"))],
+                "12": [cache_job(31, ("Restore the Go module cache", "success"), ("Restore the Go build cache",
+                                                                                 "success"),
+                                 ("Save the Go build cache", "success"))]}
+        logs = {"22": {"unavailable": "HTTP 410"}, "23": excerpt(COLD_LOG), "31": excerpt(GO_LOG)}
+        rows = measure.cache_ledger(runs, jobs, logs, "owner/repo")
+        summary = [(row["job_id"], row["event"], row["kind"], row["operation"], row["requested"], row["outcome"],
+                    row["evidence_source"]) for row in rows]
+        self.assertEqual(summary, [
+            ("21", "pull_request", "go-module", "restore", True, "unknown", "none"),
+            ("21", "pull_request", "go-build", "save", False, "save-skipped", "step"),
+            ("22", "pull_request", "go-module", "restore", True, "unknown", "none"),
+            ("23", "pull_request", "go-module", "restore", True, "miss", "log"),
+            ("23", "pull_request", "go-build", "restore", True, "restore-failed", "log"),
+            ("23", "pull_request", "go-module", "save", True, "saved", "log"),
+            ("23", "pull_request", "go-build", "save", True, "unknown", "log"),
+            ("31", "push", "go-module", "restore", True, "hit", "log"),
+            ("31", "push", "go-build", "restore", True, "partial-restore", "log"),
+            # The job and its save step are green; the log says nothing was written.
+            ("31", "push", "go-build", "save", True, "save-failed", "log")])
+        self.assertEqual(rows[2]["evidence"], "log unavailable: HTTP 410")
+        self.assertEqual({row["repository"] for row in rows}, {"owner/repo"})
+        self.assertEqual(rows[-1]["head_branch"], "main")
+        conditions = measure.ledger_by_job(rows)
+        self.assertEqual(measure.cache_condition(conditions[("12", "1", "31")]),
+                         "go-build=partial-restore,go-module=hit")
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "21")]), "go-module=unknown")
+        self.assertEqual(measure.cache_condition(()), "no cache restore")
+        self.assertLessEqual({row["outcome"] for row in rows}, set(measure.CACHE_OUTCOMES))
+
+    def test_api_cache_steps_without_an_excerpt_section_stay_unknown(self):
+        runs = [run(11, "Code checks", "h", at(0))]
+        steps = (("Restore the Go module cache", "success"), ("Restore the Go build cache", "success"),
+                 ("Save the Go build cache", "success"))
+        jobs = {"11": [cache_job(21, *steps), cache_job(22, *steps)]}
+        # Truncated inside the first section: the later sections are lost.
+        lines, truncated = measure.cache_excerpt(log_text(*cache_section("restore", MODULE_KEY, "~/go/pkg/mod",
+                                                                         *["Received"] * 500)))
+        logs = {"21": {"lines": lines, "truncated": truncated}, "22": {"lines": [], "truncated": False}}
+        rows = measure.cache_ledger(runs, jobs, logs, "owner/repo")
+        summary = [(row["job_id"], row["kind"], row["operation"], row["outcome"], row["evidence_source"],
+                    row["excerpt_truncated"], row.get("step")) for row in rows]
+        self.assertEqual(summary, [
+            ("21", "go-module", "restore", "unknown", "log", True, "Restore the Go module cache"),
+            ("21", "go-build", "restore", "unknown", "none", True, "Restore the Go build cache"),
+            ("21", "go-build", "save", "unknown", "none", True, "Save the Go build cache"),
+            ("22", "go-module", "restore", "unknown", "none", False, "Restore the Go module cache"),
+            ("22", "go-build", "restore", "unknown", "none", False, "Restore the Go build cache"),
+            ("22", "go-build", "save", "unknown", "none", False, "Save the Go build cache")])
+        self.assertEqual(rows[1]["evidence"], "no cache section in the fetched log excerpt, which is truncated")
+        self.assertEqual(rows[3]["evidence"], "no cache section in the fetched log")
+        conditions = measure.ledger_by_job(rows)
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "21")]),
+                         "go-build=unknown,go-module=unknown")
+        # An empty excerpt is no evidence that nothing was restored.
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "22")]),
+                         "go-build=unknown,go-module=unknown")
+
+    def test_excerpt_sections_match_api_steps_in_order_and_unnamed_sections_stay(self):
+        runs = [run(11, "Code checks", "h", at(0))]
+        jobs = {"11": [cache_job(21, ("Restore the Go build cache", "success"),
+                                 ("Save the Go build cache", "success"))]}
+        rows = measure.cache_ledger(runs, jobs, {"21": excerpt(COLD_LOG)}, "owner/repo")
+        self.assertEqual([(row["kind"], row["operation"], row["outcome"], row.get("step")) for row in rows], [
+            ("go-module", "restore", "miss", None),
+            ("go-build", "restore", "restore-failed", "Restore the Go build cache"),
+            ("go-module", "save", "saved", None),
+            ("go-build", "save", "unknown", "Save the Go build cache")])
+
+    def test_every_outcome_is_named(self):
+        texts = (GO_LOG, COLD_LOG, BUILDX_LOG)
+        found = {entry["outcome"] for text in texts for entry in measure.cache_entries(measure.cache_excerpt(text)[0])}
+        self.assertEqual(found | {"save-skipped"}, set(measure.CACHE_OUTCOMES))
+
+    def test_fetch_reads_no_log_unless_asked_and_then_a_bounded_number_once(self):
+        calls = []
+
+        def api(path, jq):
+            if "/jobs?" in path:
+                run_id = int(path.split("/runs/")[1].split("/")[0])
+                return [cache_job(run_id * 10 + index, ("Restore the Go module cache", "success"))
+                        for index in range(2)] + [cache_job(run_id * 10 + 5, name="Lint")]
+            return [run(11, "Code checks", "h", at(0)), run(12, "Code checks", "h2", at(1))]
+
+        def log(repo, job_id):
+            calls.append(job_id)
+            if job_id == 111:
+                raise LookupError("HTTP 410: logs expired")
+            if job_id == 120:
+                raise ValueError("HTTP 502")
+            return GO_LOG
+
+        with tempfile.TemporaryDirectory() as directory:
+            day, today = date(2026, 10, 16), date(2026, 10, 18)
+            options = {"today": today, "api": api, "compare": lambda repo, base, head: "ahead", "log": log,
+                       "workers": 1}
+            measure.fetch(directory, "o/r", day, day, [], **options)
+            self.assertEqual(calls, [])
+            first = measure.fetch(directory, "o/r", day, day, [], cache_logs=3, **options)
+            self.assertEqual(first, {"cache logs": 1, "unavailable cache logs": 1, "failed requests": 1})
+            self.assertEqual(calls, [110, 111, 120])
+            stored = measure.load_cache_logs(directory)
+            self.assertEqual(sorted(stored), ["110", "111"])
+            self.assertEqual(stored["111"]["unavailable"], "HTTP 410: logs expired")
+            self.assertTrue(all("2026-10-20T" not in line for line in stored["110"]["lines"]))
+            calls.clear()
+            measure.fetch(directory, "o/r", day, day, [], cache_logs=5, **options)
+            # Only the failed and the not yet read logs; a job without a cache step is never read.
+            self.assertEqual(calls, [120, 121])
+            calls.clear()
+            measure.fetch(directory, "o/r", day, day, [], cache_logs=5, cache_log_jobs="^Lint$", **options)
+            self.assertEqual(calls, [115, 120, 125])
+
+    def test_fetch_reads_cache_logs_of_cancelled_runs_too(self):
+        calls = []
+        cancelled = cache_job(120, ("Restore the Go module cache", "success"), conclusion="cancelled")
+        # Cancelled while queued: no step, so it held no runner and has no log.
+        queued = {**cache_job(121, conclusion="cancelled"), "steps": []}
+
+        def api(path, jq):
+            if "/jobs?" in path:
+                return [cancelled, queued]
+            return [run(12, "Code checks", "h", at(0), conclusion="cancelled")]
+
+        def log(repo, job_id):
+            calls.append(job_id)
+            return COLD_LOG
+
+        with tempfile.TemporaryDirectory() as directory:
+            day = date(2026, 10, 16)
+            fetched = measure.fetch(directory, "o/r", day, day, [], today=date(2026, 10, 18), api=api,
+                                    compare=lambda repo, base, head: "ahead", cache_logs=5, log=log)
+            self.assertEqual(fetched, {"run lists": 1, "job lists": 1, "cache logs": 1})
+            self.assertEqual(calls, [120])
+            rows = measure.cache_ledger(measure.load_runs(directory), measure.load_jobs(directory),
+                                        measure.load_cache_logs(directory), "o/r")
+            self.assertEqual(rows[0]["outcome"], "miss")
+
+    def test_cli_lists_the_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            for name in ("runs", "jobs", "cachelogs"):
+                (cache / name).mkdir()
+            (cache / "runs" / "2026-10-17.json").write_text(json.dumps([run(11, "Code checks", "h", at(0))]))
+            (cache / "jobs" / "11.json").write_text(json.dumps([cache_job(21, ("Restore the Go module cache",
+                                                                               "success"))]))
+            (cache / "cachelogs" / "21.json").write_text(json.dumps(excerpt(GO_LOG)))
+            output = cache / "caches.json"
+            with unittest.mock.patch("sys.stdout", new=io.StringIO()) as printed:
+                self.assertEqual(measure.main(["caches", "--cache", str(cache), "--repo", "owner/repo",
+                                               "--output", str(output)]), 0)
+            result = json.loads(output.read_text())
+            self.assertEqual((result["jobs"], result["logs"], len(result["rows"])), (1, 1, 3))
+            self.assertIn("| go-build | save | save-failed | 1 |", printed.getvalue())
+            self.assertIn("| 11 | 1 | Vulnerability check | pull_request | go-module | restore | " + MODULE_KEY
+                          + " | go1.26.10 | hit |", printed.getvalue())
+            with unittest.mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(measure.main(["fetch", "--cache", str(cache), "--repo", "o/r",
+                                               "--since", "2026-10-16", "--cache-logs", "-1"]), 1)
+
+
+class CohortCacheTests(unittest.TestCase):
+    """Split a configuration's joined samples by the cache condition of their jobs."""
+
+    setUp = CohortTests.setUp
+    attempt = CohortTests.attempt
+
+    def test_samples_carry_their_cache_condition_and_split_without_changing_ranges(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 7), self.attempt(102, 202, 9),
+                self.attempt(103, 203, 2, "failed")]
+        for run_id in ("100", "101", "102", "103"):
+            self.jobs[run_id][0]["steps"].insert(1, step("Restore the Go build cache", at(1), at(1, 5)))
+        logs = {"200": excerpt(GO_LOG), "201": excerpt(GO_LOG), "202": excerpt(COLD_LOG)}
+        ledger = measure.cache_ledger(self.runs, self.jobs, logs, "owner/repo")
+        plain = measure.cohorts(self.runs, self.jobs, rows, "owner/repo")
+        result = measure.cohorts(self.runs, self.jobs, rows, "owner/repo", ledger)
+        config, before = result["configs"][0], plain["configs"][0]
+        self.assertNotIn("by_cache", before)
+        self.assertEqual((config["passed"], config["outcomes"]), (before["passed"], before["outcomes"]))
+        self.assertEqual([sample["cache_condition"] for sample in config["samples"]],
+                         ["go-build=partial-restore,go-module=hit", "go-build=partial-restore,go-module=hit",
+                          "go-build=restore-failed,go-module=miss", "go-build=unknown"])
+        warm = config["by_cache"]["go-build=partial-restore,go-module=hit"]
+        self.assertEqual((warm["attempts"], warm["passed"]["native"]),
+                         (2, {"count": 2, "min": 300.0, "median": 300.0, "max": 420.0}))
+        self.assertEqual(config["by_cache"]["go-build=unknown"]["outcomes"],
+                         {"assertion_failure": {"attempts": 1, "runner_seconds": 360.0}})
+        self.assertEqual(config["by_cache"]["go-build=unknown"]["passed"]["duration"]["count"], 0)
+        self.assertIn("| go-build=restore-failed,go-module=miss | 1 | passed 1 | ",
+                      measure.cohorts_markdown(result))
+
+    def test_cli_joins_the_ledger_from_the_cache(self):
+        rows = [self.attempt(100, 200, 5)]
+        cache, history = self.root / "cache", self.root / "history"
+        for name in ("runs", "jobs", "cachelogs"):
+            (cache / name).mkdir(parents=True)
+        (cache / "runs" / "2026-10-17.json").write_text(json.dumps(self.runs))
+        (cache / "jobs" / "100.json").write_text(json.dumps(self.jobs["100"]))
+        (cache / "cachelogs" / "200.json").write_text(json.dumps(excerpt(COLD_LOG)))
+        (history / "rows").mkdir(parents=True)
+        (history / "rows" / "100-1.jsonl").write_text(json.dumps(rows[0]) + "\n")
+        output = self.root / "cohorts.json"
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(measure.main(["cohorts", "--cache", str(cache), "--history", str(history),
+                                           "--repo", "owner/repo", "--output", str(output)]), 0)
+        sample = json.loads(output.read_text())["configs"][0]["samples"][0]
+        self.assertEqual(sample["cache_condition"], "go-build=restore-failed,go-module=miss")

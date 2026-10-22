@@ -531,6 +531,17 @@ change the API.
   are listed with the reason (#1). `fetch` now stores the jobs of cancelled
   runs for that ledger, while `report` still leaves cancelled runs out.
 
+- `ci_measurements.py fetch --cache-logs N` stores the cache lines of at
+  most N job logs, and the new `caches` command lists a cache-state ledger
+  keyed by repository, run ID, run attempt and job ID: cache kind (Go
+  module, Go build, registry), exact key or reference, toolchain and
+  platform, event, whether the operation was requested, and an outcome read
+  only from log lines (`hit`, `partial-restore`, `miss`, `restore-failed`,
+  `saved`, `save-skipped`, `save-failed` or `unknown`). A green job is never
+  taken as a cache write. `cohorts` marks each sample with its job's cache
+  condition and splits each configuration by it without changing its
+  ranges (#1).
+
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts

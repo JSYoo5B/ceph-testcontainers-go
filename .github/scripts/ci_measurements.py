@@ -42,6 +42,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -688,7 +689,7 @@ def load_history_rows(path):
     return list(rows.values())
 
 
-def cohorts(runs, jobs, rows, repository):
+def cohorts(runs, jobs, rows, repository, ledger=None):
     """Join history rows to their measured jobs and group the joined attempts
     by exact configuration (scenario_history.config_key).
 
@@ -698,8 +699,13 @@ def cohorts(runs, jobs, rows, repository):
     configuration identity are listed with the reason. Every outcome stays in
     the configuration's ledger with its runner time; the timing ranges are of
     passed attempts only, so a failure, cancellation or timeout cannot shorten
-    or lengthen them."""
+    or lengthen them.
+
+    With a cache ledger (cache_ledger), each sample carries its job's cache
+    condition and each configuration is also split by condition, with the
+    same outcome ledger and passed-only ranges per part."""
     names = {str(run["id"]): run.get("name") for run in runs}
+    conditions = ledger_by_job(ledger) if ledger is not None else None
     measured = {}
     for run_id, run_jobs in jobs.items():
         for job in run_jobs:
@@ -732,6 +738,8 @@ def cohorts(runs, jobs, rows, repository):
                          "config_key": scenario_history.config_key(row),
                          "duration": seconds(job["started_at"], job["completed_at"]),
                          "acquisition": seconds(job.get("created_at"), job["started_at"]), **job_phases(job)})
+        if conditions is not None:
+            attempts[-1]["cache_condition"] = cache_condition(conditions.get(lookup, ()))
     unmatched_jobs = [{"run_id": run_id, "run_attempt": attempt, "job_id": job_id, "job": job.get("name"),
                        "workflow": names.get(run_id)}
                       for (run_id, attempt, job_id), job in sorted(measured.items())
@@ -748,23 +756,35 @@ def cohorts(runs, jobs, rows, repository):
                                                                    item[1][0]["network"] or "", item[0])):
         identity = scenario_history.config_identity(joined[(str(group[0]["run_id"]), str(group[0]["run_attempt"]),
                                                             str(group[0]["job_id"]))])
-        ledger = {}
-        for attempt in group:
-            entry = ledger.setdefault(attempt["kind"], {"attempts": 0, "runner_seconds": 0.0})
-            entry["attempts"] += 1
-            entry["runner_seconds"] = round(entry["runner_seconds"] + (attempt["duration"] or 0), 1)
-        passed = [attempt for attempt in group if attempt["kind"] == "passed"]
-        configs.append({"config_key": config, "identity": identity, "profile_id": group[0]["profile_id"],
-                        "release": group[0]["release"], "network": group[0]["network"] or "",
-                        "attempts": len(group), "outcomes": dict(sorted(ledger.items())),
-                        "passed": {metric: span([attempt[metric] for attempt in passed])
-                                   for metric in COHORT_METRICS},
-                        "samples": [{field: attempt[field] for field in ("run_id", "run_attempt", "job_id",
-                                                                         "repetition_id", "kind")}
-                                    for attempt in group]})
+        fields = ("run_id", "run_attempt", "job_id", "repetition_id", "kind")
+        if conditions is not None:
+            fields += ("cache_condition",)
+        entry = {"config_key": config, "identity": identity, "profile_id": group[0]["profile_id"],
+                 "release": group[0]["release"], "network": group[0]["network"] or "", "attempts": len(group),
+                 **attempt_summary(group),
+                 "samples": [{field: attempt[field] for field in fields} for attempt in group]}
+        if conditions is not None:
+            parts = defaultdict(list)
+            for attempt in group:
+                parts[attempt["cache_condition"]].append(attempt)
+            entry["by_cache"] = {condition: {"attempts": len(part), **attempt_summary(part)}
+                                 for condition, part in sorted(parts.items())}
+        configs.append(entry)
     return {"schema": SCHEMA, "repository": repository, "rows": len(rows), "joined": len(attempts),
             "configs": configs, "incomparable": incomparable, "unmatched_rows": unmatched_rows,
             "unmatched_jobs": unmatched_jobs}
+
+
+def attempt_summary(group):
+    """The outcome ledger of attempts and the ranges of the passed ones."""
+    ledger = {}
+    for attempt in group:
+        entry = ledger.setdefault(attempt["kind"], {"attempts": 0, "runner_seconds": 0.0})
+        entry["attempts"] += 1
+        entry["runner_seconds"] = round(entry["runner_seconds"] + (attempt["duration"] or 0), 1)
+    passed = [attempt for attempt in group if attempt["kind"] == "passed"]
+    return {"outcomes": dict(sorted(ledger.items())),
+            "passed": {metric: span([attempt[metric] for attempt in passed]) for metric in COHORT_METRICS}}
 
 
 def cohorts_markdown(result):
@@ -784,11 +804,327 @@ def cohorts_markdown(result):
         lines.append("| {} | {} | {} | {} | {} | {} | {} | {} |".format(
             config["profile_id"], config["release"], config["network"] or "-", config["config_key"],
             config["attempts"], outcomes, *cells))
+    for config in result["configs"]:
+        if not config.get("by_cache"):
+            continue
+        lines += ["", "{} ({}, {}) by cache condition:".format(config["config_key"], config["profile_id"],
+                                                                config["release"]),
+                  "", "| Cache condition | Attempts | Outcomes | Passed job s min/median/max |",
+                  "| --- | ---: | --- | ---: |"]
+        for condition, entry in config["by_cache"].items():
+            outcomes = ", ".join("{} {}".format(kind, value["attempts"]) for kind, value in entry["outcomes"].items())
+            value = entry["passed"]["duration"]
+            lines.append("| {} | {} | {} | {} |".format(
+                condition, entry["attempts"], outcomes,
+                "-" if not value["count"] else "{}/{}/{}".format(value["min"], value["median"], value["max"])))
+    return "\n".join(lines) + "\n"
+
+
+# Cache-state ledger. Which cache a measured job restored or saved decides
+# what its setup and compile time mean, and a green job proves no cache
+# write: a save step can be skipped, continue on error, or log a failure
+# that the job ignores. The ledger reads only what a log line states. A job
+# log is fetched once, opt-in and bounded (fetch --cache-logs), and only its
+# cache lines are kept (cachelogs/<job id>.json); without that excerpt a
+# cache step that ran is "unknown", and a skipped save step is
+# "save-skipped" by the step's own conclusion.
+
+CACHE_OUTCOMES = ("hit", "partial-restore", "miss", "restore-failed", "saved", "save-skipped", "save-failed",
+                  "unknown")
+CACHE_EXCERPT_LINES = 400
+CACHE_EXCERPT_WIDTH = 500
+LOG_TIMESTAMP = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z ?")
+GO_VERSION = re.compile(r"^go version (go\S+) (\S+/\S+)$")
+# A BuildKit plain-progress line: "#<vertex> <text>".
+BUILDX_LINE = re.compile(r"^#(\d+) (.*)$")
+BUILDX_CACHE = re.compile(r"cache manifest|writing cache|exporting cache|sending cache export|ERROR|WARNING")
+CACHE_STEP = re.compile(r"^(Restore|Save)\b.*\bcache\b|^(Run|Post Run) actions/cache", re.IGNORECASE)
+# Every cache-to destination of a step, as written: --cache-to=... or a
+# cache-to: input. Its literal registry ref is its identity; a destination
+# without a ref, or one naming a shell or expression variable, is unresolved.
+# Written --cache-to=<target>, as the separate arguments --cache-to <target>
+# that build-push-action emits, or as a cache-to: input whose further
+# targets follow on continuation lines.
+CACHE_TO = re.compile(r"cache-to(?:[=:]|\s+)\s*([^\s\"']+)")
+CACHE_TO_REF = re.compile(r"\bref=([^,\s\"']+)")
+CACHE_TO_INPUT = re.compile(r"^\s+cache-to:")
+# An action input line ("  key: value") or a log command ends a multiline
+# cache-to input.
+ACTION_INPUT = re.compile(r"^  [A-Za-z0-9_-]+:")
+# Marks an excerpt line naming a cache-to destination that was cut at the
+# excerpt width: a destination may be missing from it.
+CUT_MARK = " [cut]"
+# The excerpt keeps a continuation target of a multiline cache-to input
+# under this prefix, so that the ledger reads it without the lines around.
+CACHE_TO_CONTINUED = "  cache-to+ "
+
+
+def cache_to_ref(target):
+    """The literal registry ref of one cache-to destination, or None."""
+    ref = CACHE_TO_REF.search(target)
+    return ref.group(1) if ref and "$" not in ref.group(1) else None
+
+
+def cache_excerpt(text):
+    """The lines of a job log that the ledger reads, without timestamps:
+    every step header, each actions/cache step section (inputs and results),
+    the Go toolchain line, the runner's cache mode, lines naming a cache-to
+    destination and BuildKit cache lines. Returns (lines, truncated)."""
+    lines, section, cache_to_input = [], False, False
+    for raw in text.splitlines():
+        line = LOG_TIMESTAMP.sub("", raw, count=1).rstrip()
+        header = line.startswith("##[group]Run ")
+        if header:
+            section = line.startswith("##[group]Run actions/cache")
+        if header or line.startswith("##[") or ACTION_INPUT.match(line):
+            cache_to_input = bool(CACHE_TO_INPUT.match(line))
+            continuation = False
+        else:
+            # The further targets of a multiline cache-to input.
+            continuation = cache_to_input and bool(line.strip())
+        buildx = BUILDX_LINE.match(line)
+        if (header or section or line.startswith("Cache mode: ") or GO_VERSION.match(line) or "cache-to" in line
+                or continuation or (buildx and BUILDX_CACHE.search(buildx.group(2)))):
+            if continuation:
+                line = CACHE_TO_CONTINUED + line.strip()
+            if len(line) > CACHE_EXCERPT_WIDTH and "cache-to" in line:
+                line = line[:CACHE_EXCERPT_WIDTH - len(CUT_MARK)] + CUT_MARK
+            lines.append(line[:CACHE_EXCERPT_WIDTH])
+    return lines[:CACHE_EXCERPT_LINES], len(lines) > CACHE_EXCERPT_LINES
+
+
+def cache_kind(key, path=None):
+    text = (key or "") + " " + (path or "")
+    if (key or "").startswith("go-modules-") or "pkg/mod" in text:
+        return "go-module"
+    if (key or "").startswith("go-build-") or "go-build" in text:
+        return "go-build"
+    return "other"
+
+
+def cache_entries(lines):
+    """Cache operations that an excerpt states, in log order.
+
+    actions/cache: "Cache restored from key" is a hit, or a partial restore
+    when the restored key is not the input key; "Cache not found" is a miss;
+    "Failed to restore" a failed restore; only "Cache saved with key" is a
+    save, and "Failed to save" or a refused reservation a failed one.
+    BuildKit: an imported cache manifest is a hit (of the manifest; which
+    stages it served is another question), an import ERROR naming "not
+    found" a miss and any other a failed import; only a completed "writing
+    cache ... manifest" is a save, and an ERROR or WARNING of the export
+    vertex a failed one, also when ignore-error kept the build green. A
+    requested operation that states none of these stays "unknown".
+
+    "exporting cache to registry" names no destination, and a build may
+    import several references and export to another one. An export's key is
+    the literal cache-to ref of its step when the step names exactly one
+    destination and that one is literal, and None otherwise: an unresolved
+    destination beside a literal one still makes the export ambiguous. It is
+    never taken from an import."""
+    entries, mode, toolchain, platform = [], None, None, None
+    current, in_inputs, imports, exports, destinations = None, False, {}, {}, set()
+
+    def settle(entry, outcome, evidence):
+        if entry["outcome"] == "unknown":
+            entry["outcome"], entry["evidence"] = outcome, evidence
+
+    for line in lines:
+        version = GO_VERSION.match(line)
+        if version:
+            toolchain, platform = version.groups()
+        if line.startswith("Cache mode: "):
+            mode = line.split(": ", 1)[1]
+        if line.startswith("##[group]Run "):
+            current, destinations = None, set()
+        if line.startswith(CACHE_TO_CONTINUED):
+            destinations.add(line[len(CACHE_TO_CONTINUED):].removesuffix(CUT_MARK))
+        destinations.update(CACHE_TO.findall(line))
+        if line.endswith(CUT_MARK) and "cache-to" in line:
+            # A cut line may hide another destination.
+            destinations.add(CUT_MARK)
+        if line.startswith("##[group]Run "):
+            if line.startswith("##[group]Run actions/cache"):
+                current = {"source": "actions/cache", "operation": "save" if "/save@" in line else "restore",
+                           "key": None, "path": None, "toolchain": toolchain, "platform": platform,
+                           "cache_mode": mode, "requested": True, "outcome": "unknown", "evidence": None}
+                entries.append(current)
+                in_inputs = True
+            continue
+        if current is not None:
+            text = line.replace("##[warning]", "").replace("##[error]", "")
+            if line.startswith("##[endgroup]"):
+                in_inputs = False
+            elif in_inputs and line.startswith("  key: "):
+                current["key"] = line[len("  key: "):]
+            elif in_inputs and line.startswith("  path: "):
+                current["path"] = line[len("  path: "):]
+            elif text.startswith("Cache restored from key: "):
+                restored = text[len("Cache restored from key: "):]
+                settle(current, "hit" if restored == current["key"] else "partial-restore", text)
+            elif text.startswith("Cache not found for input keys"):
+                settle(current, "miss", text)
+            elif text.startswith("Failed to restore"):
+                settle(current, "restore-failed", text)
+            elif text.startswith("Cache saved with key: "):
+                settle(current, "saved", text)
+            elif text.startswith("Failed to save") or "Unable to reserve cache" in text:
+                settle(current, "save-failed", text)
+            elif line.startswith("##[error]"):
+                settle(current, current["operation"] + "-failed", text)
+            continue
+        buildx = BUILDX_LINE.match(line)
+        if not buildx:
+            continue
+        vertex, text = buildx.groups()
+        if text.startswith("importing cache manifest from "):
+            imports[vertex] = {"source": "buildx", "operation": "import",
+                               "key": text[len("importing cache manifest from "):].strip(), "path": None,
+                               "toolchain": None, "platform": None, "cache_mode": mode, "requested": True,
+                               "outcome": "unknown", "evidence": None}
+            exports.pop(vertex, None)
+            entries.append(imports[vertex])
+        elif text.startswith("exporting cache to registry"):
+            exports[vertex] = {"source": "buildx", "operation": "export",
+                               "key": cache_to_ref(next(iter(destinations))) if len(destinations) == 1 else None,
+                               "path": None,
+                               "toolchain": None, "platform": None, "cache_mode": mode, "requested": True,
+                               "outcome": "unknown", "evidence": None}
+            imports.pop(vertex, None)
+            entries.append(exports[vertex])
+        elif vertex in imports:
+            if text.startswith("ERROR"):
+                settle(imports[vertex], "miss" if "not found" in text else "restore-failed", text)
+            elif text.startswith("inferred cache manifest type") and text.endswith("done"):
+                settle(imports[vertex], "hit", text)
+        elif vertex in exports:
+            if text.startswith(("ERROR", "WARNING")):
+                settle(exports[vertex], "save-failed", text)
+            elif text.startswith("writing cache") and "manifest" in text and text.endswith("done"):
+                settle(exports[vertex], "saved", text)
+    for entry in entries:
+        entry["kind"] = "registry" if entry["source"] == "buildx" else cache_kind(entry["key"], entry["path"])
+    return entries
+
+
+def step_kind(name):
+    lowered = name.lower()
+    return "go-module" if "module" in lowered else "go-build" if "build" in lowered else "other"
+
+
+def cache_ledger(runs, jobs, logs, repository):
+    """One row per cache operation of every job that held a runner, keyed
+    by repository, run ID, run attempt and job ID.
+
+    logs maps a job ID (as a string) to its stored excerpt. Every cache step
+    that ran keeps a row: an excerpt's actions/cache sections are matched to
+    those steps in order, by operation and by kind where the step name and
+    the section's key both give one, and a step without a section is
+    "unknown" with the reason (no log, an unavailable log, or no section in
+    the excerpt, which may be truncated). A section without such a step and
+    every BuildKit operation keep their own row. A skipped save step is
+    "save-skipped" with requested false, and a skipped restore step
+    "unknown"."""
+    run_of = {str(run["id"]): run for run in runs}
+    rows = []
+    for run_id, run_jobs in sorted(jobs.items(), key=lambda item: int(item[0]) if item[0].isdigit() else 0):
+        run = run_of.get(run_id, {})
+        for job in run_jobs:
+            if not ran(job):
+                continue
+            steps = [step for step in job["steps"] if CACHE_STEP.match(step.get("name", ""))]
+            log = logs.get(str(job.get("id")))
+            base = {"repository": repository, "run_id": run_id, "run_attempt": str(job.get("run_attempt", 1)),
+                    "job_id": str(job.get("id")), "workflow": run.get("name"), "job": job.get("name"),
+                    "event": run.get("event"), "head_branch": run.get("head_branch")}
+            fetched = log is not None and "lines" in log
+            truncated = bool(fetched and log.get("truncated"))
+            base["excerpt_truncated"] = truncated
+            if not fetched:
+                missing = "log not fetched" if log is None else "log unavailable: " + log.get("unavailable", "")
+            else:
+                missing = "no cache section in the fetched log" + (" excerpt, which is truncated" if truncated else "")
+            parsed = [{**base, **entry, "evidence_source": "log"} for entry in cache_entries(log["lines"])] \
+                if fetched else []
+            sections = [entry for entry in parsed if entry["source"] == "actions/cache"]
+            found, position = [], 0
+            for step in steps:
+                if step.get("conclusion") == "skipped":
+                    continue
+                operation = "save" if step["name"].lower().startswith(("save", "post")) else "restore"
+                kind = step_kind(step["name"])
+                match = next((index for index in range(position, len(sections))
+                              if sections[index]["operation"] == operation
+                              and (sections[index]["kind"] == kind or "other" in (kind, sections[index]["kind"]))),
+                             None)
+                if match is None:
+                    found.append({**base, "source": "step", "operation": operation, "kind": step_kind(step["name"]),
+                                  "key": None, "path": None, "toolchain": None, "platform": None, "cache_mode": None,
+                                  "requested": True, "outcome": "unknown", "evidence": missing,
+                                  "evidence_source": "none", "step": step["name"]})
+                    continue
+                # Sections before the match have no step of this name; they
+                # keep their own rows.
+                found += sections[position:match]
+                found.append({**sections[match], "step": step["name"]})
+                position = match + 1
+            found += sections[position:]
+            found += [entry for entry in parsed if entry["source"] != "actions/cache"]
+            for step in steps:
+                if step.get("conclusion") != "skipped":
+                    continue
+                save = step["name"].lower().startswith("save")
+                found.append({**base, "source": "step", "operation": "save" if save else "restore",
+                              "kind": step_kind(step["name"]), "key": None, "path": None, "toolchain": None,
+                              "platform": None, "cache_mode": None, "requested": False,
+                              "outcome": "save-skipped" if save else "unknown", "evidence": "step skipped",
+                              "evidence_source": "step", "step": step["name"]})
+            rows += found
+    return rows
+
+
+def cache_condition(rows):
+    """What a job restored, as "kind=outcome" per restore or import; the
+    condition that its setup and compile time ran under."""
+    restores = sorted({(row["kind"], row["outcome"]) for row in rows if row["operation"] in ("restore", "import")})
+    return ",".join("{}={}".format(kind, outcome) for kind, outcome in restores) or "no cache restore"
+
+
+def ledger_by_job(ledger):
+    result = defaultdict(list)
+    for row in ledger:
+        result[(row["run_id"], row["run_attempt"], row["job_id"])].append(row)
+    return result
+
+
+def caches(runs, jobs, logs, repository):
+    ledger = cache_ledger(runs, jobs, logs, repository)
+    counts = Counter((row["kind"], row["operation"], row["outcome"]) for row in ledger)
+    return {"schema": SCHEMA, "repository": repository, "rows": ledger,
+            "jobs": len(ledger_by_job(ledger)),
+            "logs": sum(1 for row in ledger_by_job(ledger).values() if row[0]["evidence_source"] == "log"),
+            "summary": [{"kind": kind, "operation": operation, "outcome": outcome, "rows": count}
+                        for (kind, operation, outcome), count in sorted(counts.items())]}
+
+
+def caches_markdown(result):
+    lines = ["{} cache operations of {} jobs; {} jobs have a fetched log excerpt.".format(
+                 len(result["rows"]), result["jobs"], result["logs"]),
+             "", "| Kind | Operation | Outcome | Rows |", "| --- | --- | --- | ---: |"]
+    for entry in result["summary"]:
+        lines.append("| {kind} | {operation} | {outcome} | {rows} |".format(**entry))
+    lines += ["", "| Run | Attempt | Job | Event | Kind | Operation | Key | Toolchain | Outcome |",
+              "| --- | ---: | --- | --- | --- | --- | --- | --- | --- |"]
+    for row in result["rows"]:
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+            row["run_id"], row["run_attempt"], row["job"], row["event"] or "-", row["kind"], row["operation"],
+            row["key"] or "-", row["toolchain"] or "-", row["outcome"]))
     return "\n".join(lines) + "\n"
 
 
 # Cache access. The cache holds runs/<date>.json (the runs created that UTC
-# day), jobs/<run id>.json and contains/<head sha>.json.
+# day), jobs/<run id>.json, contains/<head sha>.json and, when fetched,
+# cachelogs/<job id>.json.
 
 def load_runs(cache):
     runs = {}
@@ -809,6 +1145,10 @@ def load_contains(cache, markers):
         if all(marker["sha"] in answers for marker in markers):
             result[path.stem] = answers
     return result
+
+
+def load_cache_logs(cache):
+    return {path.stem: json.loads(path.read_text()) for path in sorted((Path(cache) / "cachelogs").glob("*.json"))}
 
 
 RUN_FIELDS = ("id", "name", "event", "status", "conclusion", "created_at", "run_started_at", "updated_at",
@@ -833,7 +1173,69 @@ def compare_status(repo, base, head):
     return result.stdout.strip()
 
 
-def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, compare=compare_status, workers=8):
+def job_log(repo, job_id):
+    """A job's whole log text; GitHub serves no single step's log. Raises
+    LookupError when the log is gone (expired or deleted), so that the
+    answer is stored instead of asked again."""
+    result = subprocess.run(["gh", "api", "--allow-escape-sequences",
+                             "repos/{}/actions/jobs/{}/logs".format(repo, job_id)],
+                            text=True, capture_output=True, timeout=300)
+    if result.returncode:
+        message = result.stderr.strip()
+        if "HTTP 404" in message or "HTTP 410" in message:
+            raise LookupError(message)
+        raise ValueError("job log " + str(job_id) + " failed: " + message)
+    return result.stdout
+
+
+def cache_log_candidates(runs, jobs, cache, job_pattern=None):
+    """Held-runner jobs of completed runs, oldest first (their logs expire
+    first), that have a cache step or whose name matches job_pattern and
+    have no stored excerpt."""
+    candidates = []
+    for run in sorted(runs, key=lambda run: (run["created_at"], run["id"])):
+        if run.get("status") != "completed":
+            continue
+        for job in jobs.get(str(run["id"]), ()):
+            if not ran(job) or (Path(cache) / "cachelogs" / (str(job["id"]) + ".json")).exists():
+                continue
+            if any(CACHE_STEP.match(step.get("name", "")) for step in job["steps"]) or (
+                    job_pattern and re.search(job_pattern, job.get("name", ""))):
+                candidates.append((run, job))
+    return candidates
+
+
+def fetch_cache_logs(cache, repo, runs, jobs, limit, job_pattern=None, log=job_log, workers=8):
+    """Store the cache excerpt of at most limit job logs. A gone log is
+    stored as unavailable; any other failure leaves it for the next call."""
+    (Path(cache) / "cachelogs").mkdir(parents=True, exist_ok=True)
+    fetched = Counter()
+
+    def excerpt_of(run, job):
+        path = Path(cache) / "cachelogs" / (str(job["id"]) + ".json")
+        record = {"run_id": str(run["id"]), "run_attempt": str(job.get("run_attempt", 1)), "job_id": str(job["id"])}
+        try:
+            lines, truncated = cache_excerpt(log(repo, job["id"]))
+            record.update(lines=lines, truncated=truncated)
+            result = "cache logs"
+        except LookupError as error:
+            record["unavailable"] = str(error)
+            result = "unavailable cache logs"
+        path.write_text(json.dumps(record, sort_keys=True) + "\n")
+        return result
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        tasks = cache_log_candidates(runs, jobs, cache, job_pattern)[:limit]
+        for future in [pool.submit(excerpt_of, run, job) for run, job in tasks]:
+            try:
+                fetched[future.result()] += 1
+            except (ValueError, OSError, subprocess.SubprocessError):
+                fetched["failed requests"] += 1
+    return fetched
+
+
+def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, compare=compare_status, workers=8,
+          cache_logs=0, cache_log_jobs=None, log=job_log):
     """Fill the cache for the runs created on the UTC days since..until.
 
     A finished day's run list, a completed run's jobs and a head's marker
@@ -846,7 +1248,11 @@ def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, com
     cohorts ledger counts a cancelled attempt's runner time, and a cancelled
     workflow can hold successful sibling jobs. The report leaves cancelled
     runs out on its own. Marker answers are fetched only for heads of
-    uncancelled runs, the only heads the report places in a cohort."""
+    uncancelled runs, the only heads the report places in a cohort.
+
+    With cache_logs, the cache excerpts of at most that many job logs of
+    these runs, cancelled ones included, are stored as well
+    (fetch_cache_logs); no log is read otherwise."""
     cache = Path(cache)
     for name in ("runs", "jobs", "contains"):
         (cache / name).mkdir(parents=True, exist_ok=True)
@@ -894,6 +1300,10 @@ def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, com
                 fetched[future.result()] += 1
             except (ValueError, OSError, subprocess.SubprocessError):
                 fetched["failed requests"] += 1
+    if cache_logs > 0:
+        stored = {str(run["id"]): json.loads((cache / "jobs" / (str(run["id"]) + ".json")).read_text())
+                  for run in completed if (cache / "jobs" / (str(run["id"]) + ".json")).exists()}
+        fetched.update(fetch_cache_logs(cache, repo, completed, stored, cache_logs, cache_log_jobs, log, workers))
     return dict(fetched)
 
 
@@ -922,10 +1332,19 @@ def main(argv=None):
     command.add_argument("--repo", required=True)
     command.add_argument("--since", required=True, type=lambda value: datetime.strptime(value, "%Y-%m-%d").date())
     command.add_argument("--until", type=lambda value: datetime.strptime(value, "%Y-%m-%d").date())
+    command.add_argument("--cache-logs", type=int, default=0, metavar="N",
+                         help="Also store the cache lines of at most N job logs (default 0: read no log)")
+    command.add_argument("--cache-log-jobs", metavar="REGEX",
+                         help="Also read the logs of jobs whose name matches, such as BuildKit image builds")
     command = commands.add_parser("cohorts", help="Join history rows to measured jobs by configuration")
     command.add_argument("--cache", type=Path, required=True)
     command.add_argument("--history", type=Path, required=True,
                          help="A scenario-history directory (rows/*.jsonl) or downloaded history-row.json artifacts")
+    command.add_argument("--repo", required=True)
+    command.add_argument("--output", type=Path)
+    command.add_argument("--markdown", type=Path)
+    command = commands.add_parser("caches", help="List the cache-state ledger of the measured jobs")
+    command.add_argument("--cache", type=Path, required=True)
     command.add_argument("--repo", required=True)
     command.add_argument("--output", type=Path)
     command.add_argument("--markdown", type=Path)
@@ -942,8 +1361,19 @@ def main(argv=None):
                          help="Runners left for pull requests; default tag_scenarios.PULL_REQUEST_RUNNERS")
     args = parser.parse_args(argv)
     try:
+        if args.command == "caches":
+            result = caches(load_runs(args.cache), load_jobs(args.cache), load_cache_logs(args.cache), args.repo)
+            if args.output is not None:
+                args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+            text = caches_markdown(result)
+            if args.markdown is not None:
+                args.markdown.write_text(text)
+            print(text, end="")
+            return 0
         if args.command == "cohorts":
-            result = cohorts(load_runs(args.cache), load_jobs(args.cache), load_history_rows(args.history), args.repo)
+            runs, jobs = load_runs(args.cache), load_jobs(args.cache)
+            ledger = cache_ledger(runs, jobs, load_cache_logs(args.cache), args.repo)
+            result = cohorts(runs, jobs, load_history_rows(args.history), args.repo, ledger)
             if args.output is not None:
                 args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
             text = cohorts_markdown(result)
@@ -954,7 +1384,10 @@ def main(argv=None):
         markers = parse_markers(args.marker)
         if args.command == "fetch":
             until = args.until or datetime.now(timezone.utc).date()
-            print(json.dumps(fetch(args.cache, args.repo, args.since, until, markers), sort_keys=True))
+            if args.cache_logs < 0:
+                raise ValueError("--cache-logs is a number of job logs, 0 or more")
+            print(json.dumps(fetch(args.cache, args.repo, args.since, until, markers, cache_logs=args.cache_logs,
+                                   cache_log_jobs=args.cache_log_jobs), sort_keys=True))
             return 0
         limits = dict(tag_scenarios.RELEASE_MAX_PARALLEL)
         for value in args.limit:
