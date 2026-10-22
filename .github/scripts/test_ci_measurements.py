@@ -1,10 +1,12 @@
 """Test CI measurement aggregation on small synthetic runs, without GitHub."""
 
+import io
 import json
 from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 import ci_measurements as measure
 
@@ -343,3 +345,103 @@ class CacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CohortTests(unittest.TestCase):
+    """Join history rows to measured jobs and group by exact configuration."""
+
+    def setUp(self):
+        import test_scenario_history as rows
+        self.rows = rows
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.count = 0
+        self.runs, self.jobs = [], {}
+
+    def attempt(self, run_id, measured_id, native, result="passed", attempt="1", **metadata):
+        """A measured runtime job and the history row that its artifacts give."""
+        self.count += 1
+        job = self.rows.Job(self.root / str(self.count)).passing()
+        if result == "failed":
+            job.phases(native="failure")
+            job.native(self.rows.FAILING_LOG, "native-test-failure", 40.0)
+        elif result == "cancelled":
+            job.phases(native="cancelled")
+        row = job.row(**({"run_id": str(run_id), "job_id": str(measured_id), "run_attempt": attempt} | metadata))
+        if not any(run["id"] == run_id for run in self.runs):
+            self.runs.append(run(run_id, "Ceph recovery", "a" * 40, at(0)))
+        measured = runtime_job("Scenarios / rbd", at(0), at(1), native, attempt=int(attempt))
+        measured["id"] = measured_id
+        self.jobs.setdefault(str(run_id), []).append(measured)
+        return row
+
+    def test_repetitions_of_one_configuration_join_with_an_outcome_ledger(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 7), self.attempt(102, 202, 9, "failed"),
+                self.attempt(103, 203, 2, "cancelled")]
+        result = measure.cohorts(self.runs, self.jobs, rows, "owner/repo")
+        self.assertEqual((result["rows"], result["joined"]), (4, 4))
+        self.assertEqual((result["unmatched_rows"], result["unmatched_jobs"], result["incomparable"]), ([], [], []))
+        self.assertEqual(len(result["configs"]), 1)
+        config = result["configs"][0]
+        self.assertEqual((config["attempts"], config["release"]), (4, "20.2.4"))
+        self.assertEqual(config["identity"]["checkout_tree"], "c" * 40)
+        self.assertEqual(config["outcomes"], {"assertion_failure": {"attempts": 1, "runner_seconds": 780.0},
+                                              "cancelled": {"attempts": 1, "runner_seconds": 360.0},
+                                              "passed": {"attempts": 2, "runner_seconds": 1200.0}})
+        # Ranges are of passed attempts only: 5 and 7 native minutes.
+        self.assertEqual(config["passed"]["native"], {"count": 2, "min": 300.0, "median": 300.0, "max": 420.0})
+        self.assertEqual(config["passed"]["duration"]["count"], 2)
+        self.assertEqual([sample["job_id"] for sample in config["samples"]], ["200", "201", "202", "203"])
+
+    def test_another_tree_is_another_configuration(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 5, checkout_tree="f" * 40)]
+        result = measure.cohorts(self.runs, self.jobs, rows, "owner/repo")
+        self.assertEqual([config["attempts"] for config in result["configs"]], [1, 1])
+        self.assertEqual(len({config["config_key"] for config in result["configs"]}), 2)
+
+    def test_rows_and_jobs_that_do_not_join_stay_visible(self):
+        joined = self.attempt(100, 200, 5)
+        uncached = self.attempt(101, 201, 5)
+        del self.jobs["101"]
+        other_repo = self.attempt(102, 202, 5, repository="other/repo")
+        no_job = self.attempt(103, 203, 5, job_id="")
+        wrong_attempt = self.attempt(104, 204, 5)
+        self.jobs["104"][0]["run_attempt"] = 2
+        orphan = runtime_job("Scenarios / orphan", at(0), at(1), 3)
+        orphan["id"] = 299
+        self.jobs["100"].append(orphan)
+        incomparable = self.attempt(105, 205, 5, checkout_commit="")
+        result = measure.cohorts(self.runs, self.jobs, [joined, uncached, other_repo, no_job, wrong_attempt,
+                                                        incomparable, joined], "owner/repo")
+        reasons = [(row["run_id"], row["reason"]) for row in result["unmatched_rows"]]
+        self.assertEqual(reasons, [("101", "job is not in the measurement cache"), ("102", "row of another repository"),
+                                   ("103", "row has no job ID"), ("104", "job is not in the measurement cache"),
+                                   ("100", "another row names the same job")])
+        self.assertEqual([(job["run_id"], job["job_id"]) for job in result["unmatched_jobs"]],
+                         [("100", "299"), ("102", "202"), ("103", "203"), ("104", "204")])
+        self.assertEqual([row["run_id"] for row in result["incomparable"]], ["105"])
+        self.assertEqual([config["attempts"] for config in result["configs"]], [1])
+
+    def test_cli_reads_stored_history_and_artifact_rows_once(self):
+        rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 6)]
+        cache, history = self.root / "cache", self.root / "history"
+        (cache / "runs").mkdir(parents=True)
+        (cache / "jobs").mkdir()
+        (cache / "runs" / "2026-10-17.json").write_text(json.dumps(self.runs))
+        for run_id, run_jobs in self.jobs.items():
+            (cache / "jobs" / (run_id + ".json")).write_text(json.dumps(run_jobs))
+        (history / "rows").mkdir(parents=True)
+        (history / "rows" / "100-1.jsonl").write_text(json.dumps(rows[0]) + "\n")
+        (history / "artifacts" / "a").mkdir(parents=True)
+        (history / "artifacts" / "a" / "history-row.json").write_text(json.dumps(rows[0]))
+        (history / "artifacts" / "b").mkdir(parents=True)
+        (history / "artifacts" / "b" / "history-row.json").write_text(json.dumps(rows[1]))
+        output = self.root / "cohorts.json"
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()) as printed:
+            self.assertEqual(measure.main(["cohorts", "--cache", str(cache), "--history", str(history),
+                                           "--repo", "owner/repo", "--output", str(output)]), 0)
+        result = json.loads(output.read_text())
+        self.assertEqual((result["rows"], result["joined"], result["configs"][0]["attempts"]), (2, 2, 2))
+        self.assertIn("| recovery-rbd-12345678 | 20.2.4 | - | ", printed.getvalue())
+        self.assertIn("passed 2", printed.getvalue())

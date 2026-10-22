@@ -797,6 +797,31 @@ gives the measured runner limit, pull request wall time with and without an
 overlapping periodic run, and simulated periodic and pull request makespans
 under `RELEASE_MAX_PARALLEL` (or `--limit category=N` and `--reserve N`).
 
+Marker cohorts group executions by the CI change their head contains, not by
+what each job ran. To compare repetitions of exactly one configuration, join
+the measured jobs to their history rows:
+
+```sh
+git worktree add /tmp/ci-history origin/scenario-history
+python3 .github/scripts/ci_measurements.py cohorts --cache /tmp/ci-cache \
+  --history /tmp/ci-history --repo JSYoo5B/ceph-testcontainers-go --output /tmp/cohorts.json
+```
+
+`--history` takes a `scenario-history` checkout (`rows/*.jsonl`), downloaded
+`history-row.json` artifacts, or both; a row is read once. A row joins the
+cached job with its repository, run ID, run attempt and job ID. Joined
+attempts are grouped by `scenario_history.config_key`: profile, network
+mode, release, checked-out tree, build key, platform and every role image
+ID. Each configuration has an outcome ledger with the attempts and runner
+seconds of every kind (passed, assertion failure, timeout, cancelled and the
+others of `scenario_history.attempt_kind`). Its sample count and min, median
+and max of job, acquisition and phase seconds come from passed attempts only.
+Rows that do not join (another repository, no job ID, a job missing from the
+cache, a second row for one job), measured runtime jobs without a row, and
+rows without a complete configuration identity are listed with the reason.
+Rows of two checked-out trees are two configurations, also when only the CI
+policy differs; the key is never relaxed to merge them.
+
 ## Periodic runs
 
 `Ceph periodic` runs every runtime category on the role images of every

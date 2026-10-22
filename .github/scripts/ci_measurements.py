@@ -45,6 +45,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import scenario_history
 import tag_scenarios
 
 
@@ -652,6 +653,137 @@ def markdown(result):
     return "\n".join(lines) + "\n"
 
 
+# Configuration cohorts. A runtime job's saved history row
+# (scenario_history.py) says what it ran: profile, release, checked-out tree,
+# build key, platform and role image IDs. Joining the measured job to that
+# row by execution identity lets repetitions of exactly one configuration be
+# compared, which marker ancestry alone cannot establish.
+
+COHORT_METRICS = ("duration", "acquisition") + PHASE_NAMES
+
+
+def span(values):
+    """Sample count and range; no percentile is claimed for a few samples."""
+    values = sorted(value for value in values if value is not None)
+    if not values:
+        return {"count": 0, "min": None, "median": None, "max": None}
+    return {"count": len(values), "min": round(values[0], 1), "median": round(percentile(values, 50), 1),
+            "max": round(values[-1], 1)}
+
+
+def load_history_rows(path):
+    """History rows of a scenario-history directory (rows/*.jsonl) and of
+    downloaded artifacts (history-row.json), each row once."""
+    path = Path(path)
+    rows = {}
+    for row in scenario_history.stored_rows(path):
+        rows[row["row_sha256"]] = row
+    for item in sorted(path.rglob("history-row.json")):
+        row = json.loads(item.read_text(encoding="utf-8"))
+        scenario_history.validate_row(row)
+        rows[row["row_sha256"]] = row
+    return list(rows.values())
+
+
+def cohorts(runs, jobs, rows, repository):
+    """Join history rows to their measured jobs and group the joined attempts
+    by exact configuration (scenario_history.config_key).
+
+    A row joins the job of its repository, run ID, run attempt and job ID.
+    Nothing that does not join is dropped: rows without a measured job,
+    measured runtime jobs without a row and rows without a complete
+    configuration identity are listed with the reason. Every outcome stays in
+    the configuration's ledger with its runner time; the timing ranges are of
+    passed attempts only, so a failure, cancellation or timeout cannot shorten
+    or lengthen them."""
+    names = {str(run["id"]): run.get("name") for run in runs}
+    measured = {}
+    for run_id, run_jobs in jobs.items():
+        for job in run_jobs:
+            measured[(run_id, str(job.get("run_attempt", 1)), str(job.get("id")))] = job
+    attempts, unmatched_rows, joined = [], [], {}
+    for row in rows:
+        scenario_history.validate_row(row)
+        key = row["execution_key"]
+        identity = {field: key.get(field) for field in ("run_id", "run_attempt", "job_id", "repetition_id",
+                                                        "profile_id", "network")}
+        lookup = (str(key["run_id"]), str(key["run_attempt"]), str(key.get("job_id")))
+        reason = None
+        if key.get("repository") != repository:
+            reason = "row of another repository"
+        elif key.get("job_id") in (None, "", scenario_history.MISSING):
+            reason = "row has no job ID"
+        elif lookup not in measured:
+            reason = "job is not in the measurement cache"
+        elif lookup in joined:
+            reason = "another row names the same job"
+        elif not ran(measured[lookup]):
+            reason = "job held no runner"
+        if reason:
+            unmatched_rows.append({**identity, "reason": reason})
+            continue
+        job = measured[lookup]
+        joined[lookup] = row
+        attempts.append({**identity, "workflow": names.get(lookup[0]), "job": job.get("name"),
+                         "release": scenario_history.release_of(row), "kind": scenario_history.attempt_kind(row),
+                         "config_key": scenario_history.config_key(row),
+                         "duration": seconds(job["started_at"], job["completed_at"]),
+                         "acquisition": seconds(job.get("created_at"), job["started_at"]), **job_phases(job)})
+    unmatched_jobs = [{"run_id": run_id, "run_attempt": attempt, "job_id": job_id, "job": job.get("name"),
+                       "workflow": names.get(run_id)}
+                      for (run_id, attempt, job_id), job in sorted(measured.items())
+                      if ran(job) and is_runtime(job) and (run_id, attempt, job_id) not in joined]
+    groups, incomparable = defaultdict(list), []
+    for attempt in attempts:
+        if attempt["config_key"] is None:
+            incomparable.append({field: attempt[field] for field in ("run_id", "run_attempt", "job_id",
+                                                                     "profile_id", "kind")})
+        else:
+            groups[attempt["config_key"]].append(attempt)
+    configs = []
+    for config, group in sorted(groups.items(), key=lambda item: (item[1][0]["profile_id"], item[1][0]["release"],
+                                                                   item[1][0]["network"] or "", item[0])):
+        identity = scenario_history.config_identity(joined[(str(group[0]["run_id"]), str(group[0]["run_attempt"]),
+                                                            str(group[0]["job_id"]))])
+        ledger = {}
+        for attempt in group:
+            entry = ledger.setdefault(attempt["kind"], {"attempts": 0, "runner_seconds": 0.0})
+            entry["attempts"] += 1
+            entry["runner_seconds"] = round(entry["runner_seconds"] + (attempt["duration"] or 0), 1)
+        passed = [attempt for attempt in group if attempt["kind"] == "passed"]
+        configs.append({"config_key": config, "identity": identity, "profile_id": group[0]["profile_id"],
+                        "release": group[0]["release"], "network": group[0]["network"] or "",
+                        "attempts": len(group), "outcomes": dict(sorted(ledger.items())),
+                        "passed": {metric: span([attempt[metric] for attempt in passed])
+                                   for metric in COHORT_METRICS},
+                        "samples": [{field: attempt[field] for field in ("run_id", "run_attempt", "job_id",
+                                                                         "repetition_id", "kind")}
+                                    for attempt in group]})
+    return {"schema": SCHEMA, "repository": repository, "rows": len(rows), "joined": len(attempts),
+            "configs": configs, "incomparable": incomparable, "unmatched_rows": unmatched_rows,
+            "unmatched_jobs": unmatched_jobs}
+
+
+def cohorts_markdown(result):
+    lines = ["Joined {} of {} history rows; {} rows and {} measured runtime jobs did not join, {} joined rows "
+             "have no complete configuration.".format(result["joined"], result["rows"],
+                                                      len(result["unmatched_rows"]), len(result["unmatched_jobs"]),
+                                                      len(result["incomparable"])),
+             "", "| Profile | Release | Network | Config | Attempts | Outcomes | Passed job s min/median/max | "
+                 "Passed native s min/median/max |",
+             "| --- | --- | --- | --- | ---: | --- | ---: | ---: |"]
+    for config in result["configs"]:
+        outcomes = ", ".join("{} {}".format(kind, entry["attempts"]) for kind, entry in config["outcomes"].items())
+        cells = []
+        for metric in ("duration", "native"):
+            value = config["passed"][metric]
+            cells.append("-" if not value["count"] else "{}/{}/{}".format(value["min"], value["median"], value["max"]))
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} |".format(
+            config["profile_id"], config["release"], config["network"] or "-", config["config_key"],
+            config["attempts"], outcomes, *cells))
+    return "\n".join(lines) + "\n"
+
+
 # Cache access. The cache holds runs/<date>.json (the runs created that UTC
 # day), jobs/<run id>.json and contains/<head sha>.json.
 
@@ -780,6 +912,13 @@ def main(argv=None):
     command.add_argument("--repo", required=True)
     command.add_argument("--since", required=True, type=lambda value: datetime.strptime(value, "%Y-%m-%d").date())
     command.add_argument("--until", type=lambda value: datetime.strptime(value, "%Y-%m-%d").date())
+    command = commands.add_parser("cohorts", help="Join history rows to measured jobs by configuration")
+    command.add_argument("--cache", type=Path, required=True)
+    command.add_argument("--history", type=Path, required=True,
+                         help="A scenario-history directory (rows/*.jsonl) or downloaded history-row.json artifacts")
+    command.add_argument("--repo", required=True)
+    command.add_argument("--output", type=Path)
+    command.add_argument("--markdown", type=Path)
     command = commands.choices["report"]
     command.add_argument("--output", type=Path)
     command.add_argument("--markdown", type=Path)
@@ -793,6 +932,15 @@ def main(argv=None):
                          help="Runners left for pull requests; default tag_scenarios.PULL_REQUEST_RUNNERS")
     args = parser.parse_args(argv)
     try:
+        if args.command == "cohorts":
+            result = cohorts(load_runs(args.cache), load_jobs(args.cache), load_history_rows(args.history), args.repo)
+            if args.output is not None:
+                args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+            text = cohorts_markdown(result)
+            if args.markdown is not None:
+                args.markdown.write_text(text)
+            print(text, end="")
+            return 0
         markers = parse_markers(args.marker)
         if args.command == "fetch":
             until = args.until or datetime.now(timezone.utc).date()

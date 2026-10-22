@@ -451,6 +451,13 @@ change the API.
 
 ### Continuous integration
 
+- `ci_measurements.py cohorts` joins measured runtime jobs to their saved
+  history rows by repository, run ID, run attempt and job ID, and groups the
+  joined attempts by `scenario_history.config_key`. Each configuration keeps
+  an outcome ledger of attempts and runner seconds for every outcome, and
+  timing ranges of its passed attempts only. Rows and jobs that do not join
+  are listed with the reason (#1).
+
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts
