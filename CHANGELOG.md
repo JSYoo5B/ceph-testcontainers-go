@@ -331,6 +331,14 @@ change the API.
   `REPLAY` of the same client ID and TID, and an independent client reads the
   result. The [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
   guide lists the receipt and what it leaves out.
+- The feasibility report `docs/research/bluestore-block-faults.md` records a
+  bounded probe of a test-owned sparse file, loop device and device-mapper
+  mapping on a hosted Linux runner, without Ceph: separate read, write and
+  flush delays, `EIO` from `error` and direction-specific `flakey` windows,
+  verified restore with exact readback, and owned cleanup. A whole-device
+  delay left `dmsetup resume` timed out after the kernel had installed the
+  table. The report gives a conditional go for proving OSD attachment in a
+  separate step (#7). The probe and its workflow are research tooling, not API.
 
 ### Changed
 

@@ -203,8 +203,9 @@ no association with the file's inode; then the table files, the backing file
 and the work directory were removed. `dmsetup udevcookies` listed no leftover
 cookie.
 
-The commits after `ec62fba` change only this report, so the probe and the
-workflow it executed are the ones on the PR head.
+The commits after `ec62fba` change only documentation (this report and the
+changelog), so the probe and the workflow it executed are the ones on the PR
+head.
 
 ## Eligibility
 
