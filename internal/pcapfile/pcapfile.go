@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 	"os"
 )
 
@@ -65,10 +66,14 @@ type Report struct {
 	// TruncatedPackets counts records whose captured length is smaller than
 	// their original length: snaplen truncation, not a malformed file.
 	TruncatedPackets int `json:"truncated_packets"`
-	// BytesRead is how much of the file was read; SHA256 is of those bytes,
-	// so it identifies the whole file only when Status is not LimitExceeded.
+	// BytesRead is how much of the input was read and SHA256 is of exactly
+	// those bytes. Complete reports that reading reached the end of the
+	// input within the bound, so that SHA256 identifies the whole file. An
+	// early verdict, a read error or the bound leave it false: the digest
+	// then covers only the prefix that was read.
 	BytesRead int64  `json:"bytes_read"`
 	SHA256    string `json:"sha256"`
+	Complete  bool   `json:"complete"`
 }
 
 const (
@@ -103,11 +108,17 @@ func Validate(r io.Reader, limits Limits) (Report, error) {
 	}
 	v := &validator{sum: sha256.New(), limit: limits.MaxFileBytes}
 	// One byte past the bound shows that the file is larger; it is read
-	// but not hashed, so SHA256 covers exactly BytesRead.
-	v.in = io.TeeReader(io.LimitReader(r, limits.MaxFileBytes+1), &boundedWriter{w: v.sum, left: limits.MaxFileBytes})
+	// but neither hashed nor decoded, so SHA256 covers exactly BytesRead.
+	// No input can exceed the largest bound, which needs no lookahead.
+	lookahead := r
+	if limits.MaxFileBytes < math.MaxInt64 {
+		lookahead = io.LimitReader(r, limits.MaxFileBytes+1)
+	}
+	v.in = io.TeeReader(lookahead, &boundedWriter{w: v.sum, left: limits.MaxFileBytes})
 	report, err := v.run(limits)
 	report.BytesRead = min(v.read, limits.MaxFileBytes)
 	report.SHA256 = hex.EncodeToString(v.sum.Sum(nil))
+	report.Complete = err == nil && v.ended && !v.capped()
 	if report.Status == "" && err == nil {
 		// Only the bound stops a check without a verdict.
 		report.Status = LimitExceeded
@@ -121,6 +132,8 @@ type validator struct {
 	sum   hash.Hash
 	read  int64
 	limit int64
+	// ended records that a read reached the end of the input.
+	ended bool
 }
 
 // boundedWriter passes on at most left bytes and drops the rest.
@@ -153,6 +166,7 @@ func (v *validator) fill(buf []byte) (int, error) {
 	case err == nil:
 		return n, nil
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		v.ended = true
 		return n, errShort
 	default:
 		return n, err
@@ -168,6 +182,7 @@ func (v *validator) skip(n int64) (int64, error) {
 	copied, err := io.CopyN(io.Discard, v.in, n)
 	v.read += copied
 	if errors.Is(err, io.EOF) {
+		v.ended = true
 		return copied, errShort
 	}
 	return copied, err
@@ -180,11 +195,13 @@ func (v *validator) run(limits Limits) (Report, error) {
 	if err != nil && !errors.Is(err, errShort) {
 		return report, err
 	}
+	// The lookahead byte only shows that the input exceeds the bound; it is
+	// never decoded.
+	if v.capped() {
+		return report, nil
+	}
 	if n >= 4 && binary.LittleEndian.Uint32(header) == magicPCAPNG {
 		return verdict(report, Unsupported, "pcapng is not classic pcap"), nil
-	}
-	if errors.Is(err, errShort) && v.capped() {
-		return report, nil
 	}
 	if errors.Is(err, errShort) {
 		if n < 4 {
@@ -219,10 +236,10 @@ func (v *validator) run(limits Limits) (Report, error) {
 	record := make([]byte, recordHeaderBytes)
 	for {
 		n, err := v.fill(record)
+		if v.capped() {
+			return report, nil
+		}
 		if errors.Is(err, errShort) {
-			if v.capped() {
-				return report, nil
-			}
 			if n == 0 {
 				return verdict(report, Valid, ""), nil
 			}

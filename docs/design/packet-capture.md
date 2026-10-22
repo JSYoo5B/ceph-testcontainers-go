@@ -28,8 +28,15 @@ The report keeps the byte order (`little`, `big`), timestamp unit
 (`microsecond`, `nanosecond`), version, snaplen, link type, packet count, and
 the count of records captured shorter than their original length. That count
 is snaplen truncation of those packets, not a malformed file. It also keeps
-the bytes read and their SHA-256, which identifies the whole file only when
-the status is not `limit_exceeded`.
+the bytes read and the SHA-256 of exactly those bytes. `complete` says that
+reading reached the end of the input within the bound; only then is the
+digest a whole-file identity. An early verdict such as an unknown magic
+number, a read error or the bound leaves it false, and the digest covers the
+prefix that was read.
+
+The byte read past the file bound only shows that the input is larger; it is
+neither hashed nor decoded. The largest representable bound needs no such
+byte.
 
 A record's declared length is compared with the bounds before anything is
 read, and record data is streamed through the digest without being held, so

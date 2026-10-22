@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,8 +256,85 @@ func FuzzValidate(f *testing.F) {
 		default:
 			t.Fatalf("no verdict: %+v", report)
 		}
-		if report.BytesRead > 4096 || report.BytesRead > int64(len(data)) || (report.Status != Valid) == (report.Reason == "") {
+		if report.BytesRead > 4096 || report.BytesRead > int64(len(data)) || (report.Status != Valid) == (report.Reason == "") ||
+			report.Complete && report.BytesRead != int64(len(data)) || report.Status == Valid && !report.Complete {
 			t.Fatalf("inconsistent report %+v for %d bytes", report, len(data))
 		}
 	})
+}
+
+// The largest representable bound needs no lookahead and must not wrap into
+// a negative read limit.
+func TestLargestFileBoundDoesNotOverflow(t *testing.T) {
+	data := newCapture(binary.LittleEndian, magicMicro).bytes()
+	report := check(t, data, Limits{MaxFileBytes: math.MaxInt64})
+	if report.Status != Valid || report.BytesRead != fileHeaderBytes || !report.Complete || report.SHA256 != digest(data) {
+		t.Fatalf("report %+v", report)
+	}
+}
+
+// The byte past the bound only shows that the input is larger. Whatever it
+// holds, the verdict on the same reported prefix is the same.
+func TestLookaheadByteIsNeverDecoded(t *testing.T) {
+	c := newCapture(binary.LittleEndian, magicMicro)
+	header := c.bytes()
+	// A record that claims more captured than original bytes is malformed
+	// once its header is read whole.
+	record := binary.LittleEndian.AppendUint32(nil, 1)
+	record = binary.LittleEndian.AppendUint32(record, 0)
+	record = binary.LittleEndian.AppendUint32(record, 1)
+	record = binary.LittleEndian.AppendUint32(record, 0)
+	bad := append(append(bytes.Clone(header), record...), 'x')
+	for _, tc := range []struct {
+		name  string
+		data  []byte
+		bound int64
+	}{
+		{"file header", header, fileHeaderBytes - 1},
+		{"record header", bad, fileHeaderBytes + recordHeaderBytes - 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, last := range []byte{0x00, 0xff} {
+				data := bytes.Clone(tc.data)
+				data[tc.bound] = last
+				report := check(t, data, Limits{MaxFileBytes: tc.bound})
+				if report.Status != LimitExceeded || report.BytesRead != tc.bound || report.Complete || report.SHA256 != digest(data[:tc.bound]) {
+					t.Fatalf("lookahead %#x: %+v", last, report)
+				}
+			}
+		})
+	}
+	if report := check(t, bad, Limits{MaxFileBytes: fileHeaderBytes + recordHeaderBytes}); report.Status != Malformed {
+		t.Fatalf("the same record inside the bound: %+v", report)
+	}
+}
+
+// Only reading to the end of the input makes the digest a whole-file
+// identity; an early verdict, a read error or the bound leave a prefix digest.
+func TestCompleteMarksWholeFileDigests(t *testing.T) {
+	valid := newCapture(binary.LittleEndian, magicMicro).add([]byte("hello"), 5).bytes()
+	notPCAP := bytes.Repeat([]byte("not a capture "), 20)
+	for _, tc := range []struct {
+		name     string
+		data     []byte
+		limits   Limits
+		complete bool
+		read     int
+	}{
+		{"valid", valid, Limits{}, true, len(valid)},
+		{"cut off at the end", valid[:len(valid)-1], Limits{}, true, len(valid) - 1},
+		{"early unknown magic", notPCAP, Limits{}, false, fileHeaderBytes},
+		{"bound", valid, Limits{MaxFileBytes: 30}, false, 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := check(t, tc.data, tc.limits)
+			if report.Complete != tc.complete || report.BytesRead != int64(tc.read) || report.SHA256 != digest(tc.data[:tc.read]) {
+				t.Fatalf("report %+v", report)
+			}
+		})
+	}
+	report, err := Validate(&failingReader{data: valid[:10], err: errors.New("synthetic")}, Limits{})
+	if err == nil || report.Complete {
+		t.Fatalf("read error: %+v %v", report, err)
+	}
 }
