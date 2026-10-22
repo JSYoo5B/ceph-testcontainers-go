@@ -1,9 +1,11 @@
 # Ceph behavioral bug compatibility policy
 
 This records the policy in [#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24).
-The CI planner implements explicit selection and its validation (see
-[Bug compatibility selection](ci.md#bug-compatibility-selection)). No paired
-implementation, workflow input or native compatibility result exists yet.
+The CI planner implements explicit selection and its validation, and the
+tagged runtime workflow carries one selection input through every job (see
+[Bug compatibility selection](ci.md#bug-compatibility-selection)). No caller
+sets that input, and no paired implementation or native compatibility result
+exists yet.
 The [supported-tag catalogue](../guides/bug-compatibility-tags.md) currently has
 no registered tags. Existing runtime behavior is unchanged.
 
@@ -89,10 +91,10 @@ this policy or filled with placeholder IDs:
   was selected. The planner refuses unregistered selections and requires each
   registered tag's sources to constrain on it; it does not prove that a
   compiled source behaves differently.
-- How workflows pass a selection, and how reports present it beside image
-  identities. The planner carries the selection in profile tags, the build key
-  and history identity; no workflow sets it yet. Every additional supported
-  tag adds configurations to maintain.
+- Which callers may set a selection, and for which image cohorts.
+  `tagged-runtime.yml` takes it as one input, history rows record it and job
+  summaries show it beside image identities, but no caller sets it yet.
+  Every additional supported tag adds configurations to maintain.
 
 ## Implementation and review checklist
 

@@ -55,6 +55,10 @@ on:
         description: Runtime jobs that run at once; the default (the matrix size limit) leaves them unbounded
         default: 256
         type: number
+      bug_compatibility:
+        description: Comma-separated registered ceph_bug_<id> tags (docs/guides/bug-compatibility-tags.md); empty selects every ordinary path. Plan refuses an invalid selection before any runtime job starts
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -122,17 +126,22 @@ jobs:
           SCENARIO_SELECT_DECLARATIONS: ${{ inputs.select_declarations }}
           SCENARIO_NETWORKS: ${{ inputs.networks }}
           SCENARIO_REPETITIONS: ${{ inputs.repetitions }}
+          # Validated here against the registry, before any runtime job is
+          # allocated. Every tag_scenarios.py command of this workflow takes
+          # the same input as an argument; no environment variable that Go
+          # or the planner reads carries it.
+          SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           elif [ "$SCENARIO_CATEGORY" = selected ]; then
-            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           elif [ "$SCENARIO_CATEGORY" = representative ]; then
-            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           elif [ -n "$SCENARIO_SELECT_DECLARATIONS" ]; then
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
@@ -151,7 +160,8 @@ jobs:
         continue-on-error: true
         env:
           GOPROXY: 'off'
-        run: python3 .github/scripts/tag_scenarios.py buildcache --directory artifacts/buildcache
+          SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
+        run: python3 .github/scripts/tag_scenarios.py buildcache --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --directory artifacts/buildcache
       - name: Save the Go build cache
         if: steps.warm_build.outcome == 'success'
         uses: actions/cache/save@v6
@@ -223,7 +233,11 @@ jobs:
           SCENARIO_CATEGORY: ${{ matrix.category }}
           SCENARIO_BATCH: ${{ matrix.batch }}
           SCENARIO_PACKAGE: ${{ matrix.package }}
-        run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --directory artifacts/scenario/compile
+          # The Plan job's selection, and the tags it gave this entry; a
+          # recomputed profile with other tags fails before building.
+          SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
+          SCENARIO_PROFILE_TAGS: ${{ matrix.tags }}
+        run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --directory artifacts/scenario/compile
       - name: Docker baseline and engine identity
         id: docker_baseline
         uses: ./.github/actions/runtime-cleanup
@@ -253,11 +267,13 @@ jobs:
           # mode than the batch's default runs only the tests that declare it.
           CEPH_TEST_NETWORK: ${{ matrix.network }}
           SCENARIO_TESTS: ${{ matrix.tests }}
+          SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
+          SCENARIO_PROFILE_TAGS: ${{ matrix.tags }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --binary artifacts/scenario/compile --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py optional --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           else
-            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
+            python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           fi
       - name: Verify owned Docker resource cleanup
         id: cleanup
@@ -280,7 +296,9 @@ jobs:
           SCENARIO_CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
         run: python3 .github/scripts/report_workflow_phases.py
       # One offline history row that joins the receipts above. It reads
-      # files only, and its own failure never changes the job's result.
+      # files only, and its own failure never changes the job's result. The
+      # job summary shows the row's bug compatibility selection beside the
+      # role image IDs; a receipt of another selection writes no row.
       - name: Normalize the scenario history row
         if: always()
         continue-on-error: true
@@ -291,6 +309,7 @@ jobs:
           SCENARIO_JOB_ID: ${{ job.check_run_id }}
           SCENARIO_REPETITION: ${{ matrix.repetition }}
           SCENARIO_REQUESTED_HEAD: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
         run: |
           if [ -d artifacts/scenario ]; then
             python3 .github/scripts/scenario_history.py normalize \
@@ -298,6 +317,7 @@ jobs:
               --profile "$SCENARIO_PROFILE" --network "$SCENARIO_NETWORK" --release "$SCENARIO_RELEASE" \
               --job-id "$SCENARIO_JOB_ID" --repetition-id "$SCENARIO_REPETITION" --requested-head "$SCENARIO_REQUESTED_HEAD" \
               --checkout-commit "$(git rev-parse HEAD)" --checkout-tree "$(git rev-parse 'HEAD^{tree}')" \
+              --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --summary "$GITHUB_STEP_SUMMARY" \
               --output artifacts/scenario/history-row.json
           fi
       - name: Save compile, native and phase results

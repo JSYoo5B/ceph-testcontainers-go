@@ -1579,6 +1579,87 @@ class BugCompatibilitySelectionTests(unittest.TestCase):
                 engine.verified_binary(directory, selected, ["TestNewFeature"])
 
 
+class BugCompatibilityMatrixEntryTests(unittest.TestCase):
+    """A runtime job recomputes its profile with its own selection; a matrix
+    entry of the Plan job's selection must have the same tags."""
+
+    def plans(self):
+        catalog = bug_branches()
+        return (catalog, engine.discover(catalog, engine.bug_selection(bug_registry(), "")),
+                engine.discover(catalog, engine.bug_selection(bug_registry(), BUG_A)))
+
+    def test_compile_of_another_selection_fails_before_building(self):
+        _, ordinary, selected = self.plans()
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "bounded_go") as compiler:
+            directory = Path(temporary) / "compile"
+            for plan, entry in ((ordinary, selected), (selected, ordinary)):
+                with self.subTest(tags=entry["include"][0]["tags"]), \
+                        self.assertRaisesRegex(ValueError, "selected different bug compatibility paths"):
+                    engine.compile_profile(plan, "short", "basic", None, directory,
+                                           profile_tags=entry["include"][0]["tags"])
+            self.assertFalse(directory.exists())
+        compiler.assert_not_called()
+
+    def test_run_of_another_selection_fails_before_running(self):
+        catalog, ordinary, selected = self.plans()
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine.subprocess, "Popen") as popen, \
+                patch.object(engine, "verified_binary") as verifier:
+            output = Path(temporary) / "native"
+            with self.assertRaisesRegex(ValueError, "selected different bug compatibility paths"):
+                engine.run_profile(catalog, selected, "short", "basic", None, output, Path(temporary),
+                                   binary=Path(temporary) / "compile", profile_tags=ordinary["include"][0]["tags"])
+            self.assertFalse(output.exists())
+        popen.assert_not_called()
+        verifier.assert_not_called()
+
+    def test_matching_entry_tags_are_accepted(self):
+        _, ordinary, selected = self.plans()
+        for plan in (ordinary, selected):
+            engine.matrix_tags(plan["include"][0], plan["include"][0]["tags"])
+            engine.matrix_tags(plan["include"][0], None)
+
+    def test_cli_refuses_a_mismatched_entry_or_selection_before_allocating(self):
+        optional = fixture(path="internal/integration/optional_test.go", category="optional", batch="native_bug")
+        optional["constraint"] = combine("and", optional["constraint"], tag("native_regression"))
+        optional["tags"].append("native_regression")
+        cases = {
+            "selected different bug compatibility paths": ["--profile-tags", "ci," + BUG_A],
+            "unregistered bug compatibility tag": ["--bug-compatibility", "ceph_bug_synthetic_typo"],
+            "not a bug compatibility tag": ["--bug-compatibility", "integration"],
+        }
+        for message, arguments in cases.items():
+            for command in (["compile", "--category", "short", "--batch", "basic"],
+                            ["run", "--category", "short", "--batch", "basic", "--binary", "compile"],
+                            ["optional", "--batch", "native_bug", "--binary", "compile"]):
+                with self.subTest(message=message, command=command[0]), tempfile.TemporaryDirectory() as temporary, \
+                        patch.object(engine, "load_catalog", return_value=[fixture(), optional]), \
+                        patch.object(engine, "bounded_go") as compiler, \
+                        patch.object(engine.subprocess, "Popen") as popen, \
+                        patch("sys.stderr", new=io.StringIO()) as error:
+                    directory = Path(temporary) / "out"
+                    self.assertEqual(engine.main(command + arguments + ["--directory", str(directory)]), 1)
+                    self.assertFalse(directory.exists())
+                    compiler.assert_not_called()
+                    popen.assert_not_called()
+                    self.assertIn(message, error.getvalue())
+
+    def test_environment_never_carries_the_selection(self):
+        environment = {"GOFLAGS": "-tags=" + BUG_A, "SCENARIO_BUG_COMPATIBILITY": BUG_A,
+                       "BUG_COMPATIBILITY": BUG_A}
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, environment), \
+                patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch("sys.stdout", new=io.StringIO()):
+            output = Path(temporary) / "plan.json"
+            self.assertEqual(engine.main(["plan", "--category", "short", "--output", str(output),
+                                          "--github-output", str(Path(temporary) / "github")]), 0)
+            plan = json.loads(output.read_text())
+            self.assertEqual(plan["bug_compatibility"], [])
+            self.assertTrue(all(BUG_A not in profile["tags"].split(",") for profile in plan["include"]))
+            matrix = json.loads(github_outputs(Path(temporary) / "github")["matrix"])["include"]
+            self.assertTrue(all(entry["bug_compatibility"] == [] for entry in matrix))
+            self.assertNotIn("-tags", engine.go_environment()["GOFLAGS"])
+
+
 class BugCompatibilityRegistryTests(unittest.TestCase):
     def test_malformed_registry_is_refused(self):
         def document(**changes):
