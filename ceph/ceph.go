@@ -94,15 +94,18 @@ type Container struct {
 	extensionsMu          sync.Mutex
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
-	osdMemory             *osdMemoryStorage
-	osdVolume             *osdVolumeStorage
-	run                   *runVolume
-	config                []byte
-	keyring               []byte
-	portLeases            []*hostPortLease
-	closed                bool
-	monitorTerminated     bool
-	networkRemoved        bool
+	// detachedOSDs are retained stores and registrations without a
+	// container, until ReopenOSD or Terminate.
+	detachedOSDs      map[int]*DetachedOSD
+	osdMemory         *osdMemoryStorage
+	osdVolume         *osdVolumeStorage
+	run               *runVolume
+	config            []byte
+	keyring           []byte
+	portLeases        []*hostPortLease
+	closed            bool
+	monitorTerminated bool
+	networkRemoved    bool
 
 	// nativeMu guards the RunNativeCommand calls that run or whose command
 	// is not confirmed as stopped, and whether Terminate refuses new ones.
@@ -141,6 +144,9 @@ type OSDContainer struct {
 	placement   OSDConfig
 	purged      bool
 	purgeIssued bool
+	// detaching marks an OSD that DetachOSD fenced; detachRemoved marks
+	// one whose container it removed. Both keep the OSD owned for retry.
+	detaching, detachRemoved bool
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
@@ -799,7 +805,13 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	}
 	osd, ok := c.osds[id]
 	if !ok || osd == nil {
+		if c.detachedOSDs[id] != nil {
+			return invalid(fmt.Errorf("osd.%d is detached; reopen it before removing it", id))
+		}
 		return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
+	}
+	if osd.detaching {
+		return fmt.Errorf("osd.%d is being detached; retry DetachOSD", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

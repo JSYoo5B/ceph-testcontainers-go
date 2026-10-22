@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **700** functions, declared methods on
+The declaration catalogue contains **707** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **932** exported field/nested-record/embedding entries in
 **161** types. It scans exported declared interfaces as well; there are none
@@ -18,17 +18,19 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 308 | 323 |
+| `ceph` | 315 | 323 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| Total | 700 | 932 |
+| Total | 707 | 932 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
-mirror variants, and the context-bounded `MonitorsContext` and `OSDsContext`
-getters added for #4. It uses the current source, not the earlier 691/692-entry
+mirror variants, the context-bounded `MonitorsContext` and `OSDsContext`
+getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
+and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
+accessors) added for #6. It uses the current source, not the earlier 691/692-entry
 checkpoint. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
@@ -53,6 +55,7 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Saved policies and revocation handles | Retain the completed `Override*` and management `*Handle` names from #18/#19. Retain `FullRatiosOverride` and `BlocklistOverride` as the explicit #15/#16 exceptions: their domain/Restore methods already identify the saved policy. This does not move either policy into `fault`, add automatic undo, or claim an uncertain handle succeeded. |
 | Owned additions and disruption leases | Retain `PauseLease`, `NetworkProfileLease`, `SnapshotScheduleLease`, and `ImmutableObjectCacheLease`. Preserve `Pause`/`Resume`, Apply/Restore and Add/Restore. `TemporaryBlocklist` retains its real native TTL; the cache's Start name deliberately drops Temporary because it has none. `Lease` identifies ownership, not universal expiry or automatic restoration. |
 | Quiesce and staged removal/addition | Retain `QuiesceSubvolumes`/`Quiesce.Release`, `MirrorDirectoryAddition`, `MirrorDirectoryRemoval`, `MirrorPeerRemoval`, their Begin/Status/Wait/Acknowledge methods and observation types. They represent native set or phased transition ownership, including partial/uncertain progress; a past-participle name or common Undo would misstate their contract. |
+| Retained OSD lifecycle | Retain `DetachOSD`, `ReopenOSD` and `DetachedOSD`. Detach names releasing a daemon's container while keeping its store and MON registration, and is distinct from `RemoveOSD` (drain and purge) and from container Stop/Start (same container). Reopen names starting a new container on that retained store; it neither allocates a registration like `Add*` nor formats like a fresh start. `DetachedOSD` exposes read-only accessors instead of mutable fields, because ReopenOSD validates against private copies; `ClusterFSID` qualifies which FSID it is. |
 | Lifetime and recovery operations | Retain `Terminate` for owned clusters/fixtures, `Close` for streams/shared fixtures, explicit Restore for policies/files, Stop for a process that may retain files, and Resume for thawing. `RestoreBackup`, `RestoreIncremental`, `Rebootstrap*`, `RepairPG` and clone cancel/remove are domain recovery operations, not interchangeable cleanup handles. |
 | Debug and fault operations | Retain `InjectObjectDataError`, `InterruptNetwork`, `InterruptLink` and peer/zone interruption helpers with their established package placement. A one-shot injection has no generic Restore contract; caller-bound links differ from cluster-selected networks. No package move or new fault guarantee follows from the naming pass. |
 | Options, constants and errors | Retain `With*`, `Default*`, `Max*`, `Min*`, typed domain constants and `Err*`. These express configuration, bounds and errors.Is categories. `WithOSDInMemoryStorage`, `WithOSDVolumeStorage` and `WithOSDObjectStore` distinguish backing storage from the object-store engine. Prefixes alone do not assert support or require a global alias. |

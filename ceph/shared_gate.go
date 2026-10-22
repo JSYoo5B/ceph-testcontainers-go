@@ -172,10 +172,12 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"AddMonitor":            sharedRecycle,
 	"AddOSD":                sharedRecycle,
 	"AddOSDWithConfig":      sharedRecycle,
+	"DetachOSD":             sharedRecycle,
 	"InjectObjectDataError": sharedRecycle,
 	"RemoveManager":         sharedRecycle,
 	"RemoveMonitor":         sharedRecycle,
 	"RemoveOSD":             sharedRecycle,
+	"ReopenOSD":             sharedRecycle,
 
 	"Terminate": sharedRefused,
 }

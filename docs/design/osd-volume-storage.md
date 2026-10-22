@@ -56,14 +56,13 @@ checks stored identities while every original mount user is stopped. Recovery
 uses the same OSD containers; an independent observer reference makes volume
 removal fail until that reference is removed and `Terminate` retried.
 
-This does not close #6. There is no retained descriptor, public detach/reopen,
-candidate cleanup ledger or exclusive attachment lease. A future replacement
-must create a new descriptor without rebinding the old published pointer, confirm
-old raw-container removal, validate stored and current MON identities before any
-writes, fence old native/fault users and preserve uncertain ownership. It must
-prove known bytes on a single-replica pool through a different Docker container
-with the same OSD ID/UUID/FSID and without backfill. Same-container restart,
-replication and ordinary volume allocation do not prove those criteria.
+[Retained detach and reopen](osd-retained-reopen.md) builds on this backend:
+`DetachOSD` removes the container after a fence and keeps the store and
+registration, and `ReopenOSD` starts a new descriptor and container after a
+read-only identity, registration and key preflight. Its native batch reads
+known bytes back from a single-replica pool through a different container.
+Same-container restart, replication and ordinary volume allocation above do
+not prove those criteria by themselves.
 
 `Terminate` always discards owned storage. No host/daemon-restart or power-loss
 durability is claimed.
