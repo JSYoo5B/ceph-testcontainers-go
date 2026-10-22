@@ -13,7 +13,7 @@ for each daemon role, and what an image must contain.
 pinned to the tested native AMD64/ARM64 index digest:
 
 ```text
-ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80
+ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80
 ```
 
 The digest is a multi-architecture manifest for `linux/amd64` and
@@ -31,7 +31,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 
 | Release | Status | Tested image |
 | --- | --- | --- |
-| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | `roles-v2-official-20.2.4-all` (`ceph.DefaultImage`) |
+| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | Pruned official aggregate pinned by `ceph.DefaultImage` |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see
@@ -141,129 +141,49 @@ These affect commands or client libraries you run yourself, not the typed API:
 
 ## Role images
 
-The official image contains every Ceph component. Lighter images can be used by
-role, so that each container pulls only what it runs. A role describes the
-components an image must contain, not a container: MON and MGR, for example,
-run as separate containers from the same `control` image.
+`ceph.ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an
+exclusive All image. This is the image model used by the module and its CI.
+`Run(ctx, image)` treats the image as an aggregate. Use `RunWithImages` or
+`WithImages` for explicit roles; a missing optional feature image is an error.
 
-| Role | Runs |
+| Role | Runtime responsibility |
 | --- | --- |
-| `control` | MON, MGR, the fixture's CLI container, client and helper containers, `rbd-mirror` and `cephfs-mirror` daemons, multisite setup clients |
-| `osd` | One container per OSD |
-| `rgw` | RGW gateways |
-| `mds` | CephFS metadata servers |
-| `all` | Every component of the four roles in one image, like the official image |
+| essential | MON, MGR and OSD in separate containers; bootstrap/administration, MGR modules, OSD classes/plugins |
+| client | Ordinary CLI, Python rados/rbd/cephfs bindings, encryption/striper clients, offline map diagnostics |
+| cephfs | MDS and CephFS mirror runtime |
+| rbd-aux | RBD mirror and cache-capable client runtime |
+| rgw | Gateway and RGW administration/setup |
+| all | Aggregate supplying every role |
 
-### Which option selects which image
-
-| Containers | Image selected by | Fallback |
-| --- | --- | --- |
-| MON, MGR, control CLI, helper containers (host-port reservations, the in-memory OSD storage keeper) | The `img` argument of `ceph.Run` (or `rbd.Run`, `cephfs.Run`, `rgw.Run`). `cluster.ControlImage()` returns it. | None |
-| OSDs, including OSDs added later | `ceph.WithOSDImage(image)` | `Run` image |
-| MDS daemons, including daemons added by `ScaleMDS` | `cephfs.WithMDSImage(image)` | `Run` image |
-| Gateways from `rgw.WithGateways` and `rgw.Start` | `rgw.WithImage(image)` | `Run` image |
-| `rbd-mirror` daemons and both setup clients | The `image` argument of `rbd.RunMirror`; must be a `control` or `all` image. Pass `source.ControlImage()`. | None |
-| `cephfs-mirror` daemons | The `image` argument of `cephfs.RunMirror`; must be a `control` or `all` image. | None |
-| Multisite gateways | The `image` argument of `rgw.RunMultisite`, `rgw.RunTopology`, `Multisite.AddZone` and `Multisite.AddZonegroup` (an `rgw` or `all` image) | None |
-| Multisite setup clients (`radosgw-admin`) | `rgw.MultisiteConfig.ControlImage` or `rgw.TopologyConfig.ControlImage` | Each zone cluster's own `ControlImage()` |
-| Your client containers | Your choice; `cluster.ControlImage()` has every Ceph CLI and the Python bindings | None |
-| Netem helper | `fault.NetworkProfile.HelperImage`, selected explicitly (for example `fault.NetemHelperImage`) | None; never uses the Ceph role image implicitly |
-
-If you omit a role override, that role runs from the `Run` image, which must
-then contain the role's components too. With a `control`-only image you must
-at least set `WithOSDImage`, and also `cephfs.WithMDSImage` or `rgw.WithImage`
-when you start CephFS or RGW.
-
-`RunNativeCommand` needs `python3` in the container that runs its supervisor.
-The `osd`, `mds` and `rgw` role contracts do not require it, so a supervised
-command in one of those containers may return `ceph.ErrImageCapability`.
-Run client oracles in a `control`/`all` client container; `AdminSocket` can
-query owned MON/MGR/OSD admin sockets through the shared run volume from the
-control container. Selecting a helper does not add tools to a daemon image.
-
-```golang
-cluster, err := ceph.Run(ctx, "ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-control",
-	ceph.WithOSDImage("ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-osd"),
-	cephfs.WithMDSImage("ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-mds"),
-	rgw.WithImage("ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-rgw"),
-	cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
-	rgw.WithGateways(rgw.Config{Name: "s3"}),
-)
-if cluster != nil {
-	testcontainers.CleanupContainer(t, cluster)
-}
-if err != nil {
-	t.Fatal(err)
-}
+```go
+cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{
+    Essential: essentialRef,
+    Client: clientRef,
+    CephFS: cephFSRef,
+    RGW: rgwRef,
+}, cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
+   rgw.WithGateways(rgw.Config{Name: "s3"}))
+if cluster != nil { testcontainers.CleanupContainer(t, cluster) }
+if err != nil { t.Fatal(err) }
 ```
 
-### Published role images
+Use matching Ceph releases. Published immutable references are recorded in
+[the role digest map](../../.github/ceph-role-images.json), grouped by release,
+variant and role. The SDK default is the qualified official-derived aggregate.
 
-The companion repository
-[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images)
-checks and publishes role images for every supported release:
+Cluster administration remains on MON/the stable multi-MON CLI. Ordinary
+RBD/CephFS and native userspace oracles use the owned lazy client toolkit;
+aggregate selections reuse their existing executor. Client setup and mirror
+daemons use their respective client and feature images. RGW administration
+runs in rgw without requiring a generic client. Cache daemon/plugin/socket
+stay with their consuming librbd client. MGR modules and OSD plugins stay
+with essential. Caller-owned external clients remain caller-owned.
 
-```text
-ghcr.io/jsyoo5b/ceph-testcontainers-images:<variant>-<release>-<role>
-```
-
-- `<variant>`: `official` (files copied only from the official image),
-  `debian` or `ubuntu` (built from Ceph's own distribution packages);
-- `<release>`: for example `20.2.4` or `19.2.5`;
-- `<role>`: `control`, `osd`, `rgw`, `mds` or `all`.
-
-Each tag covers `linux/amd64` and `linux/arm64`. You can also build your own
-images; any image that meets the requirements below works.
-
-## Image requirements by role
-
-Requirements that apply to every role:
-
-- Linux `amd64` or `arm64`; containers run as root.
-- No dependency on cephadm, systemd or an image-specific entrypoint. The module
-  overrides entrypoint and command, and daemons run in the foreground.
-- `/bin/sh` and `mkdir`, `cp`, `cat`, `rm`, `test`, `sleep`, `hostname` and
-  `awk` on `PATH`. `hostname -i` prints the container address and
-  `sleep infinity` keeps an idle container running.
-- Writable `/etc/ceph`, `/var/lib/ceph`, `/var/run/ceph` (a symlink to
-  `/run/ceph` is fine) and `/var/log/ceph`; a sticky `/tmp`.
-- Every executable loads with its shared libraries, Python modules and runtime
-  plugins.
-- No cluster inside the image: FSID, keys, daemon IDs, addresses and ports are
-  injected at run time. No address or port is fixed in the image.
-- OSDs initialize with `--mkfs` on a sparse BlueStore file. Block devices, LVM,
-  privileged mode and kernel mounts are not used.
-- All Ceph executables report `ceph version <release> (<commit>)` for
-  `--version`, all with the same release; images combined in one cluster report
-  the same release.
-
-| Role | Executables on `PATH` | Additional runtime dependencies |
-| --- | --- | --- |
-| `control` | `ceph-mon`, `ceph-mgr`, `ceph`, `ceph-authtool`, `monmaptool`, `rados` with `--striper`, `rbd`, `cryptsetup`, `rbd-mirror`, `cephfs-mirror`, `radosgw-admin`, `python3` | Python `rados`, `rbd`, `cephfs`, `ceph_argparse`, `ceph_daemon`; librbd LUKS1/LUKS2 encryption, libcryptsetup, libradosstriper; the release's always-on MGR modules plus `volumes`, `rbd_support` and `mirroring` with their Python dependencies |
-| `osd` | `ceph-osd` | BlueStore; the `rbd`, `rgw`, `cephfs`, `hello` and `lock` object classes; compressor and erasure-code plugins |
-| `rgw` | `radosgw`, `radosgw-admin`, `readlink` | Beast HTTP frontend with TLS |
-| `mds` | `ceph-mds` | MDS shared libraries |
-| `all` | Union of the four roles | Union of the four roles |
-
-`rbd.TemporaryImmutableObjectCache` also needs `ceph-immutable-object-cache`
-and the librbd `parent_cache` plugin in the client container it runs in. The
-official image has both; an image without them is refused with
-`ceph.ErrImageCapability` for that function only.
-
-Python and the CLIs of other roles are not required in `osd`, `rgw` or `mds`
-images. Do not rely on `ceph` or `python3` inside OSD, MDS or RGW containers
-when you run your own commands; use the control container instead (see
-[Running native commands](native-commands.md)).
-
-The control image runs more than daemons: the fixture executes the `ceph` CLI,
-Python probes (RGW HTTP and TLS readiness, CephFS and RBD client helpers) and
-mirror daemons from it. A missing MGR module dependency shows up as a health
-error, so `HEALTH_OK` also depends on the control image.
-
-The authoritative list, with the reason each component is needed, is the
-[image requirements](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/IMAGE_REQUIREMENTS.md)
-document of the images repository, which also provides a checker for any
-local image.
+`RunNativeCommand` requires Python in the actual target container, and keeps
+explicit capability checks. Selecting a toolkit does not add utilities to a
+daemon. The complete [image requirements](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/IMAGE_REQUIREMENTS.md)
+and [role contract](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/ROLES.md)
+define the supported runtime dependencies.
 
 ### Only what the official image ships
 
@@ -322,7 +242,7 @@ provided.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `ControlImage`,
-  `WithOSDImage`, the error categories.
+  `ImageSet`, `WithImages`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`, `RunMirror`,
@@ -332,24 +252,3 @@ provided.
 - [rbd.md](../rbd.md): `RunMirror`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's
   own suites against another image or release.
-
-## Versioned dependency roles
-
-`ceph.RunWithImages` and `ceph.WithImages` opt into `ceph.ImageSet` with
-Essential, Client, CephFS, RBDAux and RGW fields, or the exclusive All field.
-Use `roles-v2-<variant>-<release>-<role>` images from the images repository.
-Legacy Run/img and role overrides keep their semantics; don't combine legacy
-overrides with an explicit image set. No optional role falls back to core.
-
-Core administration still uses MON/stable multi-MON CLI. RBD/CephFS toolkit
-commands select a lazy fixture-owned client executor; external clients remain
-caller-owned. RBD mirrors select rbd-aux for the daemon and client for setup;
-CephFS mirrors select cephfs. RGW setup/admin uses rgw. Ordinary RBD and backup
-need no rbd-aux, and generic client no longer requires RGW administration.
-Cache clients must select rbd-aux so the local daemon, plugin and librbd share
-the socket. MGR modules and OSD plugins stay with essential.
-
-The compatibility runner accepts `--contract roles-v2`; all and split layouts
-remain independent. Native client and mirror fixtures select their actual
-execution roles instead of reusing ControlImage. Existing published tags and
-legacy-role CI remain separate regression paths.

@@ -108,7 +108,7 @@ def main(argv=None):
                "TESTCONTAINERS_HOST_OVERRIDE": "127.0.0.1",
                "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
                "CEPH_TEST_GOCEPH_CLIENT_IMAGE": images["client"], "CEPH_TEST_GOCEPH_VERSION": go_ceph}
-        for name in ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE", "CEPH_TEST_MDS_IMAGE"):
+        for name in ("CEPH_TEST_IMAGE", "CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_CEPHFS_IMAGE", "CEPH_TEST_RBD_AUX_IMAGE", "CEPH_TEST_RGW_IMAGE"):
             if os.environ.get(name):
                 env[name] = os.environ[name]
         cidfile = output / "runner.cid"

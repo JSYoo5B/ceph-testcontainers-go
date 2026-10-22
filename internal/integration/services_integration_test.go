@@ -20,73 +20,40 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// integrationImage returns the image of the role whose variable is name.
-// Locally a role without an image uses the control image, and the control
-// role uses ceph.DefaultImage. Role-image CI (SCENARIO_IMAGE_LAYOUT=roles)
-// prepares only the roles that a batch declares in its image-roles, so there
-// a role without an image is an error rather than a fallback to the control
-// image.
+// integrationImage selects a role, or the aggregate image for a local run.
 func integrationImage(getenv func(string) string, name string) (string, error) {
-	if getenv("SCENARIO_IMAGE_CONTRACT") == "roles-v2" {
-		aliases := map[string]string{"CEPH_TEST_IMAGE": "CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_OSD_IMAGE": "CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_MDS_IMAGE": "CEPH_TEST_CEPHFS_IMAGE"}
-		if translated := aliases[name]; translated != "" {
-			name = translated
-		}
-		image := getenv(name)
-		if image == "" {
-			return "", fmt.Errorf("%s is required by roles-v2; no fallback", name)
-		}
-		return image, nil
-	}
-
 	if image := getenv(name); image != "" {
 		return image, nil
 	}
-	if getenv("SCENARIO_IMAGE_LAYOUT") == "roles" {
-		return "", fmt.Errorf("%s is not set: role-image CI prepared the roles %q; add the role to the batch's image-roles", name, getenv("SCENARIO_IMAGE_ROLES"))
+	if getenv("CEPH_TEST_ESSENTIAL_IMAGE") != "" || getenv("SCENARIO_IMAGE_LAYOUT") == "roles" {
+		return "", fmt.Errorf("%s is required by the selected roles; no fallback", name)
 	}
-	if name == "CEPH_TEST_IMAGE" {
-		return ceph.DefaultImage, nil
+	if image := getenv("CEPH_TEST_IMAGE"); image != "" {
+		return image, nil
 	}
-	return integrationImage(getenv, "CEPH_TEST_IMAGE")
+	return ceph.DefaultImage, nil
 }
 
-// controlImage returns the control image, for a test that needs no other
-// role.
 func controlImage(t *testing.T) string {
 	t.Helper()
-	image, err := integrationImage(os.Getenv, "CEPH_TEST_IMAGE")
+	image, err := integrationImage(os.Getenv, "CEPH_TEST_ESSENTIAL_IMAGE")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("image: control=%s", image)
 	return image
 }
 
-// Integration tests may use one image for all roles or compatible role images.
-// The control image also supplies the tools for the independent client container.
 func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
 	t.Helper()
-	if os.Getenv("SCENARIO_IMAGE_CONTRACT") == "roles-v2" {
-		images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}
-		if images.Essential == "" {
-			t.Fatal("missing roles-v2 essential image")
-		}
-		return images.Essential, []testcontainers.ContainerCustomizer{ceph.WithImages(images)}
+	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
+		image := controlImage(t)
+		return image, []testcontainers.ContainerCustomizer{ceph.WithImages(ceph.ImageSet{All: image})}
 	}
-	images := make(map[string]string)
-	for _, name := range []string{"CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE", "CEPH_TEST_MDS_IMAGE"} {
-		image, err := integrationImage(os.Getenv, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		images[name] = image
+	images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}
+	if images.Essential == "" {
+		t.Fatal("missing essential image")
 	}
-	control, osd, rgwGateway, mds := images["CEPH_TEST_IMAGE"], images["CEPH_TEST_OSD_IMAGE"], images["CEPH_TEST_RGW_IMAGE"], images["CEPH_TEST_MDS_IMAGE"]
-	t.Logf("images: control/client=%s OSD=%s RGW=%s MDS=%s", control, osd, rgwGateway, mds)
-	return control, []testcontainers.ContainerCustomizer{
-		ceph.WithOSDImage(osd), rgw.WithImage(rgwGateway), cephfs.WithMDSImage(mds),
-	}
+	return images.Essential, []testcontainers.ContainerCustomizer{ceph.WithImages(images)}
 }
 
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
@@ -228,22 +195,22 @@ func toolkitContainer(t *testing.T, cluster *ceph.Container) testcontainers.Cont
 
 // nativeClientImage relocates independent toolkit oracles without changing
 // arbitrary application images (for example Vault or a custom go-ceph client).
-func nativeClientImage(t *testing.T, legacy string) string {
+func nativeClientImage(t *testing.T, aggregate string) string {
 	t.Helper()
-	if os.Getenv("SCENARIO_IMAGE_CONTRACT") != "roles-v2" {
-		return legacy
+	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
+		return aggregate
 	}
 	image := os.Getenv("CEPH_TEST_CLIENT_IMAGE")
 	if image == "" {
-		t.Fatal("missing roles-v2 client image for native oracle")
+		t.Fatal("missing roles client image for native oracle")
 	}
 	return image
 }
 
-func nativeMirrorImage(t *testing.T, role, legacy string) string {
+func nativeMirrorImage(t *testing.T, role, aggregate string) string {
 	t.Helper()
-	if os.Getenv("SCENARIO_IMAGE_CONTRACT") != "roles-v2" {
-		return legacy
+	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
+		return aggregate
 	}
 	variable := "CEPH_TEST_RBD_AUX_IMAGE"
 	if role == "cephfs" {
@@ -251,7 +218,7 @@ func nativeMirrorImage(t *testing.T, role, legacy string) string {
 	}
 	image := os.Getenv(variable)
 	if image == "" {
-		t.Fatalf("missing roles-v2 %s mirror runtime", role)
+		t.Fatalf("missing roles %s mirror runtime", role)
 	}
 	return image
 }

@@ -41,7 +41,6 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"negative OSD block size", WithOSDBlockSize(-1)},
 		{"small OSD block size", WithOSDBlockSize((64 << 20) - 1)},
 		{"startup timeout", WithStartupTimeout(0)},
-		{"OSD image", WithOSDImage("")},
 		{"unknown OSD object store", WithOSDObjectStore("filestore")},
 		{"host address requires host mode", WithHostAddress("127.0.0.1")},
 		{"host address empty", WithHostAddress("")},

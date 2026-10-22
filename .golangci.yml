@@ -7,6 +7,10 @@ run:
     - goceph
     - native_regression
     - cephfs_fuse
+    - role_images
+    - ci_optional
+    - ci_batch_role_routing
+    - ci_batch_role_mirror_refresh
 
 linters:
   default: standard

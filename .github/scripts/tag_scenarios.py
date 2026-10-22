@@ -25,7 +25,7 @@ import run_image_matrix as images
 ROOT = Path(__file__).resolve().parents[2]
 CATEGORIES = ("code", "environment", "short", "topology", "multicluster", "recovery")
 RUNTIME_CATEGORIES = tuple(category for category in CATEGORIES if category != "code")
-LEGACY_TAGS = ("integration", "auth", "features", "topology", "hostnetwork", "multicluster", "diagnostics")
+CAPABILITY_TAGS = ("integration", "auth", "features", "topology", "hostnetwork", "multicluster", "diagnostics")
 CHECKERS = {
     "quiescence": ("check_scenario_quiescence", "TestMultiClusterCephFSOriginalProcessQuiescence"),
     "recovery": ("check_scenario_recovery", "TestMultiClusterCephFSOriginalProcessQuiescenceRecovery"),
@@ -197,10 +197,10 @@ def package_path(file):
     return "./" + parent if parent != "." else "."
 
 
-def legacy_tags(catalog):
+def capability_tags(catalog):
     # Capability tags come from source too. Adding a new capability does not
     # require changing this runner, a Make selector or a workflow matrix.
-    tags = set(LEGACY_TAGS)
+    tags = set(CAPABILITY_TAGS)
     for file in catalog:
         if not file["tests"] or "ci_optional" in file["tags"] or "ci_sdk" in file["tags"]:
             continue
@@ -214,7 +214,7 @@ def legacy_tags(catalog):
     return tuple(sorted(tags))
 
 
-def native_tags(category, batch, capabilities=LEGACY_TAGS):
+def native_tags(category, batch, capabilities=CAPABILITY_TAGS):
     return ",".join((*capabilities, "ci", "ci_" + category, "ci_batch", "ci_batch_" + batch))
 
 
@@ -222,7 +222,7 @@ def discover(catalog):
     """Build profiles and reject missing/overlapping ownership before execution."""
     profiles, owners, aggregates, all_parents = {}, defaultdict(list), {}, defaultdict(set)
     sources, networks, network_tests = defaultdict(set), defaultdict(set), defaultdict(set)
-    capabilities = legacy_tags(catalog)
+    capabilities = capability_tags(catalog)
     for file in catalog:
         if not file["tests"]:
             if file.get("metadata"):
@@ -679,7 +679,7 @@ def load_catalog(root=ROOT):
 def discover_optional(catalog):
     """Keep native defect regressions explicitly outside required coverage."""
     profiles = {}
-    capabilities = (*legacy_tags(catalog), "native_regression")
+    capabilities = (*capability_tags(catalog), "native_regression", "role_images")
     for file in catalog:
         if not file["tests"] or "ci_optional" not in file["tags"]:
             continue
@@ -713,7 +713,7 @@ def discover_optional(catalog):
         profile["profile"] = "optional/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = ("optional-" + profile["batch"])[:70] + "-" + suffix
-        profile["requires_ceph"] = profile["package"] == "./internal/integration"
+        profile["requires_ceph"] = bool(profile["image_roles"]) or profile["package"] == "./internal/integration"
         resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "optional",
             "include": [profiles[key] for key in sorted(profiles)]}

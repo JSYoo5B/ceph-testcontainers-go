@@ -55,7 +55,7 @@ The [ceph policy naming migration](docs/guides/upgrading-ceph-policy-names.md) l
   [the host network guide](docs/guides/host-network.md).
 - Access to pull the Ceph image and the Ryuk image.
 
-The default image is the published, pruned `roles-v2-official-20.2.4-all`
+The default image is the published, pruned official Tentacle 20.2.4 aggregate
 aggregate, pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
 Explicit `ceph.ImageSet` selections use essential + client for ordinary
 RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
@@ -187,5 +187,5 @@ for Go.
 They do not contain or link Ceph. Tests pull the Ceph container images at run
 time and run the daemons and CLIs inside them; Ceph in those images is under
 its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Images
-that a test selects with `WithOSDImage`, `rgw.WithImage` or
+that a test selects with `WithImages`, `rgw.WithImage` or
 `cephfs.WithMDSImage` keep the licenses of whoever publishes them.

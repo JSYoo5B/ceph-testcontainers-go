@@ -139,7 +139,7 @@ returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or
   more.
-- For role images, add `ceph.WithOSDImage` and `rgw.WithImage`, as described
+- For role images, add `ceph.WithImages` and `rgw.WithImage`, as described
   under [Image](#image).
 
 `TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
@@ -202,7 +202,7 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
   (Ceph Tentacle 20.2.4).
 - The image passed to `Run` is the control image. It runs the MON and MGR
   daemons and the Ceph CLIs. Every other role uses the same image unless a role
-  image is selected: `rgw.WithImage` for gateways, `ceph.WithOSDImage` for
+  image is selected: `rgw.WithImage` for gateways, `ceph.WithImages` for
   OSDs.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
@@ -258,8 +258,7 @@ Selects the image for every gateway of the cluster, both the ones started by
 passed to `Run`. Use the same Ceph release as the control image.
 
 ```golang
-cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-control",
-	ceph.WithOSDImage("registry.example.com/ceph:20.2.4-osd"),
+cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-all",
 	rgw.WithImage("registry.example.com/ceph:20.2.4-rgw"),
 )
 ```
@@ -1019,7 +1018,7 @@ func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opt
 
 Configures a two-zone realm. `config.Source` becomes the metadata master zone;
 both zones accept object writes. `image` is the gateway image; the setup
-clients use each cluster's control image unless `config.ControlImage` is set.
+clients use each cluster's RGW image unless `config.SetupImage` is set.
 `opts` customise both gateways and are applied last.
 
 It creates one ordinary S3 test user on the master. Both gateways expose its
@@ -1090,7 +1089,7 @@ topology, err := rgw.RunTopology(ctx, ceph.DefaultImage, rgw.TopologyConfig{
 | `Realm` | Realm name. Defaults to a generated name. |
 | `Zonegroup` | Zonegroup name. Defaults to `us-east-1`. |
 | `SourceZone`, `DestinationZone` | Zone names. Default to generated names. Set them when the test refers to zones by name (sync policies, `ZoneAdmin`, `SyncStatus`). |
-| `ControlImage` | Optional image for every setup client. When empty, each zone's client uses its own cluster's control image. |
+| `SetupImage` | Optional image for every setup client. When empty, each zone's client uses its own cluster's RGW image. |
 
 #### TopologyConfig
 
@@ -1100,7 +1099,7 @@ topology, err := rgw.RunTopology(ctx, ceph.DefaultImage, rgw.TopologyConfig{
 | `Realm` | Realm name. Defaults to a generated name. |
 | `Zonegroup` | Zonegroup name for `Zones`. Defaults to `us-east-1`. |
 | `MetadataMaster` | Initial metadata master zone. Defaults to the first zone. |
-| `ControlImage` | Optional shared setup client image, also used for zones added later. |
+| `SetupImage` | Optional shared setup client image, also used for zones added later. |
 | `Zonegroups` | `[]ZonegroupConfig` for several zonegroups. Cannot be combined with `Zones`, `Zonegroup` or `MetadataMaster`. |
 | `MasterZonegroup` | Zonegroup whose master zone becomes the realm metadata master. Defaults to the first zonegroup. Requires `Zonegroups`. |
 
@@ -1164,8 +1163,8 @@ zone's identity and endpoint, and refreshes the period in all zones. Running
 gateways restart to load the final period, keeping their listener ports and
 storage; gateways you stopped stay stopped. Running secondaries finish initial
 metadata sync before they reload. `image` selects the new gateway; the new
-setup client uses the new cluster's control image unless the fixture has a
-`ControlImage`. Bounded by six minutes in addition to `ctx`.
+setup client uses the new cluster's RGW image unless the fixture has a
+`SetupImage`. Bounded by six minutes in addition to `ctx`.
 
 Call `S3Endpoint` again on every gateway afterwards. Finish any raw master
 promotion before calling `AddZone`, or keep the previous master's gateway
@@ -3087,7 +3086,6 @@ See [guides/releases-and-images.md](guides/releases-and-images.md).
 - NFS, SMB and other gateways besides RGW.
 
 
-For roles-v2 clusters, multisite setup clients default to each cluster's RGW
-image. `SetupImage` explicitly overrides that runtime; it cannot be combined
-with the legacy `ControlImage` override. Gateway-local `Admin` remains in
+For roles clusters, multisite setup clients default to each cluster's RGW
+image. `SetupImage` explicitly overrides that runtime. Gateway-local `Admin` remains in
 the gateway with its realm/zone scope and lifecycle checks.

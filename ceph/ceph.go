@@ -28,7 +28,7 @@ import (
 
 // DefaultImage pins the published, pruned dependency-role aggregate on both
 // native architectures. Explicit ImageSet selections avoid unused feature roles.
-const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
+const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
 
 //go:embed internal/scripts/*.sh
 var scripts embed.FS
@@ -144,9 +144,8 @@ type OSDContainer struct {
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
-// img must satisfy the control role: MON/MGR, CLI, Python clients and mirrors.
-// Other roles use img unless overridden by WithOSDImage, WithMDSImage or
-// rgw.WithImage. Images contain runtime tools; this module supplies cluster setup.
+// img supplies all roles unless WithImages selects explicit role images.
+// Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
@@ -329,8 +328,8 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 	return nil
 }
 
-// ControlImage returns the legacy broad control image, or the essential image
-// in roles-v2. It remains available after termination. The essential image does
+// ControlImage returns the essential image
+// in roles. It remains available after termination. The essential image does
 // not promise general toolkit or RGW setup capabilities. Use Images for explicit
 // role selection, including Client and RGW administration runtimes.
 func (c *Container) ControlImage() string {

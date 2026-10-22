@@ -233,50 +233,26 @@ With parallel runs, `-v` output interleaves `=== PAUSE`, `=== CONT` and
 
 ## Choosing images
 
-CI sets `SCENARIO_IMAGE_CONTRACT=roles-v2` and supplies the selected immutable
-image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`,
-`CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE` and `CEPH_TEST_RGW_IMAGE`.
-Essential hosts MON/MGR/OSD; userspace commands and Python oracles use client;
-CephFS, mirror/cache and RGW features require their declared optional runtime.
-Missing roles fail rather than falling back to the core image. The
-[supplied-image runner](#reproducing-cis-role-images) prepares these identities.
+CI supplies immutable image IDs through `CEPH_TEST_ESSENTIAL_IMAGE`,
+`CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`
+and `CEPH_TEST_RGW_IMAGE`. Only roles declared by the batch are prepared;
+missing selected roles never fall back to essential.
 
-For an explicit aggregate image or historical single-image comparison, leave
-that contract marker unset. The integration tests then read these variables:
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `CEPH_TEST_IMAGE` | `ceph.DefaultImage` | Control image: MON, MGR, the fixture's CLI container, mirror daemons, RGW multisite setup clients, and the test's own client container. Also the default for every role below. |
-| `CEPH_TEST_OSD_IMAGE` | `CEPH_TEST_IMAGE` | OSD daemons (`ceph.WithOSDImage`). |
-| `CEPH_TEST_RGW_IMAGE` | `CEPH_TEST_IMAGE` | RGW gateways (`rgw.WithImage`, `rgw.RunMultisite`, `rgw.RunTopology`). |
-| `CEPH_TEST_MDS_IMAGE` | `CEPH_TEST_IMAGE` | MDS daemons (`cephfs.WithMDSImage`). |
-| `CEPH_TEST_RBD_CLIENT_IMAGE` | selected client toolkit (or aggregate image) | Alternative native RBD client for `TestRBDClientFeatures`. The tag runner and the fixture Make targets unset it, so the selected toolkit itself is verified. |
-| `CEPH_TEST_VAULT_IMAGE` | `hashicorp/vault:1.21.4` | Vault server for the RGW SSE-KMS backend tests. |
-| `CEPH_TEST_PARALLEL` | unset (sequential) | Concurrency limit for opted-in tests. |
-| `CEPH_TEST_HOST_TCP_REQUIRED` | unset | `1` makes the host-network tests require direct TCP reachability of every advertised MON/MGR/OSD port from the test process. |
-| `CEPH_TEST_HOST_HTTP_REQUIRED` | unset | `1` makes `TestHostNetworkRGWEndpoints` fail, instead of logging, when the test process cannot reach the host-network RGW over HTTP. |
-| `CEPH_TEST_GOCEPH_CLIENT_IMAGE` | none | Prepared Linux image with the go-ceph probe, for `TestGoCephLinux`. |
-| `CEPH_TEST_GOCEPH_RUNNER_IMAGE` | none | Prepared runner image for `make goceph-linux` (read by the harness, not by Go). |
-| `CEPH_TEST_GOCEPH_VERSION` | set by the harness | The go-ceph version that `internal/integration/goceph/probe/go.mod` requires. `TestGoCephLinux` fails without a released version, and fails every probe receipt that names another one. |
-
-Because the control image also runs the client container, it must provide the
-Python `rados`, `rbd` and `cephfs` bindings and the `rbd`/`rados` CLIs. A
-control-only image therefore needs the role overrides as well. Tests never
-build images or install packages; testcontainers-go pulls a reference that is
-not present locally.
+A local run with no explicit role variables uses `ceph.DefaultImage` for
+all roles. `CEPH_TEST_IMAGE` can select another aggregate image. For split
+images set essential and the feature roles your selected test requires:
 
 ```sh
-# One image for every role
-CEPH_TEST_IMAGE=registry.example.com/ceph:dev CGO_ENABLED=0 \
-  go test -tags=all -count=1 -v -timeout=30m -run '^TestRBDLifecycle$' ./internal/integration
-
-# Separate role images
-CEPH_TEST_IMAGE=registry.example.com/ceph-control:dev \
-CEPH_TEST_OSD_IMAGE=registry.example.com/ceph-osd:dev \
-CEPH_TEST_RGW_IMAGE=registry.example.com/ceph-rgw:dev \
-CEPH_TEST_MDS_IMAGE=registry.example.com/ceph-mds:dev \
-  make image-compatibility
+CEPH_TEST_ESSENTIAL_IMAGE=registry.example.com/ceph:essential \
+CEPH_TEST_CLIENT_IMAGE=registry.example.com/ceph:client \
+  CGO_ENABLED=0 go test -tags=all -count=1 -v -run '^TestRBDLifecycle$' ./internal/integration
 ```
+
+The supplied-image runner reads every supported variant/release from the
+checked-in digest map and never builds or publishes images. Additional
+routing checks are optional source-owned profiles, available to the same
+`/ci run role_routing role_mirror_refresh [on all]` review command as other
+runtime batches. Normal category checks run the existing required coverage.
 
 ### Squid runs
 
@@ -302,20 +278,21 @@ differs between releases is described in
 ### `make scenario-*` targets and image variables
 
 The `scenario-*` targets default to `SCENARIO_IMAGE_LAYOUT=all`, which unsets
-the four role variables so the target runs `ceph.DefaultImage` even if you
+the five role variables so the target runs `ceph.DefaultImage` even if you
 exported `CEPH_TEST_IMAGE`. To run a scenario target with your own images, set
-all four variables and `SCENARIO_IMAGE_LAYOUT=roles`. A missing variable stops
+all five role variables and `SCENARIO_IMAGE_LAYOUT=roles`. A missing variable stops
 Make before Go starts.
 
 ```sh
-CEPH_TEST_IMAGE=... CEPH_TEST_OSD_IMAGE=... CEPH_TEST_RGW_IMAGE=... CEPH_TEST_MDS_IMAGE=... \
+CEPH_TEST_ESSENTIAL_IMAGE=... CEPH_TEST_CLIENT_IMAGE=... CEPH_TEST_CEPHFS_IMAGE=... \
+CEPH_TEST_RBD_AUX_IMAGE=... CEPH_TEST_RGW_IMAGE=... \
   make scenario-topology SCENARIO_IMAGE_LAYOUT=roles
 ```
 
 ### Reproducing CI's role images
 
-CI runs Ceph batches with the published `roles-v2-official-<release>-<role>`
-role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images`. Resolve them
+CI runs Ceph batches with published role image digests from
+`.github/ceph-role-images.json`. Resolve them
 locally without running any test:
 
 ```sh
@@ -325,7 +302,7 @@ python3 .github/scripts/run_image_matrix.py --variant official --layout roles \
 
 Use `--release 19.2.5` for Squid. The script pulls an image only when it is
 missing, never builds one, and refuses an existing `--output-dir`. Its
-`summary.json` lists the selected `CEPH_TEST_*` values and `SCENARIO_IMAGE_CONTRACT=roles-v2` under
+`summary.json` lists the selected `CEPH_TEST_*` values under
 `prepared_environment` as immutable local image IDs; export them and run a
 test, the tag runner, or a `scenario-*` target with
 `SCENARIO_IMAGE_LAYOUT=roles`. `--roles essential`, as for a batch with

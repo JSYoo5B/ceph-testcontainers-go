@@ -1,4 +1,4 @@
-//go:build integration && role_images_v2 && !ci
+//go:build integration && role_images && ci_optional && ci_batch_role_mirror_refresh
 
 //ci: timeout=15m job-timeout=20 image-roles=essential,client,rbd-aux
 
@@ -23,7 +23,7 @@ import (
 // Synthetic stale bootstrap files isolate local repair from historical MON
 // session failures. The policy reads must use the current constrained toolkit,
 // even while both link setup clients and its daemon are stopped.
-func TestRoleImagesV2MirrorRefresh(t *testing.T) {
+func TestRoleImagesMirrorRefresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image := func(name string) string {
@@ -57,19 +57,19 @@ func TestRoleImagesV2MirrorRefresh(t *testing.T) {
 		if code, _, err := core.Exec(ctx, []string{"sh", "-c", "! command -v rbd"}); err != nil || code != 0 {
 			t.Fatalf("essential unexpectedly supplies rbd: exit %d %v", code, err)
 		}
-		if _, err := c.CreatePool(ctx, ceph.PoolConfig{Name: "v2-refresh", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
+		if _, err := c.CreatePool(ctx, ceph.PoolConfig{Name: "role-refresh", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if err := InitPool(ctx, c, "v2-refresh"); err != nil {
+		if err := InitPool(ctx, c, "role-refresh"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CreateNamespace(ctx, c, "v2-refresh", "selected"); err != nil {
+		if _, err := CreateNamespace(ctx, c, "role-refresh", "selected"); err != nil {
 			t.Fatal(err)
 		}
 		return c
 	}
 	source, destination := newCluster(), newCluster()
-	m, err := RunMirrorWithImages(ctx, MirrorConfig{Source: source, Destination: destination, Pool: "v2-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
+	m, err := RunMirrorWithImages(ctx, MirrorConfig{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
 	if m != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)

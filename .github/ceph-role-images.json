@@ -1,6 +1,5 @@
 {
   "schema": 1,
-  "contract": "roles-v2",
   "image_revision": "992cf0ba2b87ce4629d74688b59cc17dd4d73370",
   "publication_runs": {
     "20.2.4": 39705335194,
@@ -8,20 +7,56 @@
   },
   "images": {
     "20.2.4": {
-      "essential": "sha256:84eca012affba59083096c866a3cabdd06271a4100c97734397f640f1a7296dd",
-      "client": "sha256:c215640571b2c65422195393028e49f3605f1b8b9014a7c17e4922b866823b3d",
-      "cephfs": "sha256:bf25a2d2a15e66a20d20769b18622f5cb5806fd464f13b1f268ffccfc534fd07",
-      "rbd-aux": "sha256:46fee22b26b7d7b023280257c62812f1dcb63602662403cf80f3820256ae0ce7",
-      "rgw": "sha256:209a3e13efcaafbdd14f4ab5acd0c9daf42d518f76c0832b8983172b4b3646cc",
-      "all": "sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
+      "official": {
+        "all": "sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80",
+        "cephfs": "sha256:bf25a2d2a15e66a20d20769b18622f5cb5806fd464f13b1f268ffccfc534fd07",
+        "client": "sha256:c215640571b2c65422195393028e49f3605f1b8b9014a7c17e4922b866823b3d",
+        "essential": "sha256:84eca012affba59083096c866a3cabdd06271a4100c97734397f640f1a7296dd",
+        "rbd-aux": "sha256:46fee22b26b7d7b023280257c62812f1dcb63602662403cf80f3820256ae0ce7",
+        "rgw": "sha256:209a3e13efcaafbdd14f4ab5acd0c9daf42d518f76c0832b8983172b4b3646cc"
+      },
+      "debian": {
+        "all": "sha256:409d13c0f7183af82b5e4389623fc993f9493864267843fc9ff69632a3c7a6f6",
+        "cephfs": "sha256:1c7e13e353dcee61dc3fedbc3d0794ce7e5f8f3c92c689f41a7ed406368593a4",
+        "client": "sha256:85104371d713a6f7758315e079ae344ef496fc2fbf357c257d6ab290d79560d8",
+        "essential": "sha256:54fda35b6181648b98801c439b9e20ac8b680ef9346ff4e0349ae8e558522a72",
+        "rbd-aux": "sha256:6f96651420e989ae8fe300fbcadc234c6f32c41ae22da2e92431abce2224794f",
+        "rgw": "sha256:67a85597d45771fde24994413b1426d031348dc951c160fe54e1bb14990e46f9"
+      },
+      "ubuntu": {
+        "all": "sha256:1a2d9da1cc55f894c6eac584941680bc9c158d7c9ca1c52f93637c1011ec13ef",
+        "cephfs": "sha256:6652ee0f779691fe9d3ed98655d73dbd8865c99f8bafb3a6c43d0ff136162c4a",
+        "client": "sha256:ba3f11f803c8544f28bbac19fd93c02c942068b1ce8176d60bc3715dace88b3b",
+        "essential": "sha256:77d592cc510c266f38b19a4b7de0f9432532f89a19dd8a92cf3a91fec65772a5",
+        "rbd-aux": "sha256:b9d51852be5a4b49f3d7dad30cb203a1abc12fea068659f3d6aee2509c44cf47",
+        "rgw": "sha256:c05a2cacfe134524bddeea1fee7e7b0fb85141f34f8292c0033760a87dfdba57"
+      }
     },
     "19.2.5": {
-      "essential": "sha256:b7a14c49cd687e543c6b1f84740980142eebcbf9d78abe33673b0dd02a1ac8d2",
-      "client": "sha256:f99249d3b6596ac1d6d1954d805169b3ab3c332e89f70e4c20062f06013e4a22",
-      "cephfs": "sha256:f67e8c049ef4700fcbcea081f9ce270057866bbfee630c264466fe9a3c24924a",
-      "rbd-aux": "sha256:1fce8e0e0b317a95885b14d519e5d2135d8199c50842cb1025c2665cacae0318",
-      "rgw": "sha256:49423581277962dbbd48f72e727d811d2d4050b41bf6eafac0e3518c07d08c42",
-      "all": "sha256:c0dc7cc715710309af9f9452d9d6a607fafc55ee03e9bce586d38cb0e596f64f"
+      "official": {
+        "all": "sha256:c0dc7cc715710309af9f9452d9d6a607fafc55ee03e9bce586d38cb0e596f64f",
+        "cephfs": "sha256:f67e8c049ef4700fcbcea081f9ce270057866bbfee630c264466fe9a3c24924a",
+        "client": "sha256:f99249d3b6596ac1d6d1954d805169b3ab3c332e89f70e4c20062f06013e4a22",
+        "essential": "sha256:b7a14c49cd687e543c6b1f84740980142eebcbf9d78abe33673b0dd02a1ac8d2",
+        "rbd-aux": "sha256:1fce8e0e0b317a95885b14d519e5d2135d8199c50842cb1025c2665cacae0318",
+        "rgw": "sha256:49423581277962dbbd48f72e727d811d2d4050b41bf6eafac0e3518c07d08c42"
+      },
+      "debian": {
+        "all": "sha256:f8045ef7dd1de0103891dbdc287d8021b3c5fadc01ed4c9eb59cb0d832e96b86",
+        "cephfs": "sha256:a6aaedbb4945dd46796f1e9f01f2ca7b4bafb2e01738f37d3ad63643b4d1852f",
+        "client": "sha256:5fb80d0088a015f8310d590cd3ab7ea9e5ca1277ffb3fcff0672b78205b16e86",
+        "essential": "sha256:9e4e96d17c797e78c09e96ae1d7e2a410170a7615f049750ec44dbf7126ce3e9",
+        "rbd-aux": "sha256:b3737a8bf0533cd01879871067cfaa5d47b00dad0ac6000654f0c5d9d6b974c2",
+        "rgw": "sha256:af0a092462b98928cf35c4246785598132c793cc89fe4cec62d5524854035351"
+      },
+      "ubuntu": {
+        "all": "sha256:9ba9910001268fae4a966b79c3f30e5f4cd7917f777f18dc34e3080b6e49d5fc",
+        "cephfs": "sha256:c89ff9d95eddd1cecab47015a3173f2cdbb0caaa3e16cd5b087c5d5d4fd4ceca",
+        "client": "sha256:dec72ceed46655934307d2a63c9201c0bc05044b830b5061f1d76551384d5d22",
+        "essential": "sha256:795e5c4b49646f094c2eaa7adebfe0437999975cd0a0fbc77211f7a717de6395",
+        "rbd-aux": "sha256:a327357353731265e683f889fd28c814b32bd9f9b1ec7ce3433728111499a8d0",
+        "rgw": "sha256:54ad8043b7e770c84cccfca7f0122741a3d8a3dd58194a42eb0219e3037c2e05"
+      }
     }
   }
 }

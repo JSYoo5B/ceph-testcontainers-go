@@ -9,7 +9,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// ImageSet selects the roles-v2 runtime contract. All explicitly supplies every
+// ImageSet selects the roles runtime contract. All explicitly supplies every
 // role from one image. Otherwise Essential is required and optional roles are
 // required when their feature is used; there is no fallback to Essential.
 type ImageSet struct {
@@ -40,8 +40,7 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// RunWithImages starts a cluster with explicit roles-v2 selections. Legacy
-// image override options cannot be combined with this selection mode.
+// RunWithImages starts a cluster with explicit role images.
 func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	images, err := images.normalized()
 	if err != nil {
@@ -51,8 +50,7 @@ func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.
 	return Run(ctx, images.Essential, append(opts, WithImages(images))...)
 }
 
-// WithImages selects roles-v2 for an existing service Run entry point. Its
-// essential reference must equal the Run image; legacy role overrides are refused.
+// WithImages selects role images. Essential must equal the Run image.
 func WithImages(images ImageSet) Option {
 	return func(o *options) error {
 		normalized, err := images.normalized()
@@ -67,8 +65,7 @@ func WithImages(images ImageSet) Option {
 	}
 }
 
-// Images returns the effective image selections. For legacy Run, Client is
-// the broad control image and RBDAux is the legacy control image.
+// Images returns the effective role images, including aggregate selections.
 func (c *Container) Images() ImageSet {
 	if c == nil {
 		return ImageSet{}
@@ -79,15 +76,10 @@ func (c *Container) Images() ImageSet {
 	return ImageSet{Essential: c.settings.controlImage, Client: c.settings.controlImage, CephFS: c.settings.mdsImage, RBDAux: c.settings.controlImage, RGW: c.settings.rgwImage}
 }
 
-// UsesRoleImages reports explicit roles-v2 selection, including an All set.
-func (c *Container) UsesRoleImages() bool { return c != nil && c.settings.imageSet != nil }
-
 func configureImages(o *options) error {
 	if o.imageSet == nil {
-		return nil
-	}
-	if o.legacyImageOverride {
-		return fmt.Errorf("roles-v2 cannot be combined with legacy image overrides")
+		images := ImageSet{Essential: o.controlImage, Client: o.controlImage, CephFS: o.mdsImage, RBDAux: o.controlImage, RGW: o.rgwImage}
+		o.imageSet = &images
 	}
 	s := o.imageSet
 	if o.controlImage != s.Essential {
@@ -113,9 +105,8 @@ func configureImages(o *options) error {
 	return nil
 }
 
-// ClientContainerContext returns the fixture's userspace toolkit executor. In
-// roles-v2 it is allocated once on first use and owned by the cluster. Legacy
-// clusters continue to execute client tools in the existing control container.
+// ClientContainerContext returns the owned userspace toolkit executor. It starts
+// lazily for a separate client image; aggregate images reuse the control executor.
 func (c *Container) ClientContainerContext(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")
@@ -125,7 +116,7 @@ func (c *Container) ClientContainerContext(ctx context.Context) (testcontainers.
 	}
 	// Initial attachment must observe one MON configuration: a concurrent
 	// topology refresh cannot inventory a toolkit that has not been created yet.
-	if c.UsesRoleImages() && c.Images().Client != "" && c.Images().Client != c.Images().Essential {
+	if c.Images().Client != "" && c.Images().Client != c.Images().Essential {
 		if err := c.lockTopology(ctx); err != nil {
 			return nil, err
 		}
@@ -139,10 +130,11 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")
 	}
-	if !c.UsesRoleImages() || (c.settings.imageSet.Client != "" && c.settings.imageSet.Client == c.settings.imageSet.Essential) {
+	images := c.Images()
+	if images.Client == images.Essential {
 		return c.controlContainerContext(ctx)
 	}
-	if c.settings.imageSet.Client == "" {
+	if images.Client == "" {
 		return nil, invalidRequest("client image is required for this operation")
 	}
 	if err := lockTopologyMutex(ctx, &c.clientMu); err != nil {
@@ -172,7 +164,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	c.nativeMu.Unlock()
 	defer func() { c.nativeMu.Lock(); c.clientStartupCancel = nil; c.nativeMu.Unlock(); cancel() }()
 	c.featureClientAttempted = true
-	ctr, err := testcontainers.Run(ctx, c.settings.imageSet.Client, append([]testcontainers.ContainerCustomizer{
+	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		c.adminClient(), c.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	}, c.runMount()...)...)

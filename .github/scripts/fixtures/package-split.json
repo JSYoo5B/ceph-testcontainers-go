@@ -171,5 +171,5 @@
   "multicluster.RunRGWMultisite": "rgw.RunMultisite",
   "multicluster.RunRGWTopology": "rgw.RunTopology"
  },
- "role_image_routing_note": "The nativeMirrorImage wrapper preserves the original image in legacy mode. This source projection does not turn the retained native logs into roles-v2 execution evidence."
+ "role_image_routing_note": "The nativeMirrorImage wrapper preserves the original image in legacy mode. This source projection does not turn the retained native logs into roles execution evidence."
 }

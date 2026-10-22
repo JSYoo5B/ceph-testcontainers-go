@@ -1,7 +1,5 @@
-//go:build integration && role_images_v2 && !ci
+//go:build integration && role_images && ci_optional && ci_batch_role_routing
 
-// The dedicated roles-v2 workflow builds candidate images before this suite;
-// the legacy published-image CI planner must not select it.
 //ci: timeout=15m job-timeout=20 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package integration_test
@@ -21,7 +19,7 @@ func explicitRoleImage(t *testing.T, name string) string {
 	t.Helper()
 	value := os.Getenv(name)
 	if value == "" {
-		t.Fatalf("%s is required for roles-v2 native tests", name)
+		t.Fatalf("%s is required for roles native tests", name)
 	}
 	return value
 }
@@ -41,7 +39,7 @@ func ownRoleCluster(t *testing.T, c *ceph.Container) {
 
 // The ordinary RBD fixture has neither an auxiliary nor an RGW image to fall
 // back to. Its toolkit executor survives MON membership changes independently.
-func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
+func TestRoleImagesOrdinaryRBD(t *testing.T) {
 	images := ceph.ImageSet{Essential: explicitRoleImage(t, "CEPH_TEST_ESSENTIAL_IMAGE"), Client: explicitRoleImage(t, "CEPH_TEST_CLIENT_IMAGE")}
 	c, err := ceph.RunWithImages(t.Context(), images, ceph.WithOSDCount(1))
 	ownRoleCluster(t, c)
@@ -59,10 +57,10 @@ func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("client is not a constrained toolkit: exit %d %v", code, err)
 	}
-	if _, err := c.CreatePool(t.Context(), ceph.PoolConfig{Name: "v2-rbd", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
+	if _, err := c.CreatePool(t.Context(), ceph.PoolConfig{Name: "role-rbd", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := rbd.InitPool(t.Context(), c, "v2-rbd"); err != nil {
+	if err := rbd.InitPool(t.Context(), c, "role-rbd"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.AddMonitor(t.Context(), "b"); err != nil {
@@ -74,7 +72,7 @@ func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
 	if err := c.Container.Stop(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rbd.CreateNamespace(t.Context(), c, "v2-rbd", "after-mon-stop"); err != nil {
+	if _, err := rbd.CreateNamespace(t.Context(), c, "role-rbd", "after-mon-stop"); err != nil {
 		t.Fatal(err)
 	}
 	if again, err := c.ClientContainerContext(t.Context()); err != nil || again != client {
@@ -84,7 +82,7 @@ func TestRoleImagesV2OrdinaryRBD(t *testing.T) {
 
 // No generic client image is supplied. Multisite setup must select the RGW
 // administration runtime, while Gateway.Admin retains gateway-local scope.
-func TestRoleImagesV2RGWWithoutClient(t *testing.T) {
+func TestRoleImagesRGWWithoutClient(t *testing.T) {
 	images := ceph.ImageSet{Essential: explicitRoleImage(t, "CEPH_TEST_ESSENTIAL_IMAGE"), RGW: explicitRoleImage(t, "CEPH_TEST_RGW_IMAGE")}
 	source, err := ceph.RunWithImages(t.Context(), images)
 	ownRoleCluster(t, source)

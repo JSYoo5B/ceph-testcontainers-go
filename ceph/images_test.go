@@ -23,13 +23,6 @@ func TestImageSetSelectionDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestRoleImagesRejectLegacyOverridesBeforeAllocation(t *testing.T) {
-	c, err := RunWithImages(t.Context(), ImageSet{Essential: "core"}, WithOSDImage("legacy"))
-	if c != nil || !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("allocated or wrong refusal: %v %v", c, err)
-	}
-}
-
 func TestRADOSInspectionRequiresToolkitInsteadOfCoreFallback(t *testing.T) {
 	c := &Container{Container: &monitorLifecycleDaemon{}, settings: options{startupTimeout: time.Second, imageSet: &ImageSet{Essential: "core"}}}
 	if _, err := c.PGInconsistencies(t.Context(), "7.0"); !errors.Is(err, ErrInvalidRequest) {
@@ -52,15 +45,15 @@ func TestClientExecutorMissingAndClosedDoNotAllocate(t *testing.T) {
 	}
 }
 
-func TestLegacyClientExecutorUsesCurrentControl(t *testing.T) {
+func TestAggregateClientExecutorUsesCurrentControl(t *testing.T) {
 	mon, control := &monitorLifecycleDaemon{}, &monitorLifecycleDaemon{}
 	c := &Container{Container: mon}
 	if got, err := c.ClientContainerContext(t.Context()); err != nil || got != mon {
-		t.Fatalf("legacy MON: %v %v", got, err)
+		t.Fatalf("aggregate MON: %v %v", got, err)
 	}
 	c.controlPlane = control
 	if got, err := c.ClientContainerContext(t.Context()); err != nil || got != control {
-		t.Fatalf("legacy stable CLI: %v %v", got, err)
+		t.Fatalf("aggregate stable CLI: %v %v", got, err)
 	}
 }
 

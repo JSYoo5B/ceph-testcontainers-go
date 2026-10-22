@@ -35,12 +35,11 @@ type ZonegroupConfig struct {
 // MasterZonegroup for several regions with separately selected local masters.
 // MetadataMaster defaults to the first zone; MasterZonegroup to the first group.
 // All clusters use the same network mode and must not serve standalone RGW data.
-// ControlImage optionally overrides every zone's setup client image. Otherwise
-// each client uses its own cluster's control image, including added zones.
+// SetupImage optionally overrides every zone's setup client image. Otherwise
+// each client uses its own cluster's RGW image, including added zones.
 type TopologyConfig struct {
 	Zones                            []ZoneConfig
 	Realm, Zonegroup, MetadataMaster string
-	ControlImage                     string
 	SetupImage                       string
 	Zonegroups                       []ZonegroupConfig
 	MasterZonegroup                  string
@@ -77,16 +76,9 @@ type rgwZoneState struct {
 // cleanup contract as RunMultisite. The initial master becomes Source, and
 // the first remaining zone becomes Destination for compatibility. Zones returns
 // all sites. A non-nil result on error owns partial resources and needs cleanup.
-// image selects RGW gateways; each setup client uses its cluster's control
-// image unless ControlImage supplies a shared override.
+// image selects RGW gateways; each setup client uses its cluster's RGW
+// image unless SetupImage supplies a shared override.
 func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
-	if config.SetupImage != "" {
-		if config.ControlImage != "" {
-			return nil, invalid(fmt.Errorf("SetupImage and ControlImage cannot be combined"))
-		}
-		config.ControlImage = config.SetupImage
-		config.SetupImage = ""
-	}
 	zones, err := prepareRGWTopology(ctx, image, config)
 	if err != nil {
 		return nil, err
@@ -99,7 +91,7 @@ func RunTopology(ctx context.Context, image string, config TopologyConfig, opts 
 	f, err := RunMultisite(ctx, image, MultisiteConfig{
 		Source: zones[0].Cluster, Destination: zones[1].Cluster,
 		SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
-		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, ControlImage: config.ControlImage,
+		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, SetupImage: config.SetupImage,
 		destinationZonegroup: zones[1].Zonegroup,
 	}, opts...)
 	if err != nil {
@@ -357,7 +349,7 @@ func (f *Multisite) addZone(ctx context.Context, image string, config ZoneConfig
 			return nil, errors.New("finish initializing existing RGW zones before adding another")
 		}
 	}
-	clientImage, err := rgwControlImage(f.config.ControlImage, config.Cluster)
+	clientImage, err := rgwSetupImage(f.config.SetupImage, config.Cluster)
 	if err != nil {
 		return nil, err
 	}
