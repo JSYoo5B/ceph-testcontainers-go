@@ -1,9 +1,10 @@
 # Public API naming: inventory and proposed conventions
 
-Status: #14's inventory/convention checkpoint was introduced by #17. This
-revision implements the ceph policy/auth, CephFS and network profile names
-below; the remaining RBD helper row is a proposal. The source catalogue records
-the current branch.
+Status: #14's staged naming implementation and current-source retention audit
+are complete in this revision. The initial catalogue was introduced by #17;
+the final RBD helper change and [retention audit](api-naming-audit.md) complete
+the remaining scope. This is a naming assessment of the captured source, not
+approval of future APIs or a new runtime-support claim.
 #9 is closed, but its remaining object-error wording
 does not authorize another package move. This audit preserves the current
 placement of `ceph.Container.InjectObjectDataError`, session fencing and fullness.
@@ -21,26 +22,30 @@ catalogue; signatures are not rewritten to pretend the proposed API exists.
 
 | Package | Declared exports |
 | --- | ---: |
-| `ceph` | 302 |
+| `ceph` | 306 |
 | `fault` | 34 |
-| `rbd` | 76 |
-| `cephfs` | 154 |
+| `rbd` | 77 |
+| `cephfs` | 155 |
 | `rgw` | 126 |
-| Total | 692 |
+| Total | 698 |
 
 The catalogue includes functions, methods on exported receiver types, types,
 constants and variables. It scans all non-test Go source files, including
 build-tag alternatives, and refuses conflicting duplicate declarations.
-Struct fields, interface members, promoted/inherited methods and dependency
-exports are outside this snapshot. In particular, service containers inherit
-methods from `ceph.Container` and Testcontainers; the catalogue does not invent
-independent service renames for those promoted methods. Implementing a proposal
-still requires compilation of the resulting method sets and affected callers.
+The separate [member catalogue](api-naming-members.json) now records 932
+exported field/nested-record/embedding entries across 161 types. It also scans
+declared interface methods; this source has no exported declared interfaces.
+Promoted dependency methods are not duplicated: the audit separately records
+embedding boundaries and retains the inherited contracts. It does not rename
+Testcontainers or standard-library APIs. Implementing a rename still requires
+compilation of the resulting method sets and affected callers.
 
 `baseline` means the current name was recorded, **not** that it has received a
-complete naming review. The decisions and exceptions below cover the initial
-operation/handle families; the remaining query, provisioning, option and value
-names remain to be reviewed under #14. `proposal` means a candidate source
+complete naming review. The [final audit](api-naming-audit.md) records the
+retention decisions for this exact declaration and member surface, including
+query/provisioning, options, values and embeddings. Its separately edited
+[receipt](api-naming-review.json) binds both catalogues; regenerating them cannot
+silently extend that review to future names. `proposal` means a candidate source
 rename, not a compatibility alias or approval to change behavior.
 
 The existing API reference inventory test now also checks this catalogue
@@ -49,14 +54,16 @@ proposals that collide with each other or a retained declared name. Regenerate
 only after inspecting a source/proposal change:
 
 ```sh
-go test ./internal/apiinventory -run '^TestPublicNamingInventory$' -update-api-naming
+go test ./internal/apiinventory -run '^TestPublicNaming(Inventory|Members)$' -update-api-naming
 ```
 
 Normal `go test ./internal/apiinventory` verifies without modifying files. The
 proposal map is in `internal/apiinventory/naming_test.go`; rationale lives here.
-Updating the map/catalogue does not implement any runtime rename.
+Updating the map/catalogues does not implement any runtime rename. A changed
+surface also requires reviewing the names and explicitly updating the receipt;
+the regeneration flag never edits that receipt.
 
-## Proposed convention
+## Naming convention
 
 1. Read the full call, including the package and receiver. Use an operation
    verb for a mutation and a noun for its request, observation or returned
@@ -112,9 +119,9 @@ policy, while the four policy overrides remain exclusive-only.
 See [the migration guide](../guides/upgrading-ceph-policy-names.md) for the
 source break. This checkpoint fulfills five proposal rows; at that checkpoint the catalogue contained
 13 remaining proposal rows and 678 baseline rows. Baseline still does
-not mean a complete naming approval. The remaining query/provisioning/option
-and value audit, excluded fields/interfaces and service/network stages keep
-#14 open.
+not mean a complete naming approval. At that point the broader audit and
+service/network stages kept #14 open; the final audit below now records those
+remaining decisions.
 
 ## Implemented CephFS policy and owned schedule names
 
@@ -155,14 +162,18 @@ their names and error categories. No timer, cancellation rollback, permanent
 alias, package move or generic cleanup interface is introduced. See the
 [migration guide](../guides/upgrading-network-profile-names.md).
 
-Current branch catalogue: 692 declarations/methods, 1 remaining proposal row
-and 691 baseline rows. Baseline is recorded scope, not naming approval.
+## Completed RBD helper and retention audit
 
-## Remaining proposed operation mapping
+The cache operation is now `rbd.StartImmutableObjectCache`, returning the same
+`*rbd.ImmutableObjectCacheLease`. It starts an owned daemon in a caller-owned
+client container without native expiry. `Stop` keeps cached files and `Restore`
+removes the owned daemon/files; those distinct contracts remain unchanged.
+See the [migration guide](../guides/upgrading-rbd-cache-name.md).
 
-| Current operation | Proposed operation | Result / undo | Reason and source contract |
-| --- | --- | --- | --- |
-| `rbd.TemporaryImmutableObjectCache` | `rbd.StartImmutableObjectCache` | `*rbd.ImmutableObjectCacheLease` / `Restore` | Starts an owned helper in a caller-owned client container; Restore stops the owned daemon and removes its owned files. Applying `ClientOptions` to a native client remains the caller's responsibility; there is no native expiry. [immutable_object_cache.go](../../rbd/immutable_object_cache.go) |
+Current branch catalogue: 698 declarations/methods, zero remaining proposal
+rows and 698 baseline rows. The separate 932-entry member catalogue and bound
+[retention audit](api-naming-audit.md) complete the current-source assessment.
+Baseline alone still means inventory, not naming approval.
 
 ## Reviewed retention and undo exceptions
 
@@ -181,24 +192,26 @@ and 691 baseline rows. Baseline is recorded scope, not naming approval.
 ## Implementation sequence and evidence
 
 1. Review this inventory/convention checkpoint. No source rename is applied by
-   regenerating the catalogue. Review the remaining baseline query/provisioning,
-   option, data-type and constant names before claiming the whole naming audit
-   complete; field/interface-member naming needs its own expanded inventory.
+   regenerating the catalogue. The final retention audit now covers baseline
+   query/provisioning, option, data-type and constant names, plus the expanded
+   field/interface/embedding catalogue.
 2. The ceph policy/auth operation checkpoint is implemented in this revision,
    preserving shared/exclusive admission keys and their reflection tests. Its
    callers, examples, references and migration table use the current names.
-3. The CephFS policy and owned-schedule checkpoint is implemented. Implement
-   the remaining RBD cache helper separately with its actual ownership contract.
+3. The CephFS policy, owned-schedule and RBD cache-helper checkpoints are
+   implemented with their original ownership contracts.
 4. The complete network profile family is migrated together, including types,
    service helpers, signatures, native callers, discovery tooling, docs and
    sentinels' error-category behavior. Bandwidth/packet/peer/family/plane
    semantics, severe-rate and replication recovery oracles remain intact.
-5. Refresh the catalogue after each implementation checkpoint; remove fulfilled
-   proposal keys or record the resulting new baseline rather than keeping stale
-   aliases in the proposal map. Keep #14 open until its full scope is satisfied.
+5. Refresh the catalogues after each implementation checkpoint and remove
+   fulfilled proposal keys. All selected naming changes and the captured-source
+   audit are now implemented. Future API changes need their own review and
+   explicit receipt update; refreshing an inventory is not that review.
 
-Names marked `baseline` are pending audit unless covered by the retention table.
-These proposed source breaks target the next minor release; never rewrite a
+Names marked `baseline` remain inventory entries; the bound audit records why
+this revision retains them.
+These selected source breaks target the next minor release; never rewrite a
 published tag. Do not introduce permanent compatibility aliases automatically.
 No implementation PR may change timers, background workers, admission,
 uncertainty, cleanup, or recovery semantics merely to make its new name true.
