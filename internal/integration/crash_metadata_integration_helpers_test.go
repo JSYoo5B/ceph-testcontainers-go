@@ -71,17 +71,21 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint(),
-		testcontainers.WithTmpfs(map[string]string{"/var/lib/ceph": "rw,size=16m"}))
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The caller fixture uses a fresh tmpfs parent independently of package
-	// layout (including a preinstalled crash/posted directory). Both client
-	// layouts exercise the same empty/absent outcomes without changing a
-	// daemon's actual crash files or renaming an overlay lower-layer tree.
-	execCommand(t, ctx, helper, "mkdir", "-p", "/var/lib/ceph/crash")
+	// Initialize only this fresh, idle caller helper's directory, including
+	// any package-owned crash/posted skeleton. Daemon crash files stay intact.
+	// Use its writable rootfs so Docker's archive API observes the same path
+	// as Exec, without renaming an overlay lower-layer directory.
+	execCommand(t, ctx, helper, "python3", "-c", `import os, shutil
+p = '/var/lib/ceph/crash'
+if os.path.exists(p):
+    shutil.rmtree(p)
+os.makedirs(p)
+`)
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
 	osds := cluster.OSDs()
 
