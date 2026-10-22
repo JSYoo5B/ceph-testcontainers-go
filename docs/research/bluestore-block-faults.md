@@ -27,7 +27,7 @@ Two kinds of statement appear below, and they are kept apart:
 | --- | --- | --- |
 | Hosted runner eligible without installing anything | **Yes.** `losetup` and `dmsetup` present, DM driver 4.50.0; `delay` and `flakey` were not registered but their modules were installed and loaded on the first table load | Runtime evidence |
 | Baseline aligned direct I/O, exact bytes | 64 KiB write, flush and read; read hash equals the written pattern | Runtime evidence |
-| `delay` with separate read/write/flush classes | 300/600/900 ms requested; 0.301/0.610/0.905 s observed, each class identified by its own value | Runtime evidence |
+| `delay` with separate read/write/flush classes | 300/600/900 ms requested; 0.301/0.610/0.905 s and 0.306/0.630/0.908 s observed in two runs, each class identified by its own value | Runtime evidence |
 | `error` window | read and write fail with `EIO` | Runtime evidence |
 | `flakey` `error_writes` / `error_reads` | the selected direction fails with `EIO`, the other succeeds with exact bytes | Runtime evidence |
 | Restore of the original linear table | verified table and exact baseline readback after every fault | Runtime evidence |
@@ -134,9 +134,10 @@ with a foreign device number.
 
 ## What the probe observed
 
-Both runs used the same hosted runner image family, kernel `6.17.0-1022-azure`
-on x86_64, util-linux 2.39.3, device-mapper library 1.02.185 and DM driver
-4.50.0. `dmsetup targets` listed `linear` 1.5.0, `error` 1.7.0, `striped`
+The runs below used the hosted `ubuntu-latest` image on x86_64 with
+util-linux 2.39.3, device-mapper library 1.02.185 and DM driver 4.50.0. The
+first two ran on kernel `6.17.0-1022-azure`; by the third run the image had
+moved to kernel `7.0.0-1017-azure`. `dmsetup targets` listed `linear` 1.5.0, `error` 1.7.0, `striped`
 and `multipath` before the probe, and additionally `delay` 1.5.0 and `flakey`
 1.5.0 after it. The mapping's queue reported `write back`, so the kernel
 issues flushes to it. The runner was destroyed after each job.
@@ -209,9 +210,23 @@ no association with the file's inode; then the table files, the backing file
 and the work directory were removed. `dmsetup udevcookies` listed no leftover
 cookie.
 
-The commits after `ec62fba` change only documentation (this report and the
-changelog), so the probe and the workflow it executed are the ones on the PR
-head.
+### Third run: the current probe
+
+[Run 39826858735, job 119992308722, attempt 1](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/39826858735/job/119992308722),
+head `1135c77`, verdict `complete`, artifact `block-fault-report`. This head
+adds the retained chain for an unreaped child (see
+[Ownership and cleanup](#ownership-and-cleanup)) and merges `main`; the
+fault phases are unchanged. On kernel `7.0.0-1017-azure`, with the same
+target versions and a `write back` queue, every observation of the second
+run was repeated with `effect: observed`: delays of 0.3057, 0.6303 and
+0.9082 s; `EIO` for the error read and write and for each selected `flakey`
+direction; exact bytes otherwise; `restored` with the exact baseline after
+every phase. Every control command returned within 59 ms. No child was
+unreaped, so cleanup ran normally: mapping absent, association unbound, file
+removed, nothing retained and no leftover udev cookie.
+
+The commits after `1135c77` change only this report, so the probe and the
+workflow it executed are the ones on the PR head.
 
 ## Eligibility
 
@@ -309,7 +324,7 @@ the mapping, including host tooling such as udev, not only the OSD.
 
 ## Limitations
 
-- Two runs on one hosted image and kernel. Kernel and target versions,
+- Three runs on the hosted image, on two kernels (6.17 and 7.0 azure). Kernel and target versions,
   vendor patches and udev rules differ elsewhere and must be rechecked.
 - Docker Desktop (macOS, Windows), rootless engines, Podman and arm64 were
   not run. Docker Desktop's VM kernel and its device-mapper and loop support
