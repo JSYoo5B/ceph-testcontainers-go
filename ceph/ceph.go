@@ -28,7 +28,7 @@ import (
 
 // DefaultImage pins the published, pruned dependency-role aggregate on both
 // native architectures. Explicit ImageSet selections avoid unused feature roles.
-const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:6ca832983da10a3dc940b409b108ebccce4461e586b99bf3535845b22d2fce22"
+const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
 
 //go:embed internal/scripts/*.sh
 var scripts embed.FS

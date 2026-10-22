@@ -76,10 +76,10 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	if err != nil {
 		t.Fatal(err)
 	}
-	helperOutcome := ceph.CrashDirectoryEmpty
-	if cluster.UsesRoleImages() && cluster.Images().Client != cluster.Images().Essential {
-		helperOutcome = ceph.CrashDirectoryAbsent
-	}
+	// The caller fixture controls this directory independently of package
+	// layout: both daemon-free and map-tool clients must exercise the same
+	// empty/absent outcomes without changing a daemon's actual crash files.
+	execCommand(t, ctx, helper, "mkdir", "-p", "/var/lib/ceph/crash")
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
 	osds := cluster.OSDs()
 
@@ -90,26 +90,26 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Fatalf("collection before any crash: %v; %+v", err, report)
 	}
 	for _, result := range report.Containers {
-		expected := ceph.CrashDirectoryEmpty
-		if result.ContainerID == helper.GetContainerID() {
-			expected = helperOutcome
-		}
-		if result.Outcome != expected || result.State != "running" {
+		if result.Outcome != ceph.CrashDirectoryEmpty || result.State != "running" {
 			t.Fatalf("%s %s before any crash: %+v", result.Role, result.Name, result)
 		}
 	}
 	if after := dockerObjects(t, ctx, docker); after.containers != before.containers || after.volumes != before.volumes {
 		t.Fatalf("collection changed Docker objects: %+v -> %+v", before, after)
 	}
-	// A caller's container is read whatever it is called, also when it is
-	// described like the cluster's own control container.
+	// A caller's absent directory is read whatever it is called, also when
+	// described like the cluster's own control container. Preserve the empty
+	// tree while testing absence, then restore it for the crash collection.
+	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rename('/var/lib/ceph/crash', '/var/lib/ceph/crash.tc-held')`)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
 		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
-			return result.ContainerID == helper.GetContainerID() && result.Outcome == helperOutcome
+			return result.ContainerID == helper.GetContainerID() && result.Outcome == ceph.CrashDirectoryAbsent
 		}) {
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
+
+	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rename('/var/lib/ceph/crash.tc-held', '/var/lib/ceph/crash')`)
 
 	crashDaemon(t, ctx, cluster.ManagerContainer())
 	crashDaemon(t, ctx, osds[0].Container)
@@ -147,11 +147,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 		t.Logf("%s: crash %s at %s, Ceph %s, exit code %d, image %s; ignored entries %d", name, record.CrashID, record.Timestamp, record.CephVersion, result.ExitCode, result.ImageID, result.IgnoredEntries)
 	}
 	for name, state := range map[string]string{"osd.1": "exited", "mon.a": "running", "client.helper": "running"} {
-		expected := ceph.CrashDirectoryEmpty
-		if name == "client.helper" {
-			expected = helperOutcome
-		}
-		if result := results[name]; result.Outcome != expected || result.State != state {
+		if result := results[name]; result.Outcome != ceph.CrashDirectoryEmpty || result.State != state {
 			t.Fatalf("%s: %+v", name, result)
 		}
 	}

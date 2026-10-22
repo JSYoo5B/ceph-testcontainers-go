@@ -44,7 +44,7 @@ OFFICIAL_IMAGE = RELEASES[RELEASE]
 CONTRACT = "roles-v2"
 V2_ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
-DEFAULT_IMAGE = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:6ca832983da10a3dc940b409b108ebccce4461e586b99bf3535845b22d2fce22"
+DEFAULT_IMAGE = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
 LEGACY_ROLE_ENV = {
     "control": "CEPH_TEST_IMAGE",
     "osd": "CEPH_TEST_OSD_IMAGE",
