@@ -16,10 +16,11 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `recovery` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases) (Tentacle 20.2.4 and Squid 19.2.5), on `main`; the representative batches repeated on a pinned commit and pinned images |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one (Squid 19.2.5) |
+| roles-v2 consumer | `roles-v2.yml` | pull request (planned by changed inputs); weekly Monday 03:41 UTC; manual | Representative explicit-role smoke coverage or the full release/architecture campaign; see [Dependency-role consumer coverage](#dependency-role-consumer-coverage) |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, with an optional RGW image override |
 | CI command | `ci-command.yml` | a pull request comment `/ci run ...` (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) | The named runtime batches, of any category or optional, on the pull request's head commit and the chosen releases |
 
-Every runtime workflow calls the reusable template `tagged-runtime.yml`
+The category runtime workflows call the reusable template `tagged-runtime.yml`
 (`workflow_call` only; it has no triggers of its own). The workflows are
 independent: none waits for another, and each can be re-run on its own. A
 failed check name therefore tells you the kind of failure before you open it.
@@ -94,6 +95,67 @@ up. Go reuses an entry only when its content hash matches, a stale entry is
 merely unused, a failed `buildcache` leaves the cache unsaved without failing
 `Plan`, and each job still compiles, records and verifies its own binary.
 
+### Dependency-role consumer coverage
+
+`roles-v2.yml` validates the explicit essential/client/cephfs/rbd-aux/rgw
+contract separately from the published legacy-role category workflows. It
+still builds candidate images from a pinned image-repository commit: role-v2
+registry publication is a separate operation. This workflow does not publish
+images or assume candidate tags are available in the registry.
+
+Every PR first runs a small Python planner, which records the complete
+merge-base diff (including deleted and renamed inputs) in the
+`roles-v2-plan` artifact. The workflow has no PR path filter: large diffs
+cannot silently lose a relevant path to GitHub's path-filter limit.
+
+| Changed input or trigger | Native coverage |
+| --- | --- |
+| Runtime changes under `ceph/`, `cephfs/`, `rbd/`, `rgw/`, `fault/` or `internal/` | **Smoke**: current supported release (Tentacle 20.2.4), Linux/amd64, `make roles-v2-smoke` |
+| Explicit image selection (`ceph/images*.go`), role-image fixtures/routing tests, `Makefile`, Go dependencies, this workflow/planner, image-matrix release table or cleanup checker | **Full**: every supported release (Tentacle 20.2.4 and Squid 19.2.5), Linux/amd64 and Linux/arm64 |
+| Documentation, standalone `internal/tools/`, the separate `internal/integration/goceph/` module, or unrelated CI tooling alone | **None**: planner records why; no image build or native test is claimed |
+| PR with `ci:full`, or a PR in a `CI_RELEASE_PHASE=true` release phase | **Full**, overriding the file selection |
+| Weekly schedule on `main` | **Full** |
+| Manual dispatch | **Full** by default; `scope=smoke` selects representative coverage; `variant` and `images_ref` remain selectable |
+
+A mixed change uses its widest scope. The full-trigger path rules live in
+`.github/scripts/roles_v2_plan.py`; changing the planner itself requires full
+coverage. Adding/removing `ci:full` replans the PR; unrelated label changes
+neither start native work nor cancel an existing PR check.
+
+Smoke retains the three constrained routing/ownership tests (ordinary RBD
+with a separate client, RGW administration without a generic client, and
+RBD mirror bootstrap refresh) plus five existing single-cluster lifecycle
+paths (cluster, RBD, CephFS, RGW and MGR). These **8 top-level instances**
+exercise every feature role without repeating the complete compatibility,
+scheduling, shared/native-oracle and aggregate-image suites on every commit.
+Other category workflows retain their existing scopes and legacy images.
+Smoke is representative role coverage, not full roles-v2 qualification.
+
+Full coverage keeps all previous commands unchanged: split compatibility
+(9 instances), routing/ownership (3), cache/scheduling behavior (3),
+shared/native command oracles (6), then all-image compatibility (9). This is
+**30 top-level instances per release/architecture cell, 120 total** for the
+current four cells. The weekly campaign catches cross-release/architecture,
+aggregate-layout and extended behavior regressions for ordinary runtime
+changes that receive only smoke coverage before merge. Use `ci:full` or a
+manual full dispatch when that coverage is needed before merging instead.
+This workflow does not add a full campaign to every push to `main`.
+
+Both scopes snapshot and verify Testcontainers resource cleanup, even after
+a failed test; reports are included in the native artifact. Native jobs have
+a 30-minute smoke / 90-minute full limit. New PR commits cancel superseded
+roles-v2 PR runs. Manual and scheduled campaigns have independent run-ID
+groups and cannot cancel the PR run or one another.
+
+The pre-change [campaign at `7023643`, attempt 1](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/39684980756)
+passed all 120 parent instances. Its four native jobs took 52m05s–58m33s
+(start to finish, excluding queue time), totaling 225m06s of native job
+elapsed time. Image builds took 1m13s–1m40s per job; most time was spent in
+the sequential functional suites. Ordinary smoke changes reduce native
+cells from four to one and parent instances from 120 to eight. These are
+coverage/count reductions, not a measured wall-time speedup: job setup,
+image building, compilation, queueing and individual test costs still apply.
+
 ### Check names
 
 Displayed names are layered as `<workflow> / <caller job> / <batch>`. For
@@ -112,6 +174,7 @@ Each runtime workflow also has a `Plan` job.
 | Ceph short | as above, plus the run ID when a label other than `ci:selected-batches` is added or removed | Adding or removing `ci:selected-batches` replaces the run in progress. Any other label starts a run that skips its job and cancels nothing. |
 | CI command | per caller job: the pull request number, head commit, selected profiles and release; no group for the run itself | A repeated command for the same head commit, batches and release waits for the run in progress and never cancels it. Each command still has its own commit status. GitHub keeps one waiting caller per group, so a third identical command replaces the waiting one, which ends as cancelled. A different selection, release or head commit runs independently. |
 | Native regressions | none | Runs are independent. |
+| roles-v2 consumer | event and PR number for PR runs; event and run ID otherwise; unrelated label events get their own group | New PR commits and `ci:full` label changes cancel the previous PR run. Manual/weekly campaigns are independent. |
 
 Practical consequences:
 

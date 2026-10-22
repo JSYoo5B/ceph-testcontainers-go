@@ -1,9 +1,17 @@
 name: roles-v2 consumer
 on:
+  # Always plan: avoid path-filter truncation and record explicit no-work results.
   pull_request:
-    paths: ['ceph/**', 'rbd/**', 'cephfs/**', 'rgw/**', 'internal/**', '.github/scripts/**', '.github/workflows/roles-v2.yml']
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  schedule:
+    - cron: '41 3 * * 1'
   workflow_dispatch:
     inputs:
+      scope:
+        description: Representative smoke or complete release/architecture coverage
+        type: choice
+        options: [full, smoke]
+        default: full
       images_ref:
         description: Image repository revision implementing roles-v2
         default: 7ef514c475d6c789620f7bb6f63318a154ded742
@@ -16,28 +24,55 @@ env:
 permissions:
   contents: read
 concurrency:
-  group: roles-v2-consumer-${{ github.ref }}
-  cancel-in-progress: false
+  # Manual/weekly campaigns never cancel PR checks, or one another. Unrelated
+  # label events cannot cancel the PR run that still validates its head.
+  group: roles-v2-consumer-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  plan:
+    name: Plan
+    if: >-
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'ci:full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.plan.outputs.scope }}
+      count: ${{ steps.plan.outputs.count }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select roles-v2 coverage
+        id: plan
+        env:
+          CI_RELEASE_PHASE: ${{ vars.CI_RELEASE_PHASE }}
+        run: python3 .github/scripts/roles_v2_plan.py --output artifacts/roles-v2-plan.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: roles-v2-plan
+          path: artifacts/roles-v2-plan.json
+          retention-days: 14
   native:
+    name: ${{ matrix.scope }} (${{ matrix.release }}, ${{ matrix.architecture }})
+    needs: plan
+    if: needs.plan.outputs.count != '0'
     strategy:
       fail-fast: false
-      matrix:
-        release: ['20.2.4', '19.2.5']
-        architecture: [amd64, arm64]
-        include:
-          - architecture: amd64
-            runner: ubuntu-24.04
-          - architecture: arm64
-            runner: ubuntu-24.04-arm
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: ${{ matrix.scope == 'full' && 90 || 30 }}
     env:
       VARIANT: ${{ inputs.variant || 'official' }}
       RELEASE: ${{ matrix.release }}
       SCENARIO_IMAGE_CONTRACT: roles-v2
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v7
         with:
           repository: JSYoo5B/ceph-testcontainers-images
@@ -57,24 +92,38 @@ jobs:
             id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-${roles[$i]}")
             echo "${variables[$i]}=$id" >> "$GITHUB_ENV"
           done
+      - name: Snapshot test resources
+        id: cleanup
+        run: python3 .github/scripts/check_runtime_cleanup.py snapshot --directory artifacts/roles-v2-cleanup
+      - name: Representative role compatibility and routing
+        if: matrix.scope == 'smoke'
+        run: make roles-v2-smoke
       - name: Existing compatibility tests with relocated oracles
+        if: matrix.scope == 'full'
         run: make image-compatibility
       - name: Constrained role routing and client ownership
+        if: matrix.scope == 'full'
         run: make roles-v2-routing
       - name: Existing cache and scheduling behavior on relocated roles
+        if: matrix.scope == 'full'
         run: make roles-v2-runtime
       - name: Existing shared and native command oracles on relocated clients
+        if: matrix.scope == 'full'
         run: make roles-v2-oracles
       - name: Independent aggregate image path
+        if: matrix.scope == 'full'
         run: |
           id=$(docker image inspect --format '{{.Id}}' "ceph-testcontainers:roles-v2-$VARIANT-$RELEASE-all")
           CEPH_TEST_ESSENTIAL_IMAGE="$id" CEPH_TEST_CLIENT_IMAGE="$id" \
           CEPH_TEST_CEPHFS_IMAGE="$id" CEPH_TEST_RBD_AUX_IMAGE="$id" \
           CEPH_TEST_RGW_IMAGE="$id" make image-compatibility
+      - name: Check test resource cleanup
+        if: always() && steps.cleanup.outcome == 'success'
+        run: python3 .github/scripts/check_runtime_cleanup.py check --directory artifacts/roles-v2-cleanup
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: roles-v2-consumer-${{ matrix.release }}-${{ matrix.architecture }}
+          name: roles-v2-consumer-${{ matrix.scope }}-${{ matrix.release }}-${{ matrix.architecture }}
           path: |
             artifacts
             images-source/artifacts
