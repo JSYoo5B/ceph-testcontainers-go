@@ -331,6 +331,15 @@ change the API.
   `REPLAY` of the same client ID and TID, and an independent client reads the
   result. The [MDS sessions](docs/guides/messenger-client-fixtures.md#mds-sessions)
   guide lists the receipt and what it leaves out.
+- `TestOSDBackoffReceipt`, in the new recovery batch `osd_backoff`, makes a
+  primary send a PG-wide backoff to a retained python-rados client: with
+  `noout` set and a non-primary replica of a replicas/min_size 3 pool stopped,
+  the PG peers but cannot go active. The client's and the primary's
+  `debug_ms` logs join BLOCK, ACK_BLOCK and UNBLOCK by connection, OSD, PG,
+  backoff ID and range, and the original read returns the seeded bytes once
+  the replica is back. The `client-osd/backoff` coverage row becomes partial;
+  object-scoped backoffs stay uncovered (#5). See
+  [OSD backoff](docs/guides/messenger-client-fixtures.md#osd-backoff).
 
 ### Changed
 

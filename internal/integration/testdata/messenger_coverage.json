@@ -706,10 +706,16 @@
         "CEPH_MSG_OSD_BACKOFF",
         "CEPH_FEATURE_RADOS_BACKOFF"
       ],
-      "status": "uncovered",
-      "evidence": "none",
-      "cases": [],
-      "gap": "No recipe makes an OSD send a backoff and records it.",
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestOSDBackoffReceipt",
+          "receipt": "OSD_BACKOFF_RECEIPT",
+          "asserts": "a PG-wide backoff: with noout and a non-primary replica of a replicas/min_size 3 pool stopped, the PG is peered but not active under the same primary; one asynchronous python-rados read gets a BLOCK of the whole PG from the primary in the client's debug_ms log, and the primary logs the client's ACK_BLOCK with the same PG, ID, range and epoch on the connection that carried the read, both before the replica starts again; the client then receives the UNBLOCK with the same PG, ID and range at the same or a later epoch on the same connection, the original read is answered only after it, and it returns the seeded length and SHA-256; extra BLOCKs and reconnects are kept in the receipt"
+        }
+      ],
+      "gap": "Only the PG-wide backoff of a peered but inactive PG has a recipe. No recipe makes an OSD send an object-scoped backoff (a degraded or unfound object, osd_backoff_on_degraded), and the recipe's native result is per release: a pull request runs it on Tentacle only.",
       "owner": "#159"
     },
     {
