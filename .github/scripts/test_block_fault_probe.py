@@ -20,7 +20,9 @@ class FakeHost:
         self.tools = {"losetup": "/usr/sbin/losetup", "dmsetup": "/usr/sbin/dmsetup"}
         self.uid = 0
         self.files = {}
+        self.texts = {}
         self.dirs = set()
+        self.holders = []
         self.nodes = {}
         self.now = 0.0
         self.write_cache = "write back"
@@ -55,8 +57,18 @@ class FakeHost:
     def read_text(self, path):
         return self.write_cache if path.endswith("/queue/write_cache") else None
 
+    def write_text(self, path, text):
+        assert path not in self.texts
+        self.texts[path] = text
+
+    def openers(self, major_minor):
+        return list(self.holders)
+
     def remove_file(self, path):
-        del self.files[path]
+        if path in self.texts:
+            del self.texts[path]
+        else:
+            del self.files[path]
 
     def remove_dir(self, path):
         self.dirs.remove(path)
@@ -128,8 +140,9 @@ class FakeKernel:
         raise AssertionError(argv)
 
     def table_ok(self, table):
-        kind = table.split()[2]
-        if kind in self.reject or table in self.reject:
+        kinds = [line.split()[2] for line in table.splitlines()]
+        kind = next((k for k in kinds if k != "linear"), "linear")
+        if kind in self.reject or any(line in self.reject for line in table.splitlines()):
             return False
         if kind not in self.targets:
             module = {"delay": "dm_delay", "flakey": "dm_flakey"}.get(kind)
@@ -151,6 +164,8 @@ class FakeKernel:
                                "suspended": False, "open": 0}
             self.host.nodes["/dev/mapper/" + name] = dev
             return self.ok(argv)
+        if cmd == "udevcookies":
+            return self.ok(argv, "Cookie       Semid      Value      Last semop time           Last change time\n")
         if cmd == "info" and argv[2] == "--columns":
             lines = ["%s|%s" % (n, m["uuid"]) for n, m in self.maps.items()]
             return self.ok(argv, "\n".join(lines) + "\n" if lines else "No devices found\n")
@@ -173,7 +188,7 @@ class FakeKernel:
         if cmd == "status":
             return self.ok(argv, mapping["live"] + "\n")
         if cmd == "load":
-            table = argv[4]
+            table = self.host.texts[argv[3]].strip()
             if not self.table_ok(table):
                 return Result(argv, 1, "", "device-mapper: reload ioctl failed: Invalid argument\n")
             mapping["inactive"] = table
@@ -195,7 +210,9 @@ class FakeKernel:
     def io(self, argv):
         opts = dict(zip(argv[4::2], argv[5::2]))
         name = opts["--device"].rsplit("/", 1)[1]
-        table = self.maps[name]["live"].split()
+        sector = int(opts["--offset"]) // probe.SECTOR
+        table = next(line.split() for line in self.maps[name]["live"].splitlines()
+                     if int(line.split()[0]) <= sector < int(line.split()[0]) + int(line.split()[1]))
         op, seed = opts["--op"], opts["--seed"]
         out = {"op": op, "errno": None, "errno_name": None, "elapsed_s": 0.002}
         kind = table[2]
@@ -330,7 +347,14 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(phases[name]["install"]["installed_table"],
                              phases[name]["requested_fault"])
         delay = phases["delay"]["requested_fault"]
-        self.assertEqual(delay, "0 %d delay 7:0 0 300 7:0 0 600 7:0 0 900" % SECTORS)
+        start = probe.WINDOW_START // probe.SECTOR
+        end = start + probe.WINDOW_LENGTH // probe.SECTOR
+        self.assertEqual(delay.splitlines(), [
+            "0 %d linear 7:0 0" % start,
+            "%d %d delay 7:0 %d 300 7:0 %d 600 7:0 %d 900" % (start, end - start, start, start, start),
+            "%d %d linear 7:0 %d" % (end, SECTORS - end, end)])
+        self.assertEqual(host.texts, {})
+        self.assertTrue(report["cleanup"]["udev_cookies"].startswith("Cookie"))
         self.assertEqual(report["cleanup"]["mapping"]["observed"], "absent")
         self.assertEqual(report["cleanup"]["loop"]["observed"], "unbound")
         self.assertEqual(report["cleanup"]["backing"], "removed")
@@ -391,9 +415,44 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(report["cleanup"]["retained"], ["loop", "backing-file"])
         self.assertIn(p.backing, host.files)
 
+    def test_lingering_opener_blocks_removal_and_is_recorded(self):
+        p, kernel, host = make()
+        host.holders = [{"pid": 4321, "comm": "systemd-udevd"}]
+        original = kernel.dmsetup
+
+        def dmsetup(argv):
+            if argv[1] == "info" and argv[2] == p.name and p.report["cleanup"]:
+                kernel.maps[p.name]["open"] = 1
+            return original(argv)
+        kernel.dmsetup = dmsetup
+        report = p.execute()
+        mapping = report["cleanup"]["mapping"]
+        self.assertEqual(mapping["skipped"], "suspended-or-open")
+        self.assertEqual(mapping["before"]["openers"], host.holders)
+        self.assertGreaterEqual(host.now, probe.OPEN_WAIT)
+        self.assertFalse(commands(kernel, "dmsetup", "remove"))
+        self.assertEqual(report["verdict"], "uncertain")
+
+    def test_opener_that_closes_within_the_wait_allows_removal(self):
+        p, kernel, host = make()
+        original = kernel.dmsetup
+        state = {"polls": 0}
+
+        def dmsetup(argv):
+            if argv[1] == "info" and argv[2] == p.name and p.report["cleanup"]:
+                state["polls"] += 1
+                kernel.maps[p.name]["open"] = 1 if state["polls"] < 3 else 0
+            return original(argv)
+        kernel.dmsetup = dmsetup
+        report = p.execute()
+        self.assertEqual(report["verdict"], "complete")
+        self.assertEqual(report["cleanup"]["mapping"]["observed"], "absent")
+
     def test_unsupported_optional_feature_is_not_a_failure(self):
         p, kernel, host = make()
-        kernel.reject.add("0 %d flakey 7:0 0 0 3600 1 error_reads" % SECTORS)
+        start = probe.WINDOW_START // probe.SECTOR
+        kernel.reject.add("%d %d flakey 7:0 %d 0 3600 1 error_reads" % (
+            start, probe.WINDOW_LENGTH // probe.SECTOR, start))
         report = p.execute()
         self.assertEqual(report["verdict"], "complete")
         phase = [ph for ph in report["phases"] if ph["name"] == "flakey-error-reads"][0]
@@ -441,7 +500,7 @@ class ProbeTests(unittest.TestCase):
         original = kernel.io
 
         def io(argv):
-            if kernel.maps[p.name]["live"].split()[2] == "delay":
+            if "delay" in kernel.maps[p.name]["live"]:
                 return Result(argv, None, "", "", timed_out=True, reaped=False)
             return original(argv)
         kernel.io = io

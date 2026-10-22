@@ -40,11 +40,18 @@ SECTOR = 512
 SIZE_BYTES = 64 * 1024 * 1024
 # Offsets and lengths are 4 KiB aligned, which satisfies O_DIRECT on 512-byte
 # and 4 KiB logical blocks.
-IO_OFFSET = 1024 * 1024
 IO_LENGTH = 64 * 1024
+# Faults cover only a window in the middle of the device. On the first hosted
+# run a whole-device delay also slowed the host's udev probe of the resumed
+# mapping, which kept it open and timed out dmsetup's udev wait. Signature
+# probes read near the start and end of a device, not here.
+WINDOW_START = 32 * 1024 * 1024
+WINDOW_LENGTH = 1024 * 1024
+IO_OFFSET = WINDOW_START
 CONTROL_TIMEOUT = 15
 KILL_GRACE = 5
 NODE_WAIT = 5
+OPEN_WAIT = 10
 OUTPUT_LIMIT = 4096
 # Distinct values let an elapsed time identify the class that delayed it.
 DELAYS_MS = {"read": 300, "write": 600, "flush": 900}
@@ -179,6 +186,32 @@ class Host:
         except OSError:
             return None
 
+    def write_text(self, path, text):
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+
+    def openers(self, major_minor):
+        """Processes with an open descriptor on the block device, from /proc."""
+        found = []
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit() or int(pid) == os.getpid():
+                continue
+            try:
+                fds = os.listdir("/proc/%s/fd" % pid)
+            except OSError:
+                continue
+            for fd in fds:
+                try:
+                    info = os.stat("/proc/%s/fd/%s" % (pid, fd))
+                except OSError:
+                    continue
+                if stat.S_ISBLK(info.st_mode) and "%d:%d" % (
+                        os.major(info.st_rdev), os.minor(info.st_rdev)) == major_minor:
+                    found.append({"pid": int(pid), "comm": self.read_text("/proc/%s/comm" % pid)})
+                    break
+        return found
+
     def remove_file(self, path):
         os.unlink(path)
 
@@ -282,7 +315,9 @@ def normalize_majmin(value):
 
 
 def normalize_table(text):
-    return " ".join((text or "").split())
+    """One line per target, single spaces, as `dmsetup table` prints it."""
+    lines = (" ".join(line.split()) for line in (text or "").splitlines())
+    return "\n".join(line for line in lines if line)
 
 
 # Decisions
@@ -334,6 +369,7 @@ class Probe:
         self.name = NAME_PREFIX + uuid.uuid4().hex[:12]
         self.dm_uuid = UUID_PREFIX + uuid.uuid4().hex
         self.linear = None
+        self.table_files = []
         self.baseline_hash = None
         self.baseline_elapsed = None
         # Set once the owned mapping may be suspended, foreign or busy; no
@@ -348,6 +384,7 @@ class Probe:
             "started_at": utc_now(),
             "options": {"allow_target_autoload": allow_target_autoload,
                         "size_bytes": SIZE_BYTES, "io_offset": IO_OFFSET,
+                        "fault_window": [WINDOW_START, WINDOW_LENGTH],
                         "io_length": IO_LENGTH, "delays_ms": dict(DELAYS_MS),
                         "control_timeout_s": CONTROL_TIMEOUT},
             "environment": {},
@@ -532,6 +569,9 @@ class Probe:
                  "info": parsed,
                  "live_table": normalize_table(live.stdout) if live.ok else None,
                  "inactive_table": normalize_table(inactive.stdout) if inactive.ok else None}
+        if parsed and parsed["open_count"]:
+            # Read-only: which processes hold the mapping open.
+            state["openers"] = self.host.openers(parsed["major_minor"])
         return state
 
     def identity_ok(self, state):
@@ -572,7 +612,11 @@ class Probe:
     def install(self, label, table):
         """Load, suspend and resume, observing each transition separately."""
         record = {"requested_table": table, "transitions": []}
-        for step, args in (("load", ("load", self.name, "--table", table)),
+        # A multi-target table is passed as a file in the owned work directory.
+        path = os.path.join(self.workdir, "table-%s.txt" % label)
+        self.host.write_text(path, table + "\n")
+        self.table_files.append(path)
+        for step, args in (("load", ("load", self.name, path)),
                            ("suspend", ("suspend", self.name)),
                            ("resume", ("resume", self.name))):
             result = self.dmsetup("dm-%s:%s" % (step, label), *args)
@@ -648,27 +692,35 @@ class Probe:
                                  "flush": flush["elapsed_s"]}
         return True
 
-    def phase_specs(self):
-        sectors = SIZE_BYTES // SECTOR
+    def windowed(self, target):
+        """Linear mapping around one fault target covering the window."""
         dev = self.loop_dev
-        delay = "0 %d delay %s 0 %d %s 0 %d %s 0 %d" % (
-            sectors, dev, DELAYS_MS["read"], dev, DELAYS_MS["write"], dev, DELAYS_MS["flush"])
+        start, length = WINDOW_START // SECTOR, WINDOW_LENGTH // SECTOR
+        end = start + length
+        rest = SIZE_BYTES // SECTOR - end
+        return "\n".join(("0 %d linear %s 0" % (start, dev),
+                          "%d %d %s" % (start, length, target % {"dev": dev, "off": start}),
+                          "%d %d linear %s %d" % (end, rest, dev, end)))
+
+    def phase_specs(self):
+        delay = self.windowed("delay %%(dev)s %%(off)d %d %%(dev)s %%(off)d %d %%(dev)s %%(off)d %d" % (
+            DELAYS_MS["read"], DELAYS_MS["write"], DELAYS_MS["flush"]))
         # up_interval 0 keeps flakey down for the whole window, so the table
         # load time does not decide whether an operation hit the down phase.
-        flakey = "0 %d flakey %s 0 0 3600 1 %s"
+        flakey = "flakey %(dev)s %(off)d 0 3600 1 "
         return [
             {"name": "delay", "required": True, "target": "delay", "table": delay,
              # The write repeats the baseline bytes, so its outcome cannot
              # change the expected content.
              "ops": [("read", BASELINE_SEED, "delay"), ("write", BASELINE_SEED, "delay"),
                      ("flush", BASELINE_SEED, "delay")]},
-            {"name": "error", "required": True, "target": "error", "table": "0 %d error" % sectors,
+            {"name": "error", "required": True, "target": "error", "table": self.windowed("error"),
              "ops": [("read", BASELINE_SEED, "eio"), ("write", MUTATION_SEED, "eio")]},
             {"name": "flakey-error-writes", "required": False, "target": "flakey",
-             "table": flakey % (sectors, dev, "error_writes"),
+             "table": self.windowed(flakey + "error_writes"),
              "ops": [("read", BASELINE_SEED, "exact"), ("write", MUTATION_SEED, "eio")]},
             {"name": "flakey-error-reads", "required": False, "target": "flakey",
-             "table": flakey % (sectors, dev, "error_reads"),
+             "table": self.windowed(flakey + "error_reads"),
              "ops": [("read", BASELINE_SEED, "eio"), ("write", BASELINE_SEED, "ok")]},
         ]
 
@@ -764,6 +816,14 @@ class Probe:
         if not self.identity_ok(state):
             entry["skipped"] = "identity"
             return False
+        deadline = self.host.monotonic() + OPEN_WAIT
+        while state["info"]["open_count"] and self.host.monotonic() < deadline:
+            self.host.sleep(0.5)
+            state = self.observe("before-remove-wait")
+            if not self.identity_ok(state):
+                entry["skipped"] = "identity"
+                return False
+        entry["before"] = state
         if state["info"]["suspended"] or state["info"]["open_count"]:
             entry["skipped"] = "suspended-or-open"
             return False
@@ -819,6 +879,8 @@ class Probe:
             retained.append("backing-file")
             return
         self.host.remove_file(self.backing)
+        for path in self.table_files:
+            self.host.remove_file(path)
         self.host.remove_dir(self.workdir)
         cleanup["backing"] = "removed"
 
@@ -846,6 +908,9 @@ class Probe:
                 self.report["environment"]["dm_targets_after"] = (
                     parse_targets(targets.stdout) if targets.ok else None)
                 self.cleanup()
+                # A killed dmsetup can leave its udev cookie semaphore behind.
+                cookies = self.dmsetup("dmsetup-udevcookies", "udevcookies")
+                self.report["cleanup"]["udev_cookies"] = clip(cookies.stdout).strip() if cookies.ok else None
         return self.finish()
 
     def finish(self):
