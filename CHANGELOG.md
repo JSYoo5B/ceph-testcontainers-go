@@ -390,6 +390,12 @@ change the API.
 
 ### Fixed
 
+- The failure diagnostics of `TestRGWPlacementRealmStorageClasses` read both
+  gateways' container state before any admin query, give each state, admin
+  and log read its own bound inside the 45-second total, and report a failed,
+  timed-out or truncated read instead of dropping it. An admin query that
+  stalls can no longer hide an exited source gateway (#2).
+
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
   fence after an unconfirmed stop, without closing unrelated targets. This

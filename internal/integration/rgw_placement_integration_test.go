@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -78,32 +77,18 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 		if !t.Failed() {
 			return
 		}
-		diagnosticCtx, diagnosticCancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer diagnosticCancel()
+		var sites []rgwDiagnosticSite
 		for _, site := range []struct {
 			name    string
 			gateway *rgw.Gateway
 		}{{"source", fixture.Source}, {"destination", fixture.Destination}} {
-			for _, command := range [][]string{{"sync", "status"}, {"metadata", "sync", "status"}, {"data", "sync", "status", "--source-zone", fixture.SourceZoneID}, {"sync", "error", "list"}} {
-				data, err := site.gateway.Admin(diagnosticCtx, command...)
-				if err != nil {
-					t.Logf("%s native %s diagnostic: %v", site.name, strings.Join(command[:min(3, len(command))], " "), err)
-					continue
-				}
-				t.Logf("%s native %s diagnostic: %s", site.name, strings.Join(command[:min(3, len(command))], " "), rgwPlacementSafeDiagnostic(data, site.gateway))
-			}
-			logs, err := site.gateway.Logs(diagnosticCtx)
-			if err == nil {
-				data, readErr := io.ReadAll(io.LimitReader(logs, 2<<20))
-				_ = logs.Close()
-				if readErr == nil {
-					t.Logf("%s recent RGW diagnostics: %s", site.name, rgwPlacementSafeLogDiagnostic(data, site.gateway))
-				}
-			}
-			// A gateway that exited explains admin commands that fail at once.
-			if state, err := site.gateway.State(diagnosticCtx); err == nil {
-				t.Logf("%s gateway container: status=%s exit=%d oom=%t finished=%s", site.name, state.Status, state.ExitCode, state.OOMKilled, state.FinishedAt)
-			}
+			sites = append(sites, rgwDiagnosticSite{Name: site.name, Gateway: site.gateway,
+				Commands:  [][]string{{"sync", "status"}, {"metadata", "sync", "status"}, {"data", "sync", "status", "--source-zone", fixture.SourceZoneID}, {"sync", "error", "list"}},
+				Redact:    func(data []byte) string { return rgwPlacementSafeDiagnostic(data, site.gateway) },
+				RedactLog: func(data []byte) string { return rgwPlacementSafeLogDiagnostic(data, site.gateway) }})
+		}
+		for _, line := range rgwFailureDiagnostics(context.Background(), rgwDefaultDiagnosticBounds, sites) {
+			t.Log(line)
 		}
 	})
 	config := rgw.PlacementConfig{Name: "tc-realm-tiered", IndexPool: "tc-realm-index", DataExtraPool: "tc-realm-extra", StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-realm-standard"}, {Name: "STANDARD_IA", DataPool: "tc-realm-ia"}}}
