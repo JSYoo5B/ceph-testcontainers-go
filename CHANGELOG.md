@@ -8,6 +8,17 @@ change the API.
 
 ### Added
 
+- `ceph.Container.DetachOSD` and `ReopenOSD` restart a retained OSD store in a
+  new container. With `WithOSDVolumeStorage`, detach fences the instance,
+  stops it, waits for down and removes the container, then returns a
+  `ceph.DetachedOSD` for the store and registration that it keeps. Reopen
+  checks that the store's identity files, keyring and block are unchanged,
+  that the registration holds the same UUID and is down and that the MONs'
+  key matches, before it starts a new `*OSDContainer` with the same ID and
+  UUID. The native `topology/osd_retained_reopen` batch reads known bytes back
+  from a single-replica pool through the new container. See
+  `docs/design/osd-retained-reopen.md` (#6).
+
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
   ordinary cluster-owned Docker local named volume, allocated on the first OSD.
   Purged OSD directories are discarded only after container removal; busy volume

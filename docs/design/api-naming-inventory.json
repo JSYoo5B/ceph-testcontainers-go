@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 306,
+    "ceph": 313,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -502,6 +502,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.DetachOSD",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id int) (*DetachedOSD, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.DetachOSD",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.Exec",
       "kind": "method",
       "signature": "func(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)",
@@ -822,6 +830,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.ReopenOSD",
+      "kind": "method",
+      "signature": "func(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ReopenOSD",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.RepairPG",
       "kind": "method",
       "signature": "func(ctx context.Context, pgid string) error",
@@ -1121,6 +1137,44 @@
       "current": "ceph.DefaultImage",
       "kind": "const",
       "proposed": "ceph.DefaultImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD",
+      "kind": "type",
+      "proposed": "ceph.DetachedOSD",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.ClusterFSID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.ClusterFSID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.ID",
+      "kind": "method",
+      "signature": "func() int",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.Placement",
+      "kind": "method",
+      "signature": "func() OSDConfig",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.UUID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.UUID",
       "decision": "baseline"
     },
     {

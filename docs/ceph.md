@@ -496,11 +496,12 @@ retains ownership for another `Terminate` call. Changed volume metadata is
 refused before directory operations or deletion. Never externally modify or
 attach this owned volume while using the cluster.
 
-There is no caller-supplied volume, host path, device or driver option. This
-backend does not expose retained detach/reopen, replacement-container recovery,
-exclusive attachment or host-reboot durability. `Terminate` always discards its
-owned volume. See [the storage design](design/osd-volume-storage.md) for the
-remaining lifecycle work in #6.
+There is no caller-supplied volume, host path, device or driver option.
+[DetachOSD](#detachosd) and [ReopenOSD](#reopenosd) restart a retained store in
+a new container; this backend gives no host-reboot durability. `Terminate`
+always discards its owned volume, including detached stores. See
+[the storage design](design/osd-volume-storage.md) and
+[retained reopen](design/osd-retained-reopen.md).
 
 #### WithOSDObjectStore
 
@@ -1491,7 +1492,7 @@ that only read state stay available.
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
-| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
+| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
 Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
@@ -2126,6 +2127,77 @@ reweighted and is not marked in again automatically. If the purge reply is lost,
 the handle is kept: a retry with a fresh context treats the OSD's absence as
 completion of its own purge, and after a completed purge only the Docker cleanup
 is retried. Do not register or replace OSDs externally while a removal runs.
+`RemoveOSD` refuses an OSD that [DetachOSD](#detachosd) is detaching or has
+detached.
+
+#### DetachOSD
+
+```golang
+func (c *Container) DetachOSD(ctx context.Context, id int) (*ceph.DetachedOSD, error)
+```
+
+Stops and removes an owned OSD's container but keeps its store in the owned
+volume and its MON registration, so that [ReopenOSD](#reopenosd) can start a
+new container on them. It needs [WithOSDVolumeStorage](#withosdvolumestorage);
+other storage is an invalid request. The OSD is down while it is detached, not
+out or purged: hold `noout` with [OverrideOSDFlag](#overrideosdflag) if Ceph
+must not mark it out.
+
+Detach checks the registration UUID, refuses an OSD whose container a held
+network delay, network interruption or pause still targets, then fences the
+instance against new native commands as [RemoveOSD](#removeosd) does, stops it,
+waits for it to be down and removes the container. Only after the removal does
+it read the store's identity files, keyring and block inode and size, and
+returns a `*ceph.DetachedOSD` with `ID()`, `UUID()`, `ClusterFSID()` and
+`Placement()`. The OSD leaves [OSDs](#osds); the previous `*ceph.OSDContainer`
+keeps naming the removed container.
+
+On error the OSD stays owned and fenced. Retry `DetachOSD` with a fresh context;
+it resumes after a completed removal. `RemoveOSD` refuses it meanwhile.
+
+#### ReopenOSD
+
+```golang
+func (c *Container) ReopenOSD(ctx context.Context, detached *ceph.DetachedOSD) (*ceph.OSDContainer, error)
+```
+
+Starts a new container on a store that `DetachOSD` of the same cluster
+retained and waits for the OSD to be up/in. It returns a new
+`*ceph.OSDContainer` with the same ID, UUID and placement and a different
+container.
+
+Before anything is written it requires the store's identity files, keyring and
+block inode and size to be unchanged since the detach, the MON registration to
+hold the same UUID and be down, and the MONs' key for the OSD to equal the
+stored one. A refusal leaves the OSD detached for another attempt. Once the
+container is requested the `DetachedOSD` is consumed: on a later error the
+returned handle is owned by the cluster, so detach or remove it, or terminate
+the cluster. The OSD bootstrap checks the stored identity again and never
+formats a store that has its ready marker.
+
+```golang
+noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+if err != nil {
+	t.Fatal(err)
+}
+detached, err := cluster.DetachOSD(ctx, 0)
+if err != nil {
+	t.Fatal(err)
+}
+// The store and registration of osd.0 have no container here.
+osd, err := cluster.ReopenOSD(ctx, detached)
+if err != nil {
+	t.Fatal(err)
+}
+if err := noout.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+_ = osd // same ID and UUID, new container
+```
+
+Only graceful detach of one cluster's classic BlueStore store on the same
+image is covered. Abrupt exit, host reboot, other images and reopening a store
+in another cluster are not.
 
 #### OSDStates
 
@@ -3892,6 +3964,7 @@ Selects the client/public network or the OSD replication network for
 | `MonitorContainer` | embeds `testcontainers.Container`; `DaemonName` | `Stop`/`Start` keep the store. See [Monitors](#monitors). |
 | `ManagerContainer` | embeds `testcontainers.Container`; `DaemonName` | Active or standby. See [Managers](#managers). |
 | `OSDContainer` | embeds `testcontainers.Container`; `ID`; `Placement() OSDConfig` | Backed by a sparse BlueStore file. `Placement` returns a copy of the resolved CRUSH location. See [OSDs](#osds). |
+| `DetachedOSD` | `ID() int`; `UUID() string`; `ClusterFSID() string`; `Placement() OSDConfig` | A retained store and registration without a container. See [DetachOSD](#detachosd) and [ReopenOSD](#reopenosd). |
 
 The cluster owns these containers. Do not terminate them individually; use
 `RemoveMonitor`, `RemoveManager` or `RemoveOSD`.
