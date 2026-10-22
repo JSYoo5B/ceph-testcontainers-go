@@ -180,24 +180,26 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 	case "mds":
 		return c.settings.mdsImage
 	}
-	if c.UsesRoleImages() {
-		return ""
-	}
-	return c.settings.controlImage
+	return ""
 }
 
 // WithServiceImage selects the image for a service role.
 func (serviceHooks) WithServiceImage(role, image string) Option {
 	return func(o *options) error {
-		o.legacyImageOverride = true
 		if strings.TrimSpace(image) == "" {
 			return fmt.Errorf("%s image must not be blank", strings.ToUpper(role))
 		}
 		switch role {
 		case "rgw":
 			o.rgwImage = image
+			if o.imageSet != nil {
+				o.imageSet.RGW = image
+			}
 		case "mds":
 			o.mdsImage = image
+			if o.imageSet != nil {
+				o.imageSet.CephFS = image
+			}
 		default:
 			return fmt.Errorf("unknown service role %q", role)
 		}
@@ -341,6 +343,7 @@ type testClusterConfig = struct {
 func (serviceHooks) TestCluster(control testcontainers.Container, config testClusterConfig) *Container {
 	c := &Container{Container: control, closed: config.Closed, settings: options{
 		startupTimeout: config.StartupTimeout, hostNetwork: config.HostNetwork, publicAddress: config.PublicAddress,
+		controlImage: "unit-all", osdImage: "unit-all", mdsImage: "unit-all", rgwImage: "unit-all",
 	}}
 	if config.Shared {
 		c.sharing.Store(int32(sharedWithTenants))

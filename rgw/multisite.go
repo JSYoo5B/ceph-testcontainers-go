@@ -20,14 +20,10 @@ import (
 
 // MultisiteConfig describes a two-zone realm in fresh test clusters. The
 // source is the metadata master; both zones accept object writes.
-// ControlImage optionally selects the image of the setup client containers
-// that run radosgw-admin for every zone; like a control image it needs the
-// Ceph CLI and Python. When omitted, each zone's setup client uses its own
-// cluster's control image.
+// Setup clients use each cluster's RGW image unless SetupImage overrides it.
 type MultisiteConfig struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
-	ControlImage                                  string
 	// SetupImage explicitly selects the RGW administration runtime.
 	SetupImage           string
 	destinationZonegroup string
@@ -63,24 +59,17 @@ type Multisite struct {
 // be terminated. The clusters must not already serve standalone RGW traffic.
 // Both clusters must use the same network mode. Host mode advertises the
 // configured daemon-host addresses, which must be mutually reachable.
-// image supplies only the RGW role; setup clients use the clusters' control
-// images unless ControlImage explicitly overrides them.
+// image supplies the gateway runtime; setup clients use each cluster's RGW
+// image unless SetupImage explicitly overrides it.
 func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
-	if config.SetupImage != "" {
-		if config.ControlImage != "" {
-			return nil, invalid(fmt.Errorf("SetupImage and ControlImage cannot be combined"))
-		}
-		config.ControlImage = config.SetupImage
-		config.SetupImage = ""
-	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
-	sourceClientImage, err := rgwControlImage(config.ControlImage, config.Source)
+	sourceClientImage, err := rgwSetupImage(config.SetupImage, config.Source)
 	if err != nil {
 		return nil, err
 	}
-	destinationClientImage, err := rgwControlImage(config.ControlImage, config.Destination)
+	destinationClientImage, err := rgwSetupImage(config.SetupImage, config.Destination)
 	if err != nil {
 		return nil, err
 	}
@@ -310,23 +299,15 @@ func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opt
 	return f, nil
 }
 
-// Keep the daemon image out of CLI selection: the RGW role needs neither the
-// Ceph CLI nor Python. An empty override remains empty in the saved config so
-// subsequently added zones can select their own cluster's control image.
-func rgwControlImage(override string, cluster interface{ ControlImage() string }) (string, error) {
+// An empty override lets each zone select its cluster's RGW administration
+// runtime, including zones added after initial setup.
+func rgwSetupImage(override string, cluster interface{ Images() ceph.ImageSet }) (string, error) {
 	image := override
 	if image == "" && cluster != nil {
-		if roles, ok := cluster.(interface {
-			UsesRoleImages() bool
-			Images() ceph.ImageSet
-		}); ok && roles.UsesRoleImages() {
-			image = roles.Images().RGW
-		} else {
-			image = cluster.ControlImage()
-		}
+		image = cluster.Images().RGW
 	}
 	if strings.TrimSpace(image) == "" {
-		return "", fmt.Errorf("RGW control image must not be empty")
+		return "", fmt.Errorf("RGW setup image must not be empty")
 	}
 	return image, nil
 }

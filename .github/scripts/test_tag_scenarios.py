@@ -349,6 +349,19 @@ class TagPlannerTests(unittest.TestCase):
                 with self.subTest(arguments=arguments):
                     self.assertEqual(engine.main(["plan", *arguments]), 1)
 
+    def test_optional_role_profile_prepares_images_outside_integration_package(self):
+        file = fixture(path="rbd/role_test.go", tests=("TestRoleMirror",),
+                       category="optional", batch="role_mirror")
+        file["tags"] += ["role_images"]
+        file["constraint"] = combine("and", file["constraint"], tag("role_images"))
+        file["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential,client,rbd-aux"]
+        plan = engine.discover_optional([file])
+        profile = plan["include"][0]
+        self.assertTrue(profile["requires_ceph"])
+        self.assertEqual(profile["image_roles"], "essential,client,rbd-aux")
+        self.assertIn("role_images", profile["tags"].split(","))
+        self.assertEqual(engine.discover([fixture(), file])["required_executions"], 1)
+
     def test_optional_batch_cannot_be_representative(self):
         optional = fixture(path="internal/integration/optional_test.go", tests=("TestOptional",), batch="regression")
         optional["tags"] = ["ci_optional", "ci_batch_regression", "native_regression"]

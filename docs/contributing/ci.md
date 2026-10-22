@@ -16,7 +16,6 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `recovery` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases) (Tentacle 20.2.4 and Squid 19.2.5), on `main`; the representative batches repeated on a pinned commit and pinned images |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one (Squid 19.2.5) |
-| roles-v2 consumer | `roles-v2.yml` | pull request (planned by changed inputs); weekly Monday 03:41 UTC; manual | Representative explicit-role smoke coverage or the full release/architecture campaign; see [Dependency-role consumer coverage](#dependency-role-consumer-coverage) |
 | Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, with an optional RGW image override |
 | CI command | `ci-command.yml` | a pull request comment `/ci run ...` (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) | The named runtime batches, of any category or optional, on the pull request's head commit and the chosen releases |
 
@@ -95,70 +94,23 @@ up. Go reuses an entry only when its content hash matches, a stale entry is
 merely unused, a failed `buildcache` leaves the cache unsaved without failing
 `Plan`, and each job still compiles, records and verifies its own binary.
 
-### Dependency-role consumer coverage
+### Role image checks
 
-`roles-v2.yml` validates the explicit essential/client/cephfs/rbd-aux/rgw
-contract using published images, as the category workflows now do. Image
-production and qualification belong to `ceph-testcontainers-images`; consumer
-workflows pull the checked-in index digests from `.github/ceph-role-images.json`
-and freeze native local IDs; they never rebuild candidate images. Registry
-publication remains a separate operation. Updating that pin file selects a
-full consumer campaign. A new default release also updates `ceph.DefaultImage`
-and the supplied-image runner's matching aggregate pin.
+Runtime batches prepare only their source-declared roles from the checked-in
+immutable digest map. There is no separate automatic role consumer campaign.
+Normal Code, Docker and category CI retain their existing scopes.
 
-Every PR first runs a small Python planner, which records the complete
-merge-base diff (including deleted and renamed inputs) in the
-`roles-v2-plan` artifact. The workflow has no PR path filter: large diffs
-cannot silently lose a relevant path to GitHub's path-filter limit.
+Request additional role routing through the existing review command:
 
-| Changed input or trigger | Native coverage |
-| --- | --- |
-| Runtime changes under `ceph/`, `cephfs/`, `rbd/`, `rgw/`, `fault/` or `internal/` | **Smoke**: current supported release (Tentacle 20.2.4), Linux/amd64, `make roles-v2-smoke` |
-| Explicit image selection (`ceph/images*.go`), role-image fixtures/routing tests, `Makefile`, Go dependencies, this workflow/planner, published digest pins, image-matrix release table or cleanup checker | **Full**: every supported release (Tentacle 20.2.4 and Squid 19.2.5), Linux/amd64 and Linux/arm64 |
-| Documentation, standalone `internal/tools/`, the separate `internal/integration/goceph/` module, or unrelated CI tooling alone | **None**: planner records why; no image preparation or native test is claimed |
-| PR with `ci:full`, or a PR in a `CI_RELEASE_PHASE=true` release phase | **Full**, overriding the file selection |
-| Weekly schedule on `main` | **Full** |
-| Manual dispatch | **Full** by default; `scope=smoke` selects representative coverage; `variant` remains selectable |
+```text
+/ci run role_routing role_mirror_refresh
+/ci run role_routing role_mirror_refresh on all
+```
 
-A mixed change uses its widest scope. The full-trigger path rules live in
-`.github/scripts/roles_v2_plan.py`; changing the planner itself requires full
-coverage. Adding/removing `ci:full` replans the PR; unrelated label changes
-neither start native work nor cancel an existing PR check.
-
-Smoke retains the three constrained routing/ownership tests (ordinary RBD
-with a separate client, RGW administration without a generic client, and
-RBD mirror bootstrap refresh) plus five existing single-cluster lifecycle
-paths (cluster, RBD, CephFS, RGW and MGR). These **8 top-level instances**
-exercise every feature role without repeating the complete compatibility,
-scheduling, shared/native-oracle and aggregate-image suites on every commit.
-Other category workflows retain their existing test scopes and use the same
-published dependency-role contract.
-Smoke is representative role coverage, not full roles-v2 qualification.
-
-Full coverage keeps all previous commands unchanged: split compatibility
-(9 instances), routing/ownership (3), cache/scheduling behavior (3),
-shared/native command oracles (6), then all-image compatibility (9). This is
-**30 top-level instances per release/architecture cell, 120 total** for the
-current four cells. The weekly campaign catches cross-release/architecture,
-aggregate-layout and extended behavior regressions for ordinary runtime
-changes that receive only smoke coverage before merge. Use `ci:full` or a
-manual full dispatch when that coverage is needed before merging instead.
-This workflow does not add a full campaign to every push to `main`.
-
-Both scopes snapshot and verify Testcontainers resource cleanup, even after
-a failed test; reports are included in the native artifact. Native jobs have
-a 30-minute smoke / 90-minute full limit. New PR commits cancel superseded
-roles-v2 PR runs. Manual and scheduled campaigns have independent run-ID
-groups and cannot cancel the PR run or one another.
-
-The pre-change [campaign at `7023643`, attempt 1](https://github.com/JSYoo5B/ceph-testcontainers-go/actions/runs/39684980756)
-passed all 120 parent instances. Its four native jobs took 52m05s–58m33s
-(start to finish, excluding queue time), totaling 225m06s of native job
-elapsed time. Image builds took 1m13s–1m40s per job; most time was spent in
-the sequential functional suites. Ordinary smoke changes reduce native
-cells from four to one and parent instances from 120 to eight. These are
-coverage/count reductions, not a measured wall-time speedup: job setup,
-image building, compilation, queueing and individual test costs still apply.
+These optional profiles cover constrained ordinary RBD, RGW without a generic
+client, and stopped-link mirror monitor refresh. Other cache, scheduling,
+shared/native and aggregate compatibility checks remain in their ordinary
+source-owned batches; reviewers can select those batches by the same command.
 
 ### Check names
 
@@ -178,7 +130,6 @@ Each runtime workflow also has a `Plan` job.
 | Ceph short | as above, plus the run ID when a label other than `ci:selected-batches` is added or removed | Adding or removing `ci:selected-batches` replaces the run in progress. Any other label starts a run that skips its job and cancels nothing. |
 | CI command | per caller job: the pull request number, head commit, selected profiles and release; no group for the run itself | A repeated command for the same head commit, batches and release waits for the run in progress and never cancels it. Each command still has its own commit status. GitHub keeps one waiting caller per group, so a third identical command replaces the waiting one, which ends as cancelled. A different selection, release or head commit runs independently. |
 | Native regressions | none | Runs are independent. |
-| roles-v2 consumer | event and PR number for PR runs; event and run ID otherwise; unrelated label events get their own group | New PR commits and `ci:full` label changes cancel the previous PR run. Manual/weekly campaigns are independent. |
 
 Practical consequences:
 
@@ -638,7 +589,7 @@ steps in order:
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
-| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Pulls the declared `roles-v2-official-<release>-<role>` images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for native `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, `CEPH_TEST_RGW_IMAGE` plus `SCENARIO_IMAGE_CONTRACT=roles-v2`. Source-owned `image-roles` selects the required subset. Pulls only, never builds. |
+| Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Pulls the declared immutable role indexes from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for native `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, `CEPH_TEST_RGW_IMAGE`. Source-owned `image-roles` selects the required subset. Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
@@ -694,9 +645,8 @@ five; non-Ceph profiles get none. `supervised_command` uses an idle
 `essential` runtime; `native_input` uses essential + client and starts a
 cluster without OSDs for ownership and attached-input proofs.
 
-The composite action explicitly selects `--contract roles-v2`; no old
-control-image fallback is used. Selected image IDs and the contract marker
-are exported only after complete preparation. `integrationImages` constructs
+The composite action exports selected image IDs only after complete
+preparation. There is no implicit substitution for a missing role. `integrationImages` constructs
 `ceph.ImageSet` from those identities and fails when a used feature's role
 is missing. Userspace native oracles run in the client toolkit; daemon-local
 admin sockets and process probes stay in their owning daemon. Two-client
@@ -1259,16 +1209,3 @@ python3 .github/scripts/tag_scenarios.py run \
 Local runs are sequential unless you set `CEPH_TEST_PARALLEL`, so timing can
 differ from CI. To isolate one test, use `go test -tags=all -run` as described
 in [Testing](testing.md#one-test).
-
-
-The dedicated roles-v2 consumer workflow pulls the published image contract
-before running existing image-compatibility tests with relocated native
-oracles. `make roles-v2-routing` runs constrained ordinary-RBD,
-RGW-without-client and stopped-link RBD monitor refresh cases. These focused
-files remain excluded from the general tag planner to avoid duplicate
-selection; ordinary category CI now also uses the dependency-role images.
-`make roles-v2-runtime` retains native cache and CephFS/RBD scheduling
-coverage; `make roles-v2-oracles` retains shared-cluster cleanup, Messenger
-policy and native command proofs. The aggregate image is checked separately
-through the same supplied-image runner. These checks supplement the existing
-release/category test coverage and do not qualify unexecuted cells.

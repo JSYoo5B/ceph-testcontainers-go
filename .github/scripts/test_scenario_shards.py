@@ -257,7 +257,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, "roles-v2.yml", *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
         self.assertEqual(set(self.ENTRY_POINTS), self.GATING | self.SCOPED)
         self.assertNotIn("test.yml", self.workflows)
@@ -765,7 +765,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 tag_sets = [{tag for tag in token.removeprefix("-tags=").split(",")}
                             for command in commands for token in command if token.startswith("-tags=")]
                 self.assertIn({"all"}, tag_sets)
-                self.assertIn({"all", "goceph", "native_regression"}, tag_sets)
+                self.assertTrue(any({"all", "goceph", "native_regression", "role_images", "ci_optional"} <= tags for tags in tag_sets))
 
     def test_release_callers_bound_their_runtime_jobs_within_the_runner_budget(self):
         """Each release caller passes its category's max-parallel, and the

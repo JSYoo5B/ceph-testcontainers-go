@@ -4,47 +4,49 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
-type rgwControlImageStub struct {
+type rgwSetupImageStub struct {
 	image string
 	reads int
 }
 
-func (cluster *rgwControlImageStub) ControlImage() string {
+func (cluster *rgwSetupImageStub) Images() ceph.ImageSet {
 	cluster.reads++
-	return cluster.image
+	return ceph.ImageSet{Essential: "core", Client: "toolkit", RGW: cluster.image}
 }
 
-func TestRGWControlImageUsesEachClusterAndRespectsOverride(t *testing.T) {
+func TestRGWSetupImageUsesEachClusterAndRespectsOverride(t *testing.T) {
 	for _, zone := range []string{"source", "destination", "added-zone"} {
 		t.Run(zone, func(t *testing.T) {
-			cluster := &rgwControlImageStub{image: "ceph-control:" + zone}
-			image, err := rgwControlImage("", cluster)
+			cluster := &rgwSetupImageStub{image: "ceph-rgw:" + zone}
+			image, err := rgwSetupImage("", cluster)
 			if err != nil || image != cluster.image || cluster.reads != 1 {
-				t.Fatalf("setup client did not select its own cluster's control image: image=%q reads=%d error=%v", image, cluster.reads, err)
+				t.Fatalf("setup client did not select its own cluster's RGW image: image=%q reads=%d error=%v", image, cluster.reads, err)
 			}
 			cluster.reads = 0
-			const override = "compatible-control:explicit"
-			image, err = rgwControlImage(override, cluster)
+			const override = "compatible-rgw:explicit"
+			image, err = rgwSetupImage(override, cluster)
 			if err != nil || image != override || cluster.reads != 0 {
-				t.Fatalf("explicit shared control image was not preserved: image=%q reads=%d error=%v", image, cluster.reads, err)
+				t.Fatalf("explicit shared RGW image was not preserved: image=%q reads=%d error=%v", image, cluster.reads, err)
 			}
 		})
 	}
 }
 
-func TestRGWControlImageRejectsMissingOrBlankSelection(t *testing.T) {
-	if image, err := rgwControlImage("", nil); err == nil || image != "" {
-		t.Fatal("missing control image was accepted")
+func TestRGWSetupImageRejectsMissingOrBlankSelection(t *testing.T) {
+	if image, err := rgwSetupImage("", nil); err == nil || image != "" {
+		t.Fatal("missing RGW image was accepted")
 	}
 	for _, image := range []string{"", " \t\n"} {
-		if selected, err := rgwControlImage("", &rgwControlImageStub{image: image}); err == nil || selected != "" {
-			t.Fatal("empty cluster control image was accepted")
+		if selected, err := rgwSetupImage("", &rgwSetupImageStub{image: image}); err == nil || selected != "" {
+			t.Fatal("empty cluster RGW image was accepted")
 		}
 	}
-	cluster := &rgwControlImageStub{image: "valid-control:local"}
-	if image, err := rgwControlImage(" \t", cluster); err == nil || image != "" || cluster.reads != 0 {
+	cluster := &rgwSetupImageStub{image: "valid-rgw:local"}
+	if image, err := rgwSetupImage(" \t", cluster); err == nil || image != "" || cluster.reads != 0 {
 		t.Fatal("blank explicit override silently fell back to the cluster image")
 	}
 }

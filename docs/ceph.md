@@ -204,53 +204,11 @@ Docker host, or the test process cannot reach the first MON.
 
 #### Image
 
-Use the second argument in the `Run` function to set a valid Docker image.
-
-`ceph.DefaultImage` pins the published, pruned Tentacle 20.2.4 aggregate by its
-native AMD64/ARM64 index digest. The
-digest refers to a multi-architecture index for `linux/amd64` and `linux/arm64`:
-
-```
-quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
-```
-
-```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage)
-```
-
-The image passed to `Run` is the control image. It must contain everything the
-control role needs: `ceph-mon`, `ceph-mgr` with its modules and dependencies, the
-`ceph` and `rados` command-line tools, Python `rados`/`rbd`/`cephfs` bindings, and
-the `rbd-mirror` and `cephfs-mirror` daemons used by the service packages. The
-official image contains all of them. Other roles use the same image unless you
-select a role image:
-
-| Role | Option | Used for |
-| --- | --- | --- |
-| control | `img` argument of `Run` | MONs, MGRs, CLI control container, mirror daemons, fixture helpers |
-| OSD | [WithOSDImage](#withosdimage) | initial and later OSDs |
-| RGW | `rgw.WithImage` | gateways ([rgw](rgw.md)) |
-| MDS | `cephfs.WithMDSImage` | metadata servers ([cephfs](cephfs.md)) |
-
-Role images must run the same Ceph release. The ceph-testcontainers-images
-project checks and publishes role images extracted from the official image to
-`ghcr.io/jsyoo5b/ceph-testcontainers-images`, for example:
-
-```golang
-const registry = "ghcr.io/jsyoo5b/ceph-testcontainers-images:"
-
-cluster, err := ceph.Run(ctx, registry+"official-20.2.4-control",
-	ceph.WithOSDImage(registry+"official-20.2.4-osd"),
-	rgw.WithImage(registry+"official-20.2.4-rgw"),
-	cephfs.WithMDSImage(registry+"official-20.2.4-mds"),
-)
-```
-
-Squid 19.2.5 (`quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b`)
-is also supported. [ControlImage](#controlimage) returns the selected control
-image and [CephVersion](#cephversion) the release it runs. See
-[Releases and images](guides/releases-and-images.md) for role image contents,
-private registries and release differences.
+`Run(ctx, image)` uses a complete aggregate image; the default is
+`ceph.DefaultImage`. `RunWithImages` and `WithImages` accept the same
+`ImageSet` role model. Essential supplies MON/MGR/OSD; Client, CephFS,
+RBDAux and RGW are required only by their selected features. Missing optional
+roles never fall back to essential. See [image selection](guides/releases-and-images.md#role-images).
 
 ### Container Options
 
@@ -567,16 +525,6 @@ argument is a `ceph.OSDObjectStore`:
   [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [InjectObjectDataError](#injectobjectdataerror) needs
   BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
-
-#### WithOSDImage
-
-```golang
-ceph.WithOSDImage("ghcr.io/jsyoo5b/ceph-testcontainers-images:official-20.2.4-osd")
-```
-
-Selects the image for initial and later OSDs. Without it, OSDs use the image
-passed to `Run`. A blank image is rejected. Use the same Ceph release as the
-control image.
 
 #### WithConfigFile
 
@@ -1850,7 +1798,7 @@ func (c *Container) CephVersion() string
 
 Returns the Ceph release of the control image, such as `"20.2.4"`, read once from
 `ceph --version` after MON `a` starts. `Run` fails if the output cannot be
-parsed. Role images selected with `WithOSDImage`, `rgw.WithImage` or
+parsed. Role images selected with `WithImages`, `rgw.WithImage` or
 `cephfs.WithMDSImage` may run another release; the value describes only the
 control image. The fixture uses it to choose commands that differ between
 releases, and tests can use it to choose release-specific assertions:
@@ -4807,37 +4755,19 @@ See [Releases and images](guides/releases-and-images.md) for details.
   context allows more time.
 
 
-## Explicit roles-v2 images
+## Role image selection
 
-`RunWithImages(ctx, ImageSet{Essential: core, Client: tools, CephFS: fs,
-RBDAux: mirrors, RGW: gateway}, opts...)` uses the versioned essential,
-client, cephfs, rbd-aux and rgw contracts. `ImageSet{All: image}` explicitly
-maps every responsibility to one image. Essential is mandatory; omitted
-optional roles fail when requested and never fall back to the core image.
-Legacy `Run` and image override options retain their original semantics and
-cannot be mixed with `RunWithImages`.
+`ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an exclusive
+All image. `RunWithImages` accepts the set directly; `WithImages` applies it
+to service Run entry points with images.Essential as the image argument.
+`Run` without an explicit set uses its image as the aggregate. `Images()`
+returns the effective selection and `ControlImage()` returns essential.
 
-`Images()` returns the effective selections; `UsesRoleImages()` distinguishes
-this mode. `ControlImage()` remains the legacy accessor and in roles-v2 names
-the essential image, which does not promise general client tools. Use
-`Images().Client` for independently owned userspace clients.
-
-`ClientContainerContext` lazily creates and reuses a fixture-owned general
-client executor in roles-v2. The cluster terminates partial and successful
-starts. Initial attachment is serialized with MON topology changes and honors
-the caller's cancellation while waiting. Legacy mode returns the current control executor. Core administration
-continues to use the existing MON/stable multi-MON control context. No public
-Client identity type is introduced: ClientConfig, WithClientIdentity and
-RunNativeCommand retain their existing ownership and credential contracts.
-The method exposes an administrative handle and is refused on shared clusters.
-
-RBD/CephFS feature operations, `ObjectWatchers` and `PGInconsistencies` use
-the client toolkit while local daemon socket
-and file operations stay with that daemon. Ordinary RBD needs no rbd-aux
-image. RGW administration uses the RGW runtime and is not a mandatory client
-capability. Combine matching Ceph releases and validate custom image closures
-with the images repository's roles-v2 checker before use.
-
-`WithImages(images)` provides the same explicit mode for existing service Run
-entry points; pass images.Essential as their image argument. It rejects a
-mismatched Run image and legacy image override options.
+`ClientContainerContext` lazily creates one owned toolkit for a separate
+client image; aggregate selections reuse the control executor. Initial
+attachment is serialized with MON topology changes and honors cancellation.
+The cluster owns partial/successful toolkit teardown. RBD/CephFS operations,
+`ObjectWatchers` and `PGInconsistencies` use that toolkit, while daemon-local
+sockets and process observations stay on their daemon. ClientConfig and
+WithClientIdentity keep identity/credential ownership; a separate public
+client lifecycle type is unnecessary.

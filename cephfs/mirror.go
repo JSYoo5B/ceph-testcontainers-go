@@ -1375,8 +1375,8 @@ func validCephFSMirrorFilesystemName(name string) bool {
 
 // RunMirrorWithImages selects the source cluster's CephFS daemon runtime.
 func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
-	if config.Source == nil || config.Destination == nil || !config.Source.UsesRoleImages() || !config.Destination.UsesRoleImages() {
-		return nil, invalid(fmt.Errorf("roles-v2 clusters are required"))
+	if config.Source == nil || config.Destination == nil {
+		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
 	image := config.Source.Images().CephFS
 	if image == "" {

@@ -19,9 +19,9 @@ Build the binary from a clean checkout so its VCS revision is recorded:
 mkdir -p artifacts
 go build -o artifacts/roleoverhead ./internal/tools/roleoverhead
 artifacts/roleoverhead \
-  -all ceph-testcontainers:roles-v2-official-19.2.5-all \
-  -essential ceph-testcontainers:roles-v2-official-19.2.5-essential \
-  -client ceph-testcontainers:roles-v2-official-19.2.5-client \
+  -all ceph-testcontainers:official-19.2.5-all \
+  -essential ceph-testcontainers:official-19.2.5-essential \
+  -client ceph-testcontainers:official-19.2.5-client \
   -image-source IMAGE_ASSEMBLY_COMMIT \
   -output artifacts/role-overhead.json
 ```

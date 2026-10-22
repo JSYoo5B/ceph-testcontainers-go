@@ -161,7 +161,7 @@ executes the fixture's `ceph` commands. Other roles can use separate images:
 | Role | Image | Required content |
 | --- | --- | --- |
 | MON, MGR, control CLI | `Run` image | `ceph` CLI, MGR modules (`volumes`, `mirroring`), Python `cephfs` binding (pin policy reads and clone identity checks run libcephfs in the control container) |
-| OSD | `ceph.WithOSDImage`, otherwise the `Run` image | `ceph-osd` |
+| OSD | `ImageSet.Essential` | `ceph-osd` |
 | MDS | `cephfs.WithMDSImage`, otherwise the `Run` image | `ceph-mds` |
 | CephFS mirror daemon | `image` argument of `RunMirror` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `cluster.ControlImage()` |
 | Client containers | chosen by the test | the client under test; `ceph.DefaultImage` provides Python libcephfs |
@@ -274,8 +274,7 @@ Selects the image for every MDS container started by `Run`, `Start`,
 Use an image of the same Ceph release.
 
 ```golang
-cluster, err := cephfs.Run(ctx, "registry.example.com/ceph:20.2.4-control",
-	ceph.WithOSDImage("registry.example.com/ceph:20.2.4-osd"),
+cluster, err := cephfs.Run(ctx, "registry.example.com/ceph:20.2.4-all",
 	cephfs.WithMDSImage("registry.example.com/ceph:20.2.4-mds"),
 )
 ```
@@ -2914,8 +2913,6 @@ Context handling, cleanup ordering and partial results are covered in
 
 ### RunMirrorWithImages
 
-`RunMirrorWithImages` selects the matching auxiliary daemon runtime from explicit
-roles-v2 clusters, preserving later daemon additions and existing mirror
-lifecycle/ownership. RBD setup clients use each cluster's client image;
-CephFS MGR modules remain in essential. The legacy `RunMirror` image argument
-continues to work with legacy clusters.
+`RunMirrorWithImages` selects the receiving cluster's `cephfs` image and
+preserves the same runtime for later daemon additions. Setup clients use each
+cluster's client image. `RunMirror` accepts an explicit daemon image.

@@ -43,7 +43,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	}
 	diagnosticsDataProbe(t, ctx, client, "seed")
 	owned := diagnosticsOwnedContainers(cluster)
-	if cluster.UsesRoleImages() && cluster.Images().Client != cluster.Images().Essential {
+	if cluster.Images().Client != cluster.Images().Essential {
 		// Initial CephFS setup owns a separate toolkit. Include that same
 		// container in the before/after inventory and diagnostic coverage proof.
 		owned = append(owned, toolkitContainer(t, cluster))

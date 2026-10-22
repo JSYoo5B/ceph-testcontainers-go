@@ -3,7 +3,6 @@ package ceph
 import (
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -11,7 +10,6 @@ import (
 
 type options struct {
 	imageSet               *ImageSet
-	legacyImageOverride    bool
 	osds                   int
 	initialOSDs            []OSDConfig
 	initialOSDsExplicit    bool
@@ -144,19 +142,6 @@ func WithHostAddress(address string) Option {
 		}
 		o.publicAddress = ip.String()
 		o.hostAddressSet = true
-		return nil
-	}
-}
-
-// WithOSDImage selects the image for initial and subsequently added OSDs.
-// If omitted, OSDs use the image passed to Run. Use matching Ceph versions.
-func WithOSDImage(image string) Option {
-	return func(o *options) error {
-		o.legacyImageOverride = true
-		if strings.TrimSpace(image) == "" {
-			return fmt.Errorf("OSD image must not be blank")
-		}
-		o.osdImage = image
 		return nil
 	}
 }

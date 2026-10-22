@@ -89,10 +89,10 @@ CEPHFS_REMOVAL_TESTS_directory-intent = ^TestMultiClusterCephFSDirectoryAddition
 # Required native clients use the selected control/all image and its runtime
 # contract; full client-fixtures remains an explicit optional target.
 ifeq ($(SCENARIO_IMAGE_LAYOUT),roles)
-$(foreach name,CEPH_TEST_IMAGE CEPH_TEST_OSD_IMAGE CEPH_TEST_RGW_IMAGE CEPH_TEST_MDS_IMAGE,$(if $(strip $($(name))),,$(error $(name) is required for SCENARIO_IMAGE_LAYOUT=roles)))
+$(foreach name,CEPH_TEST_ESSENTIAL_IMAGE CEPH_TEST_CLIENT_IMAGE CEPH_TEST_CEPHFS_IMAGE CEPH_TEST_RBD_AUX_IMAGE CEPH_TEST_RGW_IMAGE,$(if $(strip $($(name))),,$(error $(name) is required for SCENARIO_IMAGE_LAYOUT=roles)))
 SCENARIO_TEST_ENV = env CGO_ENABLED=0
 else ifeq ($(SCENARIO_IMAGE_LAYOUT),all)
-SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_OSD_IMAGE -u CEPH_TEST_RGW_IMAGE -u CEPH_TEST_MDS_IMAGE CGO_ENABLED=0
+SCENARIO_TEST_ENV = env -u CEPH_TEST_IMAGE -u CEPH_TEST_ESSENTIAL_IMAGE -u CEPH_TEST_CLIENT_IMAGE -u CEPH_TEST_CEPHFS_IMAGE -u CEPH_TEST_RBD_AUX_IMAGE -u CEPH_TEST_RGW_IMAGE CGO_ENABLED=0
 else
 $(error Unknown SCENARIO_IMAGE_LAYOUT)
 endif
@@ -196,13 +196,13 @@ race:
 
 tag-compile:
 	CGO_ENABLED=0 go test -mod=readonly -tags=all -run '^$$' ./...
-	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh -run '^$$' ./...
 	CGO_ENABLED=0 go test -mod=readonly -tags=all,cephfs_fuse -run '^$$' ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
 
-# Required scenarios consume selected existing images; the default is Quay all.
+# Required scenarios consume selected existing images; the default is the pruned aggregate.
 # No image producer is required. Tests and clusters execute sequentially.
 scenario-default:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
@@ -427,24 +427,3 @@ scenario-osd-memory:
 
 scenario-small-osds:
 	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration,topology -count=1 -failfast -v -timeout=$(SCENARIO_SMALL_OSDS_TIMEOUT) -run '$(SCENARIO_SMALL_OSDS_TESTS)' ./internal/integration
-
-
-# Explicit candidate-contract routing checks; legacy published-role CI remains
-# independent until roles-v2 images are qualified and adopted.
-.PHONY: roles-v2-smoke roles-v2-routing roles-v2-runtime roles-v2-oracles
-# Representative single-cluster paths cover every feature role; routing adds
-# constrained client/essential, RGW administration and the rbd-aux mirror.
-roles-v2-smoke: roles-v2-routing
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,topology -count=1 -v -timeout=20m ./internal/integration -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle)$$'
-
-roles-v2-routing:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=30m ./internal/integration -run '^TestRoleImagesV2'
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,role_images_v2 -count=1 -v -timeout=15m ./rbd -run '^TestRoleImagesV2MirrorRefresh$$'
-
-# Retain the existing behavioral proofs for role-local cache plugins and MGR
-# scheduling modules. Loading the binaries/modules in a quick check is not enough.
-roles-v2-runtime:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,features,multicluster -count=1 -v -timeout=40m ./internal/integration -run '^Test(ImmutableObjectCache|CephFSSnapshotSchedule|RBDAutomaticSnapshotSchedule)$$'
-
-roles-v2-oracles:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration -count=1 -v -timeout=40m ./internal/integration -run '^Test(SharedCluster|SharedClusterServices|MessengerPolicy|NativeCommands|ScrubInconsistency|PausedObjectWatcher)$$'

@@ -144,13 +144,10 @@ The default is `ceph.DefaultImage`, the pruned Tentacle aggregate image
 `quay.io/ceph/ceph:v20.2.4` pinned by its multi-architecture digest
 (linux/amd64 and linux/arm64).
 
-The image must satisfy the `control` role: MON and MGR daemons, the `ceph`,
-`rbd` and `rados` CLIs, the Python `rados`/`rbd` bindings and the `rbd-mirror`
-daemon. An `all` image satisfies every role. OSDs use the same image unless you
-pass `ceph.WithOSDImage`. RBD needs no daemon of its own, so there is no RBD
-role image. Keep the Ceph release and CPU architecture identical across role
-images. Image roles, prepared role images and Squid images are described in
-[the releases and images guide](guides/releases-and-images.md).
+An aggregate supplies all roles. For explicit roles use `ceph.WithImages`:
+essential supplies the daemons and client supplies ordinary RBD commands.
+RBD mirror/cache additionally select rbd-aux. Keep Ceph releases and native
+architectures consistent. See the [image guide](guides/releases-and-images.md).
 
 `RunMirror` also takes an image. It runs the setup CLI clients and the
 `rbd-mirror` daemons, so it needs the `control` or `all` role as well. Pass the
@@ -209,7 +206,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 `AllowOverwrites` is required for RBD data pools.
 
 Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
-`ceph.WithHostNetwork`, `ceph.WithOSDImage`, `ceph.WithConfigFile`,
+`ceph.WithHostNetwork`, `ceph.WithImages`, `ceph.WithConfigFile`,
 `ceph.WithMessengerMode`, ...); see [ceph.md](ceph.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,
 `testcontainers.WithLogger` or any `testcontainers.CustomizeRequestOption`)
@@ -2028,8 +2025,6 @@ See [Classified errors](guides/errors.md#unsupported-features).
 
 ### RunMirrorWithImages
 
-`RunMirrorWithImages` selects the matching auxiliary daemon runtime from explicit
-roles-v2 clusters, preserving later daemon additions and existing mirror
-lifecycle/ownership. RBD setup clients use each cluster's client image;
-CephFS MGR modules remain in essential. The legacy `RunMirror` image argument
-continues to work with legacy clusters.
+`RunMirrorWithImages` selects the receiving cluster's `rbd-aux` image and
+preserves the same runtime for later daemon additions. Setup clients use each
+cluster's client image. `RunMirror` accepts an explicit daemon image.

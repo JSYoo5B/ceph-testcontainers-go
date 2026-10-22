@@ -41,17 +41,9 @@ RELEASES = {release: image for release, _, image in SUPPORTED_RELEASES}
 CODENAMES = {release: codename for release, codename, _ in SUPPORTED_RELEASES}
 RELEASE = "20.2.4"
 OFFICIAL_IMAGE = RELEASES[RELEASE]
-CONTRACT = "roles-v2"
-V2_ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
+ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
-DEFAULT_IMAGE = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
-LEGACY_ROLE_ENV = {
-    "control": "CEPH_TEST_IMAGE",
-    "osd": "CEPH_TEST_OSD_IMAGE",
-    "rgw": "CEPH_TEST_RGW_IMAGE",
-    "mds": "CEPH_TEST_MDS_IMAGE",
-}
-ROLE_ENV = V2_ROLE_ENV
+DEFAULT_IMAGE = REGISTRY + "@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80"
 EXPECTED_TESTS = (
     "TestClusterLifecycle",
     "TestRBDLifecycle",
@@ -70,9 +62,7 @@ RESULT = re.compile(r"^[ \t]*--- (PASS|FAIL|SKIP): (Test[^ \t]+) \([0-9]+(?:\.[0
 
 
 def parse_arguments(argv=None):
-    global CONTRACT, ROLE_ENV
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--contract", choices=("auto", "legacy", "roles-v2"), default="roles-v2")
     parser.add_argument("--variant", choices=("official", "debian", "ubuntu"), default="official")
     parser.add_argument("--layout", choices=("all", "roles"), default="all")
     parser.add_argument("--platform", choices=("linux/amd64", "linux/arm64"),
@@ -91,11 +81,6 @@ def parse_arguments(argv=None):
                         help="Comma-separated role=sha256:<digest> pins of the role tags; empty pins none. "
                              "Requires --layout roles")
     args = parser.parse_args(argv)
-    if args.contract == "auto":
-        args.contract = "roles-v2" if args.roles and "essential" in args.roles.split(",") else "legacy"
-    CONTRACT = args.contract
-    ROLE_ENV = V2_ROLE_ENV if CONTRACT == "roles-v2" else LEGACY_ROLE_ENV
-
     if args.github_env is not None and not args.prepare_only:
         parser.error("--github-env requires --prepare-only")
     if args.roles is None:
@@ -119,9 +104,9 @@ def parse_arguments(argv=None):
 def parse_roles(text):
     """Return declared roles in contract order, including its core role."""
     roles = text.split(",")
-    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or ("essential" if CONTRACT == "roles-v2" else "control") not in roles:
+    if any(role not in ROLE_ENV for role in roles) or len(roles) != len(set(roles)) or "essential" not in roles:
         raise ValueError("--roles must list distinct roles of " + ",".join(ROLE_ENV)
-                         + ", " + ("essential" if CONTRACT == "roles-v2" else "control") + " included")
+                         + ", " + "essential" + " included")
     return tuple(role for role in ROLE_ENV if role in roles)
 
 
@@ -144,35 +129,24 @@ def pin_references(references, digests):
             for role, reference in references.items()}
 
 
-def published_role_pins(release):
-    """Checked-in index digests of one qualified publication generation."""
+def published_role_pins(release, variant="official"):
+    """Immutable indexes of the published role images."""
     data = json.loads((ROOT / ".github/ceph-role-images.json").read_text())
-    pins = data.get("images", {}).get(release, {})
-    if (data.get("schema") != 1 or data.get("contract") != "roles-v2"
-            or set(pins) != set(V2_ROLE_ENV) | {"all"}
+    pins = data.get("images", {}).get(release, {}).get(variant, {})
+    if (data.get("schema") != 1 or set(pins) != set(ROLE_ENV) | {"all"}
             or any(not isinstance(value, str) or DIGEST.fullmatch(value) is None for value in pins.values())):
-        raise ValueError("published dependency-role pins are incomplete or invalid for " + release)
+        raise ValueError("published role pins are incomplete or invalid for " + release + "/" + variant)
     return pins
 
 
 def image_references(variant, layout, release, roles=None):
-    roles = tuple(ROLE_ENV) if roles is None else roles
+    roles = tuple(ROLE_ENV) if roles is None else tuple(roles)
     if release not in RELEASES or variant not in ("official", "debian", "ubuntu") or layout not in ("all", "roles"):
         raise ValueError("unsupported image matrix cell")
-    if layout == "all":
-        if tuple(roles) != tuple(ROLE_ENV):
-            raise ValueError("the all layout serves every role of the selected contract")
-        reference = RELEASES[release] if variant == "official" and CONTRACT == "legacy" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
-        references = {"all": reference}
-    else:
-        references = {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
-                      for role in ROLE_ENV if role in roles}
-    if CONTRACT == "roles-v2" and variant == "official":
-        pins = published_role_pins(release)
-        references = {role: reference + "@" + pins[role] for role, reference in references.items()}
-        if layout == "all" and release == RELEASE and references["all"] != DEFAULT_IMAGE:
-            raise ValueError("default aggregate does not match the published role pins")
-    return references
+    if layout == "all" and roles != tuple(ROLE_ENV):
+        raise ValueError("the all layout serves every role")
+    pins = published_role_pins(release, variant)
+    return {role: REGISTRY + "@" + pins[role] for role in (("all",) if layout == "all" else roles)}
 
 
 def native_platform(info):
@@ -256,12 +230,11 @@ def completed_tests(path, module):
 def append_role_environment(path, environment, roles=None):
     roles = tuple(ROLE_ENV) if roles is None else roles
     image_names = [ROLE_ENV[role] for role in ROLE_ENV if role in roles]
-    names = image_names + (["SCENARIO_IMAGE_CONTRACT"] if CONTRACT == "roles-v2" else [])
-    core = "essential" if CONTRACT == "roles-v2" else "control"
+    names = image_names
+    core = "essential"
     if (core not in roles or set(environment) != set(names)
             or any(not isinstance(environment[name], str)
-                   or IMAGE_ID.fullmatch(environment[name]) is None for name in image_names)
-            or (CONTRACT == "roles-v2" and environment["SCENARIO_IMAGE_CONTRACT"] != "roles-v2")):
+                   or IMAGE_ID.fullmatch(environment[name]) is None for name in image_names)):
         raise RuntimeError("prepared environment must contain exactly the immutable image IDs of the declared roles")
     content = "".join(name + "=" + environment[name] + "\n" for name in names).encode("utf-8")
     descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NONBLOCK", 0), 0o600)
@@ -397,8 +370,6 @@ def main(argv=None):
         selected = {role: images["all" if args.layout == "all" else role]["image_id"]
                     for role in args.roles}
         environment = {ROLE_ENV[role]: image for role, image in selected.items()}
-        if CONTRACT == "roles-v2":
-            environment["SCENARIO_IMAGE_CONTRACT"] = "roles-v2"
         if args.prepare_only:
             summary["prepared_environment"] = environment
             if args.github_env is not None:
@@ -408,8 +379,6 @@ def main(argv=None):
             code = 0
         else:
             env = os.environ.copy()
-            if CONTRACT == "legacy":
-                env.pop("SCENARIO_IMAGE_CONTRACT", None)
             # Inherited make options can request dry runs or extra goals. This
             # runner invokes exactly the checked-in compatibility target.
             for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES", "MAKEOVERRIDES", "GOFLAGS"):

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 308,
+    "ceph": 306,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -963,14 +963,6 @@
       "signature": "func() bool",
       "receiver": "*Container",
       "proposed": "ceph.Container.UsesHostNetwork",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.UsesRoleImages",
-      "kind": "method",
-      "signature": "func() bool",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.UsesRoleImages",
       "decision": "baseline"
     },
     {
@@ -2128,13 +2120,6 @@
       "kind": "function",
       "signature": "func(count int) Option",
       "proposed": "ceph.WithOSDCount",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDImage",
-      "kind": "function",
-      "signature": "func(image string) Option",
-      "proposed": "ceph.WithOSDImage",
       "decision": "baseline"
     },
     {

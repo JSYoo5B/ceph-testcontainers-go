@@ -207,15 +207,9 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 	if err != nil {
 		return nil, invalid(fmt.Errorf("configure RBD mirror: %w", err))
 	}
-	sourceImage, destinationImage := image, image
-	if config.Source.UsesRoleImages() || config.Destination.UsesRoleImages() {
-		if !config.Source.UsesRoleImages() || !config.Destination.UsesRoleImages() {
-			return nil, invalid(fmt.Errorf("cannot mix legacy and roles-v2 mirror clusters"))
-		}
-		sourceImage, destinationImage = config.Source.Images().Client, config.Destination.Images().Client
-		if sourceImage == "" || destinationImage == "" {
-			return nil, invalid(fmt.Errorf("RBD mirror setup requires both client images"))
-		}
+	sourceImage, destinationImage := config.Source.Images().Client, config.Destination.Images().Client
+	if sourceImage == "" || destinationImage == "" {
+		return nil, invalid(fmt.Errorf("RBD mirror setup requires both client images"))
 	}
 	receiverClusters, err := captureRBDReceiverClusters(ctx, config)
 	if err != nil {
@@ -750,8 +744,8 @@ func normalizeRBDMirrorMode(mode MirrorMode) (MirrorMode, error) {
 // RunMirrorWithImages selects the receiving cluster's rbd-aux runtime and each
 // cluster's independent client runtime. Later AddDaemon uses the same runtime.
 func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
-	if config.Source == nil || config.Destination == nil || !config.Source.UsesRoleImages() || !config.Destination.UsesRoleImages() {
-		return nil, invalid(fmt.Errorf("roles-v2 clusters are required"))
+	if config.Source == nil || config.Destination == nil {
+		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
 	image := config.Destination.Images().RBDAux
 	if image == "" {

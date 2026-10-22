@@ -107,7 +107,7 @@ type FilesystemStatus struct {
 // entrypoint and networking. A non-nil result with an error identifies attempted
 // resources; the cluster owns cleanup, including partial daemon startup.
 func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Filesystem, error) {
-	if c.UsesRoleImages() && (c.Images().CephFS == "" || c.Images().Client == "") {
+	if c.Images().CephFS == "" || c.Images().Client == "" {
 		return nil, invalid(fmt.Errorf("cephfs and client images are required before filesystem setup"))
 	}
 

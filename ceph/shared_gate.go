@@ -60,7 +60,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"CollectDiagnostics":        sharedOpen,
 	"Configuration":             sharedOpen,
 	"Images":                    sharedOpen,
-	"UsesRoleImages":            sharedOpen,
 	"ClientContainerContext":    sharedExclusive,
 	"ControlImage":              sharedOpen,
 	"DaemonAddresses":           sharedOpen,

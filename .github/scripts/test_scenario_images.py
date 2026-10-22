@@ -21,13 +21,12 @@ import run_image_matrix as runner
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ROLES = ("CEPH_TEST_IMAGE", "CEPH_TEST_OSD_IMAGE", "CEPH_TEST_RGW_IMAGE",
-         "CEPH_TEST_MDS_IMAGE")
-V2_ENV = ("CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_CEPHFS_IMAGE", "CEPH_TEST_RBD_AUX_IMAGE", "CEPH_TEST_RGW_IMAGE")
+ROLE_ENV = ("CEPH_TEST_ESSENTIAL_IMAGE", "CEPH_TEST_CLIENT_IMAGE", "CEPH_TEST_CEPHFS_IMAGE", "CEPH_TEST_RBD_AUX_IMAGE", "CEPH_TEST_RGW_IMAGE")
+ROLES = ROLE_ENV
 CONSUMERS = ("CEPH_TEST_RBD_CLIENT_IMAGE", "CEPH_TEST_VAULT_IMAGE")
 IMAGES = {name: "sha256:" + digit * 64
-          for name, digit in zip(ROLES, "1234")}
-IMAGES.update({name: "sha256:" + digit * 64 for name, digit in zip(V2_ENV, "56789")})
+          for name, digit in zip(ROLES, "12345")}
+IMAGES.update({name: "sha256:" + digit * 64 for name, digit in zip(ROLE_ENV, "56789")})
 # Historical manual targets, never the source of CI membership.
 MANUAL_SCENARIOS = (
     "scenario-default", "scenario-topology", "scenario-multicluster-topology",
@@ -112,7 +111,7 @@ def check_environment_prefix(prefix):
         token = prefix[index]
         if token in ("env", "CGO_ENABLED=0"):
             index += 1
-        elif token == "-u" and index + 1 < len(prefix) and prefix[index + 1] in (*ROLES, *CONSUMERS):
+        elif token == "-u" and index + 1 < len(prefix) and prefix[index + 1] in (*ROLES, *CONSUMERS, "CEPH_TEST_IMAGE"):
             index += 2
         else:
             raise AssertionError("unapproved executable or option in scenario env prefix")
@@ -458,7 +457,7 @@ class ScenarioImageTests(unittest.TestCase):
         commands = [shlex.split(line) for line in logical_lines if line.strip()]
         self.assertEqual(commands, [
             ["python3", "$GITHUB_ACTION_PATH/../../scripts/run_image_matrix.py",
-             "--contract", "roles-v2", "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
+             "--variant", "official", "--layout", "roles", "--release", "$SCENARIO_RELEASE", "--prepare-only",
              "--roles", "$SCENARIO_ROLES", "--digests", "$SCENARIO_DIGESTS",
              "--platform", "linux/amd64", "--github-env", "$GITHUB_ENV",
              "--output-dir", "artifacts/scenario-images"],
@@ -509,7 +508,7 @@ class ScenarioImageTests(unittest.TestCase):
             arguments = json.loads(calls.read_text())
             self.assertEqual(Path(arguments[0]).resolve(), ROOT / ".github/scripts/run_image_matrix.py")
             self.assertEqual(arguments[1:], [
-                "--contract", "roles-v2", "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
+                "--variant", "official", "--layout", "roles", "--release", "19.2.5", "--prepare-only",
                 "--roles", roles, "--digests", digests,
                 "--platform", "linux/amd64", "--github-env", str(environment_file),
                 "--output-dir", "artifacts/scenario-images",
@@ -517,7 +516,7 @@ class ScenarioImageTests(unittest.TestCase):
             return result, existing, environment_file.read_text()
 
     def test_composite_selects_layout_only_after_successful_preparation(self):
-        for roles, names in (("essential,client,cephfs,rbd-aux,rgw", V2_ENV), ("essential", V2_ENV[:1])):
+        for roles, names in (("essential,client,cephfs,rbd-aux,rgw", ROLE_ENV), ("essential", ROLE_ENV[:1])):
             with self.subTest(roles=roles):
                 result, existing, actual = self.run_composite(0, roles)
                 self.assertEqual(result.returncode, 0, result.stderr)
