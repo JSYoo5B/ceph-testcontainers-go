@@ -566,7 +566,10 @@ def schedule_summary(periodic_runs, pull_requests, runners, limits, reserve):
 
 def report(cache, markers, limits=None, reserve=None, periodic_minimum=100):
     runs = load_runs(cache)
-    jobs = load_jobs(cache)
+    # fetch keeps cancelled runs' jobs for the cohorts outcome ledger; the
+    # report leaves them out, so a cache with or without them reports alike.
+    cancelled = {str(run["id"]) for run in runs if run.get("conclusion") == "cancelled"}
+    jobs = {run_id: run_jobs for run_id, run_jobs in load_jobs(cache).items() if run_id not in cancelled}
     contains = load_contains(cache, markers)
     found, skipped = executions(runs, jobs, contains, markers)
     metrics = [execution_metrics(execution) for execution in found]
@@ -837,7 +840,13 @@ def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, com
     answers are fetched once; today's run list and unfinished runs are
     fetched again on the next call. Job lists and marker answers are fetched
     by workers concurrent requests; a failed request leaves its record
-    missing for the next call and is counted."""
+    missing for the next call and is counted.
+
+    Jobs are fetched for every completed run, cancelled ones included: the
+    cohorts ledger counts a cancelled attempt's runner time, and a cancelled
+    workflow can hold successful sibling jobs. The report leaves cancelled
+    runs out on its own. Marker answers are fetched only for heads of
+    uncancelled runs, the only heads the report places in a cohort."""
     cache = Path(cache)
     for name in ("runs", "jobs", "contains"):
         (cache / name).mkdir(parents=True, exist_ok=True)
@@ -871,9 +880,10 @@ def fetch(cache, repo, since, until, markers, today=None, api=gh_json_lines, com
         path.write_text(json.dumps(answers, sort_keys=True) + "\n")
         return "marker answers"
 
-    completed = [run for run in runs if run.get("status") == "completed" and run.get("conclusion") != "cancelled"]
+    completed = [run for run in runs if run.get("status") == "completed"]
     tasks = [(jobs_of, run) for run in completed if not (cache / "jobs" / (str(run["id"]) + ".json")).exists()]
-    heads = sorted({run["head_sha"] for run in completed if run.get("name") in FAMILY})
+    heads = sorted({run["head_sha"] for run in completed
+                    if run.get("name") in FAMILY and run.get("conclusion") != "cancelled"})
     for sha in heads:
         path = cache / "contains" / (sha + ".json")
         if not path.exists() or any(marker["sha"] not in json.loads(path.read_text()) for marker in markers):

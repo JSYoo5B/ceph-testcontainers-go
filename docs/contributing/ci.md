@@ -822,6 +822,15 @@ rows without a complete configuration identity are listed with the reason.
 Rows of two checked-out trees are two configurations, also when only the CI
 policy differs; the key is never relaxed to merge them.
 
+`fetch` stores the jobs of every completed run, cancelled runs included, so a
+cancelled attempt that held a runner joins its row and counts in the
+`cancelled` ledger, and the other jobs of a cancelled workflow join their
+rows as well. The report still leaves cancelled runs out, so its results do
+not depend on whether the cache holds their jobs. A cache filled before
+this change has no job lists for cancelled runs. The next `fetch` over the
+same days requests only those missing lists; the stored run lists of
+finished days and the stored job lists are not fetched again.
+
 ## Periodic runs
 
 `Ceph periodic` runs every runtime category on the role images of every

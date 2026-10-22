@@ -490,7 +490,8 @@ change the API.
   joined attempts by `scenario_history.config_key`. Each configuration keeps
   an outcome ledger of attempts and runner seconds for every outcome, and
   timing ranges of its passed attempts only. Rows and jobs that do not join
-  are listed with the reason (#1).
+  are listed with the reason (#1). `fetch` now stores the jobs of cancelled
+  runs for that ledger, while `report` still leaves cancelled runs out.
 
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
