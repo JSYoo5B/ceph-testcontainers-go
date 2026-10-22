@@ -153,7 +153,9 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"Managers":                sharedExclusive,
 	"ManagersContext":         sharedExclusive,
 	"Monitors":                sharedExclusive,
+	"MonitorsContext":         sharedExclusive,
 	"OSDs":                    sharedExclusive,
+	"OSDsContext":             sharedExclusive,
 	"ServiceContainers":       sharedExclusive,
 	"WithClient":              sharedExclusive,
 	// Promoted from the primary MON's container and overridden below.

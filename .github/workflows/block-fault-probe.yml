@@ -1,0 +1,60 @@
+name: Block fault probe
+
+# Research probe for issue #7: delay and I/O-error tables on a test-owned
+# sparse file, loop device and device-mapper mapping, without Ceph. It runs
+# only on a disposable hosted runner and is not a required check.
+on:
+  pull_request:
+    paths:
+      - .github/scripts/block_fault_probe.py
+      - .github/scripts/test_block_fault_probe.py
+      - .github/workflows/block-fault-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Scratch device probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run the probe unit tests
+        run: python3 -m unittest discover -s .github/scripts -p 'test_block_fault_probe.py' -v
+      - name: Run the probe
+        # The runner's existing tools and kernel modules are used as they are.
+        # --allow-target-autoload lets a table load trigger the kernel's
+        # on-demand load of an installed dm_delay or dm_flakey module.
+        run: |
+          mkdir -p "$RUNNER_TEMP/block-fault" artifacts
+          status=0
+          sudo -n python3 -I .github/scripts/block_fault_probe.py run \
+            --directory "$RUNNER_TEMP/block-fault" \
+            --output artifacts/block-fault-report.json \
+            --allow-target-autoload || status=$?
+          sudo -n chown "$(id -u):$(id -g)" artifacts/block-fault-report.json || true
+          {
+            echo "### Block fault probe"
+            echo
+            jq -r '"Verdict: **\(.verdict)**", "",
+              "| Phase | Effect | Restore |", "| --- | --- | --- |",
+              (.phases[] | "| \(.name) | \(.effect // .outcome) | \(.restore.outcome // "") |")' \
+              artifacts/block-fault-report.json
+          } >> "$GITHUB_STEP_SUMMARY" || true
+          exit "$status"
+      - name: Upload the probe report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: block-fault-report
+          path: artifacts/block-fault-report.json
+          retention-days: 30
+          if-no-files-found: warn

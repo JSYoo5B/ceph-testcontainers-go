@@ -12,6 +12,10 @@ ingest appends rows to a JSONL history file. Re-ingesting an identical row
 is a no-op; a different row under the same execution key is an error that
 reports both row hashes and leaves the history unchanged.
 
+normalize --summary also appends the row's provenance to a Markdown job
+summary: the bug compatibility selection beside the release, platform and
+role image IDs.
+
 summary counts rows per profile and release from a JSONL history file.
 
 collect stores the rows of downloaded artifacts durably, one JSONL file per
@@ -166,6 +170,26 @@ def matrix_id(profile, network):
     return profile["id"]
 
 
+def bug_compatibility(profile, requested):
+    """The bug compatibility selection that the receipts record.
+
+    A profile's tags carry its selection (tag_scenarios.native_tags), so
+    every selected tag must be one of them. requested, the workflow's own
+    selection as a comma-separated string, must equal the receipts'; None
+    skips that check. A receipt from before selections existed records
+    none, which only the empty selection matches."""
+    if not profile:
+        return MISSING
+    selected = profile.get("bug_compatibility", [])
+    if not isinstance(selected, list) or selected != sorted(set(selected)) \
+            or not set(selected) <= set(str(profile.get("tags", "")).split(",")):
+        raise ValueError("the receipts' bug compatibility selection is not a sorted subset of their profile tags")
+    if requested is not None and sorted({name.strip() for name in requested.split(",") if name.strip()}) != selected:
+        raise ValueError("the receipts were built with another bug compatibility selection than this workflow's: "
+                         + (",".join(selected) or "none"))
+    return selected
+
+
 def normalize(scenario, cleanup=None, images=None, metadata=None):
     metadata = dict(metadata or {})
     evidence = Evidence({"scenario": scenario, "cleanup": cleanup, "images": images})
@@ -187,6 +211,10 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
     for other in (receipts["compile"].get("profile"), receipts["native"].get("profile")):
         if other and other.get("id") != profile.get("id"):
             raise ValueError("compile and native receipts belong to different profiles")
+        if other and (other.get("tags"), other.get("bug_compatibility")) != (profile.get("tags"),
+                                                                               profile.get("bug_compatibility")):
+            raise ValueError("compile and native receipts carry different tags or bug compatibility selections")
+    selection = bug_compatibility(profile, metadata.get("bug_compatibility"))
     # An empty matrix network lets a checker batch run its default mode,
     # which its native receipt then names.
     requested, reported = metadata.get("network") or "", receipts["native"].get("network")
@@ -327,7 +355,8 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
 
     row = {"schema": SCHEMA, "execution_key": key, "source": source,
            "profile": {field: profile.get(field, MISSING) for field in
-                       ("id", "profile", "category", "batch", "package", "tags", "checker", "case", "requires_ceph")},
+                       ("id", "profile", "category", "batch", "package", "tags", "checker", "case", "requires_ceph")}
+           | {"bug_compatibility": selection},
            "build": build, "runtime": runtime, "phases": rows,
            "outcome": {"status": status,
                        "failed_phases": [phase["phase"] for phase in rows if phase["status"] == "failed"],
@@ -505,7 +534,11 @@ def attempt_kind(row):
 def config_identity(row):
     """Everything that two attempts must share to be the same configuration:
     profile, network mode, release, checked-out tree, build key, platform and
-    every role image ID. None for a row without complete identities."""
+    every role image ID. None for a row without complete identities.
+
+    The build key holds the profile's tags, so two bug compatibility
+    selections are already two configurations; profile.bug_compatibility is
+    not added, which keeps the keys of earlier rows unchanged."""
     if row["comparability"]["status"] != "complete":
         return None
     runtime = row["runtime"]
@@ -686,6 +719,30 @@ def history_notes(summary, row, tests):
     return notes
 
 
+def markdown_cell(value):
+    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def provenance_summary(row):
+    """The row's selected paths beside its image identities, as Markdown."""
+    selection = row["profile"].get("bug_compatibility", MISSING)
+    if isinstance(selection, list):
+        selection = ", ".join("`" + name + "`" for name in selection) or "none (ordinary paths)"
+    runtime = row["runtime"]
+    lines = ["#### Provenance of " + markdown_cell(row["execution_key"]["profile_id"]), "",
+             "| Field | Value |", "| --- | --- |",
+             "| Bug compatibility selection | " + markdown_cell(selection) + " |",
+             "| Tags | " + markdown_cell(row["build"]["tags"]) + " |",
+             "| Checkout tree | " + markdown_cell(row["source"]["checkout_tree"]) + " |",
+             "| Release | " + markdown_cell(runtime.get("release", runtime["requested_release"])) + " |",
+             "| Platform | " + markdown_cell(runtime.get("platform", runtime["status"])) + " |"]
+    for role, image in sorted((runtime.get("roles") or {}).items()):
+        lines.append("| Image `" + markdown_cell(role) + "` | " + markdown_cell(image["image_id"]) + " |")
+    if runtime["status"] != "recorded":
+        lines.append("| Images | " + markdown_cell(runtime["status"]) + " |")
+    return "\n".join(lines + ["", ""])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -697,6 +754,9 @@ def main(argv=None):
     for name in ("profile", "network", "repository", "workflow", "run-id", "run-attempt", "job-id",
                  "repetition-id", "requested-head", "checkout-commit", "checkout-tree", "event", "release"):
         command.add_argument("--" + name)
+    command.add_argument("--bug-compatibility", metavar="TAGS",
+                         help="The workflow's bug compatibility selection; receipts of another one write no row")
+    command.add_argument("--summary", type=Path, help="Append the row's provenance, such as $GITHUB_STEP_SUMMARY")
     command = commands.add_parser("ingest", help="Append rows to a JSONL history file")
     command.add_argument("--history", type=Path, required=True)
     command.add_argument("rows", type=Path, nargs="+")
@@ -712,8 +772,12 @@ def main(argv=None):
         if args.command == "normalize":
             metadata = {name: getattr(args, name) for name in
                         ("profile", "network", "repository", "workflow", "run_id", "run_attempt", "job_id",
-                         "repetition_id", "requested_head", "checkout_commit", "checkout_tree", "event", "release")}
+                         "repetition_id", "requested_head", "checkout_commit", "checkout_tree", "event", "release",
+                         "bug_compatibility")}
             row = normalize(args.scenario, args.cleanup, args.images, metadata)
+            if args.summary is not None:
+                with args.summary.open("a", encoding="utf-8") as summary:
+                    summary.write(provenance_summary(row))
             content = json.dumps(row, indent=2, sort_keys=True) + "\n"
             if args.output is None:
                 sys.stdout.write(content)

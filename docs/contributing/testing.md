@@ -115,13 +115,16 @@ with `all || (...)`, so `all` wins over capability and CI tags. That is why
 use the [tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` build tag
 has nothing to do with the Ceph `all` role image.
 
-The planned [bug-ID compatibility selection](bug-compatibility.md) is a
-separate implementation choice from these test selectors. `all` must not
-implicitly select bug workarounds. The
+[Bug-ID compatibility selection](bug-compatibility.md) is a separate
+implementation choice from these test selectors. `all` must not implicitly
+select bug workarounds, and the planner never collects a `ceph_bug_` tag as a
+capability. The CI runner takes an explicit `--bug-compatibility` selection
+that must name registered tags (see
+[Bug compatibility selection](ci.md#bug-compatibility-selection)). The
 [supported-tag catalogue](../guides/bug-compatibility-tags.md) currently has no
-registered tags; no additional build configuration is implemented by that policy
-checkpoint. Future pairs must retain the same test contracts and prove which
-path was selected, alongside the actual image/build identity.
+registered tags, so the only accepted selection is empty. Future pairs must
+retain the same test contracts and prove which path was selected, alongside
+the actual image/build identity.
 
 ## Running integration tests
 
@@ -660,7 +663,13 @@ Other release differences, kept out of the table on purpose:
   output. The warm MGRs, OSDs and MDS daemons run with `debug_monc 10/10` from
   the start of the replacement to the end of the test. The MDS socket is
   reached with the `ceph` CLI in the MDS's own container; an MDS image without
-  the CLI leaves the MDS observations marked incomplete. When a later step
+  the CLI leaves the MDS observations marked incomplete. The recorder lists
+  the owned MONs, MGRs and OSDs with `MonitorsContext`, `ManagersContext` and
+  `OSDsContext`, each within one query bound. While another operation holds
+  the topology, the bundle records `list monitors: ...` (or managers, osds)
+  as incomplete instead of waiting, keeps the observations that need no
+  membership, and leaves a debug window whose daemon it cannot identify
+  `skipped: identity unavailable`. When a later step
   fails, for example the CephFS observation after the mirror restarts, the
   cleanup logs a bundle for the phase `after replacement` before the fixture
   is removed. Otherwise the cleanup restores the exact prior level on the same

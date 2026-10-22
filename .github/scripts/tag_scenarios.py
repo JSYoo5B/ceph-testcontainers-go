@@ -76,6 +76,18 @@ GO_TOOL_TAGS = frozenset(("cgo", "gc", "gccgo", "unix", "race", "msan", "asan", 
 # the same lines for per-test durations.
 RUN_LINE = re.compile(r"=== RUN\s+(Test\S+)")
 RESULT_LINE = re.compile(r"\s*--- (PASS|FAIL|SKIP): (Test\S+) \(([0-9.]+)s\)")
+# Ceph bug compatibility tags (docs/contributing/bug-compatibility.md) select
+# an implementation path, never tests. Only an explicit, registered selection
+# enables one; discovery never collects them as capabilities.
+BUG_TAG_PREFIX = "ceph_bug_"
+BUG_TAG = re.compile(r"ceph_bug_[a-z0-9]+(?:_[a-z0-9]+)*\Z")
+BUG_REGISTRY = ROOT / "docs/guides/bug-compatibility-tags.json"
+BUG_REGISTRY_SCHEMA = "ceph-bug-compatibility-tags/v1"
+BUG_STATUSES = ("supported", "retired")
+# A file names a few bug tags at most; its branches are enumerated.
+MAX_FILE_BUG_TAGS = 4
+GO_BUILD_LINE = re.compile(r"^//go:build\s+(.+)$", re.MULTILINE)
+NO_BUGS = {"registered": frozenset(), "retired": frozenset(), "selected": (), "conflicts": frozenset()}
 
 
 def go_environment():
@@ -87,6 +99,121 @@ def go_environment():
 def reserved_go_tag(value):
     return (value in GO_PLATFORMS or value in GO_TOOL_TAGS or re.fullmatch(r"go1\.[0-9]+", value) is not None
             or any(value.startswith(architecture + ".") for architecture in GO_PLATFORMS))
+
+
+def bug_registry(document):
+    """Validate the bug compatibility catalogue's machine-readable record."""
+    if not isinstance(document, dict) or document.get("schema") != BUG_REGISTRY_SCHEMA:
+        raise ValueError("bug compatibility registry has an unknown schema")
+    if set(document) != {"schema", "tags", "conflicts"} or not isinstance(document["tags"], list) \
+            or not isinstance(document["conflicts"], list):
+        raise ValueError("bug compatibility registry needs exactly schema, tags and conflicts")
+    entries = {}
+    for entry in document["tags"]:
+        if not isinstance(entry, dict) or set(entry) != {"tag", "tracker", "status", "sources"}:
+            raise ValueError("bug compatibility entry needs exactly tag, tracker, status and sources")
+        name = entry["tag"]
+        if not isinstance(name, str) or not BUG_TAG.fullmatch(name):
+            raise ValueError("bug compatibility tag must be ceph_bug_<id>: " + repr(name))
+        if name in entries:
+            raise ValueError("bug compatibility tag is registered twice: " + name)
+        if not isinstance(entry["tracker"], str) or not re.fullmatch(r"https://\S+", entry["tracker"]):
+            raise ValueError(name + ": bug compatibility entry needs its https tracker link")
+        if entry["status"] not in BUG_STATUSES:
+            raise ValueError(name + ": bug compatibility status is one of " + ", ".join(BUG_STATUSES))
+        sources = entry["sources"]
+        if entry["status"] == "supported" and (not isinstance(sources, list) or not sources):
+            raise ValueError(name + ": a supported bug compatibility tag names its source files")
+        if not isinstance(sources, list) or len(sources) != len(set(sources)) or any(
+                not isinstance(path, str) or not path.endswith(".go") or Path(path).is_absolute()
+                or ".." in Path(path).parts for path in sources):
+            raise ValueError(name + ": bug compatibility sources are distinct repository Go files")
+        entries[name] = entry
+    conflicts = set()
+    for pair in document["conflicts"]:
+        if (not isinstance(pair, list) or len(pair) != 2 or pair[0] == pair[1]
+                or any(name not in entries for name in pair)):
+            raise ValueError("a bug compatibility conflict names two distinct registered tags")
+        if frozenset(pair) in conflicts:
+            raise ValueError("a bug compatibility conflict is declared twice")
+        conflicts.add(frozenset(pair))
+    return {"tags": entries, "conflicts": conflicts}
+
+
+def bug_registry_sources(registry, root=ROOT):
+    """Each supported tag's source files exist and name it in //go:build.
+
+    Go accepts an unused tag, so the registry, not a successful build, ties
+    a tag to the files it selects."""
+    for name, entry in sorted(registry["tags"].items()):
+        if entry["status"] != "supported":
+            continue
+        for path in entry["sources"]:
+            try:
+                text = (Path(root) / path).read_text(encoding="utf-8")
+            except OSError:
+                raise ValueError(name + ": registered source is missing: " + path) from None
+            lines = GO_BUILD_LINE.findall(text)
+            if len(lines) != 1 or name not in re.findall(r"[A-Za-z0-9_.]+", lines[0]):
+                raise ValueError(name + ": registered source does not constrain on the tag: " + path)
+
+
+def load_bug_registry(path=BUG_REGISTRY):
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError("bug compatibility registry is unreadable: " + str(error)) from None
+    return bug_registry(document)
+
+
+def bug_selection(registry, selection):
+    """The explicit bug compatibility selection, validated before any build.
+
+    Unknown, misspelled, retired, repeated or conflicting tags refuse the
+    selection; no tag selects every ordinary path."""
+    names = [name.strip() for name in selection.split(",") if name.strip()]
+    if len(names) != len(set(names)):
+        raise ValueError("bug compatibility selection names a tag twice")
+    for name in names:
+        if not name.startswith(BUG_TAG_PREFIX):
+            raise ValueError("not a bug compatibility tag: " + name)
+        entry = registry["tags"].get(name)
+        if entry is None:
+            raise ValueError("unregistered bug compatibility tag: " + name)
+        if entry["status"] != "supported":
+            raise ValueError("retired bug compatibility tag: " + name)
+    for pair in sorted(registry["conflicts"], key=sorted):
+        if pair <= set(names):
+            raise ValueError("conflicting bug compatibility tags: " + ", ".join(sorted(pair)))
+    return {"registered": frozenset(name for name, entry in registry["tags"].items() if entry["status"] == "supported"),
+            "retired": frozenset(name for name, entry in registry["tags"].items() if entry["status"] != "supported"),
+            "selected": tuple(sorted(names)), "conflicts": frozenset(registry["conflicts"])}
+
+
+def file_bug_tags(file, bugs):
+    """The bug compatibility tags in a file's constraint, all registered."""
+    names = sorted(tag for tag in file["tags"] if tag.startswith(BUG_TAG_PREFIX))
+    for name in names:
+        if name in bugs["retired"]:
+            raise ValueError(file["path"] + ": retired bug compatibility tag still guards a test: " + name)
+        if name not in bugs["registered"]:
+            raise ValueError(file["path"] + ": unregistered bug compatibility tag: " + name)
+    if len(names) > MAX_FILE_BUG_TAGS:
+        raise ValueError(file["path"] + ": a test file names more than " + str(MAX_FILE_BUG_TAGS)
+                         + " bug compatibility tags")
+    return names
+
+
+def any_bug_branch(file, tags, bugs):
+    """Whether tags compile the file under some selection of its bug tags.
+
+    A file that only another selection compiles is the other path of a bug.
+    Its tests must not disappear from the profile: discover proves that the
+    inventory is the same under either selection."""
+    names = file_bug_tags(file, bugs)
+    base = {tag for tag in tags if not tag.startswith(BUG_TAG_PREFIX)}
+    return any(evaluate(file["constraint"], base | {name for bit, name in enumerate(names) if mask >> bit & 1})
+               for mask in range(1 << len(names)))
 
 
 def evaluate(expression, tags):
@@ -210,19 +337,44 @@ def capability_tags(catalog):
         if file.get("metadata") and any(suffix in GO_PLATFORMS for suffix in suffixes):
             raise ValueError(file["path"] + ": platform-specific runtime files need a separate runner policy")
         tags.update(tag for tag in file["tags"] if tag not in ("all", "ci", "native_regression", "goceph")
-                    and not tag.startswith("ci_"))
+                    and not tag.startswith("ci_") and not tag.startswith(BUG_TAG_PREFIX))
     return tuple(sorted(tags))
 
 
-def native_tags(category, batch, capabilities=CAPABILITY_TAGS):
-    return ",".join((*capabilities, "ci", "ci_" + category, "ci_batch", "ci_batch_" + batch))
+def native_tags(category, batch, capabilities=CAPABILITY_TAGS, bugs=()):
+    return ",".join((*capabilities, "ci", "ci_" + category, "ci_batch", "ci_batch_" + batch, *bugs))
 
 
-def discover(catalog):
+def same_inventory_under_bugs(catalog, package, tags, bugs, label):
+    """The tests of package under tags do not depend on bug selection.
+
+    Toggling each registered bug tag that a file of the package names must
+    keep the same compiled test names: an ordinary path and its
+    compatibility path assert the same contract under one name. A toggle
+    that would activate a declared conflict is skipped: bug_selection refuses
+    that combination, so it is never planned."""
+    names = sorted({name for file in catalog if file["tests"] and package_path(file) == package
+                    for name in file_bug_tags(file, bugs)})
+    if not names:
+        return
+    selected = set(tags)
+    expected = selected_tests(catalog, package, ",".join(sorted(selected)))
+    for name in names:
+        toggled = selected ^ {name}
+        if any(pair <= toggled for pair in bugs["conflicts"]):
+            continue
+        if selected_tests(catalog, package, ",".join(sorted(toggled))) != expected:
+            raise ValueError(label + ": bug compatibility tag " + name + " changes the selected tests; "
+                             "both paths must keep the same test names")
+
+
+def discover(catalog, bugs=NO_BUGS):
     """Build profiles and reject missing/overlapping ownership before execution."""
     profiles, owners, aggregates, all_parents = {}, defaultdict(list), {}, defaultdict(set)
     sources, networks, network_tests = defaultdict(set), defaultdict(set), defaultdict(set)
     capabilities = capability_tags(catalog)
+    selected_bugs = tuple(bugs["selected"])
+    all_tags = {"all", *selected_bugs}
     for file in catalog:
         if not file["tests"]:
             if file.get("metadata"):
@@ -232,8 +384,9 @@ def discover(catalog):
             continue
         tags = set(file["tags"])
         package = package_path(file)
+        file_bug_tags(file, bugs)
         if "ci_optional" in tags or "ci_sdk" in tags:
-            if evaluate(file["constraint"], {"all"}):
+            if any_bug_branch(file, {"all"}, bugs):
                 raise ValueError(file["path"] + ": optional or SDK test must require an explicit extra tag")
             continue
         category_tags = {tag for tag in tags if tag.startswith("ci_") and not tag.startswith("ci_batch_")}
@@ -245,9 +398,9 @@ def discover(catalog):
         if not tags and not file.get("metadata"):
             continue
         if not category_tags:
-            if evaluate(file["constraint"], set(capabilities) | {"ci"}):
+            if any_bug_branch(file, set(capabilities) | {"ci"}, bugs):
                 raise ValueError(file["path"] + ": required test is missing a CI category")
-            if evaluate(file["constraint"], {"all"}):
+            if evaluate(file["constraint"], all_tags):
                 for test in file["tests"]:
                     key = (package, test)
                     if key in aggregates:
@@ -258,7 +411,9 @@ def discover(catalog):
         if len(category_tags) != 1:
             raise ValueError(file["path"] + ": a test file must have one CI category")
         batches = {tag[len("ci_batch_"):] for tag in tags if tag.startswith("ci_batch_")}
-        if not batches and not file.get("metadata") and evaluate(file["constraint"], {"all"}):
+        if not batches and not file.get("metadata") and any_bug_branch(file, {"all"}, bugs):
+            if not evaluate(file["constraint"], all_tags):
+                continue
             for test in file["tests"]:
                 key = (package, test)
                 if key in aggregates:
@@ -269,12 +424,14 @@ def discover(catalog):
         if len(batches) != 1 or not IDENTIFIER.fullmatch(next(iter(batches), "")):
             raise ValueError(file["path"] + ": a test file must have one valid CI batch")
         category, batch = next(iter(category_tags))[3:], next(iter(batches))
-        if not evaluate(file["constraint"], set(native_tags(category, batch, capabilities).split(","))):
+        profile_tags = native_tags(category, batch, capabilities, selected_bugs)
+        active = evaluate(file["constraint"], set(profile_tags.split(",")))
+        if not active and not any_bug_branch(file, set(profile_tags.split(",")), bugs):
             raise ValueError(file["path"] + ": declared profile excludes its test file")
         metadata = parse_metadata(file)
         key = (category, batch, package)
         profile = {"category": category, "batch": batch, "package": package,
-                   "tags": native_tags(category, batch, capabilities), **metadata}
+                   "tags": profile_tags, **metadata}
         if key in profiles and profiles[key] != profile:
             raise ValueError(file["path"] + ": one batch has conflicting budgets, checker scope or image roles")
         profiles[key] = profile
@@ -282,15 +439,19 @@ def discover(catalog):
         if file.get("networks"):
             networks[key].add(tuple(file["networks"]))
             network_tests[key].update(file.get("network_tests", ()))
+        if not active:
+            # The other path of a bug: its batch lists it as a source, and
+            # the active path owns the same tests.
+            continue
         for test in file["tests"]:
             owners[(package, test)].append((key, file, metadata))
-            if evaluate(file["constraint"], {"all"}):
+            if evaluate(file["constraint"], all_tags):
                 all_parents[package].add(test)
     if not profiles:
         raise ValueError("no required tagged runtime profiles were found")
     for key, assignments in owners.items():
         if len(assignments) == 1 and key not in aggregates:
-            if not evaluate(assignments[0][1]["constraint"], {"all"}):
+            if not evaluate(assignments[0][1]["constraint"], all_tags):
                 raise ValueError(assignments[0][1]["path"] + ": required test is missing from the all tag")
             continue
         checker_names = {assignment[2]["checker"] for assignment in assignments}
@@ -321,6 +482,10 @@ def discover(catalog):
                 if any(not any(assignment[0] == own and assignment[1]["path"] == file["path"]
                                for assignment in owners[(profile["package"], test)]) for test in file["tests"]):
                     raise ValueError(file["path"] + ": test tags overlap another runtime profile")
+        same_inventory_under_bugs(catalog, profile["package"], selected, bugs,
+                                  profile["category"] + "/" + profile["batch"])
+    for package in sorted({profile["package"] for profile in profiles.values()}):
+        same_inventory_under_bugs(catalog, package, all_tags, bugs, "all/" + package)
     result = [profiles[key] for key in sorted(profiles)]
     for key in sorted(profiles):
         # The files that declare the batch's tests; shared helpers are not
@@ -333,11 +498,13 @@ def discover(catalog):
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = (profile["category"] + "-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = profile["package"] == "./internal/integration" and profile["category"] != "code"
+        profile["bug_compatibility"] = list(selected_bugs)
         resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "required", "include": result,
             "required_parents": {package: sorted(names) for package, names in sorted(all_parents.items())},
             "required_executions": sum(len(assignments) for assignments in owners.values()),
-            "required_profiles": len(result), "capability_tags": list(capabilities)}
+            "required_profiles": len(result), "capability_tags": list(capabilities),
+            "bug_compatibility": list(selected_bugs)}
 
 
 def batch_networks(key, declared):
@@ -603,7 +770,7 @@ def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
 
 
 def declaration_selection(profiles, base, root=ROOT, runner=None):
-    """Advisory selection of profiles by declaration reachability (#116).
+    """Advisory selection of profiles by declaration reachability.
 
     It is recorded beside the plan and never changes which profiles run.
     A profile outside the analysed package, or any failure of the analysis,
@@ -639,7 +806,7 @@ def declaration_selection(profiles, base, root=ROOT, runner=None):
 
 def apply_declaration_selection(plan, selection):
     """Keep only the profiles that the declaration selection selected: the
-    pull request scope of a gating category (#116). Pushes to main run the
+    pull request scope of a gating category. Pushes to main run the
     full plan, so a miss surfaces at the next merge."""
     selected = [profile for profile in plan["include"] if profile["id"] in selection["selected"]]
     return {**plan, "include": selected, "selected_scope": "declarations", "selected_profiles": len(selected),
@@ -676,13 +843,15 @@ def load_catalog(root=ROOT):
     return json.loads(result.stdout)
 
 
-def discover_optional(catalog):
+def discover_optional(catalog, bugs=NO_BUGS):
     """Keep native defect regressions explicitly outside required coverage."""
     profiles = {}
     capabilities = (*capability_tags(catalog), "native_regression", "role_images")
+    selected_bugs = tuple(bugs["selected"])
     for file in catalog:
         if not file["tests"] or "ci_optional" not in file["tags"]:
             continue
+        file_bug_tags(file, bugs)
         if any(reserved_go_tag(tag) for tag in file["tags"]):
             raise ValueError(file["path"] + ": optional profile cannot force platform/toolchain tags")
         batches = {tag[len("ci_batch_"):] for tag in file["tags"] if tag.startswith("ci_batch_")}
@@ -691,12 +860,12 @@ def discover_optional(catalog):
         batch = next(iter(batches))
         package = package_path(file)
         profile = {"category": "optional", "batch": batch, "package": package,
-                   "tags": native_tags("optional", batch, capabilities), **parse_metadata(file)}
+                   "tags": native_tags("optional", batch, capabilities, selected_bugs), **parse_metadata(file)}
         if profile["representative"]:
             raise ValueError(file["path"] + ": an optional batch cannot be representative")
-        if not evaluate(file["constraint"], set(profile["tags"].split(","))):
+        if not any_bug_branch(file, set(profile["tags"].split(",")), bugs):
             raise ValueError(file["path"] + ": declared optional profile excludes its file")
-        if evaluate(file["constraint"], {"all"}):
+        if any_bug_branch(file, {"all"}, bugs):
             raise ValueError(file["path"] + ": optional test leaked into the normal all tag")
         key = (batch, package)
         if key in profiles and profiles[key] != profile:
@@ -710,13 +879,15 @@ def discover_optional(catalog):
             if file["tags"] and ("ci_optional" not in file["tags"]
                                  or "ci_batch_" + profile["batch"] not in file["tags"]):
                 raise ValueError(file["path"] + ": optional tags overlap a different source profile")
+        same_inventory_under_bugs(catalog, profile["package"], selected, bugs, "optional/" + profile["batch"])
+        profile["bug_compatibility"] = list(selected_bugs)
         profile["profile"] = "optional/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = ("optional-" + profile["batch"])[:70] + "-" + suffix
         profile["requires_ceph"] = bool(profile["image_roles"]) or profile["package"] == "./internal/integration"
         resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "optional",
-            "include": [profiles[key] for key in sorted(profiles)]}
+            "include": [profiles[key] for key in sorted(profiles)], "bug_compatibility": list(selected_bugs)}
 
 
 def select_optional_plan(plan, batch):
@@ -731,7 +902,7 @@ def select_optional_plan(plan, batch):
 
 def select_profiles_plan(plan, optional, identifiers):
     """The runtime profiles named by ID, of any category or optional: the
-    plan of a pull request comment command (ci_command.py, #116). It claims
+    plan of a pull request comment command (ci_command.py). It claims
     no coverage; an unknown, duplicate or code profile ID refuses the plan."""
     names = [name.strip() for name in identifiers.split(",") if name.strip()]
     if not names:
@@ -784,17 +955,19 @@ def compile_inventory(package, tags, root=ROOT):
 def verify(catalog, plan, root=ROOT):
     observations = []
     packages = sorted({profile["package"] for profile in plan["include"]})
+    bugs = tuple(plan.get("bug_compatibility", ()))
+    all_tags = ",".join(("all", *bugs))
     for package in packages:
-        actual = compile_inventory(package, "all", root)
-        expected = selected_tests(catalog, package, "all")
+        actual = compile_inventory(package, all_tags, root)
+        expected = selected_tests(catalog, package, all_tags)
         if actual != expected:
             raise ValueError("all-tag compiled inventory differs from its AST source: " + package)
-        observations.append({"package": package, "tags": "all", "tests": actual})
+        observations.append({"package": package, "tags": all_tags, "tests": actual})
     for category in CATEGORIES:
         for package in packages:
             if not any(profile["category"] == category and profile["package"] == package for profile in plan["include"]):
                 continue
-            tags = ",".join((*plan["capability_tags"], "ci", "ci_" + category))
+            tags = ",".join((*plan["capability_tags"], "ci", "ci_" + category, *bugs))
             actual = compile_inventory(package, tags, root)
             expected = selected_tests(catalog, package, tags)
             if actual != expected:
@@ -994,7 +1167,20 @@ def verified_binary(directory, profile, expected, root=ROOT):
     return binary, receipt
 
 
-def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None):
+def matrix_tags(profile, tags):
+    """Refuse a profile whose recomputed tags differ from its matrix entry's.
+
+    A runtime job recomputes its plan from source and its own bug
+    compatibility selection; the matrix entry carries the Plan job's tags.
+    When the two selections differ, nothing is built or run."""
+    if tags is not None and tags != profile["tags"]:
+        raise ValueError("the matrix entry's tags differ from this job's recomputed profile tags "
+                         "(Plan and this job selected different bug compatibility paths): "
+                         + tags + " != " + profile["tags"])
+
+
+def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None,
+                profile_tags=None):
     """Run one profile, or with tests only those of its tests that declare
     network modes, as a matrix entry of a non-default mode does.
 
@@ -1005,6 +1191,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if len(matches) != 1:
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
+    matrix_tags(profile, profile_tags)
     expected = selected_tests(catalog, profile["package"], profile["tags"])
     if not expected:
         raise ValueError("requested runtime profile is empty")
@@ -1116,12 +1303,13 @@ def prepare_modules(directory, root=ROOT):
     return report
 
 
-def compile_profile(plan, category, batch, package, directory, root=ROOT):
+def compile_profile(plan, category, batch, package, directory, root=ROOT, profile_tags=None):
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
     if len(matches) != 1:
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
+    matrix_tags(profile, profile_tags)
     directory.mkdir(parents=True, exist_ok=False)
     binary = (directory / binary_name(profile["package"])).resolve()
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o", str(binary), profile["package"]]
@@ -1177,8 +1365,18 @@ def warm_build_cache(plan, directory, root=ROOT):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    # The same selection must reach plan, compile and run: a profile's tags
+    # carry it, so a binary of another selection fails its receipt check.
+    selection = argparse.ArgumentParser(add_help=False)
+    selection.add_argument("--bug-compatibility", default="", metavar="TAGS",
+                           help="Comma-separated registered ceph_bug_<id> tags; empty selects every ordinary path")
+    # A runtime job also names its matrix entry's tags, so that a job whose
+    # selection differs from the Plan job's fails before building.
+    entry = argparse.ArgumentParser(add_help=False)
+    entry.add_argument("--profile-tags", metavar="TAGS",
+                       help="The matrix entry's tags; refuse a recomputed profile with other tags")
     for name in ("plan", "verify"):
-        command = commands.add_parser(name)
+        command = commands.add_parser(name, parents=[selection])
         command.add_argument("--output", type=Path)
         if name == "plan":
             command.add_argument("--github-output", type=Path)
@@ -1206,7 +1404,7 @@ def main(argv=None):
             command.add_argument("--networks", choices=NETWORK_SCOPES, default="default",
                                  help="Run each batch in its default network mode, or in every mode it declares")
     for name in ("compile", "run"):
-        command = commands.add_parser(name)
+        command = commands.add_parser(name, parents=[selection, entry])
         command.add_argument("--category", required=True,
                              choices=(*CATEGORIES, "optional") if name == "compile" else CATEGORIES)
         command.add_argument("--batch", required=True)
@@ -1223,13 +1421,13 @@ def main(argv=None):
     command.add_argument("--github-output", type=Path)
     command = commands.add_parser("vocabulary")
     command.add_argument("--output", type=Path)
-    command = commands.add_parser("code")
+    command = commands.add_parser("code", parents=[selection])
     command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("modules")
     command.add_argument("--directory", required=True, type=Path)
-    command = commands.add_parser("buildcache")
+    command = commands.add_parser("buildcache", parents=[selection])
     command.add_argument("--directory", required=True, type=Path)
-    command = commands.add_parser("optional")
+    command = commands.add_parser("optional", parents=[selection, entry])
     command.add_argument("--batch", required=True)
     command.add_argument("--package")
     command.add_argument("--directory", required=True, type=Path)
@@ -1269,8 +1467,11 @@ def main(argv=None):
             report = prepare_modules(args.directory)
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0 if report["passed"] else 1
+        registry = load_bug_registry()
+        bugs = bug_selection(registry, getattr(args, "bug_compatibility", ""))
+        bug_registry_sources(registry)
         catalog = load_catalog()
-        plan = discover(catalog)
+        plan = discover(catalog, bugs)
         if args.command == "releases":
             report = releases_report(plan, args.scope, args.check_prefix)
             if args.github_output is not None:
@@ -1280,7 +1481,7 @@ def main(argv=None):
             print(json.dumps(report, indent=2, sort_keys=True))
             return 0 if report["passed"] else 1
         if args.command == "vocabulary":
-            report = vocabulary(plan, discover_optional(catalog))
+            report = vocabulary(plan, discover_optional(catalog, bugs))
             if args.output is not None:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -1292,10 +1493,11 @@ def main(argv=None):
             return 0 if report["passed"] else 1
         if args.command == "run":
             report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory,
-                                 tests=args.tests, binary=args.binary)
+                                 tests=args.tests, binary=args.binary, profile_tags=args.profile_tags)
         elif args.command == "compile":
-            selected_plan = discover_optional(catalog) if args.category == "optional" else plan
-            report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory)
+            selected_plan = discover_optional(catalog, bugs) if args.category == "optional" else plan
+            report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory,
+                                     profile_tags=args.profile_tags)
         elif args.command == "code":
             profiles = [profile for profile in plan["include"] if profile["category"] == "code"]
             if not profiles:
@@ -1306,15 +1508,15 @@ def main(argv=None):
             report = {"schema": SCHEMA, "passed": all(result["passed"] for result in results), "profiles": results}
             (args.directory / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         elif args.command == "optional":
-            optional = discover_optional(catalog)
+            optional = discover_optional(catalog, bugs)
             report = run_profile(catalog, optional, "optional", args.batch, args.package, args.directory,
-                                 binary=args.binary)
+                                 binary=args.binary, profile_tags=args.profile_tags)
         else:
             if args.command == "plan":
                 if args.optional:
-                    report = select_optional_plan(discover_optional(catalog), args.batch)
+                    report = select_optional_plan(discover_optional(catalog, bugs), args.batch)
                 elif args.profiles:
-                    report = select_profiles_plan(plan, discover_optional(catalog), args.profiles)
+                    report = select_profiles_plan(plan, discover_optional(catalog, bugs), args.profiles)
                 elif args.representative:
                     report = select_representative_plan(plan)
                     report["repetitions"] = args.repetitions

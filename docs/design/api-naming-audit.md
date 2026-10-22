@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **705** functions, declared methods on
+The declaration catalogue contains **707** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **932** exported field/nested-record/embedding entries in
 **161** types. It scans exported declared interfaces as well; there are none
@@ -18,18 +18,19 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 313 | 323 |
+| `ceph` | 315 | 323 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| Total | 705 | 932 |
+| Total | 707 | 932 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
-mirror variants, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD` and
-`DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement` accessors)
-added for #6. It uses the current source, not the earlier 691/692-entry
+mirror variants, the context-bounded `MonitorsContext` and `OSDsContext`
+getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
+and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
+accessors) added for #6. It uses the current source, not the earlier 691/692-entry
 checkpoint. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
@@ -48,6 +49,7 @@ The receipt is not a stability guarantee or approval of later APIs.
 | --- | --- |
 | Cluster construction, topology and resource operations | Retain `Run`, `RunWithImages`, `Add*`, `Create*`, `Remove*`, `Start`, `Set*` and `Update*`. Their verbs distinguish allocating an owned resource, attaching a daemon to an existing cluster, and changing existing policy. `cephfs.Start`/`rgw.Start` attach services; package `Run` owns a cluster. No blanket Create/Add or Set/Apply conversion is justified. |
 | Role selection and feature executors | Retain `ImageSet` and `Essential`, `Client`, `CephFS`, `RBDAux`, `RGW`, `All`: they match the current dependency-role contract. `WithImages` selects configuration; `Images` reports effective selection; `ClientContainerContext` names the lazy toolkit executor. `ControlImage`/`ControlContainer*` retain their control-plane meaning rather than restoring old daemon-role image options. |
+| Context-bounded getters | Retain `ConnectionConfigContext`, `ControlContainerContext`, `ManagersContext`, `MonitorsContext` and `OSDsContext`. The `Context` suffix names the variant of an existing getter that returns the same owned result but waits for the topology only while `ctx` is active; the context-free getters remain. It does not promise that a returned descriptor stays live. |
 | Queries and waits | Retain domain nouns (`Pools`, `OSDStates`, `Sessions`, `Zonegroups`, `ImageStatus`, `DataPools`), plus List where the standalone namespace CLI uses it. Receiver/package context resolves subject names. `WaitReady`, `WaitFor*`, `Wait*Ready` and `Wait*Synced` identify actual readiness/sync predicates; a naming pass must not turn one observation into a broader completion promise. |
 | Requests, observations and value/resource types | Retain `Config`, `Setting`, `Policy`, `Status`, `State`, `Info`, `Snapshot`, `Report` and domain resource nouns. Request and returned observation distinctions are explicit in their signatures/reference pages. Repeated `Filesystem`, `Mirror`, `Pool`, `Client` or `Network` words remain where needed to distinguish data pools, host/cluster networks, source/destination and daemon/client roles. |
 | Saved policies and revocation handles | Retain the completed `Override*` and management `*Handle` names from #18/#19. Retain `FullRatiosOverride` and `BlocklistOverride` as the explicit #15/#16 exceptions: their domain/Restore methods already identify the saved policy. This does not move either policy into `fault`, add automatic undo, or claim an uncertain handle succeeded. |

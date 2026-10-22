@@ -1491,7 +1491,7 @@ that only read state stay available.
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `ManagersContext`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
+| `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `MonitorsContext`, `Managers`, `ManagersContext`, `OSDs`, `OSDsContext`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
@@ -1862,6 +1862,16 @@ again. A MON whose endpoint is interrupted with
 restored. MON a's container waits for a quorum when it starts, so after all
 MONs were stopped, start the others first.
 
+#### MonitorsContext
+
+```golang
+func (c *Container) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error)
+```
+
+Like [Monitors](#monitors), but bounds the wait for a concurrent topology change
+by `ctx`. The returned slice is independent; descriptors and containers remain
+owned by the cluster.
+
 #### AddMonitor
 
 ```golang
@@ -2062,6 +2072,16 @@ startup. Failed initialization is not automatically replayed. See
 and limits. [Launch recipes](design/osd-launch-recipes.md) capture file/config
 inputs and rebuild fresh Readers without replaying container creation; neither
 change introduces retained-store detach/reopen support.
+
+#### OSDsContext
+
+```golang
+func (c *Container) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error)
+```
+
+Like [OSDs](#osds), but bounds the wait for a concurrent topology change by
+`ctx`. The returned slice is independent; descriptors and containers remain
+owned by the cluster.
 
 #### AddOSD
 

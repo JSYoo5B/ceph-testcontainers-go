@@ -18,6 +18,14 @@ change the API.
 
 ### Added
 
+- `ceph.Container.MonitorsContext` and `OSDsContext` list the owned MONs and
+  OSDs like `Monitors` and `OSDs`, but stop waiting for a concurrent topology
+  change when `ctx` ends, as `ManagersContext` already did. The MON
+  replacement diagnostics of `TestMultiClusterMonitorBootstrapRefresh` use
+  them for the quorum wait, every snapshot, the warm-daemon identities and
+  the log traces, so a held topology mutex no longer outlives the failure
+  bundle's bound (#4).
+
 - `ceph.Container.DetachOSD` and `ReopenOSD` restart a retained OSD store in a
   new container. With `WithOSDVolumeStorage`, detach fences the instance,
   stops it, waits for down and removes the container, then returns a
@@ -361,6 +369,14 @@ change the API.
   the replica is back. The `client-osd/backoff` coverage row becomes partial;
   object-scoped backoffs stay uncovered (#5). See
   [OSD backoff](docs/guides/messenger-client-fixtures.md#osd-backoff).
+- The feasibility report `docs/research/bluestore-block-faults.md` records a
+  bounded probe of a test-owned sparse file, loop device and device-mapper
+  mapping on a hosted Linux runner, without Ceph: separate read, write and
+  flush delays, `EIO` from `error` and direction-specific `flakey` windows,
+  verified restore with exact readback, and owned cleanup. A whole-device
+  delay left `dmsetup resume` timed out after the kernel had installed the
+  table. The report gives a conditional go for proving OSD attachment in a
+  separate step (#7). The probe and its workflow are research tooling, not API.
 
 ### Changed
 
@@ -435,6 +451,12 @@ change the API.
   counted rather than read as healthy. Exact replica bytes remain the only
   success (#2).
 
+- The failure diagnostics of `TestRGWPlacementRealmStorageClasses` read both
+  gateways' container state before any admin query, give each state, admin
+  and log read its own bound inside the 45-second total, and report a failed,
+  timed-out or truncated read instead of dropping it. An admin query that
+  stalls can no longer hide an exited source gateway (#2).
+
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
   fence after an unconfirmed stop, without closing unrelated targets. This
@@ -496,6 +518,21 @@ change the API.
 
 ### Continuous integration
 
+- The tag planner no longer collects `ceph_bug_<id>` tags as capabilities,
+  so a bug tag in a test constraint cannot enable a workaround in every
+  profile. `tag_scenarios.py --bug-compatibility` takes an explicit selection
+  and validates it against `docs/guides/bug-compatibility-tags.json`, which
+  registers no tag yet. The ordinary and compatibility test files of a bug
+  must keep the same test names in the same batch; the selection is part of
+  each profile's tags, build key and history identity. No workflow passes a
+  selection, so CI behavior is unchanged (#24).
+- `tagged-runtime.yml` takes one `bug_compatibility` input, empty by default,
+  and passes it as an argument to every planner command of the run. The Plan
+  job refuses an invalid selection before any runtime job starts, and a
+  runtime job whose recomputed profile tags differ from its matrix entry's
+  fails before building. History rows record the selection, refuse receipts
+  of another selection, and the job summary shows it beside the role image
+  IDs. No caller passes the input, so CI behavior is unchanged (#24).
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts

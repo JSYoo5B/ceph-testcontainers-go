@@ -95,12 +95,14 @@ their waits by `ctx`:
 | Method | Returns |
 | --- | --- |
 | `ConnectionConfigContext(ctx)` | Independent copies of `ceph.conf` and the admin keyring; refuses a terminated or incompletely bootstrapped cluster |
+| `MonitorsContext(ctx)` | MON descriptors sorted by name |
 | `ManagersContext(ctx)` | MGR descriptors sorted by name |
+| `OSDsContext(ctx)` | OSD descriptors sorted by ID |
 | `rgw.GatewaysContext(ctx, cluster)` | Gateway descriptors sorted by name, including partially started ones |
 | `ControlContainerContext(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
-The context-free versions (`ConnectionConfig`, `Managers`, `rgw.Gateways`,
-`ControlContainer`) remain available.
+The context-free versions (`ConnectionConfig`, `Monitors`, `Managers`, `OSDs`,
+`rgw.Gateways`, `ControlContainer`) remain available.
 
 ### Waiting in the background
 

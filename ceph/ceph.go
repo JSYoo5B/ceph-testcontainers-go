@@ -975,6 +975,11 @@ func (c *Container) OSDs() []*OSDContainer {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.osdsLocked()
+}
+
+// osdsLocked lists the owned OSDs. The caller holds c.mu.
+func (c *Container) osdsLocked() []*OSDContainer {
 	result := make([]*OSDContainer, 0, len(c.osds))
 	for _, osd := range c.osds {
 		result = append(result, osd)

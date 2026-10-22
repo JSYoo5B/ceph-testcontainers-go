@@ -24,16 +24,17 @@ import (
 
 // monReplacementCluster is the part of *ceph.Container that a recorded MON
 // replacement uses: the membership operations and read-only observations
-// through public APIs.
+// through public APIs. Membership is listed with the context getters, so a
+// held topology mutex cannot outlive an observation's bound.
 type monReplacementCluster interface {
 	AddMonitor(context.Context, string) (*ceph.MonitorContainer, error)
 	RemoveMonitor(context.Context, string) error
 	QuorumStatus(context.Context) (ceph.QuorumStatus, error)
 	AdminSocket(context.Context, string, ...string) ([]byte, error)
 	CollectDiagnostics(context.Context, ceph.DiagnosticsConfig) (*ceph.DiagnosticsReport, error)
-	Monitors() []*ceph.MonitorContainer
-	Managers() []*ceph.ManagerContainer
-	OSDs() []*ceph.OSDContainer
+	MonitorsContext(context.Context) ([]*ceph.MonitorContainer, error)
+	ManagersContext(context.Context) ([]*ceph.ManagerContainer, error)
+	OSDsContext(context.Context) ([]*ceph.OSDContainer, error)
 }
 
 // monReplacementBounds bounds every step. Operation guards AddMonitor and
@@ -350,7 +351,13 @@ func (r *monReplacementRecorder) begin(ctx context.Context) {
 func (r *monReplacementRecorder) replace(ctx context.Context, pairs [][2]string) error {
 	members := slices.Clone(r.Baseline.MonMap)
 	if len(members) == 0 {
-		for _, mon := range r.cluster.Monitors() {
+		listCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+		monitors, err := r.cluster.MonitorsContext(listCtx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("list monitors before the replacement: %w", err)
+		}
+		for _, mon := range monitors {
 			members = append(members, mon.DaemonName)
 		}
 	}
@@ -403,7 +410,12 @@ func (r *monReplacementRecorder) phase(ctx context.Context, name string, want []
 				// A read that fails while membership changes is not final.
 				return status, false, nil
 			}
-			return status, monReplacementQuorumIs(status, want) && len(r.cluster.Monitors()) == len(want), nil
+			// So is owned membership that the probe's bound cannot list.
+			monitors, err := r.cluster.MonitorsContext(probeCtx)
+			if err != nil {
+				return status, false, nil
+			}
+			return status, monReplacementQuorumIs(status, want) && len(monitors) == len(want), nil
 		})
 		p.QuorumProbes = seen.Attempts
 		if err != nil {
@@ -463,7 +475,8 @@ func (r *monReplacementRecorder) restoreDebug(parent context.Context) []monRepla
 	r.debugMu.Lock()
 	defer r.debugMu.Unlock()
 	warm := make(map[string]warmDaemonStatus)
-	for _, status := range r.warmIdentities(ctx) {
+	identities, unlisted := r.warmIdentities(ctx)
+	for _, status := range identities {
 		warm[status.Daemon] = status
 	}
 	for i := range r.Debug {
@@ -473,6 +486,10 @@ func (r *monReplacementRecorder) restoreDebug(parent context.Context) []monRepla
 		}
 		current, ok := warm[window.Daemon]
 		switch {
+		case !ok && len(unlisted) > 0:
+			// The daemon may still run with the diagnostic level.
+			window.Restored = "skipped: identity unavailable: " + strings.Join(unlisted, "; ")
+			continue
 		case !ok || !current.Running:
 			window.Restored = "skipped: daemon is not running"
 			continue
@@ -536,7 +553,12 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 			work()
 		}()
 	}
-	monitors := r.cluster.Monitors()
+	listCtx, cancelList := context.WithTimeout(ctx, r.bounds.Query)
+	monitors, err := r.cluster.MonitorsContext(listCtx)
+	cancelList()
+	if err != nil {
+		incomplete("list monitors: %v", err)
+	}
 	s.Monitors = make([]monLocalStatus, len(monitors))
 	sessions := make([][]monReplacementSession, len(monitors))
 	for i, mon := range monitors {
@@ -558,7 +580,10 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 			}
 		})
 	}
-	warm := r.warmIdentities(ctx)
+	warm, unlisted := r.warmIdentities(ctx)
+	for _, problem := range unlisted {
+		incomplete("%s", problem)
+	}
 	for i := range warm {
 		w := &warm[i]
 		run(func() {
@@ -604,8 +629,8 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 
 // warmIdentities lists the owned MGRs and OSDs and the daemons reached in
 // their own containers, such as MDS daemons, with their container generation.
-func (r *monReplacementRecorder) warmIdentities(ctx context.Context) []warmDaemonStatus {
-	var result []warmDaemonStatus
+// unlisted says which owned kinds could not be listed within the query bound.
+func (r *monReplacementRecorder) warmIdentities(ctx context.Context) (result []warmDaemonStatus, unlisted []string) {
 	identify := func(daemon string, ctr testcontainers.Container) {
 		status := warmDaemonStatus{Daemon: daemon}
 		if ctr == nil {
@@ -625,16 +650,36 @@ func (r *monReplacementRecorder) warmIdentities(ctx context.Context) []warmDaemo
 		}
 		result = append(result, status)
 	}
-	for _, mgr := range r.cluster.Managers() {
+	managers, osds, unlisted := r.ownedDaemons(ctx)
+	for _, mgr := range managers {
 		identify("mgr."+mgr.DaemonName, mgr.Container)
 	}
-	for _, osd := range r.cluster.OSDs() {
+	for _, osd := range osds {
 		identify("osd."+strconv.Itoa(osd.ID), osd.Container)
 	}
 	for _, d := range r.exec {
 		identify(d.Daemon, d.Container)
 	}
-	return result
+	return result, unlisted
+}
+
+// ownedDaemons lists the owned MGRs and OSDs, each within the query bound.
+// A kind that cannot be listed is reported instead of waited for.
+func (r *monReplacementRecorder) ownedDaemons(ctx context.Context) ([]*ceph.ManagerContainer, []*ceph.OSDContainer, []string) {
+	var unlisted []string
+	listCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+	managers, err := r.cluster.ManagersContext(listCtx)
+	cancel()
+	if err != nil {
+		unlisted = append(unlisted, "list managers: "+err.Error())
+	}
+	listCtx, cancel = context.WithTimeout(ctx, r.bounds.Query)
+	osds, err := r.cluster.OSDsContext(listCtx)
+	cancel()
+	if err != nil {
+		unlisted = append(unlisted, "list osds: "+err.Error())
+	}
+	return managers, osds, unlisted
 }
 
 // traces reads the MON client lines of every warm daemon and every additional
@@ -646,10 +691,11 @@ func (r *monReplacementRecorder) traces(ctx context.Context) []monReplacementTra
 		ctr  testcontainers.Container
 	}
 	var targets []target
-	for _, mgr := range r.cluster.Managers() {
+	managers, osds, unlisted := r.ownedDaemons(ctx)
+	for _, mgr := range managers {
 		targets = append(targets, target{"mgr." + mgr.DaemonName, mgr.Container})
 	}
-	for _, osd := range r.cluster.OSDs() {
+	for _, osd := range osds {
 		targets = append(targets, target{"osd." + strconv.Itoa(osd.ID), osd.Container})
 	}
 	for _, d := range r.exec {
@@ -658,7 +704,11 @@ func (r *monReplacementRecorder) traces(ctx context.Context) []monReplacementTra
 	for _, extra := range r.additional {
 		targets = append(targets, target{extra.Name, extra.Container})
 	}
-	result := make([]monReplacementTrace, 0, len(targets))
+	result := make([]monReplacementTrace, 0, len(targets)+len(unlisted))
+	for _, problem := range unlisted {
+		// The owned daemons of a kind that could not be listed have no trace.
+		result = append(result, monReplacementTrace{Daemon: "owned", Error: problem})
+	}
 	for _, target := range targets {
 		trace := monReplacementTrace{Daemon: target.name}
 		if target.ctr == nil {
