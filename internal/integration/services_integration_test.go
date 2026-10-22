@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -265,9 +266,8 @@ func assertContainerFilesEqual(t *testing.T, ctx context.Context, ctr testcontai
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer stream.Close()
-		data, err := io.ReadAll(stream)
-		if err != nil {
+		data, readErr := io.ReadAll(stream)
+		if err := errors.Join(readErr, stream.Close()); err != nil {
 			t.Fatal(err)
 		}
 		return data
