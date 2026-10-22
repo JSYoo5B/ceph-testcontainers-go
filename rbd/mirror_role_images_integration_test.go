@@ -7,6 +7,7 @@ package rbd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -96,9 +97,9 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer reader.Close()
-		data, err := io.ReadAll(reader)
-		if err != nil {
+		data, readErr := io.ReadAll(reader)
+		closeErr := reader.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
 			t.Fatal(err)
 		}
 		return data

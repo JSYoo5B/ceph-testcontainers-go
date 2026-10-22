@@ -51,6 +51,6 @@ kernel configuration/counters; workload throughput and receiver effects need
 their own measurements. The `ErrNetem*` sentinels keep their `errors.Is` categories.
 
 Native test names and scenario selectors are unchanged. This checkpoint creates
-no new native capability and does not complete #14's remaining RBD helper or
-baseline/field/interface audit. See the [naming inventory](../design/api-naming.md),
+no new native capability. The later [final retention audit](../design/api-naming-audit.md)
+records completion of #14's RBD helper and baseline/member review. See the [naming inventory](../design/api-naming.md),
 [fault reference](../fault.md) and [RGW reference](../rgw.md).
