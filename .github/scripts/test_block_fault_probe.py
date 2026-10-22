@@ -398,6 +398,37 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(report["cleanup"]["retained"], ["dm-mapping", "loop", "backing-file"])
         self.assertIn(p.backing, host.files)
 
+    def test_unreaped_create_retains_the_whole_chain(self):
+        p, kernel, host = make()
+        kernel.hooks[("dmsetup", "create")] = lambda argv: Result(
+            argv, None, "", "", timed_out=True, reaped=False)
+        report = p.execute()
+        self.assertEqual(report["verdict"], "uncertain")
+        self.assertIn("dm-create-timed-out", report["uncertain"])
+        self.assertEqual(report["cleanup"]["skipped"], "unreaped:dm-create")
+        self.assertEqual(report["cleanup"]["retained"], ["dm-mapping", "loop", "backing-file"])
+        self.assertFalse(commands(kernel, "dmsetup", "remove"))
+        self.assertFalse(commands(kernel, "losetup", "--detach"))
+        self.assertIn(p.backing, host.files)
+        self.assertTrue(kernel.loops)
+
+    def test_reaped_create_timeout_with_mapping_absent_releases_the_chain(self):
+        p, kernel, host = make()
+        kernel.hooks[("dmsetup", "create")] = lambda argv: Result(argv, None, "", "", timed_out=True)
+        report = p.execute()
+        self.assertEqual(report["verdict"], "uncertain")
+        self.assertEqual(report["cleanup"]["mapping"]["observed"], "absent")
+        self.assertEqual(report["cleanup"]["retained"], [])
+        self.assertEqual((kernel.loops, host.files), ({}, {}))
+
+    def test_unreaped_attach_keeps_the_backing_file(self):
+        p, kernel, host = make()
+        kernel.hooks[("losetup", "--find")] = lambda argv: Result(
+            argv, None, "", "", timed_out=True, reaped=False)
+        report = p.execute()
+        self.assertEqual(report["cleanup"]["retained"], ["loop", "backing-file"])
+        self.assertIn(p.backing, host.files)
+
     def test_successful_remove_with_mapping_still_present(self):
         p, kernel, host = make()
         kernel.hooks[("dmsetup", "remove")] = lambda argv: Result(argv, 0, "", "")

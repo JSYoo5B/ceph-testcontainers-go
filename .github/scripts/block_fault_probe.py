@@ -376,6 +376,8 @@ class Probe:
         # further control or destructive I/O is attempted afterwards.
         self.halted = False
         self.io_pending = False
+        # Steps whose killed child could not be reaped.
+        self.unreaped = []
         # Optional targets that are neither registered nor allowed to load.
         self.unavailable = set()
         self.report = {
@@ -402,6 +404,9 @@ class Probe:
     def run(self, name, argv, timeout=CONTROL_TIMEOUT):
         result = self.runner.run(argv, timeout)
         self.report["steps"].append(result.record(name))
+        if result.timed_out and not result.reaped:
+            # The child may still act on the chain after this observation.
+            self.unreaped.append(name)
         return result
 
     def uncertain(self, reason):
@@ -786,6 +791,15 @@ class Probe:
         cleanup = self.report["cleanup"]
         retained = []
         cleanup["retained"] = retained
+        if self.unreaped:
+            # An absence observed now does not stop a live child from creating
+            # or binding a resource later, so the whole chain stays in place.
+            cleanup["skipped"] = "unreaped:" + ",".join(self.unreaped)
+            if self.linear is not None:
+                retained.append("dm-mapping")
+            retained += ["loop", "backing-file"]
+            self.uncertain("cleanup-retained:" + ",".join(retained))
+            return
         mapping_gone = True
         if self.loop is not None and self.linear is not None:
             mapping_gone = self.remove_mapping(cleanup)
