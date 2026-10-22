@@ -177,7 +177,7 @@ func bit(value bool) string {
 
 func TestImmutableObjectCacheLifecycle(t *testing.T) {
 	client := newFakeCacheClient()
-	lease, err := TemporaryImmutableObjectCache(t.Context(), client, ImmutableObjectCache{ID: "rbd-client"})
+	lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{ID: "rbd-client"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestImmutableObjectCacheLifecycle(t *testing.T) {
 func TestImmutableObjectCacheRestoreStopsAndKeepsAnExistingDirectory(t *testing.T) {
 	client := newFakeCacheClient()
 	client.files["/cache"] = "dir"
-	lease, err := TemporaryImmutableObjectCache(t.Context(), client, ImmutableObjectCache{Path: "/cache", Socket: "/run/ioc/sock", MaxSize: 64 << 20})
+	lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{Path: "/cache", Socket: "/run/ioc/sock", MaxSize: 64 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestImmutableObjectCacheRestoreStopsAndKeepsAnExistingDirectory(t *testing.
 
 func TestImmutableObjectCacheDaemonThatExited(t *testing.T) {
 	client := newFakeCacheClient()
-	lease, err := TemporaryImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
+	lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestImmutableObjectCacheStartFailuresLeaveNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := newFakeCacheClient()
 			fault(client)
-			lease, err := TemporaryImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
+			lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
 			if !errors.Is(err, ceph.ErrNativeFailure) || lease != nil {
 				t.Fatalf("start with %s: %v, %v", name, lease, err)
 			}
@@ -303,7 +303,7 @@ func TestImmutableObjectCacheRefusals(t *testing.T) {
 				test.setup(client)
 			}
 			before := fmt.Sprint(client.files, client.objects)
-			lease, err := TemporaryImmutableObjectCache(t.Context(), client, test.config)
+			lease, err := StartImmutableObjectCache(t.Context(), client, test.config)
 			if !errors.Is(err, test.kind) || lease != nil {
 				t.Fatalf("%v, %v", lease, err)
 			}
@@ -312,7 +312,7 @@ func TestImmutableObjectCacheRefusals(t *testing.T) {
 			}
 		})
 	}
-	if _, err := TemporaryImmutableObjectCache(t.Context(), nil, ImmutableObjectCache{}); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if _, err := StartImmutableObjectCache(t.Context(), nil, ImmutableObjectCache{}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("nil client: %v", err)
 	}
 }
@@ -322,7 +322,7 @@ func TestImmutableObjectCacheRefusals(t *testing.T) {
 func TestImmutableObjectCacheUnconfirmedStartKeepsTheLease(t *testing.T) {
 	client := newFakeCacheClient()
 	client.execFail = "start"
-	lease, err := TemporaryImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
+	lease, err := StartImmutableObjectCache(t.Context(), client, ImmutableObjectCache{})
 	if err == nil || lease == nil || client.running() != 1 {
 		t.Fatalf("an exec failure of start: %v, %v, %d daemons", lease, err, client.running())
 	}
