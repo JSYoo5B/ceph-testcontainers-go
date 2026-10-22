@@ -93,6 +93,11 @@ func (c *Container) Monitors() []*MonitorContainer {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.monitorsLocked()
+}
+
+// monitorsLocked lists the owned MONs. The caller holds c.mu.
+func (c *Container) monitorsLocked() []*MonitorContainer {
 	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
 	if c.Container != nil && !c.monitorTerminated {
 		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a"})

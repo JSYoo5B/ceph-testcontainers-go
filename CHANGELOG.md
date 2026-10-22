@@ -8,6 +8,14 @@ change the API.
 
 ### Added
 
+- `ceph.Container.MonitorsContext` and `OSDsContext` list the owned MONs and
+  OSDs like `Monitors` and `OSDs`, but stop waiting for a concurrent topology
+  change when `ctx` ends, as `ManagersContext` already did. The MON
+  replacement diagnostics of `TestMultiClusterMonitorBootstrapRefresh` use
+  them for the quorum wait, every snapshot, the warm-daemon identities and
+  the log traces, so a held topology mutex no longer outlives the failure
+  bundle's bound (#4).
+
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
   ordinary cluster-owned Docker local named volume, allocated on the first OSD.
   Purged OSD directories are discarded only after container removal; busy volume
