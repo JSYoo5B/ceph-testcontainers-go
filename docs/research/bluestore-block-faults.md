@@ -136,8 +136,8 @@ with a foreign device number.
 
 The runs below used the hosted `ubuntu-latest` image on x86_64 with
 util-linux 2.39.3, device-mapper library 1.02.185 and DM driver 4.50.0. The
-first two ran on kernel `6.17.0-1022-azure`; by the third run the image had
-moved to kernel `7.0.0-1017-azure`. `dmsetup targets` listed `linear` 1.5.0, `error` 1.7.0, `striped`
+first two ran on kernel `6.17.0-1022-azure` and the third on
+`7.0.0-1017-azure`; hosted runners served both kernels during this study. `dmsetup targets` listed `linear` 1.5.0, `error` 1.7.0, `striped`
 and `multipath` before the probe, and additionally `delay` 1.5.0 and `flakey`
 1.5.0 after it. The mapping's queue reported `write back`, so the kernel
 issues flushes to it. The runner was destroyed after each job.
