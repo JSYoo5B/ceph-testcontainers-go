@@ -101,6 +101,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
     # The pull request comment command (#116): issue_comment only.
     COMMAND = "ci-command.yml"
+    # The scratch-device research probe (#7): its own paths only, no scenarios.
+    BLOCK_FAULT_PROBE = "block-fault-probe.yml"
     PERIODIC_SCHEDULE = "41 */3 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
 
@@ -257,8 +259,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
+        probe = self.workflows[self.BLOCK_FAULT_PROBE]
+        self.assertIn("\non:\n  pull_request:\n    paths:\n", probe)
+        self.assertNotIn("tagged-runtime.yml", probe)
         self.assertEqual(set(self.ENTRY_POINTS), self.GATING | self.SCOPED)
         self.assertNotIn("test.yml", self.workflows)
         ignored = "".join("      - " + path + "\n" for path in self.RUNTIME_PATHS_IGNORE)
