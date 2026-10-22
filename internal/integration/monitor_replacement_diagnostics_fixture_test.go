@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -300,6 +301,32 @@ func (f *fakeMonCluster) OSDs() []*ceph.OSDContainer {
 	return []*ceph.OSDContainer{{ID: 0, Container: &fakeDaemonContainer{cluster: f, daemon: "osd.0"}}}
 }
 
+// The context getters, like the real ones, list membership under the
+// topology mutex and stop waiting for it when ctx ends.
+func (f *fakeMonCluster) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error) {
+	if err := f.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer f.unlock()
+	return f.Monitors(), nil
+}
+
+func (f *fakeMonCluster) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+	if err := f.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer f.unlock()
+	return f.Managers(), nil
+}
+
+func (f *fakeMonCluster) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error) {
+	if err := f.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer f.unlock()
+	return f.OSDs(), nil
+}
+
 // fakeDaemonContainer reports the generation that its cluster records.
 type fakeDaemonContainer struct {
 	testcontainers.Container
@@ -582,5 +609,125 @@ func TestMonReplacementMDSWithoutCLIIsIncomplete(t *testing.T) {
 	finishMonReplacement(reporter, r)
 	if reporter.entries[1] != "log MON_REPLACEMENT_DEBUG token="+r.Token+" cluster=source debug_monc_restored=2/2" || f.debug["mds.fs-a"] != "1/5" {
 		t.Fatalf("reported %q debug %v", reporter.entries, f.debug)
+	}
+}
+
+// heldTopologyMonCluster lists membership through a real cluster value whose
+// topology mutex a test holds; every other observation is the fake's.
+type heldTopologyMonCluster struct {
+	*fakeMonCluster
+	real *ceph.Container
+}
+
+func (c heldTopologyMonCluster) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error) {
+	return c.real.MonitorsContext(ctx)
+}
+
+func (c heldTopologyMonCluster) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+	return c.real.ManagersContext(ctx)
+}
+
+func (c heldTopologyMonCluster) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error) {
+	return c.real.OSDsContext(ctx)
+}
+
+// holdTopology holds the real cluster's topology mutex until the test ends.
+func holdTopology(t *testing.T) *ceph.Container {
+	t.Helper()
+	real := servicehook.TestCluster(nil, servicehook.TestConfig{OSDs: 1})
+	servicehook.Lock(real)
+	t.Cleanup(func() { servicehook.Unlock(real) })
+	return real
+}
+
+// awaitWhileHeld fails the test unless work returns while real's topology
+// mutex is still held, so that no enumeration waited for its release.
+func awaitWhileHeld[T any](t *testing.T, real *ceph.Container, limit time.Duration, work func() T) T {
+	t.Helper()
+	done := make(chan T, 1)
+	go func() { done <- work() }()
+	select {
+	case result := <-done:
+		if servicehook.TryLock(real) {
+			servicehook.Unlock(real)
+			t.Fatal("the topology mutex was released before the collection returned")
+		}
+		return result
+	case <-time.After(limit):
+		t.Fatalf("collection did not return within %s while the topology mutex was held", limit)
+		panic("unreachable")
+	}
+}
+
+var heldTopologyBounds = monReplacementBounds{
+	Operation: 300 * time.Millisecond, Quorum: 200 * time.Millisecond, QuorumInterval: 5 * time.Millisecond,
+	Query: 20 * time.Millisecond, Snapshot: time.Second, Bundle: 3 * time.Second,
+}
+
+// A failure bundle collected while another operation holds the topology
+// mutex returns within its bounds, before the mutex is released. Membership
+// it cannot list is incomplete, a debug window whose daemon it cannot
+// identify stays explicitly unrestored, and the observations that need no
+// membership, such as the MDS reached in its own container, are kept.
+func TestMonReplacementCollectionReturnsWhileTopologyIsHeld(t *testing.T) {
+	f := newFakeMonCluster()
+	real := holdTopology(t)
+	r := fakeMDS(f, newMonReplacementRecorder("source", heldTopologyMonCluster{f, real}, heldTopologyBounds))
+	r.Debug = []monReplacementDebug{
+		{Daemon: "mgr.x", StartedAt: "t0", Prior: "1/5", Set: true},
+		{Daemon: "mds.fs-a", StartedAt: "t0", Prior: "1/5", Set: true},
+	}
+	f.debug["mgr.x"], f.debug["mds.fs-a"] = monReplacementDebugLevel, monReplacementDebugLevel
+	failed := monReplacementPhase{Seq: 1, Name: "add d", Error: "join monitor d to quorum: context deadline exceeded", Handle: "mon.d"}
+	bundle := awaitWhileHeld(t, real, 2*time.Second, func() *monReplacementBundle { return r.collect(t.Context(), failed) })
+	if bundle.Failed.Error != failed.Error || bundle.Failed.Handle != "mon.d" {
+		t.Fatalf("failed phase %+v", bundle.Failed)
+	}
+	for _, want := range []string{"list monitors: context deadline exceeded", "list managers: context deadline exceeded", "list osds: context deadline exceeded"} {
+		if !slices.Contains(bundle.Failure.Incomplete, want) {
+			t.Fatalf("incomplete lacks %q: %v", want, bundle.Failure.Incomplete)
+		}
+	}
+	if !slices.Equal(bundle.Failure.Quorum, []string{"a", "b", "c"}) || len(bundle.Failure.Monitors) != 0 {
+		t.Fatalf("failure snapshot %+v", bundle.Failure)
+	}
+	if len(bundle.Failure.Warm) != 1 || bundle.Failure.Warm[0].Daemon != "mds.fs-a" || bundle.Failure.Warm[0].Native == nil {
+		t.Fatalf("warm %+v", bundle.Failure.Warm)
+	}
+	var owned []string
+	for _, trace := range bundle.Traces {
+		if trace.Daemon == "owned" {
+			owned = append(owned, trace.Error)
+		}
+	}
+	if !slices.Equal(owned, []string{"list managers: context deadline exceeded", "list osds: context deadline exceeded"}) ||
+		!slices.ContainsFunc(bundle.Traces, func(trace monReplacementTrace) bool { return trace.Daemon == "mds.fs-a" && trace.Error == "" }) {
+		t.Fatalf("traces %+v", bundle.Traces)
+	}
+	if !strings.HasPrefix(bundle.Debug[0].Restored, "skipped: identity unavailable: list managers: ") || f.debug["mgr.x"] != monReplacementDebugLevel {
+		t.Fatalf("mgr window %+v debug %v", bundle.Debug[0], f.debug)
+	}
+	if bundle.Debug[1].Restored != "ok" || f.debug["mds.fs-a"] != "1/5" {
+		t.Fatalf("mds window %+v debug %v", bundle.Debug[1], f.debug)
+	}
+}
+
+// The quorum wait of a phase and the replacement's own membership list stop
+// at their bounds while the topology mutex is held; neither adds a monitor
+// it could not account for.
+func TestMonReplacementQuorumWaitReturnsWhileTopologyIsHeld(t *testing.T) {
+	f := newFakeMonCluster()
+	real := holdTopology(t)
+	r := newMonReplacementRecorder("source", heldTopologyMonCluster{f, real}, heldTopologyBounds)
+	err := awaitWhileHeld(t, real, 2*time.Second, func() error {
+		return r.phase(t.Context(), "check", []string{"a", "b", "c"}, func(context.Context) (string, error) { return "", nil })
+	})
+	if err == nil || !strings.Contains(err.Error(), "quorum [a b c] after check") || len(r.Phases) != 1 || r.Phases[0].QuorumProbes == 0 {
+		t.Fatalf("phase %v %+v", err, r.Phases)
+	}
+	r.Baseline = &monReplacementSnapshot{}
+	err = awaitWhileHeld(t, real, 2*time.Second, func() error { return r.replace(t.Context(), fakeMonReplacementPairs) })
+	if err == nil || !strings.Contains(err.Error(), "list monitors before the replacement: context deadline exceeded") || len(f.adds) != 0 {
+		t.Fatalf("replace %v adds %v", err, f.adds)
 	}
 }

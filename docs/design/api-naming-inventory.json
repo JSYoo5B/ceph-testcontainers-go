@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 306,
+    "ceph": 308,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -630,6 +630,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.MonitorsContext",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*MonitorContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.MonitorsContext",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.NetworkName",
       "kind": "method",
       "signature": "func() string",
@@ -659,6 +667,14 @@
       "signature": "func() []*OSDContainer",
       "receiver": "*Container",
       "proposed": "ceph.Container.OSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OSDsContext",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OSDsContext",
       "decision": "baseline"
     },
     {

@@ -299,8 +299,31 @@ gets the selected tags. They are part of the profile's `tags`, and so of its
 build key, its compile receipt and its history configuration identity, and
 the plan and each profile list them in `bug_compatibility`. The profile ID
 does not change. `run --binary` refuses a binary compiled under another
-selection. No workflow passes a selection yet, and the catalogue registers no
-tag, so CI runs every ordinary path.
+selection.
+
+#### Selecting paths in a workflow run
+
+`tagged-runtime.yml` takes the selection as one `workflow_call` input,
+`bug_compatibility`, empty by default. Its Plan job passes the input to
+`plan` and `buildcache` as `--bug-compatibility`, so an invalid selection
+fails the Plan job and no runtime job starts. Each runtime job passes the
+same input to `compile`, `run` or `optional`, together with
+`--profile-tags`, its matrix entry's `tags`. The job recomputes its profile
+from source and its own selection; when those tags differ from the matrix
+entry's, the command fails before it builds or runs anything. The compile
+receipt check then refuses a binary of another selection, as above.
+
+The input reaches each command only as an argument, through a quoted step
+variable. `tag_scenarios.py` reads no selection from the environment, and the
+Go environment it builds with still replaces an inherited `GOFLAGS`, so
+neither `-tags` nor `-overlay` from the runner can select a path. The history
+step passes the input to `scenario_history.py normalize`, which writes no row
+when the receipts were built with another selection (see
+[Scenario history](#scenario-history)).
+
+No caller passes the input. Pull requests, `ci:full`, the comment command
+and the periodic runs therefore keep the empty selection, which is also the
+only valid one while the catalogue registers no tag.
 
 ### Advisory declaration selection
 
@@ -611,13 +634,13 @@ steps in order:
 | Restore the Go module cache | n/a | Restores the module cache that the `Plan` job saved. |
 | Restore the Go build cache | n/a | Restores the build cache that a `Plan` job saved for this Go version and `go.sum`. A miss only makes the compile build every dependency. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. With a restored cache it finds every module at once; otherwise this is the only step that downloads. |
-| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. |
+| Compile selected tagged suite | Compilation | `tag_scenarios.py compile` builds the batch's test binary with `go test -c` within 180 seconds, with `GOPROXY=off`, so it reads only the module cache. It writes the binary as `compile/<package>.test` (for example `internal-integration.test`) and records in `compile-report.json` its sha256, its build key (package, tags, the fixed Go environment, Go version, `GOOS` and `GOARCH`), the sha256 of every source file that the build reads, and the tests that the binary lists. No test runs. It first refuses a recomputed profile whose tags differ from the matrix entry's (see [Selecting paths in a workflow run](#selecting-paths-in-a-workflow-run)). |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every container, network and named volume labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Only for Ceph batches. Pulls the declared immutable role indexes from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for native `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_ESSENTIAL_IMAGE`, `CEPH_TEST_CLIENT_IMAGE`, `CEPH_TEST_CEPHFS_IMAGE`, `CEPH_TEST_RBD_AUX_IMAGE`, `CEPH_TEST_RGW_IMAGE`. Source-owned `image-roles` selects the required subset. Pulls only, never builds. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary artifacts/scenario/compile` runs the binary of the compile step instead of building again (see [Reusing the compiled binary](#reusing-the-compiled-binary)), and applies the pass rules below. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs even after a failure, if the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. It never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the job summary and `phases.json`, and an annotation for each failed or cancelled phase. |
-| Normalize the scenario history row | n/a | Writes `history-row.json` from the saved receipts (see [Scenario history](#scenario-history)). Its own failure never changes the job's result. |
+| Normalize the scenario history row | n/a | Writes `history-row.json` from the saved receipts (see [Scenario history](#scenario-history)), and appends its bug compatibility selection, release, platform and role image IDs to the job summary. Its own failure never changes the job's result. |
 | Save compile, native and phase results | n/a | Uploads `tag-scenario-<id>`. |
 | Identify completed failing tests | n/a | On failure, adds one annotation per failed test or subtest name found in `native.log`. |
 
@@ -1126,6 +1149,13 @@ A row holds:
   job checked out.
 - `build`: the compile receipt's build key, binary sha256, a digest of its
   source hashes, and whether the native step ran that binary.
+- `profile`: the receipts' profile identity and tags, and
+  `bug_compatibility`, the selected bug tags (empty for every ordinary path,
+  `missing` without a receipt). Compile and native receipts with different
+  tags or selections, or receipts of another selection than
+  `--bug-compatibility`, write no row. With `--summary`, `normalize` also
+  appends the selection, tags, checkout tree, release, platform and every
+  role image ID to the job summary.
 - `runtime`: the resolved release, layout, platform and every role's image
   ID and registry digests, or `not_applicable` for a batch without Ceph.
 - `phases`: for each workflow phase, the step outcome (`workflow`), the
@@ -1189,7 +1219,10 @@ profile ID and release:
   scenario outcomes among them failed.
 - `configs`: the 10 most recent configurations. A configuration is the
   profile, network mode, release, checked-out tree, build key, platform and
-  every role image ID; rows without complete identities are counted in
+  every role image ID. The build key holds the profile's tags, so another
+  bug compatibility selection is another configuration; the selection has
+  no field of its own in the identity, which keeps the keys of earlier rows.
+  Rows without complete identities are counted in
   `incomparable_rows` and never joined to one. Each configuration has its
   `passed` and `failed` counts, the excluded attempts by kind, the first
   failure (run, attempt, job, repetition, phase and test; a later pass does

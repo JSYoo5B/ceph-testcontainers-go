@@ -101,6 +101,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
     # The pull request comment command: issue_comment only.
     COMMAND = "ci-command.yml"
+    # The scratch-device research probe (#7): its own paths only, no scenarios.
+    BLOCK_FAULT_PROBE = "block-fault-probe.yml"
     PERIODIC_SCHEDULE = "41 */3 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
 
@@ -257,8 +259,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_separate_workflows_with_independent_entry_points(self):
         expected = {"code.yml", "tagged-runtime.yml", "native-regressions.yml", self.PERIODIC,
-                    self.RELEASE_MATRIX, self.COMMAND, *self.ENTRY_POINTS}
+                    self.RELEASE_MATRIX, self.COMMAND, self.BLOCK_FAULT_PROBE, *self.ENTRY_POINTS}
         self.assertEqual(set(self.workflows), expected)
+        probe = self.workflows[self.BLOCK_FAULT_PROBE]
+        self.assertIn("\non:\n  pull_request:\n    paths:\n", probe)
+        self.assertNotIn("tagged-runtime.yml", probe)
         self.assertEqual(set(self.ENTRY_POINTS), self.GATING | self.SCOPED)
         self.assertNotIn("test.yml", self.workflows)
         ignored = "".join("      - " + path + "\n" for path in self.RUNTIME_PATHS_IGNORE)
@@ -1130,6 +1135,117 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
         for path in (ROOT / ".github/workflows").glob("*.yml"):
             if path.name not in ("ceph-short.yml", "tagged-runtime.yml"):
                 self.assertNotIn("select_declarations", path.read_text(), path.name)
+
+
+class BugCompatibilityWorkflowTests(unittest.TestCase):
+    """One explicit bug compatibility input reaches every planner command of
+    a tagged runtime run as an argument; callers keep the empty default."""
+
+    # The planner commands that recompute a plan, so take the selection.
+    SELECTING = ("plan", "buildcache", "compile", "run", "optional")
+    # The commands of a runtime job that also name their matrix entry's tags.
+    ENTRY = ("compile", "run", "optional")
+    ARGUMENT = '--bug-compatibility "$SCENARIO_BUG_COMPATIBILITY"'
+    VARIABLE = "${{ inputs.bug_compatibility }}"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflows = {path.name: path.read_text() for path in (ROOT / ".github/workflows").glob("*.yml")}
+        cls.reusable = cls.workflows["tagged-runtime.yml"]
+        jobs = dict(blocks(cls.reusable.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        cls.steps = [step for job in jobs.values() for step in steps(job)]
+
+    def engine_lines(self):
+        """(operation, command line, step) of every tag_scenarios.py command."""
+        for step in self.steps:
+            for line in run_command(step).splitlines():
+                match = re.search(r"\btag_scenarios\.py (\w+)", line)
+                if match:
+                    yield match[1], line, step
+
+    def test_the_input_is_declared_once_with_an_empty_default(self):
+        inputs = self.reusable.split("\npermissions:", 1)[0]
+        self.assertRegex(inputs, r"(?m)^      bug_compatibility:\n(?:        .*\n)*?        default: ''\n"
+                                 r"        type: string\n")
+        self.assertEqual(inputs.count("bug_compatibility:"), 1)
+
+    def test_every_selecting_command_takes_the_same_input_as_an_argument(self):
+        seen = set()
+        for operation, line, step in self.engine_lines():
+            with self.subTest(operation=operation, line=line):
+                if operation not in self.SELECTING:
+                    self.assertNotIn("--bug-compatibility", line)
+                    continue
+                seen.add(operation)
+                self.assertEqual(shlex.split(line).count("--bug-compatibility"), 1)
+                self.assertIn(self.ARGUMENT, line)
+                self.assertEqual(scalar(step, "SCENARIO_BUG_COMPATIBILITY"), self.VARIABLE)
+                if operation in self.ENTRY:
+                    self.assertIn('--profile-tags "$SCENARIO_PROFILE_TAGS"', line)
+                    self.assertEqual(scalar(step, "SCENARIO_PROFILE_TAGS"), "${{ matrix.tags }}")
+        self.assertEqual(seen, set(self.SELECTING))
+
+    def test_history_row_checks_the_selection_and_writes_the_job_summary(self):
+        step = next(step for step in self.steps if "scenario_history.py normalize" in run_command(step))
+        command = shlex.split(run_command(step).replace("\\\n", " "))
+        self.assertEqual(command[command.index("--bug-compatibility") + 1], "$SCENARIO_BUG_COMPATIBILITY")
+        self.assertEqual(command[command.index("--summary") + 1], "$GITHUB_STEP_SUMMARY")
+        self.assertEqual(scalar(step, "SCENARIO_BUG_COMPATIBILITY"), self.VARIABLE)
+
+    def test_no_expression_or_go_variable_carries_the_selection(self):
+        # The input reaches a command only through a quoted step variable,
+        # and no workflow sets a Go variable that could select tags.
+        for step in self.steps:
+            self.assertNotIn("inputs.bug_compatibility", run_command(step))
+        for name, text in self.workflows.items():
+            with self.subTest(workflow=name):
+                self.assertNotRegex(text, r"(?m)^\s+(?:GOFLAGS|GOENV|GOWORK|CGO_CFLAGS):")
+                self.assertNotRegex(text, r"(?<![-\w])-tags[= ]")
+
+    def test_callers_keep_the_default_selection(self):
+        # Pull requests, ci:full, the comment command and the periodic
+        # campaigns select every ordinary path until a caller opts in.
+        for name, text in self.workflows.items():
+            if name != "tagged-runtime.yml":
+                self.assertNotIn("bug_compatibility", text, name)
+
+    def run_plan_step(self, category, selection):
+        """Run the plan step's shell with python3 replaced by a recorder."""
+        plan_step = next(step for step in self.steps if re.search(r"\btag_scenarios\.py plan\b", run_command(step)))
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "bin").mkdir()
+            recorder = directory / "bin" / "python3"
+            recorder.write_text("#!/bin/sh\nfor argument in \"$@\"; do printf '%s\\n' \"$argument\"; done "
+                                "> \"$RECORD\"\n")
+            recorder.chmod(0o755)
+            environment = {"PATH": str(directory / "bin") + ":/usr/bin:/bin", "RECORD": str(directory / "record"),
+                           "SCENARIO_CATEGORY": category, "SCENARIO_OPTIONAL_BATCH": "native_rgw_translation",
+                           "SCENARIO_PROFILES": "x", "SCENARIO_CHANGED_SINCE": "",
+                           "SCENARIO_SELECT_DECLARATIONS": "", "SCENARIO_NETWORKS": "default",
+                           "SCENARIO_REPETITIONS": "1", "SCENARIO_BUG_COMPATIBILITY": selection,
+                           "GITHUB_OUTPUT": str(directory / "output"), "GITHUB_STEP_SUMMARY": str(directory / "s")}
+            subprocess.run(["sh", "-e", "-c", run_command(plan_step)], cwd=directory, env=environment,
+                           check=True, timeout=30)
+            return (directory / "record").read_text().splitlines()
+
+    def test_every_plan_branch_validates_the_selection_before_any_runtime_job(self):
+        for category in ("short", "optional", "selected", "representative"):
+            for selection in ("", "ceph_bug_synthetic_a, ceph_bug_synthetic_b"):
+                with self.subTest(category=category, selection=selection):
+                    command = self.run_plan_step(category, selection)
+                    self.assertEqual(command[1], "plan")
+                    self.assertEqual(command[command.index("--bug-compatibility") + 1], selection)
+        jobs = dict(blocks(self.reusable.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))
+        self.assertEqual(scalar(jobs["runtime"], "needs"), "plan")
+
+    def test_the_checked_in_registry_allows_only_the_empty_selection(self):
+        registry = engine.load_bug_registry()
+        self.assertEqual(registry["tags"], {})
+        self.assertEqual(engine.bug_selection(registry, "")["selected"], ())
+        with contextlib.redirect_stderr(io.StringIO()) as error, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(engine.main(["plan", "--bug-compatibility", "ceph_bug_synthetic_a"]), 1)
+        self.assertIn("unregistered bug compatibility tag", error.getvalue())
 
 
 class FailureReporterSafetyTests(unittest.TestCase):
