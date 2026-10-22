@@ -250,7 +250,7 @@ class MatrixTests(unittest.TestCase):
         self.assertFalse((self.output / "integration.log").exists())
 
     def test_declared_control_role_never_touches_other_roles(self):
-        # #29: an RGW pull that the registry refuses fails a four-role
+        # An RGW pull that the registry refuses fails a four-role
         # preparation, but a batch that declares only the essential role never
         # asks for that image.
         env_file = self.write("github-env", "EXISTING=keep\n")

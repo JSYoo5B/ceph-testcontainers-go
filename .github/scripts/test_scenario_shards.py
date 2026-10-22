@@ -93,13 +93,13 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
     # and on pushes to main only in a release phase.
     SCOPED = {"ceph-topology.yml", "ceph-multicluster.yml", "ceph-recovery.yml"}
     # A pull request of this gating category may opt in to declaration
-    # selection with a label (#116); pushes to main always run every batch.
+    # selection with a label; pushes to main always run every batch.
     OPT_IN = {"ceph-short.yml": "ci:selected-batches"}
     # The releases and check names that the per-release caller jobs had
     # before SUPPORTED_RELEASES generated them. They must stay covered.
     HISTORICAL_RELEASES = {"20.2.4": "tentacle", "19.2.5": "squid"}
     PERIODIC, RELEASE_MATRIX = "ceph-periodic.yml", "ceph-release-matrix.yml"
-    # The pull request comment command (#116): issue_comment only.
+    # The pull request comment command: issue_comment only.
     COMMAND = "ci-command.yml"
     PERIODIC_SCHEDULE = "41 */3 * * *"
     CAMPAIGN_SCHEDULE = "23 4 * * *"
@@ -1022,7 +1022,7 @@ def folded(text, key):
 
 class OptInDeclarationSelectionTests(unittest.TestCase):
     """Ceph short narrows a pull request to the declaration selection only
-    when the pull request carries the opt-in label (#116). Every other event,
+    when the pull request carries the opt-in label. Every other event,
     and every push to main, runs every batch."""
 
     LABEL = SourceDrivenWorkflowTests.OPT_IN["ceph-short.yml"]

@@ -88,7 +88,7 @@ jobs:
       # setup-go's own cache is keyed by go.sum and saved by whichever job
       # finishes first. Once that was this job, which needs almost no modules,
       # every later job restored an 11 MB cache and downloaded its modules
-      # inside the compile bound (#51). This job fills an explicit module
+      # inside the compile bound. This job fills an explicit module
       # cache instead, before any runtime job starts.
       - uses: actions/setup-go@v7
         id: go

@@ -5,7 +5,7 @@ name: Ceph short
 #
 # Every batch runs on every push to main and on every pull request. A pull
 # request can opt in to running only the batches that reach a declaration it
-# changes, with the ci:selected-batches label (#116). The selection is
+# changes, with the ci:selected-batches label. The selection is
 # advisory: adding or removing the label starts a new run, and pushes to main
 # always run every batch, so a selection miss surfaces at the next merge.
 on:

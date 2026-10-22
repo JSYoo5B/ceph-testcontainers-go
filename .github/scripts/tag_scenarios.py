@@ -770,7 +770,7 @@ def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
 
 
 def declaration_selection(profiles, base, root=ROOT, runner=None):
-    """Advisory selection of profiles by declaration reachability (#116).
+    """Advisory selection of profiles by declaration reachability.
 
     It is recorded beside the plan and never changes which profiles run.
     A profile outside the analysed package, or any failure of the analysis,
@@ -806,7 +806,7 @@ def declaration_selection(profiles, base, root=ROOT, runner=None):
 
 def apply_declaration_selection(plan, selection):
     """Keep only the profiles that the declaration selection selected: the
-    pull request scope of a gating category (#116). Pushes to main run the
+    pull request scope of a gating category. Pushes to main run the
     full plan, so a miss surfaces at the next merge."""
     selected = [profile for profile in plan["include"] if profile["id"] in selection["selected"]]
     return {**plan, "include": selected, "selected_scope": "declarations", "selected_profiles": len(selected),
@@ -902,7 +902,7 @@ def select_optional_plan(plan, batch):
 
 def select_profiles_plan(plan, optional, identifiers):
     """The runtime profiles named by ID, of any category or optional: the
-    plan of a pull request comment command (ci_command.py, #116). It claims
+    plan of a pull request comment command (ci_command.py). It claims
     no coverage; an unknown, duplicate or code profile ID refuses the plan."""
     names = [name.strip() for name in identifiers.split(",") if name.strip()]
     if not names:
