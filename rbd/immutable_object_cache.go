@@ -26,7 +26,7 @@ const (
 )
 
 // ImmutableObjectCache configures the RBD immutable object cache daemon,
-// ceph-immutable-object-cache, that TemporaryImmutableObjectCache starts in a
+// ceph-immutable-object-cache, that StartImmutableObjectCache starts in a
 // client container. The daemon caches whole parent-image objects of clones
 // for the librbd clients in that container that enable the parent cache.
 type ImmutableObjectCache struct {
@@ -64,7 +64,7 @@ type ImmutableObjectCacheStatus struct {
 	RADOSReads uint64
 }
 
-// ImmutableObjectCacheLease owns one daemon that TemporaryImmutableObjectCache
+// ImmutableObjectCacheLease owns one daemon that StartImmutableObjectCache
 // started, with its socket and cache directory.
 type ImmutableObjectCacheLease struct {
 	// Config is the request with its defaults filled in.
@@ -164,7 +164,7 @@ remove)
 esac
 `
 
-// TemporaryImmutableObjectCache starts the RBD immutable object cache daemon
+// StartImmutableObjectCache starts the RBD immutable object cache daemon
 // in client, a container that the caller owns, and returns its lease. A
 // librbd client in the same container uses the cache when it sets the
 // lease's ClientOptions; other clients read the parents from RADOS. The
@@ -173,7 +173,7 @@ esac
 // both, and an image without them is refused with ceph.ErrImageCapability.
 // An existing socket or a non-empty cache directory is refused with
 // ceph.ErrInvalidRequest, and nothing is changed.
-func TemporaryImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error) {
+func StartImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error) {
 	config, err := normalizeImmutableObjectCache(client, config)
 	if err != nil {
 		return nil, err

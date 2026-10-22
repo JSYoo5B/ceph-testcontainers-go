@@ -68,6 +68,7 @@ Service containers inherit the renamed ceph methods through their embedded
 `*ceph.Container`; their own service APIs are not renamed in this checkpoint.
 
 `TemporaryBlocklist` still has a real native duration/expiry and stays in `ceph`.
-`OverrideFullRatios`, Pause/Resume, native input Close and the proposed service
-and network names are not changed here. The [naming inventory](../design/api-naming.md)
-distinguishes implemented names from proposals and unreviewed baseline entries.
+`OverrideFullRatios`, Pause/Resume and native input Close are unchanged by
+this checkpoint. Later service/network/cache stages and the
+[final naming audit](../design/api-naming-audit.md) complete the staged pass;
+regenerating a baseline inventory alone still does not approve names.

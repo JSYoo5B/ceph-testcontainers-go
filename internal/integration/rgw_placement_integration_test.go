@@ -171,8 +171,9 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	body := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + sourcePlacement.LocationConstraint + `</LocationConstraint></CreateBucketConfiguration>`)
 	rgwPlacementWaitCreateBucket(t, ctx, clients[0], bucket, body)
 	payload := bytes.Repeat([]byte("realm-selected-storage-class\n"), 4096)
+	source := rgwPlacementBindSource(t, ctx, fixture.Source)
 	rgwPlacementRequest(t, ctx, clients[0], http.MethodPut, bucket+"/replicated", payload, "STANDARD_IA", http.StatusOK)
-	rgwPlacementWaitReplica(t, ctx, clients[1], bucket+"/replicated", payload)
+	rgwPlacementWaitReplica(t, ctx, clients[1], source, bucket+"/replicated", payload)
 	var replicaListing struct {
 		Contents []struct{ Key, StorageClass string } `xml:"Contents"`
 	}

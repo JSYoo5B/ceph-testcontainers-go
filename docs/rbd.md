@@ -13,7 +13,7 @@ package starts such a cluster and prepares the server side of RBD tests:
 - image namespaces for tenant isolation (`CreateNamespace`, `ListNamespaces`, `RemoveNamespace`);
 - observation of the clients that watch an image and hold its locks (`ImageClients`), for exclusive-lock and fencing tests;
 - full and incremental backup transport between independent clusters (`ExportBackup`, `ExportIncremental`, `RestoreBackup`, `RestoreIncremental`);
-- the RBD immutable object cache daemon in a client container, with its cached objects and RADOS reads (`TemporaryImmutableObjectCache`);
+- the RBD immutable object cache daemon in a client container, with its cached objects and RADOS reads (`StartImmutableObjectCache`);
 - native `rbd-mirror` replication between two clusters, in snapshot or journal mode, with image or pool scope, default or named namespaces, any number of receiver daemons, and typed readiness observation (`RunMirror` and the `Mirror` methods).
 
 Image CRUD (create, clone, flatten, trash, migration, group snapshots,
@@ -444,15 +444,15 @@ The daemon runs in a client container that you own, next to the librbd
 consumer: both use the same socket and cache directory. The container needs
 `ceph-immutable-object-cache` on its `PATH` and the librbd `parent_cache`
 plugin in its plugin directory. The official Ceph image has both, and so do
-the `control` role images of
-[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images)
-that include the `ceph-immutable-object-cache` package. A container without them is refused with
+the current `rbd-aux` role images of
+[ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images).
+Select `cluster.Images().RBDAux` for the caller-owned cache client container. A container without them is refused with
 `ceph.ErrImageCapability`; nothing is installed at runtime.
 
-#### TemporaryImmutableObjectCache
+#### StartImmutableObjectCache
 
 ```golang
-func TemporaryImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)
+func StartImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)
 ```
 
 Starts the daemon in `client` and waits until its socket is open. `config`
@@ -510,11 +510,13 @@ and cached 64 MiB; a second export and a Python `rbd.Image.read` added none.
 `rados df` read counters lag behind and do not show this; use `RADOSReads`.
 
 ```golang
-lease, err := rbd.TemporaryImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: "rbd-client"})
+lease, err := rbd.StartImmutableObjectCache(ctx, client, rbd.ImmutableObjectCache{ID: "rbd-client"})
+if lease != nil {
+    defer lease.Restore(context.WithoutCancel(ctx))
+}
 if err != nil {
     return err
 }
-defer lease.Restore(context.WithoutCancel(ctx))
 args := []string{"rbd", "--id", "rbd-client", "export", "pool/clone", "/dev/null"}
 for name, value := range lease.ClientOptions() {
     args = append(args, "--"+name+"="+value)
