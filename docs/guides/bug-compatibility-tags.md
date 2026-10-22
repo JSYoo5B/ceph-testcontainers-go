@@ -7,7 +7,9 @@ exists.
 
 The machine-readable record is
 [`bug-compatibility-tags.json`](bug-compatibility-tags.json). The CI planner
-reads it to validate a selection (see
+reads it to validate a selection, including the `bug_compatibility` input of
+the tagged runtime workflow, whose history rows and job summaries record the
+selection (see
 [Bug compatibility selection](../contributing/ci.md#bug-compatibility-selection)).
 Each entry has exactly these fields:
 

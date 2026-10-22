@@ -1163,7 +1163,20 @@ def verified_binary(directory, profile, expected, root=ROOT):
     return binary, receipt
 
 
-def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None):
+def matrix_tags(profile, tags):
+    """Refuse a profile whose recomputed tags differ from its matrix entry's.
+
+    A runtime job recomputes its plan from source and its own bug
+    compatibility selection; the matrix entry carries the Plan job's tags.
+    When the two selections differ, nothing is built or run."""
+    if tags is not None and tags != profile["tags"]:
+        raise ValueError("the matrix entry's tags differ from this job's recomputed profile tags "
+                         "(Plan and this job selected different bug compatibility paths): "
+                         + tags + " != " + profile["tags"])
+
+
+def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, tests="", binary=None,
+                profile_tags=None):
     """Run one profile, or with tests only those of its tests that declare
     network modes, as a matrix entry of a non-default mode does.
 
@@ -1174,6 +1187,7 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if len(matches) != 1:
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
+    matrix_tags(profile, profile_tags)
     expected = selected_tests(catalog, profile["package"], profile["tags"])
     if not expected:
         raise ValueError("requested runtime profile is empty")
@@ -1285,12 +1299,13 @@ def prepare_modules(directory, root=ROOT):
     return report
 
 
-def compile_profile(plan, category, batch, package, directory, root=ROOT):
+def compile_profile(plan, category, batch, package, directory, root=ROOT, profile_tags=None):
     matches = [profile for profile in plan["include"] if profile["category"] == category
                and profile["batch"] == batch and (package is None or profile["package"] == package)]
     if len(matches) != 1:
         raise ValueError("requested category/batch/package is unsupported or ambiguous")
     profile = matches[0]
+    matrix_tags(profile, profile_tags)
     directory.mkdir(parents=True, exist_ok=False)
     binary = (directory / binary_name(profile["package"])).resolve()
     command = ["go", "test", "-mod=readonly", "-tags=" + profile["tags"], "-c", "-o", str(binary), profile["package"]]
@@ -1351,6 +1366,11 @@ def main(argv=None):
     selection = argparse.ArgumentParser(add_help=False)
     selection.add_argument("--bug-compatibility", default="", metavar="TAGS",
                            help="Comma-separated registered ceph_bug_<id> tags; empty selects every ordinary path")
+    # A runtime job also names its matrix entry's tags, so that a job whose
+    # selection differs from the Plan job's fails before building.
+    entry = argparse.ArgumentParser(add_help=False)
+    entry.add_argument("--profile-tags", metavar="TAGS",
+                       help="The matrix entry's tags; refuse a recomputed profile with other tags")
     for name in ("plan", "verify"):
         command = commands.add_parser(name, parents=[selection])
         command.add_argument("--output", type=Path)
@@ -1380,7 +1400,7 @@ def main(argv=None):
             command.add_argument("--networks", choices=NETWORK_SCOPES, default="default",
                                  help="Run each batch in its default network mode, or in every mode it declares")
     for name in ("compile", "run"):
-        command = commands.add_parser(name, parents=[selection])
+        command = commands.add_parser(name, parents=[selection, entry])
         command.add_argument("--category", required=True,
                              choices=(*CATEGORIES, "optional") if name == "compile" else CATEGORIES)
         command.add_argument("--batch", required=True)
@@ -1403,7 +1423,7 @@ def main(argv=None):
     command.add_argument("--directory", required=True, type=Path)
     command = commands.add_parser("buildcache", parents=[selection])
     command.add_argument("--directory", required=True, type=Path)
-    command = commands.add_parser("optional", parents=[selection])
+    command = commands.add_parser("optional", parents=[selection, entry])
     command.add_argument("--batch", required=True)
     command.add_argument("--package")
     command.add_argument("--directory", required=True, type=Path)
@@ -1469,10 +1489,11 @@ def main(argv=None):
             return 0 if report["passed"] else 1
         if args.command == "run":
             report = run_profile(catalog, plan, args.category, args.batch, args.package, args.directory,
-                                 tests=args.tests, binary=args.binary)
+                                 tests=args.tests, binary=args.binary, profile_tags=args.profile_tags)
         elif args.command == "compile":
             selected_plan = discover_optional(catalog, bugs) if args.category == "optional" else plan
-            report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory)
+            report = compile_profile(selected_plan, args.category, args.batch, args.package, args.directory,
+                                     profile_tags=args.profile_tags)
         elif args.command == "code":
             profiles = [profile for profile in plan["include"] if profile["category"] == "code"]
             if not profiles:
@@ -1485,7 +1506,7 @@ def main(argv=None):
         elif args.command == "optional":
             optional = discover_optional(catalog, bugs)
             report = run_profile(catalog, optional, "optional", args.batch, args.package, args.directory,
-                                 binary=args.binary)
+                                 binary=args.binary, profile_tags=args.profile_tags)
         else:
             if args.command == "plan":
                 if args.optional:

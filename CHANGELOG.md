@@ -459,6 +459,13 @@ change the API.
   must keep the same test names in the same batch; the selection is part of
   each profile's tags, build key and history identity. No workflow passes a
   selection, so CI behavior is unchanged (#24).
+- `tagged-runtime.yml` takes one `bug_compatibility` input, empty by default,
+  and passes it as an argument to every planner command of the run. The Plan
+  job refuses an invalid selection before any runtime job starts, and a
+  runtime job whose recomputed profile tags differ from its matrix entry's
+  fails before building. History rows record the selection, refuse receipts
+  of another selection, and the job summary shows it beside the role image
+  IDs. No caller passes the input, so CI behavior is unchanged (#24).
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts
