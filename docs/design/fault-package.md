@@ -127,7 +127,7 @@ defines its own unexported category error type with the same `Is` rule as
 | `TemporaryOSDFlag` / `OSDFlagOverride` (`ceph/osd_policy.go`) | Stays | Ordinary operational OSDMap flags (`noout`, `noscrub`, `norebalance` ...) also used for maintenance and recovery control. Pairing it with `PauseContainer` (`nodown`) is a recipe. |
 | `TemporaryClientRevocation` / `ClientRevocation` (`ceph/client_revocation.go`) | Stays | Client identity lifecycle. It depends on `authFences`, `clientKeys` and `clientRevocations` and the fencing of `ReplaceClientKey`, and it is `sharedTenant`. Moving it means designing an auth boundary, which is outside this refactor. |
 | `cephfs.Filesystem.TemporarySessionTimeouts`, `TemporarySnapshotSchedule`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Stay in `cephfs` | MDS and file system configuration. |
-| `rbd.TemporaryImmutableObjectCache` | Stays in `rbd` | Client feature lease, not a fault. |
+| `rbd.StartImmutableObjectCache` | Stays in `rbd` | Client feature lease, not a fault. |
 
 ### Service-package fault helpers
 
