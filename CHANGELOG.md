@@ -522,6 +522,15 @@ change the API.
   fails before building. History rows record the selection, refuse receipts
   of another selection, and the job summary shows it beside the role image
   IDs. No caller passes the input, so CI behavior is unchanged (#24).
+
+- `ci_measurements.py cohorts` joins measured runtime jobs to their saved
+  history rows by repository, run ID, run attempt and job ID, and groups the
+  joined attempts by `scenario_history.config_key`. Each configuration keeps
+  an outcome ledger of attempts and runner seconds for every outcome, and
+  timing ranges of its passed attempts only. Rows and jobs that do not join
+  are listed with the reason (#1). `fetch` now stores the jobs of cancelled
+  runs for that ledger, while `report` still leaves cancelled runs out.
+
 - A collaborator can run chosen runtime batches on a pull request with a
   comment line `/ci run <batch|profile>... [on <release|codename|all>]`.
   The `CI command` workflow (`ci-command.yml`, on `issue_comment`) accepts
