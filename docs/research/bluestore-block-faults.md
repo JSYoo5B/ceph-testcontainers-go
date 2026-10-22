@@ -115,6 +115,11 @@ OSD effect. A timed-out load, suspend or resume, an identity change or an
 incomplete observation halts every later control action; the probe does not
 retry, and the verdict becomes `uncertain`. The verdict is `complete`,
 `ineligible`, `failed` or `uncertain`; the workflow fails for the latter two.
+`complete` means that nothing failed and nothing is uncertain. It does not
+mean that every effect was observed: an operation can be `unverified` (for
+example a flush when the mapping has no write-back cache) and its phase
+`partly-unverified` while the verdict stays `complete`. Each observation's
+own `effect` field is the result to read.
 
 The decisions are covered by Docker-free unit tests with a fake kernel
 ([`test_block_fault_probe.py`](../../.github/scripts/test_block_fault_probe.py)):
@@ -123,8 +128,9 @@ the mapping suspended; a successful `dmsetup remove` that leaves the mapping
 present; a successful detach that leaves the association bound; a lingering
 opener; a rejected optional feature; a delay that is not observed; an error
 table whose write still mutates data; a foreign UUID after resume; an I/O
-helper that times out without being reaped; and a device node with a foreign
-device number.
+helper that times out without being reaped; a `dmsetup create` or
+`losetup --find` child that times out without being reaped; and a device node
+with a foreign device number.
 
 ## What the probe observed
 
@@ -251,18 +257,24 @@ removal and never removes a resource it cannot identify as its own.
 Cleanup runs in a fixed order and each step records the command outcome
 separately from the observed state:
 
-1. Skip all removal if any earlier control was uncertain or an I/O child may
-   still be running.
-2. Observe the mapping. Wait up to 10 s for its open count to reach 0,
+1. If any control or I/O child timed out and could not be reaped after
+   SIGKILL, keep the whole chain (mapping, loop and file) and run no removal
+   command. Observing the mapping or association absent at that moment does
+   not stop the child from creating or binding it later.
+2. Otherwise, a complete `dmsetup info` scan that shows the mapping absent
+   lets cleanup continue with the loop. If the mapping is present and an
+   earlier control was uncertain or an I/O may still be in flight, keep the
+   mapping and everything under it.
+3. Observe the mapping. Wait up to 10 s for its open count to reach 0,
    recording the openers. Remove it only when it is our UUID and device
    number, active, not suspended and not open, then require a complete
    `dmsetup info` scan to show it gone. Exit status 0 alone is not enough,
    since a deferred removal also returns 0 while the mapping remains.
-3. Detach the loop device only after the mapping is observed gone and the
+4. Detach the loop device only after the mapping is observed gone and the
    association is still exactly ours, then require a complete scan to show
    no association with the backing inode. A detach that returns 0 can leave
    a lazily detached association bound while other openers remain.
-4. Remove the backing file only with no association to its inode and the
+5. Remove the backing file only with no association to its inode and the
    same device and inode as created.
 
 Anything not released is listed as retained and makes the verdict
@@ -324,8 +336,15 @@ not part of this report. It should proceed only when all of these hold:
 
 - It runs on an eligible, disposable native Linux host (the hosted
   `ubuntu-latest` runner qualifies on the evidence above), and repeats this
-  scratch probe there first, on a separate mapping, with a `complete`
-  verdict.
+  scratch probe there first, on a separate mapping. The verdict `complete`
+  alone is not enough. The report must show, each with `effect: observed`:
+  the exact baseline; the delay phase's read, write and flush (the flush
+  needs a `write back` queue, otherwise the flush class is not claimed for
+  the OSD step); `EIO` for both the read and the write of the error phase;
+  for the `flakey` phases, only when the OSD step uses direction-specific
+  errors, `EIO` in the selected direction and success in the other. Every
+  restore must be `restored` with the exact baseline readback, and cleanup
+  must retain nothing.
 - It identifies or neutralizes host openers before a whole-device fault, for
   example by recording openers and udev completion around each transition and
   treating a non-OSD opener as an uncertain state. `--noudevsync` alone only
