@@ -81,8 +81,30 @@ the same UUID, then reopens it. The test requires a different container, the
 same ID, UUID, FSID and volume, a clean PG and an exact readback. No other
 replica exists, so the bytes come from the retained store.
 
+The same batch checks native refusals before that positive path, and each one
+must leave nothing changed.
+
+1. With the OSD paused through `fault.Pause`, `DetachOSD` refuses. The same
+   container stays running and paused, the handle stays owned and the
+   registration is unchanged. After the resume, a native command on that
+   instance still runs, so the refusal set no fence. Detach then succeeds.
+2. After detach, `RemoveOSD` refuses and the registration stays the same.
+3. An independent observer container mounts the owned volume read/write and
+   appends a line to the retained `keyring`. `ReopenOSD` refuses because the
+   store changed since detach. The Docker container list, the down
+   registration with the same UUID and the store fingerprint stay unchanged:
+   mode, inode, size and modification time of every entry, and a SHA-256 of
+   every regular file except `block`. No OSD is published.
+4. The observer writes the original keyring bytes back in place, so the
+   fingerprint equals the detached one except the keyring's modification
+   time. The observer is removed and the reopen then succeeds.
+5. A second `ReopenOSD` of the consumed handle refuses.
+
 This does not cover abrupt exit, host or daemon restart durability, image
 changes between detach and reopen, reopening in another cluster, the tmpfs and
-MemStore backends, detaching with a fault held, or several retained stores in
-one native run. A pending-resource ledger for a lost creation reply still
-relies on the existing owner-label scan.
+MemStore backends, a held network delay or interruption at detach, cancelled
+or partially failed native detach and reopen, concurrent reopens from separate
+goroutines, or several retained stores in one native run. Unit tests cover a
+cancelled reopen, partial detach and a failed reopen start with fakes only. A
+pending-resource ledger for a lost creation reply still relies on the existing
+owner-label scan.
