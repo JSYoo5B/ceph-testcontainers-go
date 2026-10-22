@@ -10,7 +10,7 @@ batches the pull request's diff selects.
 With --github, the runtime runs of each pull request are read with the gh
 CLI: every attempt of every pull request run on the pull request's branch,
 and the push run of the merge commit. A batch job that failed must be in the
-selection of the diff that the run tested, or it is a miss (issue #116).
+selection of the diff that the run tested, or it is a miss.
 Cancelled jobs are ignored: the maintainer cancels runs on purpose. Only an
 excluded failure whose job ID batch_selection_explained.json records, with
 the batch, the failure's signature, the evidence that the diff did not cause

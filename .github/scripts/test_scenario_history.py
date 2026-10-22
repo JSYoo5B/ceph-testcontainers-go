@@ -271,6 +271,101 @@ class NormalizeTest(unittest.TestCase):
             self.job.row(profile="other-profile")
 
 
+# A synthetic bug ID: a test input only, never registered in the catalogue.
+BUG = "ceph_bug_synthetic_a"
+
+
+def select_bug(job, compile_selection=(BUG,), native_selection=(BUG,)):
+    """Rewrite a job's receipts as if built with a bug compatibility selection."""
+    for path, selection in (("compile/compile-report.json", compile_selection),
+                            ("native/report.json", native_selection)):
+        report = json.loads((job.scenario / path).read_text())
+        report["profile"] = PROFILE | {"tags": ",".join((PROFILE["tags"], *selection)),
+                                       "bug_compatibility": list(selection)}
+        if "build_key" in (report.get("binary") or {}):
+            report["binary"]["build_key"] = report["binary"]["build_key"] | {"tags": report["profile"]["tags"]}
+        write(job.scenario / path, report)
+    return job
+
+
+class BugCompatibilityProvenanceTest(unittest.TestCase):
+    """A row names the selected paths of its receipts, and refuses receipts
+    of another selection than the workflow's or than each other's."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+
+    def test_row_records_the_receipts_selection(self):
+        ordinary = Job(self.root / "ordinary").passing().row(bug_compatibility="")
+        self.assertEqual(ordinary["profile"]["bug_compatibility"], [])
+        selected = select_bug(Job(self.root / "selected").passing()).row(bug_compatibility=" " + BUG + " ,")
+        self.assertEqual(selected["profile"]["bug_compatibility"], [BUG])
+        self.assertIn(BUG, selected["build"]["tags"].split(","))
+        # Without the workflow's selection the receipts' own is recorded.
+        self.assertEqual(select_bug(Job(self.root / "unchecked").passing()).row()["profile"]["bug_compatibility"],
+                         [BUG])
+
+    def test_a_job_without_receipts_records_no_selection(self):
+        job = Job(self.root / "job")
+        job.phases(modules="failure", compile="skipped", native="skipped")
+        self.assertEqual(job.row(bug_compatibility="")["profile"]["bug_compatibility"], history.MISSING)
+
+    def test_mismatched_receipts_write_no_row(self):
+        cases = {
+            "another bug compatibility selection than this workflow": (select_bug, {"bug_compatibility": ""}),
+            "another bug compatibility selection than this workflow's: none": (
+                lambda job: job, {"bug_compatibility": BUG}),
+            "different tags or bug compatibility selections": (
+                lambda job: select_bug(job, native_selection=()), {}),
+        }
+        for message, (change, metadata) in cases.items():
+            with self.subTest(message), self.assertRaisesRegex(ValueError, message):
+                change(Job(self.root / str(len(message))).passing()).row(**metadata)
+
+    def test_a_selection_outside_the_profile_tags_is_refused(self):
+        job = Job(self.root / "job").passing()
+        for path in ("compile/compile-report.json", "native/report.json"):
+            report = json.loads((job.scenario / path).read_text())
+            report["profile"] = PROFILE | {"bug_compatibility": [BUG]}
+            write(job.scenario / path, report)
+        with self.assertRaisesRegex(ValueError, "not a sorted subset of their profile tags"):
+            job.row()
+
+    def test_another_selection_is_another_configuration_and_keeps_existing_keys(self):
+        ordinary = Job(self.root / "ordinary").passing().row()
+        selected = select_bug(Job(self.root / "selected").passing()).row(run_id="101")
+        self.assertNotEqual(history.config_key(ordinary), history.config_key(selected))
+        self.assertNotIn("bug_compatibility", history.config_identity(ordinary))
+
+    def test_summary_puts_the_selection_beside_the_image_identities(self):
+        summary = history.provenance_summary(select_bug(Job(self.root / "job").passing()).row())
+        self.assertIn("| Bug compatibility selection | `" + BUG + "` |", summary)
+        self.assertIn("| Image `osd` | sha256:" + "1" * 64 + " |", summary)
+        self.assertIn("| Release | 20.2.4 |", summary)
+        ordinary = history.provenance_summary(Job(self.root / "ordinary").passing().row())
+        self.assertIn("| Bug compatibility selection | none (ordinary paths) |", ordinary)
+        self.assertEqual(history.markdown_cell("a|b\nc"), "a\\|b c")
+
+    def test_command_line_writes_the_summary_and_refuses_a_mismatch(self):
+        job = select_bug(Job(self.root / "job").passing())
+        arguments = ["normalize", "--scenario", str(job.scenario), "--cleanup", str(job.cleanup),
+                     "--images", str(job.images), "--profile", PROFILE["id"], "--repository", "owner/repo",
+                     "--run-id", "1", "--run-attempt", "1", "--summary", str(self.root / "summary.md"),
+                     "--output", str(self.root / "row.json")]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(history.main(arguments + ["--bug-compatibility", BUG]), 0)
+        self.assertIn("`" + BUG + "`", (self.root / "summary.md").read_text())
+        (self.root / "row.json").unlink()
+        (self.root / "summary.md").unlink()
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            self.assertEqual(history.main(arguments + ["--bug-compatibility", ""]), 1)
+        self.assertIn("another bug compatibility selection", error.getvalue())
+        self.assertFalse((self.root / "row.json").exists())
+        self.assertFalse((self.root / "summary.md").exists())
+
+
 class IngestTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

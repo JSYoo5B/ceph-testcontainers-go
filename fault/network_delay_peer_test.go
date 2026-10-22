@@ -145,7 +145,7 @@ func TestPeerNetworkDelayValidation(t *testing.T) {
 	}
 }
 
-// Filter dumps that tc 6.1 printed for these keys, as images #4's checker recorded them, with
+// Filter dumps that tc 6.1 printed for these keys, with
 // the repeated "match" members collected under "matches" as netemScript does.
 const (
 	nativeIPv4PeerFilter = `[{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0},{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0,"options":{"fh":"800:","ht_divisor":1}},{"parent":"7e00:","protocol":"ip","pref":10,"kind":"u32","chain":0,"options":{"fh":"800::1","order":1,"key_ht":"800","bkt":"0","flowid":"7e00:3","not_in_hw":true,"matches":[{"value":"ac130003","mask":"ffffffff","offmask":"","off":16},{"value":"60000","mask":"ff0000","offmask":"","off":8},{"value":"1b58","mask":"ffff","offmask":"","off":20}]}}]`

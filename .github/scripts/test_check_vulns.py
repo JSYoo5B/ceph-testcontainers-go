@@ -44,6 +44,9 @@ class CheckVulnsTests(unittest.TestCase):
         provenance = json.loads(PROVENANCE.read_text())
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(), provenance["fixture_sha256"])
         self.assertEqual((provenance["json_exit_code"], provenance["convert_exit_code"]), (0, 3))
+        self.assertEqual(provenance["historical_origin"]["source_commit"], "0317a8f")
+        self.assertEqual(provenance["historical_origin"]["unavailable"], ["source_commit"])
+        self.assertTrue(provenance["evidence_role"].startswith("historical scanner fixture"))
 
     def test_the_scan_before_the_update_fails_although_govulncheck_exited_zero(self):
         code, out, err = self.run_main(FIXTURE.read_text())

@@ -162,8 +162,16 @@ class QuiescenceCoverageTests(unittest.TestCase):
     def test_retained_producer_source_and_actual_preorder_are_bound(self):
         provenance = json.loads(PROVENANCE.read_text())
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(), provenance["fixture_sha256"])
-        self.assertEqual(provenance["source_sha"], "3ac07fe9525e5442fb646fdd67a92d321e0bc89d")
-        self.assertEqual(provenance["run_id"], 37766891332)
+        # The producing run belongs to the archived predecessor: its
+        # identities stay as recorded, marked unavailable, and the fixture
+        # stays a historical parser control.
+        origin = provenance["historical_origin"]
+        self.assertEqual(origin["source_sha"], "3ac07fe9525e5442fb646fdd67a92d321e0bc89d")
+        self.assertEqual(origin["run_id"], 37766891332)
+        self.assertEqual(origin["job_id"], 113282432657)
+        self.assertEqual(sorted(origin["unavailable"]), ["job_id", "job_url", "run_id", "source_sha"])
+        self.assertTrue(origin["availability"].startswith("unavailable:"))
+        self.assertTrue(provenance["evidence_role"].startswith("historical parser control"))
         self.assertEqual(len(provenance["original_line_numbers"]), 72)
         # Historical logs bind the actual historical producer, independently
         # of today's source layout. Keep the original provenance SHA intact.
