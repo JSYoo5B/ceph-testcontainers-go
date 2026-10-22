@@ -830,8 +830,10 @@ step (`Restore ... cache`, `Save ... cache` or an unnamed `actions/cache`
 step). `--cache-log-jobs REGEX` adds jobs by name, such as BuildKit image
 builds in `ceph-testcontainers-images`. GitHub serves only a whole job log,
 so only its cache lines are stored, without timestamps, in
-`cachelogs/<job id>.json`: each `actions/cache` step section, the
-`go version` line, the runner's `Cache mode` and BuildKit cache lines. An
+`cachelogs/<job id>.json`: every step header, each `actions/cache` step
+section, the `go version` line, the runner's `Cache mode`, lines naming a
+`cache-to` destination and BuildKit cache lines, at most 400 lines (the
+excerpt records whether it was truncated). An
 expired log is stored as unavailable and not read again; any other failed
 request is counted and read on the next call.
 
@@ -848,7 +850,22 @@ event (`pull_request`, `push`, ...) and head branch, the cache kind
 (`go-module`, `go-build`, `registry` or `other`), the operation (`restore`,
 `save`, BuildKit `import` or `export`), the exact key or cache reference, the
 Go toolchain and platform of the job, whether the operation was requested and
-its outcome. Only a log line sets an outcome:
+its outcome. Every cache step that ran keeps a row. The excerpt's
+`actions/cache` sections are matched to those steps in order, by operation
+and by kind where the step name and the key both give one. A step without a
+section is `unknown` with the reason: no log, an unavailable log, or no
+section in the excerpt (`excerpt_truncated` says whether the excerpt was
+cut). An empty excerpt therefore leaves the steps `unknown`, never
+`no cache restore`. A section without a matching step keeps its own row.
+
+BuildKit's `exporting cache to registry` names no destination, and one build
+may import several references and export to another. An export's key is the
+literal `ref=` of a `--cache-to` or `cache-to:` input of its own step when
+the step names exactly one. A reference through a variable, two
+destinations or none leave the key empty; it is never taken from an
+import.
+
+Only a log line sets an outcome:
 
 | Outcome | Evidence |
 | --- | --- |

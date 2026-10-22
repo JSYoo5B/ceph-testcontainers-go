@@ -538,18 +538,50 @@ class CacheLedgerTests(unittest.TestCase):
                                                    ("go-build", "save", BUILD_KEY, "unknown")])
 
     def test_registry_imports_and_exports_including_an_ignored_export_error(self):
+        # The step names no literal cache-to ref, so no export has a known
+        # destination, although each follows an import of a matching name.
         self.assertEqual(self.outcomes(BUILDX_LOG), [("registry", "import", CACHE_REF + "-mon", "miss"),
                                                      ("registry", "import", CACHE_REF + "-osd", "restore-failed"),
-                                                     ("registry", "export", CACHE_REF + "-osd", "save-failed"),
+                                                     ("registry", "export", None, "save-failed"),
                                                      ("registry", "import", CACHE_REF, "hit"),
-                                                     ("registry", "export", CACHE_REF, "saved"),
+                                                     ("registry", "export", None, "saved"),
                                                      ("registry", "import", CACHE_REF + "-rgw", "hit"),
-                                                     ("registry", "export", CACHE_REF + "-rgw", "unknown")])
+                                                     ("registry", "export", None, "unknown")])
+
+    def test_an_export_destination_is_only_an_explicit_cache_to_ref(self):
+        source, base, destination = "registry.example/source:cache", "registry.example/base:cache", \
+            "registry.example/dest:cache"
+        build = ("#6 importing cache manifest from " + source,
+                 "#6 inferred cache manifest type: application/vnd.oci.image.manifest.v1+json done",
+                 "#7 importing cache manifest from " + base,
+                 "#7 ERROR: failed to configure registry cache importer: " + base + ": not found",
+                 "#20 exporting cache to registry", "#20 writing cache image manifest sha256:" + "3" * 64 + " done")
+        explicit = log_text("##[group]Run docker buildx build --cache-from=type=registry,ref=" + source
+                            + " --cache-from=type=registry,ref=" + base + " --cache-to=type=registry,ref="
+                            + destination + ",mode=max image", *build)
+        self.assertEqual(self.outcomes(explicit), [("registry", "import", source, "hit"),
+                                                   ("registry", "import", base, "miss"),
+                                                   ("registry", "export", destination, "saved")])
+        # A cache-to input of an action, read from its "with:" block.
+        action = log_text("##[group]Run docker/build-push-action@v7", "with:",
+                          "  cache-to: type=registry,ref=" + destination + ",mode=max", "##[endgroup]", *build)
+        self.assertEqual(self.outcomes(action)[-1], ("registry", "export", destination, "saved"))
+        # A variable reference, two destinations, or a cache-to of an
+        # earlier step name no destination.
+        for text in (log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=$cache_ref image",
+                              *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " --cache-to=type=registry,ref=registry.example/other:cache image", *build),
+                     log_text("##[group]Run docker buildx build --cache-to=type=registry,ref=" + destination
+                              + " first", "##[group]Run docker buildx build second", *build)):
+            self.assertEqual(self.outcomes(text)[-1], ("registry", "export", None, "saved"))
 
     def test_the_excerpt_keeps_only_cache_lines_without_timestamps(self):
         lines, truncated = measure.cache_excerpt(GO_LOG)
         self.assertFalse(truncated)
-        self.assertEqual(lines[:2], ["Cache mode: write", "go version go1.26.10 linux/amd64"])
+        self.assertEqual(lines[:3], ["Cache mode: write", "##[group]Run actions/setup-go@v7",
+                                     "go version go1.26.10 linux/amd64"])
+        self.assertIn("##[group]Run make vulncheck", lines)
         self.assertNotIn("No vulnerabilities found.", lines)
         self.assertNotIn("Current runner version: '2.338.0'", lines)
         lines, truncated = measure.cache_excerpt(log_text(*cache_section("restore", MODULE_KEY, "~/go/pkg/mod",
@@ -591,6 +623,45 @@ class CacheLedgerTests(unittest.TestCase):
         self.assertEqual(measure.cache_condition(conditions[("11", "1", "21")]), "go-module=unknown")
         self.assertEqual(measure.cache_condition(()), "no cache restore")
         self.assertLessEqual({row["outcome"] for row in rows}, set(measure.CACHE_OUTCOMES))
+
+    def test_api_cache_steps_without_an_excerpt_section_stay_unknown(self):
+        runs = [run(11, "Code checks", "h", at(0))]
+        steps = (("Restore the Go module cache", "success"), ("Restore the Go build cache", "success"),
+                 ("Save the Go build cache", "success"))
+        jobs = {"11": [cache_job(21, *steps), cache_job(22, *steps)]}
+        # Truncated inside the first section: the later sections are lost.
+        lines, truncated = measure.cache_excerpt(log_text(*cache_section("restore", MODULE_KEY, "~/go/pkg/mod",
+                                                                         *["Received"] * 500)))
+        logs = {"21": {"lines": lines, "truncated": truncated}, "22": {"lines": [], "truncated": False}}
+        rows = measure.cache_ledger(runs, jobs, logs, "owner/repo")
+        summary = [(row["job_id"], row["kind"], row["operation"], row["outcome"], row["evidence_source"],
+                    row["excerpt_truncated"], row.get("step")) for row in rows]
+        self.assertEqual(summary, [
+            ("21", "go-module", "restore", "unknown", "log", True, "Restore the Go module cache"),
+            ("21", "go-build", "restore", "unknown", "none", True, "Restore the Go build cache"),
+            ("21", "go-build", "save", "unknown", "none", True, "Save the Go build cache"),
+            ("22", "go-module", "restore", "unknown", "none", False, "Restore the Go module cache"),
+            ("22", "go-build", "restore", "unknown", "none", False, "Restore the Go build cache"),
+            ("22", "go-build", "save", "unknown", "none", False, "Save the Go build cache")])
+        self.assertEqual(rows[1]["evidence"], "no cache section in the fetched log excerpt, which is truncated")
+        self.assertEqual(rows[3]["evidence"], "no cache section in the fetched log")
+        conditions = measure.ledger_by_job(rows)
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "21")]),
+                         "go-build=unknown,go-module=unknown")
+        # An empty excerpt is no evidence that nothing was restored.
+        self.assertEqual(measure.cache_condition(conditions[("11", "1", "22")]),
+                         "go-build=unknown,go-module=unknown")
+
+    def test_excerpt_sections_match_api_steps_in_order_and_unnamed_sections_stay(self):
+        runs = [run(11, "Code checks", "h", at(0))]
+        jobs = {"11": [cache_job(21, ("Restore the Go build cache", "success"),
+                                 ("Save the Go build cache", "success"))]}
+        rows = measure.cache_ledger(runs, jobs, {"21": excerpt(COLD_LOG)}, "owner/repo")
+        self.assertEqual([(row["kind"], row["operation"], row["outcome"], row.get("step")) for row in rows], [
+            ("go-module", "restore", "miss", None),
+            ("go-build", "restore", "restore-failed", "Restore the Go build cache"),
+            ("go-module", "save", "saved", None),
+            ("go-build", "save", "unknown", "Save the Go build cache")])
 
     def test_every_outcome_is_named(self):
         texts = (GO_LOG, COLD_LOG, BUILDX_LOG)

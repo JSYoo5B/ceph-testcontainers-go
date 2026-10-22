@@ -836,20 +836,24 @@ GO_VERSION = re.compile(r"^go version (go\S+) (\S+/\S+)$")
 BUILDX_LINE = re.compile(r"^#(\d+) (.*)$")
 BUILDX_CACHE = re.compile(r"cache manifest|writing cache|exporting cache|sending cache export|ERROR|WARNING")
 CACHE_STEP = re.compile(r"^(Restore|Save)\b.*\bcache\b|^(Run|Post Run) actions/cache", re.IGNORECASE)
+# An explicit registry cache destination: --cache-to / cache-to with a
+# literal ref (one that names a shell or expression variable is not one).
+CACHE_TO = re.compile(r"cache-to[=:]\s*\S*?\bref=([^,\s\"']+)")
 
 
 def cache_excerpt(text):
     """The lines of a job log that the ledger reads, without timestamps:
-    each actions/cache step section (inputs and results), the Go toolchain
-    line, the runner's cache mode and BuildKit cache lines. Returns (lines,
-    truncated)."""
+    every step header, each actions/cache step section (inputs and results),
+    the Go toolchain line, the runner's cache mode, lines naming a cache-to
+    destination and BuildKit cache lines. Returns (lines, truncated)."""
     lines, section = [], False
     for raw in text.splitlines():
         line = LOG_TIMESTAMP.sub("", raw, count=1).rstrip()
-        if line.startswith("##[group]Run "):
+        header = line.startswith("##[group]Run ")
+        if header:
             section = line.startswith("##[group]Run actions/cache")
         buildx = BUILDX_LINE.match(line)
-        if (section or line.startswith("Cache mode: ") or GO_VERSION.match(line)
+        if (header or section or line.startswith("Cache mode: ") or GO_VERSION.match(line) or "cache-to" in line
                 or (buildx and BUILDX_CACHE.search(buildx.group(2)))):
             lines.append(line[:CACHE_EXCERPT_WIDTH])
     return lines[:CACHE_EXCERPT_LINES], len(lines) > CACHE_EXCERPT_LINES
@@ -876,9 +880,14 @@ def cache_entries(lines):
     found" a miss and any other a failed import; only a completed "writing
     cache ... manifest" is a save, and an ERROR or WARNING of the export
     vertex a failed one, also when ignore-error kept the build green. A
-    requested operation that states none of these stays "unknown"."""
+    requested operation that states none of these stays "unknown".
+
+    "exporting cache to registry" names no destination, and a build may
+    import several references and export to another one. An export's key is
+    the literal cache-to ref of its step when the step names exactly one,
+    and None otherwise; it is never taken from an import."""
     entries, mode, toolchain, platform = [], None, None, None
-    current, in_inputs, imports, exports, reference = None, False, {}, {}, None
+    current, in_inputs, imports, exports, destinations = None, False, {}, {}, set()
 
     def settle(entry, outcome, evidence):
         if entry["outcome"] == "unknown":
@@ -890,8 +899,11 @@ def cache_entries(lines):
             toolchain, platform = version.groups()
         if line.startswith("Cache mode: "):
             mode = line.split(": ", 1)[1]
+        for reference in CACHE_TO.findall(line):
+            if "$" not in reference:
+                destinations.add(reference)
         if line.startswith("##[group]Run "):
-            current = None
+            current, destinations = None, {reference for reference in CACHE_TO.findall(line) if "$" not in reference}
             if line.startswith("##[group]Run actions/cache"):
                 current = {"source": "actions/cache", "operation": "save" if "/save@" in line else "restore",
                            "key": None, "path": None, "toolchain": toolchain, "platform": platform,
@@ -926,14 +938,15 @@ def cache_entries(lines):
             continue
         vertex, text = buildx.groups()
         if text.startswith("importing cache manifest from "):
-            reference = text[len("importing cache manifest from "):].strip()
-            imports[vertex] = {"source": "buildx", "operation": "import", "key": reference, "path": None,
+            imports[vertex] = {"source": "buildx", "operation": "import",
+                               "key": text[len("importing cache manifest from "):].strip(), "path": None,
                                "toolchain": None, "platform": None, "cache_mode": mode, "requested": True,
                                "outcome": "unknown", "evidence": None}
             exports.pop(vertex, None)
             entries.append(imports[vertex])
         elif text.startswith("exporting cache to registry"):
-            exports[vertex] = {"source": "buildx", "operation": "export", "key": reference, "path": None,
+            exports[vertex] = {"source": "buildx", "operation": "export",
+                               "key": next(iter(destinations)) if len(destinations) == 1 else None, "path": None,
                                "toolchain": None, "platform": None, "cache_mode": mode, "requested": True,
                                "outcome": "unknown", "evidence": None}
             imports.pop(vertex, None)
@@ -962,10 +975,15 @@ def cache_ledger(runs, jobs, logs, repository):
     """One row per cache operation of every job that held a runner, keyed
     by repository, run ID, run attempt and job ID.
 
-    logs maps a job ID (as a string) to its stored excerpt. With an excerpt
-    the rows are the operations it states; without one, each cache step that
-    ran is "unknown". Either way a skipped save step is "save-skipped" with
-    requested false, and a skipped restore step "unknown"."""
+    logs maps a job ID (as a string) to its stored excerpt. Every cache step
+    that ran keeps a row: an excerpt's actions/cache sections are matched to
+    those steps in order, by operation and by kind where the step name and
+    the section's key both give one, and a step without a section is
+    "unknown" with the reason (no log, an unavailable log, or no section in
+    the excerpt, which may be truncated). A section without such a step and
+    every BuildKit operation keep their own row. A skipped save step is
+    "save-skipped" with requested false, and a skipped restore step
+    "unknown"."""
     run_of = {str(run["id"]): run for run in runs}
     rows = []
     for run_id, run_jobs in sorted(jobs.items(), key=lambda item: int(item[0]) if item[0].isdigit() else 0):
@@ -978,15 +996,39 @@ def cache_ledger(runs, jobs, logs, repository):
             base = {"repository": repository, "run_id": run_id, "run_attempt": str(job.get("run_attempt", 1)),
                     "job_id": str(job.get("id")), "workflow": run.get("name"), "job": job.get("name"),
                     "event": run.get("event"), "head_branch": run.get("head_branch")}
-            if log is not None and "lines" in log:
-                found = [{**base, **entry, "evidence_source": "log"} for entry in cache_entries(log["lines"])]
-            else:
+            fetched = log is not None and "lines" in log
+            truncated = bool(fetched and log.get("truncated"))
+            base["excerpt_truncated"] = truncated
+            if not fetched:
                 missing = "log not fetched" if log is None else "log unavailable: " + log.get("unavailable", "")
-                found = [{**base, "source": "step", "operation": "save" if step["name"].lower().startswith(
-                              ("save", "post")) else "restore", "kind": step_kind(step["name"]), "key": None,
-                          "path": None, "toolchain": None, "platform": None, "cache_mode": None, "requested": True,
-                          "outcome": "unknown", "evidence": missing, "evidence_source": "none", "step": step["name"]}
-                         for step in steps if step.get("conclusion") != "skipped"]
+            else:
+                missing = "no cache section in the fetched log" + (" excerpt, which is truncated" if truncated else "")
+            parsed = [{**base, **entry, "evidence_source": "log"} for entry in cache_entries(log["lines"])] \
+                if fetched else []
+            sections = [entry for entry in parsed if entry["source"] == "actions/cache"]
+            found, position = [], 0
+            for step in steps:
+                if step.get("conclusion") == "skipped":
+                    continue
+                operation = "save" if step["name"].lower().startswith(("save", "post")) else "restore"
+                kind = step_kind(step["name"])
+                match = next((index for index in range(position, len(sections))
+                              if sections[index]["operation"] == operation
+                              and (sections[index]["kind"] == kind or "other" in (kind, sections[index]["kind"]))),
+                             None)
+                if match is None:
+                    found.append({**base, "source": "step", "operation": operation, "kind": step_kind(step["name"]),
+                                  "key": None, "path": None, "toolchain": None, "platform": None, "cache_mode": None,
+                                  "requested": True, "outcome": "unknown", "evidence": missing,
+                                  "evidence_source": "none", "step": step["name"]})
+                    continue
+                # Sections before the match have no step of this name; they
+                # keep their own rows.
+                found += sections[position:match]
+                found.append({**sections[match], "step": step["name"]})
+                position = match + 1
+            found += sections[position:]
+            found += [entry for entry in parsed if entry["source"] != "actions/cache"]
             for step in steps:
                 if step.get("conclusion") != "skipped":
                     continue
