@@ -26,8 +26,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// DefaultImage pins the multi-architecture manifest tested by this PoC.
-const DefaultImage = "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"
+// DefaultImage pins the published, pruned dependency-role aggregate on both
+// native architectures. Explicit ImageSet selections avoid unused feature roles.
+const DefaultImage = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:6ca832983da10a3dc940b409b108ebccce4461e586b99bf3535845b22d2fce22"
 
 //go:embed internal/scripts/*.sh
 var scripts embed.FS

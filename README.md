@@ -55,8 +55,11 @@ The [ceph policy naming migration](docs/guides/upgrading-ceph-policy-names.md) l
   [the host network guide](docs/guides/host-network.md).
 - Access to pull the Ceph image and the Ryuk image.
 
-The default image is the official `quay.io/ceph/ceph` Tentacle 20.2.x image,
-pinned by digest as `ceph.DefaultImage`. Squid 19.2.x images also work, with
+The default image is the published, pruned `roles-v2-official-20.2.4-all`
+aggregate, pinned to its AMD64/ARM64 index digest as `ceph.DefaultImage`.
+Explicit `ceph.ImageSet` selections use essential + client for ordinary
+RADOS/RBD and add CephFS, mirror/cache or RGW images only for those features.
+Runtime CI uses these dependency roles directly. Squid 19.2.x also works, with
 the differences listed in [the releases guide](docs/guides/releases-and-images.md).
 
 ## Installation

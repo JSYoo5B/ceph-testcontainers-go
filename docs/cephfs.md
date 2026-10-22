@@ -150,7 +150,7 @@ including stopped and partially started daemons.
 #### Image
 
 Use the second argument in the `Run` function to set a valid Docker image.
-The default is `ceph.DefaultImage`, the Ceph Tentacle 20.2.4 image
+The default is `ceph.DefaultImage`, the pruned Ceph Tentacle 20.2.4 aggregate
 `quay.io/ceph/ceph:v20.2.4` pinned by its multi-architecture digest. It contains
 every role, including `cephfs-mirror` and the Python `cephfs` and `rados`
 bindings.

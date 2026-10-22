@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # on each row (tag_scenarios.py releases), so a new release is one row here
 # once ceph-testcontainers-images publishes its role images. A release or
 # patch that is not a row is refused, never mapped to a neighbouring one.
-# RELEASE is the default and matches DefaultImage.
+# RELEASE is the default Ceph version; DEFAULT_IMAGE matches ceph.DefaultImage.
 SUPPORTED_RELEASES = (
     ("20.2.4", "tentacle",
      "quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9"),
@@ -44,6 +44,7 @@ OFFICIAL_IMAGE = RELEASES[RELEASE]
 CONTRACT = "roles-v2"
 V2_ROLE_ENV = {"essential":"CEPH_TEST_ESSENTIAL_IMAGE", "client":"CEPH_TEST_CLIENT_IMAGE", "cephfs":"CEPH_TEST_CEPHFS_IMAGE", "rbd-aux":"CEPH_TEST_RBD_AUX_IMAGE", "rgw":"CEPH_TEST_RGW_IMAGE"}
 REGISTRY = "ghcr.io/jsyoo5b/ceph-testcontainers-images"
+DEFAULT_IMAGE = "ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:6ca832983da10a3dc940b409b108ebccce4461e586b99bf3535845b22d2fce22"
 LEGACY_ROLE_ENV = {
     "control": "CEPH_TEST_IMAGE",
     "osd": "CEPH_TEST_OSD_IMAGE",
@@ -149,8 +150,10 @@ def image_references(variant, layout, release, roles=None):
         raise ValueError("unsupported image matrix cell")
     if layout == "all":
         if tuple(roles) != tuple(ROLE_ENV):
-            raise ValueError("the all layout serves all four roles")
+            raise ValueError("the all layout serves every role of the selected contract")
         reference = RELEASES[release] if variant == "official" and CONTRACT == "legacy" else REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-all"
+        if CONTRACT == "roles-v2" and variant == "official" and release == RELEASE:
+            reference = DEFAULT_IMAGE
         return {"all": reference}
     return {role: REGISTRY + ":" + ("roles-v2-" if CONTRACT == "roles-v2" else "") + variant + "-" + release + "-" + role
             for role in ROLE_ENV if role in roles}

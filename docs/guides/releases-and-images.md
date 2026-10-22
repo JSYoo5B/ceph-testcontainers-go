@@ -9,10 +9,11 @@ for each daemon role, and what an image must contain.
 
 ## Default image
 
-`ceph.DefaultImage` is the official Ceph Tentacle image, pinned by digest:
+`ceph.DefaultImage` is the published, pruned Tentacle dependency-role aggregate,
+pinned to the tested native AMD64/ARM64 index digest:
 
 ```text
-quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9
+ghcr.io/jsyoo5b/ceph-testcontainers-images:roles-v2-official-20.2.4-all@sha256:6ca832983da10a3dc940b409b108ebccce4461e586b99bf3535845b22d2fce22
 ```
 
 The digest is a multi-architecture manifest for `linux/amd64` and
@@ -30,7 +31,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage)
 
 | Release | Status | Tested image |
 | --- | --- | --- |
-| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | `quay.io/ceph/ceph:v20.2.4` (`ceph.DefaultImage`) |
+| Tentacle 20.2.x | Default; every feature on 20.2.4. 20.2.0 to 20.2.3 have no `aes256k` keys | `roles-v2-official-20.2.4-all` (`ceph.DefaultImage`) |
 | Squid 19.2.x | Supported, with the differences listed below | `quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b` |
 
 Squid 19.2.6 behaves like 19.2.5 except that RGW multisite cannot start; see

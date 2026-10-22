@@ -114,11 +114,9 @@ class MatrixTests(unittest.TestCase):
     def summary(self):
         return json.loads((self.output / "summary.json").read_text())
 
-    def test_default_matches_official_image_and_all_pins_four_components(self):
+    def test_explicit_legacy_all_still_pins_four_components(self):
         self.assertEqual(runner.ROLE_ENV, {"control": "CEPH_TEST_IMAGE", "osd": "CEPH_TEST_OSD_IMAGE",
                                           "rgw": "CEPH_TEST_RGW_IMAGE", "mds": "CEPH_TEST_MDS_IMAGE"})
-        original = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
-        self.assertIn('const DefaultImage = "' + runner.OFFICIAL_IMAGE + '"', original)
         self.assertEqual(self.invoke(env={name: "unrelated:mutable" for name in runner.ROLE_ENV.values()}), 0)
         report = self.summary()
         self.assertEqual(report["images"]["all"]["reference"], runner.OFFICIAL_IMAGE)
@@ -597,6 +595,13 @@ class MatrixTests(unittest.TestCase):
 
 
 class VersionedRoleSelectionTests(unittest.TestCase):
+    def test_default_aggregate_matches_the_published_multiarch_library_pin(self):
+        source = (SCRIPT.parents[2] / "ceph/ceph.go").read_text()
+        self.assertIn('const DefaultImage = "' + runner.DEFAULT_IMAGE + '"', source)
+        self.assertRegex(runner.DEFAULT_IMAGE, r":roles-v2-official-20\.2\.4-all@sha256:[0-9a-f]{64}$")
+        with mock.patch.multiple(runner, CONTRACT="roles-v2", ROLE_ENV=runner.V2_ROLE_ENV):
+            self.assertEqual(runner.image_references("official", "all", runner.RELEASE), {"all": runner.DEFAULT_IMAGE})
+
     def test_default_cli_is_dependency_roles_and_rejects_legacy_role_names(self):
         with mock.patch.multiple(runner, CONTRACT="legacy", ROLE_ENV=runner.LEGACY_ROLE_ENV):
             args = runner.parse_arguments([])

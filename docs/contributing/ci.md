@@ -687,8 +687,9 @@ core role and prepares only that subset. Ordinary RADOS/RBD paths use
 `essential,client`; CephFS adds `cephfs`, RBD mirrors/cache add `rbd-aux`,
 and gateway paths add `rgw`. Mixed-service and broadly shared batches keep
 all five when required. An undeclared Ceph profile conservatively gets all
-five; non-Ceph profiles get none. `supervised_command` and `native_input`
-use only an idle `essential` runtime without a cluster.
+five; non-Ceph profiles get none. `supervised_command` uses an idle
+`essential` runtime; `native_input` uses essential + client and starts a
+cluster without OSDs for ownership and attached-input proofs.
 
 The composite action explicitly selects `--contract roles-v2`; no old
 control-image fallback is used. Selected image IDs and the contract marker

@@ -206,7 +206,8 @@ Docker host, or the test process cannot reach the first MON.
 
 Use the second argument in the `Run` function to set a valid Docker image.
 
-`ceph.DefaultImage` pins the official Ceph Tentacle 20.2.4 image by digest. The
+`ceph.DefaultImage` pins the published, pruned Tentacle 20.2.4 aggregate by its
+native AMD64/ARM64 index digest. The
 digest refers to a multi-architecture index for `linux/amd64` and `linux/arm64`:
 
 ```
