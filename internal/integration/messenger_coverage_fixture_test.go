@@ -624,14 +624,12 @@ func validateCoverage(manifest coverageManifest, reference coverageReference, so
 		if !slices.Contains(coverageEvidence, row.Evidence) {
 			add("%s: unknown evidence %q", where, row.Evidence)
 		}
-		if row.Status != "covered" {
-			if strings.TrimSpace(row.Gap) == "" {
-				add("%s: %s without a gap", where, row.Status)
-			}
-			if !coverageOwners.MatchString(row.Owner) {
-				add("%s: %s needs an owning issue, not %q", where, row.Status, row.Owner)
-			}
-		} else if row.Owner != "" && !coverageOwners.MatchString(row.Owner) {
+		if row.Status != "covered" && strings.TrimSpace(row.Gap) == "" {
+			add("%s: %s without a gap", where, row.Status)
+		}
+		// An owner is optional: a row without one is better than a row
+		// that names an issue which does not track it.
+		if row.Owner != "" && !coverageOwners.MatchString(row.Owner) {
 			add("%s: malformed owner %q", where, row.Owner)
 		}
 		for _, c := range row.Cases {
@@ -803,6 +801,11 @@ func TestMessengerCoverageValidator(t *testing.T) {
 	if problems := validateCoverage(valid(), reference, sources); len(problems) != 0 {
 		t.Fatalf("valid manifest: %v", problems)
 	}
+	unowned := valid()
+	unowned.Rows[1].Owner = ""
+	if problems := validateCoverage(unowned, reference, sources); len(problems) != 0 {
+		t.Fatalf("an uncovered row without an owner: %v", problems)
+	}
 	for _, c := range []coverageCase{
 		{Test: "TestWrites", Receipt: "WRITE_RECEIPT"}, {Test: "TestWrites/host", Receipt: "WRITE_RECEIPT"},
 		{Test: "TestWrites/nested/v2"}, {Test: "TestWrites/nested/crc"}, {Test: "TestNoSubtests"},
@@ -835,7 +838,7 @@ func TestMessengerCoverageValidator(t *testing.T) {
 		"unknown symbol":        {func(m *coverageManifest) { m.Rows[0].Symbols = []string{"CEPH_OSD_OP_WRITE2"} }, "not in the reference"},
 		"covered without case":  {func(m *coverageManifest) { m.Rows[0].Cases = nil }, "covered without a case"},
 		"uncovered with case":   {func(m *coverageManifest) { m.Rows[1].Cases = m.Rows[0].Cases }, "uncovered but lists cases"},
-		"uncovered no owner":    {func(m *coverageManifest) { m.Rows[1].Owner = "" }, "needs an owning issue"},
+		"malformed owner":       {func(m *coverageManifest) { m.Rows[1].Owner = "50" }, `malformed owner "50"`},
 		"partial no gap":        {func(m *coverageManifest) { m.Rows[0].Status, m.Rows[0].Gap, m.Rows[0].Owner = "partial", "", "#50" }, "partial without a gap"},
 		"duplicate id":          {func(m *coverageManifest) { m.Rows[1].ID = m.Rows[0].ID }, "duplicate id"},
 		"other ceph commit":     {func(m *coverageManifest) { m.CephCommit = strings.Repeat("b", 40) }, "is not the reference"},

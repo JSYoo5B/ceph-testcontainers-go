@@ -424,6 +424,12 @@ change the API.
   counted rather than read as healthy. Exact replica bytes remain the only
   success (#2).
 
+- The failure diagnostics of `TestRGWPlacementRealmStorageClasses` read both
+  gateways' container state before any admin query, give each state, admin
+  and log read its own bound inside the 45-second total, and report a failed,
+  timed-out or truncated read instead of dropping it. An admin query that
+  stalls can no longer hide an exited source gateway (#2).
+
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
   fence after an unconfirmed stop, without closing unrelated targets. This
@@ -484,6 +490,15 @@ change the API.
   requirements to the tests proving them.
 
 ### Continuous integration
+
+- The tag planner no longer collects `ceph_bug_<id>` tags as capabilities,
+  so a bug tag in a test constraint cannot enable a workaround in every
+  profile. `tag_scenarios.py --bug-compatibility` takes an explicit selection
+  and validates it against `docs/guides/bug-compatibility-tags.json`, which
+  registers no tag yet. The ordinary and compatibility test files of a bug
+  must keep the same test names in the same batch; the selection is part of
+  each profile's tags, build key and history identity. No workflow passes a
+  selection, so CI behavior is unchanged (#24).
 
 - `ci_measurements.py cohorts` joins measured runtime jobs to their saved
   history rows by repository, run ID, run attempt and job ID, and groups the

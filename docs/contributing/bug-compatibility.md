@@ -1,8 +1,9 @@
 # Ceph behavioral bug compatibility policy
 
 This records the policy in [#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24).
-It is a documentation checkpoint: bug-ID selection, paired implementations,
-selection validation and report integration are not implemented by this change.
+The CI planner implements explicit selection and its validation (see
+[Bug compatibility selection](ci.md#bug-compatibility-selection)). No paired
+implementation, workflow input or native compatibility result exists yet.
 The [supported-tag catalogue](../guides/bug-compatibility-tags.md) currently has
 no registered tags. Existing runtime behavior is unchanged.
 
@@ -83,10 +84,15 @@ this policy or filled with placeholder IDs:
   assigned upstream IDs, and retirement rules for published tags.
 - Explicit conflict declarations and diagnostics for incompatible selections;
   do not rely on duplicate-symbol errors or undocumented precedence.
-- Tooling to verify intended selection. Go can accept unused or misspelled
-  custom tags, so a successful build alone does not prove a path was selected.
-- How active compatibility paths enter execution reports and source/image/build
-  provenance. Every additional supported tag adds configurations to maintain.
+- Selection verification beyond the planner. Go can accept unused or
+  misspelled custom tags, so a successful build alone does not prove a path
+  was selected. The planner refuses unregistered selections and requires each
+  registered tag's sources to constrain on it; it does not prove that a
+  compiled source behaves differently.
+- How workflows pass a selection, and how reports present it beside image
+  identities. The planner carries the selection in profile tags, the build key
+  and history identity; no workflow sets it yet. Every additional supported
+  tag adds configurations to maintain.
 
 ## Implementation and review checklist
 

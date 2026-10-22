@@ -239,6 +239,9 @@ Nothing in the workflows names a test.
    compiled test names with the catalog. Code checks runs it for every pull
    request and every push to `main`; the runtime workflows do not repeat it.
 
+Bug compatibility tags never take part in steps 2 and 3: see
+[Bug compatibility selection](#bug-compatibility-selection).
+
 Each profile has a stable ID, `<category>-<batch>-<8 hex digits>`, such as
 `short-default-a488da21`. The ID appears in artifact names, the job summary
 and annotations.
@@ -261,6 +264,43 @@ default mode when no entry selects one, and after the run a dedicated checker
 the log. The planner rejects these batches unless together they cover every
 mode and kind of the checker. Locally, the `all` build still runs the original
 parent test with every leaf.
+
+### Bug compatibility selection
+
+A `ceph_bug_<id>` tag selects the compatibility path of one Ceph bug (see the
+[policy](bug-compatibility.md)); it never selects tests. The planner therefore
+never collects such a tag as a capability, and `all` or `native_regression`
+never enable one. Only `--bug-compatibility TAGS`, accepted by `plan`,
+`verify`, `compile`, `run`, `code`, `optional` and `buildcache`, selects them:
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --bug-compatibility ceph_bug_<id>
+```
+
+The selection is refused before the catalog is read when a tag is not in
+[`bug-compatibility-tags.json`](../guides/bug-compatibility-tags.json), is
+retired, appears twice, or conflicts with another selected tag. The planner
+also refuses a test file whose constraint names an unregistered or retired
+bug tag, and a registered tag whose source files do not name it in
+`//go:build`. With no selection every ordinary path compiles.
+
+A test file guarded by a bug tag is one path of that bug. The file that the
+selection excludes stays in its batch's `sources`; the other path owns its
+tests. For every profile and for each package's `all` build, the planner
+toggles each bug tag that a test file of the package names and requires the
+same test names: both paths must keep the same tests in the same batch. A bug
+tag that adds, removes, renames or moves a test refuses the plan. A toggle
+that would make two conflicting tags active together is skipped, because the
+selection refuses that combination: the comparison covers only selections
+that can be planned.
+
+The selection applies to the whole test binary, so every profile of the plan
+gets the selected tags. They are part of the profile's `tags`, and so of its
+build key, its compile receipt and its history configuration identity, and
+the plan and each profile list them in `bug_compatibility`. The profile ID
+does not change. `run --binary` refuses a binary compiled under another
+selection. No workflow passes a selection yet, and the catalogue registers no
+tag, so CI runs every ordinary path.
 
 ### Advisory declaration selection
 
@@ -409,22 +449,6 @@ pull requests. To run it on a host without `gh`, fill the cache on a machine
 that has it, copy the cache and a clone with the pull request heads
 (`git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'`), and pass
 `--offline` and the same `--ref`.
-
-In a replay of 60 pull requests, the selection
-kept 1170 of 2288 Ceph short jobs (51%); 31 pull requests ran fewer than
-every batch. Of 31 failed batch jobs, 5 were selected and the other 26 are
-explained, so the script exits with status 0:
-
-| Failed jobs | Explanation |
-| --- | --- |
-| 19 | infrastructure: `actions/setup-go` could not be downloaded, no step ran |
-| 1 | infrastructure: `ENOTFOUND` while finalizing an artifact during image preparation, no test ran |
-| 1 | infrastructure: the Docker daemon failed to create a network before the scenario started |
-| 1 | CephFS mirror release hang in the MGR `mirroring` module, subsequently fixed |
-| 1 | `radosgw-admin` hang, cause not established; the command is now bounded |
-| 1 | `TestImmutableObjectCache` promotion race, subsequently fixed |
-| 1 (`short/messenger_policy`) | the `ceph` CLI lost the MON client's `handle_auth_bad_method` line that the check required; the check was corrected |
-| 1 (`short/rbd_fixtures_mirror_scope`) | infrastructure: a host-wide I/O stall of the runner held both OSDs' BlueStore commits for up to 84 s |
 
 Changes outside `internal/integration`, such as the public packages and
 `.github/`, still select every batch.

@@ -1,7 +1,7 @@
 name: CI command
 
 # A pull request comment line "/ci run <batch|profile>... [on <release|all>]"
-# runs the named runtime batches on the pull request's head commit (#116).
+# runs the named runtime batches on the pull request's head commit.
 # Default pull request CI, pushes to main and the ci:full and
 # ci:selected-batches labels are unchanged by it.
 #
