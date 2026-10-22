@@ -390,6 +390,12 @@ change the API.
 
 ### Fixed
 
+- `TestRGWPlacementRealmStorageClasses` no longer accepts replica bytes that
+  arrive after a read's deadline. Its replica wait reads through the shared
+  bounded observation with a 30-second read bound inside the unchanged
+  four-minute budget, and a failure names the last sample: HTTP status, S3
+  error code (`NoSuchKey` or `NoSuchBucket`), byte count and SHA-256 (#2).
+
 - Fence and drain public native commands for an OSD Docker instance before
   `RemoveOSD` mutates or purges it. Preserve retry ownership and its admission
   fence after an unconfirmed stop, without closing unrelated targets. This
