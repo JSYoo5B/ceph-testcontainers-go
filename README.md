@@ -40,10 +40,12 @@ to `ceph.Run` together, and their `Container` embeds `*ceph.Container`. The API
 reference for every package is also available with `go doc` and on
 pkg.go.dev.
 
-The proposed cross-package naming convention and source inventory are tracked
-in [API naming](docs/design/api-naming.md). Remaining proposal names are not
-current APIs; use the package references above for the implemented surface.
-The [ceph policy naming migration](docs/guides/upgrading-ceph-policy-names.md) lists this checkpoint's implemented old-to-new calls.
+The implemented naming convention, source inventory and current-source retention
+audit are recorded in [API naming](docs/design/api-naming.md). Upgrade guides
+cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
+[CephFS names](docs/guides/upgrading-cephfs-names.md),
+[network profiles](docs/guides/upgrading-network-profile-names.md) and the
+[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md).
 
 ## Requirements
 

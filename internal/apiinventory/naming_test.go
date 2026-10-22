@@ -19,9 +19,7 @@ var updateNaming = flag.Bool("update-api-naming", false, "refresh the source-der
 
 // These are review proposals, not compatibility aliases or an API rewrite.
 // Only inventory rows below change when a proposal is edited.
-var namingProposals = map[string]string{
-	"rbd.TemporaryImmutableObjectCache": "rbd.StartImmutableObjectCache",
-}
+var namingProposals = map[string]string{}
 
 type namingEntry struct {
 	Current   string `json:"current"`
