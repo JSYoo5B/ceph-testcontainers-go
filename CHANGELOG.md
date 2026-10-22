@@ -37,6 +37,11 @@ change the API.
   from a single-replica pool through the new container. See
   `docs/design/osd-retained-reopen.md` (#6).
 
+- The native `topology/osd_retained_reopen` batch also refuses, without
+  mutation, a detach of a paused OSD, a reopen of a store whose keyring an
+  independent observer changed, `RemoveOSD` of a detached OSD and a second
+  reopen of one handle. It then restores the keyring and reopens (#6).
+
 - `ceph.WithOSDVolumeStorage` places classic BlueStore OSD directories in an
   ordinary cluster-owned Docker local named volume, allocated on the first OSD.
   Purged OSD directories are discarded only after container removal; busy volume
