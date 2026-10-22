@@ -12,6 +12,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
 )
 
 // rgwReplicaSample is one read of a replicated object: what the gateway
@@ -85,19 +88,166 @@ func rgwReplicaProbe(client s3HTTPClient, path string, payload []byte) func(cont
 	}
 }
 
-// rgwReplicaBounds bound one replica convergence: the whole wait, one read
-// and the pause between reads.
-type rgwReplicaBounds struct {
-	Wait, Read, Interval time.Duration
+// rgwContainerStateReader reads one container's identity and Docker state.
+// *rgw.Gateway satisfies it; fixtures fake it without Docker.
+type rgwContainerStateReader interface {
+	GetContainerID() string
+	State(context.Context) (*container.State, error)
 }
 
-// rgwReplicaConverged waits until path holds exactly payload. Its error names
-// the last sample and the expected size and digest.
-func rgwReplicaConverged(ctx context.Context, client s3HTTPClient, path string, payload []byte, bounds rgwReplicaBounds) (observation[rgwReplicaSample], error) {
-	seen, err := observe(ctx, bounds.Wait, bounds.Read, bounds.Interval, rgwReplicaProbe(client, path, payload))
+// rgwReplicaSource is the source gateway of a replicated write, bound to the
+// container ID and process start time captured before the write. A wait for
+// the replica checks it read-only; it never restarts the gateway.
+type rgwReplicaSource struct {
+	reader        rgwContainerStateReader
+	ID, StartedAt string
+}
+
+// rgwReplicaBindSource captures the running source gateway's container and
+// process start generation.
+func rgwReplicaBindSource(ctx context.Context, reader rgwContainerStateReader) (rgwReplicaSource, error) {
+	id := reader.GetContainerID()
+	state, err := reader.State(ctx)
+	if err != nil {
+		return rgwReplicaSource{}, fmt.Errorf("source gateway %s: inspect before the replicated write: %w", id, err)
+	}
+	sample := rgwSourceSampleOf(state)
+	if id == "" || sample.Status != container.StateRunning || state.StartedAt == "" {
+		return rgwReplicaSource{}, fmt.Errorf("source gateway %q is not a running process to bind: %s", id, sample)
+	}
+	return rgwReplicaSource{reader: reader, ID: id, StartedAt: state.StartedAt}, nil
+}
+
+// rgwSourceSample is one inspection of the source gateway during a wait.
+type rgwSourceSample struct {
+	Status     container.ContainerState
+	ExitCode   int
+	OOMKilled  bool
+	StartedAt  string
+	FinishedAt string
+	Err        string
+	// InspectErrors counts the failed inspections of the wait so far.
+	InspectErrors int
+}
+
+func rgwSourceSampleOf(state *container.State) rgwSourceSample {
+	if state == nil {
+		return rgwSourceSample{Err: "empty container state"}
+	}
+	sample := rgwSourceSample{Status: state.Status, ExitCode: state.ExitCode, OOMKilled: state.OOMKilled, StartedAt: state.StartedAt, FinishedAt: state.FinishedAt}
+	if sample.Status == "" {
+		switch {
+		case state.Paused:
+			sample.Status = container.StatePaused
+		case state.Restarting:
+			sample.Status = container.StateRestarting
+		case state.Running:
+			sample.Status = container.StateRunning
+		default:
+			sample.Status = container.StateExited
+		}
+	}
+	return sample
+}
+
+func (s rgwSourceSample) String() string {
+	text := "not inspected"
+	if s.Err != "" {
+		text = "inspect error: " + s.Err
+	} else if s.Status != "" {
+		text = fmt.Sprintf("status=%s exit=%d oom=%v started=%s finished=%s", s.Status, s.ExitCode, s.OOMKilled, s.StartedAt, s.FinishedAt)
+	}
+	if s.InspectErrors > 0 {
+		text += fmt.Sprintf(" (%d failed inspections)", s.InspectErrors)
+	}
+	return text
+}
+
+// check inspects the source once. It returns an error only for a terminal
+// state: a removed container, a changed process start generation, or a
+// container that is no longer running. Paused and restarting are classified
+// in the sample, not inferred as a crash: a paused process is frozen, and a
+// restarting one shows its new start generation at the next inspection once
+// Docker runs it again.
+//
+// An inspect error is neither healthy nor a crash. It says something about
+// the Docker API, not the gateway process, so it is recorded in the sample and
+// the wait keeps polling within its own bound; a wait that ends on its budget
+// names the failed inspections instead of a healthy state.
+func (s rgwReplicaSource) check(ctx context.Context) (rgwSourceSample, error) {
+	if id := s.reader.GetContainerID(); id != s.ID {
+		return rgwSourceSample{}, fmt.Errorf("source gateway container changed from %s to %s", s.ID, id)
+	}
+	state, err := s.reader.State(ctx)
+	if errdefs.IsNotFound(err) {
+		return rgwSourceSample{Err: err.Error()}, fmt.Errorf("source gateway %s was removed: %w", s.ID, err)
+	}
+	if err != nil {
+		return rgwSourceSample{Err: err.Error()}, nil
+	}
+	sample := rgwSourceSampleOf(state)
+	if state == nil {
+		return sample, nil
+	}
+	if state.StartedAt != s.StartedAt {
+		return sample, fmt.Errorf("source gateway %s restarted: start generation changed from %s to %s", s.ID, s.StartedAt, state.StartedAt)
+	}
+	switch sample.Status {
+	case container.StateRunning, container.StatePaused, container.StateRestarting:
+		return sample, nil
+	}
+	return sample, fmt.Errorf("source gateway %s stopped: %s", s.ID, sample)
+}
+
+// rgwReplicaObservation is one convergence probe: the replica read and the
+// source gateway inspection that went with it.
+type rgwReplicaObservation struct {
+	Replica rgwReplicaSample
+	Source  rgwSourceSample
+}
+
+// rgwReplicaSourceProbe checks the source within inspect, then reads the
+// replica with what remains of the probe. Exact replica bytes are convergence
+// whatever the source state; otherwise a terminal source state ends the wait.
+func rgwReplicaSourceProbe(source rgwReplicaSource, inspect time.Duration, replica func(context.Context) (rgwReplicaSample, bool, error)) func(context.Context) (rgwReplicaObservation, bool, error) {
+	inspectErrors := 0
+	return func(ctx context.Context) (rgwReplicaObservation, bool, error) {
+		var seen rgwReplicaObservation
+		inspectCtx, cancel := context.WithTimeout(ctx, inspect)
+		var terminal error
+		seen.Source, terminal = source.check(inspectCtx)
+		cancel()
+		if seen.Source.Err != "" {
+			inspectErrors++
+		}
+		seen.Source.InspectErrors = inspectErrors
+		var ready bool
+		var err error
+		seen.Replica, ready, err = replica(ctx)
+		if err != nil || ready {
+			return seen, ready, err
+		}
+		return seen, false, terminal
+	}
+}
+
+// rgwReplicaBounds bound one replica convergence: the whole wait, one probe,
+// the source inspection inside a probe and the pause between probes.
+type rgwReplicaBounds struct {
+	Wait, Read, Inspect, Interval time.Duration
+}
+
+// rgwReplicaConverged waits until path holds exactly payload, ending at once
+// when source stops or restarts. Its error names the last replica sample, the
+// source state and the expected size and digest.
+func rgwReplicaConverged(ctx context.Context, client s3HTTPClient, source rgwReplicaSource, path string, payload []byte, bounds rgwReplicaBounds) (observation[rgwReplicaObservation], error) {
+	if source.reader == nil {
+		return observation[rgwReplicaObservation]{}, fmt.Errorf("replica %s: no bound source gateway", path)
+	}
+	seen, err := observe(ctx, bounds.Wait, bounds.Read, bounds.Interval, rgwReplicaSourceProbe(source, bounds.Inspect, rgwReplicaProbe(client, path, payload)))
 	if err != nil {
 		sum := sha256.Sum256(payload)
-		return seen, fmt.Errorf("replica %s: %w; last %s; expected bytes=%d sha256=%s", path, err, seen.Value, len(payload), hex.EncodeToString(sum[:]))
+		return seen, fmt.Errorf("replica %s: %w; last %s; source %s %s; expected bytes=%d sha256=%s", path, err, seen.Value.Replica, source.ID, seen.Value.Source, len(payload), hex.EncodeToString(sum[:]))
 	}
 	return seen, nil
 }
