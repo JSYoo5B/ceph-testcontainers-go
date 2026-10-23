@@ -1879,7 +1879,8 @@ rotation; a log stream that fails, is cut inside a frame, has a line without
 a valid timestamp or exceeds `MaxLogBytes`; a crash directory that is
 missing, unreadable, cut off or holds rejected metadata; a new crash without
 its done marker; a container added after the activation; more than 128
-containers; an unknown end of the window; and an expired context.
+containers; an unknown end of the window, or an engine clock that did not
+advance since the activation; and an expired context.
 
 Limits:
 

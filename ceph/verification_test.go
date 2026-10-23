@@ -471,6 +471,8 @@ func TestVerificationGapsAreIncomplete(t *testing.T) {
 			logs: "osd.0: log driver failed"},
 		{name: "unknown end of window", mutate: func(fx *verifyFixture) { fx.docker.infoErr = errors.New("engine busy") },
 			logs: ": the end of the window is unknown", crash: ": the end of the window is unknown"},
+		{name: "clock that did not advance", mutate: func(fx *verifyFixture) { fx.docker.clock = verifyStart },
+			logs: "not after the activation's", crash: "not after the activation's"},
 		{name: "unreadable crash directory", mutate: func(fx *verifyFixture) { fx.docker.containers["osd1"].copyErr = errors.New("archive refused") },
 			crash: "osd.1: crash directory failed: archive refused"},
 		{name: "missing crash directory", mutate: func(fx *verifyFixture) { fx.docker.containers["osd1"].noCrash = true },

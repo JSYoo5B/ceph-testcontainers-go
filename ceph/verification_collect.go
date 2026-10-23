@@ -29,7 +29,9 @@ func dialVerificationDocker(ctx context.Context) (verificationDocker, func(), er
 	if err != nil {
 		return nil, nil, err
 	}
-	return docker, func() { _ = docker.Close() }, nil
+	// The engine's own client: Testcontainers' Info caches the first answer,
+	// whose clock would never advance.
+	return docker.Client, func() { _ = docker.Close() }, nil
 }
 
 // verificationSourceName names a container as the report does: "osd.0",
@@ -109,7 +111,7 @@ func inspectGeneration(ctx context.Context, docker verificationDocker, id string
 		}
 	}
 	if generation.startedAt == "" {
-		return nil, errors.New("Docker reported no start time")
+		return nil, errors.New("the Docker engine reported no start time")
 	}
 	return generation, nil
 }
@@ -217,6 +219,9 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 	end, err := dockerClock(ctx, docker, config.OperationTimeout)
 	if err != nil {
 		o.gap("", verificationReason("the end of the window is unknown: "+err.Error(), redact))
+	} else if !end.After(b.start) {
+		o.gap("", fmt.Sprintf("the Docker engine's clock reads %s, not after the activation's %s, so the window is unknown",
+			end.Format(time.RFC3339Nano), b.start.Format(time.RFC3339Nano)))
 	} else {
 		o.end = end
 	}
