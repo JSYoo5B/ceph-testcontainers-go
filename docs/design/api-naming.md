@@ -14,7 +14,7 @@ The [package boundary](fault-package.md) remains independent of naming.
 
 [api-naming-inventory.json](api-naming-inventory.json) is a source-derived
 catalogue of package-level exports and declared methods on exported receiver
-types in the five public packages. Every row names
+types in the public packages. Every row names
 the current identifier, kind, proposed identifier and decision. Functions and
 methods include their **current** Go signature, including returned handles; methods also record their pointer/value receiver.
 A proposal for a type also propagates to its declared method names in the
@@ -29,11 +29,15 @@ catalogue; signatures are not rewritten to pretend the proposed API exists.
 | `rgw` | 126 |
 | Total | 698 |
 
+These are the counts of that initial catalogue. The current counts, including
+the `capture` package that #52 added, are in the
+[retention audit](api-naming-audit.md#scope-and-evidence) and its receipt.
+
 The catalogue includes functions, methods on exported receiver types, types,
 constants and variables. It scans all non-test Go source files, including
 build-tag alternatives, and refuses conflicting duplicate declarations.
-The separate [member catalogue](api-naming-members.json) now records 932
-exported field/nested-record/embedding entries across 161 types. It also scans
+The separate [member catalogue](api-naming-members.json) now records 987
+exported field/nested-record/embedding entries across 165 types. It also scans
 declared interface methods; this source has no exported declared interfaces.
 Promoted dependency methods are not duplicated: the audit separately records
 embedding boundaries and retains the inherited contracts. It does not rename

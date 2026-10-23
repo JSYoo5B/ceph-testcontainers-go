@@ -684,7 +684,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         profiles = engine.select_required_plan(self.plan, "environment")["include"]
         self.assertTrue(profiles)
         self.assertTrue(all(not profile["requires_ceph"] for profile in profiles))
-        self.assertTrue(all(profile["package"] == "./internal/dockerbridge" for profile in profiles))
+        # Docker behaviour without Ceph: bridge endpoints and packet capture.
+        self.assertTrue(all(profile["package"] in ("./internal/dockerbridge", "./capture") for profile in profiles))
         for category in ("short", "topology", "multicluster", "recovery"):
             self.assertTrue(all(profile["requires_ceph"] for profile in
                                 engine.select_required_plan(self.plan, category)["include"]))

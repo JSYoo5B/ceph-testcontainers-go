@@ -31,10 +31,12 @@ from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 | `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
 | `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
 | `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes, multisite replication and sync policy | [docs/rgw.md](docs/rgw.md) |
+| `capture` | `github.com/JSYoo5B/ceph-testcontainers-go/capture` | Opt-in packet capture on one container endpoint, with a caller-selected helper image, delivering a structurally checked classic pcap and a report | [docs/capture.md](docs/capture.md) |
 
-Every package follows the Testcontainers for Go module conventions: a `Run`
+Every fixture package follows the Testcontainers for Go module conventions: a `Run`
 function that takes a context, an image and options, and a `Container` that
-embeds `testcontainers.Container`. The service packages build on `ceph`: their
+embeds `testcontainers.Container`. `capture` starts no fixture of its own: it
+observes a container that the caller or a fixture already owns. The service packages build on `ceph`: their
 `Run` starts a cluster with the service's defaults, their options can be passed
 to `ceph.Run` together, and their `Container` embeds `*ceph.Container`. The API
 reference for every package is also available with `go doc` and on

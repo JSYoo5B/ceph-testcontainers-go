@@ -1,18 +1,66 @@
-# Packet capture: minimal file validation
+# Packet capture: session and minimal file validation
 
-This is the first increment of #52. The module will collect packet captures
+This note records the increments of #52. The module collects packet captures
 from a capture helper image whose contract is defined with
-[ceph-testcontainers-images#8](https://github.com/JSYoo5B/ceph-testcontainers-images/issues/8).
-Collection, retrieval, minimal structural validation and delivery belong
-here. Messenger decoding, decryption, protocol assertions and dissectors
-belong to consumers.
+[ceph-testcontainers-images#8](https://github.com/JSYoo5B/ceph-testcontainers-images/issues/8)
+and fixed as packet-capture contract 1 in that repository's
+`docs/EXTENSIONS.md`. Collection, retrieval, minimal structural validation and
+delivery belong here. Messenger decoding, decryption, protocol assertions and
+dissectors belong to consumers.
 
-The capture lifecycle (helper start, readiness, graceful stop and flush,
-limits, statistics, target generation and cleanup) waits for that contract.
-This increment adds only the part that does not depend on it: the classic
-pcap structure check in `internal/pcapfile`. No public API is added yet.
+The first increment added the classic pcap structure check in
+`internal/pcapfile`. The second adds the public [`capture`](../capture.md)
+package: one capture session on one explicitly selected endpoint.
 
-## What the check establishes
+## Capture session
+
+`capture.Start` takes a caller-selected helper image, target container,
+user-defined bridge network, interface, filter, snaplen and packet bound. It
+never selects an image, interface or filter by itself and never changes the
+target. The lifecycle follows contract 1:
+
+1. Validate the request. The file bound is the contract's
+   24 + packets × (16 + snaplen) bytes, at most 1 GiB.
+2. Admit the target: running, unpaused, in its own network namespace and
+   attached to a bridge-driver network. Its container instance (`StartedAt`),
+   sandbox and endpoint MAC address are recorded as its generation.
+3. Run a short-lived probe from the requested image in the target's namespace
+   (`container:<target>`), as the image's own user with `NET_RAW` only and
+   without `no-new-privileges`. It reports the contract's executables, the
+   user, `tcpdump --version`, the filter compiled with
+   `tcpdump -y EN10MB -d -- <filter>`, the namespace and the interface's MAC
+   address. The probe's image ID, not the tag, is used from then on.
+4. Start the helper with `tcpdump` as its process, with the contract's capture
+   options and `--` before the filter. Readiness is the
+   `listening on <interface>, link-type EN10MB` line on standard error
+   together with the output file; a running container is not readiness. The
+   target's generation is checked again after readiness.
+5. `Session.Stop` sends `SIGTERM` and waits a bounded grace for exit status 0.
+   Without an end it sends `SIGKILL` and reports an emergency stop. Since
+   `tcpdump` is the helper's process, the container's exit status is the
+   tool's, and its statistics are read from the container's standard error.
+   An unprinted counter stays unknown.
+6. Compare the target with its generation, copy the file out of the stopped
+   helper (at most the bound; one more byte only shows that it is larger),
+   check it with `internal/pcapfile`, and remove the helper. Stop works from a
+   fresh bounded context, keeps its report, and retries only the removal when
+   called again.
+
+The generic command supervisor is not used for the capture itself: its
+cancellation kills the process group, which is not the contract's graceful
+stop. Ending the helper's own process with a signal and observing the
+container's exit keeps stop and completion separate from cancellation.
+
+Error categories are distinct. A missing helper image is
+`ceph.ErrImageCapability`. An image that breaks the contract is
+`capture.ErrImageUnsupported` (`ErrImageCapability`), and a refused
+`NET_RAW` exec or device open is `capture.ErrPermissionDenied`
+(`ErrEnvironmentUnavailable`). A bad request, filter, interface or target is
+`ceph.ErrInvalidRequest`. A capture that did not become ready, did not end
+cleanly, lost its target or delivered a file that is not valid classic pcap is
+`capture.ErrFailed` (`ErrNativeFailure`).
+
+## What the file check establishes
 
 `pcapfile.Validate` reads a stream with two bounds: the file size and one
 record's captured length. It returns a report with one status.
@@ -54,6 +102,8 @@ are returned as errors, never as a verdict.
 
 ## Validation
 
+### File check
+
 Unit tests build captures in both byte orders and both timestamp units. They
 cover valid, empty and snaplen-truncated captures; every malformed and
 unsupported case above with its reason and read count; the record bound; the
@@ -62,11 +112,36 @@ errors; and reading from disk. `FuzzValidate` checks that any input yields a
 verdict within its bounds. These are offline checks of the parser, not capture
 evidence.
 
+### Capture session
+
+Unit tests in `capture` replace Docker with a model of one target and one
+helper. They cover request and target refusals, an existing output, every
+probe classification with negative controls against the other error kinds,
+readiness that needs both the line for the selected interface and the file,
+target change during start, packet-limit, killed, failed, target-gone,
+cut-off, pcapng and over-bound ends, unknown statistics, an expired workload
+context, and a removal that is retried. These are offline checks of the
+lifecycle, not capture evidence.
+
+`TestCaptureTargetTraffic` is the native scenario, in the `environment`
+category's `packet_capture` batch, which the Docker checks workflow runs on
+its Linux runner. No helper is published yet, so it builds the reference helper
+from the ceph-testcontainers-images commit that merged contract 1 (the
+engine builds that repository's Dockerfile; this module produces no image),
+unless `CEPH_TEST_CAPTURE_IMAGE` names another image. On a private bridge it
+captures HTTP traffic between a caller-owned busybox target and a client,
+selected by port and client address, while a second flow on another port must
+be excluded. It requires a graceful stop, a valid file with both directions and
+the response payload, statistics that match the file, a file still readable
+after helper removal, an unchanged target, a valid empty capture, and refused
+filter and interface requests that leave no output. A pass is evidence only for
+the runner's engine and architecture (`linux/amd64`).
+
 ## Next steps
 
-1. Agree on the helper contract with images#8: readiness signal, graceful stop
-   and flush, output bounds and statistics.
-2. Add the capture session: explicit target and filter, readiness before the
-   workload, graceful stop, retrieval, validation with this package, and a
-   structured report that keeps unknown statistics unknown.
-3. Prove it natively per the #52 acceptance list, separately per architecture.
+1. Native negative controls: denied `NET_RAW`, target restart or removal during
+   a capture, workload cancellation and partial output, and the packet limit.
+2. Each declared architecture separately, `linux/arm64` included, once the
+   helper is published.
+3. Integration with #49's failure bundle, keeping raw pcap retention and upload
+   deliberate and capture usable on its own.
