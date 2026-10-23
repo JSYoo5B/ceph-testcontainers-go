@@ -48,7 +48,7 @@ try:
             for seq,name in enumerate(('control','acknowledged','replacement')):
                 data=payload(seq); io.write_full(name,data)
                 emit('acknowledged',object=name,seq=seq,ret=0,client='client.%d'%c.get_instance_id(),**view(io,name))
-        elif phase=='actor':
+        elif phase in ('actor-fresh','actor-replacement'):
             # The callback only enqueues. This one writer serializes every record,
             # so a delayed or missing callback never changes what the ledger says
             # about the request itself.
@@ -63,7 +63,7 @@ try:
                     called.add(name)
                     emit('callback',object=name,callback_ns=ns,ret=pending[name].get_return_value() if name in pending else None)
             client='client.%d'%c.get_instance_id()
-            for seq,name in ((3,'fresh'),(4,'replacement')):
+            for seq,name in (((3,'fresh'),) if phase=='actor-fresh' else ((4,'replacement'),)):
                 data=payload(seq)
                 # Intent is recorded before the API call: its monotonic time bounds
                 # the submission from below, whatever the call does afterwards.
@@ -86,7 +86,7 @@ try:
                 if all(name in called for name in pending if name not in outstanding): break
                 time.sleep(.01)
             drain()
-            emit('channel',pending=sorted(outstanding),callbacks=sorted(called),stopped=stopping[0])
+            emit('channel',object=','.join(sorted(pending)),pending=sorted(outstanding),callbacks=sorted(called),stopped=stopping[0])
         elif phase=='read':
             # A separate process and fresh connection, never the actor's ioctx.
             out={name:view(io,name) for name in ('control','acknowledged','replacement','fresh','never-submitted')}
@@ -197,40 +197,53 @@ func abruptOverlap(events []abruptWriteEvent, beforeKill, afterExit int64) error
 	return nil
 }
 
-// abruptChannel names the state of the writer's callback channel, apart from
-// the outcome of any request: "complete" when the writer ended after seeing
-// every completion and delivered callback, "incomplete" when it ended with
-// requests outstanding or callbacks missing, and "missing" when it never
-// reported (for example because it was killed).
+// abruptChannel names the state of the writers' callback channels, apart from
+// the outcome of any request: "complete" when both writers ended after seeing
+// their completion and delivered callback, "incomplete" when a writer ended
+// with its request outstanding or its callback missing, or only one reported,
+// and "missing" when none reported (for example because they were killed).
 func abruptChannel(events []abruptWriteEvent) string {
+	reports, complete := 0, 0
 	for _, event := range events {
 		if event.Event != "channel" {
 			continue
 		}
-		if len(event.Pending) == 0 && len(event.Callbacks) == 2 {
-			return "complete"
+		reports++
+		if len(event.Pending) == 0 && len(event.Callbacks) == 1 {
+			complete++
 		}
-		return "incomplete"
 	}
-	return "missing"
+	switch {
+	case reports == 0:
+		return "missing"
+	case reports == 2 && complete == 2:
+		return "complete"
+	}
+	return "incomplete"
 }
 
-// abruptWitness is the native request that a caller-outstanding write maps to
-// on a single-copy PG. The OSD does not mark such a write "waiting for sub
-// ops", so the witness takes the unique matching request and keeps its full ID
-// and events. It does not show that the write is uncommitted or that it stays
-// outstanding while the daemon is killed.
+// abruptWitness is the native request of one writer client on a single-copy
+// PG. The OSD does not mark such a write "waiting for sub ops". While a request
+// is held in dispatch it is also still undecoded, so the OSD names neither the
+// object nor the operations; the request is bound to its object by the client:
+// each writer is a client of its own that submits exactly one request to one
+// object, and the ledger records which. Its full request ID, flag point and
+// events are kept. It does not show that the write is uncommitted or that it
+// stays outstanding while the daemon is killed.
 type abruptWitness struct {
 	Object  string   `json:"object"`
+	Client  string   `json:"client"`
 	Request string   `json:"request"`
+	Decoded bool     `json:"decoded"`
 	Flag    string   `json:"flag_point"`
 	Events  []string `json:"events"`
 }
 
-// abruptFindWitness returns the one write request of client for object in a
-// dump_ops_in_flight output. No match is not yet a witness. Several matches,
-// an unreadable dump, a request of another client or PG, or a request without
-// an ID refuse admission, because the phase would not be proven.
+// abruptFindWitness returns the one write request of client in a
+// dump_ops_in_flight output, bound to object. No request is not yet a witness.
+// Several requests, an unreadable dump, a request to another PG, one that is
+// not a write, or one that names another object once it is decoded refuse
+// admission, because the phase would not be proven.
 func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, bool, error) {
 	var dump struct {
 		Ops []heldOp `json:"ops"`
@@ -240,7 +253,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 	}
 	var found []heldOp
 	for _, op := range dump.Ops {
-		if strings.HasPrefix(op.Description, "osd_op(") && strings.Contains(op.Description, ":::"+object+":head") {
+		if strings.HasPrefix(op.Description, "osd_op(") && strings.HasPrefix(op.request(), client+".") {
 			found = append(found, op)
 		}
 	}
@@ -249,23 +262,23 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 		return abruptWitness{}, false, nil
 	case 1:
 	default:
-		return abruptWitness{}, false, fmt.Errorf("%d requests name object %s", len(found), object)
+		return abruptWitness{}, false, fmt.Errorf("%d requests of %s are in flight, not one", len(found), client)
 	}
 	op := found[0]
-	request := op.request()
-	if request == "" || !strings.HasPrefix(request, client+".") {
-		return abruptWitness{}, false, fmt.Errorf("request %q of object %s is not from %s", request, object, client)
-	}
 	if !strings.Contains(op.Description, " "+pg+" ") || !strings.Contains(op.Description, "write") {
-		return abruptWitness{}, false, fmt.Errorf("request %q of object %s is not a write to PG %s", request, object, pg)
+		return abruptWitness{}, false, fmt.Errorf("request %q of %s is not a write to PG %s", op.request(), client, pg)
 	}
-	return abruptWitness{Object: object, Request: request, Flag: op.TypeData.FlagPoint, Events: op.events()}, true, nil
+	decoded := strings.Contains(op.Description, ":::")
+	if decoded && !strings.Contains(op.Description, ":::"+object+":head") {
+		return abruptWitness{}, false, fmt.Errorf("request %q of %s names another object than %s", op.request(), client, object)
+	}
+	return abruptWitness{Object: object, Client: client, Request: op.request(), Decoded: decoded, Flag: op.TypeData.FlagPoint, Events: op.events()}, true, nil
 }
 
-// abruptWitnesses reads the OSD's in-flight operations and returns the unique
-// request of each submitted object that the OSD tracks so far. The
-// daemon's process generation must be the same before and after the dump.
-func abruptWitnesses(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, client string) []abruptWitness {
+// abruptWitness reads the OSD's in-flight operations once and returns the
+// witness of client for object, if it has one. The daemon's process generation
+// must be the same before and after the dump.
+func abruptWitnessOf(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, object, client string) (abruptWitness, bool) {
 	t.Helper()
 	before := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
 	data, err := cluster.AdminSocket(ctx, daemon, "dump_ops_in_flight")
@@ -276,17 +289,31 @@ func abruptWitnesses(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	if !before.State.Running || before.State.Pid != after.State.Pid || before.State.StartedAt != after.State.StartedAt {
 		t.Fatalf("daemon generation changed while its requests were read: %+v then %+v", before.State, after.State)
 	}
-	var witnesses []abruptWitness
-	for _, object := range []string{"fresh", "replacement"} {
-		witness, ok, err := abruptFindWitness(data, object, client, pg)
-		if err != nil {
-			t.Fatal("abrupt request witness refused", err)
-		}
-		if ok {
-			witnesses = append(witnesses, witness)
-		}
+	witness, ok, err := abruptFindWitness(data, object, client, pg)
+	if err != nil {
+		t.Fatal("abrupt request witness refused", err)
 	}
-	return witnesses
+	abruptLastDump = abruptDescriptions(data)
+	return witness, ok
+}
+
+// abruptLastDump is the latest dump's request descriptions, for the failure
+// message of a phase that was not observed. It holds no object data.
+var abruptLastDump []string
+
+func abruptDescriptions(data []byte) []string {
+	var dump struct {
+		Ops []heldOp `json:"ops"`
+	}
+	_ = json.Unmarshal(data, &dump)
+	var out []string
+	for _, op := range dump.Ops {
+		if len(out) == 8 {
+			break
+		}
+		out = append(out, fmt.Sprintf("%s flag=%q events=%v", op.Description, op.TypeData.FlagPoint, op.events()))
+	}
+	return out
 }
 
 func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string) func() {

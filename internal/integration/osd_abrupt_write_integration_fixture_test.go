@@ -66,15 +66,16 @@ func TestOSDAbruptOverlapClassification(t *testing.T) {
 }
 
 func TestOSDAbruptChannelIsSeparateFromOutcomes(t *testing.T) {
-	complete := abruptWriteEvent{Event: "channel", Callbacks: []string{"fresh", "replacement"}}
+	one := abruptWriteEvent{Event: "channel", Callbacks: []string{"fresh"}}
 	for name, tc := range map[string]struct {
 		events []abruptWriteEvent
 		want   string
 	}{
-		"complete":         {[]abruptWriteEvent{complete}, "complete"},
+		"complete":         {[]abruptWriteEvent{one, one}, "complete"},
+		"one report":       {[]abruptWriteEvent{one}, "incomplete"},
 		"no report":        {[]abruptWriteEvent{{Event: "intent"}}, "missing"},
 		"outstanding":      {[]abruptWriteEvent{{Event: "channel", Pending: []string{"fresh"}, Stopped: true}}, "incomplete"},
-		"missing callback": {[]abruptWriteEvent{{Event: "channel", Callbacks: []string{"fresh"}}}, "incomplete"},
+		"missing callback": {[]abruptWriteEvent{one, {Event: "channel"}}, "incomplete"},
 	} {
 		if got := abruptChannel(tc.events); got != tc.want {
 			t.Errorf("%s: %s, want %s", name, got, tc.want)
@@ -83,10 +84,18 @@ func TestOSDAbruptChannelIsSeparateFromOutcomes(t *testing.T) {
 }
 
 func TestOSDAbruptSingleCopyWitness(t *testing.T) {
-	op := func(client, tid, object, pg, flag string) map[string]any {
+	// While a request is held in dispatch it is undecoded: the OSD prints its
+	// client request ID, PG and flags, but neither object nor operations.
+	undecoded := func(client, tid, pg, flag string) map[string]any {
+		return map[string]any{
+			"description": "osd_op(" + client + ".0:" + tid + " " + pg + " " + pg + " (undecoded) ondisk+write+known_if_redirected e12)",
+			"type_data":   map[string]any{"flag_point": flag, "events": []map[string]string{{"event": "initiated"}, {"event": "throttled"}}},
+		}
+	}
+	decoded := func(client, tid, object, pg, flag string) map[string]any {
 		return map[string]any{
 			"description": "osd_op(" + client + ".0:" + tid + " " + pg + " 1:abcdef:::" + object + ":head [writefull 0~65539] snapc 0=[] ondisk+write+known_if_redirected e12)",
-			"type_data":   map[string]any{"flag_point": flag, "events": []map[string]string{{"event": "initiated"}, {"event": "queued_for_pg"}}},
+			"type_data":   map[string]any{"flag_point": flag, "events": []map[string]string{{"event": "initiated"}}},
 		}
 	}
 	dump := func(ops ...map[string]any) []byte {
@@ -94,22 +103,29 @@ func TestOSDAbruptSingleCopyWitness(t *testing.T) {
 		return data
 	}
 	// A single-copy write is never "waiting for sub ops"; any flag point is kept.
-	witness, ok, err := abruptFindWitness(dump(op("client.4123", "5", "fresh", "1.0", "delayed"), op("client.4123", "6", "replacement", "1.0", "queued")), "fresh", "client.4123", "1.0")
-	if err != nil || !ok || witness.Request != "client.4123.0:5" || witness.Flag != "delayed" || len(witness.Events) != 2 {
-		t.Fatalf("witness %+v %v %v", witness, ok, err)
+	witness, ok, err := abruptFindWitness(dump(undecoded("client.4123", "5", "1.0", "delayed"), undecoded("client.4124", "1", "1.0", "queued")), "fresh", "client.4123", "1.0")
+	if err != nil || !ok || witness.Request != "client.4123.0:5" || witness.Flag != "delayed" || len(witness.Events) != 2 || witness.Decoded || witness.Object != "fresh" {
+		t.Fatalf("undecoded witness %+v %v %v", witness, ok, err)
 	}
-	if _, ok, err := abruptFindWitness(dump(op("client.4123", "6", "replacement", "1.0", "")), "fresh", "client.4123", "1.0"); ok || err != nil {
-		t.Fatalf("an absent request is no witness: %v %v", ok, err)
+	witness, ok, err = abruptFindWitness(dump(decoded("client.4123", "5", "fresh", "1.0", "")), "fresh", "client.4123", "1.0")
+	if err != nil || !ok || !witness.Decoded {
+		t.Fatalf("decoded witness %+v %v %v", witness, ok, err)
+	}
+	if _, ok, err := abruptFindWitness(dump(undecoded("client.4124", "1", "1.0", "")), "fresh", "client.4123", "1.0"); ok || err != nil {
+		t.Fatalf("a request of another client is no witness: %v %v", ok, err)
+	}
+	if _, ok, err := abruptFindWitness(dump(undecoded("client.41230", "1", "1.0", "")), "fresh", "client.4123", "1.0"); ok || err != nil {
+		t.Fatalf("a client ID that only shares a prefix is no witness: %v %v", ok, err)
 	}
 	for name, tc := range map[string]struct {
 		data []byte
 		want string
 	}{
-		"ambiguous":    {dump(op("client.4123", "5", "fresh", "1.0", ""), op("client.4123", "7", "fresh", "1.0", "")), "2 requests"},
-		"other client": {dump(op("client.9999", "5", "fresh", "1.0", "")), "not from client.4123"},
-		"other PG":     {dump(op("client.4123", "5", "fresh", "2.0", "")), "not a write to PG"},
+		"ambiguous":    {dump(undecoded("client.4123", "5", "1.0", ""), undecoded("client.4123", "7", "1.0", "")), "2 requests"},
+		"other PG":     {dump(undecoded("client.4123", "5", "2.0", "")), "not a write to PG"},
+		"not a write":  {[]byte(`{"ops":[{"description":"osd_op(client.4123.0:5 1.0 1.0 (undecoded) read e12)"}]}`), "not a write"},
+		"other object": {dump(decoded("client.4123", "5", "replacement", "1.0", "")), "another object"},
 		"unreadable":   {[]byte(`not json`), "dump_ops_in_flight"},
-		"no request":   {[]byte(`{"ops":[{"description":"osd_op( 1.0 1:a:::fresh:head [write]"}]}`), "not from"},
 	} {
 		if _, ok, err := abruptFindWitness(tc.data, "fresh", "client.4123", "1.0"); ok || err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: ok=%t err=%v, want an error with %q", name, ok, err, tc.want)
@@ -169,16 +185,16 @@ func TestOSDAbruptWriterLedgerSchedules(t *testing.T) {
 	}{
 		// The callback runs before the post-return record, yet the ledger keeps
 		// intent, return, completion and callback as separate facts.
-		"immediate callback": {"immediate", 700 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel"}, "complete"},
+		"immediate callback": {"immediate", 700 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel", "channel"}, "complete"},
 		// The callback arrives within the writer's bounded wait after the stop.
-		"delayed callback": {"delayed", 450 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel"}, "complete"},
+		"delayed callback": {"delayed", 450 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel", "channel"}, "complete"},
 		// The completion is observable, but its callback never arrives in time:
 		// the outcome is recorded and the channel is reported incomplete.
-		"late callback": {"late", 450 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "channel"}, "incomplete"},
+		"late callback": {"late", 450 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "channel", "channel"}, "incomplete"},
 		// Nothing completes: the stop is acknowledged with both requests pending.
-		"never completes": {"never", 300 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "channel"}, "incomplete"},
+		"never completes": {"never", 300 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "channel", "channel"}, "incomplete"},
 		// A rejected API call is its own record and is not retried.
-		"api error": {"raises", 300 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "channel"}, "incomplete"},
+		"api error": {"raises", 300 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "channel", "channel"}, "incomplete"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -186,25 +202,34 @@ func TestOSDAbruptWriterLedgerSchedules(t *testing.T) {
 				t.Fatal(err)
 			}
 			ledger := filepath.Join(dir, "ledger.jsonl")
-			cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, abruptWriteScript, "actor", "pool", ledger)
-			cmd.Env = append(os.Environ(), "FAKE_SCHEDULE="+tc.schedule)
+			// Both writers share one ledger, as in the scenario.
+			var writers []*exec.Cmd
 			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan error, 1)
-			go func() { done <- cmd.Wait() }()
-			time.Sleep(tc.terminate)
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Fatalf("writer: %v %s", err, stderr.String())
+			for _, phase := range []string{"actor-fresh", "actor-replacement"} {
+				cmd := exec.Command("python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv.pop(1)); exec(sys.argv.pop(1))", dir, abruptWriteScript, phase, "pool", ledger)
+				cmd.Env = append(os.Environ(), "FAKE_SCHEDULE="+tc.schedule)
+				cmd.Stderr = &stderr
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
 				}
-			case <-time.After(10 * time.Second):
-				_ = cmd.Process.Kill()
-				t.Fatal("writer did not acknowledge SIGTERM")
+				writers = append(writers, cmd)
+			}
+			time.Sleep(tc.terminate)
+			for _, cmd := range writers {
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+			}
+			for _, cmd := range writers {
+				done := make(chan error, 1)
+				go func() { done <- cmd.Wait() }()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("writer: %v %s", err, stderr.String())
+					}
+				case <-time.After(10 * time.Second):
+					_ = cmd.Process.Kill()
+					t.Fatal("writer did not acknowledge SIGTERM")
+				}
 			}
 			data, err := os.ReadFile(ledger)
 			if err != nil {

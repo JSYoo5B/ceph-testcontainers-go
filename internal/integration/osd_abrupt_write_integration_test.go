@@ -133,60 +133,70 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	pg := fmt.Sprintf("%d.0", poolStatus.ID)
 	restoreDelay := abruptDispatchDelay(t, ctx, cluster, fmt.Sprintf("osd.%d", osd.ID))
-	actor := startNative(ctx, cluster, client, abruptCommand("actor", pool, ledger))
-	actorFinished := false
+	// Each writer is a Rados client of its own with exactly one request, so that
+	// the OSD's request, which names its client, is bound to its object by the
+	// ledger. The second writer starts after the first request is witnessed.
+	writers := map[string]*nativeCall{}
+	finished := map[string]bool{}
 	t.Cleanup(func() {
-		if actorFinished {
-			return
-		}
-		actor.cancel()
-		select {
-		case outcome := <-actor.done:
-			t.Logf("OSD_ABRUPT_ORIGINAL cleanup_exit=%d error=%v", outcome.result.ExitCode, outcome.err)
-		case <-time.After(30 * time.Second):
-			t.Error("original actor cleanup did not confirm stop")
+		for object, writer := range writers {
+			if finished[object] {
+				continue
+			}
+			writer.cancel()
+			select {
+			case outcome := <-writer.done:
+				t.Logf("OSD_ABRUPT_ORIGINAL object=%s cleanup_exit=%d error=%v", object, outcome.result.ExitCode, outcome.err)
+			case <-time.After(30 * time.Second):
+				t.Error("original writer cleanup did not confirm stop", object)
+			}
 		}
 	})
-	var witnesses []abruptWitness
 	daemon := fmt.Sprintf("osd.%d", osd.ID)
-	// The injected delay holds each request in the OSD's dispatch of its client
-	// connection, one after the other. Only the first request exists in the
-	// OSD's operation tracker while it is held; the second stays queued behind
-	// it and is outstanding in the writer alone. The first one is therefore the
-	// witness, and the second one's visibility is recorded as it is found.
-	for deadline := time.Now().Add(time.Minute); ; {
-		events := abruptLedger(t, ctx, cluster, client, pool, ledger)
-		var writer string
-		returned := 0
-		for _, event := range events {
-			switch event.Event {
-			case "intent":
-				writer = event.Client
-			case "api_return":
-				returned++
-			case "completed", "callback":
-				t.Fatalf("original request finished before disruption: %+v", event)
-			}
-		}
-		if returned == 2 {
-			if witnesses = abruptWitnesses(t, ctx, cluster, docker.Client, osd, daemon, pg, writer); slices.ContainsFunc(witnesses, func(w abruptWitness) bool { return w.Object == "fresh" }) {
-				// A request that completed while the dump was read is no witness.
-				if again := abruptLedger(t, ctx, cluster, client, pool, ledger); slices.ContainsFunc(again, func(e abruptWriteEvent) bool { return e.Event == "completed" || e.Event == "callback" }) {
-					t.Fatal("original request finished while its witness was read")
+	var witnesses []abruptWitness
+	for _, object := range []string{"fresh", "replacement"} {
+		writers[object] = startNative(ctx, cluster, client, abruptCommand("actor-"+object, pool, ledger))
+		for deadline := time.Now().Add(time.Minute); ; {
+			var writer string
+			returned := false
+			for _, event := range abruptLedger(t, ctx, cluster, client, pool, ledger) {
+				switch {
+				case event.Event == "intent" && event.Object == object:
+					writer = event.Client
+				case event.Event == "api_return" && event.Object == object:
+					returned = true
+				case event.Event == "completed" || event.Event == "callback":
+					t.Fatalf("original request finished before disruption: %+v", event)
 				}
-				break
 			}
+			if returned {
+				witness, ok := abruptWitnessOf(t, ctx, cluster, docker.Client, osd, daemon, pg, object, writer)
+				if ok {
+					witnesses = append(witnesses, witness)
+					break
+				}
+				// The first request is required to be visible. The second can
+				// stay queued behind the first one in the same dispatch.
+				if object == "replacement" {
+					t.Log("OSD_ABRUPT_WITNESS second request not visible in the OSD, outstanding in its writer only")
+					break
+				}
+			}
+			select {
+			case outcome := <-writers[object].done:
+				finished[object] = true
+				t.Fatalf("writer %s ended before the required phase: %+v", object, outcome)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("required OSD in-flight phase of %s not observed; last dump %q", object, abruptLastDump)
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		select {
-		case outcome := <-actor.done:
-			actorFinished = true
-			t.Fatalf("actor ended before required phase: %+v", outcome)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("required OSD in-flight phase not observed")
-		}
-		time.Sleep(50 * time.Millisecond)
+	}
+	// A request that completed while its witness was read is no witness.
+	if slices.ContainsFunc(abruptLedger(t, ctx, cluster, client, pool, ledger), func(e abruptWriteEvent) bool { return e.Event == "completed" || e.Event == "callback" }) {
+		t.Fatal("original request finished while its witness was read")
 	}
 	encodedWitnesses, _ := json.Marshal(witnesses)
 	t.Logf("OSD_ABRUPT_WITNESS pg=%s witnesses=%s", pg, encodedWitnesses)
@@ -217,20 +227,21 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	var afterExit int64
 	abruptPhase(t, ctx, cluster, client, "clock", pool, ledger, &afterExit)
-	// Stop the original client while the OSD is down. It must not reconnect
+	// Stop the original clients while the OSD is down. They must not reconnect
 	// and resubmit a librados pending request when the OSD comes back.
-	actor.cancel()
-	var outcome nativeOutcome
-	select {
-	case outcome = <-actor.done:
-		actorFinished = true
-	case <-time.After(30 * time.Second):
-		t.Fatal("original writer stop unconfirmed; refuse restart")
-	}
-	t.Logf("OSD_ABRUPT_ORIGINAL exit=%d error=%v stdout=%s stderr=%s", outcome.result.ExitCode, outcome.err, outcome.result.Stdout, outcome.result.Stderr)
-	var unstopped *ceph.NativeCommandUnstoppedError
-	if !errors.Is(outcome.err, context.Canceled) || errors.As(outcome.err, &unstopped) {
-		t.Fatal("original writer was not confirmed stopped", outcome.err)
+	for object, writer := range writers {
+		writer.cancel()
+		select {
+		case outcome := <-writer.done:
+			finished[object] = true
+			t.Logf("OSD_ABRUPT_ORIGINAL object=%s exit=%d error=%v stdout=%s stderr=%s", object, outcome.result.ExitCode, outcome.err, outcome.result.Stdout, outcome.result.Stderr)
+			var unstopped *ceph.NativeCommandUnstoppedError
+			if !errors.Is(outcome.err, context.Canceled) || errors.As(outcome.err, &unstopped) {
+				t.Fatal("original writer was not confirmed stopped", object, outcome.err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("original writer stop unconfirmed; refuse restart", object)
+		}
 	}
 	events := abruptLedger(t, ctx, cluster, client, pool, ledger)
 	encoded, err := json.Marshal(events)
