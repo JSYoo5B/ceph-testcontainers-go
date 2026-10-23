@@ -18,6 +18,20 @@ change the API.
 
 ### Added
 
+- `ceph.Container.TerminateOnCleanup` registers one test cleanup that runs
+  the checks added with `Finalization.Check`, then, with
+  `FinalizationConfig.Archive` and a failed test, a failure archive, then the
+  cleanups added with `Finalization.Cleanup`, and finally `Terminate`. The
+  archive writes the `CollectDiagnostics` and `CollectCrashMetadata` reports
+  and a manifest with execution provenance and every outcome into a new
+  directory under the test's `ArtifactDir` (kept with `go test -artifacts`).
+  Each phase has a fresh bounded context; collection and storage errors are
+  recorded without skipping cleanup, and a passing test collects nothing.
+  The tagged runtime runner passes the artifact flags in both execution
+  modes, lists the retained files in `native/report.json`, and the job
+  summary records the upload of a failed run's artifact separately. A
+  downloaded artifact of a failed native run has not yet verified it (#49).
+
 - `capture.Start` and `capture.Session.Stop` record the packets of one
   container endpoint on a user-defined bridge with a caller-selected helper
   image that meets packet-capture contract 1 of ceph-testcontainers-images.
