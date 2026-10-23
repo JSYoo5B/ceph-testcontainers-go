@@ -175,7 +175,10 @@ func TestPostTestVerification(t *testing.T) {
 	// cleanups and still terminates the cluster.
 	recorder.finalize()
 	failures := recorder.failures()
-	for _, want := range []string{"verification crash-policy: post-test verification crash-policy: unexpected", "verification after-crashes: post-test verification after-crashes: incomplete"} {
+	// The later verification's crash check is incomplete; its log check may
+	// also hold the MON's OSD_DOWN warnings for the removal, which nothing
+	// permits.
+	for _, want := range []string{"verification crash-policy: post-test verification crash-policy: unexpected", "crashes incomplete (0 unexpected, 0 permitted, 1 gaps"} {
 		if !slices.ContainsFunc(failures, func(failure string) bool { return strings.Contains(failure, want) }) {
 			t.Fatalf("finalization failures %q lack %q", failures, want)
 		}
