@@ -189,6 +189,26 @@ class MessengerEvidenceTests(unittest.TestCase):
     def test_wrong_image(self):
         self.receipt["cohort"]["images"] = ["sha256:" + "1" * 64]; self.reject()
 
+    def test_split_role_images(self):
+        images = ["sha256:" + digit * 64 for digit in "123"]
+        self.expected["images"] = images
+        self.receipt["cohort"]["images"] = images.copy()
+        result = self.check()
+        self.assertEqual(result["native_cases"][0]["cohort"]["images"], images)
+
+    def test_omitted_exercised_client_image(self):
+        # The expected set is independent of the producer's service inventory.
+        essential, client, cephfs = ["sha256:" + digit * 64 for digit in "123"]
+        self.expected["images"] = [essential, client, cephfs]
+        self.receipt["cohort"]["images"] = [essential, cephfs]
+        with self.assertRaisesRegex(m.EvidenceError, "unexpected image/release/platform cohort"):
+            self.check()
+
+    def test_duplicate_client_image(self):
+        image = self.expected["images"][0]
+        self.receipt["cohort"]["images"] = [image, image]
+        self.reject()
+
     def test_wrong_native_build(self):
         self.receipt["cohort"]["ceph_version"] = "ceph version 20.2.4 (other)"; self.reject()
 

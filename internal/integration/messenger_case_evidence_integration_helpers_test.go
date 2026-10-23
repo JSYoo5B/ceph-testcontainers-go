@@ -60,7 +60,9 @@ func registerMessengerEvidence(t *testing.T) func(map[string]any) {
 	return func(receipt map[string]any) { pending = receipt }
 }
 
-func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.Container, parent []byte, fsid string) map[string]any {
+// Executors are the containers already used by the recipe, including clients
+// owned separately from the cluster. Collecting evidence must not start one.
+func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.Container, parent []byte, fsid string, executors ...testcontainers.Container) map[string]any {
 	t.Helper()
 	version := strings.TrimSpace(execOutput(t, ctx, cluster.ControlContainer(), "ceph", "--version"))
 	match := regexp.MustCompile(`^ceph version ([0-9]+\.[0-9]+\.[0-9]+) `).FindStringSubmatch(version)
@@ -71,25 +73,10 @@ func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.
 	for _, osd := range cluster.OSDs() {
 		containers = append(containers, osd.Container)
 	}
-	images := map[string]bool{}
-	for _, ctr := range containers {
-		if ctr == nil {
-			continue
-		}
-		state, err := ctr.Inspect(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.HasPrefix(state.Image, "sha256:") {
-			t.Fatalf("container has no immutable image ID: %q", state.Image)
-		}
-		images[state.Image] = true
+	ids, err := messengerEvidenceImages(ctx, containers, executors...)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ids := make([]string, 0, len(images))
-	for id := range images {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
 	sources := map[string]string{}
 	for name, data := range map[string][]byte{
 		"internal/integration/testdata/messenger_reference.json": evidenceReference,
@@ -113,4 +100,27 @@ func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.
 	sources["internal/integration/*.go"] = evidenceDigest([]byte(snapshot.String()))
 	return map[string]any{"schema": "ceph-messenger-case/v1", "binding": "targeted-command/native-identities", "case": t.Name(), "run_id": uuid.NewString(), "generation": fsid, "parent_sha256": evidenceDigest(parent), "sources": sources,
 		"cohort": map[string]any{"release": match[1], "ceph_version": version, "platform": fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), "go_version": runtime.Version(), "images": ids}}
+}
+
+func messengerEvidenceImages(ctx context.Context, containers []testcontainers.Container, executors ...testcontainers.Container) ([]string, error) {
+	images := map[string]bool{}
+	for i, ctr := range append(slices.Clone(containers), executors...) {
+		if ctr == nil {
+			return nil, fmt.Errorf("evidence container %d is missing", i)
+		}
+		state, err := ctr.Inspect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("inspect evidence container %d: %w", i, err)
+		}
+		if state == nil || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(state.Image) {
+			return nil, fmt.Errorf("evidence container %d has no immutable image ID", i)
+		}
+		images[state.Image] = true
+	}
+	ids := make([]string, 0, len(images))
+	for id := range images {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids, nil
 }

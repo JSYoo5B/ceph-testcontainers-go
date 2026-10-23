@@ -87,7 +87,8 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	receipt := map[string]any{"fsid": fsid, "osdmap_epoch": osdMap.Epoch, "pgid": mapping.PGID, "acting": mapping.Acting}
 
 	// Identity: each OSD, the PG, and refusals the client decides alone.
-	admin := runTargetedProbe(t, ctx, toolkitContainer(t, cluster), "/etc/ceph/ceph.client.admin.keyring", "client.admin", 30,
+	toolkit := toolkitContainer(t, cluster)
+	admin := runTargetedProbe(t, ctx, toolkit, "/etc/ceph/ceph.client.admin.keyring", "client.admin", 30,
 		"osd0=osd:0:status", "osd1=osd:1:status", "unknown=osd:0:tc-no-such-command", "missing=osd:99:status",
 		"pg=pg:"+mapping.PGID+":query", "missingpg=pg:99.0:query")
 	for _, osd := range osdMap.OSDs {
@@ -223,7 +224,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	stopped := runTargetedProbe(t, ctx, toolkitContainer(t, cluster), "/etc/ceph/ceph.client.admin.keyring", "client.admin", 10,
+	stopped := runTargetedProbe(t, ctx, toolkit, "/etc/ceph/ceph.client.admin.keyring", "client.admin", 10,
 		"stopped=osd:1:status")["stopped"]
 	if stopped.Ret != -6 {
 		t.Fatalf("stopped osd.1 status: %+v, want -6", stopped)
@@ -240,7 +241,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("TARGETED_COMMAND_RECEIPT %s", data)
-	recordEvidence(targetedMessengerEvidence(t, ctx, cluster, data, fsid))
+	recordEvidence(targetedMessengerEvidence(t, ctx, cluster, data, fsid, toolkit, client))
 }
 
 func runTargetedProbe(t *testing.T, ctx context.Context, ctr testcontainers.Container, keyring, name string, timeout int, requests ...string) map[string]targetedReply {
