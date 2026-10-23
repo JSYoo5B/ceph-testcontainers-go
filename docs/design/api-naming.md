@@ -30,14 +30,15 @@ catalogue; signatures are not rewritten to pretend the proposed API exists.
 | Total | 698 |
 
 These are the counts of that initial catalogue. The current counts, including
-the `capture` package that #52 added, are in the
+the `capture` package that #52 added and the post-test verification of #48,
+are in the
 [retention audit](api-naming-audit.md#scope-and-evidence) and its receipt.
 
 The catalogue includes functions, methods on exported receiver types, types,
 constants and variables. It scans all non-test Go source files, including
 build-tag alternatives, and refuses conflicting duplicate declarations.
-The separate [member catalogue](api-naming-members.json) now records 995
-exported field/nested-record/embedding entries across 166 types. It also scans
+The separate [member catalogue](api-naming-members.json) now records 1068
+exported field/nested-record/embedding entries across 176 types. It also scans
 declared interface methods; this source has no exported declared interfaces.
 Promoted dependency methods are not duplicated: the audit separately records
 embedding boundaries and retains the inherited contracts. It does not rename

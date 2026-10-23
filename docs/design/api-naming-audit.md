@@ -8,23 +8,23 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **745** functions, declared methods on
+The declaration catalogue contains **768** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **995** exported field/nested-record/embedding entries in
-**166** types. It scans exported declared interfaces as well; there are none
+catalogue contains **1068** exported field/nested-record/embedding entries in
+**176** types. It scans exported declared interfaces as well; there are none
 in the current public packages. Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 320 | 331 |
+| `ceph` | 343 | 404 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
 | `capture` | 33 | 55 |
-| Total | 745 | 995 |
+| Total | 768 | 1068 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -33,9 +33,11 @@ getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
 and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
 accessors) added for #6, the test finalization added for #49
 (`TerminateOnCleanup`, `Finalization` with `Check` and `Cleanup`, and
-`FinalizationConfig` with its eight fields), and the `capture` package added
-for #52 (see [Packet capture](#packet-capture-package) below). It uses the
-current source, not the earlier 691/692-entry, 707-entry or 712-entry
+`FinalizationConfig` with its eight fields), the opt-in post-test verification
+added for #48 (see [Post-test verification](#post-test-verification) below),
+and the `capture` package added for #52 (see
+[Packet capture](#packet-capture-package) below). It uses the current source,
+not the earlier 691/692-entry, 707-entry, 712-entry or 745-entry
 checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
@@ -68,6 +70,23 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Identity and native projection fields | Retain `ID`, `UUID`, `FSID`, `GID`, `PID`, `PGID`, `MDS`, `MGR`, `OSD`, `RADOSReads`, `CRUSH*`, `URL` and context-specific `Name`/`Path`. Preserve native map spellings such as `MgrMap`, `MonMap`, `Addrs` and `Addrvec`: these are recognizable protocol projections with existing JSON tags, not requests to normalize upstream schemas. |
 | Bounds, quantities and role/policy fields | Retain existing unit-bearing `*Bytes`, `*Percent`, `*Probability`, durations, ranks/counts and source/destination qualifiers. Domain `K`/`M` denote erasure-code geometry, and pin `Value` is qualified by `Type`; no untyped universal value API is introduced. `Complete`, `Ready`, `Confirmed`, `Owned`, `Gone` and truncation/error fields keep their documented observation limits. |
 | Credentials, callbacks and mutable public descriptors | Retain `AccessKey`, `SecretKey`, `PrivateKeyPEM`, client identities, `OriginalProcessClientFactory` and configuration fields such as lease `Config`. Clear spelling does not authorize logging secrets, mutate captured identity or convert a descriptor into proof of current ownership; the existing validation/redaction contracts remain. |
+
+## Post-test verification
+
+The first #48 increment adds 23 `ceph` declarations and 73 member entries in
+`VerificationConfig`, `LogExpectation`, `CrashExpectation`,
+`VerificationReport`, `VerificationWindow`, `VerificationSource`,
+`VerificationCheck`, `VerificationFinding`, `ExpectationResult` and
+`VerificationGap`. It was reviewed at the call site against the convention
+above:
+
+| Name | Decision and reason |
+| --- | --- |
+| `Finalization.Verify` / `Verification.Evaluate` | `Verify` activates a verification and adds it to the finalization's checks, beside `Check` and `Cleanup`; it records a baseline and changes nothing in the cluster, so neither `Start` nor a lease name fits, and the returned `Verification` has nothing to stop or restore. `Evaluate` observes the window until now and returns a report without failing the test, which only the finalization's check does. |
+| `VerificationConfig`, `VerificationReport`, `VerificationWindow`, `VerificationSource`, `VerificationCheck`, `VerificationFinding`, `VerificationGap` | Request and observation types of the retained `Config`/`Report` family. The `Verification` prefix keeps them apart from the diagnostics and crash metadata reports, whose collectors they reuse. |
+| `LogExpectation`, `CrashExpectation`, `ExpectationResult` | Separate log and crash expectation types, so that a log pattern cannot waive a crash. `Required` with `MinCount` distinguishes requiring an event from permitting it; `MaxCount` bounds a permission. `ExpectationResult` reports each one's matches. |
+| `VerificationOutcome` with `VerificationClean`, `VerificationUnexpected`, `VerificationIncomplete` | The three outcomes keep their type as a prefix, so that clean, an unexpected finding and an incomplete observation stay distinct at the call site. |
+| `LogEvent` with `LogAssertion`, `LogFatalSignal`, `LogClusterError`, `LogClusterSecurity`, `LogClusterWarning` | The fixed line classes. `Cluster*` names the cluster log levels (ERR, SEC, WRN) rather than a generic severity, and none of them implies an allowance. |
 
 ## Packet capture package
 
