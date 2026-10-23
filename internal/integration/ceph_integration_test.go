@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -26,31 +25,15 @@ func TestClusterLifecycle(t *testing.T) {
 	image, opts := integrationImages(t)
 	opts = append(opts, ceph.WithOSDCount(2))
 	cluster, err := ceph.Run(ctx, image, opts...)
+	// One finalization archives a failure before the client and the
+	// cluster are removed; go test -artifacts keeps the archive.
+	var finalization *ceph.Finalization
 	if cluster != nil {
-		t.Cleanup(func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if t.Failed() {
-				for _, ctr := range append([]testcontainers.Container{cluster.Container}, osdContainers(cluster)...) {
-					if ctr == nil {
-						continue
-					}
-					logs, err := ctr.Logs(cleanupCtx)
-					if err != nil {
-						continue
-					}
-					data, _ := io.ReadAll(logs)
-					_ = logs.Close()
-					if len(data) > 16000 {
-						data = data[len(data)-16000:]
-					}
-					t.Logf("%s logs:\n%s", ctr.GetContainerID(), data)
-				}
-			}
-			if err := cluster.Terminate(cleanupCtx); err != nil {
-				t.Errorf("terminate cluster: %v", err)
-			}
-		})
+		var registerErr error
+		finalization, registerErr = cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true, Scenario: "cluster-lifecycle"})
+		if registerErr != nil {
+			t.Fatal(registerErr)
+		}
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +64,7 @@ func TestClusterLifecycle(t *testing.T) {
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)
 	if client != nil {
-		testcontainers.CleanupContainer(t, client)
+		finalization.Cleanup("client", func(ctx context.Context) error { return client.Terminate(ctx) })
 	}
 	if err != nil {
 		t.Fatal(err)

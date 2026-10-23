@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs and rgw; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "ceph": 315,
+    "ceph": 320,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -982,6 +982,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Container.TerminateOnCleanup",
+      "kind": "method",
+      "signature": "func(t testing.TB, config FinalizationConfig) (*Finalization, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.TerminateOnCleanup",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Container.UpdateClientCaps",
       "kind": "method",
       "signature": "func(ctx context.Context, client *ClientConfig, caps ClientCaps) error",
@@ -1281,6 +1289,34 @@
       "current": "ceph.ErrUnsupported",
       "kind": "var",
       "proposed": "ceph.ErrUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization",
+      "kind": "type",
+      "proposed": "ceph.Finalization",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Check",
+      "kind": "method",
+      "signature": "func(name string, check func(context.Context) error)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Check",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Cleanup",
+      "kind": "method",
+      "signature": "func(name string, cleanup func(context.Context) error)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Cleanup",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FinalizationConfig",
+      "kind": "type",
+      "proposed": "ceph.FinalizationConfig",
       "decision": "baseline"
     },
     {

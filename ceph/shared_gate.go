@@ -179,7 +179,8 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"RemoveOSD":             sharedRecycle,
 	"ReopenOSD":             sharedRecycle,
 
-	"Terminate": sharedRefused,
+	"Terminate":          sharedRefused,
+	"TerminateOnCleanup": sharedRefused,
 }
 
 // sharingMode is how a SharedCluster lends a cluster.

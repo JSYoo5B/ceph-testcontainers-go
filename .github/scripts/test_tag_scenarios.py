@@ -815,6 +815,10 @@ class CompletionTests(unittest.TestCase):
             self.assertIn("-mod=readonly", command)
             self.assertIn("-count=1", command)
             self.assertIn("-timeout=20m", command)
+            # The retained artifact flags precede the package argument.
+            self.assertEqual(command[-3:], ["-artifacts", "-outputdir=" + str((output / engine.TEST_ARTIFACTS).resolve()),
+                                            "./internal/integration"])
+            self.assertTrue((output / engine.TEST_ARTIFACTS).is_dir())
             self.assertNotIn("CEPH_TEST_RBD_CLIENT_IMAGE", popen.call_args.kwargs["env"])
             self.assertEqual(popen.call_args.kwargs["env"]["CEPH_TEST_VAULT_IMAGE"], "vault-custom")
             for key, value in engine.GO_EXECUTION_ENV.items():
@@ -825,6 +829,22 @@ class CompletionTests(unittest.TestCase):
             self.assertEqual(report["go_environment"], {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "off"})
             self.assertTrue((output / "native.log").is_file())
             self.assertTrue((output / "report.json").is_file())
+
+    def test_test_artifacts_lists_retained_files_without_following_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            archive = directory / "_artifacts" / "internal/integration" / "TestX" / "123" / "ceph-abc-0011"
+            archive.mkdir(parents=True)
+            (archive / "manifest.json").write_text("{}\n")
+            (archive / "diagnostics.json").write_text("{}\n")
+            (archive / "outside").symlink_to("/")
+            listing = engine.test_artifacts(directory)
+        self.assertEqual(listing["directory"], engine.TEST_ARTIFACTS)
+        self.assertEqual([file["path"] for file in listing["files"]], [
+            "_artifacts/internal/integration/TestX/123/ceph-abc-0011/diagnostics.json",
+            "_artifacts/internal/integration/TestX/123/ceph-abc-0011/manifest.json"])
+        self.assertEqual(listing["manifests"], 1)
+        self.assertEqual(listing["files"][0]["bytes"], 3)
 
     def test_compile_phase_does_not_execute_any_test(self):
         plan = engine.discover([fixture()])
@@ -912,7 +932,10 @@ class BinaryReuseTests(unittest.TestCase):
         self.assertEqual(report["completion"]["execution"], "test-binary")
         command, options = commands[0]
         binary = str((directory / "internal-integration.test").resolve())
-        self.assertEqual(command, [binary, "-test.v", "-test.count=1", "-test.timeout=20m"])
+        artifacts = str((root / "native" / engine.TEST_ARTIFACTS).resolve())
+        self.assertEqual(command, [binary, "-test.v", "-test.count=1", "-test.timeout=20m",
+                                   "-test.artifacts", "-test.outputdir=" + artifacts])
+        self.assertEqual(report["test_artifacts"], {"directory": engine.TEST_ARTIFACTS, "files": [], "manifests": 0})
         self.assertEqual(options["cwd"], root / "internal/integration")
         self.assertNotIn("CEPH_TEST_RBD_CLIENT_IMAGE", options["env"])
         for name, value in engine.GO_EXECUTION_ENV.items():
@@ -927,7 +950,10 @@ class BinaryReuseTests(unittest.TestCase):
                                                environment={"CEPH_TEST_NETWORK": "bridge"})
         self.assertTrue(report["passed"], report)
         command, options = commands[0]
-        self.assertEqual(command[1:], ["-test.v", "-test.count=1", "-test.timeout=20m", "-test.run=^(TestNetworked)$"])
+        self.assertEqual(command[1:4], ["-test.v", "-test.count=1", "-test.timeout=20m"])
+        self.assertEqual(command[4], "-test.artifacts")
+        self.assertTrue(command[5].startswith("-test.outputdir=/"), command)
+        self.assertEqual(command[6:], ["-test.run=^(TestNetworked)$"])
         self.assertEqual(options["env"]["CEPH_TEST_NETWORK"], "bridge")
 
     def test_each_receipt_mismatch_fails_closed_before_running_anything(self):

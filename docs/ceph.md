@@ -1627,6 +1627,129 @@ the restore failure is returned, and a later `Terminate` retries. With
 `testcontainers.CleanupContainer`, register the cluster first and clients
 afterwards.
 
+#### TerminateOnCleanup
+
+```golang
+func (c *Container) TerminateOnCleanup(t testing.TB, config ceph.FinalizationConfig) (*ceph.Finalization, error)
+func (f *Finalization) Check(name string, check func(context.Context) error)
+func (f *Finalization) Cleanup(name string, cleanup func(context.Context) error)
+```
+
+Registers one `t.Cleanup` that finalizes the cluster and then calls
+[Terminate](#terminate). Use it instead of another cleanup that terminates the
+cluster, and register it right after `Run`. The cleanup runs these phases in
+this order, whatever order the test added its steps in:
+
+1. The checks added with `Check`, in the order they were added. A check is a
+   post-test verification that needs the running cluster. It fails the test
+   by returning an error, by panicking or through `t` itself.
+2. With `Archive`, the failure archive, if the test has failed by now. A
+   failure that a check reported therefore triggers it too.
+3. The cleanups added with `Cleanup`, in reverse order, such as the removal
+   of a client container that the archive should still see. Test cleanups
+   registered after `TerminateOnCleanup` run before all of this, as Go runs
+   cleanups last-in first-out, so route such removals through `Cleanup`.
+   With `Archive`, a cleanup that fails when nothing had failed before
+   triggers an archive of what still runs, labelled `after-cleanup`.
+4. `Terminate`. Its error fails the test.
+
+```golang
+cluster, err := ceph.Run(ctx, image)
+if cluster != nil {
+	finalization, regErr := cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true})
+	if regErr != nil {
+		t.Fatal(regErr)
+	}
+	// client is a container that the test attached to the cluster.
+	finalization.Cleanup("client", func(ctx context.Context) error { return client.Terminate(ctx) })
+}
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+Each phase gets a fresh context with its own bound, because the test's
+context has already ended when cleanups run. Errors stay separate: a check's
+error and a cleanup's error fail the test under their names, the
+archive's collection and storage errors are only logged and recorded in its
+manifest, and none of them skips a later phase. A shared cluster refuses
+`TerminateOnCleanup` with `ErrSharedCluster`. Adding a step after the
+finalization has started fails the test instead.
+
+`ceph.FinalizationConfig` fields (zero selects the default):
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `Archive` | off | Write the failure archive when the test fails. |
+| `ArchiveDirectory` | the test's `ArtifactDir` | Root of the archives; each gets a new directory under `<root>/<test name>/`. |
+| `Scenario` | none | One-line label for the manifest. |
+| `CheckTimeout` | 2 minutes | All checks together; at most 10 minutes. |
+| `ArchiveTimeout` | 3 minutes | The whole archive, both collectors and every write; at most 10 minutes. |
+| `CleanupTimeout` | 3 minutes | The cleanups together, and `Terminate` separately; at most 10 minutes. |
+| `Diagnostics` | defaults | The [CollectDiagnostics](#collectdiagnostics) configuration, including `AdditionalContainers` and `RedactValues`. |
+| `CrashMetadata` | defaults | The [CollectCrashMetadata](#collectcrashmetadata) configuration. |
+
+Invalid fields are rejected before anything is registered.
+
+##### The failure archive
+
+A passing test collects and writes nothing. In a failed test, the archive
+runs `CollectDiagnostics` and `CollectCrashMetadata` at the same time, within
+`ArchiveTimeout`, and writes each report it gets even when the collector
+returned an error, so a failed query or container leaves the rest. It writes
+into a new directory `ceph-<cluster>-<execution ID>`, where the execution ID
+is random, so parallel tests, repeated executions and several clusters of one
+test never share one:
+
+| File | Contents |
+| --- | --- |
+| `diagnostics.json` | The `ceph.DiagnosticsReport`, absent when the collector returned none. |
+| `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
+| `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup and the termination outcome. |
+
+The manifest's execution identity has the Go version and platform, the VCS
+revision when the test binary carries one, and the repository, workflow
+event revision (`workflow_sha`, from `GITHUB_SHA`), workflow, job, run ID and
+run attempt of a GitHub Actions run; no other environment variable is read.
+The workflow event revision is not the checked-out source: a comment-triggered
+run checks out a pull request's head, so only the binary's VCS revision counts
+as the source revision. Provenance that the library does not know is listed in
+`missing_provenance`, such as the source revision of a binary without VCS
+information and the bug compatibility selection
+(image IDs are in the diagnostics' `container-inspect` artifacts). A check
+or cleanup records its error (a returned error, a panic, or a `t.Fatal` or
+`t.FailNow` that ended its goroutine, which never skips the later phases)
+apart from `failed_test`, set when the step turned a passing test into a
+failed one through the test; the trigger has both kinds for checks and for
+cleanups. Each
+collector entry has `reported`, `complete` and its error; the crash entry
+counts the containers per `ceph.CrashOutcome`, so an empty or absent crash
+directory stays distinct from rejected metadata and found records. The
+archive is first written while the cluster runs; after the cleanups and
+`Terminate`, the manifest is replaced with their outcomes and `final` set.
+Nothing is collected again after termination. The manifest records the
+archive's directory name, not its host path.
+
+By default the archive goes into the test's `ArtifactDir`, which `go test`
+keeps under its output directory only with `-artifacts` (and `-outputdir`
+for another place than the package directory). Without the flag the
+directory is temporary and is removed after the test; the manifest's
+`retained` field and the log line say so. Errors in creating the directory
+or writing a file are logged and recorded, never retried in a loop, and do
+not stop the later phases. If `ArtifactDir` itself cannot be created, Go
+fails the test, and the cleanups and `Terminate` still run.
+
+Limits:
+
+- The reports are a snapshot during finalization: observations are not
+  atomic, and log tails are not continuous history.
+- No crash records is not proof that a daemon never crashed. A container
+  removed earlier took its records along.
+- Nothing runs after a forced process exit, a Go test timeout panic or a lost
+  runner.
+- Redaction is that of the collectors, also for the errors in the manifest;
+  review arbitrary daemon logs before sharing an archive.
+
 #### Ceph
 
 ```golang
@@ -3609,8 +3732,11 @@ partially bootstrapped clusters and on stopped or removed containers. It never
 starts, stops or reconfigures anything, and it never collects files, environment
 variables, keyrings, the auth database, mount sources or arbitrary commands.
 
-It is not called automatically. Call it before cleanup, with its own short
-context (the test context may already be canceled):
+[TerminateOnCleanup](#terminateoncleanup) with `Archive` calls it, and
+[CollectCrashMetadata](#collectcrashmetadata), when a test fails, and writes
+both reports with a manifest. Otherwise it is not called automatically. Call
+it before cleanup, with its own short context (the test context may already be
+canceled):
 
 ```golang
 t.Cleanup(func() {
@@ -4043,6 +4169,7 @@ See the [handle contract](#container-methods).
 | `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [OverrideFullRatios](#overridefullratios) |
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
+| `FinalizationConfig`, `Finalization` | [TerminateOnCleanup](#terminateoncleanup) |
 
 ## Examples
 
@@ -4721,10 +4848,14 @@ container, or use host mode.
 
 ### Save diagnostics when a test fails
 
-See [CollectDiagnostics](#collectdiagnostics). Add caller-owned clients and
-mirror daemons with `DiagnosticsConfig.AdditionalContainers` and mask
-application secrets with `RedactValues`. For daemons that crashed, also save
-the crash reports with [CollectCrashMetadata](#collectcrashmetadata).
+Use [TerminateOnCleanup](#terminateoncleanup) with `Archive: true`: it
+writes the diagnostics, the crash metadata and a manifest into the test's
+artifact directory before the cluster is terminated. Run `go test -artifacts`
+to keep them. Add caller-owned clients and mirror daemons with
+`Diagnostics.AdditionalContainers`, remove them through
+`Finalization.Cleanup`, and mask application secrets with `RedactValues`. To
+collect by hand, see [CollectDiagnostics](#collectdiagnostics) and
+[CollectCrashMetadata](#collectcrashmetadata).
 
 ## Running native commands
 

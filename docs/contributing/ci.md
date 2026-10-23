@@ -1153,7 +1153,7 @@ falls back to libcephfs. Outside the tag runner, build it with the
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `phases.json` (phase outcomes); `history-row.json` (the job's [history row](#scenario-history)) |
+| `tag-scenario-<id>` | `modules/modules.log` and `modules/modules-report.json` (download output and outcome); `compile/compile.log` and `compile/compile-report.json` (compiler output, outcome and binary receipt; the binary itself is not uploaded); `native/native.log` (complete verbose test output); `native/report.json` (verdict); `native/test-artifacts/` (the tests' retained artifact directories, such as [failure archives](#failure-archives)); `phases.json` (phase outcomes); `history-row.json` (the job's [history row](#scenario-history)) |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
@@ -1184,6 +1184,8 @@ applies to new uploads only; existing artifacts keep their recorded expiry.
 - `compiled_tests`: the tests the batch was expected to run.
 - `command`, `elapsed_seconds`, `exit_code`.
 - `strict_completion`: the checker result for checker batches.
+- `test_artifacts`: the files that the tests left in `native/test-artifacts/`,
+  with their sizes, and the number of failure archive manifests among them.
 
 `modules-report.json` and `compile-report.json` record `exit_code`,
 `timed_out`, `timeout_seconds` and `elapsed_seconds`. Their `classification`
@@ -1196,6 +1198,38 @@ keeps the output written until then.
 
 `phases.json` holds the same phase outcomes as the job summary, with
 `failed_phases` and `cancelled_phases` lists.
+
+### Failure archives
+
+The runner passes Go's artifact flags in both execution modes: `-artifacts
+-outputdir=<native>/test-artifacts` to `go test`, and `-test.artifacts
+-test.outputdir=<native>/test-artifacts` to the compiled test binary. A test
+that finalizes its cluster with
+[`TerminateOnCleanup`](../ceph.md#terminateoncleanup) and `Archive` writes
+its failure archive into its `ArtifactDir`, so the archive lands under
+`native/test-artifacts/_artifacts/<package>/<test>/<random>/ceph-<cluster>-<execution>/`
+with `diagnostics.json`, `crash-metadata.json` and `manifest.json`. Parallel
+tests, repeated executions and several clusters of one test get separate
+directories. A passing test calls nothing and leaves no directory.
+
+Three outcomes are recorded separately, and none implies the next:
+
+1. **Local file creation.** The test log names the archive directory and
+   what each collector and file write did; the manifest records the same
+   per collector and file. `test_artifacts` in `native/report.json` lists the
+   files that exist after the run.
+2. **Upload.** `native/test-artifacts/` is inside the uploaded
+   `tag-scenario-<id>` artifact. For a failed native step, the job summary's
+   `Failure archive` section records the number of local manifests, the
+   upload step's outcome and the artifact's URL and ID.
+3. **Availability.** Only downloading the artifact of a failed run and
+   reading its manifest shows that the archive is retained. Unit and fixture
+   tests of the archive do not show it, and neither does a listing or a
+   successful upload step.
+
+An archive holds a snapshot taken before the cluster's termination, not
+continuous history. Nothing is archived when the runner is lost or the test
+process is killed or panics, for example at the job timeout or the Go test timeout.
 
 ### Scenario history
 
