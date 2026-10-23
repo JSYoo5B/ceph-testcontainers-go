@@ -22,6 +22,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/capture"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
+	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -117,7 +118,8 @@ func runBusybox(t *testing.T, ctx context.Context, network string, cmd ...string
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			if err := ctr.Terminate(cleanupCtx); err != nil {
+			// A target-loss scenario may already have removed it.
+			if err := testcontainers.TerminateContainer(ctr, testcontainers.StopContext(cleanupCtx)); err != nil {
 				t.Errorf("remove a capture test container: %v", err)
 			}
 		})
@@ -151,6 +153,78 @@ func fetch(t *testing.T, ctx context.Context, client testcontainers.Container, u
 	return string(data)
 }
 
+// helpers lists the capture helpers, running or not, that joined target's
+// network namespace.
+func helpers(t *testing.T, ctx context.Context, docker *testcontainers.DockerClient, target string) []container.Summary {
+	t.Helper()
+	list, err := docker.ContainerList(ctx, mobycl.ContainerListOptions{All: true,
+		Filters: mobycl.Filters{}.Add("label", "org.testcontainers.ceph.role=capture-helper")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined []container.Summary
+	for _, helper := range list.Items {
+		if helper.HostConfig.NetworkMode == "container:"+target {
+			joined = append(joined, helper)
+		}
+	}
+	return joined
+}
+
+// waitHelperEnd waits up to limit for the one capture helper of target to
+// end on its own, and reports whether it did.
+func waitHelperEnd(t *testing.T, ctx context.Context, docker *testcontainers.DockerClient, target string, limit time.Duration) bool {
+	t.Helper()
+	for deadline := time.Now().Add(limit); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		joined := helpers(t, ctx, docker, target)
+		if len(joined) != 1 {
+			t.Fatalf("%d capture helpers joined the target", len(joined))
+		}
+		if joined[0].State != container.StateRunning {
+			return true
+		}
+	}
+	return false
+}
+
+// requireHelpersRemoved fails when a capture helper of target is left.
+func requireHelpersRemoved(t *testing.T, ctx context.Context, docker *testcontainers.DockerClient, target string) {
+	t.Helper()
+	if left := helpers(t, ctx, docker, target); len(left) != 0 {
+		t.Fatalf("%d capture helpers left after the capture", len(left))
+	}
+}
+
+// startOwned starts a capture and, before the caller looks at the error,
+// registers a bounded fallback Stop for any returned session, also one
+// returned with an error. A fatal path before the subtest's own Stop then
+// still ends and removes the helper; after an explicit Stop the fallback
+// returns the same report. It only checks that no helper stays joined to
+// the target, so the original failure is kept.
+func startOwned(t *testing.T, docker *testcontainers.DockerClient, target string, start func() (*capture.Session, error)) (*capture.Session, error) {
+	t.Helper()
+	session, err := start()
+	if session != nil {
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if _, stopErr := session.Stop(ctx); stopErr != nil {
+				t.Logf("fallback Stop: %v", stopErr)
+			}
+			if left := helpers(t, ctx, docker, target); len(left) != 0 {
+				t.Errorf("%d capture helpers left after the fallback Stop", len(left))
+			}
+		})
+	}
+	return session, err
+}
+
+func logReport(t *testing.T, report capture.Report, err error) {
+	t.Helper()
+	data, _ := json.MarshalIndent(report, "", "  ")
+	t.Logf("report: %s\nerror: %v", data, err)
+}
+
 // TestCaptureTargetTraffic captures known TCP traffic of a caller-owned
 // target on a private bridge, with an unrelated flow that the filter
 // excludes, then a valid empty capture and refused requests. It needs an
@@ -182,13 +256,20 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = docker.Close() })
 	request := func(name, filter string) capture.Request {
 		return capture.Request{HelperImage: helper, Network: bridge.Name, Interface: "eth0", Filter: filter,
 			SnapLen: 65535, MaxPackets: 1000, Output: filepath.Join(t.TempDir(), name+".pcap")}
 	}
 
 	t.Run("bidirectional", func(t *testing.T) {
-		session, err := capture.Start(ctx, target, request("traffic", "tcp port 7000 and host "+clientHost))
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, request("traffic", "tcp port 7000 and host "+clientHost))
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +321,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		session, err := capture.Start(ctx, target, request("empty", "tcp port 7999"))
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, request("empty", "tcp port 7999"))
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +343,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 			"filter":    request("filter", "tcp portx 7000"),
 			"interface": func() capture.Request { r := request("interface", "tcp"); r.Interface = "eth1"; return r }(),
 		} {
-			session, err := capture.Start(ctx, target, req)
+			session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+				return capture.Start(ctx, target, req)
+			})
 			if session != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Errorf("%s: session %v, err %v", name, session, err)
 			}
@@ -269,6 +354,150 @@ func TestCaptureTargetTraffic(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("packet limit", func(t *testing.T) {
+		req := request("limit", "tcp port 7000 and host "+clientHost)
+		req.SnapLen, req.MaxPackets = 128, 4
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, req)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// One HTTP exchange has more than four packets on the selected flow.
+		fetch(t, ctx, client, targetURL+":7000/")
+		if !waitHelperEnd(t, ctx, docker, target.GetContainerID(), 30*time.Second) {
+			t.Fatal("tcpdump did not end at its packet limit")
+		}
+		report, err := session.Stop(ctx)
+		logReport(t, report, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.End != capture.EndPacketLimit || report.ExitCode != 0 || !report.EndedAt.Before(report.StopRequestedAt) ||
+			report.Target != capture.TargetUnchanged || !report.HelperRemoved {
+			t.Fatalf("end %s/%d at %s (stop %s), target %s, removed %t", report.End, report.ExitCode,
+				report.EndedAt, report.StopRequestedAt, report.Target, report.HelperRemoved)
+		}
+		if report.File.Status != capture.FileValid || !report.File.Complete || report.File.Packets != req.MaxPackets ||
+			report.File.SnapLen != uint32(req.SnapLen) {
+			t.Fatalf("file %+v", report.File)
+		}
+		if captured := report.Statistics.Captured; captured != nil && *captured != uint64(req.MaxPackets) {
+			t.Fatalf("tcpdump captured %d packets", *captured)
+		}
+		file, err := os.ReadFile(report.Output)
+		if err != nil || int64(len(file)) != report.RetrievedBytes {
+			t.Fatalf("delivered file: %d bytes, %v", len(file), err)
+		}
+		for _, f := range flows(t, file) {
+			if f.srcPort != 7000 && f.dstPort != 7000 {
+				t.Fatalf("a packet outside the selected flow: %+v", f)
+			}
+		}
+		requireHelpersRemoved(t, ctx, docker, target.GetContainerID())
+	})
+
+	t.Run("canceled workload", func(t *testing.T) {
+		workload, cancelWorkload := context.WithCancel(ctx)
+		defer cancelWorkload()
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(workload, target, request("canceled", "tcp port 7000 and host "+clientHost))
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fetch(t, workload, client, targetURL+":7000/")
+		time.Sleep(time.Second)
+		cancelWorkload()
+		// Stop gets the workload's canceled context, as a deferred cleanup
+		// after a failed workload would.
+		report, err := session.Stop(workload)
+		logReport(t, report, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.End != capture.EndStopped || report.ExitCode != 0 || report.Target != capture.TargetUnchanged || !report.HelperRemoved {
+			t.Fatalf("end %s/%d, target %s, removed %t", report.End, report.ExitCode, report.Target, report.HelperRemoved)
+		}
+		if report.File.Status != capture.FileValid || !report.File.Complete || report.File.Packets == 0 {
+			t.Fatalf("file %+v", report.File)
+		}
+		requireHelpersRemoved(t, ctx, docker, target.GetContainerID())
+	})
+
+	t.Run("denied NET_RAW", func(t *testing.T) {
+		// The public API always grants NET_RAW; this test hook withholds it
+		// from the capture helper alone, as an engine that refuses it would.
+		req := request("denied", "tcp port 7000")
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.StartWithoutNetRaw(ctx, target, req)
+		})
+		t.Logf("error: %v", err)
+		if session != nil || !errors.Is(err, capture.ErrPermissionDenied) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) ||
+			errors.Is(err, capture.ErrFailed) || errors.Is(err, capture.ErrImageUnsupported) {
+			t.Fatalf("session %v, err %v", session, err)
+		}
+		if _, statErr := os.Stat(req.Output); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("a refused capture kept its output")
+		}
+		requireHelpersRemoved(t, ctx, docker, target.GetContainerID())
+	})
+
+	// The target-loss scenarios end their own target: the capture is bound
+	// to the generation it joined and never follows it.
+	for _, loss := range []struct {
+		name  string
+		end   func(t *testing.T, id string)
+		state capture.TargetState
+	}{
+		{"target removed", func(t *testing.T, id string) {
+			if _, err := docker.ContainerRemove(ctx, id, mobycl.ContainerRemoveOptions{Force: true}); err != nil {
+				t.Fatal(err)
+			}
+		}, capture.TargetGone},
+		{"target restarted", func(t *testing.T, id string) {
+			now := 0
+			if _, err := docker.ContainerRestart(ctx, id, mobycl.ContainerRestartOptions{Timeout: &now}); err != nil {
+				t.Fatal(err)
+			}
+		}, capture.TargetChanged},
+	} {
+		t.Run(loss.name, func(t *testing.T) {
+			lost := runBusybox(t, ctx, bridge.Name, "sh", "-c",
+				"mkdir -p /www && echo capture-payload-7000 > /www/index.html && httpd -p 7000 -h /www && exec sleep infinity")
+			lostURL, id := "http://"+address(t, ctx, lost, bridge.Name).String(), lost.GetContainerID()
+			session, err := startOwned(t, docker, id, func() (*capture.Session, error) {
+				return capture.Start(ctx, lost, request(strings.ReplaceAll(loss.name, " ", "-"), "tcp port 7000 and host "+clientHost))
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fetch(t, ctx, client, lostURL+":7000/")
+			time.Sleep(time.Second)
+			loss.end(t, id)
+			// tcpdump ends on its own once the interface is gone; when it
+			// does not within the wait, Stop ends it.
+			ended := waitHelperEnd(t, ctx, docker, id, 30*time.Second)
+			report, err := session.Stop(ctx)
+			logReport(t, report, err)
+			t.Logf("tcpdump ended before Stop: %t", ended)
+			if !errors.Is(err, capture.ErrFailed) || report.Target != loss.state || !report.HelperRemoved {
+				t.Fatalf("err %v, target %s, removed %t", err, report.Target, report.HelperRemoved)
+			}
+			if ended && (report.End != capture.EndFailed || report.ExitCode == 0) {
+				t.Fatalf("tcpdump ended on its own as %s/%d", report.End, report.ExitCode)
+			}
+			if !ended && report.End != capture.EndStopped {
+				t.Fatalf("tcpdump ended after Stop as %s/%d", report.End, report.ExitCode)
+			}
+			// The traffic before the loss is still delivered and checked.
+			if !report.Retrieved || report.File.Status != capture.FileValid || !report.File.Complete || report.File.Packets == 0 {
+				t.Fatalf("file %+v", report.File)
+			}
+			requireHelpersRemoved(t, ctx, docker, id)
+		})
+	}
 
 	after, err := target.Inspect(ctx)
 	if err != nil {

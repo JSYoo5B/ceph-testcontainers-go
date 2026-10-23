@@ -134,14 +134,34 @@ selected by port and client address, while a second flow on another port must
 be excluded. It requires a graceful stop, a valid file with both directions and
 the response payload, statistics that match the file, a file still readable
 after helper removal, an unchanged target, a valid empty capture, and refused
-filter and interface requests that leave no output. A pass is evidence only for
-the runner's engine and architecture (`linux/amd64`).
+filter and interface requests that leave no output.
+
+The same scenario then covers the negative and partial cases:
+
+- Packet limit: with `MaxPackets` 4, `tcpdump` must end on its own before
+  `Stop`, which reports `EndPacketLimit` without an error and a valid file of
+  exactly four packets of the selected flow.
+- Canceled workload: `Stop` receives the workload's canceled context and still
+  stops gracefully, delivers a valid file and removes the helper.
+- Denied `NET_RAW`: the public API always grants `NET_RAW`, so a test-only hook
+  in the package starts the capture helper (not the probe) without it. The
+  engine must refuse it before readiness as `capture.ErrPermissionDenied`,
+  with no session, helper or output left. This shows the classification of a
+  withheld capability, not a particular engine's policy.
+- Target removed or restarted during a capture: each uses its own target.
+  `Stop` must join `capture.ErrFailed`, report `TargetGone` or `TargetChanged`,
+  deliver a valid file of the traffic before the loss and remove the helper.
+  When `tcpdump` ends on its own after the loss, its end must be `EndFailed`
+  with a nonzero status; otherwise `Stop` ends it.
+
+A pass is evidence only for the runner's engine and architecture
+(`linux/amd64`). A killed capture (`EndKilled`) and a cut-off final record stay
+offline checks: the reference helper always ends within the grace on
+`SIGTERM`.
 
 ## Next steps
 
-1. Native negative controls: denied `NET_RAW`, target restart or removal during
-   a capture, workload cancellation and partial output, and the packet limit.
-2. Each declared architecture separately, `linux/arm64` included, once the
+1. Each declared architecture separately, `linux/arm64` included, once the
    helper is published.
-3. Integration with #49's failure bundle, keeping raw pcap retention and upload
+2. Integration with #49's failure bundle, keeping raw pcap retention and upload
    deliberate and capture usable on its own.
