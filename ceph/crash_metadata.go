@@ -123,6 +123,9 @@ type CrashRecord struct {
 	Posted        bool           `json:"posted,omitempty"`
 	Fields        map[string]any `json:"fields"`
 	OmittedFields []string       `json:"omitted_fields,omitempty"`
+	// identity is the crash directory's own name, before redaction, for
+	// comparing crashes; it is never reported.
+	identity string
 }
 
 // CrashOmission names a metadata file that was not accepted, and why.
@@ -438,7 +441,8 @@ func crashRecord(data []byte, relative string, posted bool, redact func(string) 
 	if err := decoder.Decode(&object); err != nil || object == nil || !errors.Is(decoder.Decode(&rest), io.EOF) {
 		return CrashRecord{}, "not a JSON object"
 	}
-	record := CrashRecord{CrashID: redact(path.Base(path.Dir(relative))), Path: redact(relative), Posted: posted, Fields: map[string]any{}}
+	record := CrashRecord{CrashID: redact(path.Base(path.Dir(relative))), Path: redact(relative), Posted: posted, Fields: map[string]any{},
+		identity: path.Base(path.Dir(relative))}
 	for key, value := range object {
 		kept, ok := crashFieldValue(value, redact)
 		if !crashFields[key] || !ok {

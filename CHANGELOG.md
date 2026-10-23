@@ -18,6 +18,22 @@ change the API.
 
 ### Added
 
+- `ceph.Finalization.Verify` activates an opt-in post-test verification of a
+  dedicated cluster: it records the daemon container generations, the crash
+  IDs already present and the window's start, and adds a check that
+  evaluates the daemons' log lines and new crashes against separate
+  `LogExpectation` and `CrashExpectation` rules. `Required` distinguishes
+  requiring an event from permitting it. Reports are clean, unexpected or
+  incomplete; removed, restarted or inaccessible containers, rotating or
+  unsupported log drivers, cut or malformed streams, unreadable crash
+  directories and incomplete crash metadata are gaps, never clean. A result
+  that is not clean fails the test and, with `Archive`, is archived before
+  the cleanups. `Verification.Evaluate` returns the report without failing.
+  Shared clusters are refused. Native coverage of log windows and crash
+  completion is not yet measured (#47), so a clean result is scoped evidence
+  only. The native `short/post_test_verification` batch crashes the MGR and
+  an OSD after activation (#48).
+
 - `ceph.Container.TerminateOnCleanup` registers one test cleanup that runs
   the checks added with `Finalization.Check`, then, with
   `FinalizationConfig.Archive` and a failed test, a failure archive, then the

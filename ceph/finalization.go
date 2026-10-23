@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -59,6 +60,10 @@ type Finalization struct {
 	started  bool
 	checks   []finalizationStep
 	cleanups []finalizationStep
+	// verificationNames are the active verifications' names, and
+	// verificationReports the reports of their checks, for the archive.
+	verificationNames   map[string]bool
+	verificationReports []*VerificationReport
 
 	// The cluster's operations, replaced in tests.
 	cluster            string
@@ -66,6 +71,7 @@ type Finalization struct {
 	collectDiagnostics func(context.Context, DiagnosticsConfig) (*DiagnosticsReport, error)
 	collectCrash       func(context.Context, CrashMetadataConfig) (*CrashMetadataReport, error)
 	terminate          func(context.Context) error
+	activate           func(context.Context, VerificationConfig) (*Verification, error)
 	writeFile          func(string, []byte) error
 	artifactDir        func() (string, bool)
 	now                func() time.Time
@@ -111,6 +117,7 @@ func (c *Container) TerminateOnCleanup(t testing.TB, config FinalizationConfig) 
 	f.cluster, f.images = c.owner, c.Images()
 	f.collectDiagnostics, f.collectCrash = c.CollectDiagnostics, c.CollectCrashMetadata
 	f.terminate = func(ctx context.Context) error { return c.Terminate(ctx) }
+	f.activate = c.startVerification
 	t.Cleanup(f.finalize)
 	return f, nil
 }
@@ -373,6 +380,12 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	if crash != nil {
 		m.Archive.ClusterClosed = m.Archive.ClusterClosed || crash.Closed
 		m.Files = append(m.Files, f.writeReport(directory, "crash-metadata.json", crash))
+	}
+	f.mu.Lock()
+	verifications := slices.Clone(f.verificationReports)
+	f.mu.Unlock()
+	for i, report := range verifications {
+		m.Files = append(m.Files, f.writeReport(directory, fmt.Sprintf("verification-%d-%s.json", i+1, artifactName(report.Name)), report))
 	}
 	m.Archive.FinishedAt = f.now()
 	m.Archive.Complete = true

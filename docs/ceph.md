@@ -1705,6 +1705,7 @@ test never share one:
 | --- | --- |
 | `diagnostics.json` | The `ceph.DiagnosticsReport`, absent when the collector returned none. |
 | `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
+| `verification-<n>-<name>.json` | The `ceph.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup and the termination outcome. |
 
 The manifest's execution identity has the Go version and platform, the VCS
@@ -1749,6 +1750,152 @@ Limits:
   runner.
 - Redaction is that of the collectors, also for the errors in the manifest;
   review arbitrary daemon logs before sharing an archive.
+
+#### Verify
+
+```golang
+func (f *Finalization) Verify(ctx context.Context, config ceph.VerificationConfig) (*ceph.Verification, error)
+func (v *Verification) Evaluate(ctx context.Context) (*ceph.VerificationReport, error)
+```
+
+Opt-in post-test verification of a dedicated cluster: the log lines and the
+new crashes of its daemons between the activation and the end of the test,
+each against its own expected events. `Verify` activates it on a
+`Finalization` from [TerminateOnCleanup](#terminateoncleanup) and adds a check
+named `verification <name>`, so it runs before the failure archive and the
+cleanups. A verification that is not clean fails the test, and with
+`Archive` its report is archived with the diagnostics before anything is
+removed. Runs that do not call `Verify` keep their behavior.
+
+```golang
+finalization, err := cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true})
+if err != nil {
+	t.Fatal(err)
+}
+// The test crashes osd.0 on purpose: require that crash and its signal line.
+_, err = finalization.Verify(ctx, ceph.VerificationConfig{
+	Logs: []ceph.LogExpectation{{Name: "osd0-signal", Required: true, Daemon: "osd.0",
+		Event: ceph.LogFatalSignal, Pattern: `Caught signal`}},
+	Crashes: []ceph.CrashExpectation{{Name: "osd0-crash", Required: true, MaxCount: 1,
+		Daemon: "osd.0", Process: "ceph-osd"}},
+})
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+The activation records the baseline: the selected container generations
+(the cluster's daemon containers and `AdditionalContainers`, not the control
+container or the toolkit client), with their container ID, start time and
+restart count; the crash IDs already in their crash directories; and the
+window's start on the Docker engine's clock. A crash is new when its crash ID
+was not in that container's directory at activation. `Verify` returns an
+error for an invalid configuration, when the engine's clock cannot be read,
+after the finalization has started, for a name already active on the
+finalization, and with `ErrSharedCluster` on a cluster that a `SharedCluster`
+shares, even exclusively: cluster-wide events cannot be attributed to one
+tenant. `Evaluate` returns the report of the window until now without failing
+the test, and can be repeated; it returns an error only when it cannot
+evaluate at all.
+
+Log events are lines of the containers' Docker log streams in the window,
+read with Docker's timestamps. A line is an event of one `ceph.LogEvent`
+kind, the first that matches:
+
+| Kind | Line |
+| --- | --- |
+| `LogAssertion` | `FAILED ceph_assert`, `FAILED assert` or `ceph_abort` |
+| `LogFatalSignal` | `Caught signal` |
+| `LogClusterError` | a cluster log entry `[ERR]` |
+| `LogClusterSecurity` | a cluster log entry `[SEC]` |
+| `LogClusterWarning` | a cluster log entry `[WRN]` |
+
+Daemons write their cluster log entries to their own output and the MON
+writes them again as the cluster log, so one entry can be two events. Other
+lines are not evaluated.
+
+Each event goes to the first expectation of its kind (log or crash) that
+matches it and still permits one more; one that none permits is unexpected.
+A `ceph.LogExpectation` matches all of its non-empty criteria: `Daemon` (the
+source as the report names it, such as `osd.0` or `mgr.a`), `Event`, and the
+required `Pattern`, a regular expression on the redacted line. A
+`ceph.CrashExpectation` matches `Daemon`, `Process` (such as `ceph-osd`) and
+`Signature`, a regular expression on one line of the crash's `stack_sig`,
+`assert_*` or `backtrace` fields; at least one of the three is required.
+Both have `Name`, which identifies them in the report and is unique, and:
+
+- `Required`: the expectation must match at least `MinCount` events (at least
+  one) or the check is unexpected. Without it the expectation only permits,
+  and `MinCount` must be zero.
+- `MaxCount`: the number of events it permits, zero for any. Further events go
+  on to the next expectations.
+
+A log expectation never matches a crash, and a crash expectation never a log
+line. Expectations do not repair, restart or archive anything, and they do
+not suppress the test's own checks.
+
+`ceph.VerificationConfig` fields (zero selects the default):
+
+| Field | Default | Maximum | Meaning |
+| --- | --- | --- | --- |
+| `Name` | `post-test` | 128 bytes | Names the check and the report. |
+| `Logs`, `Crashes` | none | 256 each | The expected events. |
+| `Timeout` | 2 minutes | 5 minutes | The activation, and each evaluation; the check is also bounded by `CheckTimeout`. |
+| `OperationTimeout` | 20 seconds | 1 minute | Each Docker operation, including one container's log stream. |
+| `MaxLogBytes` | 32 MiB | 256 MiB | Log stream bytes of the window per container. |
+| `MaxFindings` | 256 | 4096 | Findings kept per check. |
+| `AdditionalContainers` | none | 64 | Caller-owned daemon containers, such as mirror daemons; never adopted. |
+| `RedactValues` | none | 128 | Additional secrets to remove from the report. |
+
+`ceph.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
+`Window` (`ceph.VerificationWindow`: `Phase` `test`, `StartedAt` and
+`EndedAt` on the engine's clock, `EvaluatedAt`), the `Sources`
+(`ceph.VerificationSource`: `Source`, `Role`, `Name`, `ContainerID`,
+`ImageID`, `StartedAt`, `RestartCount`, `State`, `LogDriver`, `LogBytes` and
+the `BaselineCrashes`), the effective `LogExpectations` and
+`CrashExpectations`, `Notes` on its scope, and one `ceph.VerificationCheck`
+each for `Logs` and `Crashes`. A check has its `Outcome`, the `Permitted`
+and `Unexpected` counts, `Findings` (`ceph.VerificationFinding`: `Source`,
+`ContainerID`, `Event`, `Time`, the redacted `Text` of at most 1 KiB with
+`Truncated`, `CrashID`, and the permitting `Expectation`, empty when
+unexpected), with the unexpected ones first and `OmittedFindings` beyond
+`MaxFindings`, the `Expectations` (`ceph.ExpectationResult`: `Name`,
+`Required`, `MinCount`, `MaxCount`, `Matched`, `Satisfied`) and the `Gaps`
+(`ceph.VerificationGap`: `Source`, `Reason`).
+
+Each check's `ceph.VerificationOutcome`, and the report's, which is the worse
+of the two:
+
+| Outcome | Meaning |
+| --- | --- |
+| `VerificationUnexpected` | An event was not permitted, or a required expectation was not satisfied. Gaps found besides stay in the report. |
+| `VerificationIncomplete` | Nothing unexpected was found, but an observation could not be completed; see `Gaps`. |
+| `VerificationClean` | Every selected source was observed for the whole window, and nothing unexpected was found. |
+
+An observation that cannot be completed is a gap, never clean: a container
+that was not created, removed, restarted or inaccessible at activation or
+since; a log driver other than `json-file`, or `json-file` with `max-size`
+rotation; a log stream that fails, is cut inside a frame, has a line without
+a valid timestamp or exceeds `MaxLogBytes`; a crash directory that is
+missing, unreadable, cut off or holds rejected metadata; a new crash without
+its done marker; a container added after the activation; more than 128
+containers; an unknown end of the window, or an engine clock that did not
+advance since the activation; and an expired context.
+
+Limits:
+
+- The window starts at the activation and ends at the check; bootstrap before
+  it and the cleanups and termination after it are outside it. Only the
+  daemons' output is observed, not lines below their log level.
+- Only the container generations selected at activation are covered. A
+  removed or replaced container takes its logs and crash records along and is
+  reported as a gap, not covered.
+- Clean is evidence for the reported sources and window, not proof that no
+  daemon failed. Its log and crash coverage has not yet been measured against
+  native log windows, crash completion and collection limits (#47).
+- Shared-cluster tenants, scrub results, fresh scrubs and fault recovery waits
+  are not verified, and the bug compatibility selection is not known to the
+  report.
 
 #### Ceph
 
@@ -4170,6 +4317,7 @@ See the [handle contract](#container-methods).
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
 | `FinalizationConfig`, `Finalization` | [TerminateOnCleanup](#terminateoncleanup) |
+| `VerificationConfig`, `LogExpectation`, `CrashExpectation`, `Verification`, `VerificationReport` and its parts | [Verify](#verify) |
 
 ## Examples
 
@@ -4856,6 +5004,11 @@ to keep them. Add caller-owned clients and mirror daemons with
 `Finalization.Cleanup`, and mask application secrets with `RedactValues`. To
 collect by hand, see [CollectDiagnostics](#collectdiagnostics) and
 [CollectCrashMetadata](#collectcrashmetadata).
+
+To also fail a test whose client operations succeeded although a daemon
+crashed or logged an unexpected warning, activate a post-test
+[verification](#verify) on the same finalization, with the crashes and log
+lines that the test causes on purpose as expectations.
 
 ## Running native commands
 
