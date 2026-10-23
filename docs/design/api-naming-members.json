@@ -3,7 +3,7 @@
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in public types; dependency and promoted method sets are not expanded",
   "counts": {
     "capture": 55,
-    "ceph": 404,
+    "ceph": 420,
     "cephfs": 247,
     "fault": 64,
     "rbd": 94,
@@ -187,6 +187,28 @@
       "DaemonAddresses.OSDMapEpoch field int",
       "DaemonAddresses.OSDs field []OSDAddress",
       "DaemonAddresses.StandbyManagers field []string"
+    ],
+    "ceph.DebugLevelReceipt": [
+      "DebugLevelReceipt.Applied field string `json:\"applied,omitempty\"`",
+      "DebugLevelReceipt.Daemon field string `json:\"daemon\"`",
+      "DebugLevelReceipt.Generation field string `json:\"generation\"`",
+      "DebugLevelReceipt.Name field string `json:\"name\"`",
+      "DebugLevelReceipt.Prior field string `json:\"prior\"`",
+      "DebugLevelReceipt.Requested field string `json:\"requested\"`",
+      "DebugLevelReceipt.Restored field string `json:\"restored,omitempty\"`",
+      "DebugLevelReceipt.State field DebugLevelState `json:\"state\"`",
+      "DebugLevelReceipt.Transitions field []DebugLevelTransition `json:\"transitions\"`"
+    ],
+    "ceph.DebugLevelSetting": [
+      "DebugLevelSetting.Daemon field string",
+      "DebugLevelSetting.Level field string",
+      "DebugLevelSetting.Name field string"
+    ],
+    "ceph.DebugLevelTransition": [
+      "DebugLevelTransition.At field time.Time `json:\"at\"`",
+      "DebugLevelTransition.Error field string `json:\"error,omitempty\"`",
+      "DebugLevelTransition.Readback field string `json:\"readback,omitempty\"`",
+      "DebugLevelTransition.State field DebugLevelState `json:\"state\"`"
     ],
     "ceph.DiagnosticArtifact": [
       "DiagnosticArtifact.ContainerID field string `json:\"container_id,omitempty\"`",

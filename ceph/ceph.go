@@ -120,6 +120,9 @@ type Container struct {
 	// overrides and full ratios override, reserved or held; see
 	// faultRegistry. It is guarded by mu.
 	faults faultRegistry
+	// debugLevels admits one OverrideDebugLevel window per daemon and
+	// option; it has its own lock.
+	debugLevels debugLevelRegistry
 	// osdRunner replaces runContainer for OSD containers in tests.
 	osdRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// osdVolumeDocker and osdVolumeRunner replace owned-volume allocation in tests.

@@ -138,6 +138,7 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"SetPoolReplication":      sharedExclusive,
 	"TemporaryBlocklist":      sharedExclusive,
 	"OverrideConfig":          sharedExclusive,
+	"OverrideDebugLevel":      sharedExclusive,
 	"OverrideFullRatios":      sharedExclusive,
 	"OverrideMGRModule":       sharedExclusive,
 	"OverrideMessengerPolicy": sharedExclusive,
