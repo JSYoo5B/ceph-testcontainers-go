@@ -57,6 +57,9 @@ GO_EXECUTION_ENV = {"CGO_ENABLED": "0", "GOFLAGS": "-mod=readonly", "GOWORK": "o
 # binary run directly (run --binary).
 GO_TEST, TEST_BINARY = "go-test", "test-binary"
 EXECUTIONS = (GO_TEST, TEST_BINARY)
+# The directory, under a native run's output, that Go's -artifacts flag
+# fills with each test's retained ArtifactDir.
+TEST_ARTIFACTS = "test-artifacts"
 # The package whose batches internal/tools/batchselect analyses, and its bound: the
 # first run compiles the export data of every dependency.
 DECLARATION_PACKAGE = "./internal/integration"
@@ -1221,6 +1224,16 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
         path, receipt = verified_binary(binary, profile, expected, root)
         command = [str(path), "-test.v", "-test.count=1", "-test.timeout=" + profile["timeout"]]
     directory.mkdir(parents=True, exist_ok=False)
+    # Go's -artifacts keeps each test's ArtifactDir, where a ceph
+    # Finalization writes its failure archive, under this directory, which
+    # the runtime job uploads. Its files are listed in the report; that a
+    # file exists here does not show that the upload succeeded.
+    artifacts = (directory / TEST_ARTIFACTS).resolve()
+    artifacts.mkdir()
+    if execution == GO_TEST:
+        command[-1:-1] = ["-artifacts", "-outputdir=" + str(artifacts)]
+    else:
+        command += ["-test.artifacts", "-test.outputdir=" + str(artifacts)]
     if selection:
         expected = sorted(selection)
         pattern = "^(" + "|".join(expected) + ")$"
@@ -1256,12 +1269,24 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
               "compiled_tests": expected, "completion": completed, "strict_completion": strict,
               "classification": failure_kind(exit_code, completed, strict),
               "source": [{"path": file["path"], "sha256": file["sha256"]} for file in catalog]}
+    result["test_artifacts"] = test_artifacts(artifacts)
     if receipt is not None:
         result["binary"] = {"directory": str(binary), "binary": receipt["binary"], "sha256": receipt["sha256"],
                             "build_key": receipt["build_key"]}
     result["passed"] = result["classification"] == "passed"
     (directory / "report.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     return result
+
+
+def test_artifacts(directory):
+    """The files that the tests left in their artifact directories, by path
+    relative to directory. This records local file creation only."""
+    files = []
+    for path in sorted(directory.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            files.append({"path": path.relative_to(directory).as_posix(), "bytes": path.stat().st_size})
+    return {"directory": TEST_ARTIFACTS, "files": files,
+            "manifests": sum(1 for file in files if file["path"].endswith("/manifest.json"))}
 
 
 def bounded_go(command, root, timeout):

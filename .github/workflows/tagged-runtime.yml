@@ -321,6 +321,7 @@ jobs:
               --output artifacts/scenario/history-row.json
           fi
       - name: Save compile, native and phase results
+        id: upload_scenario
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -332,6 +333,25 @@ jobs:
             artifacts/scenario/
             !artifacts/scenario/compile/*.test
           if-no-files-found: warn
+      # A failure archive under native/test-artifacts, a listing of it in
+      # native/report.json and this upload's outcome are separate facts. This
+      # step records the last two; only a download of the artifact shows that
+      # an archive is retained (docs/contributing/ci.md, "Failure archives").
+      - name: Record the failure archive upload
+        if: always() && steps.native.outcome == 'failure'
+        continue-on-error: true
+        env:
+          UPLOAD_OUTCOME: ${{ steps.upload_scenario.outcome }}
+          UPLOAD_ID: ${{ steps.upload_scenario.outputs.artifact-id }}
+          UPLOAD_URL: ${{ steps.upload_scenario.outputs.artifact-url }}
+        run: |
+          manifests=$(find artifacts/scenario/native/test-artifacts -name manifest.json -type f 2>/dev/null | wc -l)
+          {
+            echo "### Failure archive"
+            echo "- manifests written locally: $manifests"
+            echo "- upload step: $UPLOAD_OUTCOME"
+            echo "- uploaded artifact: ${UPLOAD_URL:-none} (id ${UPLOAD_ID:-none})"
+          } >> "$GITHUB_STEP_SUMMARY"
       # The classification of earlier attempts, from the scenario-history
       # branch that Ceph periodic's History job writes. Read only on a
       # failure; a missing branch leaves the report without history.
