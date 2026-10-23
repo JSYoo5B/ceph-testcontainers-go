@@ -200,6 +200,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	encodedWitnesses, _ := json.Marshal(witnesses)
 	t.Logf("OSD_ABRUPT_WITNESS pg=%s witnesses=%s", pg, encodedWitnesses)
+	bootedBefore := osdUpFrom(t, ctx, cluster, osd.ID)
 	var beforeKill int64
 	abruptPhase(t, ctx, cluster, client, "clock", pool, ledger, &beforeKill)
 	running := osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID())
@@ -253,9 +254,11 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 		t.Fatal("required abrupt window not established", err)
 	}
 	restoreDelay()
-	osdVolumeWaitState(t, ctx, cluster, registered, false)
+	// With one OSD no peer reports it failed, so the MONs keep it "up" in the
+	// map until their report timeout. The dead process is the observation here,
+	// and the restart is told apart by a newer boot epoch below.
 	if status, err := cluster.Status(ctx); err == nil {
-		t.Logf("OSD_ABRUPT_RECOVERY phase=down status=%+v", status)
+		t.Logf("OSD_ABRUPT_RECOVERY phase=after-kill status=%+v", status)
 	} else {
 		t.Fatal(err)
 	}
@@ -270,6 +273,12 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	if err := osd.Start(ctx); err != nil {
 		t.Fatal("recovery restart independently failed", err)
+	}
+	for deadline := time.Now().Add(2 * time.Minute); osdUpFrom(t, ctx, cluster, osd.ID) <= bootedBefore; {
+		if time.Now().After(deadline) {
+			t.Fatalf("restarted OSD did not boot into a newer epoch than %d", bootedBefore)
+		}
+		time.Sleep(time.Second)
 	}
 	osdVolumeWaitState(t, ctx, cluster, registered, true)
 	if err := cluster.WaitForClean(ctx); err != nil {
