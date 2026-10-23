@@ -510,12 +510,18 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 	}
 	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
 	defer cancel()
+	// A free slot is taken even with an ended context, whose evaluation is
+	// then incomplete; only waiting for a busy one is bounded by ctx.
 	select {
 	case v.evaluating <- struct{}{}:
-		defer func() { <-v.evaluating }()
-	case <-ctx.Done():
-		return nil, fmt.Errorf("verification %s: another evaluation was still running: %w", v.name, ctx.Err())
+	default:
+		select {
+		case v.evaluating <- struct{}{}:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("verification %s: another evaluation was still running: %w", v.name, ctx.Err())
+		}
 	}
+	defer func() { <-v.evaluating }()
 	v.mu.Lock()
 	baseline := v.baseline
 	v.mu.Unlock()

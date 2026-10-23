@@ -155,7 +155,9 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 		}
 		target.crashes = map[string]bool{}
 		for _, record := range result.Records {
-			target.crashes[record.CrashID] = true
+			// The raw identity, so that report redaction cannot merge
+			// distinct crashes.
+			target.crashes[record.identity] = true
 		}
 	}
 	if err != nil && len(crashes.Containers) != len(b.targets) {
@@ -309,21 +311,24 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 		// One crash can be seen twice, as unposted and as posted metadata:
 		// it counts once, and is complete when any sighting has its done
 		// marker.
+		// Crashes are compared by their raw identity; the reported ID is
+		// the redacted one.
 		var order []string
-		done := map[string]bool{}
+		done, reported := map[string]bool{}, map[string]string{}
 		for _, record := range result.Records {
-			if target.crashes[record.CrashID] {
+			if target.crashes[record.identity] {
 				continue
 			}
-			if _, ok := done[record.CrashID]; !ok {
-				order = append(order, record.CrashID)
+			if _, ok := done[record.identity]; !ok {
+				order = append(order, record.identity)
+				reported[record.identity] = record.CrashID
 				o.crashes = append(o.crashes, crashEvent(target, record))
 			}
-			done[record.CrashID] = done[record.CrashID] || record.Done
+			done[record.identity] = done[record.identity] || record.Done
 		}
 		for _, id := range order {
 			if !done[id] {
-				crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", id))
+				crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", reported[id]))
 			}
 		}
 	}

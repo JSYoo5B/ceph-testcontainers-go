@@ -391,6 +391,30 @@ func TestVerificationRedactsCrashMetadata(t *testing.T) {
 	}
 }
 
+// Report redaction masks crash IDs but does not merge them: a new crash
+// whose masked ID equals a baseline crash's is still new.
+func TestVerificationCrashIdentityIgnoresRedaction(t *testing.T) {
+	old := "2026-10-23T00:55:00.000000Z_11111111-1111-4111-8111-111111111111"
+	added := "2026-10-23T01:01:00.000000Z_22222222-2222-4222-8222-222222222222"
+	for _, masked := range []bool{false, true} {
+		fx := newVerifyFixture()
+		fx.docker.containers["osd1"].crashes = []string{old}
+		if masked {
+			fx.config.RedactValues = []string{old, added}
+		}
+		v := fx.activate(t)
+		fx.docker.containers["osd1"].crashes = []string{old, added}
+		report := fx.evaluate(t, v)
+		if report.Outcome != VerificationUnexpected || report.Crashes.Unexpected != 1 {
+			t.Fatalf("masked %t: crashes %+v", masked, report.Crashes)
+		}
+		data, _ := json.Marshal(report)
+		if masked && (strings.Contains(string(data), old) || strings.Contains(string(data), added)) {
+			t.Fatalf("a masked crash ID is in the report")
+		}
+	}
+}
+
 // A crash seen as unposted and as posted metadata is one crash.
 func TestVerificationCountsDistinctCrashes(t *testing.T) {
 	newCrash := "2026-10-23T01:01:00Z_twice"
