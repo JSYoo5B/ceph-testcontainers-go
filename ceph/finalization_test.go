@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -38,6 +40,18 @@ func (tb *finalizationTB) Errorf(format string, args ...any) {
 	defer tb.mu.Unlock()
 	tb.failed = true
 	tb.errors = append(tb.errors, fmt.Sprintf(format, args...))
+}
+
+// FailNow ends the calling goroutine as testing.T's does.
+func (tb *finalizationTB) FailNow() {
+	tb.mu.Lock()
+	tb.failed = true
+	tb.mu.Unlock()
+	runtime.Goexit()
+}
+func (tb *finalizationTB) Fatalf(format string, args ...any) {
+	tb.Errorf(format, args...)
+	tb.FailNow()
 }
 func (tb *finalizationTB) Logf(format string, args ...any) {
 	tb.mu.Lock()
@@ -227,6 +241,11 @@ func TestFinalizationArchivesLaterCheckFailure(t *testing.T) {
 			if returned := reported != "reported"; m.Trigger.CheckFailed != returned || (m.Checks[1].Error != "") != returned {
 				t.Fatalf("checks = %+v trigger %+v", m.Checks, m.Trigger)
 			}
+			// A report through the test is recorded apart from an error.
+			if through := reported == "reported"; m.Trigger.CheckReportedFailure != through ||
+				m.Checks[0].FailedTest || m.Checks[1].FailedTest != through {
+				t.Fatalf("checks = %+v trigger %+v", m.Checks, m.Trigger)
+			}
 		})
 	}
 }
@@ -380,6 +399,100 @@ func TestFinalizationArchivesCleanupFailureBeforeTermination(t *testing.T) {
 	m := readManifest(t, archives[0])
 	if m.Phase != "after-cleanup" || !m.Trigger.CleanupFailed || m.Trigger.TestFailed || m.Cleanups[0].Error != "endpoint not restored" {
 		t.Fatalf("manifest = %+v", m)
+	}
+}
+
+func TestFinalizationRecordsCleanupsThatFailThroughTheTest(t *testing.T) {
+	fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+	fx.Cleanup("remove-client", func(context.Context) error {
+		fx.event("cleanup")
+		fx.tb.Errorf("client not removed")
+		return nil
+	})
+	fx.run()
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives = %v", archives)
+	}
+	m := readManifest(t, archives[0])
+	if m.Phase != "after-cleanup" || m.Trigger.CleanupFailed || !m.Trigger.CleanupReportedFailure ||
+		m.Cleanups[0].Error != "" || !m.Cleanups[0].FailedTest || !m.Final {
+		t.Fatalf("manifest = %+v", m)
+	}
+}
+
+// A check or cleanup that calls t.Fatal ends its goroutine through
+// runtime.Goexit, which recover does not intercept.
+func TestFinalizationSurvivesFatalChecksAndCleanups(t *testing.T) {
+	t.Run("check", func(t *testing.T) {
+		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+		fx.Cleanup("remove-client", func(context.Context) error { fx.event("cleanup"); return nil })
+		fx.Check("fatal", func(context.Context) error {
+			fx.event("check")
+			fx.tb.Fatalf("unexpected crash osd.1")
+			return nil
+		})
+		fx.Check("later", func(context.Context) error { fx.event("later"); return nil })
+		fx.run()
+		// The archive still sees the client, and nothing is skipped.
+		if want := []string{"check", "later", "diagnostics", "crash", "cleanup", "terminate"}; !sameEvents(fx.events, want) {
+			t.Fatalf("events = %v, want %v", fx.events, want)
+		}
+		m := readManifest(t, fx.archives(t)[0])
+		if m.Phase != "before-cleanup" || !m.Trigger.CheckFailed || !m.Trigger.CheckReportedFailure ||
+			!strings.Contains(m.Checks[0].Error, "without returning") || !m.Checks[0].FailedTest || len(m.Checks) != 2 || !m.Final {
+			t.Fatalf("manifest = %+v", m)
+		}
+	})
+	t.Run("cleanup", func(t *testing.T) {
+		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+		fx.Cleanup("first-registered", func(context.Context) error { fx.event("first-registered"); return nil })
+		fx.Cleanup("fatal", func(context.Context) error {
+			fx.event("fatal")
+			fx.tb.Fatalf("endpoint not restored")
+			return nil
+		})
+		fx.run()
+		if want := []string{"fatal", "first-registered", "diagnostics", "crash", "terminate"}; !sameEvents(fx.events, want) {
+			t.Fatalf("events = %v, want %v", fx.events, want)
+		}
+		m := readManifest(t, fx.archives(t)[0])
+		if m.Phase != "after-cleanup" || !m.Trigger.CleanupFailed || !m.Trigger.CleanupReportedFailure ||
+			len(m.Cleanups) != 2 || !strings.Contains(m.Cleanups[0].Error, "without returning") || !m.Final {
+			t.Fatalf("manifest = %+v", m)
+		}
+	})
+}
+
+// sameEvents compares events, in which the two collectors may come in
+// either order.
+func sameEvents(got, want []string) bool {
+	normalize := func(events []string) []string {
+		events = slices.Clone(events)
+		for i := 0; i+1 < len(events); i++ {
+			if events[i] == "crash" && events[i+1] == "diagnostics" {
+				events[i], events[i+1] = events[i+1], events[i]
+			}
+		}
+		return events
+	}
+	return slices.Equal(normalize(got), normalize(want))
+}
+
+func TestFinalizationKeepsWorkflowRevisionApartFromSource(t *testing.T) {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				t.Skip("this test binary carries a VCS revision")
+			}
+		}
+	}
+	workflow := strings.Repeat("a", 40)
+	t.Setenv("GITHUB_SHA", workflow)
+	fx := newFinalizationFixture(t, FinalizationConfig{})
+	m := fx.newManifest()
+	if m.Execution.WorkflowSHA != workflow || m.Execution.Revision != "" || !slices.Contains(m.Missing, "source revision") {
+		t.Fatalf("execution = %+v missing %v", m.Execution, m.Missing)
 	}
 }
 

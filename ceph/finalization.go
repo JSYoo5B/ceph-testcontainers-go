@@ -157,7 +157,8 @@ func newFinalization(t testing.TB, config FinalizationConfig) (*Finalization, er
 // Check adds a post-test check. Checks run before the archive decision, in
 // registration order, while the cluster and every client still run. A check
 // that returns an error, or panics, fails the test and triggers the archive;
-// a check may also report through the test itself. Adding a check after
+// a check may also report through the test itself, including with t.Fatal,
+// which ends only the check. Adding a check after
 // finalization has started fails the test instead.
 func (f *Finalization) Check(name string, check func(context.Context) error) {
 	f.add(&f.checks, "Check", name, check)
@@ -216,6 +217,7 @@ func (f *Finalization) finalize() {
 			run.manifest.Trigger.CheckFailed = true
 			f.t.Errorf("ceph finalization check %s: %s", check.name, outcome.Error)
 		}
+		run.manifest.Trigger.CheckReportedFailure = run.manifest.Trigger.CheckReportedFailure || outcome.FailedTest
 		run.manifest.Checks = append(run.manifest.Checks, outcome)
 	}
 	cancel()
@@ -234,6 +236,7 @@ func (f *Finalization) finish(run *finalizationRun, cleanups []finalizationStep)
 			run.manifest.Trigger.CleanupFailed = true
 			f.t.Errorf("ceph finalization cleanup %s: %s", cleanups[i].name, outcome.Error)
 		}
+		run.manifest.Trigger.CleanupReportedFailure = run.manifest.Trigger.CleanupReportedFailure || outcome.FailedTest
 		run.manifest.Cleanups = append(run.manifest.Cleanups, outcome)
 	}
 	if f.config.Archive && !run.archiveAttempted && f.t.Failed() {
@@ -260,23 +263,37 @@ func (f *Finalization) terminateCluster(run *finalizationRun) {
 	}
 }
 
-// runStep runs one check, cleanup or Terminate and records its outcome. A
-// panic becomes the step's error, so that it cannot skip the later phases.
+// runStep runs one check, cleanup or Terminate on its own goroutine and
+// records its outcome. A panic, and a t.FailNow, t.Fatal, t.SkipNow or
+// runtime.Goexit that ends the step's goroutine instead of returning, become
+// the step's error, so that neither can skip the later phases. A step that
+// turns a passing test into a failed one through the test is recorded as
+// such, apart from its error; a test that had already failed cannot
+// attribute a later report to the step.
 func (f *Finalization) runStep(ctx context.Context, step finalizationStep) (outcome finalizationOutcome) {
 	outcome = finalizationOutcome{Name: boundedName(step.name), StartedAt: f.now()}
+	failedBefore := f.t.Failed()
 	var err error
-	func() {
+	done := make(chan struct{})
+	go func() {
+		returned := false
+		defer close(done)
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				err = fmt.Errorf("panic: %v", recovered)
+			} else if !returned {
+				err = errors.New("ended its goroutine without returning (t.FailNow, t.Fatal, t.SkipNow or runtime.Goexit)")
 			}
 		}()
 		err = step.run(ctx)
+		returned = true
 	}()
+	<-done
 	outcome.FinishedAt = f.now()
 	if err != nil {
 		outcome.Error = f.redact(err.Error())
 	}
+	outcome.FailedTest = !failedBefore && f.t.Failed()
 	return outcome
 }
 
@@ -517,18 +534,28 @@ type finalizationExecution struct {
 	Revision   string    `json:"revision,omitempty"`
 	Modified   *bool     `json:"modified,omitempty"`
 	Repository string    `json:"repository,omitempty"`
-	Commit     string    `json:"commit,omitempty"`
-	Workflow   string    `json:"workflow,omitempty"`
-	Job        string    `json:"job,omitempty"`
-	RunID      string    `json:"run_id,omitempty"`
-	RunAttempt string    `json:"run_attempt,omitempty"`
+	// WorkflowSHA is GITHUB_SHA, the revision of the workflow's event. It is
+	// not the revision that was checked out and built: a comment-triggered
+	// run of a pull request checks out another revision. Only Revision
+	// identifies the source.
+	WorkflowSHA string `json:"workflow_sha,omitempty"`
+	Workflow    string `json:"workflow,omitempty"`
+	Job         string `json:"job,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
+	RunAttempt  string `json:"run_attempt,omitempty"`
 }
 
 type finalizationTrigger struct {
 	// TestFailed is the test's state before the checks ran.
-	TestFailed    bool `json:"test_failed"`
+	TestFailed bool `json:"test_failed"`
+	// CheckFailed and CleanupFailed mean that a step returned an error,
+	// panicked or ended its goroutine.
 	CheckFailed   bool `json:"check_failed"`
 	CleanupFailed bool `json:"cleanup_failed"`
+	// CheckReportedFailure and CleanupReportedFailure mean that a step
+	// turned the passing test into a failed one through the test itself.
+	CheckReportedFailure   bool `json:"check_reported_failure"`
+	CleanupReportedFailure bool `json:"cleanup_reported_failure"`
 }
 
 type finalizationOutcome struct {
@@ -536,6 +563,9 @@ type finalizationOutcome struct {
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 	Error      string    `json:"error,omitempty"`
+	// FailedTest means that the test was passing before the step and had
+	// failed after it.
+	FailedTest bool `json:"failed_test"`
 }
 
 type finalizationArchive struct {
@@ -601,12 +631,13 @@ func (f *Finalization) newManifest() finalizationManifest {
 	}
 	// Only these public identifiers of a GitHub Actions run are read; no
 	// other environment variable is.
-	for name, field := range map[string]*string{"GITHUB_REPOSITORY": &m.Execution.Repository, "GITHUB_SHA": &m.Execution.Commit,
+	for name, field := range map[string]*string{"GITHUB_REPOSITORY": &m.Execution.Repository, "GITHUB_SHA": &m.Execution.WorkflowSHA,
 		"GITHUB_WORKFLOW": &m.Execution.Workflow, "GITHUB_JOB": &m.Execution.Job, "GITHUB_RUN_ID": &m.Execution.RunID,
 		"GITHUB_RUN_ATTEMPT": &m.Execution.RunAttempt} {
 		*field = boundedName(os.Getenv(name))
 	}
-	if m.Execution.Revision == "" && m.Execution.Commit == "" {
+	// The workflow's revision does not stand in for the source revision.
+	if m.Execution.Revision == "" {
 		m.Missing = append(m.Missing, "source revision")
 	}
 	if m.Execution.RunID == "" {

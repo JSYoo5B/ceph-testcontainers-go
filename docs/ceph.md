@@ -1708,11 +1708,20 @@ test never share one:
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup and the termination outcome. |
 
 The manifest's execution identity has the Go version and platform, the VCS
-revision when the test binary carries one, and the repository, commit,
-workflow, job, run ID and run attempt of a GitHub Actions run; no other
-environment variable is read. Provenance that the library does not know is
-listed in `missing_provenance`, such as the bug compatibility selection
-(image IDs are in the diagnostics' `container-inspect` artifacts). Each
+revision when the test binary carries one, and the repository, workflow
+event revision (`workflow_sha`, from `GITHUB_SHA`), workflow, job, run ID and
+run attempt of a GitHub Actions run; no other environment variable is read.
+The workflow event revision is not the checked-out source: a comment-triggered
+run checks out a pull request's head, so only the binary's VCS revision counts
+as the source revision. Provenance that the library does not know is listed in
+`missing_provenance`, such as the source revision of a binary without VCS
+information and the bug compatibility selection
+(image IDs are in the diagnostics' `container-inspect` artifacts). A check
+or cleanup records its error (a returned error, a panic, or a `t.Fatal` or
+`t.FailNow` that ended its goroutine, which never skips the later phases)
+apart from `failed_test`, set when the step turned a passing test into a
+failed one through the test; the trigger has both kinds for checks and for
+cleanups. Each
 collector entry has `reported`, `complete` and its error; the crash entry
 counts the containers per `ceph.CrashOutcome`, so an empty or absent crash
 directory stays distinct from rejected metadata and found records. The
