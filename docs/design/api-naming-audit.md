@@ -8,10 +8,10 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **712** functions, declared methods on
+The declaration catalogue contains **745** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **940** exported field/nested-record/embedding entries in
-**162** types. It scans exported declared interfaces as well; there are none
+catalogue contains **995** exported field/nested-record/embedding entries in
+**166** types. It scans exported declared interfaces as well; there are none
 in the current public packages. Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
@@ -23,17 +23,20 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| Total | 712 | 940 |
+| `capture` | 33 | 55 |
+| Total | 745 | 995 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
 mirror variants, the context-bounded `MonitorsContext` and `OSDsContext`
 getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
 and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
-accessors) added for #6, and the test finalization added for #49
+accessors) added for #6, the test finalization added for #49
 (`TerminateOnCleanup`, `Finalization` with `Check` and `Cleanup`, and
-`FinalizationConfig` with its eight fields). It uses the current source, not the earlier 691/692-entry
-checkpoint. The receipt binds canonical catalogue bytes and per-package counts.
+`FinalizationConfig` with its eight fields), and the `capture` package added
+for #52 (see [Packet capture](#packet-capture-package) below). It uses the
+current source, not the earlier 691/692-entry, 707-entry or 712-entry
+checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
 Digest matching establishes scope agreement, not the quality of a naming review.
@@ -65,6 +68,20 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Identity and native projection fields | Retain `ID`, `UUID`, `FSID`, `GID`, `PID`, `PGID`, `MDS`, `MGR`, `OSD`, `RADOSReads`, `CRUSH*`, `URL` and context-specific `Name`/`Path`. Preserve native map spellings such as `MgrMap`, `MonMap`, `Addrs` and `Addrvec`: these are recognizable protocol projections with existing JSON tags, not requests to normalize upstream schemas. |
 | Bounds, quantities and role/policy fields | Retain existing unit-bearing `*Bytes`, `*Percent`, `*Probability`, durations, ranks/counts and source/destination qualifiers. Domain `K`/`M` denote erasure-code geometry, and pin `Value` is qualified by `Type`; no untyped universal value API is introduced. `Complete`, `Ready`, `Confirmed`, `Owned`, `Gone` and truncation/error fields keep their documented observation limits. |
 | Credentials, callbacks and mutable public descriptors | Retain `AccessKey`, `SecretKey`, `PrivateKeyPEM`, client identities, `OriginalProcessClientFactory` and configuration fields such as lease `Config`. Clear spelling does not authorize logging secrets, mutate captured identity or convert a descriptor into proof of current ownership; the existing validation/redaction contracts remain. |
+
+## Packet capture package
+
+The first #52 increment adds the sixth public package, `capture`, with 32
+declarations and 55 member entries in `Request`, `Report`, `Statistics` and
+`FileReport`. It was reviewed at the call site against the convention above:
+
+| Name | Decision and reason |
+| --- | --- |
+| `capture.Start` / `capture.Session.Stop` | `Start` owns a new resource (a helper running `tcpdump` in the target's namespace) and has no native expiry, so neither `Apply`/`Override` nor `Temporary` fits. `Stop` ends a process whose file is retained and delivered, the existing meaning of Stop; it is not a `Restore`, because nothing of the target is changed. `Session` is the caller-owned handle: no cluster `Terminate` knows it, which a `Lease` beside the cluster-registered leases would blur. |
+| `capture.Request`, `capture.Report`, `capture.Statistics`, `capture.FileReport` | Request input, the delivery report and its observed parts, as in the retained `Config`/`Report`/`Status` family. The package name already says capture, so no type repeats it. `FileReport` mirrors the internal pcap check field for field without exposing the internal package. |
+| `capture.EndReason`, `TargetState`, `FileStatus` and their constants | Typed observations whose constants keep their type as a prefix (`EndStopped`, `EndPremature`, `TargetGone`, `FileValid`), so separate outcomes stay distinct at the call site; `End*`, `Target*` and `File*` do not collide. Nil `Statistics` counters keep unknown apart from zero. |
+| `capture.ErrImageUnsupported`, `ErrPermissionDenied`, `ErrFailed` | The netem sentinels' roles without their `Netem` qualifier, which the package name replaces; each matches its `ceph` category with `errors.Is`. |
+| `capture.MaxSnapLen`, `MaxFileBytes`, `MaxFilterBytes`, `MaxTimeout`, `DefaultReadyTimeout`, `DefaultStopGrace` | The retained `Max*`/`Default*` bound convention. There is no helper-image constant: no capture helper is published, and the request never selects one implicitly. |
 
 ## Embeddings and externally defined interfaces
 

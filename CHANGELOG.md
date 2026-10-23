@@ -32,6 +32,17 @@ change the API.
   summary records the upload of a failed run's artifact separately. A
   downloaded artifact of a failed native run has not yet verified it (#49).
 
+- `capture.Start` and `capture.Session.Stop` record the packets of one
+  container endpoint on a user-defined bridge with a caller-selected helper
+  image that meets packet-capture contract 1 of ceph-testcontainers-images.
+  The filter is compiled and the interface checked before the capture, a
+  session is ready only after tcpdump listens and its file exists, and it is
+  bound to the target's container instance and sandbox. Stop ends tcpdump with
+  SIGTERM within a bounded grace, retrieves the classic pcap, checks its
+  structure and removes the helper; `capture.Report` keeps the process,
+  target, statistics (unknown when not printed), retrieval and file outcomes
+  apart. No helper image is published or selected by default (#52).
+
 - `ceph.Container.MonitorsContext` and `OSDsContext` list the owned MONs and
   OSDs like `Monitors` and `OSDs`, but stop waiting for a concurrent topology
   change when `ctx` ends, as `ManagersContext` already did. The MON
