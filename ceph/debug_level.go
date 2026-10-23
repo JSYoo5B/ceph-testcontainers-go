@@ -10,9 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containerd/errdefs"
-	"github.com/testcontainers/testcontainers-go"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
@@ -142,7 +139,8 @@ func (h *DebugLevelOverrideHandle) Receipt() DebugLevelReceipt {
 // generation, and the cluster's own topology operations, such as RemoveOSD,
 // DetachOSD and ReopenOSD, wait until the set has ended. A set whose end
 // cannot be confirmed may still run: the window keeps it, and no later set or
-// terminal state is taken until it is confirmed stopped.
+// terminal state is taken until it is confirmed stopped. Until then RemoveOSD
+// and DetachOSD first stop it, or refuse to replace the OSD.
 //
 // The readbacks around each set are not an atomic compare-and-swap: another
 // writer of the same daemon and option must not race the window, and an
@@ -617,7 +615,11 @@ func (t *osdDebugTarget) get(ctx context.Context, name string) (string, error) {
 
 // set holds c.mu, which the cluster's topology operations hold, from the
 // generation check until the command has ended, so that the cluster cannot
-// replace the OSD in between.
+// replace the OSD in between. The command is registered as a native
+// invocation of the OSD's container instance, as RunNativeCommand's are, and
+// one whose end is unconfirmed stays registered until settle confirms it: the
+// fence of RemoveOSD and DetachOSD drains it first or refuses, and Terminate
+// stops it.
 func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) (func(context.Context) error, error) {
 	c := t.c
 	if err := c.lockTopology(ctx); err != nil {
@@ -631,25 +633,53 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 	if c.run == nil || c.run.removed {
 		return nil, &debugLevelRefusal{err: errors.New("this cluster has no shared run directory for admin sockets")}
 	}
-	control, _, err := c.adminSocketCommand(ctx, t.daemon, "config", "set", name, value)
-	if marker, ok := supervised.Unconfirmed(err); ok && control != nil {
-		return func(ctx context.Context) error { return settleAdminSocketCommand(ctx, control, marker) }, err
+	control, err := c.controlContainerContext(ctx)
+	if err != nil {
+		return nil, &debugLevelRefusal{err: fmt.Errorf("select admin socket control: %w", err)}
 	}
-	return nil, err
-}
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	// The invocation runs in control but addresses the OSD instance, which
+	// its fence names.
+	inv := &nativeInvocation{owner: c, target: control, targetID: t.osd.GetContainerID(), label: "admin socket",
+		cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
+	c.nativeMu.Lock()
+	switch {
+	case c.nativeClosed:
+		c.nativeMu.Unlock()
+		return nil, &debugLevelRefusal{changed: true, err: errClusterTerminated}
+	case c.nativeFenced[inv.targetID]:
+		c.nativeMu.Unlock()
+		return nil, &debugLevelRefusal{changed: true, err: fmt.Errorf("%s is fenced for removal", t.daemon)}
+	}
+	if c.nativeInvocations == nil {
+		c.nativeInvocations = make(map[*nativeInvocation]bool)
+	}
+	c.nativeInvocations[inv] = true
+	c.nativeMu.Unlock()
 
-// settleAdminSocketCommand returns nil once the admin socket command that
-// owns marker in control can no longer run; a removed control container
-// confirms that as well.
-func settleAdminSocketCommand(ctx context.Context, control testcontainers.Container, marker string) error {
-	err := supervised.Cancel(ctx, control, "admin socket", marker)
-	if err == nil {
-		return nil
+	_, err = c.adminSocketCommand(runCtx, control, t.daemon, "config", "set", name, value)
+	marker, unconfirmed := supervised.Unconfirmed(err)
+	c.nativeMu.Lock()
+	if unconfirmed {
+		inv.marker = marker
+	} else {
+		delete(c.nativeInvocations, inv)
 	}
-	if _, stateErr := control.State(ctx); errdefs.IsNotFound(stateErr) {
-		return nil
+	c.nativeMu.Unlock()
+	close(inv.done)
+	if !unconfirmed {
+		return nil, err
 	}
-	return err
+	return func(ctx context.Context) error {
+		if err := inv.stop(ctx); err != nil {
+			return err
+		}
+		c.nativeMu.Lock()
+		delete(c.nativeInvocations, inv)
+		c.nativeMu.Unlock()
+		return nil
+	}, err
 }
 
 // decodeDebugLevel reads the reply of config get, {"<name>": "<value>"}.

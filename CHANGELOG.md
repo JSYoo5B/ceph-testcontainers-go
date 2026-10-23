@@ -28,7 +28,8 @@ change the API.
   outside edit in place. Each set is admitted only on the window's
   generation while the cluster's topology operations wait, and the generation
   is checked again after each read. A set whose end is unconfirmed keeps the
-  window open until it is confirmed stopped. A failed or lost apply returns a
+  window open, and `RemoveOSD` and `DetachOSD` stop it first or refuse, until
+  it is confirmed stopped. A failed or lost apply returns a
   handle that reconciles before it restores, and `Receipt` keeps the states, readbacks,
   times and errors. Registered with `Finalization.Cleanup`, restoration runs
   after the failure archive and before earlier-registered client removals.

@@ -3,6 +3,8 @@ package ceph
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -861,6 +863,115 @@ func TestOSDDebugTargetSetAdmission(t *testing.T) {
 		var refusal *debugLevelRefusal
 		if _, err := target.set(ctx, "osd-container@start-1", "debug_osd", "20"); !errors.As(err, &refusal) || refusal.changed || len(control.Calls) != 0 {
 			t.Fatalf("err %v calls %v", err, control.Calls)
+		}
+	})
+}
+
+// debugLevelNativeCluster is a cluster whose control container runs its
+// commands as real processes through the supervisor, with a ceph program
+// that only appends its arguments to the returned log.
+func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *osdDebugTarget, string) {
+	t.Helper()
+	control := newNativeTarget(t, "control", "tc-public")
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "ceph.log")
+	if err := os.WriteFile(filepath.Join(bin, "ceph"), []byte("#!/bin/sh\necho \"$*\" >> '"+log+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := nativeCluster()
+	c.Container, c.run = control, &runVolume{name: "run"}
+	osd := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
+	c.osds = map[int]*OSDContainer{0: {ID: 0, Container: osd}}
+	return c, control, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osds[0]}, log
+}
+
+func cephCalls(t *testing.T, log string) string {
+	t.Helper()
+	data, err := os.ReadFile(log)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestOSDDebugTargetSetRunsInControl(t *testing.T) {
+	requireLinuxGroups(t)
+	c, _, target, log := debugLevelNativeCluster(t)
+	settle, err := target.set(t.Context(), "osd-container@start-1", "debug_osd", "20")
+	if settle != nil || err != nil || registered(c) != 0 {
+		t.Fatalf("settle %v err %v registered %d", settle != nil, err, registered(c))
+	}
+	if got := cephCalls(t, log); got != "--admin-daemon /var/run/ceph/ceph-osd.0.asok config set debug_osd 20\n" {
+		t.Fatalf("ceph calls %q", got)
+	}
+}
+
+// A set whose exec Docker accepted but has not started, and whose
+// cancellation fails, may still reach the shared socket after a replacement.
+// It keeps the OSD instance's native fence closed until it is confirmed
+// stopped, and once confirmed it never runs.
+func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
+	unconfirmedSet := func(t *testing.T) (*Container, *nativeTarget, func(context.Context) error, string, func()) {
+		c, control, target, log := debugLevelNativeCluster(t)
+		gate := make(chan struct{})
+		control.startGate, control.refuseCancel = gate, true
+		var release sync.Once
+		t.Cleanup(func() { release.Do(func() { close(gate) }) })
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		time.AfterFunc(100*time.Millisecond, cancel)
+		settle, err := target.set(ctx, "osd-container@start-1", "debug_osd", "20")
+		if settle == nil || err == nil || registered(c) != 1 {
+			t.Fatalf("settle %v err %v registered %d", settle != nil, err, registered(c))
+		}
+		return c, control, settle, log, func() { release.Do(func() { close(gate) }) }
+	}
+	t.Run("failed cancellation, then settlement", func(t *testing.T) {
+		c, control, settle, log, start := unconfirmedSet(t)
+		if err := settle(t.Context()); err == nil || registered(c) != 1 {
+			t.Fatalf("settled with a refused cancellation: %v", err)
+		}
+		// RemoveOSD and DetachOSD fence the instance before they replace it.
+		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err == nil || registered(c) != 1 {
+			t.Fatalf("the fence admitted a replacement while the set may run: %v", err)
+		}
+		control.set(func(f *nativeTarget) { f.refuseCancel = false })
+		if err := settle(t.Context()); err != nil || registered(c) != 0 {
+			t.Fatalf("settle: %v registered %d", err, registered(c))
+		}
+		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+			t.Fatal(err)
+		}
+		start()
+		control.wg.Wait()
+		if got := cephCalls(t, log); got != "" {
+			t.Fatalf("a settled set ran late: %q", got)
+		}
+	})
+	t.Run("drained by the fence", func(t *testing.T) {
+		c, control, settle, log, start := unconfirmedSet(t)
+		control.set(func(f *nativeTarget) { f.refuseCancel = false })
+		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil || registered(c) != 0 {
+			t.Fatalf("fence: %v registered %d", err, registered(c))
+		}
+		if err := settle(t.Context()); err != nil {
+			t.Fatalf("settle after the fence stopped it: %v", err)
+		}
+		start()
+		control.wg.Wait()
+		if got := cephCalls(t, log); got != "" {
+			t.Fatalf("a drained set ran late: %q", got)
+		}
+	})
+	t.Run("fenced instance", func(t *testing.T) {
+		c, _, target, log := debugLevelNativeCluster(t)
+		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+			t.Fatal(err)
+		}
+		var refusal *debugLevelRefusal
+		if _, err := target.set(t.Context(), "osd-container@start-1", "debug_osd", "20"); !errors.As(err, &refusal) || !refusal.changed || cephCalls(t, log) != "" {
+			t.Fatalf("set on a fenced instance: %v", err)
 		}
 	})
 }

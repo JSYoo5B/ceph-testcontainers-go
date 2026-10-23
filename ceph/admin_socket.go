@@ -169,28 +169,27 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 	case !owned:
 		return nil, invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
 	}
-	_, out, err := c.adminSocketCommand(ctx, daemon, args...)
-	return out, err
+	control, err := c.controlContainerContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("select admin socket control: %w", err)
+	}
+	return c.adminSocketCommand(ctx, control, daemon, args...)
 }
 
 // adminSocketCommand runs args on the admin socket of daemon, which the
-// caller checked, and returns the control container that ran it: an error
-// that supervised.Unconfirmed reports leaves the command running there.
-func (c *Container) adminSocketCommand(ctx context.Context, daemon string, args ...string) (testcontainers.Container, []byte, error) {
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("select admin socket control: %w", err)
-	}
+// caller checked, in control: an error that supervised.Unconfirmed reports
+// leaves the command possibly running there.
+func (c *Container) adminSocketCommand(ctx context.Context, control testcontainers.Container, daemon string, args ...string) ([]byte, error) {
 	socket := adminSocketDir + "/ceph-" + daemon + ".asok"
 	result, err := supervised.Command(ctx, control, "admin socket", c.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
 		append([]string{"ceph", "--admin-daemon", socket}, args...)...)
 	if err != nil {
-		return control, nil, fmt.Errorf("admin socket of %s: %w", daemon, err)
+		return nil, fmt.Errorf("admin socket of %s: %w", daemon, err)
 	}
 	if result.ExitCode != 0 {
-		return control, result.Stdout, fmt.Errorf("admin socket of %s: %w", daemon, nativeFailure("ceph", result.ExitCode, nil, result.Stderr))
+		return result.Stdout, fmt.Errorf("admin socket of %s: %w", daemon, nativeFailure("ceph", result.ExitCode, nil, result.Stderr))
 	}
-	return control, result.Stdout, nil
+	return result.Stdout, nil
 }
 
 func parseAdminSocketDaemon(daemon string) (kind, id string, err error) {

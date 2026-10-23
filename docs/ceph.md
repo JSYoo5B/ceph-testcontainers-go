@@ -3321,7 +3321,9 @@ verifies it:
   window open; a later `Restore` reconciles it first.
 - A set of the window whose end could not be confirmed may still apply. The
   window keeps it open as unconfirmed, and a later `Restore` first confirms that
-  the set has stopped before it reads, sets or releases anything.
+  the set has stopped before it reads, sets or releases anything. Until then
+  `RemoveOSD` and `DetachOSD` first stop that set or refuse, so it cannot reach
+  a replacement OSD through the shared socket path.
 
 The generation is checked again after each read, so a replacement during a read
 is reported as a changed target instead of a level to restore.
