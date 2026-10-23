@@ -147,11 +147,15 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 			t.Error("original actor cleanup did not confirm stop")
 		}
 	})
-	var events []abruptWriteEvent
 	var witnesses []abruptWitness
 	daemon := fmt.Sprintf("osd.%d", osd.ID)
+	// The injected delay holds each request in the OSD's dispatch of its client
+	// connection, one after the other. Only the first request exists in the
+	// OSD's operation tracker while it is held; the second stays queued behind
+	// it and is outstanding in the writer alone. The first one is therefore the
+	// witness, and the second one's visibility is recorded as it is found.
 	for deadline := time.Now().Add(time.Minute); ; {
-		events = abruptLedger(t, ctx, cluster, client, pool, ledger)
+		events := abruptLedger(t, ctx, cluster, client, pool, ledger)
 		var writer string
 		returned := 0
 		for _, event := range events {
@@ -165,13 +169,12 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 			}
 		}
 		if returned == 2 {
-			if witnesses = abruptWitnesses(t, ctx, cluster, docker.Client, osd, daemon, pg, writer); len(witnesses) == 2 {
+			if witnesses = abruptWitnesses(t, ctx, cluster, docker.Client, osd, daemon, pg, writer); slices.ContainsFunc(witnesses, func(w abruptWitness) bool { return w.Object == "fresh" }) {
 				// A request that completed while the dump was read is no witness.
-				if again := abruptLedger(t, ctx, cluster, client, pool, ledger); !slices.ContainsFunc(again, func(e abruptWriteEvent) bool { return e.Event == "completed" || e.Event == "callback" }) {
-					events = again
-					break
+				if again := abruptLedger(t, ctx, cluster, client, pool, ledger); slices.ContainsFunc(again, func(e abruptWriteEvent) bool { return e.Event == "completed" || e.Event == "callback" }) {
+					t.Fatal("original request finished while its witness was read")
 				}
-				t.Fatal("original request finished while its witness was read")
+				break
 			}
 		}
 		select {
@@ -229,7 +232,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if !errors.Is(outcome.err, context.Canceled) || errors.As(outcome.err, &unstopped) {
 		t.Fatal("original writer was not confirmed stopped", outcome.err)
 	}
-	events = abruptLedger(t, ctx, cluster, client, pool, ledger)
+	events := abruptLedger(t, ctx, cluster, client, pool, ledger)
 	encoded, err := json.Marshal(events)
 	if err != nil {
 		t.Fatal(err)

@@ -263,7 +263,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 }
 
 // abruptWitnesses reads the OSD's in-flight operations and returns the unique
-// request of each submitted object, or nothing while either is missing. The
+// request of each submitted object that the OSD tracks so far. The
 // daemon's process generation must be the same before and after the dump.
 func abruptWitnesses(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, client string) []abruptWitness {
 	t.Helper()
@@ -304,7 +304,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	}
 	t.Cleanup(restore)
 	for _, setting := range []ceph.ConfigSetting{
-		{Section: osd, Name: "osd_debug_inject_dispatch_delay_duration", Value: "5"},
+		{Section: osd, Name: "osd_debug_inject_dispatch_delay_duration", Value: "30"},
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 	} {
 		handle, err := cluster.OverrideConfig(ctx, setting)
@@ -319,7 +319,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	// daemon's own value before any request is submitted, so that a request is
 	// never counted against a delay that is not in effect yet.
 	for _, setting := range []ceph.ConfigSetting{
-		{Name: "osd_debug_inject_dispatch_delay_duration", Value: "5"},
+		{Name: "osd_debug_inject_dispatch_delay_duration", Value: "30"},
 		{Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 	} {
 		deadline := time.Now().Add(time.Minute)
@@ -338,7 +338,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	return restore
 }
 
-// abruptSameNumber compares two decimal renderings, such as "5.000000" and "5".
+// abruptSameNumber compares two decimal renderings, such as "30.000000" and "30".
 func abruptSameNumber(a, b string) bool {
 	x, errA := strconv.ParseFloat(a, 64)
 	y, errB := strconv.ParseFloat(b, 64)

@@ -254,7 +254,7 @@ func TestOSDAbruptSameNumber(t *testing.T) {
 	for _, tc := range []struct {
 		a, b string
 		want bool
-	}{{"5.000000", "5", true}, {"1", "1.0", true}, {"0.1", "1", false}, {"", "1", false}, {"x", "x", false}} {
+	}{{"30.000000", "30", true}, {"1", "1.0", true}, {"0.1", "1", false}, {"", "1", false}, {"x", "x", false}} {
 		if got := abruptSameNumber(tc.a, tc.b); got != tc.want {
 			t.Errorf("%q %q: %t", tc.a, tc.b, got)
 		}
