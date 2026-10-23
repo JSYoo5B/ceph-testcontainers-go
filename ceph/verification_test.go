@@ -43,9 +43,13 @@ type fakeVerifyContainer struct {
 	// those without a done marker.
 	crashes []string
 	notDone map[string]bool
-	process string
-	copyErr error
-	noCrash bool
+	// posted lists crash IDs also present, done, as posted metadata;
+	// messages replaces a crash's assert_msg.
+	posted   []string
+	messages map[string]string
+	process  string
+	copyErr  error
+	noCrash  bool
 }
 
 type fakeLogLine struct {
@@ -165,15 +169,30 @@ func (d *fakeVerifyDocker) CopyFromContainer(ctx context.Context, id string, opt
 		_, _ = writer.Write([]byte(body))
 	}
 	write("crash/", "", tar.TypeDir)
+	meta := func(crash string) string {
+		message := "fixture assertion " + crash
+		if ctr.messages[crash] != "" {
+			message = ctr.messages[crash]
+		}
+		data, _ := json.Marshal(map[string]any{"crash_id": crash, "timestamp": verifyStart.Add(time.Minute).Format(time.RFC3339Nano),
+			"process_name": ctr.process, "entity_name": "entity-of-" + id,
+			"assert_condition": "r == 0", "assert_msg": message, "backtrace": []string{"frame-a", "frame-b"}})
+		return string(data)
+	}
 	for _, crash := range ctr.crashes {
 		write("crash/"+crash+"/", "", tar.TypeDir)
-		meta, _ := json.Marshal(map[string]any{"crash_id": crash, "timestamp": verifyStart.Add(time.Minute).Format(time.RFC3339Nano),
-			"process_name": ctr.process, "entity_name": "entity-of-" + id,
-			"assert_condition": "r == 0", "assert_msg": "fixture assertion " + crash, "backtrace": []string{"frame-a", "frame-b"}})
-		write("crash/"+crash+"/meta", string(meta), tar.TypeReg)
+		write("crash/"+crash+"/meta", meta(crash), tar.TypeReg)
 		if !ctr.notDone[crash] {
 			write("crash/"+crash+"/done", "", tar.TypeReg)
 		}
+	}
+	if len(ctr.posted) > 0 {
+		write("crash/posted/", "", tar.TypeDir)
+	}
+	for _, crash := range ctr.posted {
+		write("crash/posted/"+crash+"/", "", tar.TypeDir)
+		write("crash/posted/"+crash+"/meta", meta(crash), tar.TypeReg)
+		write("crash/posted/"+crash+"/done", "", tar.TypeReg)
 	}
 	_ = writer.Close()
 	return mobycl.CopyFromContainerResult{Content: io.NopCloser(&buffer)}, nil
@@ -347,6 +366,63 @@ func TestVerificationNewCrashesByIdentity(t *testing.T) {
 	})
 }
 
+// The collector of a crash's metadata redacts the configured values and the
+// cluster's own secrets before a finding keeps the text.
+func TestVerificationRedactsCrashMetadata(t *testing.T) {
+	newCrash := "2026-10-23T01:01:00Z_secret"
+	fx := newVerifyFixture()
+	fx.config.RedactValues = []string{"opaque-caller-value-41"}
+	v := fx.activate(t)
+	osd := fx.docker.containers["osd0"]
+	osd.crashes = append(osd.crashes, newCrash)
+	osd.messages = map[string]string{newCrash: "failed with opaque-caller-value-41 and key AQBverifysecret=="}
+	report := fx.evaluate(t, v)
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Crashes.Unexpected != 1 || !strings.Contains(report.Crashes.Findings[0].Text, "failed with") {
+		t.Fatalf("crashes %+v", report.Crashes)
+	}
+	for _, secret := range []string{"opaque-caller-value-41", "AQBverifysecret=="} {
+		if strings.Contains(string(data), secret) || strings.Contains(report.summary(), secret) {
+			t.Errorf("the report keeps %q", secret)
+		}
+	}
+}
+
+// A crash seen as unposted and as posted metadata is one crash.
+func TestVerificationCountsDistinctCrashes(t *testing.T) {
+	newCrash := "2026-10-23T01:01:00Z_twice"
+	seenTwice := func(fx *verifyFixture) {
+		osd := fx.docker.containers["osd0"]
+		osd.crashes = append(osd.crashes, newCrash)
+		osd.posted = []string{newCrash}
+		// The unposted copy has no done marker; the posted one does.
+		osd.notDone = map[string]bool{newCrash: true}
+	}
+	t.Run("two required", func(t *testing.T) {
+		fx := newVerifyFixture()
+		fx.config.Crashes = []CrashExpectation{{Name: "two", Daemon: "osd.0", Required: true, MinCount: 2}}
+		v := fx.activate(t)
+		seenTwice(fx)
+		report := fx.evaluate(t, v)
+		if report.Outcome == VerificationClean || report.Crashes.Permitted != 1 || report.Crashes.Expectations[0].Satisfied {
+			t.Fatalf("one crash satisfied two: %+v", report.Crashes)
+		}
+	})
+	t.Run("one permitted", func(t *testing.T) {
+		fx := newVerifyFixture()
+		fx.config.Crashes = []CrashExpectation{{Name: "one", Daemon: "osd.0", MaxCount: 1}}
+		v := fx.activate(t)
+		seenTwice(fx)
+		report := fx.evaluate(t, v)
+		if report.Outcome != VerificationClean || report.Crashes.Permitted != 1 || report.Crashes.Unexpected != 0 {
+			t.Fatalf("crashes %+v\n%s", report.Crashes, gapReasons(report.Crashes))
+		}
+	})
+}
+
 // Log events are classified lines inside the window. A narrow expectation
 // permits its line only, MaxCount limits it, and an ordinary INFO line is no
 // event.
@@ -416,6 +492,55 @@ func TestVerificationLogExpectations(t *testing.T) {
 
 // A required expectation that nothing matched fails, as does one matched
 // fewer than MinCount times; an unmatched permission does not.
+// Expectations match the whole redacted line, not the bounded text a
+// finding keeps.
+func TestVerificationMatchesBeyondTheFindingText(t *testing.T) {
+	fx := newVerifyFixture()
+	fx.config.Logs = []LogExpectation{{Name: "marker", Daemon: "mon.a", Required: true, Pattern: `late-marker-7f3a`}}
+	v := fx.activate(t)
+	fx.line("mon", 2*time.Minute, "0 log_channel(cluster) log [WRN] : "+strings.Repeat("x", 1100)+" late-marker-7f3a")
+	report := fx.evaluate(t, v)
+	if report.Outcome != VerificationClean || report.Logs.Permitted != 1 || !report.Logs.Expectations[0].Satisfied ||
+		!report.Logs.Findings[0].Truncated || len(report.Logs.Findings[0].Text) > maxFindingText {
+		t.Fatalf("logs %+v", report.Logs)
+	}
+}
+
+// A line longer than the line bound leaves its rest unread: a gap, also when
+// its kept prefix is no event.
+func TestVerificationCutLineIsAGap(t *testing.T) {
+	fx := newVerifyFixture()
+	v := fx.activate(t)
+	fx.line("mon", 2*time.Minute, strings.Repeat("x", maxVerificationLine+16)+" log_channel(cluster) log [ERR] : lost")
+	report := fx.evaluate(t, v)
+	if report.Logs.Outcome != VerificationIncomplete || !strings.Contains(gapReasons(report.Logs), "longer than") {
+		t.Fatalf("logs %s: %s", report.Logs.Outcome, gapReasons(report.Logs))
+	}
+}
+
+// Waiting for another evaluation is bounded by the evaluation's context.
+func TestVerificationEvaluationWaitIsBounded(t *testing.T) {
+	fx := newVerifyFixture()
+	v := fx.activate(t)
+	v.evaluating <- struct{}{} // another evaluation holds the verification
+	defer func() { <-v.evaluating }()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := v.Evaluate(ctx)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a canceled evaluation waited for another one")
+	}
+}
+
 func TestVerificationRequiredExpectations(t *testing.T) {
 	fx := newVerifyFixture()
 	fx.config.Logs = []LogExpectation{{Name: "may-warn", Pattern: `OSD_DOWN`}}

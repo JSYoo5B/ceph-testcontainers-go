@@ -122,7 +122,8 @@ var errVerificationRemoved = errors.New("the container was removed")
 // crash directories and then reads the engine's clock, so that a crash
 // between the two counts as new.
 func recordVerificationBaseline(ctx context.Context, config VerificationConfig, snapshot diagnosticsSnapshot, docker verificationDocker) (*verificationBaseline, error) {
-	b := &verificationBaseline{secrets: snapshot.secrets}
+	// The configured values are secrets also when the snapshot lacks them.
+	b := &verificationBaseline{secrets: append(slices.Clone(snapshot.secrets), config.RedactValues...)}
 	redact := diagnosticsRedactor(b.secrets)
 	both := func(source, reason string) {
 		reason = verificationReason(reason, redact)
@@ -142,7 +143,7 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 		}
 		target.generation = generation
 	}
-	crashes, err := readVerificationCrashes(ctx, config, b.targets, docker)
+	crashes, err := readVerificationCrashes(ctx, config, b.targets, b.secrets, docker)
 	for i, result := range crashes.Containers {
 		target := &b.targets[i]
 		if target.generation == nil {
@@ -169,10 +170,12 @@ func recordVerificationBaseline(ctx context.Context, config VerificationConfig, 
 }
 
 // readVerificationCrashes reads the crash directories of targets, one
-// result per target in order.
-func readVerificationCrashes(ctx context.Context, config VerificationConfig, targets []verificationTarget, docker verificationDocker) (*CrashMetadataReport, error) {
+// result per target in order. The collector redacts with secrets, the
+// configured values together with the cluster's own: it takes them from the
+// snapshot, not from its RedactValues.
+func readVerificationCrashes(ctx context.Context, config VerificationConfig, targets []verificationTarget, secrets []string, docker verificationDocker) (*CrashMetadataReport, error) {
 	crashConfig, _ := normalizeCrashMetadataConfig(CrashMetadataConfig{OperationTimeout: config.OperationTimeout, RedactValues: config.RedactValues})
-	snapshot := diagnosticsSnapshot{}
+	snapshot := diagnosticsSnapshot{secrets: slices.Clone(secrets)}
 	for _, target := range targets {
 		snapshot.containers = append(snapshot.containers, target.DiagnosticsContainer)
 	}
@@ -285,7 +288,7 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 		}
 		o.sources = append(o.sources, source)
 	}
-	crashes, err := readVerificationCrashes(ctx, config, b.targets, docker)
+	crashes, err := readVerificationCrashes(ctx, config, b.targets, b.secrets, docker)
 	if err != nil && len(crashes.Containers) != len(b.targets) {
 		crashGap("", err.Error())
 	}
@@ -303,13 +306,24 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 			}
 			continue
 		}
+		// One crash can be seen twice, as unposted and as posted metadata:
+		// it counts once, and is complete when any sighting has its done
+		// marker.
+		var order []string
+		done := map[string]bool{}
 		for _, record := range result.Records {
 			if target.crashes[record.CrashID] {
 				continue
 			}
-			o.crashes = append(o.crashes, crashEvent(target, record))
-			if !record.Done {
-				crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", record.CrashID))
+			if _, ok := done[record.CrashID]; !ok {
+				order = append(order, record.CrashID)
+				o.crashes = append(o.crashes, crashEvent(target, record))
+			}
+			done[record.CrashID] = done[record.CrashID] || record.Done
+		}
+		for _, id := range order {
+			if !done[id] {
+				crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", id))
 			}
 		}
 	}
@@ -335,6 +349,7 @@ func crashEvent(target verificationTarget, record CrashRecord) verificationEvent
 	} else if backtrace, _ := record.Fields["backtrace"].([]string); len(backtrace) > 0 {
 		summary += ": " + strings.Join(backtrace[:min(3, len(backtrace))], " | ")
 	}
+	e.match = summary
 	e.text, e.truncated = diagnosticBoundText(summary, maxFindingText)
 	return e
 }
@@ -366,8 +381,12 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	stop := context.AfterFunc(opCtx, func() { _ = reader.Close() })
 	defer stop()
 	counted := &countingReader{r: io.LimitReader(reader, config.MaxLogBytes+1)}
-	malformed, outside := 0, 0
+	malformed, outside, cut := 0, 0, 0
 	line := func(data []byte, truncated bool) {
+		if truncated {
+			// The rest of the line was not read, whatever its prefix holds.
+			cut++
+		}
 		stamp, text, _ := strings.Cut(string(data), " ")
 		when, err := time.Parse(time.RFC3339Nano, stamp)
 		if err != nil {
@@ -381,7 +400,10 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 		for _, kind := range verificationLogEvents {
 			if kind.pattern.MatchString(text) {
 				e := verificationEvent{source: target.source, containerID: target.id, event: string(kind.event), time: when.UTC().Format(time.RFC3339Nano)}
-				e.text, e.truncated = diagnosticBoundText(redact(strings.TrimRight(text, "\r")), maxFindingText)
+				// Expectations match the whole redacted line; only the text
+				// that the report keeps is bounded.
+				e.match = redact(strings.TrimRight(text, "\r"))
+				e.text, e.truncated = diagnosticBoundText(e.match, maxFindingText)
 				e.truncated = e.truncated || truncated
 				emit(e)
 				return
@@ -425,6 +447,9 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	}
 	if malformed > 0 {
 		err = errors.Join(err, fmt.Errorf("%d log lines have no valid timestamp", malformed))
+	}
+	if cut > 0 {
+		err = errors.Join(err, fmt.Errorf("%d log lines are longer than %d bytes; their rest was not read", cut, maxVerificationLine))
 	}
 	return read, errors.Join(err, opCtx.Err())
 }

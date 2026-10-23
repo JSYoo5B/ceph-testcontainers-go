@@ -240,6 +240,10 @@ type Verification struct {
 
 	mu       sync.Mutex
 	baseline *verificationBaseline
+	// evaluating admits one evaluation at a time, since evaluations count
+	// matches in the shared rules; waiting for it is bounded by the
+	// evaluation's own timeout and context.
+	evaluating chan struct{}
 }
 
 const (
@@ -462,7 +466,8 @@ func newVerification(config VerificationConfig) (*Verification, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Verification{name: config.Name, config: config, logs: logs, crashes: crashes, now: func() time.Time { return time.Now().UTC() }}, nil
+	return &Verification{name: config.Name, config: config, logs: logs, crashes: crashes, now: func() time.Time { return time.Now().UTC() },
+		evaluating: make(chan struct{}, 1)}, nil
 }
 
 // activate records the baseline.
@@ -503,13 +508,20 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 	if err := v.admit(); err != nil {
 		return nil, err
 	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.baseline == nil {
-		return nil, invalid(errors.New("verification was not activated"))
-	}
 	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
 	defer cancel()
+	select {
+	case v.evaluating <- struct{}{}:
+		defer func() { <-v.evaluating }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("verification %s: another evaluation was still running: %w", v.name, ctx.Err())
+	}
+	v.mu.Lock()
+	baseline := v.baseline
+	v.mu.Unlock()
+	if baseline == nil {
+		return nil, invalid(errors.New("verification was not activated"))
+	}
 	observation := &verificationObservation{}
 	if snapshot, err := v.snapshot(ctx); err != nil {
 		observation.gap("", "list the cluster's containers: "+err.Error())
@@ -521,7 +533,7 @@ func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error
 		observation.gap("", "connect to Docker: "+err.Error())
 	} else {
 		defer closeDocker()
-		observeVerification(ctx, v.config, v.baseline, docker, observation)
+		observeVerification(ctx, v.config, baseline, docker, observation)
 	}
 	return v.evaluate(observation), nil
 }
@@ -578,9 +590,11 @@ type verificationEvent struct {
 	source, containerID string
 	event               string
 	time                string
-	text                string
-	truncated           bool
-	crashID, process    string
+	// text is the bounded text a finding keeps; match is the whole redacted
+	// text that expectations are matched against.
+	text, match      string
+	truncated        bool
+	crashID, process string
 	// signature holds the lines a crash signature is matched against.
 	signature []string
 }
@@ -599,7 +613,7 @@ func (r *verificationRule) matches(e verificationEvent) bool {
 		return true
 	}
 	if e.event != "crash" {
-		return r.pattern.MatchString(e.text)
+		return r.pattern.MatchString(e.match)
 	}
 	return slices.ContainsFunc(e.signature, r.pattern.MatchString)
 }
