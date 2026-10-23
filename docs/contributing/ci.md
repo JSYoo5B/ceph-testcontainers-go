@@ -864,8 +864,21 @@ seconds of every kind (passed, assertion failure, timeout, cancelled and the
 others of `scenario_history.attempt_kind`). Its sample count and min, median
 and max of job, acquisition and phase seconds come from passed attempts only.
 Rows that do not join (another repository, no job ID, a job missing from the
-cache, a second row for one job), measured runtime jobs without a row, and
+cache, a job that held no runner), measured runtime jobs without a row, and
 rows without a complete configuration identity are listed with the reason.
+
+Job ownership is resolved before configurations are grouped, so neither the
+order of the rows nor the artifact path they came from decides a job's
+bucket. All distinct rows (receipts) that name one job are collected first.
+Receipts that agree on repetition, profile, network mode, release, outcome
+kind and configuration key join the job once; the sample lists every
+receipt's `row_sha256` as provenance and its runner time counts once.
+Receipts that disagree, such as one with complete checkout metadata and one
+without, make the job a receipt conflict. The job stays out of every
+configuration and out of the incomparable list, and `conflicts` lists it with
+its job seconds and each receipt's kind, configuration key and comparability
+reasons; `conflict_runner_seconds` totals them. No receipt is preferred by
+input order, and a conflict stays unresolved until its receipts are corrected.
 Rows of two checked-out trees are two configurations, also when only the CI
 policy differs; the key is never relaxed to merge them.
 
