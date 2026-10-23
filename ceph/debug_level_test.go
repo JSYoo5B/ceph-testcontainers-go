@@ -25,15 +25,22 @@ type debugLevelFake struct {
 	setFaults []debugLevelSetFault
 	// getErrs are consumed in order by the gets; nil reads normally.
 	getErrs []error
-	// afterSet runs after a set, for example to edit or restart the target.
-	afterSet func(*debugLevelFake)
-	sets     []string
-	gets     int
+	// afterSet runs after a set, for example to edit or restart the target,
+	// and afterGet after a read.
+	afterSet, afterGet func(*debugLevelFake)
+	// live holds the values of sets that may still run; settleErrs are
+	// consumed in order by their settling, and a nil one stops them.
+	live       []string
+	settleErrs []error
+	sets       []string
+	gets       int
 }
 
 type debugLevelSetFault struct {
 	applies bool
-	err     error
+	// live leaves the set running unconfirmed: it applies only on complete.
+	live bool
+	err  error
 }
 
 func newDebugLevelFake(value string) *debugLevelFake {
@@ -50,6 +57,14 @@ func (f *debugLevelFake) generation(ctx context.Context) (debugLevelGeneration, 
 }
 
 func (f *debugLevelFake) get(ctx context.Context, name string) (string, error) {
+	value, err := f.read(ctx)
+	if f.afterGet != nil {
+		f.afterGet(f)
+	}
+	return value, err
+}
+
+func (f *debugLevelFake) read(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.gets++
@@ -66,14 +81,24 @@ func (f *debugLevelFake) get(ctx context.Context, name string) (string, error) {
 	return f.value, nil
 }
 
-func (f *debugLevelFake) set(ctx context.Context, name, value string) error {
+// set admits the set like osdDebugTarget: only on the expected generation.
+func (f *debugLevelFake) set(ctx context.Context, identity, name, value string) (func(context.Context) error, error) {
 	f.mu.Lock()
+	if changed, err := checkDebugLevelGeneration(f.gen, f.genErr, identity, "osd.0"); err != nil {
+		f.mu.Unlock()
+		return nil, &debugLevelRefusal{changed: changed, err: err}
+	}
 	f.sets = append(f.sets, name+"="+value)
 	fault := debugLevelSetFault{applies: true}
 	if len(f.setFaults) > 0 {
 		fault, f.setFaults = f.setFaults[0], f.setFaults[1:]
 	}
-	if fault.applies {
+	var settle func(context.Context) error
+	switch {
+	case fault.live:
+		f.live = append(f.live, value)
+		settle = f.settle
+	case fault.applies:
 		f.value, _ = normalizeDebugLevel(value)
 	}
 	after := f.afterSet
@@ -81,7 +106,31 @@ func (f *debugLevelFake) set(ctx context.Context, name, value string) error {
 	if after != nil {
 		after(f)
 	}
-	return fault.err
+	return settle, fault.err
+}
+
+func (f *debugLevelFake) settle(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.settleErrs) > 0 {
+		err := f.settleErrs[0]
+		f.settleErrs = f.settleErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	f.live = nil
+	return nil
+}
+
+// complete lets the sets that still run apply, as a delayed command does.
+func (f *debugLevelFake) complete() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, value := range f.live {
+		f.value, _ = normalizeDebugLevel(value)
+	}
+	f.live = nil
 }
 
 func (f *debugLevelFake) edit(edit func(*debugLevelFake)) {
@@ -461,6 +510,155 @@ func TestDebugLevelRestoreReplies(t *testing.T) {
 	})
 }
 
+func TestDebugLevelSettlesUnconfirmedSets(t *testing.T) {
+	stillRunning := errors.New("command not stopped")
+	t.Run("apply", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		fake.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
+		fake.settleErrs = []error{stillRunning, stillRunning}
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if h == nil || err == nil || !strings.Contains(err.Error(), "may still run") {
+			t.Fatalf("handle %v err %v", h, err)
+		}
+		wantDebugLevelStates(t, h, DebugLevelPriorRead, DebugLevelApplyAttempted, DebugLevelApplyUncertain)
+		// The prior level still reads back, but the set may still apply:
+		// Restore neither reports restoration nor releases the admission.
+		err = h.Restore(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "may still run") || h.Receipt().State != DebugLevelUnconfirmed || len(fake.setCalls()) != 1 {
+			t.Fatalf("restore: %v state %s sets %v", err, h.Receipt().State, fake.setCalls())
+		}
+		if len(registry.active) != 1 {
+			t.Fatal("a window with a running set lost its admission")
+		}
+		// The delayed set applies; once it is confirmed ended, Restore
+		// reconciles the level it left.
+		fake.complete()
+		if err := h.Restore(t.Context()); err != nil || fake.current() != "1/5" || h.Receipt().State != DebugLevelRestored {
+			t.Fatalf("retry: %v value %q state %s", err, fake.current(), h.Receipt().State)
+		}
+		if len(registry.active) != 0 {
+			t.Fatal("admission not released")
+		}
+	})
+	t.Run("apply stopped before it applied", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		fake.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if h == nil || err == nil || h.Receipt().State != DebugLevelApplyUncertain || h.Receipt().Applied != "1/5" {
+			t.Fatalf("handle %v err %v", h, err)
+		}
+		if err := h.Restore(t.Context()); err != nil || len(fake.setCalls()) != 1 {
+			t.Fatalf("restore: %v sets %v", err, fake.setCalls())
+		}
+		fake.complete()
+		if fake.current() != "1/5" {
+			t.Fatalf("a stopped set applied: %q", fake.current())
+		}
+	})
+	t.Run("restore", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.edit(func(f *debugLevelFake) {
+			f.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
+			f.settleErrs = []error{stillRunning}
+		})
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || len(registry.active) != 1 {
+			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
+		}
+		fake.complete()
+		if err := h.Restore(t.Context()); err != nil || fake.current() != "1/5" || len(fake.setCalls()) != 2 {
+			t.Fatalf("retry: %v value %q sets %v", err, fake.current(), fake.setCalls())
+		}
+	})
+	t.Run("restore during a replacement", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.edit(func(f *debugLevelFake) {
+			f.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
+			f.settleErrs = []error{stillRunning}
+			f.afterSet = func(f *debugLevelFake) { f.edit(func(f *debugLevelFake) { f.gen.identity = "osd0@start-2" }) }
+		})
+		// The restore set may still reach the new generation.
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || len(registry.active) != 1 {
+			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
+		}
+		fake.edit(func(f *debugLevelFake) { f.afterSet = nil })
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || len(fake.setCalls()) != 2 {
+			t.Fatalf("retry: %v state %s sets %v", err, h.Receipt().State, fake.setCalls())
+		}
+	})
+	t.Run("changed target", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		fake.setFaults = []debugLevelSetFault{{live: true, err: stillRunning}}
+		fake.settleErrs = []error{stillRunning, stillRunning}
+		h, _ := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		fake.edit(func(f *debugLevelFake) { f.gen.identity = "osd0@start-2" })
+		// The running set could reach the new generation: the window is not
+		// released as target-changed until the set is confirmed ended.
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelUnconfirmed || len(registry.active) != 1 {
+			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
+		}
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || len(registry.active) != 0 {
+			t.Fatalf("retry: %v state %s", err, h.Receipt().State)
+		}
+	})
+}
+
+func TestDebugLevelRevalidatesAfterReads(t *testing.T) {
+	// replace makes the next read return before a replacement completes.
+	replace := func(f *debugLevelFake) {
+		f.afterGet = func(f *debugLevelFake) {
+			f.edit(func(f *debugLevelFake) { f.gen.identity, f.value = "osd0@start-2", "9/9" })
+			f.afterGet = nil
+		}
+	}
+	t.Run("restore", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		replace(fake)
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || fake.current() != "9/9" || len(fake.setCalls()) != 1 {
+			t.Fatalf("restore: %v state %s value %q sets %v", err, h.Receipt().State, fake.current(), fake.setCalls())
+		}
+	})
+	t.Run("prior already in place", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake.edit(func(f *debugLevelFake) { f.value = "1/5" })
+		replace(fake)
+		if err := h.Restore(t.Context()); err == nil || h.Receipt().State != DebugLevelTargetChanged || h.Receipt().Restored != "" {
+			t.Fatalf("restore: %v state %s", err, h.Receipt().State)
+		}
+	})
+	t.Run("apply", func(t *testing.T) {
+		var registry debugLevelRegistry
+		fake := newDebugLevelFake("1/5")
+		replace(fake)
+		h, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		if h != nil || err == nil || fake.current() != "9/9" || len(fake.setCalls()) != 0 || len(registry.active) != 0 {
+			t.Fatalf("handle %v err %v value %q sets %v", h, err, fake.current(), fake.setCalls())
+		}
+	})
+}
+
 func TestDebugLevelEndedWorkloadContext(t *testing.T) {
 	var registry debugLevelRegistry
 	fake := newDebugLevelFake("1/5")
@@ -624,4 +822,45 @@ func TestOSDDebugTargetGeneration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOSDDebugTargetSetAdmission(t *testing.T) {
+	newTarget := func() (*Container, *poolFixtureContainer, *debugLevelOSD, *osdDebugTarget) {
+		c, control := adminSocketCluster()
+		ctr := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
+		c.osds[0] = &OSDContainer{ID: 0, Container: ctr}
+		return c, control, ctr, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osds[0]}
+	}
+	for name, test := range map[string]struct {
+		edit    func(*Container, *debugLevelOSD)
+		changed bool
+	}{
+		"restarted":  {func(_ *Container, o *debugLevelOSD) { o.state.StartedAt = "start-2" }, true},
+		"replaced":   {func(c *Container, o *debugLevelOSD) { c.osds[0] = &OSDContainer{ID: 0, Container: o} }, true},
+		"stopped":    {func(_ *Container, o *debugLevelOSD) { o.state.Running = false }, true},
+		"terminated": {func(c *Container, _ *debugLevelOSD) { c.closed = true }, true},
+		"paused":     {func(_ *Container, o *debugLevelOSD) { o.state.Paused = true }, false},
+		"no run dir": {func(c *Container, _ *debugLevelOSD) { c.run.removed = true }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, control, ctr, target := newTarget()
+			test.edit(c, ctr)
+			settle, err := target.set(t.Context(), "osd-container@start-1", "debug_osd", "20")
+			var refusal *debugLevelRefusal
+			if settle != nil || !errors.As(err, &refusal) || refusal.changed != test.changed || len(control.Calls) != 0 {
+				t.Fatalf("settle %v err %v calls %v", settle != nil, err, control.Calls)
+			}
+		})
+	}
+	t.Run("topology busy", func(t *testing.T) {
+		c, control, _, target := newTarget()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		var refusal *debugLevelRefusal
+		if _, err := target.set(ctx, "osd-container@start-1", "debug_osd", "20"); !errors.As(err, &refusal) || refusal.changed || len(control.Calls) != 0 {
+			t.Fatalf("err %v calls %v", err, control.Calls)
+		}
+	})
 }

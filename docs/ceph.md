@@ -3304,7 +3304,10 @@ database; [OverrideConfig](#overrideconfig) is the stored-entry model. A daemon
 restart drops a runtime value. The call reads the effective prior level, sets
 the requested level and verifies the normalized readback, so `20` reads back as
 `20/20`. The window is bound to the OSD container's generation (container ID and
-start time). Only one window per daemon and option is admitted at a time.
+start time). Only one window per daemon and option is admitted at a time. Each
+set is issued only while the OSD still runs that generation, and the cluster's
+own topology operations, such as `RemoveOSD`, `DetachOSD` and `ReopenOSD`, wait
+until the set has ended.
 
 `DebugLevelOverrideHandle.Restore` first checks the same generation and that
 the daemon still shows the window's own value, then sets the prior level and
@@ -3316,6 +3319,12 @@ verifies it:
   restored: the window's process is gone.
 - A paused OSD, an unavailable socket or an unverified readback leaves the
   window open; a later `Restore` reconciles it first.
+- A set of the window whose end could not be confirmed may still apply. The
+  window keeps it open as unconfirmed, and a later `Restore` first confirms that
+  the set has stopped before it reads, sets or releases anything.
+
+The generation is checked again after each read, so a replacement during a read
+is reported as a changed target instead of a level to restore.
 
 A set or readback that fails returns a non-nil handle with the error, because a
 lost reply can still have applied. Readbacks after a set use a fresh context
@@ -3352,7 +3361,9 @@ if err != nil {
 
 The readbacks around each set are not an atomic compare-and-swap. Do not change
 the same daemon and option elsewhere while a window is open; an outside write of
-the window's own value cannot be told apart from it. Verbose levels cost log
+the window's own value cannot be told apart from it. A restart of the OSD
+container from outside the cluster after the last check is not held off.
+Verbose levels cost log
 volume and can change timing; levels and durations for particular investigations
 are not established yet.
 

@@ -9,6 +9,11 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/containerd/errdefs"
+	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // DebugLevelSetting selects one runtime debug level of one running daemon.
@@ -133,9 +138,17 @@ func (h *DebugLevelOverrideHandle) Receipt() DebugLevelReceipt {
 // are removed, and a failed restoration triggers an after-cleanup archive and
 // still lets Terminate run.
 //
+// Each set is admitted only while the daemon still runs the window's
+// generation, and the cluster's own topology operations, such as RemoveOSD,
+// DetachOSD and ReopenOSD, wait until the set has ended. A set whose end
+// cannot be confirmed may still run: the window keeps it, and no later set or
+// terminal state is taken until it is confirmed stopped.
+//
 // The readbacks around each set are not an atomic compare-and-swap: another
 // writer of the same daemon and option must not race the window, and an
-// outside write of the window's own value cannot be told apart from it.
+// outside write of the window's own value cannot be told apart from it. A
+// restart of the daemon's container from outside the cluster after the last
+// check is not held off either.
 func (c *Container) OverrideDebugLevel(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error) {
 	if gateErr := c.sharedGate("OverrideDebugLevel"); gateErr != nil {
 		return nil, gateErr
@@ -217,8 +230,23 @@ type debugLevelTarget interface {
 	// generation reports the target's current container generation.
 	generation(ctx context.Context) (debugLevelGeneration, error)
 	get(ctx context.Context, name string) (string, error)
-	set(ctx context.Context, name, value string) error
+	// set issues the set only while the target runs generation identity,
+	// and a *debugLevelRefusal means that it issued nothing. A non-nil
+	// settle means that the set may still run; settle returns nil once it
+	// can no longer.
+	set(ctx context.Context, identity, name, value string) (settle func(context.Context) error, err error)
 }
+
+// debugLevelRefusal is a set that was not issued because the target was not
+// the window's running generation; changed marks a terminal mismatch.
+type debugLevelRefusal struct {
+	changed bool
+	err     error
+}
+
+func (e *debugLevelRefusal) Error() string { return e.err.Error() }
+
+func (e *debugLevelRefusal) Unwrap() error { return e.err }
 
 type debugLevelGeneration struct {
 	// owned is false when the cluster no longer owns the same daemon
@@ -269,6 +297,8 @@ type debugLevelState struct {
 	now      func() time.Time
 	// lock serializes the window's operations and honors contexts.
 	lock chan struct{}
+	// pending settles a set whose end was not confirmed; lock guards it.
+	pending func(context.Context) error
 
 	mu      sync.Mutex
 	receipt DebugLevelReceipt
@@ -308,19 +338,51 @@ func (s *debugLevelState) finish(state DebugLevelState, readback string, err err
 // is a terminal mismatch, and err is a check that could not be completed.
 func (s *debugLevelState) sameGeneration(ctx context.Context) (changed bool, err error) {
 	gen, err := s.target.generation(ctx)
+	return checkDebugLevelGeneration(gen, err, s.identity, s.setting.Daemon)
+}
+
+func checkDebugLevelGeneration(gen debugLevelGeneration, err error, identity, daemon string) (changed bool, _ error) {
 	switch {
 	case err != nil:
-		return false, fmt.Errorf("inspect %s: %w", s.setting.Daemon, err)
+		return false, fmt.Errorf("inspect %s: %w", daemon, err)
 	case !gen.owned:
-		return true, fmt.Errorf("%s is no longer owned by this cluster", s.setting.Daemon)
-	case gen.identity == "" || gen.identity != s.identity:
-		return true, fmt.Errorf("%s runs in another container generation", s.setting.Daemon)
+		return true, fmt.Errorf("%s is no longer owned by this cluster", daemon)
+	case gen.identity == "" || gen.identity != identity:
+		return true, fmt.Errorf("%s runs in another container generation", daemon)
 	case !gen.running:
-		return true, fmt.Errorf("%s is stopped; its runtime level is gone", s.setting.Daemon)
+		return true, fmt.Errorf("%s is stopped; its runtime level is gone", daemon)
 	case gen.paused:
-		return false, fmt.Errorf("%s is paused", s.setting.Daemon)
+		return false, fmt.Errorf("%s is paused", daemon)
 	}
 	return false, nil
+}
+
+// settle confirms under a fresh bound that the window's unconfirmed set can
+// no longer run, and forgets it then.
+func (s *debugLevelState) settle(ctx context.Context) error {
+	if s.pending == nil {
+		return nil
+	}
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.bound)
+	defer cancel()
+	if err := s.pending(settleCtx); err != nil {
+		return fmt.Errorf("an earlier set of %s of %s may still run: %w", s.setting.Name, s.setting.Daemon, err)
+	}
+	s.pending = nil
+	return nil
+}
+
+// confirmTarget checks the generation during Restore: a changed target ends
+// the window, and a check that could not be completed leaves it unconfirmed.
+func (s *debugLevelState) confirmTarget(ctx context.Context) error {
+	changed, err := s.sameGeneration(ctx)
+	switch {
+	case changed:
+		return s.finish(DebugLevelTargetChanged, "", err)
+	case err != nil:
+		s.record(DebugLevelUnconfirmed, "", err)
+	}
+	return err
 }
 
 func openDebugLevel(ctx context.Context, registry *debugLevelRegistry, target debugLevelTarget, setting DebugLevelSetting, owned string, bound time.Duration, now func() time.Time) (*DebugLevelOverrideHandle, error) {
@@ -352,16 +414,24 @@ func openDebugLevel(ctx context.Context, registry *debugLevelRegistry, target de
 	handle := &DebugLevelOverrideHandle{state: s}
 
 	s.record(DebugLevelApplyAttempted, "", nil)
-	setErr := target.set(ctx, setting.Name, setting.Level)
-	// A lost reply or cancellation does not prove that the set did not
-	// apply; read back with a fresh bounded context.
-	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
-	defer cancel()
-	value, readErr := target.get(readCtx, setting.Name)
-	changed, genErr := s.sameGeneration(readCtx)
+	settle, setErr := target.set(ctx, s.identity, setting.Name, setting.Level)
 	if setErr != nil {
 		setErr = fmt.Errorf("set %s of %s: %w", setting.Name, setting.Daemon, setErr)
 	}
+	if refusal := (*debugLevelRefusal)(nil); errors.As(setErr, &refusal) {
+		// The target changed during the prior read and nothing was set.
+		registry.release(s.key, s)
+		return nil, setErr
+	}
+	s.pending = settle
+	// A lost reply or cancellation does not prove that the set did not
+	// apply; read back with a fresh bounded context, after a set that may
+	// still run is stopped.
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+	defer cancel()
+	settleErr := s.settle(readCtx)
+	value, readErr := target.get(readCtx, setting.Name)
+	changed, genErr := s.sameGeneration(readCtx)
 	if readErr != nil {
 		readErr = fmt.Errorf("read back %s of %s: %w", setting.Name, setting.Daemon, readErr)
 		value = ""
@@ -372,6 +442,11 @@ func openDebugLevel(ctx context.Context, registry *debugLevelRegistry, target de
 		s.mu.Unlock()
 	}
 	switch {
+	case settleErr != nil:
+		// The window keeps the set, which Restore settles first.
+		err = errors.Join(setErr, settleErr, readErr, genErr)
+		s.record(DebugLevelApplyUncertain, value, err)
+		return handle, err
 	case changed:
 		return handle, s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
 	case setErr == nil && readErr == nil && genErr == nil && sameDebugLevel(value, owned):
@@ -393,9 +468,11 @@ func openDebugLevel(ctx context.Context, registry *debugLevelRegistry, target de
 // edit, which Restore leaves as it is. A stopped, restarted or replaced
 // daemon is not restored. These outcomes are terminal: Restore returns nil
 // once restored and the same error again otherwise. A paused daemon, an
-// unavailable socket or an unverified readback leave the window open, and a
-// later Restore reconciles it first. The readback after the set uses a fresh
-// context bounded by the cluster's startup timeout.
+// unavailable socket, an unverified readback or an earlier set of the window
+// that may still run leave the window open, and a later Restore settles and
+// reconciles it first. The generation is checked again after each read. The
+// readback after the set and the settling of a set use fresh contexts bounded
+// by the cluster's startup timeout.
 func (h *DebugLevelOverrideHandle) Restore(ctx context.Context) error {
 	if h == nil || h.state == nil {
 		return errors.New("debug level override is unavailable")
@@ -419,16 +496,22 @@ func (h *DebugLevelOverrideHandle) Restore(ctx context.Context) error {
 	defer cancel()
 	name, daemon := s.setting.Name, s.setting.Daemon
 	s.record(DebugLevelRestoreAttempted, "", nil)
-	if changed, err := s.sameGeneration(ctx); changed {
-		return s.finish(DebugLevelTargetChanged, "", err)
-	} else if err != nil {
+	// A set that may still run could change the level after any check.
+	if err := s.settle(ctx); err != nil {
 		s.record(DebugLevelUnconfirmed, "", err)
+		return err
+	}
+	if err := s.confirmTarget(ctx); err != nil {
 		return err
 	}
 	current, err := s.target.get(ctx, name)
 	if err != nil {
 		err = fmt.Errorf("read the current %s of %s: %w", name, daemon, err)
 		s.record(DebugLevelUnconfirmed, "", err)
+		return err
+	}
+	// A replacement during the read would make current another generation's.
+	if err := s.confirmTarget(ctx); err != nil {
 		return err
 	}
 	prior := s.receipt.Prior
@@ -439,12 +522,21 @@ func (h *DebugLevelOverrideHandle) Restore(ctx context.Context) error {
 	if !sameDebugLevel(current, s.owned) {
 		return s.finish(DebugLevelConflict, current, fmt.Errorf("%s of %s changed outside this window to %q; it was not restored", name, daemon, current))
 	}
-	setErr := s.target.set(ctx, name, prior)
+	settle, setErr := s.target.set(ctx, s.identity, name, prior)
 	if setErr != nil {
 		setErr = fmt.Errorf("restore %s of %s: %w", name, daemon, setErr)
 	}
+	if refusal := (*debugLevelRefusal)(nil); errors.As(setErr, &refusal) {
+		if refusal.changed {
+			return s.finish(DebugLevelTargetChanged, "", setErr)
+		}
+		s.record(DebugLevelUnconfirmed, "", setErr)
+		return setErr
+	}
+	s.pending = settle
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), s.bound)
 	defer readCancel()
+	settleErr := s.settle(readCtx)
 	value, readErr := s.target.get(readCtx, name)
 	changed, genErr := s.sameGeneration(readCtx)
 	if readErr != nil {
@@ -452,6 +544,11 @@ func (h *DebugLevelOverrideHandle) Restore(ctx context.Context) error {
 		value = ""
 	}
 	switch {
+	case settleErr != nil:
+		// No terminal state releases the window while its set may run.
+		err := errors.Join(setErr, settleErr, readErr, genErr)
+		s.record(DebugLevelUnconfirmed, value, err)
+		return err
 	case changed:
 		return s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
 	case readErr != nil || genErr != nil:
@@ -488,13 +585,18 @@ type osdDebugTarget struct {
 }
 
 func (t *osdDebugTarget) generation(ctx context.Context) (debugLevelGeneration, error) {
-	c := t.c
-	if err := c.lockTopology(ctx); err != nil {
+	if err := t.c.lockTopology(ctx); err != nil {
 		return debugLevelGeneration{}, err
 	}
+	defer t.c.mu.Unlock()
+	return t.generationLocked(ctx)
+}
+
+// generationLocked is generation for a caller that holds c.mu.
+func (t *osdDebugTarget) generationLocked(ctx context.Context) (debugLevelGeneration, error) {
+	c := t.c
 	osd := c.osds[t.id]
 	owned := !c.closed && osd == t.osd && osd != nil && osd.Container != nil && !osd.purged && !osd.purgeIssued && !osd.detaching
-	c.mu.Unlock()
 	if !owned {
 		return debugLevelGeneration{}, nil
 	}
@@ -513,8 +615,40 @@ func (t *osdDebugTarget) get(ctx context.Context, name string) (string, error) {
 	return decodeDebugLevel(out, name)
 }
 
-func (t *osdDebugTarget) set(ctx context.Context, name, value string) error {
-	_, err := t.c.AdminSocket(ctx, t.daemon, "config", "set", name, value)
+// set holds c.mu, which the cluster's topology operations hold, from the
+// generation check until the command has ended, so that the cluster cannot
+// replace the OSD in between.
+func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) (func(context.Context) error, error) {
+	c := t.c
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, &debugLevelRefusal{err: err}
+	}
+	defer c.mu.Unlock()
+	gen, err := t.generationLocked(ctx)
+	if changed, err := checkDebugLevelGeneration(gen, err, identity, t.daemon); err != nil {
+		return nil, &debugLevelRefusal{changed: changed, err: err}
+	}
+	if c.run == nil || c.run.removed {
+		return nil, &debugLevelRefusal{err: errors.New("this cluster has no shared run directory for admin sockets")}
+	}
+	control, _, err := c.adminSocketCommand(ctx, t.daemon, "config", "set", name, value)
+	if marker, ok := supervised.Unconfirmed(err); ok && control != nil {
+		return func(ctx context.Context) error { return settleAdminSocketCommand(ctx, control, marker) }, err
+	}
+	return nil, err
+}
+
+// settleAdminSocketCommand returns nil once the admin socket command that
+// owns marker in control can no longer run; a removed control container
+// confirms that as well.
+func settleAdminSocketCommand(ctx context.Context, control testcontainers.Container, marker string) error {
+	err := supervised.Cancel(ctx, control, "admin socket", marker)
+	if err == nil {
+		return nil
+	}
+	if _, stateErr := control.State(ctx); errdefs.IsNotFound(stateErr) {
+		return nil
+	}
 	return err
 }
 
