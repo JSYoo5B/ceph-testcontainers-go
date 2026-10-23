@@ -106,7 +106,7 @@ captured, that nothing was dropped, or that any protocol message is valid.
 | `HelperImage`, `HelperImageID`, `HelperPlatform`, `ToolVersion` | The requested image, the image that ran, its os/architecture and `tcpdump --version`. |
 | `Filter`, `SnapLen`, `MaxPackets`, `MaxBytes` | The selection and bounds; `MaxBytes` is derived from the other two. |
 | `StartedAt`, `ReadyAt`, `StopRequestedAt`, `EndedAt` | Helper start, readiness, the start of `Stop`, and the end of `tcpdump`. |
-| `End`, `ExitCode` | How `tcpdump` ended, a `capture.EndReason`: `EndStopped` (status 0 after `SIGTERM`), `EndPacketLimit` (status 0 at `MaxPackets` before `Stop`), `EndKilled` (no end within the grace), `EndFailed` (nonzero status) or `EndUnknown`. |
+| `End`, `ExitCode` | How `tcpdump` ended, a `capture.EndReason`: `EndStopped` (status 0 after `SIGTERM`), `EndPacketLimit` (status 0 before `Stop`, with a valid file of `MaxPackets` packets and a captured counter, when printed, that agrees), `EndPremature` (status 0 before `Stop` without reaching `MaxPackets`, as after a signal from elsewhere; an error), `EndKilled` (no end within the grace), `EndFailed` (nonzero status) or `EndUnknown` (not observed, or an end before `Stop` without a valid file to decide it). |
 | `Target` | A `capture.TargetState`: `TargetUnchanged`, `TargetChanged` (restarted, stopped or another sandbox), `TargetGone` or `TargetUnknown`. |
 | `Statistics` | `tcpdump`'s counters as a `capture.Statistics`: `Captured`, `ReceivedByFilter`, `DroppedByKernel` and `DroppedByInterface`. A nil counter was not printed and is unknown, not zero. |
 | `Stderr` | `tcpdump`'s standard error, up to 64 KiB. |

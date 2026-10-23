@@ -139,7 +139,9 @@ func (r Request) validate() error {
 		return invalidRequest("the capture filter contains a NUL byte")
 	case r.SnapLen < 1 || r.SnapLen > MaxSnapLen:
 		return invalidRequest("capture SnapLen must be 1 to %d", MaxSnapLen)
-	case r.MaxPackets < 1 || r.maxBytes() > MaxFileBytes:
+	// Compared before multiplying, so that a large MaxPackets cannot wrap
+	// the file bound.
+	case r.MaxPackets < 1 || int64(r.MaxPackets) > (MaxFileBytes-24)/(16+int64(r.SnapLen)):
 		return invalidRequest("capture MaxPackets must be positive, with a file bound of at most %d bytes", MaxFileBytes)
 	case r.Output == "":
 		return invalidRequest("capture needs Request.Output")
@@ -157,15 +159,23 @@ type EndReason string
 const (
 	// EndStopped means tcpdump ended with status 0 after Stop's SIGTERM.
 	EndStopped EndReason = "stopped"
-	// EndPacketLimit means tcpdump ended with status 0 before Stop, at
-	// Request.MaxPackets: later traffic is not in the file.
+	// EndPacketLimit means tcpdump ended with status 0 before Stop, and the
+	// valid file holds Request.MaxPackets packets (as does tcpdump's
+	// captured counter when it printed one): later traffic is not in the
+	// file.
 	EndPacketLimit EndReason = "packet_limit"
+	// EndPremature means tcpdump ended with status 0 before Stop, but the
+	// file and its counter do not show that it reached Request.MaxPackets,
+	// as after a signal from elsewhere: traffic after its end is missing.
+	EndPremature EndReason = "premature"
 	// EndKilled means tcpdump did not end within the stop grace and the
 	// helper was killed; the file may hold only part of the capture.
 	EndKilled EndReason = "killed"
 	// EndFailed means tcpdump ended with a nonzero status.
 	EndFailed EndReason = "failed"
-	// EndUnknown means the end could not be observed.
+	// EndUnknown means the end could not be observed, or that tcpdump ended
+	// with status 0 before Stop and no valid file was retrieved to tell
+	// EndPacketLimit from EndPremature.
 	EndUnknown EndReason = "unknown"
 )
 
@@ -297,14 +307,17 @@ type Report struct {
 // calls Stop, also after a failed workload: no cluster Terminate knows it.
 // Stop is retryable.
 type Session struct {
-	mu       sync.Mutex
-	backend  backend
-	request  Request
-	target   targetState
-	helper   string
-	report   Report
-	finished bool
-	err      error
+	mu      sync.Mutex
+	backend backend
+	request Request
+	target  targetState
+	helper  string
+	// probe is a probe container that could not be removed; Stop retries.
+	probe     string
+	selfEnded bool
+	report    Report
+	finished  bool
+	err       error
 }
 
 // capturePath is the helper's capture file below /tmp, which the contract
@@ -342,7 +355,7 @@ var pollInterval = 100 * time.Millisecond
 // running helper alone is not. The session is bound to the target's
 // container instance and sandbox at that point and never follows a restart.
 // Start returns a non-nil session with an error only when it could not
-// remove a helper that failed; Stop it to retry the removal.
+// remove a probe or a helper that failed; Stop it to retry the removal.
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
 	return start(ctx, dockerBackend{}, target, req)
 }
@@ -377,6 +390,11 @@ func start(ctx context.Context, b backend, target testcontainers.Container, req 
 		Output: req.Output, End: EndUnknown, Target: TargetUnknown,
 	}
 	if err := s.preflight(ctx, id); err != nil {
+		if s.probe != "" {
+			// The probe is still owned: Stop retries its removal.
+			s.finished = true
+			return s, err
+		}
 		return nil, errors.Join(err, os.Remove(req.Output))
 	}
 	if err := s.startHelper(ctx, id); err != nil {
@@ -409,10 +427,19 @@ func admitTarget(state targetState, network string) error {
 }
 
 // preflight runs the probe in the target's namespace and records the image.
+// The probe is removed with a fresh bounded context; when that fails, the
+// session keeps it for Stop.
 func (s *Session) preflight(ctx context.Context, id string) error {
-	result, err := s.backend.probe(ctx, s.request.HelperImage, "container:"+id, probeArgv(s.request.Interface, s.request.Filter))
+	result, probe, err := s.backend.probe(ctx, s.request.HelperImage, "container:"+id, probeArgv(s.request.Interface, s.request.Filter))
+	s.probe = probe
+	removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	removeErr := s.removeProbe(removeCtx)
+	cancel()
 	if err != nil {
-		return classifyStartError(ctx, "run the capture probe", err)
+		return errors.Join(classifyStartError(ctx, "run the capture probe", err), removeErr)
+	}
+	if removeErr != nil {
+		return removeErr
 	}
 	report, err := parseProbe(result)
 	if err != nil {
@@ -523,6 +550,17 @@ func (s *Session) abort(ctx context.Context) error {
 	return s.removeHelper(ctx)
 }
 
+func (s *Session) removeProbe(ctx context.Context) error {
+	if s.probe == "" {
+		return nil
+	}
+	if err := s.backend.remove(ctx, s.probe); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("remove the capture probe: %w", err)
+	}
+	s.probe = ""
+	return nil
+}
+
 func (s *Session) removeHelper(ctx context.Context) error {
 	if s.report.HelperRemoved || s.helper == "" {
 		return nil
@@ -542,9 +580,9 @@ func (s *Session) removeHelper(ctx context.Context) error {
 // canceled or expired ctx does not leave the helper behind.
 //
 // The report is returned also with an error. The error joins ErrFailed for
-// a capture that failed, was killed, lost its target or delivered a file
-// that is not valid classic pcap, and a removal error. A capture that ended
-// at MaxPackets is not an error; its End says so. After a removal error
+// a capture that failed, was killed, ended early on its own, lost its target
+// or delivered a file that is not valid classic pcap, and a removal error. A
+// capture that ended at MaxPackets is not an error; its End says so. After a removal error
 // Stop can be called again; it returns the same report.
 func (s *Session) Stop(ctx context.Context) (Report, error) {
 	s.mu.Lock()
@@ -555,7 +593,7 @@ func (s *Session) Stop(ctx context.Context) (Report, error) {
 		s.finished = true
 		s.err = s.finish(finishCtx)
 	}
-	return s.report, errors.Join(s.err, s.removeHelper(finishCtx))
+	return s.report, errors.Join(s.err, s.removeProbe(finishCtx), s.removeHelper(finishCtx))
 }
 
 func (s *Session) stopGrace() time.Duration {
@@ -597,6 +635,9 @@ func (s *Session) finish(ctx context.Context) error {
 		problems = append(problems, fmt.Errorf("%w: the target is %s since the capture became ready; the file covers only the namespace it joined", ErrFailed, s.report.Target))
 	}
 	if err := s.retrieve(ctx); err != nil {
+		problems = append(problems, err)
+	}
+	if err := s.settleSelfEnd(); err != nil {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
@@ -661,8 +702,28 @@ func (s *Session) recordEnd(state helperState, signaled, killed bool) {
 	case signaled:
 		s.report.End = EndStopped
 	default:
-		s.report.End = EndPacketLimit
+		// Ended on its own: whether at MaxPackets is decided from the
+		// retrieved file and the counter, in settleSelfEnd.
+		s.report.End = EndUnknown
+		s.selfEnded = true
 	}
+}
+
+// settleSelfEnd decides how a tcpdump that ended with status 0 before Stop
+// ended: at MaxPackets only when the valid file holds that many packets and
+// the captured counter, when printed, agrees. Without a valid file the end
+// stays EndUnknown.
+func (s *Session) settleSelfEnd() error {
+	if !s.selfEnded || s.report.File.Status != FileValid {
+		return nil
+	}
+	captured := s.report.Statistics.Captured
+	if s.report.File.Packets == s.request.MaxPackets && (captured == nil || *captured == uint64(s.request.MaxPackets)) {
+		s.report.End = EndPacketLimit
+		return nil
+	}
+	s.report.End = EndPremature
+	return fmt.Errorf("%w: tcpdump ended before Stop with %d of %d packets", ErrFailed, s.report.File.Packets, s.request.MaxPackets)
 }
 
 func (s *Session) compareTarget(ctx context.Context) TargetState {

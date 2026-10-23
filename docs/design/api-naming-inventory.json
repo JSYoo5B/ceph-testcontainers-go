@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "capture": 32,
+    "capture": 33,
     "ceph": 315,
     "cephfs": 155,
     "fault": 34,
@@ -38,6 +38,12 @@
       "current": "capture.EndPacketLimit",
       "kind": "const",
       "proposed": "capture.EndPacketLimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndPremature",
+      "kind": "const",
+      "proposed": "capture.EndPremature",
       "decision": "baseline"
     },
     {

@@ -44,9 +44,10 @@ type backend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.
 	target(ctx context.Context, id, network string) (targetState, error)
-	// probe runs argv in a helper from image in networkMode until it exits,
-	// and removes it.
-	probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, error)
+	// probe runs argv in a helper from image in networkMode until it exits.
+	// It returns the probe container's ID, also with an error, and does not
+	// remove it: a non-empty ID must be removed.
+	probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, string, error)
 	platform(ctx context.Context, imageID string) (string, error)
 	// run starts argv as a helper's process from image in networkMode. A
 	// non-empty ID returned with an error must be removed.
@@ -127,10 +128,10 @@ func (dockerBackend) run(ctx context.Context, image, networkMode string, argv []
 	return helper.GetContainerID(), err
 }
 
-func (b dockerBackend) probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, error) {
+func (b dockerBackend) probe(ctx context.Context, image, networkMode string, argv []string) (probeResult, string, error) {
 	id, err := b.run(ctx, image, networkMode, argv)
 	if err != nil {
-		return probeResult{}, errors.Join(err, b.removeFresh(ctx, id))
+		return probeResult{}, id, err
 	}
 	result, err := func() (probeResult, error) {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -160,17 +161,7 @@ func (b dockerBackend) probe(ctx context.Context, image, networkMode string, arg
 			}
 		}
 	}()
-	return result, errors.Join(err, b.removeFresh(ctx, id))
-}
-
-// removeFresh removes a probe also after ctx ended.
-func (b dockerBackend) removeFresh(ctx context.Context, id string) error {
-	if id == "" {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-	defer cancel()
-	return b.remove(ctx, id)
+	return result, id, err
 }
 
 func (dockerBackend) platform(ctx context.Context, imageID string) (string, error) {

@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **739** functions, declared methods on
+The declaration catalogue contains **740** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **987** exported field/nested-record/embedding entries in
 **165** types. It scans exported declared interfaces as well; there are none
@@ -23,8 +23,8 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| `capture` | 32 | 55 |
-| Total | 739 | 987 |
+| `capture` | 33 | 55 |
+| Total | 740 | 987 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -75,7 +75,7 @@ declarations and 55 member entries in `Request`, `Report`, `Statistics` and
 | --- | --- |
 | `capture.Start` / `capture.Session.Stop` | `Start` owns a new resource (a helper running `tcpdump` in the target's namespace) and has no native expiry, so neither `Apply`/`Override` nor `Temporary` fits. `Stop` ends a process whose file is retained and delivered, the existing meaning of Stop; it is not a `Restore`, because nothing of the target is changed. `Session` is the caller-owned handle: no cluster `Terminate` knows it, which a `Lease` beside the cluster-registered leases would blur. |
 | `capture.Request`, `capture.Report`, `capture.Statistics`, `capture.FileReport` | Request input, the delivery report and its observed parts, as in the retained `Config`/`Report`/`Status` family. The package name already says capture, so no type repeats it. `FileReport` mirrors the internal pcap check field for field without exposing the internal package. |
-| `capture.EndReason`, `TargetState`, `FileStatus` and their constants | Typed observations whose constants keep their type as a prefix (`EndStopped`, `TargetGone`, `FileValid`), so separate outcomes stay distinct at the call site; `End*`, `Target*` and `File*` do not collide. Nil `Statistics` counters keep unknown apart from zero. |
+| `capture.EndReason`, `TargetState`, `FileStatus` and their constants | Typed observations whose constants keep their type as a prefix (`EndStopped`, `EndPremature`, `TargetGone`, `FileValid`), so separate outcomes stay distinct at the call site; `End*`, `Target*` and `File*` do not collide. Nil `Statistics` counters keep unknown apart from zero. |
 | `capture.ErrImageUnsupported`, `ErrPermissionDenied`, `ErrFailed` | The netem sentinels' roles without their `Netem` qualifier, which the package name replaces; each matches its `ceph` category with `errors.Is`. |
 | `capture.MaxSnapLen`, `MaxFileBytes`, `MaxFilterBytes`, `MaxTimeout`, `DefaultReadyTimeout`, `DefaultStopGrace` | The retained `Max*`/`Default*` bound convention. There is no helper-image constant: no capture helper is published, and the request never selects one implicitly. |
 

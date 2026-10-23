@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,6 +28,7 @@ const (
 	targetID  = "target-id"
 	targetMAC = "02:42:ac:11:00:02"
 	helperID  = "helper-id"
+	probeID   = "probe-id"
 	imageID   = "sha256:helper"
 )
 
@@ -64,33 +66,36 @@ func goodProbe() map[string]any {
 type fakeBackend struct {
 	mu sync.Mutex
 
-	targetState  targetState
-	targetErr    error
-	targetAfter  *targetState // the target from the second inspection on
-	targetGone   bool         // removed from the second inspection on
-	targetCalls  int
-	probeReport  map[string]any
-	probeStdout  string
-	probeStderr  string
-	probeErr     error
-	runErr       error
-	readyLine    string
-	stderrExtra  string
-	noFile       bool
-	exitBefore   *int // ends before readiness with this status
-	ignoreTerm   bool
-	termStatus   int
-	selfEnded    bool // tcpdump ended at its packet limit before Stop
-	file         []byte
-	copyErr      error
-	removeErrs   []error
-	running      bool
-	exitCode     int
-	signals      []string
-	removed      []string
-	probeArgv    []string
-	runArgv      []string
-	networkModes []string
+	targetState     targetState
+	targetErr       error
+	targetAfter     *targetState // the target from the second inspection on
+	targetGone      bool         // removed from the second inspection on
+	targetCalls     int
+	probeReport     map[string]any
+	probeStdout     string
+	probeStderr     string
+	probeErr        error
+	runErr          error
+	readyLine       string
+	stderrExtra     string
+	noFile          bool
+	exitBefore      *int // ends before readiness with this status
+	ignoreTerm      bool
+	termStatus      int
+	selfEnded       bool // tcpdump ended at its packet limit before Stop
+	file            []byte
+	copyErr         error
+	removeErrs      []error
+	running         bool
+	exitCode        int
+	signals         []string
+	removed         []string
+	probeRemoved    int
+	probeRemoveErrs []error
+	trailer         *string // tcpdump's statistics after its end, when not the default
+	probeArgv       []string
+	runArgv         []string
+	networkModes    []string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -120,17 +125,17 @@ func (f *fakeBackend) target(_ context.Context, id, network string) (targetState
 	return f.targetState, nil
 }
 
-func (f *fakeBackend) probe(_ context.Context, image, networkMode string, argv []string) (probeResult, error) {
+func (f *fakeBackend) probe(_ context.Context, image, networkMode string, argv []string) (probeResult, string, error) {
 	f.probeArgv, f.networkModes = argv, append(f.networkModes, networkMode)
 	if f.probeErr != nil {
-		return probeResult{}, f.probeErr
+		return probeResult{}, probeID, f.probeErr
 	}
 	stdout := f.probeStdout
 	if stdout == "" && f.probeReport != nil {
 		data, _ := json.Marshal(f.probeReport)
 		stdout = string(data) + "\n"
 	}
-	return probeResult{imageID: imageID, stdout: []byte(stdout), stderr: []byte(f.probeStderr)}, nil
+	return probeResult{imageID: imageID, stdout: []byte(stdout), stderr: []byte(f.probeStderr)}, probeID, nil
 }
 
 func (f *fakeBackend) platform(context.Context, string) (string, error) { return "linux/amd64", nil }
@@ -166,7 +171,11 @@ func (f *fakeBackend) logs(context.Context, string, int) ([]byte, []byte, error)
 	defer f.mu.Unlock()
 	text := f.readyLine + "\n" + f.stderrExtra
 	if !f.running && f.exitCode == 0 && f.exitBefore == nil {
-		text += "2 packets captured\n2 packets received by filter\n0 packets dropped by kernel\n"
+		if f.trailer != nil {
+			text += *f.trailer
+		} else {
+			text += "2 packets captured\n2 packets received by filter\n0 packets dropped by kernel\n"
+		}
 	}
 	return nil, []byte(text), nil
 }
@@ -199,6 +208,15 @@ func (f *fakeBackend) copy(context.Context, string, string) (io.ReadCloser, erro
 func (f *fakeBackend) remove(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if id == probeID {
+		if len(f.probeRemoveErrs) > 0 {
+			err := f.probeRemoveErrs[0]
+			f.probeRemoveErrs = f.probeRemoveErrs[1:]
+			return err
+		}
+		f.probeRemoved++
+		return nil
+	}
 	if len(f.removeErrs) > 0 {
 		err := f.removeErrs[0]
 		f.removeErrs = f.removeErrs[1:]
@@ -526,8 +544,11 @@ func TestStopOutcomes(t *testing.T) {
 		check  func(Report) bool
 		err    error
 	}{
-		"packet limit": {func(f *fakeBackend) { f.selfEnded = true },
-			func(r Report) bool { return r.End == EndPacketLimit && r.File.Status == FileValid }, nil},
+		// The fake file and counter hold two packets of the requested ten.
+		"premature end": {func(f *fakeBackend) { f.selfEnded = true },
+			func(r Report) bool { return r.End == EndPremature && r.File.Status == FileValid && r.File.Packets == 2 }, ErrFailed},
+		"self end without a file": {func(f *fakeBackend) { f.selfEnded, f.copyErr = true, errdefs.ErrNotFound },
+			func(r Report) bool { return r.End == EndUnknown && !r.Retrieved }, ErrFailed},
 		"empty capture": {func(f *fakeBackend) { f.file = pcapFile(128) },
 			func(r Report) bool { return r.End == EndStopped && r.File.Status == FileValid && r.File.Packets == 0 }, nil},
 		"snaplen truncation": {func(f *fakeBackend) {
@@ -572,6 +593,81 @@ func TestStopOutcomes(t *testing.T) {
 			if info, err := os.Stat(req.Output); err != nil || info.Size() != report.MaxBytes {
 				t.Errorf("over bound: kept %v bytes, want %d", info, report.MaxBytes)
 			}
+		}
+	}
+}
+
+func TestStopReportsPacketLimitOnlyWhenReached(t *testing.T) {
+	for name, tc := range map[string]struct {
+		maxPackets int
+		trailer    *string
+		want       EndReason
+	}{
+		"reached":            {2, nil, EndPacketLimit},
+		"file short":         {3, nil, EndPremature},
+		"counter disagrees":  {2, ptr("3 packets captured\n"), EndPremature},
+		"no counter printed": {2, ptr(""), EndPacketLimit},
+	} {
+		f := newFakeBackend()
+		req := request(t)
+		req.MaxPackets = tc.maxPackets
+		session, err := startFake(t, f, req)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		f.selfEnded, f.trailer = true, tc.trailer
+		report, err := session.Stop(context.Background())
+		if report.End != tc.want || (tc.want == EndPacketLimit) != (err == nil) || (err != nil && !errors.Is(err, ErrFailed)) {
+			t.Errorf("%s: end = %s, err = %v", name, report.End, err)
+		}
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+func TestRequestRefusesWrappingPacketBound(t *testing.T) {
+	limit := int((MaxFileBytes - 24) / (16 + 128))
+	for name, tc := range map[string]struct {
+		packets int
+		ok      bool
+	}{
+		"largest": {limit, true}, "one more": {limit + 1, false}, "MaxInt": {math.MaxInt, false},
+		"wraps to small": {int(math.MaxInt64/144) + 1, false},
+	} {
+		req := request(t)
+		req.SnapLen, req.MaxPackets = 128, tc.packets
+		if err := req.validate(); (err == nil) != tc.ok {
+			t.Errorf("%s: validate = %v", name, err)
+		}
+		if tc.ok {
+			if req.maxBytes() > MaxFileBytes || req.maxBytes() <= 0 {
+				t.Errorf("%s: file bound = %d", name, req.maxBytes())
+			}
+			continue
+		}
+		f := newFakeBackend()
+		if _, err := startFake(t, f, req); !errors.Is(err, ceph.ErrInvalidRequest) || f.targetCalls != 0 || f.probeArgv != nil || exists(req.Output) {
+			t.Errorf("%s: err = %v, target inspections %d, probe %v, output kept %v", name, err, f.targetCalls, f.probeArgv != nil, exists(req.Output))
+		}
+	}
+}
+
+func TestStartKeepsProbeThatCannotBeRemoved(t *testing.T) {
+	for name, probeErr := range map[string]error{"probe passed": nil, "probe failed": errors.New("connection reset")} {
+		f := newFakeBackend()
+		f.probeErr = probeErr
+		f.probeRemoveErrs = []error{errors.New("engine busy")}
+		req := request(t)
+		session, err := startFake(t, f, req)
+		if session == nil || err == nil || !strings.Contains(err.Error(), "remove the capture probe") || f.runArgv != nil {
+			t.Fatalf("%s: session = %v, err = %v, helper started %v", name, session, err, f.runArgv != nil)
+		}
+		report, err := session.Stop(context.Background())
+		if err != nil || f.probeRemoved != 1 || f.removed != nil || len(f.signals) != 0 || report.Retrieved {
+			t.Fatalf("%s: retry: report = %+v, err = %v, removed %q", name, report, err, f.removed)
+		}
+		if again, err := session.Stop(context.Background()); err != nil || f.probeRemoved != 1 || again.End != report.End {
+			t.Fatalf("%s: a second Stop: %v, removed %q", name, err, f.removed)
 		}
 	}
 }
