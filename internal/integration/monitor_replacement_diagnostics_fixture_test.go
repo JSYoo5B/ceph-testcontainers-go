@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -51,6 +53,15 @@ type fakeMonCluster struct {
 	adds         map[string]int
 	removes      []string
 	diagnostics  []error
+	// statusEdits rewrites the named MON's mon_status response; partial
+	// lists MONs whose descriptor has no container; stateErr fails the
+	// named container's inspection; restartOnStatus restarts the named MON
+	// while it answers mon_status. statusQueries counts the queries.
+	statusEdits     map[string]func(map[string]any)
+	partial         map[string]bool
+	stateErr        map[string]bool
+	restartOnStatus map[string]bool
+	statusQueries   map[string]int
 }
 
 func newFakeMonCluster() *fakeMonCluster {
@@ -62,6 +73,8 @@ func newFakeMonCluster() *fakeMonCluster {
 		debug:   map[string]string{"mgr.x": "1/5", "osd.0": "0/10", "mds.fs-a": "1/5"},
 		started: map[string]string{"mgr.x": "t0", "osd.0": "t0", "mds.fs-a": "t0"},
 		adds:    map[string]int{}, noCLI: map[string]bool{}, logs: map[string][]string{},
+		statusEdits: map[string]func(map[string]any){}, partial: map[string]bool{}, stateErr: map[string]bool{},
+		restartOnStatus: map[string]bool{}, statusQueries: map[string]int{},
 	}
 	return f
 }
@@ -246,6 +259,10 @@ func (f *fakeMonCluster) monStatus(id string) ([]byte, error) {
 		Rank int    `json:"rank"`
 		Name string `json:"name"`
 	}
+	f.statusQueries[id]++
+	if f.restartOnStatus["mon."+id] {
+		f.started["mon."+id] = "t1"
+	}
 	value := map[string]any{"name": id, "rank": slices.Index(f.members, id), "election_epoch": f.election, "quorum": []int{}}
 	var mons []member
 	var quorum []int
@@ -255,7 +272,7 @@ func (f *fakeMonCluster) monStatus(id string) ([]byte, error) {
 			quorum = append(quorum, rank)
 		}
 	}
-	value["monmap"] = map[string]any{"epoch": f.epoch, "mons": mons}
+	value["monmap"] = map[string]any{"epoch": f.epoch, "fsid": "fsid-1", "mons": mons}
 	switch {
 	case f.probing[id]:
 		value["state"] = "probing"
@@ -263,6 +280,9 @@ func (f *fakeMonCluster) monStatus(id string) ([]byte, error) {
 		value["state"], value["quorum"] = "leader", quorum
 	default:
 		value["state"], value["quorum"] = "peon", quorum
+	}
+	if edit := f.statusEdits[id]; edit != nil {
+		edit(value)
 	}
 	return json.Marshal(value)
 }
@@ -287,7 +307,11 @@ func (f *fakeMonCluster) Monitors() []*ceph.MonitorContainer {
 	defer f.mu.Unlock()
 	var result []*ceph.MonitorContainer
 	for _, name := range f.members {
-		result = append(result, &ceph.MonitorContainer{DaemonName: name, Container: &fakeDaemonContainer{cluster: f, daemon: "mon." + name}})
+		mon := &ceph.MonitorContainer{DaemonName: name}
+		if !f.partial[name] {
+			mon.Container = &fakeDaemonContainer{cluster: f, daemon: "mon." + name}
+		}
+		result = append(result, mon)
 	}
 	slices.SortFunc(result, func(a, b *ceph.MonitorContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
 	return result
@@ -345,7 +369,14 @@ func (c *fakeDaemonContainer) Logs(context.Context) (io.ReadCloser, error) {
 func (c *fakeDaemonContainer) State(context.Context) (*container.State, error) {
 	c.cluster.mu.Lock()
 	defer c.cluster.mu.Unlock()
-	return &container.State{Running: true, StartedAt: c.cluster.started[c.daemon]}, nil
+	if c.cluster.stateErr[c.daemon] {
+		return nil, errors.New("inspect: connection refused")
+	}
+	started, ok := c.cluster.started[c.daemon]
+	if !ok {
+		started = "t0"
+	}
+	return &container.State{Running: true, StartedAt: started}, nil
 }
 
 // fakeMDS adds the cluster's MDS to r as a daemon reached in its own
@@ -488,9 +519,23 @@ func TestMonReplacementJoinTimeoutLogsBundleBeforeFailing(t *testing.T) {
 	if joining == nil || joining.State != "probing" || joining.MonMapEpoch != 6 || len(joining.Quorum) != 0 || !slices.Contains(joining.Members, "e") {
 		t.Fatalf("joining MON %+v", joining)
 	}
+	// Its response reports the requested name and the quorum's FSID, so the
+	// state above is attributed to it, with the payload kept beside it.
+	if bundle.Failure.FSID != "fsid-1" || joining.Identity == nil || joining.Identity.Attribution != monStatusMatched ||
+		joining.Identity.ContainerID != "cid-mon.e-0123456789" || joining.Identity.Generation != "unchanged" ||
+		joining.Payload == nil || !strings.Contains(joining.Payload.Data, `"state":"probing"`) {
+		t.Fatalf("joining MON identity %+v payload %+v", joining.Identity, joining.Payload)
+	}
 	// The paused MON is an incomplete observation, not a status.
 	if !slices.ContainsFunc(bundle.Failure.Incomplete, func(s string) bool { return strings.HasPrefix(s, "mon.c mon_status: ") }) {
 		t.Fatalf("incomplete %v", bundle.Failure.Incomplete)
+	}
+	// Its expired query keeps an explicit reason and no payload digest.
+	for _, mon := range bundle.Failure.Monitors {
+		if mon.Name == "c" && (mon.Identity.Attribution != monStatusUnknown || mon.Payload.Digest != "" || mon.Payload.Bytes != 0 ||
+			len(mon.Payload.Incomplete) != 1 || !strings.Contains(mon.Payload.Incomplete[0], "context deadline exceeded") || mon.State != "") {
+			t.Fatalf("paused MON %+v payload %+v", mon, mon.Payload)
+		}
 	}
 	if bundle.Diagnostics == nil || bundle.DiagnosticsError != "" || len(f.diagnostics) != 1 || f.diagnostics[0] != nil {
 		t.Fatalf("diagnostics %+v error=%q calls=%v", bundle.Diagnostics, bundle.DiagnosticsError, f.diagnostics)
@@ -730,4 +775,214 @@ func TestMonReplacementQuorumWaitReturnsWhileTopologyIsHeld(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "list monitors before the replacement: context deadline exceeded") || len(f.adds) != 0 {
 		t.Fatalf("replace %v adds %v", err, f.adds)
 	}
+}
+
+// monStatusFixture is a mon_status of a joining MON shaped like the
+// supported releases' Monitor::get_mon_status: rank -1, probing, outside a
+// quorum whose monmap does not list it yet, synchronizing from a provider.
+func monStatusFixture(edit func(map[string]any)) []byte {
+	value := map[string]any{
+		"name": "e", "rank": -1, "state": "probing", "election_epoch": 14, "quorum": []int{},
+		"features":       map[string]any{"required_con": "2449958747317026820", "quorum_con": "0"},
+		"outside_quorum": []string{}, "extra_probe_peers": []any{},
+		"sync_provider": []any{},
+		"sync":          map[string]any{"sync_provider": "mon.0 v2:10.0.0.2:3300/0", "sync_cookie": 4294967296, "sync_start_version": 12},
+		"monmap": map[string]any{"epoch": 6, "fsid": "fsid-1", "mons": []any{
+			map[string]any{"rank": 0, "name": "b"}, map[string]any{"rank": 1, "name": "c"}, map[string]any{"rank": 2, "name": "d"},
+		}},
+	}
+	if edit != nil {
+		edit(value)
+	}
+	raw, _ := json.Marshal(value)
+	return raw
+}
+
+// A response is the requested MON's own only when its name and monmap FSID
+// say so. A wrong or missing identity keeps the payload but no summary.
+func TestMonStatusAttributionChecksReportedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, expectedFSID string
+		raw                []byte
+		attribution        string
+		reason             string
+		reportedName       *string
+		reportedFSID       *string
+	}{
+		{name: "matching joining MON", expectedFSID: "fsid-1", raw: monStatusFixture(nil), attribution: monStatusMatched},
+		{name: "wrong name", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { v["name"] = "x" }),
+			attribution: monStatusMismatched, reason: `reported name "x", requested "e"`},
+		{name: "wrong fsid", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { v["monmap"].(map[string]any)["fsid"] = "fsid-2" }),
+			attribution: monStatusMismatched, reason: `reported fsid "fsid-2", expected "fsid-1"`},
+		{name: "absent name", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { delete(v, "name") }),
+			attribution: monStatusUnknown, reason: "the response reports no name"},
+		{name: "empty name", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { v["name"] = "" }),
+			attribution: monStatusUnknown, reason: "the response reports no name"},
+		{name: "absent fsid", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { delete(v["monmap"].(map[string]any), "fsid") }),
+			attribution: monStatusUnknown, reason: "the response reports no monmap fsid"},
+		{name: "absent monmap", expectedFSID: "fsid-1", raw: monStatusFixture(func(v map[string]any) { delete(v, "monmap") }),
+			attribution: monStatusUnknown, reason: "the response reports no monmap fsid"},
+		{name: "absent identity", expectedFSID: "fsid-1", raw: []byte(`{"rank": 2, "state": "peon"}`),
+			attribution: monStatusUnknown, reason: "the response reports no name; the response reports no monmap fsid"},
+		{name: "no fsid baseline", raw: monStatusFixture(nil), attribution: monStatusUnknown, reason: "no cluster fsid was available to compare"},
+		{name: "wrong name with absent fsid", expectedFSID: "fsid-1",
+			raw:         monStatusFixture(func(v map[string]any) { v["name"] = "x"; delete(v["monmap"].(map[string]any), "fsid") }),
+			attribution: monStatusMismatched, reason: `reported name "x", requested "e"; the response reports no monmap fsid`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := attributeMonStatus("e", tc.expectedFSID, tc.raw)
+			id := local.Identity
+			if local.Name != "e" || id == nil || id.Requested != "e" || id.Attribution != tc.attribution || id.Reason != tc.reason {
+				t.Fatalf("status %+v identity %+v", local, id)
+			}
+			if local.Payload == nil || local.Payload.Data != string(tc.raw) || local.Payload.Bytes != len(tc.raw) || len(local.Payload.Digest) != 64 {
+				t.Fatalf("payload %+v", local.Payload)
+			}
+			if tc.attribution == monStatusMatched {
+				// Rank -1, a monmap without the MON and an empty quorum are
+				// valid observations of a joining MON.
+				if local.Error != "" || local.State != "probing" || local.Rank != -1 || local.MonMapEpoch != 6 || len(local.Quorum) != 0 || slices.Contains(local.Members, "e") {
+					t.Fatalf("matched summary %+v", local)
+				}
+				return
+			}
+			// The expected name is not replaced by the reported one, and the
+			// payload's state is not presented as the candidate's.
+			if local.Error != "mon_status not attributed: "+tc.reason || local.State != "" || local.Rank != -1 || local.MonMapEpoch != 0 || local.Members != nil {
+				t.Fatalf("unattributed summary %+v", local)
+			}
+		})
+	}
+	// Absent and empty reported fields stay distinct.
+	absent := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) { delete(v, "name") }))
+	empty := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) { v["name"] = "" }))
+	wrong := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) { v["name"] = "x"; v["monmap"].(map[string]any)["fsid"] = "fsid-2" }))
+	if absent.Identity.ReportedName != nil || empty.Identity.ReportedName == nil || *empty.Identity.ReportedName != "" ||
+		*wrong.Identity.ReportedName != "x" || *wrong.Identity.ReportedFSID != "fsid-2" || wrong.Identity.ExpectedFSID != "fsid-1" {
+		t.Fatalf("reported identities %+v %+v %+v", absent.Identity, empty.Identity, wrong.Identity)
+	}
+	raw, _ := json.Marshal(absent)
+	if strings.Contains(string(raw), `"reported_name"`) {
+		t.Fatalf("absent name serialized: %s", raw)
+	}
+}
+
+// The retained payload keeps what the summary drops: two synchronization
+// sessions with an identical summary stay distinguishable, and an absent sync
+// object stays absent. Malformed and oversized responses keep their bounded,
+// redacted evidence with an explicit reason.
+func TestMonStatusPayloadIsRetainedBoundedAndRedacted(t *testing.T) {
+	first := attributeMonStatus("e", "fsid-1", monStatusFixture(nil))
+	second := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) {
+		v["sync"] = map[string]any{"sync_provider": "mon.1 v2:10.0.0.3:3300/0", "sync_cookie": 8589934592, "sync_start_version": 15}
+	}))
+	none := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) { delete(v, "sync") }))
+	summary := func(l monLocalStatus) monLocalStatus { l.Identity, l.Payload = nil, nil; return l }
+	if fmt.Sprint(summary(first)) != fmt.Sprint(summary(second)) || first.Payload.Digest == second.Payload.Digest ||
+		!strings.Contains(second.Payload.Data, `"sync_cookie":8589934592`) || strings.Contains(none.Payload.Data, `"sync"`) {
+		t.Fatalf("sync sessions %+v %+v %+v", first.Payload, second.Payload, none.Payload)
+	}
+
+	malformed := attributeMonStatus("e", "fsid-1", []byte(`{"name":"e","state":"prob`))
+	if malformed.Identity.Attribution != monStatusUnknown || malformed.Payload.Data != `{"name":"e","state":"prob` ||
+		len(malformed.Payload.Incomplete) != 1 || !strings.HasPrefix(malformed.Payload.Incomplete[0], "malformed: ") || malformed.State != "" {
+		t.Fatalf("malformed %+v %+v", malformed, malformed.Payload)
+	}
+
+	big := monStatusFixture(func(v map[string]any) { v["extra_probe_peers"] = []string{strings.Repeat("é", monStatusRetainBytes)} })
+	oversized := attributeMonStatus("e", "fsid-1", big)
+	if oversized.Identity.Attribution != monStatusMatched || oversized.State != "probing" || !oversized.Payload.Truncated ||
+		oversized.Payload.Bytes != len(big) || len(oversized.Payload.Data) > monStatusRetainBytes || !utf8.ValidString(oversized.Payload.Data) ||
+		len(oversized.Payload.Incomplete) != 1 || !strings.HasPrefix(oversized.Payload.Incomplete[0], "oversized: retained ") {
+		t.Fatalf("oversized payload bytes=%d retained=%d %+v", oversized.Payload.Bytes, len(oversized.Payload.Data), oversized.Payload.Incomplete)
+	}
+
+	secret := attributeMonStatus("e", "fsid-1", monStatusFixture(func(v map[string]any) { v["key"] = "AQBsecretvalue==" }))
+	if strings.Contains(secret.Payload.Data, "AQBsecretvalue") || !strings.Contains(secret.Payload.Data, `"key":"[REDACTED]"`) {
+		t.Fatalf("redaction %s", secret.Payload.Data)
+	}
+}
+
+// In a snapshot, a MON whose response reports another identity keeps the
+// payload as unattributed, incomplete evidence. A partial descriptor without
+// a container, an inspection that fails and a restart during the query are
+// reported as such; each MON is queried once and no membership changes.
+func TestMonReplacementSnapshotAttributesMonStatus(t *testing.T) {
+	f := newFakeMonCluster()
+	f.members, f.quorum = []string{"a", "b", "c", "d", "e", "x"}, map[string]bool{"a": true, "b": true, "c": true}
+	f.probing["d"], f.probing["e"] = true, true
+	f.statusEdits["b"] = func(v map[string]any) { v["name"] = "x" }
+	f.statusEdits["c"] = func(v map[string]any) { v["monmap"].(map[string]any)["fsid"] = "fsid-2" }
+	f.statusEdits["d"] = func(v map[string]any) { delete(v, "name"); delete(v["monmap"].(map[string]any), "fsid") }
+	f.partial["e"] = true
+	f.stateErr["mon.x"] = true
+	f.restartOnStatus["mon.a"] = true
+	r := newMonReplacementRecorder("source", f, fakeMonReplacementBounds)
+	s := r.snapshot(t.Context(), false)
+	if s.FSID != "fsid-1" || !slices.Equal(s.Quorum, []string{"a", "b", "c"}) {
+		t.Fatalf("quorum %q %v", s.FSID, s.Quorum)
+	}
+	mons := map[string]monLocalStatus{}
+	for _, mon := range s.Monitors {
+		mons[mon.Name] = mon
+	}
+	for name, want := range map[string]string{"a": monStatusMatched, "b": monStatusMismatched, "c": monStatusMismatched, "d": monStatusUnknown, "e": monStatusMatched, "x": monStatusMatched} {
+		mon := mons[name]
+		if mon.Identity == nil || mon.Identity.Attribution != want || mon.Identity.Requested != name || mon.Identity.ExpectedFSID != "fsid-1" || mon.Identity.FSIDSource != "quorum" || mon.Payload == nil || mon.Payload.Data == "" {
+			t.Fatalf("mon.%s %+v identity %+v", name, mon, mon.Identity)
+		}
+		if f.statusQueries[name] != 1 {
+			t.Fatalf("mon.%s queried %d times", name, f.statusQueries[name])
+		}
+	}
+	if b := mons["b"]; b.State != "" || b.Rank != -1 || *b.Identity.ReportedName != "x" {
+		t.Fatalf("misnamed response attributed: %+v", b)
+	}
+	if c := mons["c"]; c.State != "" || *c.Identity.ReportedFSID != "fsid-2" {
+		t.Fatalf("foreign fsid attributed: %+v", c)
+	}
+	if mons["a"].Identity.Generation != "changed" || mons["a"].Identity.StartedBefore != "t0" || mons["a"].Identity.StartedAfter != "t1" ||
+		mons["e"].Identity.Generation != "unavailable: no container" || mons["e"].Identity.ContainerID != "" ||
+		mons["x"].Identity.Generation != "unavailable: before the query: state: inspect: connection refused; after the query: state: inspect: connection refused" ||
+		mons["x"].Identity.ContainerID != "cid-mon.x-0123456789" || mons["d"].Identity.Generation != "unchanged" {
+		t.Fatalf("generations a=%+v e=%+v x=%+v", mons["a"].Identity, mons["e"].Identity, mons["x"].Identity)
+	}
+	for _, want := range []string{
+		`mon.b mon_status: mon_status not attributed: reported name "x", requested "b"`,
+		`mon.c mon_status: mon_status not attributed: reported fsid "fsid-2", expected "fsid-1"`,
+		"mon.d mon_status: mon_status not attributed: the response reports no name; the response reports no monmap fsid",
+		"mon.a generation: changed during mon_status from t0 to t1",
+		"mon.e generation: unavailable: no container",
+	} {
+		if !slices.Contains(s.Incomplete, want) {
+			t.Fatalf("incomplete lacks %q: %q", want, s.Incomplete)
+		}
+	}
+	if len(f.adds) != 0 || len(f.removes) != 0 {
+		t.Fatalf("membership changed: adds %v removes %v", f.adds, f.removes)
+	}
+}
+
+// Without a quorum FSID in its own snapshot, a response is compared with the
+// baseline's, and without either it stays unattributed.
+func TestMonReplacementSnapshotFSIDBaseline(t *testing.T) {
+	f := newFakeMonCluster()
+	r := newMonReplacementRecorder("source", quorumlessMonCluster{f}, fakeMonReplacementBounds)
+	s := r.snapshot(t.Context(), false)
+	if s.FSID != "" || s.QuorumError == "" || len(s.Monitors) != 3 || s.Monitors[0].Identity.Attribution != monStatusUnknown ||
+		s.Monitors[0].Identity.Reason != "no cluster fsid was available to compare" || s.Monitors[0].State != "" {
+		t.Fatalf("snapshot without a baseline %+v %+v", s, s.Monitors[0].Identity)
+	}
+	r.Baseline = &monReplacementSnapshot{FSID: "fsid-1"}
+	s = r.snapshot(t.Context(), false)
+	if id := s.Monitors[0].Identity; id.Attribution != monStatusMatched || id.ExpectedFSID != "fsid-1" || id.FSIDSource != "baseline quorum" || s.Monitors[0].State != "leader" {
+		t.Fatalf("snapshot with a baseline %+v", id)
+	}
+}
+
+// quorumlessMonCluster fails every quorum query.
+type quorumlessMonCluster struct{ *fakeMonCluster }
+
+func (quorumlessMonCluster) QuorumStatus(context.Context) (ceph.QuorumStatus, error) {
+	return ceph.QuorumStatus{}, errors.New("quorum_status: timed out")
 }

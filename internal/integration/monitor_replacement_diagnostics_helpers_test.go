@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
@@ -98,16 +101,164 @@ func monReplacementExecSocket(ctx context.Context, d monReplacementExecDaemon, a
 }
 
 // monLocalStatus is what one MON reports about itself on its admin socket.
+// Name is the owned descriptor's daemon name that was queried. The summary
+// fields from State on are filled only when the response's own identity
+// matches that MON and the cluster; Identity says whether it did, and Payload
+// keeps the response itself either way.
 type monLocalStatus struct {
-	Name          string   `json:"name"`
-	State         string   `json:"state,omitempty"`
-	Rank          int      `json:"rank"`
-	ElectionEpoch int      `json:"election_epoch,omitempty"`
-	MonMapEpoch   int      `json:"monmap_epoch,omitempty"`
-	Members       []string `json:"members,omitempty"`
-	Quorum        []string `json:"quorum,omitempty"`
-	OutsideQuorum []string `json:"outside_quorum,omitempty"`
-	Error         string   `json:"error,omitempty"`
+	Name          string             `json:"name"`
+	State         string             `json:"state,omitempty"`
+	Rank          int                `json:"rank"`
+	ElectionEpoch int                `json:"election_epoch,omitempty"`
+	MonMapEpoch   int                `json:"monmap_epoch,omitempty"`
+	Members       []string           `json:"members,omitempty"`
+	Quorum        []string           `json:"quorum,omitempty"`
+	OutsideQuorum []string           `json:"outside_quorum,omitempty"`
+	Error         string             `json:"error,omitempty"`
+	Identity      *monStatusIdentity `json:"identity,omitempty"`
+	Payload       *monStatusPayload  `json:"payload,omitempty"`
+}
+
+// Attribution of a mon_status response to the MON it was requested from.
+const (
+	monStatusMatched    = "matched"
+	monStatusMismatched = "mismatched"
+	monStatusUnknown    = "unknown"
+)
+
+// monStatusIdentity keeps the expected identity of a mon_status response
+// apart from the identity the response reports. Requested, ContainerID and
+// ExpectedFSID are what was asked for: the owned descriptor's daemon name, its
+// full container ID and the cluster FSID from the quorum query. ReportedName
+// and ReportedFSID are the response's own name and monmap.fsid; nil means the
+// field was absent, which is not the same as an empty value. Admission of the
+// admin socket by daemon name is not an identity check of its response.
+type monStatusIdentity struct {
+	Requested    string  `json:"requested"`
+	ContainerID  string  `json:"container_id,omitempty"`
+	ExpectedFSID string  `json:"expected_fsid,omitempty"`
+	FSIDSource   string  `json:"fsid_source,omitempty"`
+	ReportedName *string `json:"reported_name,omitempty"`
+	ReportedFSID *string `json:"reported_fsid,omitempty"`
+	Attribution  string  `json:"attribution"`
+	Reason       string  `json:"reason,omitempty"`
+	// StartedBefore and StartedAfter are the container's start time
+	// inspected around the query. Generation is "unchanged", "changed" or
+	// why it is unavailable. An unchanged start time does not prove that the
+	// native process or its session were uninterrupted.
+	StartedBefore string `json:"started_before,omitempty"`
+	StartedAfter  string `json:"started_after,omitempty"`
+	Generation    string `json:"generation"`
+}
+
+// monStatusPayload is a mon_status response as it was received, redacted
+// and bounded to monStatusRetainBytes. Bytes is the received size and Digest
+// the SHA-256 of the whole redacted response, so that two responses stay
+// distinguishable when Data is truncated. Incomplete says why Data is not a
+// whole, decodable response.
+type monStatusPayload struct {
+	QueryStarted time.Time `json:"query_started"`
+	QueryEnded   time.Time `json:"query_ended"`
+	Bytes        int       `json:"bytes"`
+	Digest       string    `json:"digest,omitempty"`
+	Data         string    `json:"data,omitempty"`
+	Truncated    bool      `json:"truncated,omitempty"`
+	Incomplete   []string  `json:"incomplete,omitempty"`
+}
+
+const monStatusRetainBytes = 16 << 10
+
+// The secret patterns of the cluster's own diagnostics redaction.
+var (
+	monReplacementSecretPattern     = regexp.MustCompile(`(?i)((?:secret_key|access_key|password|private_key|authorization|credential|signature|token|secret|key)\s*["']?\s*[:=]\s*["']?)([^"'\s,;}\]]+)`)
+	monReplacementBearerPattern     = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	monReplacementPrivateKeyPattern = regexp.MustCompile(`(?s)-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----`)
+)
+
+func monReplacementRedact(data string) string {
+	data = monReplacementPrivateKeyPattern.ReplaceAllString(data, "[REDACTED PRIVATE KEY]")
+	data = monReplacementBearerPattern.ReplaceAllString(data, "${1}[REDACTED]")
+	return monReplacementSecretPattern.ReplaceAllString(data, "${1}[REDACTED]")
+}
+
+// retainMonStatus keeps raw redacted and bounded.
+func retainMonStatus(raw []byte) *monStatusPayload {
+	if len(raw) == 0 {
+		return &monStatusPayload{}
+	}
+	data := monReplacementRedact(strings.ToValidUTF8(string(raw), "�"))
+	sum := sha256.Sum256([]byte(data))
+	payload := &monStatusPayload{Bytes: len(raw), Digest: hex.EncodeToString(sum[:])}
+	if len(data) > monStatusRetainBytes {
+		end := monStatusRetainBytes
+		for end > 0 && !utf8.RuneStart(data[end]) {
+			end--
+		}
+		payload.Incomplete = append(payload.Incomplete, fmt.Sprintf("oversized: retained %d of %d redacted bytes", end, len(data)))
+		data, payload.Truncated = data[:end], true
+	}
+	payload.Data = data
+	return payload
+}
+
+// attributeMonStatus checks the identity that a mon_status response reports
+// against the MON it was requested from and the cluster's FSID, and fills the
+// summary only when both match. A mismatched or missing identity keeps the
+// response as unattributed evidence: the summary keeps rank -1 and no state.
+// A joining MON's rank -1, a monmap without it and an empty quorum are valid
+// observations, not mismatches.
+func attributeMonStatus(requested, expectedFSID string, raw []byte) monLocalStatus {
+	identity := &monStatusIdentity{Requested: requested, ExpectedFSID: expectedFSID, Attribution: monStatusUnknown}
+	local := monLocalStatus{Name: requested, Rank: -1, Identity: identity, Payload: retainMonStatus(raw)}
+	var reported struct {
+		Name   *string `json:"name"`
+		MonMap *struct {
+			FSID *string `json:"fsid"`
+		} `json:"monmap"`
+	}
+	if err := json.Unmarshal(raw, &reported); err != nil {
+		local.Payload.Incomplete = append(local.Payload.Incomplete, "malformed: "+err.Error())
+		identity.Reason = "the response is not a decodable mon_status"
+		local.Error = fmt.Sprintf("decode mon_status: %v", err)
+		return local
+	}
+	identity.ReportedName = reported.Name
+	if reported.MonMap != nil {
+		identity.ReportedFSID = reported.MonMap.FSID
+	}
+	var mismatched, unknown []string
+	switch name := identity.ReportedName; {
+	case name == nil || *name == "":
+		unknown = append(unknown, "the response reports no name")
+	case *name != requested:
+		mismatched = append(mismatched, fmt.Sprintf("reported name %q, requested %q", *name, requested))
+	}
+	switch fsid := identity.ReportedFSID; {
+	case fsid == nil || *fsid == "":
+		unknown = append(unknown, "the response reports no monmap fsid")
+	case expectedFSID == "":
+		unknown = append(unknown, "no cluster fsid was available to compare")
+	case *fsid != expectedFSID:
+		mismatched = append(mismatched, fmt.Sprintf("reported fsid %q, expected %q", *fsid, expectedFSID))
+	}
+	switch {
+	case len(mismatched) > 0:
+		identity.Attribution = monStatusMismatched
+	case len(unknown) > 0:
+		identity.Attribution = monStatusUnknown
+	default:
+		identity.Attribution = monStatusMatched
+	}
+	if identity.Attribution != monStatusMatched {
+		identity.Reason = strings.Join(append(mismatched, unknown...), "; ")
+		local.Error = "mon_status not attributed: " + identity.Reason
+		return local
+	}
+	if err := parseMonLocalStatus(raw, &local); err != nil {
+		local.Payload.Incomplete = append(local.Payload.Incomplete, "malformed: "+err.Error())
+		local.Error = err.Error()
+	}
+	return local
 }
 
 // monReplacementSession is one MON session of a warm daemon, as that MON lists it.
@@ -134,7 +285,9 @@ type warmDaemonStatus struct {
 }
 
 type monReplacementSnapshot struct {
-	At          time.Time               `json:"at"`
+	At time.Time `json:"at"`
+	// FSID is the cluster FSID that the quorum query reported.
+	FSID        string                  `json:"fsid,omitempty"`
 	Quorum      []string                `json:"quorum,omitempty"`
 	MonMap      []string                `json:"monmap,omitempty"`
 	QuorumError string                  `json:"quorum_error,omitempty"`
@@ -537,7 +690,7 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 		s.QuorumError = err.Error()
 		incomplete("quorum: %v", err)
 	} else {
-		s.Quorum = slices.Clone(status.QuorumNames)
+		s.FSID, s.Quorum = status.MonMap.FSID, slices.Clone(status.QuorumNames)
 		for _, mon := range status.MonMap.Mons {
 			s.MonMap = append(s.MonMap, mon.Name)
 		}
@@ -559,18 +712,20 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 	if err != nil {
 		incomplete("list monitors: %v", err)
 	}
+	// Each response is attributed against this snapshot's quorum FSID, or
+	// the baseline's when this quorum query failed.
+	expectedFSID, fsidSource := s.FSID, "quorum"
+	if expectedFSID == "" && r.Baseline != nil && r.Baseline.FSID != "" {
+		expectedFSID, fsidSource = r.Baseline.FSID, "baseline quorum"
+	}
 	s.Monitors = make([]monLocalStatus, len(monitors))
 	sessions := make([][]monReplacementSession, len(monitors))
 	for i, mon := range monitors {
 		daemon := "mon." + mon.DaemonName
 		run(func() {
-			local := monLocalStatus{Name: mon.DaemonName, Rank: -1}
-			if raw, err := r.query(ctx, daemon, "mon_status"); err != nil {
-				local.Error = err.Error()
-				incomplete("%s mon_status: %v", daemon, err)
-			} else if err := parseMonLocalStatus(raw, &local); err != nil {
-				local.Error = err.Error()
-				incomplete("%s mon_status: %v", daemon, err)
+			local, problems := r.monStatus(ctx, mon, expectedFSID, fsidSource)
+			for _, problem := range problems {
+				incomplete("%s", problem)
 			}
 			s.Monitors[i] = local
 			if raw, err := r.query(ctx, daemon, "sessions"); err != nil {
@@ -625,6 +780,77 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 	s.Warm = warm
 	slices.Sort(s.Incomplete)
 	return s
+}
+
+// monStatus queries one owned MON's mon_status once, inspecting its
+// container's start time before and after the query, and attributes the
+// response with attributeMonStatus. problems are the snapshot's incomplete
+// entries for this MON.
+func (r *monReplacementRecorder) monStatus(ctx context.Context, mon *ceph.MonitorContainer, expectedFSID, fsidSource string) (monLocalStatus, []string) {
+	daemon := "mon." + mon.DaemonName
+	var problems []string
+	generation := func() (string, error) {
+		if mon.Container == nil {
+			return "", errors.New("no container")
+		}
+		stateCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
+		defer cancel()
+		state, err := mon.Container.State(stateCtx)
+		switch {
+		case err != nil:
+			return "", fmt.Errorf("state: %w", err)
+		case state == nil || state.StartedAt == "":
+			return "", errors.New("state: no start time")
+		}
+		return state.StartedAt, nil
+	}
+	before, beforeErr := generation()
+	started := time.Now()
+	raw, err := r.query(ctx, daemon, "mon_status")
+	ended := time.Now()
+	after, afterErr := generation()
+	var local monLocalStatus
+	if err != nil {
+		local = monLocalStatus{Name: mon.DaemonName, Rank: -1, Error: err.Error(), Payload: retainMonStatus(raw),
+			Identity: &monStatusIdentity{Requested: mon.DaemonName, ExpectedFSID: expectedFSID, Attribution: monStatusUnknown, Reason: "no complete response"}}
+		local.Payload.Incomplete = append(local.Payload.Incomplete, "query: "+err.Error())
+		problems = append(problems, fmt.Sprintf("%s mon_status: %v", daemon, err))
+	} else {
+		local = attributeMonStatus(mon.DaemonName, expectedFSID, raw)
+		if local.Error != "" {
+			problems = append(problems, fmt.Sprintf("%s mon_status: %s", daemon, local.Error))
+		}
+	}
+	local.Payload.QueryStarted, local.Payload.QueryEnded = started, ended
+	identity := local.Identity
+	if expectedFSID != "" {
+		identity.FSIDSource = fsidSource
+	}
+	if mon.Container != nil {
+		identity.ContainerID = mon.Container.GetContainerID()
+	}
+	identity.StartedBefore, identity.StartedAfter = before, after
+	switch {
+	case mon.Container == nil:
+		identity.Generation = "unavailable: no container"
+		problems = append(problems, fmt.Sprintf("%s generation: %s", daemon, identity.Generation))
+	case beforeErr != nil || afterErr != nil:
+		var reasons []string
+		if beforeErr != nil {
+			reasons = append(reasons, "before the query: "+beforeErr.Error())
+		}
+		if afterErr != nil {
+			reasons = append(reasons, "after the query: "+afterErr.Error())
+		}
+		identity.Generation = "unavailable: " + strings.Join(reasons, "; ")
+		problems = append(problems, fmt.Sprintf("%s generation: %s", daemon, identity.Generation))
+	case before != after:
+		identity.Generation = "changed"
+		problems = append(problems, fmt.Sprintf("%s generation: changed during mon_status from %s to %s", daemon, before, after))
+	default:
+		identity.Generation = "unchanged"
+	}
+	return local, problems
 }
 
 // warmIdentities lists the owned MGRs and OSDs and the daemons reached in
