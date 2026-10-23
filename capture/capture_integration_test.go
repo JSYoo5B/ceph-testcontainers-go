@@ -195,6 +195,30 @@ func requireHelpersRemoved(t *testing.T, ctx context.Context, docker *testcontai
 	}
 }
 
+// startOwned starts a capture and, before the caller looks at the error,
+// registers a bounded fallback Stop for any returned session, also one
+// returned with an error. A fatal path before the subtest's own Stop then
+// still ends and removes the helper; after an explicit Stop the fallback
+// returns the same report. It only checks that no helper stays joined to
+// the target, so the original failure is kept.
+func startOwned(t *testing.T, docker *testcontainers.DockerClient, target string, start func() (*capture.Session, error)) (*capture.Session, error) {
+	t.Helper()
+	session, err := start()
+	if session != nil {
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if _, stopErr := session.Stop(ctx); stopErr != nil {
+				t.Logf("fallback Stop: %v", stopErr)
+			}
+			if left := helpers(t, ctx, docker, target); len(left) != 0 {
+				t.Errorf("%d capture helpers left after the fallback Stop", len(left))
+			}
+		})
+	}
+	return session, err
+}
+
 func logReport(t *testing.T, report capture.Report, err error) {
 	t.Helper()
 	data, _ := json.MarshalIndent(report, "", "  ")
@@ -243,7 +267,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	}
 
 	t.Run("bidirectional", func(t *testing.T) {
-		session, err := capture.Start(ctx, target, request("traffic", "tcp port 7000 and host "+clientHost))
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, request("traffic", "tcp port 7000 and host "+clientHost))
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +321,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	})
 
 	t.Run("empty", func(t *testing.T) {
-		session, err := capture.Start(ctx, target, request("empty", "tcp port 7999"))
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, request("empty", "tcp port 7999"))
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +343,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 			"filter":    request("filter", "tcp portx 7000"),
 			"interface": func() capture.Request { r := request("interface", "tcp"); r.Interface = "eth1"; return r }(),
 		} {
-			session, err := capture.Start(ctx, target, req)
+			session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+				return capture.Start(ctx, target, req)
+			})
 			if session != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
 				t.Errorf("%s: session %v, err %v", name, session, err)
 			}
@@ -328,7 +358,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	t.Run("packet limit", func(t *testing.T) {
 		req := request("limit", "tcp port 7000 and host "+clientHost)
 		req.SnapLen, req.MaxPackets = 128, 4
-		session, err := capture.Start(ctx, target, req)
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(ctx, target, req)
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,7 +401,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 	t.Run("canceled workload", func(t *testing.T) {
 		workload, cancelWorkload := context.WithCancel(ctx)
 		defer cancelWorkload()
-		session, err := capture.Start(workload, target, request("canceled", "tcp port 7000 and host "+clientHost))
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.Start(workload, target, request("canceled", "tcp port 7000 and host "+clientHost))
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,11 +430,10 @@ func TestCaptureTargetTraffic(t *testing.T) {
 		// The public API always grants NET_RAW; this test hook withholds it
 		// from the capture helper alone, as an engine that refuses it would.
 		req := request("denied", "tcp port 7000")
-		session, err := capture.StartWithoutNetRaw(ctx, target, req)
+		session, err := startOwned(t, docker, target.GetContainerID(), func() (*capture.Session, error) {
+			return capture.StartWithoutNetRaw(ctx, target, req)
+		})
 		t.Logf("error: %v", err)
-		if session != nil {
-			defer func() { _, _ = session.Stop(ctx) }()
-		}
 		if session != nil || !errors.Is(err, capture.ErrPermissionDenied) || !errors.Is(err, ceph.ErrEnvironmentUnavailable) ||
 			errors.Is(err, capture.ErrFailed) || errors.Is(err, capture.ErrImageUnsupported) {
 			t.Fatalf("session %v, err %v", session, err)
@@ -434,7 +467,9 @@ func TestCaptureTargetTraffic(t *testing.T) {
 			lost := runBusybox(t, ctx, bridge.Name, "sh", "-c",
 				"mkdir -p /www && echo capture-payload-7000 > /www/index.html && httpd -p 7000 -h /www && exec sleep infinity")
 			lostURL, id := "http://"+address(t, ctx, lost, bridge.Name).String(), lost.GetContainerID()
-			session, err := capture.Start(ctx, lost, request(strings.ReplaceAll(loss.name, " ", "-"), "tcp port 7000 and host "+clientHost))
+			session, err := startOwned(t, docker, id, func() (*capture.Session, error) {
+				return capture.Start(ctx, lost, request(strings.ReplaceAll(loss.name, " ", "-"), "tcp port 7000 and host "+clientHost))
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
