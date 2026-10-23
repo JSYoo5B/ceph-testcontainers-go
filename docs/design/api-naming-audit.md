@@ -8,23 +8,23 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **768** functions, declared methods on
+The declaration catalogue contains **787** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **1068** exported field/nested-record/embedding entries in
-**176** types. It scans exported declared interfaces as well; there are none
+catalogue contains **1084** exported field/nested-record/embedding entries in
+**179** types. It scans exported declared interfaces as well; there are none
 in the current public packages. Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 343 | 404 |
+| `ceph` | 362 | 420 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
 | `capture` | 33 | 55 |
-| Total | 768 | 1068 |
+| Total | 787 | 1084 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -35,10 +35,11 @@ accessors) added for #6, the test finalization added for #49
 (`TerminateOnCleanup`, `Finalization` with `Check` and `Cleanup`, and
 `FinalizationConfig` with its eight fields), the opt-in post-test verification
 added for #48 (see [Post-test verification](#post-test-verification) below),
-and the `capture` package added for #52 (see
-[Packet capture](#packet-capture-package) below). It uses the current source,
-not the earlier 691/692-entry, 707-entry, 712-entry or 745-entry
-checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
+the `capture` package added for #52 (see
+[Packet capture](#packet-capture-package) below), and the first runtime debug
+level window added for #50 (see [Runtime debug level window](#runtime-debug-level-window)
+below). It uses the current source, not the earlier 691/692-entry, 707-entry,
+712-entry, 745-entry or 768-entry checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
 Digest matching establishes scope agreement, not the quality of a naming review.
@@ -87,6 +88,22 @@ above:
 | `LogExpectation`, `CrashExpectation`, `ExpectationResult` | Separate log and crash expectation types, so that a log pattern cannot waive a crash. `Required` with `MinCount` distinguishes requiring an event from permitting it; `MaxCount` bounds a permission. `ExpectationResult` reports each one's matches. |
 | `VerificationOutcome` with `VerificationClean`, `VerificationUnexpected`, `VerificationIncomplete` | The three outcomes keep their type as a prefix, so that clean, an unexpected finding and an incomplete observation stay distinct at the call site. |
 | `LogEvent` with `LogAssertion`, `LogFatalSignal`, `LogClusterError`, `LogClusterSecurity`, `LogClusterWarning` | The fixed line classes. `Cluster*` names the cluster log levels (ERR, SEC, WRN) rather than a generic severity, and none of them implies an allowance. |
+
+## Runtime debug level window
+
+The first #50 increment adds 19 `ceph` declarations and 16 member entries in
+`DebugLevelSetting`, `DebugLevelReceipt` and `DebugLevelTransition`. It covers
+one OSD and one `debug_ms` or `debug_osd` runtime value at a time; the final
+spelling for more roles, options or replacement-spanning windows stays open
+until native evidence and overhead measurements exist. It was reviewed at the
+call site against the convention above:
+
+| Name | Decision and reason |
+| --- | --- |
+| `Container.OverrideDebugLevel` / `DebugLevelOverrideHandle.Restore` | The `Override*`/`*OverrideHandle`/`Restore` family: the call saves the daemon's prior effective value and returns an explicit restoration handle that may hold an uncertain apply. It has no native expiry, so `Temporary` does not fit. `DebugLevel` rather than `Config` keeps it apart from `OverrideConfig`, which changes stored central entries, not a daemon's runtime value. |
+| `DebugLevelSetting` | Request input of the retained `Setting` family, beside `ConfigSetting`; `Daemon`, `Name` and `Level` name the selected target, option and requested text. |
+| `DebugLevelOverrideHandle.Receipt`, `DebugLevelReceipt`, `DebugLevelTransition` | `Receipt` returns a copy of the window's evidence, as the existing native receipts do, rather than a live status; `Transition` names one recorded state change with its time, readback and error. |
+| `DebugLevelState` with `DebugLevelPriorRead`, `DebugLevelApplyAttempted`, `DebugLevelApplied`, `DebugLevelApplyUncertain`, `DebugLevelRestoreAttempted`, `DebugLevelRestored`, `DebugLevelConflict`, `DebugLevelTargetChanged`, `DebugLevelUnconfirmed` | The states of #50's state progression. The constants keep the `DebugLevel` prefix so that they do not collide with other state names; `Applied` and `Restored` mean verified readback, and `ApplyUncertain` and `Unconfirmed` keep an unknown outcome apart from success. |
 
 ## Packet capture package
 

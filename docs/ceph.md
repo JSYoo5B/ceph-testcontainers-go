@@ -1490,7 +1490,7 @@ that only read state stay available.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `MonitorsContext`, `Managers`, `ManagersContext`, `OSDs`, `OSDsContext`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1545,6 +1545,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
 | `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
+| `*ceph.DebugLevelOverrideHandle` | [OverrideDebugLevel](#overridedebuglevel) | `Restore` |
 | `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
 | `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
@@ -1564,12 +1565,12 @@ All handles follow the same contract:
 - `Restore` returns only the changed item to its captured prior state, including
   "absent". It refuses, with an error, to overwrite a value that someone else
   changed in the meantime. Writes of the same value cannot be detected.
-- A second handle for the same item (configuration key, flag, module, ratios,
-  container) is refused while the first is active.
-- `Terminate` disposes of configuration, flags, modules, ratios and the blocklist
-  with the cluster, so restoring is optional when the condition lasts until the
-  end of the test. Pauses are resumed and network interruptions restored by
-  `Terminate` before it removes anything.
+- A second handle for the same item (configuration key, daemon debug option,
+  flag, module, ratios, container) is refused while the first is active.
+- `Terminate` disposes of configuration, debug levels, flags, modules, ratios
+  and the blocklist with the cluster, so restoring is optional when the
+  condition lasts until the end of the test. Pauses are resumed and network
+  interruptions restored by `Terminate` before it removes anything.
 
 Restore in `t.Cleanup` with a context that is still live. `t.Context()` is
 canceled before cleanup functions run:
@@ -3284,6 +3285,89 @@ masked entries. Each `ceph.ConfigEntry` has `Section`, `Mask`, `Name`, `Value`,
 `Level` and `CanUpdateAtRuntime`. These are stored entries, not inherited or
 effective values; use `ceph config show <daemon> <option>` for a daemon's
 effective value. Entries can contain sensitive values.
+
+#### OverrideDebugLevel
+
+```golang
+func (c *Container) OverrideDebugLevel(ctx context.Context, setting ceph.DebugLevelSetting) (*ceph.DebugLevelOverrideHandle, error)
+```
+
+Opens one runtime debug level window on one running OSD that the cluster owns.
+`ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
+`debug_osd`) and `Level` (`N` or `N/M`, from 0 to 99). Other roles and options
+are refused; neither verbose levels nor all daemons are ever selected
+automatically.
+
+The window changes the daemon's runtime value through its admin socket, as
+[AdminSocket](#adminsocket) reaches it, and never the central configuration
+database; [OverrideConfig](#overrideconfig) is the stored-entry model. A daemon
+restart drops a runtime value. The call reads the effective prior level, sets
+the requested level and verifies the normalized readback, so `20` reads back as
+`20/20`. The window is bound to the OSD container's generation (container ID and
+start time). Only one window per daemon and option is admitted at a time. Each
+set is issued only while the OSD still runs that generation, and the cluster's
+own topology operations, such as `RemoveOSD`, `DetachOSD` and `ReopenOSD`, wait
+until the set has ended.
+
+`DebugLevelOverrideHandle.Restore` first checks the same generation and that
+the daemon still shows the window's own value, then sets the prior level and
+verifies it:
+
+- A prior level that is already in place counts as restored.
+- Any other value is an outside edit; it is preserved, not overwritten.
+- A stopped, restarted, replaced or removed OSD, or a terminated cluster, is not
+  restored: the window's process is gone.
+- A paused OSD, an unavailable socket or an unverified readback leaves the
+  window open; a later `Restore` reconciles it first.
+- A set of the window whose end could not be confirmed may still apply. The
+  window keeps it open as unconfirmed, and a later `Restore` first confirms that
+  the set has stopped before it reads, sets or releases anything. Until then
+  `RemoveOSD` and `DetachOSD` first stop that set or refuse, so it cannot reach
+  a replacement OSD through the shared socket path.
+
+The generation is checked again after each read, so a replacement during a read
+is reported as a changed target instead of a level to restore.
+
+A set or readback that fails returns a non-nil handle with the error, because a
+lost reply can still have applied. Readbacks after a set use a fresh context
+bounded by [WithStartupTimeout](#withstartuptimeout).
+
+`DebugLevelOverrideHandle.Receipt` returns a JSON-serializable
+`ceph.DebugLevelReceipt`: daemon, option, generation, requested text, prior,
+applied and restored readbacks, the current `ceph.DebugLevelState` and every
+`ceph.DebugLevelTransition` with its time, readback and error. The states are
+`DebugLevelPriorRead`, `DebugLevelApplyAttempted`, then `DebugLevelApplied` or
+`DebugLevelApplyUncertain`; `Restore` records `DebugLevelRestoreAttempted`,
+then `DebugLevelRestored`, `DebugLevelConflict`, `DebugLevelTargetChanged` or
+`DebugLevelUnconfirmed`. Restored, conflict and target-changed are terminal and
+release the admission; `Restore` then returns nil or the same error again.
+
+With [TerminateOnCleanup](#terminateoncleanup), register the removal of clients
+first and the restoration afterward. The cleanups run in reverse order after the
+failure archive, so a known failure is archived while the level is still raised,
+and the level is restored before the clients are removed. A restoration that is
+the first failure triggers the `after-cleanup` archive, and Terminate still
+runs:
+
+```golang
+window, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{
+	Daemon: "osd.0", Name: "debug_osd", Level: "20",
+})
+if window != nil {
+	finalization.Cleanup("restore osd.0 debug_osd", window.Restore)
+}
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+The readbacks around each set are not an atomic compare-and-swap. Do not change
+the same daemon and option elsewhere while a window is open; an outside write of
+the window's own value cannot be told apart from it. A restart of the OSD
+container from outside the cluster after the last check is not held off.
+Verbose levels cost log
+volume and can change timing; levels and durations for particular investigations
+are not established yet.
 
 ### Container Methods: MGR modules and services
 

@@ -18,6 +18,23 @@ change the API.
 
 ### Added
 
+- `ceph.Container.OverrideDebugLevel` opens one runtime `debug_ms` or
+  `debug_osd` window on one running owned OSD through its admin socket. It
+  records the effective prior level, verifies the normalized readback, and
+  binds the window to the OSD container's generation. Only one window per
+  daemon and option is admitted. `DebugLevelOverrideHandle.Restore` restores
+  only the same generation that still shows the window's own value, verifies
+  the restored readback, accepts an already restored level and leaves an
+  outside edit in place. Each set is admitted only on the window's
+  generation while the cluster's topology operations wait, and the generation
+  is checked again after each read. A set whose end is unconfirmed keeps the
+  window open, and `RemoveOSD` and `DetachOSD` stop it first or refuse, until
+  it is confirmed stopped. A failed or lost apply returns a
+  handle that reconciles before it restores, and `Receipt` keeps the states, readbacks,
+  times and errors. Registered with `Finalization.Cleanup`, restoration runs
+  after the failure archive and before earlier-registered client removals.
+  Other roles, options, levels and replacement-spanning windows are not
+  supported yet.
 - `ceph.Finalization.Verify` activates an opt-in post-test verification of a
   dedicated cluster: it records the daemon container generations, the crash
   IDs already present and the window's start, and adds a check that

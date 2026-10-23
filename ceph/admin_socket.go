@@ -173,6 +173,13 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
+	return c.adminSocketCommand(ctx, control, daemon, args...)
+}
+
+// adminSocketCommand runs args on the admin socket of daemon, which the
+// caller checked, in control: an error that supervised.Unconfirmed reports
+// leaves the command possibly running there.
+func (c *Container) adminSocketCommand(ctx context.Context, control testcontainers.Container, daemon string, args ...string) ([]byte, error) {
 	socket := adminSocketDir + "/ceph-" + daemon + ".asok"
 	result, err := supervised.Command(ctx, control, "admin socket", c.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
 		append([]string{"ceph", "--admin-daemon", socket}, args...)...)
