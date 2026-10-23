@@ -482,6 +482,11 @@ change the API.
 
 ### Fixed
 
+- Messenger targeted-command case receipts include the already exercised client
+  toolkit and separately owned limited client in their immutable image cohort.
+  Split-role receipts retain essential, client and cephfs IDs; aggregate images
+  remain deduplicated. Missing executor image evidence refuses the receipt.
+
 - `TestRGWPlacementRealmStorageClasses` no longer accepts replica bytes that
   arrive after a read's deadline. Its replica wait reads through the shared
   bounded observation with a 30-second read bound inside the unchanged

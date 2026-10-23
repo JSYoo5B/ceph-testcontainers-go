@@ -56,7 +56,16 @@ release, platform and the sorted immutable image ID set **before** execution:
 
 The zero digest above is a schema example, not an image to use. Resolve the
 actual selected images through the engine and retain those IDs in the cohort
-file. The receipt records actual inspected image IDs and the full native
+file. Include every image used by the recipe: the cluster/control and daemon
+containers, the already exercised client toolkit, and the separately owned
+limited client. With split roles this is the essential, client and cephfs image
+ID set; an aggregate image appears only once. The recipe passes its actual
+executor containers to the emitter, which only inspects them and never starts
+an unused client to populate metadata. Inspection failure or a missing/invalid
+immutable ID prevents a successful receipt. Do not derive the expected set from
+the emitted receipt or remove the client ID to make a mismatch pass.
+
+The receipt records actual inspected image IDs and the full native
 version; mismatched IDs, release, platform or pinned native build are refused.
 No Squid or additional platform support is established by this first increment.
 
