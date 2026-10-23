@@ -382,8 +382,8 @@ class CohortTests(unittest.TestCase):
         self.count = 0
         self.runs, self.jobs = [], {}
 
-    def attempt(self, run_id, measured_id, native, result="passed", attempt="1", **metadata):
-        """A measured runtime job and the history row that its artifacts give."""
+    def receipt(self, run_id, measured_id, result="passed", attempt="1", **metadata):
+        """A history row that a job's artifacts give, without its measured job."""
         self.count += 1
         job = self.rows.Job(self.root / str(self.count)).passing()
         if result == "failed":
@@ -391,7 +391,11 @@ class CohortTests(unittest.TestCase):
             job.native(self.rows.FAILING_LOG, "native-test-failure", 40.0)
         elif result == "cancelled":
             job.phases(native="cancelled")
-        row = job.row(**({"run_id": str(run_id), "job_id": str(measured_id), "run_attempt": attempt} | metadata))
+        return job.row(**({"run_id": str(run_id), "job_id": str(measured_id), "run_attempt": attempt} | metadata))
+
+    def attempt(self, run_id, measured_id, native, result="passed", attempt="1", **metadata):
+        """A measured runtime job and the history row that its artifacts give."""
+        row = self.receipt(run_id, measured_id, result, attempt, **metadata)
         if not any(run["id"] == run_id for run in self.runs):
             self.runs.append(run(run_id, "Ceph recovery", "a" * 40, at(0)))
         measured = runtime_job("Scenarios / rbd", at(0), at(1), native, attempt=int(attempt))
@@ -439,12 +443,85 @@ class CohortTests(unittest.TestCase):
                                                         incomparable, joined], "owner/repo")
         reasons = [(row["run_id"], row["reason"]) for row in result["unmatched_rows"]]
         self.assertEqual(reasons, [("101", "job is not in the measurement cache"), ("102", "row of another repository"),
-                                   ("103", "row has no job ID"), ("104", "job is not in the measurement cache"),
-                                   ("100", "another row names the same job")])
+                                   ("103", "row has no job ID"), ("104", "job is not in the measurement cache")])
+        # The identical second copy of the joined row is the same receipt:
+        # it joins nothing more and charges no runner time twice.
+        self.assertEqual((result["joined"], result["joined_rows"], result["conflicts"]), (2, 3, []))
+        self.assertEqual(result["configs"][0]["samples"][0]["receipts"], [joined["row_sha256"]])
         self.assertEqual([(job["run_id"], job["job_id"]) for job in result["unmatched_jobs"]],
                          [("100", "299"), ("102", "202"), ("103", "203"), ("104", "204")])
         self.assertEqual([row["run_id"] for row in result["incomparable"]], ["105"])
         self.assertEqual([config["attempts"] for config in result["configs"]], [1])
+
+    def comparable(self, result):
+        """A cohort result without the evidence list whose order follows the input."""
+        return {key: value for key, value in result.items() if key != "unmatched_rows"}
+
+    def test_receipt_order_never_decides_a_jobs_configuration(self):
+        complete = self.attempt(100, 200, 5)
+        incomplete = self.receipt(100, 200, checkout_commit="")
+        other = self.attempt(101, 201, 6)
+        self.assertNotEqual(complete["row_sha256"], incomplete["row_sha256"])
+        results = [measure.cohorts(self.runs, self.jobs, order, "owner/repo")
+                   for order in ([complete, incomplete, other], [incomplete, complete, other],
+                                 [other, incomplete, complete])]
+        for result in results[1:]:
+            self.assertEqual(self.comparable(result), self.comparable(results[0]))
+        result = results[0]
+        # Job 200 is owned once, by its conflict, with both receipts as evidence.
+        self.assertEqual([(entry["job_id"], entry["duration"]) for entry in result["conflicts"]], [("200", 540.0)])
+        self.assertEqual(result["conflict_runner_seconds"], 540.0)
+        self.assertEqual(sorted(receipt["row_sha256"] for receipt in result["conflicts"][0]["receipts"]),
+                         sorted([complete["row_sha256"], incomplete["row_sha256"]]))
+        self.assertEqual(sorted(receipt["config_key"] is None for receipt in result["conflicts"][0]["receipts"]),
+                         [False, True])
+        self.assertTrue(any(result["conflicts"][0]["receipts"][index]["comparability"] for index in (0, 1)))
+        # Neither the matched cohort nor the incomparable list holds it, and no
+        # row is rejected as a second one for the job.
+        self.assertEqual((result["joined"], result["incomparable"], result["unmatched_rows"],
+                          result["unmatched_jobs"]), (1, [], [], []))
+        self.assertEqual([sample["job_id"] for sample in result["configs"][0]["samples"]], ["201"])
+        self.assertIn("1 jobs have conflicting receipts (540.0 runner s)", measure.cohorts_markdown(result))
+        self.assertIn("| 100 | 1 | 200 | 540.0 |", measure.cohorts_markdown(result))
+
+    def test_receipts_disagreeing_on_the_outcome_are_a_conflict(self):
+        passed = self.attempt(100, 200, 5)
+        failed = self.receipt(100, 200, "failed")
+        for order in ([passed, failed], [failed, passed]):
+            result = measure.cohorts(self.runs, self.jobs, order, "owner/repo")
+            self.assertEqual((result["joined"], result["configs"]), (0, []))
+            self.assertEqual(sorted(receipt["kind"] for receipt in result["conflicts"][0]["receipts"]),
+                             ["assertion_failure", "passed"])
+
+    def test_agreeing_receipts_join_once_and_keep_their_provenance(self):
+        first = self.attempt(100, 200, 5)
+        second = self.receipt(100, 200, workflow="owner/repo/.github/workflows/recovery.yml@refs/heads/other")
+        retry = self.attempt(100, 201, 7, attempt="2")
+        self.assertNotEqual(first["row_sha256"], second["row_sha256"])
+        results = [measure.cohorts(self.runs, self.jobs, order, "owner/repo")
+                   for order in ([first, second, retry], [second, retry, first])]
+        self.assertEqual(self.comparable(results[1]), self.comparable(results[0]))
+        result = results[0]
+        self.assertEqual((result["joined"], result["joined_rows"], result["conflicts"]), (2, 3, []))
+        config = result["configs"][0]
+        # The two receipts add one attempt; the other run attempt stays a sample.
+        self.assertEqual([(sample["run_attempt"], sample["job_id"]) for sample in config["samples"]],
+                         [("1", "200"), ("2", "201")])
+        self.assertEqual(config["samples"][0]["receipts"], sorted([first["row_sha256"], second["row_sha256"]]))
+        self.assertEqual(config["outcomes"], {"passed": {"attempts": 2, "runner_seconds": 1200.0}})
+
+    def test_swapped_artifact_files_give_the_same_cohorts(self):
+        complete = self.attempt(100, 200, 5)
+        incomplete = self.receipt(100, 200, checkout_commit="")
+        results = []
+        for name, (first, second) in (("ordered", (complete, incomplete)), ("swapped", (incomplete, complete))):
+            history = self.root / name
+            for directory, row in (("a", first), ("b", second)):
+                (history / "artifacts" / directory).mkdir(parents=True)
+                (history / "artifacts" / directory / "history-row.json").write_text(json.dumps(row))
+            results.append(measure.cohorts(self.runs, self.jobs, measure.load_history_rows(history), "owner/repo"))
+        self.assertEqual(results[0], results[1])
+        self.assertEqual((results[0]["rows"], results[0]["joined"], len(results[0]["conflicts"])), (2, 0, 1))
 
     def test_cli_reads_stored_history_and_artifact_rows_once(self):
         rows = [self.attempt(100, 200, 5), self.attempt(101, 201, 6)]
@@ -852,6 +929,7 @@ class CohortCacheTests(unittest.TestCase):
     """Split a configuration's joined samples by the cache condition of their jobs."""
 
     setUp = CohortTests.setUp
+    receipt = CohortTests.receipt
     attempt = CohortTests.attempt
 
     def test_samples_carry_their_cache_condition_and_split_without_changing_ranges(self):

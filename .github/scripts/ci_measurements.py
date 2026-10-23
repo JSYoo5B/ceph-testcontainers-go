@@ -689,11 +689,42 @@ def load_history_rows(path):
     return list(rows.values())
 
 
+def job_order(lookup):
+    """A measured job's (run ID, run attempt, job ID) in numeric order."""
+    return tuple((int(value) if value.isdigit() else -1, value) for value in lookup)
+
+
+def receipt_reading(row):
+    """What a history row says about its job: the fields that decide the
+    sample's identity, configuration and outcome kind."""
+    key = row["execution_key"]
+    return (key.get("repetition_id"), key.get("profile_id"), key.get("network"), scenario_history.release_of(row),
+            scenario_history.attempt_kind(row), scenario_history.config_key(row))
+
+
+def receipt_summary(row):
+    key = row["execution_key"]
+    return {"row_sha256": row["row_sha256"], "repetition_id": key.get("repetition_id"),
+            "profile_id": key.get("profile_id"), "network": key.get("network"),
+            "release": scenario_history.release_of(row), "kind": scenario_history.attempt_kind(row),
+            "config_key": scenario_history.config_key(row),
+            "comparability": list(row["comparability"].get("reasons") or [])}
+
+
 def cohorts(runs, jobs, rows, repository, ledger=None):
     """Join history rows to their measured jobs and group the joined attempts
     by exact configuration (scenario_history.config_key).
 
     A row joins the job of its repository, run ID, run attempt and job ID.
+    Ownership is resolved per job before any grouping, so the order of the
+    rows or of the files they came from never decides a job's bucket: every
+    distinct row (receipt) naming one job is collected first. Receipts that
+    agree on repetition, profile, network, release, outcome kind and
+    configuration join the job once and are all kept as its provenance.
+    Receipts that disagree make the job a receipt conflict: it stays out of
+    the configurations and the incomparable list, and its runner time is
+    counted once in the conflict list with every receipt as evidence.
+
     Nothing that does not join is dropped: rows without a measured job,
     measured runtime jobs without a row and rows without a complete
     configuration identity are listed with the reason. Every outcome stays in
@@ -710,7 +741,7 @@ def cohorts(runs, jobs, rows, repository, ledger=None):
     for run_id, run_jobs in jobs.items():
         for job in run_jobs:
             measured[(run_id, str(job.get("run_attempt", 1)), str(job.get("id")))] = job
-    attempts, unmatched_rows, joined = [], [], {}
+    unmatched_rows, candidates, copies = [], defaultdict(dict), defaultdict(int)
     for row in rows:
         scenario_history.validate_row(row)
         key = row["execution_key"]
@@ -724,31 +755,46 @@ def cohorts(runs, jobs, rows, repository, ledger=None):
             reason = "row has no job ID"
         elif lookup not in measured:
             reason = "job is not in the measurement cache"
-        elif lookup in joined:
-            reason = "another row names the same job"
         elif not ran(measured[lookup]):
             reason = "job held no runner"
         if reason:
             unmatched_rows.append({**identity, "reason": reason})
             continue
+        candidates[lookup].setdefault(row["row_sha256"], row)
+        copies[lookup] += 1
+    attempts, conflicts, joined, joined_rows = [], [], {}, 0
+    for lookup in sorted(candidates, key=job_order):
+        receipts = [candidates[lookup][sha] for sha in sorted(candidates[lookup])]
         job = measured[lookup]
+        timing = {"workflow": names.get(lookup[0]), "job": job.get("name"),
+                  "duration": seconds(job["started_at"], job["completed_at"]),
+                  "acquisition": seconds(job.get("created_at"), job["started_at"])}
+        if len({receipt_reading(row) for row in receipts}) > 1:
+            conflicts.append({"run_id": lookup[0], "run_attempt": lookup[1], "job_id": lookup[2], **timing,
+                              "reason": "receipts disagree on the job's configuration or outcome",
+                              "receipts": [receipt_summary(row) for row in receipts]})
+            continue
+        row = receipts[0]
+        key = row["execution_key"]
         joined[lookup] = row
-        attempts.append({**identity, "workflow": names.get(lookup[0]), "job": job.get("name"),
-                         "release": scenario_history.release_of(row), "kind": scenario_history.attempt_kind(row),
-                         "config_key": scenario_history.config_key(row),
-                         "duration": seconds(job["started_at"], job["completed_at"]),
-                         "acquisition": seconds(job.get("created_at"), job["started_at"]), **job_phases(job)})
+        joined_rows += copies[lookup]
+        attempts.append({**{field: key.get(field) for field in ("run_id", "run_attempt", "job_id", "repetition_id",
+                                                                 "profile_id", "network")},
+                         **timing, "release": scenario_history.release_of(row),
+                         "kind": scenario_history.attempt_kind(row), "config_key": scenario_history.config_key(row),
+                         "receipts": [receipt["row_sha256"] for receipt in receipts], **job_phases(job)})
         if conditions is not None:
             attempts[-1]["cache_condition"] = cache_condition(conditions.get(lookup, ()))
+    owned = set(joined) | {(entry["run_id"], entry["run_attempt"], entry["job_id"]) for entry in conflicts}
     unmatched_jobs = [{"run_id": run_id, "run_attempt": attempt, "job_id": job_id, "job": job.get("name"),
                        "workflow": names.get(run_id)}
                       for (run_id, attempt, job_id), job in sorted(measured.items())
-                      if ran(job) and is_runtime(job) and (run_id, attempt, job_id) not in joined]
+                      if ran(job) and is_runtime(job) and (run_id, attempt, job_id) not in owned]
     groups, incomparable = defaultdict(list), []
     for attempt in attempts:
         if attempt["config_key"] is None:
             incomparable.append({field: attempt[field] for field in ("run_id", "run_attempt", "job_id",
-                                                                     "profile_id", "kind")})
+                                                                     "profile_id", "kind", "receipts")})
         else:
             groups[attempt["config_key"]].append(attempt)
     configs = []
@@ -756,7 +802,7 @@ def cohorts(runs, jobs, rows, repository, ledger=None):
                                                                    item[1][0]["network"] or "", item[0])):
         identity = scenario_history.config_identity(joined[(str(group[0]["run_id"]), str(group[0]["run_attempt"]),
                                                             str(group[0]["job_id"]))])
-        fields = ("run_id", "run_attempt", "job_id", "repetition_id", "kind")
+        fields = ("run_id", "run_attempt", "job_id", "repetition_id", "kind", "receipts")
         if conditions is not None:
             fields += ("cache_condition",)
         entry = {"config_key": config, "identity": identity, "profile_id": group[0]["profile_id"],
@@ -771,8 +817,9 @@ def cohorts(runs, jobs, rows, repository, ledger=None):
                                  for condition, part in sorted(parts.items())}
         configs.append(entry)
     return {"schema": SCHEMA, "repository": repository, "rows": len(rows), "joined": len(attempts),
-            "configs": configs, "incomparable": incomparable, "unmatched_rows": unmatched_rows,
-            "unmatched_jobs": unmatched_jobs}
+            "joined_rows": joined_rows, "configs": configs, "incomparable": incomparable, "conflicts": conflicts,
+            "conflict_runner_seconds": round(sum(entry["duration"] or 0 for entry in conflicts), 1),
+            "unmatched_rows": unmatched_rows, "unmatched_jobs": unmatched_jobs}
 
 
 def attempt_summary(group):
@@ -788,10 +835,11 @@ def attempt_summary(group):
 
 
 def cohorts_markdown(result):
-    lines = ["Joined {} of {} history rows; {} rows and {} measured runtime jobs did not join, {} joined rows "
-             "have no complete configuration.".format(result["joined"], result["rows"],
-                                                      len(result["unmatched_rows"]), len(result["unmatched_jobs"]),
-                                                      len(result["incomparable"])),
+    lines = ["Joined {} jobs from {} of {} history rows; {} rows and {} measured runtime jobs did not join, {} "
+             "joined jobs have no complete configuration, {} jobs have conflicting receipts ({} runner s)."
+             .format(result["joined"], result["joined_rows"], result["rows"], len(result["unmatched_rows"]),
+                     len(result["unmatched_jobs"]), len(result["incomparable"]), len(result["conflicts"]),
+                     result["conflict_runner_seconds"]),
              "", "| Profile | Release | Network | Config | Attempts | Outcomes | Passed job s min/median/max | "
                  "Passed native s min/median/max |",
              "| --- | --- | --- | --- | ---: | --- | ---: | ---: |"]
@@ -817,6 +865,15 @@ def cohorts_markdown(result):
             lines.append("| {} | {} | {} | {} |".format(
                 condition, entry["attempts"], outcomes,
                 "-" if not value["count"] else "{}/{}/{}".format(value["min"], value["median"], value["max"])))
+    if result["conflicts"]:
+        lines += ["", "Jobs with conflicting receipts (kept out of every configuration):", "",
+                  "| Run | Attempt | Job | Job s | Receipts (kind, config) |", "| --- | --- | --- | ---: | --- |"]
+        for entry in result["conflicts"]:
+            lines.append("| {} | {} | {} | {} | {} |".format(
+                entry["run_id"], entry["run_attempt"], entry["job_id"],
+                "-" if entry["duration"] is None else entry["duration"],
+                "; ".join("{} {} {}".format(receipt["row_sha256"][:12], receipt["kind"], receipt["config_key"] or
+                                            "incomplete") for receipt in entry["receipts"])))
     return "\n".join(lines) + "\n"
 
 
