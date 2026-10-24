@@ -93,3 +93,51 @@ func checkECRecoveredRead(want, got ecEligibleReceipt, earlier map[uint64]bool) 
 	}
 	return nil
 }
+
+// ecShardBytes is the number of object bytes that fragment index holds for an
+// object of the given logical size, following the pinned
+// stripe_info_t::object_size_to_shard_size without its final alignment (which
+// cannot turn zero into a nonzero size). A parity index has the size of data
+// index 0. Positions are the pool's own: a profile with a chunk mapping is
+// refused by the caller, because then the index is not the raw shard.
+func ecShardBytes(size, stripeWidth uint64, k, index int) (uint64, error) {
+	if k < 1 || stripeWidth == 0 || stripeWidth%uint64(k) != 0 {
+		return 0, fmt.Errorf("stripe width %d does not divide into k=%d chunks", stripeWidth, k)
+	}
+	if index < 0 {
+		return 0, fmt.Errorf("fragment index %d", index)
+	}
+	raw := uint64(index)
+	if index >= k {
+		raw = 0
+	}
+	chunk := stripeWidth / uint64(k)
+	bytes := size - size%stripeWidth
+	bytes /= uint64(k)
+	if rest := size % stripeWidth; rest > raw*chunk {
+		bytes += min(rest-raw*chunk, chunk)
+	}
+	return bytes, nil
+}
+
+// requireECShardCoverage refuses geometry in which a remaining fragment index
+// stores no byte of the object. Such an index can be satisfied by zero padding
+// without a subread, so a successful exact-K readback would not show that the
+// index contributed.
+func requireECShardCoverage(sizes []uint64, stripeWidth uint64, k int, indices []int) error {
+	if len(sizes) == 0 || len(indices) == 0 {
+		return fmt.Errorf("no object size or fragment index to check")
+	}
+	for _, size := range sizes {
+		for _, index := range indices {
+			bytes, err := ecShardBytes(size, stripeWidth, k, index)
+			if err != nil {
+				return err
+			}
+			if bytes == 0 {
+				return fmt.Errorf("fragment %d stores no byte of a %d-byte object at stripe width %d (k=%d)", index, size, stripeWidth, k)
+			}
+		}
+	}
+	return nil
+}

@@ -83,3 +83,42 @@ func TestECRecoveredReadCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestECShardCoverage(t *testing.T) {
+	// 20000 bytes, stripe width 8192 (4096-byte chunks): two full stripes and a
+	// partial one of 3616 bytes, so index 1 stores 2*4096 bytes and no more.
+	for index, want := range map[int]uint64{0: 8192 + 3616, 1: 8192, 2: 8192 + 3616} {
+		if got, err := ecShardBytes(20000, 8192, 2, index); err != nil || got != want {
+			t.Errorf("index %d: %d bytes, %v; want %d", index, got, err, want)
+		}
+	}
+	if err := requireECShardCoverage([]uint64{20000, 20000}, 8192, 2, []int{0, 1}); err != nil {
+		t.Error(err)
+	}
+	if err := requireECShardCoverage([]uint64{20000}, 8192, 2, []int{1, 2}); err != nil {
+		t.Error(err)
+	}
+	// A large chunk: 65536-byte stripes put all 20000 bytes on data index 0, so
+	// data index 1 holds nothing and cannot show a contribution.
+	if got, err := ecShardBytes(20000, 65536, 2, 1); err != nil || got != 0 {
+		t.Errorf("large-chunk index 1: %d, %v", got, err)
+	}
+	for name, run := range map[string]func() error{
+		"large chunk, data index":     func() error { return requireECShardCoverage([]uint64{20000}, 65536, 2, []int{0, 1}) },
+		"object of exactly one chunk": func() error { return requireECShardCoverage([]uint64{4096}, 8192, 2, []int{0, 1}) },
+		"empty object":                func() error { return requireECShardCoverage([]uint64{0}, 8192, 2, []int{0}) },
+		"one small size among two":    func() error { return requireECShardCoverage([]uint64{20000, 100}, 8192, 2, []int{1}) },
+		"zero stripe width":           func() error { return requireECShardCoverage([]uint64{20000}, 0, 2, []int{0}) },
+		"stripe not a multiple":       func() error { return requireECShardCoverage([]uint64{20000}, 8193, 2, []int{0}) },
+		"no indices":                  func() error { return requireECShardCoverage([]uint64{20000}, 8192, 2, nil) },
+		"no sizes":                    func() error { return requireECShardCoverage(nil, 8192, 2, []int{0}) },
+	} {
+		if run() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// The parity index keeps index 0's size even when index 1 is empty.
+	if err := requireECShardCoverage([]uint64{20000}, 65536, 2, []int{0, 2}); err != nil {
+		t.Error(err)
+	}
+}

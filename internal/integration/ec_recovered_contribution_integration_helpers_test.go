@@ -34,6 +34,47 @@ func ecRunningInstance(ctx context.Context, osd *ceph.OSDContainer) (ecInstance,
 	return ecInstance{Pid: state.Pid, Started: state.StartedAt}, nil
 }
 
+// ecStripeGeometry reads the pool's effective stripe width and refuses a
+// profile with a chunk mapping, where a fragment index is not the raw shard.
+func ecStripeGeometry(t *testing.T, ctx context.Context, cluster *ceph.Container, pool *ceph.Pool) uint64 {
+	t.Helper()
+	detail, err := cluster.Ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pools []struct {
+		Name        string  `json:"pool_name"`
+		StripeWidth *uint64 `json:"stripe_width"`
+		Profile     string  `json:"erasure_code_profile"`
+	}
+	if err := json.Unmarshal(detail, &pools); err != nil {
+		t.Fatalf("osd pool ls detail: %v: %.2048s", err, detail)
+	}
+	i := slices.IndexFunc(pools, func(p struct {
+		Name        string  `json:"pool_name"`
+		StripeWidth *uint64 `json:"stripe_width"`
+		Profile     string  `json:"erasure_code_profile"`
+	}) bool {
+		return p.Name == pool.Name
+	})
+	if i < 0 || pools[i].StripeWidth == nil || *pools[i].StripeWidth == 0 {
+		t.Fatalf("pool %s has no readable stripe_width: %.2048s", pool.Name, detail)
+	}
+	profile, err := cluster.Ceph(ctx, "osd", "erasure-code-profile", "get", pools[i].Profile, "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var native map[string]string
+	if err := json.Unmarshal(profile, &native); err != nil {
+		t.Fatalf("erasure-code-profile get: %v: %.2048s", err, profile)
+	}
+	if native["mapping"] != "" {
+		t.Fatalf("profile %s has a chunk mapping %q: fragment indices are not raw shards", pools[i].Profile, native["mapping"])
+	}
+	t.Logf("EC_CONTRIBUTION_GEOMETRY pool %s stripe_width %d chunk %d", pool.Name, *pools[i].StripeWidth, *pools[i].StripeWidth/2)
+	return *pools[i].StripeWidth
+}
+
 // ecContributionReceipt is printed on every outcome, with whatever the run
 // reached, before the cluster is destroyed.
 type ecContributionReceipt struct {
@@ -52,6 +93,7 @@ type ecContributionReceipt struct {
 	ReadbackHead    string   `json:"readback_head_sha256,omitempty"`
 	ReadbackSnap    string   `json:"readback_snap_sha256,omitempty"`
 	ReadbackClients []uint64 `json:"readback_clients,omitempty"`
+	StripeWidth     uint64   `json:"stripe_width"`
 	Stage           string   `json:"stage"`
 }
 
@@ -146,6 +188,15 @@ func testECRecoveredContribution(t *testing.T) {
 	}
 	written := ecEligiblePhase(t, ctx, cluster, client, name, "write", nil)
 	remember(written)
+	// The witness needs every remaining index to store bytes of this object;
+	// otherwise zero padding could stand in for it. The overwrite keeps the size.
+	receipt.StripeWidth = ecStripeGeometry(t, ctx, cluster, pool)
+	if written.Size <= 0 {
+		t.Fatalf("write receipt has no object size: %+v", written)
+	}
+	if err := requireECShardCoverage([]uint64{uint64(written.Size)}, receipt.StripeWidth, 2, plan.Remaining); err != nil {
+		t.Fatal(err)
+	}
 
 	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if noout != nil {
