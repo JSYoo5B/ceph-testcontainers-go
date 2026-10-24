@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "test": "TestWorkload/case_1",
+  "cluster": "0123456789abcdef0123",
+  "execution": {
+    "id": "23d2f51aaa093891",
+    "started_at": "2026-10-24T14:42:01.163894Z",
+    "go_version": "go1.27.3",
+    "platform": "darwin/arm64"
+  },
+  "images": {
+    "Essential": "example.invalid/ceph:test",
+    "Client": "",
+    "CephFS": "",
+    "RBDAux": "",
+    "RGW": "",
+    "All": ""
+  },
+  "missing_provenance": [
+    "source revision",
+    "CI run identity",
+    "scenario",
+    "bug compatibility selection"
+  ],
+  "phase": "before-cleanup",
+  "trigger": {
+    "test_failed": true,
+    "check_failed": false,
+    "cleanup_failed": false,
+    "check_reported_failure": false,
+    "cleanup_reported_failure": false
+  },
+  "checks": [],
+  "archive": {
+    "id": "ceph-0123456789ab-23d2f51aaa093891",
+    "retained": true,
+    "timeout": "3m0s",
+    "started_at": "2026-10-24T14:42:01.163953Z",
+    "finished_at": "2026-10-24T14:42:01.164897Z",
+    "cluster_closed": false,
+    "complete": false
+  },
+  "collectors": [
+    {
+      "name": "diagnostics",
+      "file": "diagnostics.json",
+      "started_at": "2026-10-24T14:42:01.164113Z",
+      "finished_at": "2026-10-24T14:42:01.164231Z",
+      "reported": true,
+      "complete": true
+    },
+    {
+      "name": "crash-metadata",
+      "file": "crash-metadata.json",
+      "started_at": "2026-10-24T14:42:01.164111Z",
+      "finished_at": "2026-10-24T14:42:01.16413Z",
+      "reported": true,
+      "complete": true,
+      "crash_outcomes": {
+        "empty": 1,
+        "records": 1
+      }
+    }
+  ],
+  "files": [
+    {
+      "name": "diagnostics.json",
+      "bytes": 0,
+      "error": "no space left on device"
+    },
+    {
+      "name": "crash-metadata.json",
+      "bytes": 693
+    }
+  ],
+  "cleanups": [],
+  "debug_windows": [],
+  "termination": {
+    "name": "terminate",
+    "started_at": "2026-10-24T14:42:01.165154Z",
+    "finished_at": "2026-10-24T14:42:01.16517Z",
+    "failed_test": false
+  },
+  "final": true,
+  "notes": [
+    "The reports are a snapshot taken during finalization: observations are not atomic and log tails are not continuous history.",
+    "No crash records is not proof that a daemon never crashed; a removed container takes its records along.",
+    "Cleanup and termination outcomes were recorded after the snapshot; nothing was collected after termination.",
+    "Nothing is archived after a forced process exit or a lost runner."
+  ]
+}
