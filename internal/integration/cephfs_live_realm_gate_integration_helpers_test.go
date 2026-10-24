@@ -1,4 +1,4 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_live_realm_gate))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_live_realm_gate || ci_batch_cephfs_live_realm_removal))))
 
 package integration_test
 
