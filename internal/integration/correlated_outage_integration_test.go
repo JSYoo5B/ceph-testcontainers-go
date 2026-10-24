@@ -192,7 +192,12 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	}
 	osdAID, _ := strconv.Atoi(osdA.Name)
 	start := time.Now()
-	plan := newOutagePlan(func() time.Duration { return time.Since(start) }, []outageMember{monA, mgrA, osdA})
+	// The stops run OSD, MGR, MON and the restores run in reverse, so the MON
+	// starts first. The primary MON is pinned to its bridge address, and Docker
+	// hands a released address to whichever container starts first: a native
+	// run that started the OSD and MGR before the MON failed with "Address
+	// already in use" because one of them had taken that address.
+	plan := newOutagePlan(func() time.Duration { return time.Since(start) }, []outageMember{osdA, mgrA, monA})
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer stop()
@@ -203,8 +208,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	version := cluster.CephVersion()
 	platform := strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm")))
 	manifestJSON, _ := json.Marshal(manifest)
-	t.Logf("CORRELATED_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s plan=mon.%s,mgr.%s,osd.%s election_leader=%s election_epoch=%d active_mgr_gid=%d manifest=%s",
-		version, platform, imageID(t, ctx, cluster.Container), imageID(t, ctx, client), monA.Name, mgrA.Name, osdA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
+	t.Logf("CORRELATED_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s plan=osd.%s,mgr.%s,mon.%s election_leader=%s election_epoch=%d active_mgr_gid=%d manifest=%s",
+		version, platform, imageID(t, ctx, cluster.Container), imageID(t, ctx, client), osdA.Name, mgrA.Name, monA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
 
 	// Baseline: seed the placement pool, then run the retained client.
 	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "seed")
