@@ -71,6 +71,11 @@ type retainedClientReceipt struct {
 	Waits          []retainedMapWait  `json:"waits,omitempty"`
 	RestoreStarted bool               `json:"restore_started,omitempty"`
 	RestoreError   string             `json:"restore_error,omitempty"`
+	// MapEvidence has one entry for each map wait that failed, in the order
+	// of the waits, so the full-map and the drained-map incidents stay apart.
+	MapEvidence []retainedMapEvidence `json:"map_evidence,omitempty"`
+
+	mapBaselines map[string]mapEvidenceBaseline
 }
 
 func newRetainedClientReceipt(client, inode uint64, pool int64) *retainedClientReceipt {
