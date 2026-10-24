@@ -147,6 +147,17 @@ func TestECEligibleFragmentVerdicts(t *testing.T) {
 			ecWant(t, c, ecSufficient, ecBehind, 1)
 		}
 	})
+	t.Run("a clean PG outranks a stale peer last_complete", func(t *testing.T) {
+		// Shaped after what a recovered PG reported natively: active+clean
+		// while the primary still held the peer's pre-failure last_complete.
+		stale := ecFixtureShard{2, 1, "14'10", "12'7", "MAX"}
+		head, _ := ecFixtureClassify(t, observe(t, "active+clean", clean, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), stale, ecFixtureComplete(0, 2)), 2)
+		ecWant(t, head, ecSufficient, ecEligible, 0, 1, 2)
+		head, _ = ecFixtureClassify(t, observe(t, "active+clean+scrubbing", clean, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), ecFixtureShard{2, 1, "12'7", "12'7", "MAX"}, ecFixtureComplete(0, 2)), 2)
+		ecWant(t, head, ecSufficient, ecBehind, 1)
+	})
 	t.Run("each snapshot has its own required version", func(t *testing.T) {
 		// The restored fragment is complete through the clone but not the head.
 		between := ecFixtureShard{2, 1, "14'10", "14'9", "MAX"}

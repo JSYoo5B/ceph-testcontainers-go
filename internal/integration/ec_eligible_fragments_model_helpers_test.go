@@ -453,6 +453,11 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 			return result
 		}
 	}
+	// The primary does not advance a peer's last_complete when recovery
+	// finishes (observed natively: active+clean with a peer still at the
+	// pre-failure last_complete), so a lagging last_complete is only
+	// evidence of a missing object while the PG is not clean.
+	clean := slices.Contains(states, "clean")
 	candidates := 0
 	for fragment := range acting {
 		entry := ecFragment{Index: fragment, OSD: -1, Status: ecUnobserved}
@@ -466,7 +471,9 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 			switch {
 			case l.info.LastBackfill != "MAX":
 				status = ecUnbackfilled
-			case lastUpdate.less(need) || lastComplete.less(need):
+			case lastUpdate.less(need):
+				status = ecBehind
+			case lastComplete.less(need) && !clean:
 				status = ecBehind
 			}
 			if status == ecEligible || entry.Status != ecEligible {
