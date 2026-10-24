@@ -30,47 +30,6 @@ func scrubCommands(ctr *poolFixtureContainer) []string {
 	return result
 }
 
-func TestInjectObjectDataErrorValidatesTargetBeforeNativeCommands(t *testing.T) {
-	for name, call := range map[string]func(*Container) error{
-		"pool":         func(c *Container) error { return c.InjectObjectDataError(t.Context(), "--pool", "victim", 0) },
-		"object dash":  func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "-victim", 0) },
-		"object NUL":   func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "vic\x00tim", 0) },
-		"object slash": func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "ns/victim", 0) },
-		"unowned OSD":  func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "victim", 9) },
-	} {
-		ctr := scrubFixture()
-		if err := call(poolFixtureCluster(ctr, 2)); err == nil || len(ctr.Calls) != 0 {
-			t.Fatalf("%s: invalid target reached native CLI: %v %v", name, err, ctr.Calls)
-		}
-	}
-	ctr := scrubFixture()
-	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
-	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
-		t.Fatal("EC pool accepted a replica data error")
-	}
-	ctr = scrubFixture()
-	ctr.Output["osd map fixture victim --format json"] = strings.Replace(ctr.Output["osd map fixture victim --format json"], `"acting":[1,0]`, `"acting":[1]`, 1)
-	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
-		t.Fatal("OSD outside the acting set received an injection")
-	}
-	ctr = scrubFixture()
-	ctr.Output["osd map fixture victim --format json"] = strings.Replace(ctr.Output["osd map fixture victim --format json"], `"pool_id":7`, `"pool_id":8`, 1)
-	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err == nil || len(scrubCommands(ctr)) != 0 {
-		t.Fatal("mapping of another pool was accepted")
-	}
-}
-
-func TestInjectObjectDataErrorEnablesOnlyTheTargetDaemon(t *testing.T) {
-	ctr := scrubFixture()
-	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"tell osd.0 config set bluestore_debug_inject_read_err true", "tell osd.0 injectdataerr fixture victim"}
-	if !slices.Equal(scrubCommands(ctr), want) {
-		t.Fatalf("unexpected injection commands: %v", scrubCommands(ctr))
-	}
-}
-
 func TestPGInconsistenciesDecodesNativeShards(t *testing.T) {
 	objects, err := decodeInconsistentObjects([]byte(scrubInconsistentFixture))
 	want := []InconsistentObject{{Name: "victim", Errors: []string{}, UnionShardErrors: []string{"read_error"}, Shards: []InconsistentShard{

@@ -38,9 +38,10 @@ func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T
 func TestPublicFaultsRefuseSharedCluster(t *testing.T) {
 	c := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
 	for name, apply := range map[string]func() error{
-		"fault.ApplyNetworkProfile": func() error { _, err := ApplyNetworkProfile(t.Context(), c, nil, NetworkProfile{}); return err },
-		"fault.Pause":               func() error { _, err := Pause(t.Context(), c, nil); return err },
-		"fault.InterruptNetwork":    func() error { _, err := InterruptNetwork(t.Context(), c, nil, ""); return err },
+		"fault.ApplyNetworkProfile":   func() error { _, err := ApplyNetworkProfile(t.Context(), c, nil, NetworkProfile{}); return err },
+		"fault.Pause":                 func() error { _, err := Pause(t.Context(), c, nil); return err },
+		"fault.InterruptNetwork":      func() error { _, err := InterruptNetwork(t.Context(), c, nil, ""); return err },
+		"fault.InjectObjectDataError": func() error { return InjectObjectDataError(t.Context(), c, "", "", 0) },
 	} {
 		err := apply()
 		var op *ceph.OperationError
