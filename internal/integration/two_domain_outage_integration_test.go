@@ -22,7 +22,9 @@ const twoDomainPool = "tc-two-domain-ledger"
 // of three logical hosts, one after the other, while a retained librados
 // client outside the stopped containers keeps writing unique objects into a
 // ledger. One MON of three cannot form a quorum and one OSD of three is below
-// the pool's min_size of two, so no write can be acknowledged. The hosts are
+// the pool's min_size of two, so no write can be acknowledged while the outage
+// is fully applied. A write still pending when the restoration starts may be
+// acknowledged afterwards; it is counted apart and never credited to the outage. The hosts are
 // labels on one container engine: this is a correlated stop of six daemons and
 // says nothing about a physical host, rack, power or switch failure.
 //

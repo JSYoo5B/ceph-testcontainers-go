@@ -224,13 +224,20 @@ func TestTwoDomainLedgerOutcomes(t *testing.T) {
 		t.Fatalf("outcomes %+v, want %+v", out, want)
 	}
 
-	// An acknowledgement of an operation that began under the fully applied
-	// outage is an error, whatever token it returned under, but is still counted.
-	for _, after := range []string{outagePhaseOutage, outagePhaseRestoring} {
-		broken := append(slices.Clone(ops), twoDomainOp(6, outagePhaseOutage, after, true, ""))
-		out, err := twoDomainLedgerOutcomes(broken)
-		if err == nil || !strings.Contains(err.Error(), "r-00006") || out.Acked != 1 {
-			t.Fatalf("acknowledged outage write under %q: %+v %v", after, out, err)
+	// An acknowledgement that returned under the outage token is an error,
+	// but is still counted.
+	broken := append(slices.Clone(ops), twoDomainOp(6, outagePhaseOutage, outagePhaseOutage, true, ""))
+	out, err = twoDomainLedgerOutcomes(broken)
+	if err == nil || !strings.Contains(err.Error(), "r-00006") || out.Acked != 1 {
+		t.Fatalf("acknowledged outage write: %+v %v", out, err)
+	}
+	// One that returned only after the restoring token was issued was pending
+	// when the restoration began: reported, not refused, not credited.
+	for _, after := range []string{outagePhaseRestoring, outagePhaseRecovered} {
+		late := append(slices.Clone(ops), twoDomainOp(6, outagePhaseOutage, after, true, ""))
+		out, err := twoDomainLedgerOutcomes(late)
+		if err != nil || out.LateAcked != 1 || out.Acked != 0 || out.Begun != 3 {
+			t.Fatalf("late acknowledgement under %q: %+v %v", after, out, err)
 		}
 	}
 	// No operation began under the outage token: nothing to attribute yet.

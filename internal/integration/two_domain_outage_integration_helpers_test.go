@@ -164,10 +164,16 @@ func waitStableRounds(w majorityWait, observe func() majorityRound, evaluate fun
 // token, which the controller issues after every stop was observed, are
 // attributed to the fully applied outage.
 type twoDomainOutcomes struct {
-	// Begun, Acked, Failed and Inflight are operations that began under the
-	// outage token and, respectively, were all started, returned without an
-	// error, raised, or had no return record.
+	// Begun counts operations that began under the outage token. Acked,
+	// Failed and Inflight split them into operations that returned without
+	// an error before the restoring token was issued, raised, or had no
+	// return record.
 	Begun, Acked, Failed, Inflight int
+	// LateAcked are operations that began under the outage token and returned
+	// without an error only after the restoring token was issued. They were
+	// pending when the restoration started, so the acknowledgement may be a
+	// consequence of it; they are reported and never credited to the outage.
+	LateAcked int
 	// OverlapAcked are operations that began under the applying token and
 	// returned an acknowledgement after the outage token was issued. They
 	// overlapped the injection and are reported, never credited to the outage.
@@ -175,10 +181,13 @@ type twoDomainOutcomes struct {
 }
 
 // twoDomainLedgerOutcomes tallies the ledger. An acknowledgement of an
-// operation that began under the outage token is an error: with two of the
-// three replicas stopped no write can be acknowledged by the pool's min_size,
-// so such a record would mean a stopped replica or a wrong classification.
-// The operation is still reported in the counts that are returned.
+// operation that began and returned under the outage token is an error: with
+// two of the three replicas stopped no write can be acknowledged by the pool's
+// min_size, so such a record would mean a stopped replica or a wrong
+// classification. An operation that began under the outage token but returned
+// only after the restoring token is not an error, because the cluster was
+// being restored by then; it is counted as LateAcked. The counts are returned
+// either way.
 func twoDomainLedgerOutcomes(ops []outageOp) (twoDomainOutcomes, error) {
 	var out twoDomainOutcomes
 	var acked []string
@@ -186,11 +195,13 @@ func twoDomainLedgerOutcomes(ops []outageOp) (twoDomainOutcomes, error) {
 		switch {
 		case op.Phase == outagePhaseOutage:
 			out.Begun++
-			switch op.Outcome() {
-			case "acked":
+			switch {
+			case op.Outcome() == "acked" && op.PhaseAfter == outagePhaseOutage:
 				out.Acked++
 				acked = append(acked, op.Op)
-			case "failed":
+			case op.Outcome() == "acked":
+				out.LateAcked++
+			case op.Outcome() == "failed":
 				out.Failed++
 			default:
 				out.Inflight++
@@ -200,7 +211,7 @@ func twoDomainLedgerOutcomes(ops []outageOp) (twoDomainOutcomes, error) {
 		}
 	}
 	if len(acked) > 0 {
-		return out, fmt.Errorf("%d operation(s) that began under the fully applied outage were acknowledged: %v", len(acked), acked)
+		return out, fmt.Errorf("%d operation(s) that began and returned under the fully applied outage were acknowledged: %v", len(acked), acked)
 	}
 	return out, nil
 }
