@@ -523,8 +523,8 @@ argument is a `ceph.OSDObjectStore`:
   killed, or whose container is removed, loses it.
 - MemStore cannot be combined with
   [WithOSDInMemoryStorage](#withosdinmemorystorage) or
-  [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [InjectObjectDataError](#injectobjectdataerror) needs
-  BlueStore.
+  [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
+  needs BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
 #### WithConfigFile
@@ -1492,7 +1492,7 @@ that only read state stay available.
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `MonitorsContext`, `Managers`, `ManagersContext`, `OSDs`, `OSDsContext`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
-| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager`, `InjectObjectDataError` | Change the topology or damage data. |
+| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
 Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
@@ -3736,36 +3736,13 @@ wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
 
 ### Container Methods: Scrub inconsistencies
 
-These methods reproduce a damaged replica so that monitoring, client behaviour on
-an inconsistent PG, or repair automation can be tested without corrupting a disk
-or stopping an OSD. Get an object's PG and acting set with
+These methods scrub, inspect and repair PGs. A damaged replica to observe with
+them comes from [fault.InjectObjectDataError](fault.md#injectobjectdataerror),
+which makes it possible to test monitoring, client behaviour on an inconsistent
+PG, or repair automation without corrupting a disk or stopping an OSD. Get an
+object's PG and acting set with
 `cluster.Ceph(ctx, "osd", "map", pool, object, "--format", "json")` (fields
 `pgid`, `acting` and `acting_primary`).
-
-#### InjectObjectDataError
-
-```golang
-func (c *Container) InjectObjectDataError(ctx context.Context, pool, object string, osdID int) error
-```
-
-Makes one replica of an existing object on an owned OSD return a read error to
-scrub and recovery, through Ceph's `injectdataerr` debug command. It needs
-BlueStore OSDs and refuses a cluster that uses `ceph.OSDMemStore`. The OSD must be
-in the object's current acting set, and the pool must be replicated (EC pools are
-refused). The method enables `bluestore_debug_inject_read_err` on that daemon only,
-at runtime, until it restarts; the setting affects only objects with an injected
-error. The injection lives in OSD memory until the replica is rewritten (for
-example by [RepairPG](#repairpg)) or the OSD restarts. Object names that are
-empty, contain NUL or start with `-` are refused.
-
-Observed behaviour on Ceph 20.2.4:
-
-- An error on a non-primary replica does not affect client reads served by the
-  primary. A deep scrub reports `read_error` on that shard, the PG becomes
-  `active+clean+inconsistent`, and health reports `OSD_SCRUB_ERRORS` and
-  `PG_DAMAGED`.
-- An error on the primary does not make client reads fail, and a later deep scrub
-  reports no inconsistency. Inject into a replica to leave scrub evidence.
 
 #### DeepScrubPG
 
@@ -3817,6 +3794,14 @@ and full ratios, see [Fault injection](guides/fault-injection.md).
 [`fault.Pause`](fault.md#pause) freezes a daemon or client
 with the existing cluster's ownership and cleanup lifetime. Its
 `*fault.PauseLease` handle resumes the process with `Resume`.
+
+#### Object read errors
+
+[`fault.InjectObjectDataError`](fault.md#injectobjectdataerror) marks one
+replica of an object so that scrub and recovery see a read error. It is a
+one-shot injection with no handle; observe it with
+[DeepScrubPG](#deepscrubpg) and [PGInconsistencies](#pginconsistencies) and
+rewrite the replica with [RepairPG](#repairpg).
 
 #### Network faults
 
@@ -4944,7 +4929,7 @@ replica := mapping.Acting[0]
 if replica == mapping.ActingPrimary {
 	replica = mapping.Acting[1]
 }
-if err := cluster.InjectObjectDataError(ctx, "app", "victim", replica); err != nil {
+if err := fault.InjectObjectDataError(ctx, cluster, "app", "victim", replica); err != nil {
 	t.Fatal(err)
 }
 if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {

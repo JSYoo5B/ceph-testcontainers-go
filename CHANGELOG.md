@@ -450,6 +450,18 @@ change the API.
 
 ### Changed
 
+- `ceph.Container.InjectObjectDataError` moves to
+  `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)`, following the
+  maintainer decision on #9 that dedicated synthetic-error injection belongs in
+  `fault`. This is a source-breaking move for the next minor release: there is
+  no deprecated wrapper or alias in `ceph` (it would need `ceph` to import
+  `fault`), and published release tags are unchanged. Behavior is unchanged,
+  including the slash refusal for object names: shared-cluster admission with
+  its existing policy, BlueStore, owned OSD, replicated pool and object
+  mapping checks, topology serialization, partial-failure results, and the
+  one-shot contract with no handle, registry entry or Restore. Recover with
+  `RepairPG` or an OSD restart. See the [migration table](docs/fault.md).
+
 - OSD launch preparation captures immutable input values and reconstructs fresh
   file Readers and request state. Copies of a launch share one creation-attempt
   guard, so an uncertain start is not replayed and an existing descriptor is

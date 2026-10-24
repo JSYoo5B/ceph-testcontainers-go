@@ -260,7 +260,7 @@ const (
 // including OSDs added later. WithOSDBlockSize sets the capacity of a
 // MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage or
 // WithOSDVolumeStorage, which place BlueStore files in shared volumes.
-// InjectObjectDataError needs BlueStore.
+// fault.InjectObjectDataError needs BlueStore.
 func WithOSDObjectStore(store OSDObjectStore) Option {
 	return func(o *options) error {
 		if store != OSDBlueStore && store != OSDMemStore {

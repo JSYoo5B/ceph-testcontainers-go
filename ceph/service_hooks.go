@@ -337,6 +337,8 @@ type testClusterConfig = struct {
 	// and whose CRUSH location is OSDPlacement.
 	OSDs         int
 	OSDPlacement OSDConfig
+	// MemStore selects the OSDMemStore object store instead of BlueStore.
+	MemStore bool
 }
 
 // TestCluster builds a cluster value for the service packages' unit tests.
@@ -345,6 +347,9 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 		startupTimeout: config.StartupTimeout, hostNetwork: config.HostNetwork, publicAddress: config.PublicAddress,
 		controlImage: "unit-all", osdImage: "unit-all", mdsImage: "unit-all", rgwImage: "unit-all",
 	}}
+	if config.MemStore {
+		c.settings.osdObjectStore = OSDMemStore
+	}
 	if config.Shared {
 		c.sharing.Store(int32(sharedWithTenants))
 	}
