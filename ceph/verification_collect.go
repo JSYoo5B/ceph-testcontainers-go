@@ -386,7 +386,7 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	stop := context.AfterFunc(opCtx, func() { _ = reader.Close() })
 	defer stop()
 	counted := &countingReader{r: io.LimitReader(reader, config.MaxLogBytes+1)}
-	malformed, outside, cut := 0, 0, 0
+	malformed, outside, cut, unrecognized := 0, 0, 0, 0
 	line := func(data []byte, truncated bool) {
 		if truncated {
 			// The rest of the line was not read, whatever its prefix holds.
@@ -402,18 +402,22 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 			outside++
 			return
 		}
-		for _, kind := range verificationLogEvents {
-			if kind.pattern.MatchString(text) {
-				e := verificationEvent{source: target.source, containerID: target.id, event: string(kind.event), time: when.UTC().Format(time.RFC3339Nano)}
-				// Expectations match the whole redacted line; only the text
-				// that the report keeps is bounded.
-				e.match = redact(strings.TrimRight(text, "\r"))
-				e.text, e.truncated = diagnosticBoundText(e.match, maxFindingText)
-				e.truncated = e.truncated || truncated
-				emit(e)
-				return
-			}
+		raw := strings.TrimRight(text, "\r")
+		kind, _, _, unclassified := classifyVerificationLine(raw)
+		if unclassified {
+			unrecognized++
+			return
 		}
+		if kind == "" {
+			return
+		}
+		e := verificationEvent{source: target.source, containerID: target.id, event: string(kind), time: when.UTC().Format(time.RFC3339Nano)}
+		// Expectations match the whole redacted line; only the text
+		// that the report keeps is bounded.
+		e.match = redact(raw)
+		e.text, e.truncated = diagnosticBoundText(e.match, maxFindingText)
+		e.truncated = e.truncated || truncated
+		emit(e)
 	}
 	streams := map[byte]*verificationLines{1: {emit: line}, 2: {emit: line}}
 	if tty {
@@ -452,6 +456,9 @@ func readVerificationLogs(ctx context.Context, docker verificationDocker, target
 	}
 	if malformed > 0 {
 		err = errors.Join(err, fmt.Errorf("%d log lines have no valid timestamp", malformed))
+	}
+	if unrecognized > 0 {
+		err = errors.Join(err, fmt.Errorf("%d log lines carry an [ERR], [SEC] or [WRN] marker without a supported log envelope, so their severity was not classified", unrecognized))
 	}
 	if cut > 0 {
 		err = errors.Join(err, fmt.Errorf("%d log lines are longer than %d bytes; their rest was not read", cut, maxVerificationLine))

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const ownershipWarning = "0 log_channel(cluster) log [WRN] : Health check failed: 1 osds down (OSD_DOWN)"
+var ownershipWarning = daemonLogLine("cluster", "WRN", "Health check failed: 1 osds down (OSD_DOWN)")
 
 func ownershipFixture() *verifyFixture {
 	fx := newVerifyFixture()
