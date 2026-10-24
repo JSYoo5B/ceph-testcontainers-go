@@ -1686,6 +1686,107 @@ class BugCompatibilityMatrixEntryTests(unittest.TestCase):
             self.assertNotIn("-tags", engine.go_environment()["GOFLAGS"])
 
 
+class DispatchInventoryTests(unittest.TestCase):
+    """tag-plan.json is saved before network and repetition expansion; the
+    dispatch inventory is the expanded matrix that GitHub receives."""
+
+    def catalog(self, themes=False):
+        files = []
+        for index, theme in enumerate(engine.REPRESENTATIVE_THEMES if themes else ()):
+            file = fixture(path="internal/integration/" + theme + "_test.go", tests=("TestTheme" + str(index),),
+                           batch="theme_" + str(index))
+            file["metadata"] = ["timeout=20m job-timeout=30 representative=" + theme]
+            files.append(file)
+        files.append(fixture())
+        for file in files:
+            file["networks"], file["network_tests"] = ["host", "bridge"], [file["tests"][0]]
+        return files
+
+    def plan(self, scope, selection=("--category", "short"), environment=None, themes=False):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "load_catalog", return_value=self.catalog(themes)), \
+                patch.dict(os.environ, environment or {}), patch("sys.stdout", new=io.StringIO()), \
+                patch("sys.stderr", new=io.StringIO()):
+            base, github, dispatch = (Path(temporary) / name for name in ("plan.json", "github", "sub/dispatch.json"))
+            code = engine.main(["plan", *selection, "--networks", scope, "--output", str(base),
+                                "--github-output", str(github), "--dispatch-output", str(dispatch)])
+            return (code, base.read_text() if base.exists() else None,
+                    json.loads(github_outputs(github)["matrix"])["include"] if github.exists() else None,
+                    json.loads(dispatch.read_text()) if dispatch.exists() else None)
+
+    @staticmethod
+    def multiset(entries):
+        return sorted(json.dumps({field: entry[field] for field in engine.DISPATCH_FIELDS}, sort_keys=True)
+                      for entry in entries)
+
+    def test_base_plan_is_identical_across_scopes_but_the_inventory_is_not(self):
+        default, everything = self.plan("default"), self.plan("all")
+        self.assertEqual((default[0], everything[0]), (0, 0))
+        self.assertEqual(default[1], everything[1])
+        self.assertEqual([len(default[2]), len(everything[2])], [1, 2])
+        self.assertEqual([default[3]["count"], everything[3]["count"]], [1, 2])
+        self.assertEqual([default[3]["networks"], everything[3]["networks"]], ["default", "all"])
+        self.assertEqual(engine.DISPATCH_SCHEMA, everything[3]["schema"])
+        self.assertEqual([entry["network"] for entry in everything[3]["entries"]], ["host", "bridge"])
+        self.assertEqual(everything[3]["entries"][1]["tests"], "TestNewFeature")
+        self.assertEqual(everything[3]["selected_profiles"], 1)
+
+    def test_inventory_equals_the_emitted_matrix_for_every_scope_and_campaign(self):
+        for scope in engine.NETWORK_SCOPES:
+            for selection, themes, repetitions in ((("--category", "short"), False, 1),
+                                                   (("--representative", "--repetitions", "3"), True, 3)):
+                with self.subTest(scope=scope, repetitions=repetitions):
+                    code, _, matrix, inventory = self.plan(scope, selection, themes=themes)
+                    self.assertEqual(code, 0)
+                    self.assertEqual(inventory["repetitions"], repetitions)
+                    self.assertEqual(inventory["count"], len(matrix))
+                    self.assertEqual(self.multiset(inventory["entries"]), self.multiset(matrix))
+                    if repetitions > 1:
+                        self.assertEqual({entry["repetition"] for entry in inventory["entries"]}, {"1", "2", "3"})
+                        self.assertEqual(len(matrix), 3 * len(engine.REPRESENTATIVE_THEMES) * (2 if scope == "all" else 1))
+
+    def test_workflow_metadata_binds_the_inventory(self):
+        environment = {"GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "2", "SCENARIO_RELEASE": "tentacle",
+                       "SCENARIO_CATEGORY": "short", "GITHUB_REPOSITORY": "owner/repository", "GITHUB_SHA": "abc"}
+        with patch.dict(os.environ, {name: "" for name in environment}):
+            absent = self.plan("default")[3]["context"]
+        self.assertEqual(set(absent.values()), {None})
+        present = self.plan("default", environment=environment)[3]["context"]
+        self.assertEqual(present, {"repository": "owner/repository", "sha": "abc", "run_id": "7",
+                                   "run_attempt": "2", "category": "short", "release": "tentacle"})
+
+    def test_empty_selection_is_an_inventory_and_failed_expansion_is_not(self):
+        with patch.dict(os.environ, {}):
+            empty = engine.dispatch_inventory({"include": []}, [], "all", 1)
+        self.assertEqual((empty["count"], empty["entries"], empty["selected_profiles"]), (0, [], 0))
+        # A campaign over the job bound fails the expansion after the base plan
+        # was saved: the base plan exists, the inventory does not.
+        with patch.object(engine, "MAX_CAMPAIGN_JOBS", 2):
+            code, base, matrix, inventory = self.plan("all", ("--representative", "--repetitions", "3"), themes=True)
+        self.assertEqual(code, 1)
+        self.assertIsNotNone(base)
+        self.assertEqual((matrix, inventory), (None, None))
+
+    def test_dispatch_output_requires_the_matrix_output(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(engine, "load_catalog", return_value=[fixture()]), \
+                patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()) as error:
+            dispatch = Path(temporary) / "dispatch.json"
+            self.assertEqual(engine.main(["plan", "--category", "short", "--dispatch-output", str(dispatch)]), 1)
+            self.assertFalse(dispatch.exists())
+            self.assertIn("requires --github-output", error.getvalue())
+
+    def test_without_the_option_nothing_is_written_and_the_base_plan_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(engine, "load_catalog", return_value=self.catalog()), \
+                patch("sys.stdout", new=io.StringIO()):
+            plain = Path(temporary) / "plain.json"
+            self.assertEqual(engine.main(["plan", "--category", "short", "--output", str(plain),
+                                          "--github-output", str(Path(temporary) / "github")]), 0)
+            self.assertEqual(sorted(path.name for path in Path(temporary).iterdir()), ["github", "plain.json"])
+            self.assertEqual(plain.read_text(), self.plan("default")[1])
+            self.assertNotIn("dispatch", plain.read_text())
+
+
 class BugCompatibilityRegistryTests(unittest.TestCase):
     def test_malformed_registry_is_refused(self):
         def document(**changes):

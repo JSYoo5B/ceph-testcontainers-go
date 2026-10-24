@@ -1170,7 +1170,7 @@ falls back to libcephfs. Outside the tag runner, build it with the
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity, labelled resources before and after, and anything left behind |
 | `runtime-cleanup-<id>-baseline` | Uploaded only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with the resolved role image IDs, digests and platform |
-| `plan-<category>` | `tag-plan.json` from the `Plan` job, and `modules/` when it downloaded the modules |
+| `plan-<category>-<release>` | `tag-plan.json` (the selected profiles, before network and repetition expansion) and `tag-dispatch.json` (the expanded matrix that was dispatched, with the network scope, repetitions and run, attempt, release and category; absent when expansion failed, `count` 0 when the selection is empty) from the `Plan` job, and `modules/` when it downloaded the modules |
 | `code-tag-coverage` | `tag-plan.json` with compiled coverage, and the `code` batch results (Code checks) |
 
 Every upload explicitly retains its artifact for 7 days, or 14 days if the

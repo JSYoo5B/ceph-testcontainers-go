@@ -48,6 +48,15 @@ MAX_CAMPAIGN_JOBS = 100
 MAX_CAMPAIGN_MINUTES = 3000
 DURATION = re.compile(r"([1-9][0-9]*)(ms|s|m|h)\Z")
 SCHEMA = "ceph-tag-scenarios/v1"
+DISPATCH_SCHEMA = "ceph-tag-dispatch/v1"
+# The matrix fields that identify a dispatched entry; the other fields are
+# the profile's own and stay in tag-plan.json.
+DISPATCH_FIELDS = ("id", "name", "category", "batch", "package", "network", "tests", "repetition",
+                   "artifact_suffix", "job_timeout")
+# Workflow metadata that binds a dispatch inventory to its caller and attempt.
+DISPATCH_CONTEXT = (("repository", "GITHUB_REPOSITORY"), ("sha", "GITHUB_SHA"), ("run_id", "GITHUB_RUN_ID"),
+                    ("run_attempt", "GITHUB_RUN_ATTEMPT"), ("category", "SCENARIO_CATEGORY"),
+                    ("release", "SCENARIO_RELEASE"))
 # Bounds of the two preparation phases. Module preparation is the only phase
 # that reaches the network; the compile then reads the module cache.
 MODULES_TIMEOUT_SECONDS = 300
@@ -545,6 +554,22 @@ def network_matrix(profiles, scope):
                 entry["tests"] = ",".join(profile["network_tests"])
             entries.append(entry)
     return entries
+
+
+def dispatch_inventory(report, runtime, networks, repetitions, environment=None):
+    """The expanded matrix that is sent to GitHub, as a versioned document.
+
+    It is built from the same runtime value as the matrix output, after
+    network and repetition expansion and their budget checks, so the base plan
+    alone cannot stand for it: tag-plan.json records the selected profiles,
+    not the network scope or the repetitions. An empty selection is a valid
+    inventory with count 0; a failed expansion raises before this is built."""
+    environment = os.environ if environment is None else environment
+    return {"schema": DISPATCH_SCHEMA, "networks": networks, "repetitions": repetitions,
+            "selected_profiles": len(report["include"]),
+            "context": {key: environment.get(name) or None for key, name in DISPATCH_CONTEXT},
+            "count": len(runtime),
+            "entries": [{field: entry[field] for field in DISPATCH_FIELDS} for entry in runtime]}
 
 
 def select_required_plan(plan, category=None):
@@ -1405,6 +1430,8 @@ def main(argv=None):
         command.add_argument("--output", type=Path)
         if name == "plan":
             command.add_argument("--github-output", type=Path)
+            command.add_argument("--dispatch-output", type=Path,
+                                 help="With --github-output: also save the expanded dispatched matrix here")
             command.add_argument("--verify", action="store_true")
             command.add_argument("--category", choices=RUNTIME_CATEGORIES)
             command.add_argument("--optional", action="store_true")
@@ -1569,10 +1596,17 @@ def main(argv=None):
             if args.output is not None:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+            if args.command == "plan" and args.dispatch_output is not None and args.github_output is None:
+                raise ValueError("plan --dispatch-output requires --github-output")
             if args.command == "plan" and args.github_output is not None:
                 runtime = network_matrix([profile for profile in report["include"] if profile["category"] != "code"],
                                          args.networks)
                 runtime = repeat_matrix(runtime, args.repetitions)
+                if args.dispatch_output is not None:
+                    args.dispatch_output.parent.mkdir(parents=True, exist_ok=True)
+                    args.dispatch_output.write_text(json.dumps(
+                        dispatch_inventory(report, runtime, args.networks, args.repetitions),
+                        indent=2, sort_keys=True) + "\n")
                 with args.github_output.open("a", encoding="utf-8") as output:
                     output.write("matrix=" + json.dumps({"include": runtime}, separators=(",", ":")) + "\n")
                     output.write("count=" + str(len(runtime)) + "\n")
