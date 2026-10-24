@@ -364,9 +364,15 @@ func TestFaultAdmissionKeepsMethodPolicies(t *testing.T) {
 
 	for op, policy := range sharedFaultPolicies {
 		method, ok := strings.CutPrefix(op, "fault.")
-		expected := sharedMethodPolicies[method]
-		if method == "ApplyNetworkProfile" || method == "InterruptNetwork" || method == "Pause" {
+		// The Container methods are gone, so the expected policy is pinned here.
+		var expected sharedPolicy
+		switch method {
+		case "ApplyNetworkProfile", "InterruptNetwork", "Pause":
 			expected = sharedExclusive
+		case "InjectObjectDataError":
+			expected = sharedRecycle
+		default:
+			expected = sharedMethodPolicies[method]
 		}
 		if !ok || policy != expected {
 			t.Errorf("%s has policy %v, want %v", op, policy, expected)

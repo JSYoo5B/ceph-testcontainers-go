@@ -3,9 +3,9 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 35,
-    "ceph": 365,
+    "ceph": 364,
     "cephfs": 155,
-    "fault": 34,
+    "fault": 35,
     "rbd": 77,
     "rgw": 126
   },
@@ -771,14 +771,6 @@
       "signature": "func() ImageSet",
       "receiver": "*Container",
       "proposed": "ceph.Container.Images",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.InjectObjectDataError",
-      "kind": "method",
-      "signature": "func(ctx context.Context, pool, object string, osdID int) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.InjectObjectDataError",
       "decision": "baseline"
     },
     {
@@ -3955,6 +3947,13 @@
       "current": "fault.GigabitPerSecond",
       "kind": "const",
       "proposed": "fault.GigabitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.InjectObjectDataError",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool, object string, osdID int) error",
+      "proposed": "fault.InjectObjectDataError",
       "decision": "baseline"
     },
     {

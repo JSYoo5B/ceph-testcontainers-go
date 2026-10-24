@@ -8,8 +8,11 @@ Fullness uses `Container.OverrideFullRatios`, returning
 expiry or automatic context/scope restoration. The rejected extraction adds
 no public `fault` API or extra full-ratio session hooks. The broader naming
 pass remains #14, after #9. Session blocklist and fullness policy remain in
-`ceph`; the blocklist extraction in PR #12 is reverted. Object-error injection remains in `ceph`
-for a separately reviewed checkpoint. See the [migration guide](../fault.md) for the current API.
+`ceph`; the blocklist extraction in PR #12 is reverted. The maintainer decided
+that dedicated object-error injection belongs in `fault`: it is implemented as
+`fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)`, a one-shot
+operation with no handle, no registry kind and no Restore. See the
+[migration guide](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
@@ -82,7 +85,7 @@ blocklist and fullness moves are excluded by the revised package policy.
 | `(*Container).InterruptNetwork(ctx, ctr, NetworkPlane)` | `InterruptNetwork(ctx, cluster, ctr, ceph.NetworkPlane)` | `ceph/network.go:(*Container).InterruptNetwork` |
 | `InterruptNetwork(ctx, ctr, name)` | `InterruptLink(ctx, ctr, network)` (renamed: one package cannot hold both forms) | `ceph/network.go:InterruptNetwork` |
 | `(*Container).PauseContainer(ctx, ctr)` | `PauseContainer(ctx, cluster, ctr)` | `ceph/pause.go:PauseContainer` |
-| `(*Container).InjectObjectDataError(ctx, pool, object, osdID)` | `InjectObjectDataError(ctx, cluster, pool, object, osdID)` | `ceph/scrub.go:InjectObjectDataError` |
+| `(*Container).InjectObjectDataError(ctx, pool, object, osdID)` | `InjectObjectDataError(ctx, cluster, pool, object, osdID)` (implemented) | `ceph/scrub.go:InjectObjectDataError` (removed), `fault/object_error.go:InjectObjectDataError` |
 
 Types, methods, constants and variables that move with them:
 
@@ -216,12 +219,12 @@ is retired after the exclusive lease in either case
 
 ### Injected object data error (one-shot)
 
-| Aspect | Current behavior (`ceph/scrub.go:InjectObjectDataError`) |
+| Aspect | Behavior (`fault/object_error.go:InjectObjectDataError`, moved from `ceph/scrub.go`) |
 | --- | --- |
-| Apply | `sharedGate`, requires `OSDBlueStore`, validates pool and object names, `lockTopology` for the whole call, `poolPolicyReady`, requires an owned, unpurged OSD, a replicated pool, the OSD in the object's acting set, then `tell osd.N config set bluestore_debug_inject_read_err true`, `checkPoolID`, and `tell osd.N injectdataerr`. |
+| Apply | `faulthook.Admit("fault.InjectObjectDataError")`, requires BlueStore, validates the pool name and the object name (no slash, see #94), `WithTopology` for the whole call, `PoolPolicyReady`, requires an owned, unpurged OSD, a replicated pool, the OSD in the object's acting set, then `tell osd.N config set bluestore_debug_inject_read_err true`, `CheckPoolID`, and `tell osd.N injectdataerr`. It reaches the cluster only through hooks that already existed (`CLI`, `PoolState`, `CheckPoolID`, `OwnedOSD`, `BlueStore`, `StartupTimeout`, `PoolPolicyReady`); no hook, registry kind or cleanup phase was added. |
 | Recovery | No handle and no `Restore`. The injection lasts until the replica is rewritten (`RepairPG`) or the OSD restarts. The runtime setting `bluestore_debug_inject_read_err` stays true until the OSD restarts, also after `RepairPG`. |
 | Shared policy | `sharedRecycle`. |
-| Uncertainty | A failed command returns an error only; the caller observes with `DeepScrubPG`, `PGInconsistencies` and `HealthDetails`. Nothing is replayed. |
+| Uncertainty | A failed command returns an error only; the caller observes with `DeepScrubPG`, `PGInconsistencies` and `HealthDetails`. Nothing is replayed, and a failure after the debug setting was enabled does not disarm it. |
 | Terminate | Nothing to do. |
 
 ## Dependencies on `*ceph.Container` private state
@@ -288,7 +291,7 @@ not undone; they end with the cluster.
 | `PauseContainer` | reversible lease | `ContainerPause.Resume` | yes, phase 3 |
 | `TemporaryBlocklist` | reversible override, may also expire | `BlocklistOverride.Restore` | no, dies with the cluster |
 | `TemporaryFullRatios` | reversible override | `FullRatiosOverride.Restore` | no, dies with the cluster |
-| `InjectObjectDataError` | one-shot injection | none: `RepairPG` rewrites the replica, or an OSD restart clears it and the debug setting | no |
+| `InjectObjectDataError` | one-shot injection (`fault`, no handle) | none: `RepairPG` rewrites the replica, or an OSD restart clears it and the debug setting | no |
 
 ## Proposed stage 2 boundary
 
@@ -448,7 +451,7 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 | `cluster.PauseContainer(ctx, osd)` | `fault.Pause(ctx, cluster, osd)` |
 | `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | Unchanged in `ceph` (session admission) |
 | `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | `cluster.OverrideFullRatios(ctx, ceph.FullRatios{...})` (OSDMap policy in `ceph`) |
-| `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` |
+| `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` (implemented; no wrapper) |
 | `errors.Is(err, ceph.ErrNetemKernelUnsupported)` | `errors.Is(err, fault.ErrNetemKernelUnsupported)`; `errors.Is(err, ceph.ErrEnvironmentUnavailable)` unchanged |
 | `var l *ceph.NetworkInterruption = mirror.InterruptPeerLink(...)` | `var l *fault.NetworkInterruption = mirror.InterruptPeerLink(...)` |
 | `multisite.TemporaryZoneLinkDelay(ctx, a, b, ceph.NetworkDelay{...})` | `multisite.TemporaryZoneLinkDelay(ctx, a, b, fault.NetworkDelay{...})` |
@@ -466,6 +469,11 @@ Call sites in the pre-extraction inventory (`.Method(` occurrences): `ceph` unit
 `releases-and-images.md`, `docs/contributing/ci.md`.
 
 ## Transitional wrappers
+
+The object-error extraction follows the same treatment: no deprecated
+`(*ceph.Container).InjectObjectDataError` wrapper. A wrapper would need `ceph`
+to import `fault`, and the next minor release carries the break; published tags
+are not changed.
 
 Keeping `(*ceph.Container).TemporaryNetworkDelay` as a deprecated wrapper
 would need either `ceph` to import `fault` (a cycle) or the handle types to

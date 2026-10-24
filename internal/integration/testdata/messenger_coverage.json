@@ -901,9 +901,19 @@
         {
           "test": "TestCephFSSnapshotSchedule",
           "asserts": "a 1-minute schedule with retention 2 creates at least three snapshots and prunes to at most two"
+        },
+        {
+          "test": "TestCephFSLiveSnapRealmGate",
+          "asserts": "the added snapshot appears in the retained client's realm context, derived from its dump_cache, before a same-fd overwrite; HEAD reads the new bytes and the snapshot the base bytes",
+          "receipt": "CEPHFS_LIVE_REALM"
+        },
+        {
+          "test": "TestCephFSLiveSnapRealmRemoval",
+          "asserts": "the snapshot is first present in the retained client's derived realm context, then absent with a newer sequence before another same-fd overwrite; HEAD reads the new bytes and the removed snapshot path returns ENOENT",
+          "receipt": "CEPHFS_LIVE_REALM_REMOVAL"
         }
       ],
-      "gap": "Snapshot realm updates to a live client are not recorded.",
+      "gap": "Live-client realm updates are observed only as a snapshot context derived from the client's dump_cache; the cached SnapContext is not read directly and CEPH_MSG_CLIENT_SNAP traffic is not decoded. Realm hierarchy changes beyond one added and one removed snapshot are not recorded.",
       "owner": "#5"
     },
     {
