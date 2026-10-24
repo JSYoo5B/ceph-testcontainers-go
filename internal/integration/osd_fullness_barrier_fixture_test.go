@@ -212,3 +212,42 @@ func TestOSDStatesAndBackfillFull(t *testing.T) {
 		t.Fatalf("empty state array: %v %v", states, err)
 	}
 }
+
+// A read that fails inside the credited window must not be bridged: the same
+// holds that pass without it are refused with the failed reads kept, and a
+// failure before the first report credits nothing.
+func TestFailedReadsBreakTheBarrierWindow(t *testing.T) {
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	sec := func(n int) time.Time { return at.Add(time.Duration(n) * time.Second) }
+	const span = 20 * time.Second
+	hold := func(n int) barrierSample { return barrierSample{Verdict: barrierHolds, At: sec(n)} }
+
+	// Silent skipping, the former behavior, bridges the gap.
+	skipped := []barrierSample{hold(0), hold(5), hold(20)}
+	if _, err := judgeBarrier(skipped, span, false); err != nil {
+		t.Fatalf("the holds alone should pass this judge: %v", err)
+	}
+	var kept []barrierSample
+	for _, n := range []int{0, 5} {
+		kept = append(kept, hold(n))
+	}
+	for _, n := range []int{10, 15} {
+		kept = recordFailedRead(kept, sec(n), true)
+	}
+	kept = append(kept, hold(20))
+	if len(kept) != 5 {
+		t.Fatalf("failed reads inside the window were dropped: %d samples", len(kept))
+	}
+	if _, err := judgeBarrier(kept, span, false); err == nil || !strings.Contains(err.Error(), "after the first") {
+		t.Fatalf("a window with failed reads inside it was credited: %v", err)
+	}
+	// Before the first report nothing is credited, so the list is unchanged.
+	before := recordFailedRead(nil, sec(0), false)
+	before = append(before, hold(5), hold(10), hold(15), hold(30))
+	if len(before) != 4 {
+		t.Fatalf("a failed read before the first report entered the window: %d samples", len(before))
+	}
+	if _, err := judgeBarrier(before, span, false); err != nil {
+		t.Fatalf("a failure before the first report should not count: %v", err)
+	}
+}

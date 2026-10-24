@@ -166,6 +166,19 @@ func judgeBarrier(samples []barrierSample, minSpan time.Duration, allowRunningBe
 	return j, nil
 }
 
+// recordFailedRead is how a failed or malformed PG read enters the window. Once
+// backfill_toofull has been reported, the window is being credited, so a read
+// that failed inside it is an inconclusive sample that judgeBarrier refuses:
+// the time on either side must not be credited as one uninterrupted barrier.
+// Before the first report nothing is credited yet, so the failure is only
+// counted by the caller and the sample list is unchanged.
+func recordFailedRead(samples []barrierSample, at time.Time, credited bool) []barrierSample {
+	if !credited {
+		return samples
+	}
+	return append(samples, barrierSample{Verdict: barrierInconclusive, At: at})
+}
+
 // osdStates are the state names of every OSD in an "osd dump": exists, up,
 // nearfull, backfillfull, full and others. An OSD without a state array, with a
 // null one or without an id is an error, not an empty set.

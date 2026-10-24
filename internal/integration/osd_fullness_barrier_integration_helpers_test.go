@@ -355,8 +355,15 @@ func testOSDFullnessBarrier(t *testing.T) {
 				sample, err = parsePGProgress(raw)
 			}
 			if err != nil {
-				if out.SampleErrors++; out.SampleErrors > 10 {
-					t.Fatalf("too many failed PG samples, last: %v", err)
+				out.SampleErrors++
+				// A failed read inside the credited window breaks it: it is
+				// kept as an inconclusive sample and the run fails.
+				if credited := recordFailedRead(samples, time.Now(), !firstHold.IsZero()); len(credited) != len(samples) {
+					out.Samples[barrierInconclusive]++
+					t.Fatalf("a PG read failed after backfill_toofull was first reported, so the window is not uninterrupted: %v", err)
+				}
+				if out.SampleErrors > 10 {
+					t.Fatalf("too many failed PG samples before backfill_toofull, last: %v", err)
 				}
 				time.Sleep(time.Second)
 				continue
