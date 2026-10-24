@@ -1863,15 +1863,35 @@ evaluate at all.
 
 Log events are lines of the containers' Docker log streams in the window,
 read with Docker's timestamps. A line is an event of one `ceph.LogEvent`
-kind, the first that matches:
+kind. Assertion and fatal signatures are found anywhere in a line; the
+cluster log kinds come from the severity of the line's log envelope, never
+from a marker inside its message:
 
 | Kind | Line |
 | --- | --- |
-| `LogAssertion` | `FAILED ceph_assert`, `FAILED assert` or `ceph_abort` |
-| `LogFatalSignal` | `Caught signal` |
-| `LogClusterError` | a cluster log entry `[ERR]` |
-| `LogClusterSecurity` | a cluster log entry `[SEC]` |
-| `LogClusterWarning` | a cluster log entry `[WRN]` |
+| `LogAssertion` | `FAILED ceph_assert`, `FAILED assert` or `ceph_abort`, anywhere in the line |
+| `LogFatalSignal` | `Caught signal`, anywhere in the line |
+| `LogClusterError` | a cluster log entry of severity `ERR` |
+| `LogClusterSecurity` | a cluster log entry of severity `SEC` |
+| `LogClusterWarning` | a cluster log entry of severity `WRN` |
+
+The first match in this order decides. A cluster log entry has one of two
+forms, as the pinned Ceph source (Tentacle 20.2.4) prints them: a daemon's own
+log line `<stamp> <thread> <level> log_channel(<channel>) log [<PRIO>] : <message>`,
+and the cluster log line `[<channel> ]<stamp> <name> (<rank>) <seq> : <channel> [<PRIO>] <message>`
+that the MON writes (a leading channel must equal the entry's own). `PRIO` is
+`DBG`, `INF`, `SEC`, `WRN` or `ERR`. The stamp must be a real calendar date and time
+with three or six fractional digits and a canonical numeric timezone `[+-]HHMM` (minutes below 60, offsets from -1200 to +1400), as the producer writes it;
+an envelope with any other stamp is not an envelope. An entry of any channel (`cluster`,
+`audit`, ...) is an event by its severity, so an `INF` entry that quotes
+`[WRN]` is no event, and a `WRN` entry that quotes `[ERR]` is a warning. A line
+that carries an `[ERR]`, `[SEC]` or `[WRN]` marker without one of these forms is
+not classified and not guessed: the check has a gap that counts such lines, so
+it is incomplete. A quoted assertion or fatal signature still makes an
+assertion or fatal event, whatever envelope it is in. An expectation's
+`Pattern` still matches the whole line, envelope included. Formats are
+qualified per Ceph release natively separately; other releases and outputs
+(for example journald or syslog) are not recognized.
 
 Daemons write their cluster log entries to their own output and the MON
 writes them again as the cluster log, so one entry can be two events. Other

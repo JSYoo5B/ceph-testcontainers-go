@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,22 +53,122 @@ const (
 	LogFatalSignal LogEvent = "fatal-signal"
 	// LogClusterError, LogClusterSecurity and LogClusterWarning are cluster
 	// log entries of level ERR, SEC and WRN, which every daemon writes to
-	// its output and the MON writes again as the cluster log.
+	// its output and the MON writes again as the cluster log. The level is
+	// the one of the entry's own log envelope (see LogExpectation.Pattern);
+	// a marker in the message of a lower level entry makes no event, and a
+	// line with a marker but no recognized envelope is a gap, not an event.
+	// The entry's channel (such as cluster or audit) does not select the
+	// kind: a level ERR, SEC or WRN entry of any channel is an event.
 	LogClusterError    LogEvent = "cluster-error"
 	LogClusterSecurity LogEvent = "cluster-security"
 	LogClusterWarning  LogEvent = "cluster-warning"
 )
 
-// verificationLogEvents classifies a line; the first match wins.
+// verificationLogEvents lists the log event kinds. Assertion and fatal
+// signatures are found by their own patterns anywhere in a line, since the
+// daemon prints them outside the cluster log. The cluster log kinds are never
+// found by a pattern: they come from the structural severity of a recognized
+// log envelope (see parseVerificationEnvelope).
 var verificationLogEvents = []struct {
 	event   LogEvent
 	pattern *regexp.Regexp
 }{
 	{LogAssertion, regexp.MustCompile(`FAILED (ceph_)?assert|ceph_abort`)},
 	{LogFatalSignal, regexp.MustCompile(`Caught signal`)},
-	{LogClusterError, regexp.MustCompile(`\[ERR\]`)},
-	{LogClusterSecurity, regexp.MustCompile(`\[SEC\]`)},
-	{LogClusterWarning, regexp.MustCompile(`\[WRN\]`)},
+	{LogClusterError, nil},
+	{LogClusterSecurity, nil},
+	{LogClusterWarning, nil},
+}
+
+// verificationEnvelope is the producer, channel and severity of a cluster
+// log entry, parsed from the structure of the line and not from its message.
+type verificationEnvelope struct {
+	channel  string
+	priority string
+}
+
+// The supported envelopes, as the pinned Ceph source (7f793731f1b3, Tentacle
+// 20.2.4) prints them:
+//
+//   - A daemon's own log of a cluster log entry (LogChannel::do_log with the
+//     dout prefix of LogClient.cc, Log::_flush_logbuf):
+//     "<stamp> <thread> <level> log_channel(<channel>) log [<PRIO>] : <msg>".
+//   - A cluster log entry (operator<< of LogEntry, as the MON writes it with
+//     mon_cluster_log_to_stderr, which LogMonitor::log_external prefixes
+//     with the channel, and to its channel file):
+//     "[<channel> ]<stamp> <name> (<rank>) <seq> : <channel> [<PRIO>] <msg>".
+//
+// PRIO is one of DBG, INF, SEC, WRN and ERR (operator<< of clog_type).
+// Anything else is not an envelope.
+var (
+	daemonEnvelope  = regexp.MustCompile(`^(\S+) +[0-9a-f]+ +-?\d+ +log_channel\(([A-Za-z0-9_.-]+)\) log \[(DBG|INF|SEC|WRN|ERR)\] : `)
+	clusterEnvelope = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+) )?(\S+) \S+ \(\S+\) \d+ : ([A-Za-z0-9_.-]+) \[(DBG|INF|SEC|WRN|ERR)\](?: |$)`)
+	// severityMarker finds a severity marker anywhere in a line. A line
+	// that carries one without a supported envelope is not classified; it is
+	// counted and reported as a gap.
+	severityMarker = regexp.MustCompile(`\[(ERR|SEC|WRN)\]`)
+)
+
+// parseVerificationEnvelope returns the envelope at the start of a line, or
+// false when the line has none of the supported forms. A cluster log line
+// whose leading channel differs from its own channel is ambiguous and has no
+// envelope.
+func parseVerificationEnvelope(line string) (verificationEnvelope, bool) {
+	if m := daemonEnvelope.FindStringSubmatch(line); m != nil && validCephStamp(m[1]) {
+		return verificationEnvelope{channel: m[2], priority: m[3]}, true
+	}
+	if m := clusterEnvelope.FindStringSubmatch(line); m != nil && validCephStamp(m[2]) && (m[1] == "" || m[1] == m[3]) {
+		return verificationEnvelope{channel: m[3], priority: m[4]}, true
+	}
+	return verificationEnvelope{}, false
+}
+
+// cephStampShape is the stamp as the pinned producer writes it
+// (log/LogClock.h append_time, and utime_t localtime for a LogEntry): a
+// calendar date and time, three (coarse) or six fractional digits and a
+// numeric timezone.
+var cephStampShape = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.(\d{3}|\d{6})[+-]\d{4}$`)
+
+// validCephStamp reports whether s has that shape and real calendar and
+// clock values.
+func validCephStamp(s string) bool {
+	if !cephStampShape.MatchString(s) {
+		return false
+	}
+	if _, err := time.Parse("2006-01-02T15:04:05.999999999-0700", s); err != nil {
+		return false
+	}
+	// time.Parse accepts offset minutes of 60 and more, which strftime's %z
+	// cannot print. Real offsets lie between -1200 and +1400.
+	zone := s[len(s)-5:]
+	hours, _ := strconv.Atoi(zone[1:3])
+	minutes, _ := strconv.Atoi(zone[3:])
+	return minutes < 60 && (zone[0] == '+' && hours <= 14 || zone[0] == '-' && hours <= 12)
+}
+
+// classifyVerificationLine returns the event kind of a log line ("" for no
+// event) and its envelope when it has one. unclassified is true when the line
+// carries a severity marker without a supported envelope: its kind is not
+// guessed from the marker.
+func classifyVerificationLine(line string) (kind LogEvent, envelope verificationEnvelope, hasEnvelope, unclassified bool) {
+	envelope, hasEnvelope = parseVerificationEnvelope(line)
+	for _, known := range verificationLogEvents[:2] {
+		if known.pattern.MatchString(line) {
+			return known.event, envelope, hasEnvelope, false
+		}
+	}
+	if !hasEnvelope {
+		return "", envelope, false, severityMarker.MatchString(line)
+	}
+	switch envelope.priority {
+	case "ERR":
+		kind = LogClusterError
+	case "SEC":
+		kind = LogClusterSecurity
+	case "WRN":
+		kind = LogClusterWarning
+	}
+	return kind, envelope, true, false
 }
 
 // LogExpectation permits, or with Required requires, log events that match
@@ -89,7 +190,8 @@ type LogExpectation struct {
 	// Event is the kind of line.
 	Event LogEvent
 	// Pattern is a regular expression (RE2 syntax) that must match the
-	// redacted line without its timestamp.
+	// whole redacted line without its Docker timestamp, including the log
+	// envelope. Event, not Pattern, selects the structural kind.
 	Pattern string
 }
 
@@ -673,7 +775,7 @@ func evaluateVerificationCheck(events []verificationEvent, rules []*verification
 
 var verificationNotes = []string{
 	"The window starts at the activation and ends at the evaluation, on the Docker engine's clock; bootstrap before it and the cleanups and termination after it are outside the window.",
-	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered.",
+	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered. A cluster log entry is an event by the severity of its log envelope, and only the daemon log and cluster log forms of the pinned Tentacle source are recognized; a line with a severity marker in another form is a gap.",
 	"A crash is new when its crash ID was not in that container's crash directory at activation. Crashes of removed containers and of containers added after the activation are not covered, and are reported as gaps.",
 	"Clean is evidence for these sources and this window, not proof that no daemon failed. Shared-cluster tenants, scrub results and recovery waits are not verified.",
 	"The bug compatibility selection is a build property that the library does not see.",
