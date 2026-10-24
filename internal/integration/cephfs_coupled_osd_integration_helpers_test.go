@@ -500,7 +500,13 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	}
 	session := cephFSRetainedSession(t, ctx, m.fs, opened.Client, 0)
 	pool := cephFSDataPool(t, ctx, m, opened.Inode)
+	receipt := newRetainedClientReceipt(opened.Client, opened.Inode, pool)
+	// The deferred line runs on every outcome, before the cleanup restores the
+	// full ratios.
+	defer func() { t.Log(receipt.line()) }()
 	notFull := waitPoolFull(t, ctx, m.cluster, pool, false)
+	receipt.NotFullEpoch = &notFull
+	receipt.phase("pool-not-full")
 	writeCtx, stopWrite := context.WithTimeout(ctx, 2*time.Minute)
 	written, err := m.cluster.RunNativeCommand(writeCtx, toolkitContainer(t, m.cluster), ceph.NativeCommand{
 		Argv: []string{"python3", "-c", cephFSProbeWriter, m.fs.FilesystemName, hex.EncodeToString(probeBytes), probe, reprobe}, Timeout: 2 * time.Minute,
@@ -524,7 +530,10 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal("apply full ratios:", err)
 	}
+	receipt.phase("ratios-applied")
 	full := waitPoolFull(t, ctx, m.cluster, pool, true)
+	receipt.FullEpoch = &full
+	receipt.phase("pool-full")
 	health, err := m.cluster.HealthDetails(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -536,11 +545,18 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	receipt.unpromptedStatus(unprompted)
 	actor.open(t, ctx, "poke")
 	if poked := actor.receipt(t, ctx, 2); poked.Full != hex.EncodeToString(probeBytes) {
 		t.Fatalf("poke receipt = %+v", poked)
 	}
-	waitClientStatus(t, ctx, m.cluster, m.client, asok, "full map", func(status cephFSClientStatus) bool { return status.OSDEpoch >= full })
+	receipt.phase("poke-completed")
+	if err := receipt.waitMap(ctx, "full map", full, true, time.Minute, 40*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (cephFSClientStatus, error) {
+		return clientAdminStatus(probeCtx, m.cluster, m.client, asok)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	receipt.phase("full-map-held")
 
 	actor.open(t, ctx, "full")
 	whileFull := actor.receipt(t, ctx, 3)
@@ -548,15 +564,26 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("client calls while the pool is full: %v size %d, want %v size %d", errnos, whileFull.Size, want, len(base))
 	}
 
+	receipt.phase("while-full")
+	receipt.RestoreStarted = true
 	if err := fill.Restore(ctx); err != nil {
+		receipt.RestoreError = err.Error()
 		t.Fatal("restore full ratios:", err)
 	}
 	drained := waitPoolFull(t, ctx, m.cluster, pool, false)
+	receipt.DrainedEpoch = &drained
+	receipt.phase("pool-drained")
 	actor.open(t, ctx, "repoke")
 	if poked := actor.receipt(t, ctx, 4); poked.Full != hex.EncodeToString(probeBytes) {
 		t.Fatalf("repoke receipt = %+v", poked)
 	}
-	waitClientStatus(t, ctx, m.cluster, m.client, asok, "drained map", func(status cephFSClientStatus) bool { return status.OSDEpoch >= drained })
+	receipt.phase("repoke-completed")
+	if err := receipt.waitMap(ctx, "drained map", drained, true, time.Minute, 40*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (cephFSClientStatus, error) {
+		return clientAdminStatus(probeCtx, m.cluster, m.client, asok)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	receipt.phase("drained-map-held")
 	actor.open(t, ctx, "resume")
 	resumed := actor.receipt(t, ctx, 5)
 	if errnos, want := coupledOps(t, resumed), map[string]int{"write": 0, "fsync": 0}; !maps.Equal(errnos, want) || resumed.Size != int64(len(base)+len(tail)) {
@@ -596,6 +623,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("closing receipt = %+v", closed)
 	}
 	actor.wait(t, ctx)
+	receipt.phase("finished")
 	t.Logf("CEPHFS_OSD_FULL_RECEIPT %s client.%d inode=%d data pool %d: not full in e%d; full ratios 0.0001/0.0002/0.0003 flagged the pool full in e%d with OSD_FULL; the client held e%d before it read another client's file; with the full map the client's write=28 fsync=0 mkdir=0 stat=0, size stayed %d; after Restore the flag cleared in e%d and the same fd wrote and fsynced with 0 (size %d); reader client.%d read every byte; session kept, not blocklisted",
 		m.version, opened.Client, opened.Inode, pool, notFull, full, unprompted.OSDEpoch, len(base), drained, len(whole), independent.Client)
 }
