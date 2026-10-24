@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -142,6 +144,23 @@ class Safety(Archive):
             with self.subTest(entry):
                 self.manifest(lambda d: d["files"].__setitem__(1, entry))
                 self.assertEqual(self.files()["crash-metadata.json"]["state"], archive_audit.UNSAFE)
+
+    def test_invalid_path_names_are_findings_not_crashes(self):
+        names = ["a\0b", "\0", "x" * 256, "\u00e9" * 128, "\ud800"]
+        for name in names:
+            with self.subTest(repr(name)):
+                shutil.copy(FIXTURE / "manifest.json", self.root / "manifest.json")
+                data = json.loads((self.root / "manifest.json").read_text())
+                data["files"].append({"name": name, "bytes": 2})
+                (self.root / "manifest.json").write_text(json.dumps(data))  # escapes NUL and surrogates
+                report = archive_audit.audit(self.root)
+                self.assertEqual(report["files"][-1]["state"], archive_audit.UNSAFE)
+                self.assertFalse(report["evidence_complete"])
+                output = Path(self.directory.name) / "receipt.json"
+                result = subprocess.run([sys.executable, str(Path(archive_audit.__file__)), str(self.root),
+                                         "--output", str(output)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(output.read_text())["files"][-1]["state"], archive_audit.UNSAFE)
 
     def test_non_string_names_are_findings_not_crashes(self):
         for name in [[], {}, 7, None, ["a"], {"a": 1}]:

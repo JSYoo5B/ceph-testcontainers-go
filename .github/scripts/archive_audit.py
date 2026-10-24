@@ -56,6 +56,14 @@ def load_manifest(root):
     return manifest, None
 
 
+def valid_component(name):
+    """A name the filesystem can be asked about: encodable and not overlong."""
+    try:
+        return len(name.encode("utf-8")) <= 255
+    except UnicodeEncodeError:
+        return False
+
+
 def audit_file(root, entry):
     """Audit one manifest file entry; entry must be a dict."""
     name = entry.get("name")
@@ -65,17 +73,21 @@ def audit_file(root, entry):
               "producer_write": "failed" if error else "succeeded",
               "available": False, "retained_bytes": None, "sha256": None, "json_readable": None}
     if not isinstance(name, str) or not name or "/" in name or "\\" in name or name in (".", "..") \
+            or "\0" in name or not valid_component(name) \
             or not isinstance(declared, int) or isinstance(declared, bool) or not isinstance(error, str):
         record["state"] = UNSAFE
         return record
     path = root / name
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        record["state"] = UNSAFE
-        return record
     try:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            record["state"] = UNSAFE
+            return record
         data = path.read_bytes()
     except FileNotFoundError:
         data = None
+    except ValueError:
+        record["state"] = UNSAFE
+        return record
     except OSError:
         record["state"] = MISSING
         return record
