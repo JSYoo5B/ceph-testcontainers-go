@@ -341,7 +341,11 @@ const (
 	ecEligible     = "eligible"
 	ecBehind       = "behind-required-version"
 	ecUnbackfilled = "not-backfilled"
-	ecUnobserved   = "unobserved"
+	// ecCursor: a finite last_backfill cursor. MissingLoc rejects a source only
+	// when the object is at or beyond the cursor, and the model does not compare
+	// the cursor with the object, so the fragment is neither proven nor excluded.
+	ecCursor     = "backfill-cursor-unresolved"
+	ecUnobserved = "unobserved"
 )
 
 type ecFragment struct {
@@ -469,8 +473,10 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 			lastUpdate, _ := parseEversion(l.info.LastUpdate)
 			status := ecEligible
 			switch {
-			case l.info.LastBackfill != "MAX":
+			case l.info.LastBackfill == "MIN":
 				status = ecUnbackfilled
+			case l.info.LastBackfill != "MAX":
+				status = ecCursor
 			case lastUpdate.less(need):
 				status = ecBehind
 			case lastComplete.less(need) && !clean:
@@ -480,7 +486,7 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 				entry.OSD, entry.Status = l.osd, status
 			}
 		}
-		if entry.Status == ecBehind {
+		if entry.Status == ecBehind || entry.Status == ecCursor {
 			candidates++
 		}
 		result.Fragments = append(result.Fragments, entry)
@@ -490,7 +496,7 @@ func classifyECObject(obs ecObservation, k int, target ecTarget, need eversion, 
 	case eligible >= k:
 		result.Verdict = ecSufficient
 	case eligible+candidates >= k:
-		return incomplete("%d eligible and %d lagging fragments; whether the lagging ones recovered is not observed", eligible, candidates)
+		return incomplete("%d eligible and %d lagging or partially backfilled fragments; whether they can supply the object is not observed", eligible, candidates)
 	default:
 		result.Verdict = ecInsufficient
 	}

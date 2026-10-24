@@ -192,6 +192,24 @@ func TestECEligibleFragmentVerdicts(t *testing.T) {
 			t.Errorf("verdict %s (%s)", head.Verdict, head.Detail)
 		}
 	})
+	t.Run("a finite backfill cursor is not a verdict", func(t *testing.T) {
+		// Pinned MissingLoc rejects a source only when the object is at or
+		// beyond the cursor; the model does not compare them.
+		acting := []int{1, 2, ecFragmentNone}
+		cursor := ecFixtureShard{2, 1, "14'10", "14'10", "1:2e0f5bc0:::zzz:head"}
+		head, _ := ecFixtureClassify(t, observe(t, "active+undersized+degraded+remapped+backfilling", acting, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), cursor), 2)
+		if head.Verdict != ecIncomplete || len(head.indices(ecEligible)) != 1 || len(head.indices(ecCursor)) != 1 {
+			t.Errorf("finite cursor: verdict %s (%s) %+v", head.Verdict, head.Detail, head.Fragments)
+		}
+		head, _ = ecFixtureClassify(t, observe(t, "active+undersized+degraded", acting, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), ecFixtureComplete(2, 1)), 2)
+		ecWant(t, head, ecSufficient, ecEligible, 0, 1)
+		// MIN excludes the fragment for certain.
+		head, _ = ecFixtureClassify(t, observe(t, "active+undersized+degraded+remapped+backfilling", acting, ecFixtureNoUnfound,
+			ecFixtureComplete(1, 0), ecFixtureShard{2, 1, "14'10", "14'10", "MIN"}), 2)
+		ecWant(t, head, ecInsufficient, ecUnbackfilled, 1)
+	})
 	t.Run("an unbackfilled fragment is not eligible", func(t *testing.T) {
 		backfill := ecFixtureShard{2, 1, "14'10", "14'10", "MIN"}
 		head, _ := ecFixtureClassify(t, observe(t, "active+remapped+backfill_wait", clean, ecFixtureNoUnfound,
