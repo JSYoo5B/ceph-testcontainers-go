@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -45,6 +46,15 @@ type retainedMapWait struct {
 	// or "probe-error".
 	Outcome string `json:"outcome,omitempty"`
 }
+
+// retainedProbeFailure marks an error that a status read returned while the
+// phase still ran. observe returns such an error wrapped, and returns the
+// phase expiry without it, so a probe that the phase deadline canceled is not
+// reported as an independent probe failure.
+type retainedProbeFailure struct{ err error }
+
+func (f retainedProbeFailure) Error() string { return f.err.Error() }
+func (f retainedProbeFailure) Unwrap() error { return f.err }
 
 // retainedClientReceipt is the phase record of the retained-client full-map
 // scenario. Fields of a phase that was not reached stay absent: zero values
@@ -94,8 +104,7 @@ func (r *retainedClientReceipt) waitMap(ctx context.Context, phase string, targe
 		lastProbeReady = false
 		if err != nil {
 			wait.LastError = err.Error()
-			outcome = "probe-error"
-			return status, false, err
+			return status, false, retainedProbeFailure{err}
 		}
 		wait.LastError = ""
 		last = status
@@ -122,8 +131,10 @@ func (r *retainedClientReceipt) waitMap(ctx context.Context, phase string, targe
 	switch {
 	case err == nil:
 		wait.Outcome = "reached"
-	case violation || outcome == "probe-error":
+	case violation:
 		wait.Outcome = outcome
+	case errors.As(err, new(retainedProbeFailure)):
+		wait.Outcome = "probe-error"
 	case lastProbeReady:
 		wait.Outcome = "timeout-late-result"
 	default:

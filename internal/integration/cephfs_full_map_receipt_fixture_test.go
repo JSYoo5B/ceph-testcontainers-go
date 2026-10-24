@@ -126,6 +126,34 @@ func TestRetainedMapWaitProbeErrorIsRecorded(t *testing.T) {
 	}
 }
 
+func TestRetainedMapWaitPhaseExpiryDuringProbeIsATimeout(t *testing.T) {
+	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	err := r.waitMap(context.Background(), "drained map", 31, true, 20*time.Millisecond, time.Second, time.Millisecond, func(ctx context.Context) (cephFSClientStatus, error) {
+		<-ctx.Done()
+		return cephFSClientStatus{}, ctx.Err()
+	})
+	if err == nil || !strings.Contains(err.Error(), "not observed within") {
+		t.Fatalf("err = %v, want the phase expiry", err)
+	}
+	if wait := r.Waits[0]; wait.Outcome != "timeout" || wait.LastError == "" {
+		t.Fatalf("wait = %+v, want outcome timeout with the raw error kept", wait)
+	}
+}
+
+func TestRetainedMapWaitShorterProbeBoundIsAProbeError(t *testing.T) {
+	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	err := r.waitMap(context.Background(), "drained map", 31, true, time.Second, 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (cephFSClientStatus, error) {
+		<-ctx.Done()
+		return cephFSClientStatus{}, ctx.Err()
+	})
+	if err == nil || strings.Contains(err.Error(), "not observed within") {
+		t.Fatalf("err = %v, want an independent probe failure", err)
+	}
+	if wait := r.Waits[0]; wait.Outcome != "probe-error" {
+		t.Fatalf("wait = %+v", wait)
+	}
+}
+
 func TestRetainedMapWaitSampleHistoryKeepsLastStatus(t *testing.T) {
 	r := newRetainedClientReceipt(retainedClientID, 1, 3)
 	epoch := uint32(0)
