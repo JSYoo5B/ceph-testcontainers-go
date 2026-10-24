@@ -82,8 +82,10 @@ runtime override API.
 The following must be settled for an implementation, rather than inferred from
 this policy or filled with placeholder IDs:
 
-- Authoritative tracker/identifier spelling, namespace collisions, bugs without
-  assigned upstream IDs, and retirement rules for published tags.
+- Authoritative tracker/identifier spelling, namespace collisions and bugs
+  without assigned upstream IDs. Retirement and binding history are recorded in
+  [Identity binding and retirement](#identity-binding-and-retirement), which
+  leaves reactivation unresolved.
 - Explicit conflict declarations and diagnostics for incompatible selections;
   do not rely on duplicate-symbol errors or undocumented precedence.
 - Selection verification beyond the planner. Go can accept unused or
@@ -95,6 +97,73 @@ this policy or filled with placeholder IDs:
   `tagged-runtime.yml` takes it as one input, history rows record it and job
   summaries show it beside image identities, but no caller sets it yet.
   Every additional supported tag adds configurations to maintain.
+
+## Identity binding and retirement
+
+A published `ceph_bug_<id>` spelling is bound to one defect for as long as the
+repository is maintained. The catalogue must keep that binding from being
+rewritten by a later edit, so reviewers and any future check need to know where
+it lives and which edits change it.
+
+### Where the binding and its history live
+
+- The canonical binding is the `tag` and `tracker` pair of that tag's entry in
+  [`bug-compatibility-tags.json`](../guides/bug-compatibility-tags.json). The
+  v1 entry permits exactly `tag`, `tracker`, `status` and `sources`, and this
+  policy adds no identity or alias field to it. The tag spelling is the key; the
+  tracker is the one canonical link of the defect it names.
+- A retired tag keeps its entry as a tombstone, with `status` `retired` and the
+  same `tag` and `tracker`. Its spelling is never deleted or reassigned.
+- Alias history is not stored in the entry. A reviewed alias (for example a
+  moved or redirected tracker URL for the same defect) is recorded in that
+  tag's identity record on the
+  [supported-tag catalogue page](../guides/bug-compatibility-tags.md), and the
+  edit history of both files on the maintained branch is the immutable ledger.
+  The prior link is added to the identity record in the same change that
+  replaces the entry's `tracker`.
+- Published release tags are never edited to record any of this. A correction
+  lands on the maintained branch and ships in a new version.
+
+### Transitions between two revisions
+
+A candidate ledger is compared with a named maintained-base revision, never
+with its own earlier snapshot. The decisions below are the policy; the
+synthetic controls behind them are recorded in
+[#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24).
+
+| Transition of an existing tag | Decision |
+| --- | --- |
+| Supported to retired, same defect | Permit. Keep `tag` and `tracker`, and remove the tag from every guarded test and source file. |
+| Retired entry deleted | Refuse. The historical binding must remain. |
+| Retired to supported under another defect's tracker | Refuse. This reassigns the spelling. |
+| Retired to retired with another defect's tracker | Refuse. A refused selection does not by itself preserve the identity. |
+| Same defect, reviewed URL alias | Permit as a link edit. The defect, and therefore the tag, is unchanged. |
+
+### Link edit, retirement and reactivation
+
+- A link edit changes only `tracker` (and the identity record's alias list)
+  while `tag`, `status` and the defect stay the same. The reviewer must show
+  that the new link names the same defect in the same tracker.
+- Retirement changes only `status` from `supported` to `retired`, together with
+  removing its source references. It does not touch `tag` or `tracker`.
+- Reactivation, a retired tag becoming `supported` again for the same defect,
+  is not decided. Until it is, treat it as refused. Resolving it needs its own
+  review of whether a fixed-then-regressed or re-qualified defect reuses the
+  tombstone or takes a new spelling, and what evidence that requires.
+
+### What exists today and what does not
+
+| Check | State |
+| --- | --- |
+| Single-snapshot validator (`bug_registry`): exact v1 fields, one `https` tracker string, no repeated spelling | Implemented. It accepts two distinct tags with the same tracker URL, so it does not prove identity. |
+| Registered-source check (`bug_registry_sources`) and the retired-source guard, which refuses a retired tag still guarding a test | Implemented. A valid retirement must also remove those source references. |
+| Selection refusal of unregistered, retired, repeated and conflicting tags | Implemented. |
+| Revision-to-revision comparison against a named maintained base | Proposed only. No such check exists and no workflow runs one. |
+| Reporting the exact refused transition from the table above | Proposed only. |
+| Deriving a defect key (tracker namespace and project plus issue ID) from `tracker` so a link edit can be told apart from reassignment mechanically | Not decided. It may need a reviewed schema change, which this document does not make. |
+
+The production catalogue is empty, so none of these transitions has occurred.
+A later enforcement change needs its own review and authorization.
 
 ## Implementation and review checklist
 
