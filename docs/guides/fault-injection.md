@@ -30,7 +30,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
 | A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverrideHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
-| A replica is damaged | `InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
+| A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
 | The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
@@ -1063,7 +1063,7 @@ if err != nil {
 
 ## Damaging a replica
 
-`InjectObjectDataError` makes one replica of one object unreadable for scrub
+[`fault.InjectObjectDataError`](../fault.md#injectobjectdataerror) makes one replica of one object unreadable for scrub
 and recovery, using Ceph's `injectdataerr` debug command. No disk is touched
 and no OSD stops. Combine it with `DeepScrubPG`, `PGInconsistencies` and
 `RepairPG` to test monitoring of `OSD_SCRUB_ERRORS` and `PG_DAMAGED`, client
@@ -1075,7 +1075,7 @@ replica := mapping.Acting[0]
 if replica == mapping.ActingPrimary {
 	replica = mapping.Acting[1]
 }
-if err := cluster.InjectObjectDataError(ctx, "scrub", "victim", replica); err != nil {
+if err := fault.InjectObjectDataError(ctx, cluster, "scrub", "victim", replica); err != nil {
 	t.Fatal(err)
 }
 if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {
