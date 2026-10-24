@@ -3,7 +3,7 @@
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in public types; dependency and promoted method sets are not expanded",
   "counts": {
     "capture": 55,
-    "ceph": 420,
+    "ceph": 422,
     "cephfs": 247,
     "fault": 64,
     "rbd": 94,
@@ -85,6 +85,10 @@
       "BlocklistEntry.Address field string",
       "BlocklistEntry.Range field bool",
       "BlocklistEntry.Until field time.Time"
+    ],
+    "ceph.CaptureSettler": [
+      "CaptureSettler.Settle method func(ctx context.Context) (report any, err error)",
+      "CaptureSettler.SettlementAllowance method func() time.Duration"
     ],
     "ceph.ClientCaps": [
       "ClientCaps.MDS field string",

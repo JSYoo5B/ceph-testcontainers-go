@@ -60,6 +60,10 @@ type Finalization struct {
 	started  bool
 	checks   []finalizationStep
 	cleanups []finalizationStep
+	// captures are the registered packet captures, and captureReports the
+	// reports of those that were settled, for the archive.
+	captures       []finalizationCapture
+	captureReports []finalizationCaptureReport
 	// verificationNames are the active verifications' names, and
 	// verificationReports the reports of their checks, for the archive.
 	verificationNames   map[string]bool
@@ -213,7 +217,7 @@ type finalizationRun struct {
 func (f *Finalization) finalize() {
 	f.mu.Lock()
 	f.started = true
-	checks, cleanups := f.checks, f.cleanups
+	checks, cleanups, captures := f.checks, f.cleanups, f.captures
 	f.mu.Unlock()
 	run := &finalizationRun{manifest: f.newManifest()}
 	run.manifest.Trigger.TestFailed = f.t.Failed()
@@ -231,6 +235,7 @@ func (f *Finalization) finalize() {
 		run.manifest.Checks = append(run.manifest.Checks, outcome)
 	}
 	cancel()
+	f.settleCaptures(run, captures)
 	if f.config.Archive && f.t.Failed() {
 		f.archive(run, "before-cleanup")
 	}
@@ -394,6 +399,12 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	for i, report := range verifications {
 		m.Files = append(m.Files, f.writeReport(directory, fmt.Sprintf("verification-%d-%s.json", i+1, artifactName(report.Name)), report))
 	}
+	f.mu.Lock()
+	captureReports := slices.Clone(f.captureReports)
+	f.mu.Unlock()
+	for _, report := range captureReports {
+		m.Files = append(m.Files, f.writeReport(directory, captureReportFile(report.sequence, report.name), report.report))
+	}
 	m.Archive.FinishedAt = f.now()
 	m.Archive.Complete = true
 	for _, collector := range m.Collectors {
@@ -525,20 +536,21 @@ func artifactName(name string) string {
 // finalizationManifest is manifest.json. Missing provenance stays listed in
 // Missing instead of being guessed.
 type finalizationManifest struct {
-	SchemaVersion int                     `json:"schema_version"`
-	Test          string                  `json:"test"`
-	Scenario      string                  `json:"scenario,omitempty"`
-	Cluster       string                  `json:"cluster"`
-	Execution     finalizationExecution   `json:"execution"`
-	Images        ImageSet                `json:"images"`
-	Missing       []string                `json:"missing_provenance"`
-	Phase         string                  `json:"phase,omitempty"`
-	Trigger       finalizationTrigger     `json:"trigger"`
-	Checks        []finalizationOutcome   `json:"checks"`
-	Archive       finalizationArchive     `json:"archive"`
-	Collectors    []finalizationCollector `json:"collectors"`
-	Files         []finalizationFile      `json:"files"`
-	Cleanups      []finalizationOutcome   `json:"cleanups"`
+	SchemaVersion int                          `json:"schema_version"`
+	Test          string                       `json:"test"`
+	Scenario      string                       `json:"scenario,omitempty"`
+	Cluster       string                       `json:"cluster"`
+	Execution     finalizationExecution        `json:"execution"`
+	Images        ImageSet                     `json:"images"`
+	Missing       []string                     `json:"missing_provenance"`
+	Phase         string                       `json:"phase,omitempty"`
+	Trigger       finalizationTrigger          `json:"trigger"`
+	Checks        []finalizationOutcome        `json:"checks"`
+	Captures      []finalizationCaptureOutcome `json:"captures,omitempty"`
+	Archive       finalizationArchive          `json:"archive"`
+	Collectors    []finalizationCollector      `json:"collectors"`
+	Files         []finalizationFile           `json:"files"`
+	Cleanups      []finalizationOutcome        `json:"cleanups"`
 	// DebugWindows are the registered debug level windows, one per
 	// registration, each with an archive-phase and a final receipt copy.
 	DebugWindows        []finalizationDebugWindow `json:"debug_windows"`
@@ -578,7 +590,10 @@ type finalizationTrigger struct {
 	CleanupFailed bool `json:"cleanup_failed"`
 	// CheckReportedFailure and CleanupReportedFailure mean that a step
 	// turned the passing test into a failed one through the test itself.
-	CheckReportedFailure   bool `json:"check_reported_failure"`
+	CheckReportedFailure bool `json:"check_reported_failure"`
+	// CaptureFailed means that a capture's settlement returned an error,
+	// panicked or ended its goroutine.
+	CaptureFailed          bool `json:"capture_failed,omitempty"`
 	CleanupReportedFailure bool `json:"cleanup_reported_failure"`
 }
 

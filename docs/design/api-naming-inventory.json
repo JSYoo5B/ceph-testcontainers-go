@@ -2,8 +2,8 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "capture": 33,
-    "ceph": 363,
+    "capture": 35,
+    "ceph": 365,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -161,6 +161,22 @@
       "decision": "baseline"
     },
     {
+      "current": "capture.Session.Settle",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (any, error)",
+      "receiver": "*Session",
+      "proposed": "capture.Session.Settle",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session.SettlementAllowance",
+      "kind": "method",
+      "signature": "func() time.Duration",
+      "receiver": "*Session",
+      "proposed": "capture.Session.SettlementAllowance",
+      "decision": "baseline"
+    },
+    {
       "current": "capture.Session.Stop",
       "kind": "method",
       "signature": "func(ctx context.Context) (Report, error)",
@@ -281,6 +297,12 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistOverride",
       "proposed": "ceph.BlocklistOverride.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CaptureSettler",
+      "kind": "type",
+      "proposed": "ceph.CaptureSettler",
       "decision": "baseline"
     },
     {
@@ -1633,6 +1655,14 @@
       "current": "ceph.Finalization",
       "kind": "type",
       "proposed": "ceph.Finalization",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Capture",
+      "kind": "method",
+      "signature": "func(name string, session CaptureSettler)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Capture",
       "decision": "baseline"
     },
     {

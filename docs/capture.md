@@ -93,6 +93,24 @@ capture that ended at `MaxPackets` is not an error, but its `End` says that
 later traffic is missing. After a removal error `Stop` can be called again: it
 retries the removal and returns the same report.
 
+## Session.Settle
+
+```golang
+func (s *Session) SettlementAllowance() time.Duration
+func (s *Session) Settle(ctx context.Context) (any, error)
+```
+
+These implement `ceph.CaptureSettler` for
+[`Finalization.Capture`](ceph.md#settling-a-capture). `Settle` is `Stop` with
+the report returned as an `any` holding a `capture.Report` whose `Output` is
+reduced to its base name, so that an archived report names no host path. It
+inherits `Stop`'s behavior: the context's cancellation does not shorten it, a
+`Stop` that already ran is not repeated, and a `Stop` still running makes it
+wait. `SettlementAllowance` is the stop grace plus the package's two-minute
+Docker allowance (130 seconds by default), which is what the finalization
+admits for the capture. Callers that do not use a finalization keep calling
+`Stop`.
+
 ## Report
 
 `capture.Report` keeps the process, target, retrieval and file outcomes

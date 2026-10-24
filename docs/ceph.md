@@ -1635,6 +1635,7 @@ func (c *Container) TerminateOnCleanup(t testing.TB, config ceph.FinalizationCon
 func (f *Finalization) Check(name string, check func(context.Context) error)
 func (f *Finalization) Cleanup(name string, cleanup func(context.Context) error)
 func (f *Finalization) TrackDebugLevel(handle *ceph.DebugLevelOverrideHandle)
+func (f *Finalization) Capture(name string, session ceph.CaptureSettler)
 ```
 
 Registers one `t.Cleanup` that finalizes the cluster and then calls
@@ -1645,15 +1646,18 @@ this order, whatever order the test added its steps in:
 1. The checks added with `Check`, in the order they were added. A check is a
    post-test verification that needs the running cluster. It fails the test
    by returning an error, by panicking or through `t` itself.
-2. With `Archive`, the failure archive, if the test has failed by now. A
-   failure that a check reported therefore triggers it too.
-3. The cleanups added with `Cleanup`, in reverse order, such as the removal
+2. The packet captures added with `Capture`, in the order they were added
+   (see [Settling a capture](#settling-a-capture)).
+3. With `Archive`, the failure archive, if the test has failed by now. A
+   failure that a check or a capture settlement reported therefore triggers it
+   too.
+4. The cleanups added with `Cleanup`, in reverse order, such as the removal
    of a client container that the archive should still see. Test cleanups
    registered after `TerminateOnCleanup` run before all of this, as Go runs
    cleanups last-in first-out, so route such removals through `Cleanup`.
    With `Archive`, a cleanup that fails when nothing had failed before
    triggers an archive of what still runs, labelled `after-cleanup`.
-4. `Terminate`. Its error fails the test.
+5. `Terminate`. Its error fails the test.
 
 ```golang
 cluster, err := ceph.Run(ctx, image)
@@ -1693,6 +1697,38 @@ finalization has started fails the test instead.
 
 Invalid fields are rejected before anything is registered.
 
+##### Settling a capture
+
+`Finalization.Capture(name, session)` hands a running [packet
+capture](capture.md) (a `*capture.Session`, through the `ceph.CaptureSettler`
+interface that the `capture` package implements) to the finalization. The
+capture is settled after the checks and before the failure archive and the
+cleanups, so a failed test body that never reached its own `Stop` still ends
+the capture, keeps its report and leaves the helper removed before a
+`Cleanup` removes the caller-owned target. The caller still owns the
+session: an explicit `Stop` earlier is not repeated and its report is the
+one kept.
+
+The settlement has its own allowance. It is not part of `CheckTimeout` and
+does not use the expired test context: each capture gets a fresh context
+bounded by `CaptureSettler.SettlementAllowance()` (for `capture.Session`, the
+stop grace plus two minutes, 130 seconds by default), recorded as
+`allowance` in the manifest. The finalization waits for the settlement to
+return instead of abandoning it, so a target is never removed underneath a
+settlement that still runs. A settlement error fails the test under the
+capture's name next to the original failure, does not skip the other captures
+or any later phase, and triggers the archive. `Capture` with a nil session, or
+after the finalization has started, fails the test.
+
+With `Archive`, the archive keeps each settled capture's report as
+`capture-<n>-<name>.json` (`n` is the registration order) even when the
+settlement returned an error, and the manifest lists each settlement under
+`captures` with its error, `failed_test`, `allowance` and `reported`; the
+trigger has `capture_failed`. A passing test settles its captures without
+writing an archive. The archived report names the output file by its base
+name only. This does not copy or retain the pcap file itself: raw capture
+retention is a separate, explicit decision that this method does not make.
+
 ##### The failure archive
 
 A passing test collects and writes nothing. In a failed test, the archive
@@ -1708,6 +1744,7 @@ test never share one:
 | `diagnostics.json` | The `ceph.DiagnosticsReport`, absent when the collector returned none. |
 | `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
 | `verification-<n>-<name>.json` | The `ceph.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
+| `capture-<n>-<name>.json` | The report of each [settled capture](#settling-a-capture) that returned one, numbered by registration order. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
 
 The manifest's execution identity has the Go version and platform, the VCS

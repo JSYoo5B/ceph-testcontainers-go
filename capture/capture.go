@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -846,4 +847,27 @@ func classifyStartError(ctx context.Context, label string, err error) error {
 		return fmt.Errorf("%s: %w: %w", label, ErrPermissionDenied, err)
 	}
 	return classifyDocker(ctx, fmt.Errorf("%s: %w", label, err))
+}
+
+var _ ceph.CaptureSettler = (*Session)(nil)
+
+// SettlementAllowance is the longest Settle runs: the stop grace plus the
+// package's own Docker allowance, whatever context Settle is given. It is
+// what ceph.Finalization.Capture admits for this session.
+func (s *Session) SettlementAllowance() time.Duration {
+	return s.stopGrace() + finishTimeout
+}
+
+// Settle is Stop for a ceph.Finalization, which registers the session with
+// Finalization.Capture. It returns the Report as an any value and, so that an
+// archived report names no host path, with Output reduced to its base name.
+// It shares Stop's behavior: the context's cancellation does not shorten it,
+// it waits for a Stop that is already running, and a Stop that already
+// finished is not repeated.
+func (s *Session) Settle(ctx context.Context) (any, error) {
+	report, err := s.Stop(ctx)
+	if report.Output != "" {
+		report.Output = filepath.Base(report.Output)
+	}
+	return report, err
 }

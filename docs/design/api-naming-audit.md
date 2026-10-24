@@ -8,23 +8,23 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **788** functions, declared methods on
+The declaration catalogue contains **792** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **1084** exported field/nested-record/embedding entries in
-**179** types. It scans exported declared interfaces as well; there are none
-in the current public packages. Its synthetic scope test includes interface
+catalogue contains **1086** exported field/nested-record/embedding entries in
+**180** types. It scans exported declared interfaces as well; the only one in the
+current public packages is `ceph.CaptureSettler`, with two methods. Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 363 | 420 |
+| `ceph` | 365 | 422 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| `capture` | 33 | 55 |
-| Total | 788 | 1084 |
+| `capture` | 35 | 55 |
+| Total | 792 | 1086 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -39,7 +39,7 @@ the `capture` package added for #52 (see
 [Packet capture](#packet-capture-package) below), and the first runtime debug
 level window added for #50 (see [Runtime debug level window](#runtime-debug-level-window)
 below). It uses the current source, not the earlier 691/692-entry, 707-entry,
-712-entry, 745-entry, 768-entry or 787-entry checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
+712-entry, 745-entry, 768-entry, 787-entry or 788-entry checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
 Digest matching establishes scope agreement, not the quality of a naming review.
@@ -110,6 +110,16 @@ call site against the convention above:
 without taking ownership or changing it (it neither restores nor removes the
 window, unlike `Cleanup`); `DebugLevel` names the handle's family. It adds one
 declaration and no member entry, because the manifest records are unexported.
+
+`Finalization.Capture` registers a running packet capture for settlement
+before the failure archive. `Capture` is the retained noun-verb for handing a
+caller-owned resource to the finalization's settlement phase without the
+finalization owning its creation; `CaptureSettler` is the interface that
+`capture.Session` implements (the `capture` package imports `ceph`, so `ceph`
+cannot name the session type), with `Settle`, `Stop` for a finalization, and
+`SettlementAllowance`, the admitted bound. `Settle` and `SettlementAllowance`
+add two declarations to `capture`, `CaptureSettler` and `Capture` two to
+`ceph`, and two interface member entries.
 
 ## Packet capture package
 
