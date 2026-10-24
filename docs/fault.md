@@ -14,6 +14,7 @@ versions keep their original APIs. Update imports and calls together:
 | --- | --- |
 | `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
 | `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
+| `cluster.InjectObjectDataError(ctx, pool, object, osdID)` | `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)` (same one-shot contract, no handle) |
 | `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.ApplyNetworkProfile(ctx, cluster, target, delay)` |
 | `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.ApplyLinkProfile(ctx, target, network, delay)` |
 | `cluster.InterruptNetwork(ctx, target, plane)` | `fault.InterruptNetwork(ctx, cluster, target, plane)` |
@@ -46,7 +47,10 @@ belong to `ceph`, including their
 mutation APIs and restoration handles. They use Ceph control-plane operations
 to change admission or policy; testing failure outcomes does not move these
 controls into `fault`. The blocklist extraction in PR #12 is reverted.
-Object-error injection remains in `ceph` for its separately reviewed checkpoint.
+Dedicated object-error injection (`fault.InjectObjectDataError`) is a
+purpose-built synthetic error and belongs in `fault`, although Ceph implements
+the hook as a daemon debug switch. Scrub, repair and inspection of the damaged PG
+stay in `ceph`.
 
 For code already using the extracted `fault` delay names, follow the
 [network profile naming migration](guides/upgrading-network-profile-names.md).
@@ -93,6 +97,44 @@ if err != nil {
 }
 // Client operations on PGs that include osd.1 now wait for their timeouts.
 ```
+
+## InjectObjectDataError
+
+```golang
+func InjectObjectDataError(ctx context.Context, cluster *ceph.Container, pool, object string, osdID int) error
+```
+
+Makes one replica of an existing object on an owned OSD return a read error to
+scrub and recovery, through Ceph's `injectdataerr` debug command. It needs
+BlueStore OSDs and refuses a cluster that uses `ceph.OSDMemStore`. The OSD must be
+in the object's current acting set, and the pool must be replicated (EC pools are
+refused). The function enables `bluestore_debug_inject_read_err` on that daemon only,
+at runtime, until it restarts; the setting affects only objects with an injected
+error. The injection lives in OSD memory until the replica is rewritten (for
+example by [RepairPG](ceph.md#repairpg)) or the OSD restarts. Object names that are
+empty, contain NUL or start with `-` are refused.
+
+Observed behaviour on Ceph 20.2.4:
+
+- An error on a non-primary replica does not affect client reads served by the
+  primary. A deep scrub reports `read_error` on that shard, the PG becomes
+  `active+clean+inconsistent`, and health reports `OSD_SCRUB_ERRORS` and
+  `PG_DAMAGED`.
+- An error on the primary does not make client reads fail, and a later deep scrub
+  reports no inconsistency. Inject into a replica to leave scrub evidence.
+
+The object is addressed in the default namespace. A name that contains a slash
+is refused before any native command, because `injectdataerr` would read the
+part before the first slash as a namespace while the preflight `osd map` takes
+the whole word as the object. A cluster that a `SharedCluster` shares refuses
+the call unless the caller holds the exclusive lease. Topology operations are
+serialized with it.
+
+This is a one-shot injection. It returns no handle, the cluster does not
+register it, and `Terminate` does not undo it. A failure after the debug setting
+was enabled leaves it enabled; nothing disarms, repairs or retries. The
+recovery is [RepairPG](ceph.md#repairpg), which rewrites the replica, or an OSD
+restart. Neither is a `Restore`.
 
 ## InterruptNetwork
 

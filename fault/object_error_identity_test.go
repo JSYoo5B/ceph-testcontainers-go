@@ -1,9 +1,11 @@
-package ceph
+package fault
 
 import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // objectIdentity is the (namespace, object) pair a native command addresses.
@@ -91,19 +93,19 @@ func TestInjectObjectDataErrorRefusesSlashNamesBeforeAnyNativeCommand(t *testing
 		if !strings.Contains(name, "/") {
 			continue
 		}
-		ctr := scrubFixture()
-		ctr.Output["osd map fixture "+name+" --format json"] = ctr.Output["osd map fixture victim --format json"]
-		err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", name, 0)
-		if err == nil || len(ctr.Calls) != 0 || len(scrubCommands(ctr)) != 0 {
+		ctr := injectFixture()
+		ctr.Output["osd map fixture "+name+" --format json"] = ctr.Output[mapCommand]
+		err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", name, 0)
+		if err == nil || len(ctr.Calls) != 0 || len(tellCommands(ctr)) != 0 {
 			t.Fatalf("%q: slash name reached the native CLI: %v %v", name, err, ctr.Calls)
 		}
 	}
-	ctr := scrubFixture()
-	if err := poolFixtureCluster(ctr, 2).InjectObjectDataError(t.Context(), "fixture", "victim", 0); err != nil {
+	ctr := injectFixture()
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", "victim", 0); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"tell osd.0 config set bluestore_debug_inject_read_err true", "tell osd.0 injectdataerr fixture victim"}
-	if !slices.Equal(scrubCommands(ctr), want) {
-		t.Fatalf("plain name changed the injection commands: %v", scrubCommands(ctr))
+	want := []string{enableCommand, injectCommand}
+	if !slices.Equal(tellCommands(ctr), want) {
+		t.Fatalf("plain name changed the injection commands: %v", tellCommands(ctr))
 	}
 }

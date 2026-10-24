@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 )
 
 // One PG with two replicas makes every object share the same primary and
@@ -94,10 +95,10 @@ func TestScrubInconsistency(t *testing.T) {
 				}
 			}
 
-			if err := cluster.InjectObjectDataError(ctx, poolName, "victim", 99); err == nil {
+			if err := fault.InjectObjectDataError(ctx, cluster, poolName, "victim", 99); err == nil {
 				t.Fatal("unowned OSD accepted an injection")
 			}
-			if err := cluster.InjectObjectDataError(ctx, poolName, "victim", replica); err != nil {
+			if err := fault.InjectObjectDataError(ctx, cluster, poolName, "victim", replica); err != nil {
 				t.Fatal("inject replica data error", err)
 			}
 			probe(t, "injected")
@@ -122,7 +123,7 @@ func TestScrubInconsistency(t *testing.T) {
 			probe(t, "repaired")
 
 			// A primary read error is repaired from the replica during the read.
-			if err := cluster.InjectObjectDataError(ctx, poolName, "primary-victim", mapping.ActingPrimary); err != nil {
+			if err := fault.InjectObjectDataError(ctx, cluster, poolName, "primary-victim", mapping.ActingPrimary); err != nil {
 				t.Fatal("inject primary data error", err)
 			}
 			probe(t, "primary")
