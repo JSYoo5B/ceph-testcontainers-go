@@ -217,8 +217,8 @@ func newVerifyFixture() *verifyFixture {
 	}}
 	for _, ctr := range docker.containers {
 		ctr.lines = []fakeLogLine{
-			{verifyStart.Add(-5 * time.Minute), "bootstrap log_channel(cluster) log [WRN] : Health check failed: OSD count 0 < osd_pool_default_size 1 (TOO_FEW_OSDS)"},
-			{verifyStart.Add(time.Minute), "0 log_channel(cluster) log [INF] : osd.0 boot"},
+			{verifyStart.Add(-5 * time.Minute), daemonLogLine("cluster", "WRN", "Health check failed: OSD count 0 < osd_pool_default_size 1 (TOO_FEW_OSDS)")},
+			{verifyStart.Add(time.Minute), daemonLogLine("cluster", "INF", "osd.0 boot")},
 		}
 	}
 	snapshot := diagnosticsSnapshot{
@@ -230,6 +230,12 @@ func newVerifyFixture() *verifyFixture {
 		secrets:      []string{"AQBverifysecret=="},
 	}
 	return &verifyFixture{docker: docker, snapshot: snapshot}
+}
+
+// daemonLogLine is a cluster log entry as a daemon logs it (LogChannel::do_log
+// through the Log of the pinned Ceph source).
+func daemonLogLine(channel, priority, message string) string {
+	return "2026-10-24T01:02:03.123+0000 7f3a1c0e5640  0 log_channel(" + channel + ") log [" + priority + "] : " + message
 }
 
 func (fx *verifyFixture) line(id string, after time.Duration, text string) {
@@ -452,7 +458,7 @@ func TestVerificationCountsDistinctCrashes(t *testing.T) {
 // event.
 func TestVerificationLogExpectations(t *testing.T) {
 	signal := "*** Caught signal (Segmentation fault) **"
-	warning := "0 log_channel(cluster) log [WRN] : Health check failed: 1 osds down (OSD_DOWN)"
+	warning := daemonLogLine("cluster", "WRN", "Health check failed: 1 osds down (OSD_DOWN)")
 	t.Run("unexpected warning", func(t *testing.T) {
 		fx := newVerifyFixture()
 		v := fx.activate(t)
@@ -505,7 +511,7 @@ func TestVerificationLogExpectations(t *testing.T) {
 	t.Run("lines are redacted and bounded", func(t *testing.T) {
 		fx := newVerifyFixture()
 		v := fx.activate(t)
-		fx.line("osd1", 2*time.Minute, "[ERR] key AQBverifysecret== "+strings.Repeat("x", 4000))
+		fx.line("osd1", 2*time.Minute, daemonLogLine("cluster", "ERR", "key AQBverifysecret== "+strings.Repeat("x", 4000)))
 		report := fx.evaluate(t, v)
 		finding := report.Logs.Findings[0]
 		if strings.Contains(finding.Text, "AQBverifysecret") || len(finding.Text) > maxFindingText || !finding.Truncated || finding.Event != string(LogClusterError) {
@@ -522,7 +528,7 @@ func TestVerificationMatchesBeyondTheFindingText(t *testing.T) {
 	fx := newVerifyFixture()
 	fx.config.Logs = []LogExpectation{{Name: "marker", Daemon: "mon.a", Required: true, Pattern: `late-marker-7f3a`}}
 	v := fx.activate(t)
-	fx.line("mon", 2*time.Minute, "0 log_channel(cluster) log [WRN] : "+strings.Repeat("x", 1100)+" late-marker-7f3a")
+	fx.line("mon", 2*time.Minute, daemonLogLine("cluster", "WRN", strings.Repeat("x", 1100)+" late-marker-7f3a"))
 	report := fx.evaluate(t, v)
 	if report.Outcome != VerificationClean || report.Logs.Permitted != 1 || !report.Logs.Expectations[0].Satisfied ||
 		!report.Logs.Findings[0].Truncated || len(report.Logs.Findings[0].Text) > maxFindingText {
@@ -748,9 +754,9 @@ func TestVerificationFindingLimitKeepsUnexpected(t *testing.T) {
 	fx.config.Logs = []LogExpectation{{Name: "warnings", Daemon: "mon.a", Pattern: `WRN`}}
 	v := fx.activate(t)
 	for i := range 3 {
-		fx.line("mon", time.Duration(i+2)*time.Minute, "[WRN] permitted")
+		fx.line("mon", time.Duration(i+2)*time.Minute, daemonLogLine("cluster", "WRN", "permitted"))
 	}
-	fx.line("osd1", 6*time.Minute, "[ERR] unexpected")
+	fx.line("osd1", 6*time.Minute, daemonLogLine("cluster", "ERR", "unexpected"))
 	report := fx.evaluate(t, v)
 	if report.Logs.Unexpected != 1 || report.Logs.Permitted != 3 || report.Logs.OmittedFindings != 2 || len(report.Logs.Findings) != 2 ||
 		report.Logs.Findings[0].Expectation != "" || report.Logs.Findings[0].Source != "osd.1" {

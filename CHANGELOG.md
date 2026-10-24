@@ -18,6 +18,15 @@ change the API.
 
 ### Added
 
+- Post-test log verification takes a cluster log entry's kind from the
+  severity of its log envelope (the daemon log line or the MON cluster log
+  line of the pinned Tentacle source), not from a marker in the message: an
+  `INF` entry quoting `[WRN]` no longer satisfies a required warning, and a
+  `WRN` entry quoting `[ERR]` is a warning. A line with a severity marker in an
+  unrecognized form is a gap (incomplete), never guessed. Assertion and fatal
+  signatures keep matching anywhere in a line. Report and JSON shapes are
+  unchanged. Native qualification of each release's formats is not done
+  (#47).
 - `ceph.Finalization.TrackDebugLevel` registers a debug level window so that
   the failure manifest keeps a typed copy of its receipt when the archive is
   taken and another after the cleanups (`debug_windows`). Registrations are
