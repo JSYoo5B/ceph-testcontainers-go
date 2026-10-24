@@ -285,9 +285,12 @@ func TestTwoDomainLedgerWithTheRealActor(t *testing.T) {
 }
 
 // TestTwoDomainPendingWriteAcknowledgedAfterRestoration drives the real actor
-// script through the transition the first native run showed: one call fails,
-// the next begins under the outage token and stays pending, the restoring
-// token is issued, and only then does the pending call succeed. It began under
+// script through a synthetic transition: one call fails, the next begins
+// under the outage token and stays pending, the restoring token is issued,
+// and only then does the pending call succeed. The first native run's log
+// showed one failed and one in-flight outage-start call before the restoration
+// and a rejected acknowledgement after it, but not the raw return token, so
+// this control does not reconstruct that native return. The call began under
 // the outage token but is not wholly observed under it, so it is reported as
 // late-acknowledged, must still be exact in the readback, and is not refused.
 func TestTwoDomainPendingWriteAcknowledgedAfterRestoration(t *testing.T) {
