@@ -125,6 +125,7 @@ jobs:
           SCENARIO_CHANGED_SINCE: ${{ inputs.changed_since }}
           SCENARIO_SELECT_DECLARATIONS: ${{ inputs.select_declarations }}
           SCENARIO_NETWORKS: ${{ inputs.networks }}
+          SCENARIO_RELEASE: ${{ inputs.release }}
           SCENARIO_REPETITIONS: ${{ inputs.repetitions }}
           # Validated here against the registry, before any runtime job is
           # allocated. Every tag_scenarios.py command of this workflow takes
@@ -133,15 +134,15 @@ jobs:
           SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
         run: |
           if [ "$SCENARIO_CATEGORY" = optional ]; then
-            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --optional --batch "$SCENARIO_OPTIONAL_BATCH" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ "$SCENARIO_CATEGORY" = selected ]; then
-            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --profiles "$SCENARIO_PROFILES" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ "$SCENARIO_CATEGORY" = representative ]; then
-            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --representative --repetitions "$SCENARIO_REPETITIONS" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           elif [ -n "$SCENARIO_SELECT_DECLARATIONS" ]; then
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT"
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'
@@ -176,6 +177,7 @@ jobs:
           name: plan-${{ inputs.category }}-${{ inputs.release }}
           path: |
             artifacts/tag-plan.json
+            artifacts/tag-dispatch.json
             artifacts/modules/
             artifacts/buildcache/
           if-no-files-found: error
