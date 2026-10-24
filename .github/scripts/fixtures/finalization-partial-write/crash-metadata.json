@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "started_at": "0001-01-01T00:00:00Z",
+  "finished_at": "0001-01-01T00:00:00Z",
+  "closed": false,
+  "complete": true,
+  "containers": [
+    {
+      "role": "osd",
+      "name": "0",
+      "crash_dir": "",
+      "exit_code": 0,
+      "outcome": "empty",
+      "records": [],
+      "ignored_entries": 0,
+      "archive_bytes": 0
+    },
+    {
+      "role": "mon",
+      "name": "a",
+      "crash_dir": "",
+      "exit_code": 0,
+      "outcome": "records",
+      "records": [
+        {
+          "crash_id": "c1",
+          "path": "",
+          "done": false,
+          "fields": null
+        }
+      ],
+      "ignored_entries": 0,
+      "archive_bytes": 0
+    }
+  ]
+}
