@@ -32,10 +32,11 @@ func scrubCommands(ctr *poolFixtureContainer) []string {
 
 func TestInjectObjectDataErrorValidatesTargetBeforeNativeCommands(t *testing.T) {
 	for name, call := range map[string]func(*Container) error{
-		"pool":        func(c *Container) error { return c.InjectObjectDataError(t.Context(), "--pool", "victim", 0) },
-		"object dash": func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "-victim", 0) },
-		"object NUL":  func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "vic\x00tim", 0) },
-		"unowned OSD": func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "victim", 9) },
+		"pool":         func(c *Container) error { return c.InjectObjectDataError(t.Context(), "--pool", "victim", 0) },
+		"object dash":  func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "-victim", 0) },
+		"object NUL":   func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "vic\x00tim", 0) },
+		"object slash": func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "ns/victim", 0) },
+		"unowned OSD":  func(c *Container) error { return c.InjectObjectDataError(t.Context(), "fixture", "victim", 9) },
 	} {
 		ctr := scrubFixture()
 		if err := call(poolFixtureCluster(ctr, 2)); err == nil || len(ctr.Calls) != 0 {

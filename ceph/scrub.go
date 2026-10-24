@@ -51,6 +51,22 @@ func validateObjectName(name string) error {
 	return nil
 }
 
+// validateInjectObjectName additionally refuses a slash. The native
+// injectdataerr command splits its object word at the first slash into
+// namespace and object, while the preflight "osd map" call takes the word as a
+// literal object in the default namespace. A name with a slash would therefore
+// be mapped as one identity and injected as another, so it is refused before
+// any native command instead of being reinterpreted.
+func validateInjectObjectName(name string) error {
+	if err := validateObjectName(name); err != nil {
+		return err
+	}
+	if strings.ContainsRune(name, '/') {
+		return invalid(errors.New("object name must not contain a slash: injectdataerr would read the part before it as a namespace"))
+	}
+	return nil
+}
+
 // InjectObjectDataError makes one replica of an object on an owned OSD return
 // a read error to scrub and recovery, through the native injectdataerr debug
 // command. The OSD must be in the object's current acting set of a replicated
@@ -64,6 +80,10 @@ func validateObjectName(name string) error {
 // unaffected. Use DeepScrubPG to report the damage and PGInconsistencies,
 // HealthDetails (OSD_SCRUB_ERRORS, PG_DAMAGED) or PoolPGs to observe it. It
 // needs BlueStore OSDs and refuses a cluster that uses OSDMemStore.
+//
+// The object is addressed in the default namespace. A name containing a slash
+// is refused before any native command, because the native command would
+// reinterpret the part before the first slash as a namespace.
 func (c *Container) InjectObjectDataError(ctx context.Context, pool, object string, osdID int) error {
 	if gateErr := c.sharedGate("InjectObjectDataError"); gateErr != nil {
 		return gateErr
@@ -74,7 +94,7 @@ func (c *Container) InjectObjectDataError(ctx context.Context, pool, object stri
 	if err := validateExistingPoolName(pool); err != nil {
 		return err
 	}
-	if err := validateObjectName(object); err != nil {
+	if err := validateInjectObjectName(object); err != nil {
 		return err
 	}
 	if err := c.lockTopology(ctx); err != nil {
