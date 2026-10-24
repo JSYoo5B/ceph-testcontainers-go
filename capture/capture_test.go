@@ -711,3 +711,54 @@ func TestErrorCategories(t *testing.T) {
 		}
 	}
 }
+
+func TestSettleIsStopForFinalization(t *testing.T) {
+	f := newFakeBackend()
+	req := request(t)
+	session, err := startFake(t, f, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.SettlementAllowance(), req.StopGrace+finishTimeout; got != want {
+		t.Errorf("allowance = %v, want the stop grace plus the Docker allowance %v", got, want)
+	}
+	// An expired finalization context does not shorten the settlement.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	value, err := session.Settle(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, ok := value.(Report)
+	if !ok {
+		t.Fatalf("settled value is %T", value)
+	}
+	data, readErr := os.ReadFile(req.Output)
+	if readErr != nil || !bytes.Equal(data, f.file) || !report.HelperRemoved || report.File.Status != FileValid {
+		t.Fatalf("delivered %d bytes (%v), report %+v", len(data), readErr, report)
+	}
+	if report.Output != filepath.Base(req.Output) {
+		t.Errorf("settled report names %q, want only the base name", report.Output)
+	}
+	// An explicit Stop that ran earlier is not repeated, and the same
+	// report (apart from the output name) is kept.
+	again, err := session.Settle(context.Background())
+	if err != nil || len(f.signals) != 1 || again.(Report).File.SHA256 != report.File.SHA256 {
+		t.Fatalf("a second settlement repeated the capture's end: %v %q", err, f.signals)
+	}
+}
+
+func TestSettleKeepsReportWithError(t *testing.T) {
+	f := newFakeBackend()
+	f.exitBefore = nil
+	f.ignoreTerm = true
+	session, err := startFake(t, f, request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := session.Settle(context.Background())
+	report, _ := value.(Report)
+	if !errors.Is(err, ErrFailed) || report.End != EndKilled || !report.HelperRemoved {
+		t.Fatalf("report %+v, err %v: a killed capture must still report and be removed", report, err)
+	}
+}

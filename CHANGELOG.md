@@ -18,6 +18,14 @@ change the API.
 
 ### Added
 
+- `ceph.Finalization.Capture` registers a packet capture (`ceph.CaptureSettler`,
+  implemented by `capture.Session` through `Settle` and `SettlementAllowance`)
+  that the finalization settles after the checks and before the failure archive
+  and the cleanups. The settlement has its own admitted allowance (130 seconds
+  by default) instead of the check budget or the expired test context, is
+  waited for rather than abandoned, and keeps the report as
+  `capture-<n>-<name>.json` and in the manifest's `captures` even when the
+  settlement failed. Raw pcap retention is not part of this change.
 - Post-test log verification takes a cluster log entry's kind from the
   severity of its log envelope (the daemon log line or the MON cluster log
   line of the pinned Tentacle source), not from a marker in the message: an
