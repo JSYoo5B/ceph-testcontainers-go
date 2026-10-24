@@ -125,8 +125,24 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	rounds = wait("FULL_QUORUM", baseline.Members, quorumWait)
 
 	last := rounds[len(rounds)-1]
-	if problems := checkMajorityContinuity(baseline, last); len(problems) > 0 {
-		t.Fatalf("a monitor process did not continue across the outage: %v", problems)
+	// A pair of queries too slow to tell a restart from a continuing process
+	// is taken again under the same bounds, not accepted.
+	for attempt := 1; ; attempt++ {
+		problems, undecided := checkMajorityContinuity(baseline, last)
+		if len(problems) > 0 {
+			t.Fatalf("a monitor process did not continue across the outage: %v", problems)
+		}
+		if len(undecided) == 0 {
+			break
+		}
+		if attempt == 3 {
+			t.Fatalf("process continuity stayed undecided after %d observations: %v", attempt, undecided)
+		}
+		t.Logf("MON_MAJORITY_CONTINUITY attempt %d undecided, observing again: %v", attempt, undecided)
+		last = observeMajorityRound(ctx, rec, cluster, baseline)
+		if reasons := evaluateMajorityRound(baseline, last, baseline.Members); len(reasons) > 0 {
+			t.Fatalf("the recovered quorum changed while continuity was re-observed: %v", reasons)
+		}
 	}
 	// A fresh quorum-dependent management query works again, on the same
 	// monmap and the original public addresses.

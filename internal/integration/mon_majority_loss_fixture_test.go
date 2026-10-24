@@ -109,7 +109,7 @@ func TestMajorityBaselineCapturesIdentityBeforeTheCut(t *testing.T) {
 		t.Fatalf("baseline %+v", b)
 	}
 	for name, m := range b.Mons {
-		if m.ContainerID != "cid-mon."+name+"-0123456789" || m.StartedAt != "t0" || m.UptimeMS < 600000 || m.UptimeAt.IsZero() || !strings.HasPrefix(m.Address, "v2:10.0.0.") {
+		if m.ContainerID != "cid-mon."+name+"-0123456789" || m.StartedAt != "t0" || m.UptimeMS < 600000 || m.UptimeStart.IsZero() || m.UptimeEnd.Before(m.UptimeStart) || !strings.HasPrefix(m.Address, "v2:10.0.0.") {
 			t.Fatalf("mon.%s %+v", name, m)
 		}
 	}
@@ -283,8 +283,8 @@ func TestMajorityContinuityDetectsARestartedProcess(t *testing.T) {
 	rec, b := majorityBaselineOf(t, s)
 	time.Sleep(20 * time.Millisecond)
 	round := observeMajorityRound(t.Context(), rec, s.f, b)
-	if problems := checkMajorityContinuity(b, round); len(problems) != 0 {
-		t.Fatalf("continuous processes: %v", problems)
+	if problems, undecided := checkMajorityContinuity(b, round); len(problems) != 0 || len(undecided) != 0 {
+		t.Fatalf("continuous processes: %v %v", problems, undecided)
 	}
 	// The daemon restarted within the same container: its uptime starts over
 	// although the container generation is unchanged.
@@ -292,15 +292,138 @@ func TestMajorityContinuityDetectsARestartedProcess(t *testing.T) {
 	s.restarted["d"] = 590000
 	s.mu.Unlock()
 	round = observeMajorityRound(t.Context(), rec, s.f, b)
-	if problems := checkMajorityContinuity(b, round); len(problems) != 1 || !strings.Contains(problems[0], "mon.d") {
+	if problems, _ := checkMajorityContinuity(b, round); len(problems) != 1 || !strings.Contains(problems[0], "mon.d") {
 		t.Fatalf("restart not detected: %v", problems)
 	}
 	s.mu.Lock()
 	s.restarted["d"], s.noUptime["e"] = 0, true
 	s.mu.Unlock()
 	round = observeMajorityRound(t.Context(), rec, s.f, b)
-	if problems := checkMajorityContinuity(b, round); len(problems) != 1 || !strings.Contains(problems[0], "mon.e reports no complete uptime") {
+	if problems, _ := checkMajorityContinuity(b, round); len(problems) != 1 || !strings.Contains(problems[0], "mon.e reports no complete uptime") {
 		t.Fatalf("missing uptime accepted: %v", problems)
+	}
+}
+
+// delayedStatusCluster holds a MON's mon_status response after the MON
+// generated it, as a slow exec or transport does, within the query bound.
+type delayedStatusCluster struct {
+	*fakeMonCluster
+	delay map[string]time.Duration
+}
+
+func (c delayedStatusCluster) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
+	out, err := c.fakeMonCluster.AdminSocket(ctx, daemon, args...)
+	if delay := c.delay[daemon]; delay > 0 && len(args) == 1 && args[0] == "mon_status" {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return out, err
+}
+
+var delayedMajorityBounds = monReplacementBounds{
+	Operation: time.Minute, Quorum: time.Minute, QuorumInterval: time.Millisecond,
+	Query: 8 * time.Second, Snapshot: 20 * time.Second, Bundle: time.Minute,
+}
+
+// A continuing process whose already generated response needs 3.2 s, longer
+// than the old fixed slack and within the query bound, is still a continuing
+// process; a restart behind the same delay is still detected. Both run through
+// the baseline, the reader, the classifier and the continuity check.
+func TestMajorityContinuitySurvivesADelayedResponse(t *testing.T) {
+	for name, restart := range map[string]bool{"continuing": false, "restarted": true} {
+		t.Run(name, func(t *testing.T) {
+			s := newMajorityScript()
+			c := delayedStatusCluster{s.f, map[string]time.Duration{}}
+			rec := newMonReplacementRecorder("majority", c, delayedMajorityBounds)
+			b, err := captureMajorityBaseline(t.Context(), rec, c, 5)
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond)
+			c.delay["mon.d"] = 3200 * time.Millisecond
+			if restart {
+				s.mu.Lock()
+				s.restarted["d"] = 590000
+				s.mu.Unlock()
+			}
+			round := observeMajorityRound(t.Context(), rec, c, b)
+			if sample := round.Samples[3]; sample.Name != "d" || sample.Verdict == majorityInconclusive {
+				t.Fatalf("delayed sample %+v", sample)
+			}
+			problems, undecided := checkMajorityContinuity(b, round)
+			switch {
+			case restart && (len(problems) != 1 || !strings.Contains(problems[0], "mon.d")):
+				t.Fatalf("restart behind a delay not detected: %v %v", problems, undecided)
+			case !restart && (len(problems) != 0 || len(undecided) != 0):
+				t.Fatalf("delayed continuing process: %v %v", problems, undecided)
+			}
+		})
+	}
+}
+
+// Queries too slow to tell are undecided, not accepted, and a contradiction
+// outside even the widened interval is still a problem.
+func TestMajorityContinuityIsUndecidedForSlowQueries(t *testing.T) {
+	t0 := time.Now()
+	ms := func(n int) time.Time { return t0.Add(time.Duration(n) * time.Millisecond) }
+	b := &majorityBaseline{Mons: map[string]majorityMember{"a": {Name: "a", UptimeMS: 100000, UptimeStart: ms(0), UptimeEnd: ms(100)}}}
+	sample := func(uptime int64, start, end int) majorityRound {
+		return majorityRound{Samples: []majoritySample{{Name: "a", UptimeMS: uptime, QueryStarted: ms(start), QueryEnded: ms(end)}}}
+	}
+	for name, tc := range map[string]struct {
+		round              majorityRound
+		problems, undecide int
+	}{
+		"continuing, fast":       {sample(110050, 10000, 10100), 0, 0},
+		"restarted, fast":        {sample(2000, 10000, 10100), 1, 0},
+		"continuing, slow query": {sample(110050, 10000, 17000), 0, 1},
+		"contradiction, slow":    {sample(2000, 10000, 17000), 1, 0},
+	} {
+		problems, undecided := checkMajorityContinuity(b, tc.round)
+		if len(problems) != tc.problems || len(undecided) != tc.undecide {
+			t.Fatalf("%s: problems %v undecided %v", name, problems, undecided)
+		}
+	}
+}
+
+// An outage is concluded only from a response that reports an empty quorum
+// array. The paired controls differ only in how quorum is reported.
+func TestMajorityOutageNeedsAnExplicitEmptyQuorum(t *testing.T) {
+	for _, state := range []string{"probing", "electing"} {
+		for name, tc := range map[string]struct {
+			alter  func(map[string]any)
+			accept bool
+			reason string
+		}{
+			"empty":   {func(v map[string]any) { v["quorum"] = []int{} }, true, ""},
+			"missing": {func(v map[string]any) { delete(v, "quorum") }, false, "omits quorum"},
+			"null":    {func(v map[string]any) { v["quorum"] = nil }, false, "null quorum"},
+			"object":  {func(v map[string]any) { v["quorum"] = map[string]any{} }, false, "mon_status"},
+		} {
+			t.Run(state+"/"+name, func(t *testing.T) {
+				s := newMajorityScript()
+				rec, b := majorityBaselineOf(t, s)
+				s.set(state, "a", "b", "c", "d", "e")
+				for _, mon := range b.Members {
+					s.alter(mon, tc.alter)
+				}
+				round := observeMajorityRound(t.Context(), rec, s.f, b)
+				reasons := evaluateMajorityRound(b, round, nil)
+				if tc.accept != (len(reasons) == 0) {
+					t.Fatalf("accept=%v reasons %v round %s", tc.accept, reasons, round.summary())
+				}
+				if !tc.accept {
+					for _, sample := range round.Samples {
+						if sample.Verdict != majorityInconclusive || !strings.Contains(sample.Reason, tc.reason) {
+							t.Fatalf("sample %+v", sample)
+						}
+					}
+				}
+			})
+		}
 	}
 }
 

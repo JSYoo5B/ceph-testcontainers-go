@@ -3,11 +3,11 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -36,19 +36,30 @@ const (
 	majorityInconclusive = "inconclusive"
 )
 
-// majorityUptimeSlackMS bounds how far a MON's reported uptime may differ from
-// the wall-clock time between two samples of it. A restarted daemon reports a
-// small uptime and falls far outside this slack.
-const majorityUptimeSlackMS = 3000
+// majorityUptimeSlackMS is the tolerance for rounding and clock granularity
+// when a MON's reported uptime is compared with the wall-clock time between
+// two samples of it. It does not cover transport delay: the instant at which
+// the MON sampled its uptime is only known to lie within the query's start and
+// end, and the comparison uses that interval instead of a wider slack.
+const majorityUptimeSlackMS = 1500
+
+// majorityUptimeUncertaintyMS is the largest total query duration (baseline
+// plus current) for which an uptime comparison can tell a continuing process
+// from a restarted one. A slower pair of queries leaves the comparison
+// undecided and the observation is taken again.
+const majorityUptimeUncertaintyMS = 6000
 
 // majorityMember is one MON as captured before any interruption.
 type majorityMember struct {
-	Name        string    `json:"name"`
-	ContainerID string    `json:"container_id"`
-	StartedAt   string    `json:"started_at"`
-	Address     string    `json:"address"`
-	UptimeMS    int64     `json:"uptime_ms"`
-	UptimeAt    time.Time `json:"uptime_at"`
+	Name        string `json:"name"`
+	ContainerID string `json:"container_id"`
+	StartedAt   string `json:"started_at"`
+	Address     string `json:"address"`
+	UptimeMS    int64  `json:"uptime_ms"`
+	// UptimeStart and UptimeEnd bracket the query whose response reported
+	// UptimeMS; the MON sampled it at an unknown instant in between.
+	UptimeStart time.Time `json:"uptime_query_started"`
+	UptimeEnd   time.Time `json:"uptime_query_ended"`
 }
 
 // majorityBaseline is the healthy cluster's identity: its FSID, the monmap and
@@ -73,7 +84,8 @@ type majoritySample struct {
 	MonMapEpoch   int       `json:"monmap_epoch,omitempty"`
 	Quorum        []string  `json:"quorum,omitempty"`
 	UptimeMS      int64     `json:"uptime_ms"`
-	QueriedAt     time.Time `json:"queried_at"`
+	QueryStarted  time.Time `json:"query_started"`
+	QueryEnded    time.Time `json:"query_ended"`
 	Digest        string    `json:"digest,omitempty"`
 }
 
@@ -114,6 +126,32 @@ func parseMonStatusUptime(local monLocalStatus) (int64, bool) {
 		return 0, false
 	}
 	return int64(*reported.Uptime), true
+}
+
+// monStatusQuorumShape says why a retained mon_status response does not report
+// its quorum as an explicit JSON array, or returns "" when it does. The shared
+// parser decodes a missing field and null into the same empty slice as [], so
+// an outage may only be concluded from a response that this check accepts.
+func monStatusQuorumShape(local monLocalStatus) string {
+	if local.Payload == nil || local.Payload.Truncated || local.Payload.Data == "" {
+		return "the response was not retained whole"
+	}
+	var reported struct {
+		Quorum json.RawMessage `json:"quorum"`
+	}
+	if err := json.Unmarshal([]byte(local.Payload.Data), &reported); err != nil {
+		return "the response is not decodable: " + err.Error()
+	}
+	raw := bytes.TrimSpace(reported.Quorum)
+	switch {
+	case len(raw) == 0:
+		return "the response omits quorum"
+	case string(raw) == "null":
+		return "the response reports a null quorum"
+	case raw[0] != '[':
+		return "the response reports a quorum that is not an array"
+	}
+	return ""
 }
 
 func sortedClone(names []string) []string {
@@ -188,7 +226,7 @@ func captureMajorityBaseline(ctx context.Context, rec *monReplacementRecorder, c
 		}
 		b.MonMapEpoch, b.ElectionEpoch = local.MonMapEpoch, local.ElectionEpoch
 		b.Mons[mon.DaemonName] = majorityMember{Name: mon.DaemonName, ContainerID: local.Identity.ContainerID, StartedAt: local.Identity.StartedAfter,
-			Address: addresses[mon.DaemonName], UptimeMS: uptime, UptimeAt: local.Payload.QueryEnded}
+			Address: addresses[mon.DaemonName], UptimeMS: uptime, UptimeStart: local.Payload.QueryStarted, UptimeEnd: local.Payload.QueryEnded}
 	}
 	return b, nil
 }
@@ -201,7 +239,7 @@ func classifyMajoritySample(b *majorityBaseline, local monLocalStatus, problems 
 	sample := majoritySample{Name: local.Name, Verdict: majorityInconclusive, UptimeMS: -1,
 		State: local.State, ElectionEpoch: local.ElectionEpoch, MonMapEpoch: local.MonMapEpoch, Quorum: local.Quorum}
 	if local.Payload != nil {
-		sample.QueriedAt, sample.Digest = local.Payload.QueryEnded, local.Payload.Digest
+		sample.QueryStarted, sample.QueryEnded, sample.Digest = local.Payload.QueryStarted, local.Payload.QueryEnded, local.Payload.Digest
 		if uptime, ok := parseMonStatusUptime(local); ok {
 			sample.UptimeMS = uptime
 		}
@@ -228,6 +266,8 @@ func classifyMajoritySample(b *majorityBaseline, local monLocalStatus, problems 
 		return inconclusive("container %s started %s..%s, baseline %s started %s", identity.ContainerID, identity.StartedBefore, identity.StartedAfter, base.ContainerID, base.StartedAt)
 	case local.MonMapEpoch != b.MonMapEpoch || !slices.Equal(sortedClone(local.Members), b.Members):
 		return inconclusive("monmap epoch %d members %v differs from the baseline epoch %d members %v", local.MonMapEpoch, local.Members, b.MonMapEpoch, b.Members)
+	case monStatusQuorumShape(local) != "":
+		return inconclusive("%s", monStatusQuorumShape(local))
 	case local.State == "leader" || local.State == "peon" || len(local.Quorum) > 0:
 		sample.Verdict = majorityService
 	case local.State == "probing" || local.State == "electing":
@@ -347,21 +387,33 @@ func waitMajorityState(parent context.Context, rec *monReplacementRecorder, clus
 // checkMajorityContinuity compares each MON's reported uptime with the time
 // between its baseline and this round. A restarted ceph-mon reports an uptime
 // that restarts, which the container's unchanged start time alone would not
-// show. A missing or implausible uptime is reported as well.
-func checkMajorityContinuity(b *majorityBaseline, round majorityRound) []string {
-	var problems []string
+// show. The MON sampled its uptime at an unknown instant inside each query, so
+// the elapsed time between the two samples is only known to lie between the
+// current query's start minus the baseline query's end and the current query's
+// end minus the baseline query's start; a process continued if the uptime
+// advanced by an amount in that interval (plus the rounding slack). problems
+// are samples that contradict a continuing process or lack an uptime;
+// undecided are samples whose queries were too slow to tell, which the caller
+// takes again.
+func checkMajorityContinuity(b *majorityBaseline, round majorityRound) (problems, undecided []string) {
 	for _, s := range round.Samples {
 		base := b.Mons[s.Name]
-		if s.UptimeMS < 0 || s.QueriedAt.IsZero() {
+		if s.UptimeMS < 0 || s.QueryStarted.IsZero() || s.QueryEnded.IsZero() || base.UptimeStart.IsZero() || base.UptimeEnd.IsZero() {
 			problems = append(problems, fmt.Sprintf("mon.%s reports no complete uptime", s.Name))
 			continue
 		}
-		elapsed := s.QueriedAt.Sub(base.UptimeAt).Milliseconds()
-		if delta := s.UptimeMS - base.UptimeMS; math.Abs(float64(delta-elapsed)) > majorityUptimeSlackMS {
-			problems = append(problems, fmt.Sprintf("mon.%s uptime advanced %d ms over %d ms of wall clock", s.Name, delta, elapsed))
+		lowest := s.QueryStarted.Sub(base.UptimeEnd).Milliseconds()
+		highest := s.QueryEnded.Sub(base.UptimeStart).Milliseconds()
+		advanced := s.UptimeMS - base.UptimeMS
+		uncertainty := s.QueryEnded.Sub(s.QueryStarted).Milliseconds() + base.UptimeEnd.Sub(base.UptimeStart).Milliseconds()
+		switch {
+		case advanced < lowest-majorityUptimeSlackMS || advanced > highest+majorityUptimeSlackMS:
+			problems = append(problems, fmt.Sprintf("mon.%s uptime advanced %d ms but %d to %d ms of wall clock passed between its samples", s.Name, advanced, lowest, highest))
+		case uncertainty > majorityUptimeUncertaintyMS:
+			undecided = append(undecided, fmt.Sprintf("mon.%s queries took %d ms in total, too long to tell a restart from a continuing process", s.Name, uncertainty))
 		}
 	}
-	return problems
+	return problems, undecided
 }
 
 // checkMajorityAddresses compares the control quorum query's public MON
