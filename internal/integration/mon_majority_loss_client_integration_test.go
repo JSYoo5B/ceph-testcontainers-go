@@ -183,23 +183,32 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	// ended early is a failure, not a pending call.
 	waitCalls := func(what string, bound time.Duration, check func(*monLossLedger) bool) (*monLossLedger, bool) {
 		t.Helper()
-		deadline := time.Now().Add(bound)
-		for {
+		select {
+		case outcome := <-actor.done:
+			finished = true
+			t.Fatalf("the retained client ended before %s: err=%v exit=%d stdout=%s stderr=%s", what, outcome.err, outcome.result.ExitCode, outcome.result.Stdout, outcome.result.Stderr)
+		default:
+		}
+		ledger, ok, err := monLossPoll(ctx, bound, 2*time.Second, func(c context.Context) (*monLossLedger, error) {
 			select {
 			case outcome := <-actor.done:
 				finished = true
-				t.Fatalf("the retained client ended while waiting for %s: err=%v exit=%d stdout=%s stderr=%s", what, outcome.err, outcome.result.ExitCode, outcome.result.Stdout, outcome.result.Stderr)
+				return nil, fmt.Errorf("the retained client ended while waiting for %s: err=%v exit=%d stdout=%s stderr=%s", what, outcome.err, outcome.result.ExitCode, outcome.result.Stdout, outcome.result.Stderr)
 			default:
 			}
-			ledger := ledgerNow()
-			if check(ledger) {
-				return ledger, true
-			}
-			if time.Now().After(deadline) {
-				return ledger, false
-			}
-			time.Sleep(2 * time.Second)
+			l, _, err := runner.ledger(c)
+			return l, err
+		}, check)
+		if finished {
+			t.Fatal(err)
 		}
+		if !ok && ledger == nil {
+			t.Fatalf("no usable ledger within %v while waiting for %s: %v", bound, what, err)
+		}
+		if !ok && err != nil {
+			t.Logf("MON_LOSS_CLIENT_WAIT %s: last ledger read failed: %v", what, err)
+		}
+		return ledger, ok
 	}
 	steady := func(phase string) func(*monLossLedger) bool {
 		return func(l *monLossLedger) bool {

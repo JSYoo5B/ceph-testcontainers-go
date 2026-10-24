@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -695,5 +696,96 @@ func TestMonLossFreshProbeCorruptRead(t *testing.T) {
 	fake.output("fresh", "corrupt", "3")
 	if _, err := parseMonLossLedger(fake.raw(), "fake-run"); err == nil {
 		t.Fatal("a fresh read that returned other bytes was accepted")
+	}
+}
+
+// TestMonLossPollHonorsPhaseBound pins the bounded observation loop: a ledger
+// that is ready in time is accepted, one that becomes ready only after the
+// phase bound is not (it is returned as the last view), a slow read is cut by
+// the derived context, and the delay between polls honors the same bound.
+func TestMonLossPollHonorsPhaseBound(t *testing.T) {
+	ready := &monLossLedger{Session: true}
+	accept := func(l *monLossLedger) bool { return l.Session }
+	read := func(delay time.Duration, l *monLossLedger) func(context.Context) (*monLossLedger, error) {
+		return func(ctx context.Context) (*monLossLedger, error) {
+			select {
+			case <-time.After(delay):
+				return l, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	if _, ok, err := monLossPoll(t.Context(), time.Second, 5*time.Millisecond, read(0, ready), accept); !ok || err != nil {
+		t.Fatalf("a timely ready ledger was not accepted: %v %v", ok, err)
+	}
+	// Ready, but only after the bound: the read ignores the context and
+	// returns a ready snapshot late, as a slow exec that finished anyway.
+	late := func(context.Context) (*monLossLedger, error) { time.Sleep(60 * time.Millisecond); return ready, nil }
+	if last, ok, _ := monLossPoll(t.Context(), 20*time.Millisecond, 5*time.Millisecond, late, accept); ok || last != ready {
+		t.Fatalf("a snapshot ready after the bound was accepted (ok=%t) or lost (last=%v)", ok, last)
+	}
+	// Never ready: bounded, and the polling delay does not outlast the bound.
+	started := time.Now()
+	if _, ok, _ := monLossPoll(t.Context(), 30*time.Millisecond, time.Hour, read(0, &monLossLedger{}), accept); ok || time.Since(started) > 2*time.Second {
+		t.Fatalf("an unready ledger was accepted or the delay ignored the bound (%v)", time.Since(started))
+	}
+	// A read that blocks is cut by the derived context and reports its error.
+	started = time.Now()
+	if _, ok, err := monLossPoll(t.Context(), 30*time.Millisecond, time.Millisecond, read(time.Hour, ready), accept); ok || err == nil || time.Since(started) > 2*time.Second {
+		t.Fatalf("a blocked read outlived the bound: ok=%t err=%v after %v", ok, err, time.Since(started))
+	}
+}
+
+// TestMonLossFreshProbeCancelledLauncher cancels the launcher the way the
+// native supervisor does, by killing its whole process group, while the probe
+// is stalled in connect(). The probe must be inside that group and die with
+// it, leaving the connect intent as a pending stage and no end record.
+func TestMonLossFreshProbeCancelledLauncher(t *testing.T) {
+	fake := newMonLossFake(t, "FAKE_CONNECT=hang")
+	cmd := fake.command("fresh", "cancelled", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	var child int
+	for deadline := time.Now().Add(30 * time.Second); child == 0; time.Sleep(50 * time.Millisecond) {
+		raw, _ := os.ReadFile(filepath.Join(fake.ledger, "ledger.jsonl"))
+		for _, line := range strings.Split(string(raw), "\n") {
+			var event monLossEvent
+			if json.Unmarshal([]byte(line), &event) == nil && event.Event == "intent" && event.Kind == "connect" && event.PID != nil {
+				child = *event.PID
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the probe never recorded its connect intent")
+		}
+	}
+	if child == cmd.Process.Pid {
+		t.Fatal("the connect intent came from the launcher, not a child")
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-waited; err == nil {
+		t.Fatal("a killed launcher reported a clean exit")
+	}
+	gone := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if err := syscall.Kill(child, 0); errors.Is(err, syscall.ESRCH) {
+			gone = true
+			break
+		}
+	}
+	if !gone {
+		_ = syscall.Kill(child, syscall.SIGKILL)
+		t.Fatal("the probe survived the cancellation of its launcher's process group")
+	}
+	probe := fake.parse().Probes["cancelled"]
+	if probe == nil || probe.Ended || probe.Verdict() != "connect=pending ioctx=- read=-" {
+		t.Fatalf("partial records were not preserved: %+v", probe)
 	}
 }

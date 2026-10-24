@@ -155,7 +155,6 @@ elif mode=='fresh':
     if child==0:
         code=0
         try:
-            os.setsid()
             c=connect(); box={}
             def open_connection(): c.connect(); return dict(instance=c.get_instance_id())
             def open_ioctx(): box['io']=c.open_ioctx(pool)
@@ -173,7 +172,7 @@ elif mode=='fresh':
         else: time.sleep(.2)
     if status is None:
         killed=True
-        try: os.killpg(child,signal.SIGKILL)
+        try: os.kill(child,signal.SIGKILL)
         except ProcessLookupError: pass
         reap=time.monotonic()+10
         while status is None and time.monotonic()<reap:
@@ -744,7 +743,11 @@ func (r monLossRunner) ledger(ctx context.Context) (*monLossLedger, []byte, erro
 		if len(raw) == 0 || raw[len(raw)-1] == '\n' || attempt == 4 {
 			break
 		}
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, raw, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 	ledger, err := parseMonLossLedger(raw, r.run)
 	return ledger, raw, err
@@ -769,4 +772,30 @@ func (r monLossRunner) readback(ctx context.Context, names []string) (monLossRea
 		return rb, fmt.Errorf("readback JSON is incomplete: %v: %s", err, out)
 	}
 	return rb, nil
+}
+
+// monLossPoll reads the ledger until check accepts it, all within bound. The
+// read, its retries and the delay between polls share one context derived from
+// the bound, and a snapshot that becomes ready only after that context expired
+// is not accepted: it is returned, with ok false, as the last diagnostic view.
+// A read error is kept as the last error and retried until the bound ends.
+func monLossPoll(parent context.Context, bound, interval time.Duration, read func(context.Context) (*monLossLedger, error), check func(*monLossLedger) bool) (last *monLossLedger, ok bool, err error) {
+	ctx, cancel := context.WithTimeout(parent, bound)
+	defer cancel()
+	for {
+		ledger, readErr := read(ctx)
+		if readErr == nil {
+			last, err = ledger, nil
+			if ctx.Err() == nil && check(ledger) {
+				return last, true, nil
+			}
+		} else {
+			err = readErr
+		}
+		select {
+		case <-ctx.Done():
+			return last, false, err
+		case <-time.After(interval):
+		}
+	}
 }
