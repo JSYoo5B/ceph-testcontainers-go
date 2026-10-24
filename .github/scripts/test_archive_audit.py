@@ -143,6 +143,19 @@ class Safety(Archive):
                 self.manifest(lambda d: d["files"].__setitem__(1, entry))
                 self.assertEqual(self.files()["crash-metadata.json"]["state"], archive_audit.UNSAFE)
 
+    def test_non_string_names_are_findings_not_crashes(self):
+        for name in [[], {}, 7, None, ["a"], {"a": 1}]:
+            with self.subTest(name):
+                shutil.copy(FIXTURE / "manifest.json", self.root / "manifest.json")
+                self.manifest(lambda d: d["files"].append({"name": name, "bytes": 2}))
+                report = archive_audit.audit(self.root)
+                self.assertEqual(report["files"][-1]["state"], archive_audit.UNSAFE)
+                self.assertIn("%s: unsafe_path" % (name,), report["findings"])
+                self.assertFalse(report["evidence_complete"])
+                output = Path(self.directory.name) / "receipt.json"
+                archive_audit.main([str(self.root), "--output", str(output)])
+                self.assertEqual(json.loads(output.read_text())["files"][-1]["state"], archive_audit.UNSAFE)
+
     def test_unreadable_or_untyped_manifest(self):
         (self.root / "manifest.json").write_text("{")
         report = archive_audit.audit(self.root)

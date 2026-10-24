@@ -124,7 +124,7 @@ def audit(root):
         report["manifest"]["error"] = "manifest lacks files, archive.complete or final of the expected type"
         return report
     report["files"] = [audit_file(root, entry) for entry in entries]
-    listed = {record["name"] for record in report["files"]}
+    listed = {record["name"] for record in report["files"] if isinstance(record["name"], str)}
     report["unlisted_files"] = sorted(path.name for path in root.iterdir()
                                       if path.name not in listed and path.name != MANIFEST)
     termination = manifest.get("termination")
