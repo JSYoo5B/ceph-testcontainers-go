@@ -1726,7 +1726,11 @@ settlement returned an error, and the manifest lists each settlement under
 `captures` with its error, `failed_test`, `allowance` and `reported`; the
 trigger has `capture_failed`. A passing test settles its captures without
 writing an archive. The archived report names the output file by its base
-name only. This does not copy or retain the pcap file itself: raw capture
+name only, and every string in it (such as `stderr`) is masked with the same
+redaction as the manifest's errors: the configured `Diagnostics` and
+`CrashMetadata` `RedactValues` and the recognized secret patterns. Only the
+metadata is masked, never the pcap bytes. A `nil` session, including a typed
+nil pointer, is refused at registration. This does not copy or retain the pcap file itself: raw capture
 retention is a separate, explicit decision that this method does not make.
 
 ##### The failure archive

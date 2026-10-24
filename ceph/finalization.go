@@ -318,12 +318,17 @@ func (f *Finalization) runStep(ctx context.Context, step finalizationStep) (outc
 // redact masks the configured secrets and the recognized secret patterns of
 // CollectDiagnostics in an error that the manifest keeps.
 func (f *Finalization) redact(message string) string {
-	values := append(append([]string{}, f.config.Diagnostics.RedactValues...), f.config.CrashMetadata.RedactValues...)
-	message, _ = diagnosticBoundText(diagnosticsRedactor(values)(message), 64<<10)
+	message, _ = diagnosticBoundText(f.redactor()(message), 64<<10)
 	if message == "" {
 		message = "?"
 	}
 	return message
+}
+
+// redactor masks the configured secrets and the recognized secret patterns.
+func (f *Finalization) redactor() func(string) string {
+	values := append(append([]string{}, f.config.Diagnostics.RedactValues...), f.config.CrashMetadata.RedactValues...)
+	return diagnosticsRedactor(values)
 }
 
 func boundedName(name string) string {

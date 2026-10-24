@@ -204,3 +204,95 @@ func TestFinalizationCaptureRegistrationErrors(t *testing.T) {
 	var none *Finalization
 	none.Capture("nil finalization", nil)
 }
+
+// pointerSettler dereferences its receiver, as capture.Session does.
+type pointerSettler struct{ allowance time.Duration }
+
+func (s *pointerSettler) SettlementAllowance() time.Duration { return s.allowance }
+func (s *pointerSettler) Settle(context.Context) (any, error) {
+	return nil, nil
+}
+
+func TestFinalizationRejectsTypedNilCaptureAndSettlesTheNext(t *testing.T) {
+	fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+	var typedNil *pointerSettler
+	fx.Capture("typed nil", typedNil)
+	if len(fx.tb.errors) != 1 || !strings.Contains(fx.tb.errors[0], "has no session") {
+		t.Fatalf("errors = %q, want the typed nil refused at registration", fx.tb.errors)
+	}
+	good := fx.settler("good", map[string]any{"end": "stopped"}, nil)
+	fx.Capture("good", good)
+	fx.Cleanup("remove target", func(context.Context) error { fx.event("remove-target"); return nil })
+	fx.run()
+	if good.calls != 1 || indexOf(fx.events, "settle-end-good") > indexOf(fx.events, "remove-target") {
+		t.Errorf("events = %v: a bad registration must not bypass the later capture", fx.events)
+	}
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives = %v", archives)
+	}
+	if _, err := os.Stat(filepath.Join(archives[0], "capture-1-good.json")); err != nil {
+		t.Error(err)
+	}
+}
+
+type panickingAllowance struct{ pointerSettler }
+
+func (*panickingAllowance) SettlementAllowance() time.Duration { panic("no allowance") }
+
+func TestFinalizationAllowancePanicDoesNotSkipLaterCaptures(t *testing.T) {
+	fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+	fx.Capture("bad", &panickingAllowance{})
+	good := fx.settler("good", map[string]any{"end": "stopped"}, nil)
+	fx.Capture("good", good)
+	fx.Cleanup("remove target", func(context.Context) error { fx.event("remove-target"); return nil })
+	fx.run()
+	if good.calls != 1 || indexOf(fx.events, "settle-end-good") > indexOf(fx.events, "remove-target") {
+		t.Errorf("events = %v", fx.events)
+	}
+	if len(fx.tb.errors) != 1 || !strings.Contains(fx.tb.errors[0], "capture bad: panic: no allowance") {
+		t.Errorf("errors = %q", fx.tb.errors)
+	}
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives = %v", archives)
+	}
+	if m := readManifest(t, archives[0]); len(m.Captures) != 2 || m.Captures[0].Reported || !m.Captures[1].Reported {
+		t.Errorf("captures = %+v", m.Captures)
+	}
+}
+
+func TestFinalizationRedactsArchivedCaptureMetadata(t *testing.T) {
+	const opaque, token = "opaque-configured-value-7f3a", "tok3n-abcdef123456"
+	bearer := "Authorization: Bearer " + token
+	fx := newFinalizationFixture(t, FinalizationConfig{Archive: true,
+		Diagnostics: DiagnosticsConfig{RedactValues: []string{opaque}}})
+	report := map[string]any{
+		"stderr": "tcpdump: warning " + opaque + "\nGET / HTTP/1.1\nHost: example.invalid\n" + bearer,
+		"nested": map[string]any{"list": []any{"x " + opaque, 7}},
+		"counts": map[string]any{"captured": 12345678901234567},
+		"end":    "stopped",
+	}
+	fx.Capture("traffic", fx.settler("traffic", report, errors.New("capture failed: "+opaque+" "+bearer)))
+	fx.run()
+	archives := fx.archives(t)
+	if len(archives) != 1 {
+		t.Fatalf("archives = %v", archives)
+	}
+	for _, name := range []string{"capture-1-traffic.json", "manifest.json"} {
+		data, err := os.ReadFile(filepath.Join(archives[0], name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), opaque) || strings.Contains(string(data), token) {
+			t.Errorf("%s keeps a secret:\n%s", name, data)
+		}
+		if name != "manifest.json" && (!strings.Contains(string(data), "[REDACTED]") || !strings.Contains(string(data), "12345678901234567") || !strings.Contains(string(data), `"stopped"`)) {
+			t.Errorf("%s lost its redaction marker or its other content:\n%s", name, data)
+		}
+	}
+	// The caller's own report value is not rewritten.
+	if !strings.Contains(report["stderr"].(string), opaque) {
+		t.Error("the settled report was modified in place")
+	}
+}

@@ -1,8 +1,11 @@
 package ceph
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -55,7 +58,7 @@ func (f *Finalization) Capture(name string, session CaptureSettler) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if session == nil {
+	if isNilSession(session) {
 		f.t.Errorf("ceph finalization: Capture %q has no session", name)
 		return
 	}
@@ -70,7 +73,7 @@ func (f *Finalization) Capture(name string, session CaptureSettler) {
 // check failed or an earlier settlement did.
 func (f *Finalization) settleCaptures(run *finalizationRun, captures []finalizationCapture) {
 	for i, capture := range captures {
-		allowance := capture.session.SettlementAllowance()
+		allowance, allowanceErr := safeAllowance(capture.session)
 		ctx, cancel := context.WithTimeout(context.Background(), allowance)
 		var (
 			mu       sync.Mutex
@@ -78,9 +81,12 @@ func (f *Finalization) settleCaptures(run *finalizationRun, captures []finalizat
 			reported bool
 		)
 		outcome := f.runStep(ctx, finalizationStep{name: capture.name, run: func(ctx context.Context) error {
+			if allowanceErr != nil {
+				return allowanceErr
+			}
 			r, err := capture.session.Settle(ctx)
 			mu.Lock()
-			report, reported = r, r != nil
+			report, reported = f.redactReport(r), r != nil
 			mu.Unlock()
 			return err
 		}})
@@ -113,4 +119,67 @@ type finalizationCaptureOutcome struct {
 
 func captureReportFile(sequence int, name string) string {
 	return fmt.Sprintf("capture-%d-%s.json", sequence, artifactName(name))
+}
+
+// isNilSession reports a nil interface and an interface that holds a nil
+// pointer, map, slice, function or channel, which would panic on first use.
+func isNilSession(session CaptureSettler) bool {
+	if session == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(session); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	}
+	return false
+}
+
+// safeAllowance reads the allowance without letting a misbehaving session end
+// the settlement of the captures after it.
+func safeAllowance(session CaptureSettler) (allowance time.Duration, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("panic: %v", recovered)
+		}
+	}()
+	return session.SettlementAllowance(), nil
+}
+
+// redactReport applies the finalization's redaction policy to every string
+// value of a settled report before the archive keeps it. It changes only the
+// archived metadata, never a capture file. A report that cannot be
+// round-tripped through JSON is returned unchanged, and the archive's write
+// then records the marshaling error.
+func (f *Finalization) redactReport(report any) any {
+	if report == nil {
+		return nil
+	}
+	data, err := json.Marshal(report)
+	if err != nil {
+		return report
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var generic any
+	if err := decoder.Decode(&generic); err != nil {
+		return report
+	}
+	redactor := f.redactor()
+	var walk func(any) any
+	walk = func(value any) any {
+		switch v := value.(type) {
+		case string:
+			return redactor(v)
+		case []any:
+			for i := range v {
+				v[i] = walk(v[i])
+			}
+		case map[string]any:
+			for key, item := range v {
+				v[key] = walk(item)
+			}
+		}
+		return value
+	}
+	return walk(generic)
 }
