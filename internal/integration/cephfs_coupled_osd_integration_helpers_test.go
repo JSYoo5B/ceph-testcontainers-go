@@ -504,6 +504,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	// The deferred line runs on every outcome, before the cleanup restores the
 	// full ratios.
 	defer func() { t.Log(receipt.line()) }()
+	mapSources := retainedMapSources(m.cluster, m.client, asok)
 	notFull := waitPoolFull(t, ctx, m.cluster, pool, false)
 	receipt.NotFullEpoch = &notFull
 	receipt.phase("pool-not-full")
@@ -551,9 +552,11 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("poke receipt = %+v", poked)
 	}
 	receipt.phase("poke-completed")
+	receipt.beginMapEvidence(ctx, "full map", mapSources)
 	if err := receipt.waitMap(ctx, "full map", full, true, time.Minute, 40*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (cephFSClientStatus, error) {
 		return clientAdminStatus(probeCtx, m.cluster, m.client, asok)
 	}); err != nil {
+		receipt.captureMapEvidence(ctx, "full map", mapSources)
 		t.Fatal(err)
 	}
 	receipt.phase("full-map-held")
@@ -578,9 +581,11 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("repoke receipt = %+v", poked)
 	}
 	receipt.phase("repoke-completed")
+	receipt.beginMapEvidence(ctx, "drained map", mapSources)
 	if err := receipt.waitMap(ctx, "drained map", drained, true, time.Minute, 40*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (cephFSClientStatus, error) {
 		return clientAdminStatus(probeCtx, m.cluster, m.client, asok)
 	}); err != nil {
+		receipt.captureMapEvidence(ctx, "drained map", mapSources)
 		t.Fatal(err)
 	}
 	receipt.phase("drained-map-held")
