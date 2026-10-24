@@ -363,6 +363,18 @@ func testOSDSecondFault(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A short, always-trimmed PG log keeps a spare that has no copy of the PG
+	// from being brought up to date by log recovery: its empty copy then lies
+	// behind the log tail, which needs a backfill.
+	for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
+		handle, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+		if handle != nil {
+			restore(name, handle.Restore)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	for range 4 {
 		if _, err := cluster.AddOSD(ctx); err != nil {
 			t.Fatal(err)
@@ -384,7 +396,7 @@ func testOSDSecondFault(t *testing.T) {
 		t.Fatal(err)
 	}
 	recoveryRun(t, ctx, cluster, client, "write", "seed:20")
-	clean := waitPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
+	clean := secondFaultWaitPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && !slices.Contains(pg.Acting, 2147483647)
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
@@ -471,7 +483,7 @@ func testOSDSecondFault(t *testing.T) {
 
 	// First fault: one acting replica stops and keeps its store.
 	stopOSD(a)
-	waitPG(t, ctx, cluster, "active on the two remaining replicas", func(pg ceph.PGState) bool {
+	secondFaultWaitPG(t, ctx, cluster, "active on the two remaining replicas", func(pg ceph.PGState) bool {
 		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
 	})
 	secondFaultReceipt(t, ctx, cluster, "first-fault", stopped)
@@ -484,7 +496,7 @@ func testOSDSecondFault(t *testing.T) {
 	if err := cluster.SetOSDIn(ctx, a.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	waitPG(t, ctx, cluster, "held backfill to the spare", func(pg ceph.PGState) bool {
+	secondFaultWaitPG(t, ctx, cluster, "held backfill to the spare", func(pg ceph.PGState) bool {
 		return slices.Contains(pg.Up, d.ID) && !slices.Contains(pg.Acting, d.ID) && strings.Contains(pg.State, "backfill")
 	})
 	var base backfillBaseline
@@ -558,7 +570,7 @@ func testOSDSecondFault(t *testing.T) {
 
 	// Second fault: the destination stops with its transfer unfinished.
 	stopOSD(d)
-	waitPG(t, ctx, cluster, "active on the two surviving replicas without the spare", func(pg ceph.PGState) bool {
+	secondFaultWaitPG(t, ctx, cluster, "active on the two surviving replicas without the spare", func(pg ceph.PGState) bool {
 		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Up, d.ID) && !slices.Contains(pg.Acting, d.ID) && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
 	})
 	secondFaultReceipt(t, ctx, cluster, "second-fault", stopped)
@@ -582,7 +594,7 @@ func testOSDSecondFault(t *testing.T) {
 		}
 		stopped[osd.ID] = false
 	}
-	waitPG(t, ctx, cluster, "required redundancy restored", func(pg ceph.PGState) bool {
+	secondFaultWaitPG(t, ctx, cluster, "required redundancy restored", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && !slices.Contains(pg.Acting, 2147483647) &&
 			pg.Stats.ObjectsDegraded == 0 && pg.Stats.ObjectsMisplaced == 0 && pg.Stats.ObjectsUnfound == 0 && pg.Stats.ObjectCopies == 3*pg.Stats.Objects
 	})
@@ -635,4 +647,30 @@ func testOSDSecondFault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("OSD_SECOND_FAULT_RECEIPT %s", receipt)
+}
+
+// secondFaultWaitPG is waitPG that keeps the last PG it saw for its failure
+// message, so a late query error does not hide the state that never matched.
+func secondFaultWaitPG(t *testing.T, parent context.Context, cluster *ceph.Container, what string, ok func(ceph.PGState) bool) ceph.PGState {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
+	defer cancel()
+	var seen, failure string
+	for {
+		snapshot, err := cluster.PoolPGs(ctx, "tc-paths")
+		if err == nil && len(snapshot.PGs) == 1 {
+			if ok(snapshot.PGs[0]) {
+				return snapshot.PGs[0]
+			}
+			pg := snapshot.PGs[0]
+			seen = fmt.Sprintf("%s up %v acting %v", pg.State, pg.Up, pg.Acting)
+		} else if ctx.Err() == nil {
+			failure = fmt.Sprintf("%v, %d PGs", err, len(snapshot.PGs))
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("PG never %s: last seen %q, last query failure %q", what, seen, failure)
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
