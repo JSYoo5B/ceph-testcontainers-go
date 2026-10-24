@@ -148,13 +148,18 @@ class Completion:
         if SCHEDULE == "immediate":
             self.done = True
             if oncomplete: oncomplete(self)
+        elif SCHEDULE == "between":
+            # The request completes after the writer's last poll: the callback
+            # delivers the outcome, and the writer is stopped before it polls again.
+            self.done = True
+            if oncomplete: oncomplete(self)
         elif SCHEDULE in ("delayed", "late"):
             def finish():
                 self.done = True
                 time.sleep(0.5 if SCHEDULE == "delayed" else 5)
                 if oncomplete: oncomplete(self)
             timer = threading.Timer(0.2, finish); timer.daemon = True; timer.start()
-    def is_complete(self): return self.done
+    def is_complete(self): return self.done and SCHEDULE != "between" 
     def get_return_value(self): return 0
 
 class Ioctx:
@@ -186,6 +191,9 @@ func TestOSDAbruptWriterLedgerSchedules(t *testing.T) {
 		// The callback runs before the post-return record, yet the ledger keeps
 		// intent, return, completion and callback as separate facts.
 		"immediate callback": {"immediate", 700 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel", "channel"}, "complete"},
+		// The requests complete after the last poll and the writer stops before
+		// it polls again: their outcome is kept, not only their callback.
+		"stopped between polls": {"between", 300 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel", "channel"}, "complete"},
 		// The callback arrives within the writer's bounded wait after the stop.
 		"delayed callback": {"delayed", 450 * time.Millisecond, []string{"intent", "api_return", "intent", "api_return", "completed", "completed", "callback", "callback", "channel", "channel"}, "complete"},
 		// The completion is observable, but its callback never arrives in time:
@@ -259,6 +267,16 @@ func TestOSDAbruptWriterLedgerSchedules(t *testing.T) {
 			if !slices.Equal(kinds, want) {
 				t.Fatalf("events %v, want %v", kinds, want)
 			}
+			if tc.schedule == "between" {
+				for _, event := range events {
+					if event.Event == "completed" && (event.Via != "callback" || event.Ret != 0) {
+						t.Fatalf("a callback-only outcome was not normalized: %+v", event)
+					}
+				}
+				if len(abruptSuccesses(events)) != 2 {
+					t.Fatalf("successes %v", abruptSuccesses(events))
+				}
+			}
 			if got := abruptChannel(events); got != tc.channel {
 				t.Fatalf("channel %s, want %s (%+v)", got, tc.channel, events)
 			}
@@ -282,6 +300,40 @@ func TestOSDAbruptSameNumber(t *testing.T) {
 	}{{"30.000000", "30", true}, {"1", "1.0", true}, {"0.1", "1", false}, {"", "1", false}, {"x", "x", false}} {
 		if got := abruptSameNumber(tc.a, tc.b); got != tc.want {
 			t.Errorf("%q %q: %t", tc.a, tc.b, got)
+		}
+	}
+}
+
+func TestOSDAbruptVerifiesEverySuccessfulOriginalOutcome(t *testing.T) {
+	intents := []abruptWriteEvent{
+		{Event: "intent", Object: "fresh", Bytes: 100, SHA256: "new-fresh"},
+		{Event: "intent", Object: "replacement", Bytes: 200, SHA256: "new-replacement"},
+	}
+	events := func(extra ...abruptWriteEvent) []abruptWriteEvent {
+		return append(append([]abruptWriteEvent{}, intents...), extra...)
+	}
+	exact := map[string]abruptObjectState{
+		"fresh":       {Present: true, Size: 100, SHA256: "new-fresh"},
+		"replacement": {Present: true, Size: 200, SHA256: "new-replacement"},
+	}
+	stale := map[string]abruptObjectState{"replacement": {Present: true, Size: 150, SHA256: "old-replacement"}}
+	for name, tc := range map[string]struct {
+		events    []abruptWriteEvent
+		recovered map[string]abruptObjectState
+		wantErr   bool
+	}{
+		"unknown outcomes are not checked here": {events(), stale, false},
+		"completed success, exact bytes":        {events(abruptWriteEvent{Event: "completed", Object: "fresh"}), exact, false},
+		"completed success, absent":             {events(abruptWriteEvent{Event: "completed", Object: "fresh"}), stale, true},
+		// The callback is the only record of the success: the writer stopped first.
+		"callback-only success, absent fresh": {events(abruptWriteEvent{Event: "callback", Object: "fresh"}), stale, true},
+		"callback-only success, stale value":  {events(abruptWriteEvent{Event: "callback", Object: "replacement"}), stale, true},
+		"callback-only success, exact bytes":  {events(abruptWriteEvent{Event: "callback", Object: "replacement"}), exact, false},
+		"failed completion is not a success":  {events(abruptWriteEvent{Event: "completed", Object: "fresh", Ret: -110}), stale, false},
+		"failed callback is not a success":    {events(abruptWriteEvent{Event: "callback", Object: "fresh", Ret: -110}), stale, false},
+	} {
+		if err := abruptVerifyOutcomes(tc.events, tc.recovered); (err != nil) != tc.wantErr {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 }

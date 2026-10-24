@@ -308,14 +308,8 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 			t.Fatalf("acknowledged object %s changed: %+v before %+v", name, recovered[name], baseline[name])
 		}
 	}
-	for _, event := range events {
-		if event.Event == "completed" && event.Ret == 0 {
-			for _, submission := range events {
-				if submission.Event == "intent" && submission.Object == event.Object && (recovered[event.Object].SHA256 != submission.SHA256 || recovered[event.Object].Size != submission.Bytes) {
-					t.Fatal("eventual successful completion lost its submitted bytes")
-				}
-			}
-		}
+	if err := abruptVerifyOutcomes(events, recovered); err != nil {
+		t.Fatal(err)
 	}
 	t.Logf("OSD_ABRUPT_READBACK unconfirmed=unknown no_replay=true objects=%s", readback)
 	if err := noout.Restore(ctx); err != nil {

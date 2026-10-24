@@ -55,13 +55,21 @@ try:
             callbacks=queue.SimpleQueue(); stopping=[False]
             signal.signal(signal.SIGTERM,lambda *_: stopping.__setitem__(0,True))
             def delivered(name): return lambda completion: callbacks.put((name,time.monotonic_ns()))
-            pending={}; called=set()
+            pending={}; called=set(); outstanding={}; recorded=set()
+            def record(name,via):
+                # One terminal outcome per request, whichever path sees it first:
+                # the poll, the callback or the final reconciliation at stop.
+                if name in recorded: return
+                recorded.add(name); outstanding.pop(name,None)
+                emit('completed',object=name,ret=pending[name].get_return_value(),via=via)
             def drain():
                 while True:
                     try: name,ns=callbacks.get_nowait()
                     except queue.Empty: return
                     called.add(name)
-                    emit('callback',object=name,callback_ns=ns,ret=pending[name].get_return_value() if name in pending else None)
+                    # A callback that outran the poll still carries the outcome.
+                    record(name,'callback')
+                    emit('callback',object=name,callback_ns=ns,ret=pending[name].get_return_value())
             client='client.%d'%c.get_instance_id()
             for seq,name in (((3,'fresh'),) if phase=='actor-fresh' else ((4,'replacement'),)):
                 data=payload(seq)
@@ -72,14 +80,15 @@ try:
                 except Exception as e:
                     emit('api_return',object=name,error=repr(e)); continue
                 emit('api_return',object=name,error='')
-            outstanding=dict(pending)
+            outstanding.update(pending)
             while outstanding and not stopping[0]:
                 drain()
                 for name,completion in list(outstanding.items()):
-                    if completion.is_complete():
-                        emit('completed',object=name,ret=completion.get_return_value())
-                        del outstanding[name]
+                    if completion.is_complete(): record(name,'poll')
                 time.sleep(.01)
+            # A request can complete between the last poll and the stop.
+            for name,completion in list(outstanding.items()):
+                if completion.is_complete(): record(name,'stop')
             # Give the callbacks of completed requests a bounded time to arrive.
             for _ in range(200):
                 drain()
@@ -120,6 +129,7 @@ type abruptWriteEvent struct {
 	Bytes      int      `json:"bytes"`
 	SHA256     string   `json:"sha256"`
 	Error      string   `json:"error"`
+	Via        string   `json:"via"`
 	Pending    []string `json:"pending"`
 	Callbacks  []string `json:"callbacks"`
 	Stopped    bool     `json:"stopped"`
@@ -370,4 +380,36 @@ func abruptSameNumber(a, b string) bool {
 	x, errA := strconv.ParseFloat(a, 64)
 	y, errB := strconv.ParseFloat(b, 64)
 	return errA == nil && errB == nil && x == y
+}
+
+// abruptSuccesses returns the objects whose original request is known to have
+// succeeded, from its completion record or, when the writer stopped before it
+// could record one, from its callback's return code.
+func abruptSuccesses(events []abruptWriteEvent) map[string]bool {
+	known := map[string]bool{}
+	for _, event := range events {
+		if (event.Event == "completed" || event.Event == "callback") && event.Ret == 0 {
+			known[event.Object] = true
+		}
+	}
+	return known
+}
+
+// abruptVerifyOutcomes checks the recovered objects against the original
+// outcomes. A known success must read back with exactly its submitted bytes;
+// an unknown outcome is not checked here, because the read phase already
+// accepts only the old or the submitted whole value.
+func abruptVerifyOutcomes(events []abruptWriteEvent, recovered map[string]abruptObjectState) error {
+	for object := range abruptSuccesses(events) {
+		for _, submission := range events {
+			if submission.Event != "intent" || submission.Object != object {
+				continue
+			}
+			state := recovered[object]
+			if !state.Present || state.SHA256 != submission.SHA256 || state.Size != submission.Bytes {
+				return fmt.Errorf("a successful original request for %s lost its submitted bytes: %+v", object, state)
+			}
+		}
+	}
+	return nil
 }
