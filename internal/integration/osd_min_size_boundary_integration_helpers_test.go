@@ -59,6 +59,34 @@ func minSizeLedger(ctx context.Context, cluster *ceph.Container, client testcont
 	return events, nil
 }
 
+// minSizeAcksAfter requires the retained writer to be acknowledged n more times
+// than at the moment this is called, which is after the phase was confirmed. It
+// returns that fresh watermark and the later one.
+func minSizeAcksAfter(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, path string, n int, what string) (confirmed, after secondFaultMark) {
+	t.Helper()
+	read := func() (secondFaultMark, error) {
+		events, err := minSizeLedger(ctx, cluster, client, path)
+		if err != nil {
+			return secondFaultMark{}, err
+		}
+		ops, err := secondFaultOps(events, false)
+		if err != nil {
+			return secondFaultMark{}, err
+		}
+		return secondFaultCount(ops), nil
+	}
+	confirmed, after, err := minSizeProgressAfter(read, n, 180, func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	})
+	if err != nil {
+		t.Fatalf("%s: %v", what, err)
+	}
+	return confirmed, after
+}
+
 // minSizeSampleNow takes one sample from the primary's own pg query and the
 // ledger.
 func minSizeSampleNow(ctx context.Context, cluster *ceph.Container, client testcontainers.Container, pgid, path string) minSizeSample {
@@ -255,7 +283,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 		ledgerJSON, _ := json.Marshal(events)
 		t.Logf("OSD_MIN_SIZE_LEDGER at failure: %.65536s", ledgerJSON)
 	})
-	mark := secondFaultAcks(t, ctx, cluster, client, ledger, secondFaultMark{}, 3, "while healthy")
+	secondFaultAcks(t, ctx, cluster, client, ledger, secondFaultMark{}, 3, "while healthy")
 	secondFaultReceipt(t, ctx, cluster, "healthy", stopped)
 
 	// First fault: one acting replica stops and keeps its store. The PG still
@@ -265,7 +293,8 @@ func testOSDMinSizeBoundary(t *testing.T) {
 		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
 	})
 	secondFaultReceipt(t, ctx, cluster, "first-fault", stopped)
-	mark = secondFaultAcks(t, ctx, cluster, client, ledger, mark, 2, "with one replica down")
+	// The watermark is taken now, after the outage is confirmed.
+	minSizeAcksAfter(t, ctx, cluster, client, ledger, 2, "with one replica down")
 	recoveryRun(t, ctx, cluster, client, "write", "delta:100")
 
 	// Marking the stopped replica out admits the spare as a new member. The
@@ -310,8 +339,11 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	}
 
 	// At min_size: the retained writer and an independent client are served.
-	above := secondFaultAcks(t, ctx, cluster, client, ledger, mark, 2, "at min_size with the backfill pending")
+	// The watermark is taken now, after the held backfill and its hold check were
+	// confirmed: acknowledgments accumulated during the setup above do not count.
+	aboveFrom, above := minSizeAcksAfter(t, ctx, cluster, client, ledger, 2, "at min_size with the backfill pending")
 	receipt.Above = &above
+	t.Logf("OSD_MIN_SIZE_AT_MIN_SIZE writer_when_confirmed=%+v writer_later=%+v", aboveFrom, above)
 	recoveryRun(t, ctx, cluster, client, "write", "above:10")
 	readRecoveryObjects(t, ctx, cluster, "seed:20", "delta:100", "above:10")
 	secondFaultReceipt(t, ctx, cluster, "at-min-size", stopped)

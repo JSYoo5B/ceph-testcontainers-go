@@ -208,3 +208,25 @@ func collectMinSizeWindow(ctx context.Context, start time.Time, span time.Durati
 		}
 	}
 }
+
+// minSizeProgressAfter takes a watermark when it is called, which is after the
+// phase under test was confirmed, and polls until the writer has been
+// acknowledged n more times than that watermark. Acknowledgments that
+// accumulated before the confirmation (earlier setup steps) never count: a
+// caller must not pass an older watermark in their place. A read that fails is
+// returned, not skipped.
+func minSizeProgressAfter(read func() (secondFaultMark, error), n, polls int, wait func()) (confirmed, after secondFaultMark, err error) {
+	if confirmed, err = read(); err != nil {
+		return confirmed, confirmed, err
+	}
+	for range polls {
+		if after, err = read(); err != nil {
+			return confirmed, after, err
+		}
+		if secondFaultAdvanced(confirmed, after, n) {
+			return confirmed, after, nil
+		}
+		wait()
+	}
+	return confirmed, after, fmt.Errorf("the writer was not acknowledged %d more times after the phase was confirmed: from %+v to %+v", n, confirmed, after)
+}

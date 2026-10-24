@@ -227,3 +227,31 @@ func TestMinSizeLateOutcomes(t *testing.T) {
 		t.Fatalf("%+v: %v", final, err)
 	}
 }
+
+// Acknowledgments that accumulated before the phase was confirmed must not
+// satisfy the gate. A stale watermark (5, taken before setup) passes against a
+// writer that stopped at 9 after setup; the fresh watermark does not.
+func TestMinSizeProgressNeedsAcksAfterConfirmation(t *testing.T) {
+	stale, setupDone := secondFaultMark{Acked: 5}, secondFaultMark{Acked: 9}
+	if !secondFaultAdvanced(stale, setupDone, 2) {
+		t.Fatal("the negative control no longer shows a stale watermark passing")
+	}
+	reads := 0
+	stalled := func() (secondFaultMark, error) { reads++; return setupDone, nil }
+	waits := 0
+	if confirmed, after, err := minSizeProgressAfter(stalled, 2, 5, func() { waits++ }); err == nil || confirmed != setupDone || after != setupDone || waits != 5 {
+		t.Fatalf("a writer without new acknowledgments passed: %+v %+v %v after %d waits", confirmed, after, err, waits)
+	}
+	// A writer that is acknowledged after the confirmation passes, from the
+	// watermark taken at the confirmation.
+	acked := 8
+	moving := func() (secondFaultMark, error) { acked++; return secondFaultMark{Acked: acked}, nil }
+	if confirmed, after, err := minSizeProgressAfter(moving, 2, 5, func() {}); err != nil || confirmed.Acked != 9 || after.Acked != 11 {
+		t.Fatalf("%+v %+v %v", confirmed, after, err)
+	}
+	// A failed read is returned, not skipped.
+	failing := func() (secondFaultMark, error) { return secondFaultMark{}, errors.New("ledger unreadable") }
+	if _, _, err := minSizeProgressAfter(failing, 2, 5, func() {}); err == nil {
+		t.Fatal("a failed ledger read passed")
+	}
+}
