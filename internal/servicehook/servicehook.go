@@ -336,6 +336,8 @@ type TestConfig = struct {
 	// and whose CRUSH location is OSDPlacement.
 	OSDs         int
 	OSDPlacement ceph.OSDConfig
+	// MemStore selects the OSDMemStore object store instead of BlueStore.
+	MemStore bool
 }
 
 // TestStateView points at a cluster's internals for unit tests. PortLeases is

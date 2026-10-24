@@ -5,9 +5,8 @@ are complete in this revision. The initial catalogue was introduced by #17;
 the final RBD helper change and [retention audit](api-naming-audit.md) complete
 the remaining scope. This is a naming assessment of the captured source, not
 approval of future APIs or a new runtime-support claim.
-#9 is closed, but its remaining object-error wording
-does not authorize another package move. This audit preserves the current
-placement of `ceph.Container.InjectObjectDataError`, session fencing and fullness.
+Per the maintainer decision recorded on #9, dedicated object-error injection
+is `fault.InjectObjectDataError`; session fencing and fullness stay in `ceph`.
 The [package boundary](fault-package.md) remains independent of naming.
 
 ## Source inventory and limits
@@ -189,7 +188,7 @@ Baseline alone still means inventory, not naming approval.
 | `fault.Pause` / `fault.PauseLease.Resume` | Retain the selected operation/lease pair; Resume thaws without restarting. A non-nil uncertain result still owns a possible pause. |
 | `fault.InterruptNetwork`, `fault.InterruptLink` / `fault.NetworkInterruption.Restore` | Retain the explicit cluster-plane versus standalone named-link call forms for this checkpoint. Restore reconciles an endpoint's identity/address; it is not daemon restart. Do not invent a type suffix change just for uniformity. |
 | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Retain domain-selected peer/zone names and service-owned restoration. These are not global network-wide cuts. |
-| `ceph.Container.InjectObjectDataError` | Record the current one-shot debug mutation in `ceph`; retain `Inject` and no universal Restore handle. Recovery by replica rewrite/repair or OSD restart is distinct from removing a policy override. This naming proposal decides no package move. |
+| `fault.InjectObjectDataError` | Record the one-shot debug mutation in `fault` (moved from `ceph.Container` by the #9 checkpoint); retain `Inject` and no universal Restore handle. Recovery by replica rewrite/repair or OSD restart is distinct from removing a policy override. |
 | `ceph.NativeInput.Close` | Retain stream-resource lifetime; not cluster termination or policy rollback. [native_command.go](../../ceph/native_command.go) |
 | `ceph.SharedCluster.Close`, `ceph.SharedCluster.Lease`, `ceph.SharedCluster.Exclusive`, `ceph.Container.Terminate` | Retain distinct owner/tenant/fixture lifetimes. Lease/Exclusive register release with test cleanup; there is no public Tenant.Release method. A tenant cleanup does not mean every shared cluster is immediately terminated. [shared.go](../../ceph/shared.go), [shared_exclusive.go](../../ceph/shared_exclusive.go), [tenant.go](../../ceph/tenant.go) |
 | `rbd.RestoreBackup`, `rbd.RestoreIncremental` | Retain domain data-restore verbs. They consume backup input; they are not lease cleanup and must not be converted into a generic cleanup contract. [backup.go](../../rbd/backup.go) |
