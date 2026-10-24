@@ -6,6 +6,8 @@ package integration_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -278,6 +280,54 @@ func TestTwoDomainLedgerWithTheRealActor(t *testing.T) {
 		t.Fatalf("a failed operation under the outage: %+v %v", out, err)
 	}
 	if unconfirmed, err := outageVerify(ops, hung.readback(ops)); err != nil || unconfirmed != 0 {
+		t.Fatalf("readback: %d %v", unconfirmed, err)
+	}
+}
+
+// TestTwoDomainPendingWriteAcknowledgedAfterRestoration drives the real actor
+// script through the transition the first native run showed: one call fails,
+// the next begins under the outage token and stays pending, the restoring
+// token is issued, and only then does the pending call succeed. It began under
+// the outage token but is not wholly observed under it, so it is reported as
+// late-acknowledged, must still be exact in the readback, and is not refused.
+func TestTwoDomainPendingWriteAcknowledgedAfterRestoration(t *testing.T) {
+	fake := newOutageFake(t, "FAKE_MODE=gated")
+	gated := strings.Replace(outageFakeRados, `if seq == FAIL and MODE == "hang": time.sleep(120)`,
+		`if MODE == "gated" and seq == 0: raise RuntimeError("timed out")
+        if MODE == "gated" and seq == 1:
+            while not os.path.exists(os.path.join(STORE, "gate")): time.sleep(.02)`, 1)
+	if gated == outageFakeRados {
+		t.Fatal("the stand-in has no hang hook to replace")
+	}
+	if err := os.WriteFile(filepath.Join(fake.dir, "rados.py"), []byte(gated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake.token(outagePhaseOutage)
+	_, done := fake.start()
+	fake.waitFor("a failed call and a pending one", func(ops []outageOp) bool {
+		return len(ops) == 2 && ops[0].Outcome() == "failed" && ops[1].Outcome() == "inflight"
+	})
+	fake.token(outagePhaseRestoring)
+	if err := os.WriteFile(filepath.Join(fake.dir, "store", "gate"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake.waitFor("the pending call to return", func(ops []outageOp) bool { return len(ops) >= 2 && ops[1].Returned })
+	fake.token(outagePhaseStop)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	ops := fake.ops()
+	out, err := twoDomainLedgerOutcomes(ops)
+	if err != nil {
+		t.Fatalf("a pending write acknowledged after the restoration began was refused: %v", err)
+	}
+	if out.LateAcked != 1 || out.Failed != 1 || out.Acked != 0 || ops[1].PhaseAfter != outagePhaseRestoring {
+		t.Fatalf("outcomes %+v, second operation %+v", out, ops[1])
+	}
+	if got := outageTally(ops)["outage-overlapping-acked"]; got != 1 {
+		t.Fatalf("the shared credit classes disagree: %v", outageTally(ops))
+	}
+	if unconfirmed, err := outageVerify(ops, fake.readback(ops)); err != nil || unconfirmed != 0 {
 		t.Fatalf("readback: %d %v", unconfirmed, err)
 	}
 }
