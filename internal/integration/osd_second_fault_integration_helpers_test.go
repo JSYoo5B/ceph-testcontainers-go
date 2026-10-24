@@ -272,7 +272,7 @@ func secondFaultAcks(t *testing.T, parent context.Context, cluster *ceph.Contain
 	defer cancel()
 	for {
 		mark, _ := secondFaultMarkNow(t, ctx, cluster, client, path)
-		if mark.Acked >= since.Acked+n {
+		if secondFaultAdvanced(since, mark, n) {
 			return mark
 		}
 		select {
@@ -281,6 +281,41 @@ func secondFaultAcks(t *testing.T, parent context.Context, cluster *ceph.Contain
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// secondFaultAdvanced reports whether the writer has acknowledged at least n
+// operations beyond the baseline since.
+func secondFaultAdvanced(since, now secondFaultMark, n int) bool { return now.Acked >= since.Acked+n }
+
+// secondFaultInstance is the running identity of one OSD container.
+type secondFaultInstance struct {
+	Running, OOMKilled bool
+	Pid                int
+	StartedAt          string
+}
+
+func secondFaultInstanceOf(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) secondFaultInstance {
+	t.Helper()
+	state, err := osd.State(ctx)
+	if err != nil || state == nil {
+		t.Fatalf("state of osd.%d: %+v: %v", osd.ID, state, err)
+	}
+	return secondFaultInstance{Running: state.Running, OOMKilled: state.OOMKilled, Pid: state.Pid, StartedAt: state.StartedAt}
+}
+
+// secondFaultAdmitStop refuses to label a stop as the deliberate fault unless
+// the target is still the running instance that was captured earlier. An OSD
+// that already exited, was OOM-killed or restarted is an unexpected exit.
+func secondFaultAdmitStop(captured, now secondFaultInstance) error {
+	switch {
+	case !captured.Running || captured.Pid <= 0:
+		return fmt.Errorf("the captured instance was not running: %+v", captured)
+	case !now.Running || now.OOMKilled:
+		return fmt.Errorf("the target exited before the stop was requested: %+v", now)
+	case now.Pid != captured.Pid || now.StartedAt != captured.StartedAt:
+		return fmt.Errorf("the target is not the captured instance: %+v, captured %+v", now, captured)
+	}
+	return nil
 }
 
 // pgQueryRaw is queryPG without a fatal exit, for polling a PG that is
@@ -432,13 +467,32 @@ func testOSDSecondFault(t *testing.T) {
 			return nil
 		})
 	}
+	// Every OSD is captured as a running instance before any fault; a stop is
+	// admitted only for that same instance, and its result is read back apart
+	// from the request.
+	instances := map[int]secondFaultInstance{}
+	for _, osd := range cluster.OSDs() {
+		instances[osd.ID] = secondFaultInstanceOf(t, ctx, osd)
+		if !instances[osd.ID].Running {
+			t.Fatalf("osd.%d is not running before any fault: %+v", osd.ID, instances[osd.ID])
+		}
+	}
 	stopOSD := func(osd *ceph.OSDContainer) {
 		t.Helper()
+		now := secondFaultInstanceOf(t, ctx, osd)
+		if err := secondFaultAdmitStop(instances[osd.ID], now); err != nil {
+			t.Fatalf("osd.%d stop refused: %v", osd.ID, err)
+		}
 		stopped[osd.ID] = true
 		timeout := 10 * time.Second
 		if err := osd.Stop(ctx, &timeout); err != nil {
 			t.Fatal(err)
 		}
+		after := secondFaultInstanceOf(t, ctx, osd)
+		if after.Running || after.OOMKilled {
+			t.Fatalf("osd.%d after the stop request: %+v", osd.ID, after)
+		}
+		t.Logf("OSD_SECOND_FAULT_STOP osd=%d requested_from=%+v resulting=%+v", osd.ID, now, after)
 	}
 	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if noout != nil {
@@ -574,10 +628,13 @@ func testOSDSecondFault(t *testing.T) {
 		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Up, d.ID) && !slices.Contains(pg.Acting, d.ID) && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
 	})
 	secondFaultReceipt(t, ctx, cluster, "second-fault", stopped)
-	afterStop := secondFaultAcks(t, ctx, cluster, client, ledger, before, 2, "after the second stop")
+	// The pre-stop watermark joined the progress sample. Acknowledgments seen
+	// before the outage was confirmed do not count: take a baseline now.
+	confirmed, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
+	afterStop := secondFaultAcks(t, ctx, cluster, client, ledger, confirmed, 2, "after the second outage was confirmed")
 	readRecoveryObjects(t, ctx, cluster, "seed:20", "delta:100")
 	recoveryRun(t, ctx, cluster, client, "write", "after:10")
-	t.Logf("OSD_SECOND_FAULT_BOUNDARY min_size=2 surviving=2 writer_before=%+v writer_after=%+v independent_write=after:10 independent_read=seed:20,delta:100", before, afterStop)
+	t.Logf("OSD_SECOND_FAULT_BOUNDARY min_size=2 surviving=2 writer_before=%+v writer_at_confirmation=%+v writer_after=%+v independent_write=after:10 independent_read=seed:20,delta:100", before, confirmed, afterStop)
 
 	// Restoration: the sleeps end first, so that three copies can converge.
 	for _, handle := range sleeps {

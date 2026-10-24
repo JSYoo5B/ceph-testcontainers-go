@@ -292,3 +292,37 @@ func TestSecondFaultLedgerRules(t *testing.T) {
 		t.Error("an outstanding operation passed the oracle")
 	}
 }
+
+func TestSecondFaultWriterAdvanceNeedsTheConfirmedBaseline(t *testing.T) {
+	// Two acknowledgments arrived between the pre-stop read and the confirmed
+	// outage, and nothing after it.
+	pre, confirmed, now := secondFaultMark{Acked: 3}, secondFaultMark{Acked: 5}, secondFaultMark{Acked: 5}
+	if !secondFaultAdvanced(pre, now, 2) {
+		t.Fatal("the control must show that the pre-stop baseline is satisfied by pre-outage acknowledgments")
+	}
+	if secondFaultAdvanced(confirmed, now, 2) {
+		t.Fatal("no acknowledgment after the confirmed outage was accepted")
+	}
+	if !secondFaultAdvanced(confirmed, secondFaultMark{Acked: 7}, 2) || secondFaultAdvanced(confirmed, secondFaultMark{Acked: 6}, 2) {
+		t.Fatal("exactly two acknowledgments after the baseline are required")
+	}
+}
+
+func TestSecondFaultStopAdmission(t *testing.T) {
+	running := secondFaultInstance{Running: true, Pid: 40, StartedAt: "t0"}
+	if err := secondFaultAdmitStop(running, running); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct{ captured, now secondFaultInstance }{
+		"already exited":         {running, secondFaultInstance{Pid: 0, StartedAt: "t0"}},
+		"exited and OOM killed":  {running, secondFaultInstance{OOMKilled: true, StartedAt: "t0"}},
+		"restarted":              {running, secondFaultInstance{Running: true, Pid: 41, StartedAt: "t1"}},
+		"same pid, new start":    {running, secondFaultInstance{Running: true, Pid: 40, StartedAt: "t1"}},
+		"captured while stopped": {secondFaultInstance{StartedAt: "t0"}, running},
+		"captured without a pid": {secondFaultInstance{Running: true}, running},
+	} {
+		if secondFaultAdmitStop(tc.captured, tc.now) == nil {
+			t.Errorf("%s was admitted", name)
+		}
+	}
+}
