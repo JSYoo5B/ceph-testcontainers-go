@@ -684,7 +684,7 @@ func (v *Verification) evaluate(o *verificationObservation) *VerificationReport 
 	report := &VerificationReport{SchemaVersion: 1, Name: v.name, Cluster: v.cluster, Images: v.images,
 		Window:          VerificationWindow{Phase: "test", StartedAt: b.start, EndedAt: o.end, EvaluatedAt: v.now()},
 		Sources:         o.sources,
-		LogExpectations: v.config.Logs, CrashExpectations: v.config.Crashes, Notes: verificationNotes}
+		LogExpectations: slices.Clone(v.config.Logs), CrashExpectations: slices.Clone(v.config.Crashes), Notes: slices.Clone(verificationNotes)}
 	if report.Sources == nil {
 		report.Sources = []VerificationSource{}
 	}
