@@ -71,6 +71,16 @@ func TestClassifyVerificationLine(t *testing.T) {
 		{"stamp without fraction", "2026-10-24T01:02:03+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
 		{"stamp without timezone", "2026-10-24T01:02:03.123 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
 		{"stamp with two fractional digits", "2026-10-24T01:02:03.12+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset minutes 60", "2026-10-24T01:02:03.123+1260 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset minutes 60 from zero hours", "2026-10-24T01:02:03.123456+0060 mon.a (mon.0) 17 : cluster [WRN] sentinel", "", "", "", true},
+		{"offset hours beyond +14", "2026-10-24T01:02:03.123+1500 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset hours beyond -12", "2026-10-24T01:02:03.123-1300 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset minutes 99", "2026-10-24T01:02:03.123+0099 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset with a colon", "2026-10-24T01:02:03.123+05:30 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"offset Z", "2026-10-24T01:02:03.123Z 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"leap day", "2024-02-29T01:02:03.123+1400 7f3a  0 log_channel(cluster) log [WRN] : sentinel", LogClusterWarning, "cluster", "WRN", false},
+		{"offset -1200", "2026-10-24T01:02:03.123456-1200 mon.a (mon.0) 17 : cluster [WRN] sentinel", LogClusterWarning, "cluster", "WRN", false},
+		{"non-leap Feb 29", "2026-02-29T01:02:03.123+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
 		{"coarse and fine stamps", "2026-10-24T01:02:03.123456-0530 7f3a  0 log_channel(cluster) log [WRN] : sentinel", LogClusterWarning, "cluster", "WRN", false},
 		{"no marker", "plain daemon output", "", "", "", false},
 		{"DBG marker only", "[DBG] bare", "", "", "", false},
@@ -209,6 +219,21 @@ func TestVerificationUnsupportedEnvelopeIsAGap(t *testing.T) {
 // satisfy a required warning.
 func TestVerificationMalformedStampIsAGap(t *testing.T) {
 	forms := map[string]func(priority string) string{
+		"daemon offset 1260": func(p string) string {
+			return "2026-10-24T01:02:03.123+1260 7f3a  0 log_channel(cluster) log [" + p + "] : quotes [ERR] sentinel"
+		},
+		"daemon offset 0060": func(p string) string {
+			return "2026-10-24T01:02:03.123456+0060 7f3a  0 log_channel(cluster) log [" + p + "] : quotes [ERR] sentinel"
+		},
+		"cluster offset 1260": func(p string) string {
+			return "2026-10-24T01:02:03.123456+1260 mon.a (mon.0) 17 : cluster [" + p + "] quotes [ERR] sentinel"
+		},
+		"cluster offset 0060": func(p string) string {
+			return "cluster 2026-10-24T01:02:03.123456+0060 mon.a (mon.0) 17 : cluster [" + p + "] quotes [ERR] sentinel"
+		},
+		"cluster offset colon": func(p string) string {
+			return "2026-10-24T01:02:03.123456+05:30 mon.a (mon.0) 17 : cluster [" + p + "] quotes [ERR] sentinel"
+		},
 		"daemon lone digit": func(p string) string {
 			return "1 deadbeef 0 log_channel(cluster) log [" + p + "] : quotes [ERR] sentinel"
 		},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,8 +135,15 @@ func validCephStamp(s string) bool {
 	if !cephStampShape.MatchString(s) {
 		return false
 	}
-	_, err := time.Parse("2006-01-02T15:04:05.999999999-0700", s)
-	return err == nil
+	if _, err := time.Parse("2006-01-02T15:04:05.999999999-0700", s); err != nil {
+		return false
+	}
+	// time.Parse accepts offset minutes of 60 and more, which strftime's %z
+	// cannot print. Real offsets lie between -1200 and +1400.
+	zone := s[len(s)-5:]
+	hours, _ := strconv.Atoi(zone[1:3])
+	minutes, _ := strconv.Atoi(zone[3:])
+	return minutes < 60 && (zone[0] == '+' && hours <= 14 || zone[0] == '-' && hours <= 12)
 }
 
 // classifyVerificationLine returns the event kind of a log line ("" for no
