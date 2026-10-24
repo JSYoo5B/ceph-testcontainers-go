@@ -64,6 +64,14 @@ func TestClassifyVerificationLine(t *testing.T) {
 		{"channel prefix disagrees", "audit " + clusterLogLine(false, "cluster", "INF", "sentinel [ERR]"), "", "", "", true},
 		{"missing channel", "2026-10-24T01:02:03.123456+0000 mon.a (mon.0) 17 : [WRN] sentinel", "", "", "", true},
 		{"missing priority", "2026-10-24T01:02:03.123456+0000 mon.a (mon.0) 17 : cluster sentinel [WRN]", "", "", "", true},
+		// A malformed producer stamp is no envelope.
+		{"daemon lone digit stamp", "1 deadbeef 0 log_channel(cluster) log [INF] : quotes [ERR] sentinel", "", "", "", true},
+		{"daemon impossible stamp", "2026-99-99T99:99:99.123+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"cluster impossible stamp", "2026-02-30T01:02:03.123456+0000 mon.a (mon.0) 17 : cluster [WRN] sentinel", "", "", "", true},
+		{"stamp without fraction", "2026-10-24T01:02:03+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"stamp without timezone", "2026-10-24T01:02:03.123 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"stamp with two fractional digits", "2026-10-24T01:02:03.12+0000 7f3a  0 log_channel(cluster) log [WRN] : sentinel", "", "", "", true},
+		{"coarse and fine stamps", "2026-10-24T01:02:03.123456-0530 7f3a  0 log_channel(cluster) log [WRN] : sentinel", LogClusterWarning, "cluster", "WRN", false},
 		{"no marker", "plain daemon output", "", "", "", false},
 		{"DBG marker only", "[DBG] bare", "", "", "", false},
 	}
@@ -194,4 +202,43 @@ func TestVerificationUnsupportedEnvelopeIsAGap(t *testing.T) {
 			t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
 		}
 	})
+}
+
+// A malformed producer stamp makes the line an unclassified marker line at
+// the collector: an INF line is not silently clean, and a WRN line does not
+// satisfy a required warning.
+func TestVerificationMalformedStampIsAGap(t *testing.T) {
+	forms := map[string]func(priority string) string{
+		"daemon lone digit": func(p string) string {
+			return "1 deadbeef 0 log_channel(cluster) log [" + p + "] : quotes [ERR] sentinel"
+		},
+		"daemon impossible": func(p string) string {
+			return "2026-99-99T99:99:99.123+0000 7f3a  0 log_channel(cluster) log [" + p + "] : quotes [ERR] sentinel"
+		},
+		"cluster lone digit": func(p string) string { return "1 mon.a (mon.0) 17 : cluster [" + p + "] quotes [ERR] sentinel" },
+		"cluster impossible": func(p string) string {
+			return "cluster 2026-13-01T25:61:61.123456+0000 mon.a (mon.0) 17 : cluster [" + p + "] quotes [ERR] sentinel"
+		},
+	}
+	for name, form := range forms {
+		t.Run(name+" INF", func(t *testing.T) {
+			fx := newVerifyFixture()
+			v := fx.activate(t)
+			fx.line("mon", 2*time.Minute, form("INF"))
+			report := fx.evaluate(t, v)
+			if report.Outcome != VerificationIncomplete || len(report.Logs.Findings) != 0 || len(report.Logs.Gaps) != 1 {
+				t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
+			}
+		})
+		t.Run(name+" required WRN", func(t *testing.T) {
+			fx := newVerifyFixture()
+			fx.config.Logs = []LogExpectation{{Name: "sentinel-warning", Required: true, Event: LogClusterWarning, Pattern: `sentinel`}}
+			v := fx.activate(t)
+			fx.line("mon", 2*time.Minute, form("WRN"))
+			report := fx.evaluate(t, v)
+			if report.Outcome != VerificationUnexpected || report.Logs.Expectations[0].Matched != 0 || len(report.Logs.Findings) != 0 || len(report.Logs.Gaps) != 1 {
+				t.Fatalf("outcome %s logs %+v", report.Outcome, report.Logs)
+			}
+		})
+	}
 }

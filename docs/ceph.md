@@ -1839,7 +1839,9 @@ forms, as the pinned Ceph source (Tentacle 20.2.4) prints them: a daemon's own
 log line `<stamp> <thread> <level> log_channel(<channel>) log [<PRIO>] : <message>`,
 and the cluster log line `[<channel> ]<stamp> <name> (<rank>) <seq> : <channel> [<PRIO>] <message>`
 that the MON writes (a leading channel must equal the entry's own). `PRIO` is
-`DBG`, `INF`, `SEC`, `WRN` or `ERR`. An entry of any channel (`cluster`,
+`DBG`, `INF`, `SEC`, `WRN` or `ERR`. The stamp must be a real calendar date and time
+with three or six fractional digits and a numeric timezone, as the producer writes it;
+an envelope with any other stamp is not an envelope. An entry of any channel (`cluster`,
 `audit`, ...) is an event by its severity, so an `INF` entry that quotes
 `[WRN]` is no event, and a `WRN` entry that quotes `[ERR]` is a warning. A line
 that carries an `[ERR]`, `[SEC]` or `[WRN]` marker without one of these forms is

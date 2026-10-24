@@ -100,8 +100,8 @@ type verificationEnvelope struct {
 // PRIO is one of DBG, INF, SEC, WRN and ERR (operator<< of clog_type).
 // Anything else is not an envelope.
 var (
-	daemonEnvelope  = regexp.MustCompile(`^\d\S* +[0-9a-f]+ +-?\d+ +log_channel\(([A-Za-z0-9_.-]+)\) log \[(DBG|INF|SEC|WRN|ERR)\] : `)
-	clusterEnvelope = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+) )?\d\S* \S+ \(\S+\) \d+ : ([A-Za-z0-9_.-]+) \[(DBG|INF|SEC|WRN|ERR)\](?: |$)`)
+	daemonEnvelope  = regexp.MustCompile(`^(\S+) +[0-9a-f]+ +-?\d+ +log_channel\(([A-Za-z0-9_.-]+)\) log \[(DBG|INF|SEC|WRN|ERR)\] : `)
+	clusterEnvelope = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+) )?(\S+) \S+ \(\S+\) \d+ : ([A-Za-z0-9_.-]+) \[(DBG|INF|SEC|WRN|ERR)\](?: |$)`)
 	// severityMarker finds a severity marker anywhere in a line. A line
 	// that carries one without a supported envelope is not classified; it is
 	// counted and reported as a gap.
@@ -113,13 +113,29 @@ var (
 // whose leading channel differs from its own channel is ambiguous and has no
 // envelope.
 func parseVerificationEnvelope(line string) (verificationEnvelope, bool) {
-	if m := daemonEnvelope.FindStringSubmatch(line); m != nil {
-		return verificationEnvelope{channel: m[1], priority: m[2]}, true
-	}
-	if m := clusterEnvelope.FindStringSubmatch(line); m != nil && (m[1] == "" || m[1] == m[2]) {
+	if m := daemonEnvelope.FindStringSubmatch(line); m != nil && validCephStamp(m[1]) {
 		return verificationEnvelope{channel: m[2], priority: m[3]}, true
 	}
+	if m := clusterEnvelope.FindStringSubmatch(line); m != nil && validCephStamp(m[2]) && (m[1] == "" || m[1] == m[3]) {
+		return verificationEnvelope{channel: m[3], priority: m[4]}, true
+	}
 	return verificationEnvelope{}, false
+}
+
+// cephStampShape is the stamp as the pinned producer writes it
+// (log/LogClock.h append_time, and utime_t localtime for a LogEntry): a
+// calendar date and time, three (coarse) or six fractional digits and a
+// numeric timezone.
+var cephStampShape = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.(\d{3}|\d{6})[+-]\d{4}$`)
+
+// validCephStamp reports whether s has that shape and real calendar and
+// clock values.
+func validCephStamp(s string) bool {
+	if !cephStampShape.MatchString(s) {
+		return false
+	}
+	_, err := time.Parse("2006-01-02T15:04:05.999999999-0700", s)
+	return err == nil
 }
 
 // classifyVerificationLine returns the event kind of a log line ("" for no
