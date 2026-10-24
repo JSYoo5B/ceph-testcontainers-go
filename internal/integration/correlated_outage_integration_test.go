@@ -196,14 +196,14 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	// starts first. The primary MON is pinned to its bridge address, and Docker
 	// hands a released address to whichever container starts first: a native
 	// run that started the OSD and MGR before the MON failed with "Address
-	// already in use" because one of them had taken that address.
+	// already in use". That explanation is an inference from the library's
+	// fixed-address handling and the order of the calls in the log; the
+	// occupant of the address was not measured.
 	plan := newOutagePlan(func() time.Duration { return time.Since(start) }, []outageMember{osdA, mgrA, monA})
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer stop()
-		if err := plan.Restore(cleanup); err != nil {
-			t.Errorf("bounded restore after the scenario: %v", err)
-		}
+		outageFinish(cleanup, plan, t.Logf, t.Errorf)
 	})
 	version := cluster.CephVersion()
 	platform := strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm")))
@@ -326,7 +326,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 
 	// Restore the same containers and stores.
 	outageToken(t, ctx, cluster, client, outageLedgerPool, run, outagePhaseRestoring)
-	if err := plan.Restore(ctx); err != nil {
+	if err := plan.Restore(ctx, "primary"); err != nil {
 		t.Fatal(err)
 	}
 	topologyWait(t, ctx, func() bool {
@@ -387,9 +387,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if tally[outagePhaseOutage+"/acked"] < 3 || tally[outagePhaseBaseline+"/acked"] < 3 {
 		t.Fatalf("tally %v", tally)
 	}
-	receipts, _ := json.Marshal(plan.Receipts)
 	tallyJSON, _ := json.Marshal(tally)
-	t.Logf("CORRELATED_OUTAGE_RECEIPTS applied_interval_ms=%d receipts=%s", interval.Milliseconds(), receipts)
 	t.Logf("CORRELATED_OUTAGE_LEDGER run=%s operations=%d tally=%s unconfirmed_present=%d ops=%s", run, len(ops), tallyJSON, unconfirmed, outageShort(ops))
 	t.Logf("CORRELATED_OUTAGE_READBACK acknowledged_exact=%d unconfirmed_present=%d placement_pool_survived=true", func() int {
 		n := 0

@@ -453,7 +453,7 @@ func TestOutagePlanAppliesAndRestoresInOrder(t *testing.T) {
 	if plan.Receipts[1].ObservedMS < plan.Receipts[1].AppliedMS || plan.Receipts[0].ObservedMS != -1 {
 		t.Fatalf("observation not attributed to its target: %+v", plan.Receipts)
 	}
-	if err := plan.Restore(t.Context()); err != nil {
+	if err := plan.Restore(t.Context(), "primary"); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(log, ","); got != "stop a,stop b,stop c,start c,start b,start a" {
@@ -475,7 +475,7 @@ func TestOutagePlanPartialApplicationIsStillRestored(t *testing.T) {
 	if _, ok := plan.AppliedInterval(); ok {
 		t.Fatal("one applied stop is not a correlated interval")
 	}
-	if err := plan.Restore(t.Context()); err != nil {
+	if err := plan.Restore(t.Context(), "primary"); err != nil {
 		t.Fatal(err)
 	}
 	// The target whose stop failed has an uncertain state and is started too;
@@ -494,7 +494,7 @@ func TestOutagePlanFailedRestoreKeepsEveryError(t *testing.T) {
 	if err := plan.Apply(t.Context(), time.Second); err != nil {
 		t.Fatal(err)
 	}
-	err := plan.Restore(t.Context())
+	err := plan.Restore(t.Context(), "primary")
 	if !errors.Is(err, first) || !errors.Is(err, second) {
 		t.Fatalf("restore lost an original error: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestOutagePlanFailedRestoreKeepsEveryError(t *testing.T) {
 	// A second restore retries only what is still stopped.
 	log = nil
 	a.startErr, c.startErr = nil, nil
-	if err := plan.Restore(t.Context()); err != nil {
+	if err := plan.Restore(t.Context(), "primary"); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(log, ","); got != "start c,start a" {
@@ -537,7 +537,7 @@ func TestOutagePlanRefusesReplacedGenerationAndFalseStops(t *testing.T) {
 	if err := plan.Apply(t.Context(), time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if err := plan.Restore(t.Context()); err == nil || plan.Receipts[0].Restored {
+	if err := plan.Restore(t.Context(), "primary"); err == nil || plan.Receipts[0].Restored {
 		t.Fatalf("a container that is still down counted as restored: %v", err)
 	}
 }
@@ -621,5 +621,89 @@ func TestCorrelatedLedgerKeepsBothTokens(t *testing.T) {
 	}
 	if got := ops[0].Credit(); got != "applying/acked" {
 		t.Fatalf("an operation begun while applying was credited as %s", got)
+	}
+}
+
+func outageCapture() (func(string, ...any), func(string, ...any), *[]string, *[]string) {
+	var logs, errs []string
+	return func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) },
+		func(f string, a ...any) { errs = append(errs, fmt.Sprintf(f, a...)) }, &logs, &errs
+}
+
+func outageParseReceipt(t *testing.T, logs []string) (receipts []outageReceipt, attempts []outageRestoreAttempt) {
+	t.Helper()
+	if len(logs) != 1 || !strings.HasPrefix(logs[0], "CORRELATED_OUTAGE_RECEIPTS ") {
+		t.Fatalf("want exactly one receipt line, got %q", logs)
+	}
+	var parsed struct {
+		Receipts        []outageReceipt        `json:"receipts"`
+		RestoreAttempts []outageRestoreAttempt `json:"restore_attempts"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(logs[0], "CORRELATED_OUTAGE_RECEIPTS ")), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed.Receipts, parsed.RestoreAttempts
+}
+
+// A later stop fails and the scenario ends early: the cleanup must still
+// restore every attempted target and emit the receipt with the attempted set.
+func TestOutageFinishEmitsReceiptOfPartialInjection(t *testing.T) {
+	var log []string
+	boom := errors.New("daemon refused to stop")
+	plan, _, _ := outageFakePlan(&outageFakeDaemon{name: "a", log: &log}, &outageFakeDaemon{name: "b", log: &log, stopErr: boom}, &outageFakeDaemon{name: "c", log: &log})
+	if err := plan.Apply(t.Context(), time.Second); !errors.Is(err, boom) {
+		t.Fatal(err)
+	}
+	logf, errorf, logs, errs := outageCapture()
+	outageFinish(t.Context(), plan, logf, errorf)
+	receipts, attempts := outageParseReceipt(t, *logs)
+	if len(*errs) != 0 || len(receipts) != 3 {
+		t.Fatalf("errors %v receipts %+v", *errs, receipts)
+	}
+	if !receipts[0].Attempted || !receipts[0].Applied || !receipts[0].Restored || !receipts[1].Attempted || receipts[1].Applied || receipts[1].StopError == "" || !receipts[1].Restored || receipts[2].Attempted || receipts[2].Restored {
+		t.Fatalf("receipts %+v", receipts)
+	}
+	if len(attempts) != 1 || attempts[0].Kind != "cleanup retry" || attempts[0].Targets != 2 || attempts[0].Error != "" {
+		t.Fatalf("attempts %+v", attempts)
+	}
+}
+
+// The primary restoration fails and so does the cleanup retry: the receipt
+// keeps both, tells them apart, and shows the targets as not restored.
+func TestOutageFinishKeepsFailedPrimaryRestoreApartFromRetry(t *testing.T) {
+	var log []string
+	failing := errors.New("start b failed")
+	b := &outageFakeDaemon{name: "b", log: &log, startErr: failing}
+	plan, _, _ := outageFakePlan(&outageFakeDaemon{name: "a", log: &log}, b)
+	if err := plan.Apply(t.Context(), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Restore(t.Context(), "primary"); !errors.Is(err, failing) {
+		t.Fatal(err)
+	}
+	logf, errorf, logs, errs := outageCapture()
+	outageFinish(t.Context(), plan, logf, errorf)
+	receipts, attempts := outageParseReceipt(t, *logs)
+	if len(*errs) != 1 || !strings.Contains((*errs)[0], "start b failed") {
+		t.Fatalf("the retry failure was not reported: %v", *errs)
+	}
+	if !receipts[0].Restored || receipts[1].Restored || receipts[1].RestoreError == "" || !receipts[1].Attempted {
+		t.Fatalf("receipts %+v", receipts)
+	}
+	if len(attempts) != 2 || attempts[0].Kind != "primary" || attempts[1].Kind != "cleanup retry" ||
+		!strings.Contains(attempts[0].Error, "start b failed") || !strings.Contains(attempts[1].Error, "start b failed") || attempts[0].Targets != 2 || attempts[1].Targets != 1 {
+		t.Fatalf("attempts %+v", attempts)
+	}
+}
+
+// With nothing attempted the receipt is still emitted and no restore is recorded.
+func TestOutageFinishWithoutInjection(t *testing.T) {
+	var log []string
+	plan, _, _ := outageFakePlan(&outageFakeDaemon{name: "a", log: &log})
+	logf, errorf, logs, errs := outageCapture()
+	outageFinish(t.Context(), plan, logf, errorf)
+	receipts, attempts := outageParseReceipt(t, *logs)
+	if len(*errs) != 0 || len(attempts) != 0 || receipts[0].Attempted || len(log) != 0 {
+		t.Fatalf("%v %+v %+v", *errs, receipts, attempts)
 	}
 }

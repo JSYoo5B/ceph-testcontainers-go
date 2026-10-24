@@ -356,6 +356,16 @@ type outagePlan struct {
 	now      func() time.Duration
 	members  []outageMember
 	Receipts []*outageReceipt
+	// Attempts lists every Restore call that had something to start.
+	Attempts []outageRestoreAttempt
+}
+
+// outageRestoreAttempt records one Restore call. Kind tells the primary
+// restoration of the scenario apart from a retry made by the cleanup.
+type outageRestoreAttempt struct {
+	Kind    string `json:"kind"`
+	Targets int    `json:"targets"`
+	Error   string `json:"error"`
 }
 
 func newOutagePlan(now func() time.Duration, members []outageMember) *outagePlan {
@@ -397,8 +407,23 @@ func (p *outagePlan) Apply(ctx context.Context, grace time.Duration) error {
 // Restore starts every attempted, unrestored target in reverse order. A failure
 // is recorded and the remaining targets are still attempted. The returned error
 // joins every failure and keeps each original error.
-func (p *outagePlan) Restore(ctx context.Context) error {
+func (p *outagePlan) Restore(ctx context.Context, kind string) error {
 	var failures []error
+	pending := 0
+	for _, r := range p.Receipts {
+		if r.Attempted && !r.Restored {
+			pending++
+		}
+	}
+	defer func() {
+		if pending > 0 {
+			attempt := outageRestoreAttempt{Kind: kind, Targets: pending}
+			if len(failures) > 0 {
+				attempt.Error = errors.Join(failures...).Error()
+			}
+			p.Attempts = append(p.Attempts, attempt)
+		}
+	}()
 	for i := len(p.members) - 1; i >= 0; i-- {
 		m, r := p.members[i], p.Receipts[i]
 		if !r.Attempted || r.Restored {
@@ -440,6 +465,34 @@ func (p *outagePlan) AppliedInterval() (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(last-first) * time.Millisecond, true
+}
+
+// ReceiptJSON is the bounded record of an injection: every target with its
+// attempted, applied, observed and restored state and times, and every restore
+// attempt with its own error, so a failed primary restore stays visible beside
+// any later cleanup retry.
+func (p *outagePlan) ReceiptJSON() string {
+	interval := int64(-1)
+	if d, ok := p.AppliedInterval(); ok {
+		interval = d.Milliseconds()
+	}
+	data, _ := json.Marshal(struct {
+		AppliedIntervalMS int64                  `json:"applied_interval_ms"`
+		Receipts          []*outageReceipt       `json:"receipts"`
+		RestoreAttempts   []outageRestoreAttempt `json:"restore_attempts"`
+	}{interval, p.Receipts, p.Attempts})
+	return string(data)
+}
+
+// outageFinish runs at cleanup, before the cluster is destroyed. It retries
+// the restoration of every attempted target that is still stopped, reports a
+// failure of that retry, and always emits the receipt, whatever the outcome of
+// the scenario was.
+func outageFinish(ctx context.Context, plan *outagePlan, logf func(string, ...any), errorf func(string, ...any)) {
+	if err := plan.Restore(ctx, "cleanup retry"); err != nil {
+		errorf("cleanup retry of the restoration failed: %v", err)
+	}
+	logf("CORRELATED_OUTAGE_RECEIPTS %s", plan.ReceiptJSON())
 }
 
 // Observe records the first native observation of a target's stop.
