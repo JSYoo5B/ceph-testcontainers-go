@@ -291,10 +291,17 @@ func (c *Container) DetachOSD(ctx context.Context, id int) (*DetachedOSD, error)
 // Before any write it requires the store's identity files, keyring and block
 // inode and size to be unchanged since the detach, the MON registration to
 // hold the same UUID and be down, and the MONs' key for the OSD to equal the
-// stored one. A refusal there leaves the OSD detached for another attempt.
+// stored one. A refusal there, a failed cleanup of the stale admin socket,
+// or a canceled context before the container is requested leaves the OSD
+// detached for another attempt; none of them dispatches a creation request.
 // Once the new container is requested the detached OSD is consumed: an
-// error returns the new handle, which the cluster owns; detach it again,
-// remove it or terminate the cluster. The store is started through the
+// error returns the new handle, which the cluster owns. If that handle has a
+// container, detach it again, remove it or terminate the cluster. If the
+// creation request returned no container, its reply may have been lost after
+// the runtime accepted it, so it is never replayed and the handle has no
+// container to detach: DetachOSD and ReopenOSD refuse it, RemoveOSD refuses
+// the last OSD, and only Terminate recovers it. ReopenOSD does not reconcile
+// a container that such a lost reply may have created. The store is started through the
 // ordinary bootstrap, which validates the stored identity again and never
 // formats a store that has its ready marker.
 func (c *Container) ReopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error) {
@@ -332,6 +339,13 @@ func (c *Container) ReopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	if err := c.reopenPreflight(ctx, detached); err != nil {
 		return nil, err
 	}
+	// The stale socket cleanup is idempotent and runs before the handle is
+	// consumed, so that its failure is a known zero-dispatch refusal that
+	// leaves the detached OSD reusable. The topology lock is held throughout.
+	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
+		return nil, err
+	}
+	// Last check before the irreversible transition.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -339,9 +353,6 @@ func (c *Container) ReopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	delete(c.detachedOSDs, id)
 	osd := &OSDContainer{ID: id, nativeUUID: detached.osdUUID, placement: detached.placement}
 	c.osds[id] = osd
-	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
-		return osd, err
-	}
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
 	if err := c.startOSD(ctx, launch); err != nil {
 		return osd, err
