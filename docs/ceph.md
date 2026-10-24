@@ -1634,6 +1634,7 @@ afterwards.
 func (c *Container) TerminateOnCleanup(t testing.TB, config ceph.FinalizationConfig) (*ceph.Finalization, error)
 func (f *Finalization) Check(name string, check func(context.Context) error)
 func (f *Finalization) Cleanup(name string, cleanup func(context.Context) error)
+func (f *Finalization) TrackDebugLevel(handle *ceph.DebugLevelOverrideHandle)
 ```
 
 Registers one `t.Cleanup` that finalizes the cluster and then calls
@@ -1707,7 +1708,7 @@ test never share one:
 | `diagnostics.json` | The `ceph.DiagnosticsReport`, absent when the collector returned none. |
 | `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
 | `verification-<n>-<name>.json` | The `ceph.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
-| `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup and the termination outcome. |
+| `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
 
 The manifest's execution identity has the Go version and platform, the VCS
 revision when the test binary carries one, and the repository, workflow
@@ -1740,6 +1741,26 @@ directory is temporary and is removed after the test; the manifest's
 or writing a file are logged and recorded, never retried in a loop, and do
 not stop the later phases. If `ArtifactDir` itself cannot be created, Go
 fails the test, and the cleanups and `Terminate` still run.
+
+`Finalization.TrackDebugLevel` registers an [OverrideDebugLevel](#overridedebuglevel)
+handle, including the non-nil handle that comes with an apply error. Each call
+is one window in registration order (`debug_windows[].sequence`); windows on the
+same daemon, option and generation are never merged or deduplicated. The
+manifest keeps a copy of each window's receipt when the failure archive is
+taken, labeled with the archive's phase (`archive`), and another after the
+cleanups (`final`), so a restoration run by `Finalization.Cleanup` is a later,
+separate record and the earlier copy still shows the raised level. The copy
+reads only the handle's local state; it never sets, restores or rereads a
+daemon, and a generic cleanup success does not stand in for `restored-verified`.
+A nil handle, or one that is not from `OverrideDebugLevel`, is recorded with
+`present: false` and no receipt, never as a restored window. The records are
+bounded: 32 windows (`debug_windows_omitted` counts the rest), the first 16
+and last 16 transitions of a window (`transitions_omitted` counts the middle),
+256-byte fields and 2048-byte transition errors, all redacted like the other
+manifest errors. Registering after finalization started fails the test.
+Passing runs archive nothing. The copies are not native evidence of a restored
+daemon level and do not cover other daemons, options or a window that spans an
+OSD replacement.
 
 Limits:
 
@@ -3354,6 +3375,7 @@ window, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{
 	Daemon: "osd.0", Name: "debug_osd", Level: "20",
 })
 if window != nil {
+	finalization.TrackDebugLevel(window) // optional: receipts in the failure manifest
 	finalization.Cleanup("restore osd.0 debug_osd", window.Restore)
 }
 if err != nil {

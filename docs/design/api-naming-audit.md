@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **787** functions, declared methods on
+The declaration catalogue contains **788** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **1084** exported field/nested-record/embedding entries in
 **179** types. It scans exported declared interfaces as well; there are none
@@ -18,13 +18,13 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 362 | 420 |
+| `ceph` | 363 | 420 |
 | `fault` | 34 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
 | `capture` | 33 | 55 |
-| Total | 787 | 1084 |
+| Total | 788 | 1084 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -39,7 +39,7 @@ the `capture` package added for #52 (see
 [Packet capture](#packet-capture-package) below), and the first runtime debug
 level window added for #50 (see [Runtime debug level window](#runtime-debug-level-window)
 below). It uses the current source, not the earlier 691/692-entry, 707-entry,
-712-entry, 745-entry or 768-entry checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
+712-entry, 745-entry, 768-entry or 787-entry checkpoints. The receipt binds canonical catalogue bytes and per-package counts.
 The generation flag cannot update the receipt: a change to captured names or signatures
 requires an explicit retention review even after inventory regeneration.
 Digest matching establishes scope agreement, not the quality of a naming review.
@@ -104,6 +104,12 @@ call site against the convention above:
 | `DebugLevelSetting` | Request input of the retained `Setting` family, beside `ConfigSetting`; `Daemon`, `Name` and `Level` name the selected target, option and requested text. |
 | `DebugLevelOverrideHandle.Receipt`, `DebugLevelReceipt`, `DebugLevelTransition` | `Receipt` returns a copy of the window's evidence, as the existing native receipts do, rather than a live status; `Transition` names one recorded state change with its time, readback and error. |
 | `DebugLevelState` with `DebugLevelPriorRead`, `DebugLevelApplyAttempted`, `DebugLevelApplied`, `DebugLevelApplyUncertain`, `DebugLevelRestoreAttempted`, `DebugLevelRestored`, `DebugLevelConflict`, `DebugLevelTargetChanged`, `DebugLevelUnconfirmed` | The states of #50's state progression. The constants keep the `DebugLevel` prefix so that they do not collide with other state names; `Applied` and `Restored` mean verified readback, and `ApplyUncertain` and `Unconfirmed` keep an unknown outcome apart from success. |
+
+`Finalization.TrackDebugLevel` registers a handle for the failure manifest.
+`Track` is the retained verb for handing an existing resource to a reporter
+without taking ownership or changing it (it neither restores nor removes the
+window, unlike `Cleanup`); `DebugLevel` names the handle's family. It adds one
+declaration and no member entry, because the manifest records are unexported.
 
 ## Packet capture package
 
