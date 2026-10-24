@@ -4,11 +4,13 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // mdsSnapshotID finds the ID of the snapshot called name on directory inode in
@@ -107,4 +109,62 @@ func classifySnapRealm(err error) string {
 		return "invalid"
 	}
 	return "unclassified"
+}
+
+// errPollDeadline means a bounded observation ran out of time. A response
+// that arrives after the deadline is not accepted, even a ready one.
+var errPollDeadline = errors.New("bounded observation deadline passed")
+
+// pollClock is the clock of a bounded observation; tests replace it.
+type pollClock struct {
+	Now  func() time.Time
+	Wait func(ctx context.Context, d time.Duration) error
+}
+
+var realPollClock = pollClock{
+	Now: time.Now,
+	Wait: func(ctx context.Context, d time.Duration) error {
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	},
+}
+
+// boundedPoll calls attempt until it reports ready, fails, or the phase
+// deadline (timeout from now) passes. Each attempt gets a context that
+// expires at the deadline, so a query cannot outlive it, and the deadline is
+// checked again after the attempt returns: a ready response that arrives
+// after it is rejected with errPollDeadline. The wait between attempts never
+// extends past the deadline. last is the value of the final attempt, also
+// when the poll ends in error, for the caller's log.
+func boundedPoll[T any](ctx context.Context, clock pollClock, timeout, interval time.Duration, attempt func(context.Context) (T, bool, error)) (last T, looks int, err error) {
+	deadline := clock.Now().Add(timeout)
+	for {
+		remaining := deadline.Sub(clock.Now())
+		if remaining <= 0 {
+			return last, looks, errPollDeadline
+		}
+		attemptCtx, stop := context.WithTimeout(ctx, remaining)
+		value, ready, attemptErr := attempt(attemptCtx)
+		stop()
+		looks++
+		last = value
+		if !clock.Now().Before(deadline) {
+			return last, looks, errPollDeadline
+		}
+		if attemptErr != nil {
+			return last, looks, attemptErr
+		}
+		if ready {
+			return last, looks, nil
+		}
+		if err := clock.Wait(ctx, min(interval, deadline.Sub(clock.Now()))); err != nil {
+			return last, looks, err
+		}
+	}
 }

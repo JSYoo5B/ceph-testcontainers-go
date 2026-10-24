@@ -202,19 +202,21 @@ func testCephFSLiveSnapRealmGate(t *testing.T) {
 	if made.Client == 0 || made.Client == baseline.Client || made.DirInode != baseline.DirInode {
 		t.Fatalf("snapshot administrator = %+v for actor %+v", made, baseline)
 	}
-	var snapID uint64
-	deadline := time.Now().Add(time.Minute)
-	for {
-		raw, err := m.cluster.Ceph(ctx, "tell", "mds."+m.mds.Name, "dump", "snaps")
-		if err == nil {
-			if snapID, err = mdsSnapshotID(raw, baseline.DirInode, snapName); err == nil {
-				break
-			}
+	// The snapshot ID comes from the MDS's snap table, which the creator's
+	// reply does not order; the read is bounded as its own phase.
+	var snapLookErr error
+	snapID, _, err := boundedPoll(ctx, realPollClock, time.Minute, time.Second, func(attemptCtx context.Context) (uint64, bool, error) {
+		raw, err := m.cluster.Ceph(attemptCtx, "tell", "mds."+m.mds.Name, "dump", "snaps")
+		if err != nil {
+			snapLookErr = err
+			return 0, false, nil
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("snapshot ID of %q: %v", snapName, err)
-		}
-		time.Sleep(time.Second)
+		id, err := mdsSnapshotID(raw, baseline.DirInode, snapName)
+		snapLookErr = err
+		return id, err == nil, nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot ID of %q: %v (last: %v)", snapName, err, snapLookErr)
 	}
 	if preErr == nil && preCtx.hasSnap(snapID) {
 		t.Fatalf("the context before the snapshot already lists snapshot %x: %+v", snapID, preCtx)
@@ -223,41 +225,34 @@ func testCephFSLiveSnapRealmGate(t *testing.T) {
 	// The MDS pushes the new context to clients with caps in the realm
 	// (Client::handle_snap); nothing orders that push before the creator's
 	// reply, so the retained client's own cache is polled, bounded.
-	var (
+	type look struct {
 		released bool
 		derived  clientSnapContext
-		gateErr  error
-		last     []byte
-		looks    int
-		firstAt  time.Duration
-	)
+		err      error
+		data     []byte
+	}
 	started := time.Now()
-	deadline = started.Add(90 * time.Second)
-	for {
-		last, err = queryClientDumpCache(ctx, m.cluster, m.client, asok)
+	var first []byte
+	final, looks, err := boundedPoll(ctx, realPollClock, 90*time.Second, time.Second, func(attemptCtx context.Context) (look, bool, error) {
+		data, err := queryClientDumpCache(attemptCtx, m.cluster, m.client, asok)
 		if err != nil {
-			t.Fatal(err)
+			return look{}, false, err
 		}
-		looks++
-		released, derived, gateErr = snapContextGate(last, baseline.Inode, snapID)
-		if looks == 1 {
-			t.Logf("CEPHFS_LIVE_REALM first look after snapshot (%s): %s", classifySnapRealm(gateErr), snapRealmShape(last, baseline.Inode))
+		l := look{data: data}
+		l.released, l.derived, l.err = snapContextGate(data, baseline.Inode, snapID)
+		if first == nil {
+			first = data
+			t.Logf("CEPHFS_LIVE_REALM first look after snapshot (%s): %s", classifySnapRealm(l.err), snapRealmShape(data, baseline.Inode))
 		}
-		if released {
-			firstAt = time.Since(started)
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Second)
+		return l, l.released, nil
+	})
+	if err != nil || !final.released {
+		t.Fatalf("CEPHFS_LIVE_REALM gate not released after %d looks over %s (%v): %s; derived=%+v; snapshot id=%x; the overwrite was not attempted: %s",
+			looks, time.Since(started).Round(time.Second), err, classifySnapRealm(final.err), final.derived, snapID, snapRealmShape(final.data, baseline.Inode))
 	}
-	if !released {
-		t.Fatalf("CEPHFS_LIVE_REALM gate not released after %d looks over %s: %s; derived=%+v; snapshot id=%x; the overwrite was not attempted: %s",
-			looks, time.Since(started).Round(time.Second), classifySnapRealm(gateErr), derived, snapID, snapRealmShape(last, baseline.Inode))
-	}
+	derived, last := final.derived, final.data
 	t.Logf("CEPHFS_LIVE_REALM gate released after %d looks, %s: derived seq=%x snaps=%x chain=%x; %s",
-		looks, firstAt.Round(time.Millisecond), derived.Seq, derived.Snaps, derived.Chain, snapRealmShape(last, baseline.Inode))
+		looks, time.Since(started).Round(time.Millisecond), derived.Seq, derived.Snaps, derived.Chain, snapRealmShape(last, baseline.Inode))
 
 	actor.open(t, ctx, "overwrite")
 	over := actor.receipt(t, ctx, 2)

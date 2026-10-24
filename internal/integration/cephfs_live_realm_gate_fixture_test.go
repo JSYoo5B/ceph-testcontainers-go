@@ -5,9 +5,12 @@
 package integration_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These fixtures are synthetic: an MDS "dump snaps" table shaped like
@@ -101,6 +104,99 @@ func TestCephFSLiveRealmGateShape(t *testing.T) {
 			if s := snapRealmShape(data, snapFixtureFileInode); !strings.Contains(s, "inodes=") {
 				t.Errorf("%s: shape %q", name, s)
 			}
+		}
+	})
+}
+
+// fakePoll is a clock that only the attempts and waits advance.
+type fakePoll struct {
+	now   time.Time
+	waits []time.Duration
+}
+
+func (f *fakePoll) clock() pollClock {
+	return pollClock{
+		Now: func() time.Time { return f.now },
+		Wait: func(_ context.Context, d time.Duration) error {
+			f.waits = append(f.waits, d)
+			f.now = f.now.Add(d)
+			return nil
+		},
+	}
+}
+
+func TestCephFSLiveRealmGateBoundedPoll(t *testing.T) {
+	const timeout, interval = 90 * time.Second, time.Second
+	// Each attempt takes the listed time and then answers ready or not.
+	type answer struct {
+		took  time.Duration
+		ready bool
+		err   error
+	}
+	run := func(answers ...answer) (*fakePoll, int, error) {
+		f := &fakePoll{now: time.Unix(1000, 0)}
+		calls := 0
+		_, looks, err := boundedPoll(context.Background(), f.clock(), timeout, interval, func(ctx context.Context) (int, bool, error) {
+			a := answers[min(calls, len(answers)-1)]
+			calls++
+			if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > timeout+time.Second {
+				t.Errorf("attempt %d context has no deadline within the phase: %v %v", calls, dl, ok)
+			}
+			f.now = f.now.Add(a.took)
+			return calls, a.ready, a.err
+		})
+		return f, looks, err
+	}
+	t.Run("on-time ready response", func(t *testing.T) {
+		if _, looks, err := run(answer{took: time.Second}, answer{took: time.Second, ready: true}); err != nil || looks != 2 {
+			t.Fatalf("looks=%d err=%v", looks, err)
+		}
+	})
+	t.Run("late ready response is rejected", func(t *testing.T) {
+		// Three 29.5 s queries with one-second waits end at 90.5 s, and the
+		// third says ready.
+		_, looks, err := run(answer{took: 29500 * time.Millisecond}, answer{took: 29500 * time.Millisecond}, answer{took: 29500 * time.Millisecond, ready: true})
+		if !errors.Is(err, errPollDeadline) || looks != 3 {
+			t.Fatalf("looks=%d err=%v, want a deadline error after 3 looks", looks, err)
+		}
+	})
+	t.Run("ready exactly at the deadline is rejected", func(t *testing.T) {
+		if _, _, err := run(answer{took: timeout, ready: true}); !errors.Is(err, errPollDeadline) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("never ready ends at the deadline without a longer wait", func(t *testing.T) {
+		f, looks, err := run(answer{took: 10 * time.Millisecond})
+		if !errors.Is(err, errPollDeadline) || looks < 2 {
+			t.Fatalf("looks=%d err=%v", looks, err)
+		}
+		if over := f.now.Sub(time.Unix(1000, 0)); over > timeout+10*time.Millisecond {
+			t.Fatalf("poll ran %s past a %s phase", over, timeout)
+		}
+		for _, w := range f.waits {
+			if w > interval {
+				t.Fatalf("wait %s exceeds the interval", w)
+			}
+		}
+	})
+	t.Run("an attempt error stops the poll", func(t *testing.T) {
+		boom := errors.New("boom")
+		if _, looks, err := run(answer{took: time.Second, err: boom}); !errors.Is(err, boom) || looks != 1 {
+			t.Fatalf("looks=%d err=%v", looks, err)
+		}
+	})
+	t.Run("a late error is a deadline error", func(t *testing.T) {
+		if _, _, err := run(answer{took: timeout + time.Second, err: errors.New("context deadline exceeded")}); !errors.Is(err, errPollDeadline) {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("cancellation during the wait is returned", func(t *testing.T) {
+		f := &fakePoll{now: time.Unix(1000, 0)}
+		clock := f.clock()
+		clock.Wait = func(context.Context, time.Duration) error { return context.Canceled }
+		_, _, err := boundedPoll(context.Background(), clock, timeout, interval, func(context.Context) (int, bool, error) { return 0, false, nil })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v", err)
 		}
 	})
 }
