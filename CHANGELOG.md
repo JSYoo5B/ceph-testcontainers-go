@@ -18,6 +18,13 @@ change the API.
 
 ### Added
 
+- `ceph.Finalization.TrackDebugLevel` registers a debug level window so that
+  the failure manifest keeps a typed copy of its receipt when the archive is
+  taken and another after the cleanups (`debug_windows`). Registrations are
+  append-only and sequential windows on one daemon, option and generation stay
+  separate; a nil handle is recorded as absent; the copies are bounded and
+  redacted and never touch the daemon. The debug window state machine is
+  unchanged.
 - `ceph.Container.OverrideDebugLevel` opens one runtime `debug_ms` or
   `debug_osd` window on one running owned OSD through its admin socket. It
   records the effective prior level, verifies the normalized readback, and

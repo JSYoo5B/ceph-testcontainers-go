@@ -64,6 +64,9 @@ type Finalization struct {
 	// verificationReports the reports of their checks, for the archive.
 	verificationNames   map[string]bool
 	verificationReports []*VerificationReport
+	// debugWindows are the registered debug level handles in registration
+	// order; a nil entry is a registration without a handle.
+	debugWindows []*DebugLevelOverrideHandle
 
 	// The cluster's operations, replaced in tests.
 	cluster            string
@@ -246,6 +249,9 @@ func (f *Finalization) finish(run *finalizationRun, cleanups []finalizationStep)
 		run.manifest.Trigger.CleanupReportedFailure = run.manifest.Trigger.CleanupReportedFailure || outcome.FailedTest
 		run.manifest.Cleanups = append(run.manifest.Cleanups, outcome)
 	}
+	if f.config.Archive {
+		f.snapshotDebugWindows(&run.manifest, "after-cleanup", true)
+	}
 	if f.config.Archive && !run.archiveAttempted && f.t.Failed() {
 		f.archive(run, "after-cleanup")
 	}
@@ -331,6 +337,7 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	run.archiveAttempted = true
 	m := &run.manifest
 	m.Phase = phase
+	f.snapshotDebugWindows(m, phase, false)
 	m.Archive.StartedAt = f.now()
 	m.Archive.Timeout = f.config.ArchiveTimeout.String()
 	directory, retained, err := f.archiveDirectory(run)
@@ -532,7 +539,11 @@ type finalizationManifest struct {
 	Collectors    []finalizationCollector `json:"collectors"`
 	Files         []finalizationFile      `json:"files"`
 	Cleanups      []finalizationOutcome   `json:"cleanups"`
-	Termination   *finalizationOutcome    `json:"termination,omitempty"`
+	// DebugWindows are the registered debug level windows, one per
+	// registration, each with an archive-phase and a final receipt copy.
+	DebugWindows        []finalizationDebugWindow `json:"debug_windows"`
+	DebugWindowsOmitted int                       `json:"debug_windows_omitted,omitempty"`
+	Termination         *finalizationOutcome      `json:"termination,omitempty"`
 	// Final means that the cleanups and Terminate have finished and their
 	// outcomes are recorded; the reports remain the earlier snapshot.
 	Final bool     `json:"final"`
@@ -627,7 +638,7 @@ var finalizationNotes = []string{
 func (f *Finalization) newManifest() finalizationManifest {
 	m := finalizationManifest{SchemaVersion: 1, Test: f.t.Name(), Scenario: f.config.Scenario, Cluster: f.cluster,
 		Images: f.images, Checks: []finalizationOutcome{}, Collectors: []finalizationCollector{},
-		Files: []finalizationFile{}, Cleanups: []finalizationOutcome{}, Missing: []string{},
+		Files: []finalizationFile{}, Cleanups: []finalizationOutcome{}, DebugWindows: []finalizationDebugWindow{}, Missing: []string{},
 		Notes: finalizationNotes}
 	m.Execution = finalizationExecution{ID: f.newID(), StartedAt: f.now(), GoVersion: runtime.Version(),
 		Platform: runtime.GOOS + "/" + runtime.GOARCH}

@@ -3,7 +3,7 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 33,
-    "ceph": 362,
+    "ceph": 363,
     "cephfs": 155,
     "fault": 34,
     "rbd": 77,
@@ -1649,6 +1649,14 @@
       "signature": "func(name string, cleanup func(context.Context) error)",
       "receiver": "*Finalization",
       "proposed": "ceph.Finalization.Cleanup",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.TrackDebugLevel",
+      "kind": "method",
+      "signature": "func(handle *DebugLevelOverrideHandle)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.TrackDebugLevel",
       "decision": "baseline"
     },
     {
