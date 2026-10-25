@@ -698,7 +698,11 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertNotRegex(caller, r"(?m)^    needs:")
         self.assertEqual(scalar(caller, "uses"), "./.github/workflows/tagged-runtime.yml")
         self.assertEqual(scalar(caller, "category"), "optional")
-        batch = scalar(caller, "optional_batch")
+        self.assertEqual(scalar(caller, "optional_batch"),
+                         "${{ inputs.failure_archive && 'failure_archive' || 'native_rgw_translation' }}")
+        self.assertIn("      failure_archive:\n", self.workflows["native-regressions.yml"])
+        self.assertIn("        type: boolean\n        default: false\n", self.workflows["native-regressions.yml"])
+        batch = "native_rgw_translation"
         profiles = [profile for profile in self.optional["include"] if profile["batch"] == batch]
         self.assertEqual(len(profiles), 1)
         selected = engine.select_optional_plan(self.optional, batch)
@@ -706,6 +710,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         self.assertIn("ci_optional", profiles[0]["tags"].split(","))
         self.assertIn("native_regression", profiles[0]["tags"].split(","))
         self.assertFalse(any(profile["batch"] == batch for profile in self.plan["include"]))
+        proof = engine.select_optional_plan(self.optional, "failure_archive")["include"]
+        self.assertEqual(len(proof), 1)
+        self.assertEqual(proof[0]["image_roles"], "essential")
+        self.assertFalse(any(profile["batch"] == "failure_archive" for profile in self.plan["include"]))
         runtime = self.jobs["tagged-runtime.yml"]["runtime"]
         self.assertEqual(scalar(runtime, "timeout-minutes"), "${{ matrix.job_timeout }}")
         optional = engine_command(steps(runtime), "optional")
@@ -770,6 +778,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             else:
                 tag_sets = [{tag for tag in token.removeprefix("-tags=").split(",")}
                             for command in commands for token in command if token.startswith("-tags=")]
+                self.assertIn({"integration"}, tag_sets)
                 self.assertIn({"all"}, tag_sets)
                 self.assertTrue(any({"all", "goceph", "native_regression", "role_images", "ci_optional"} <= tags for tags in tag_sets))
 

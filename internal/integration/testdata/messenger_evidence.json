@@ -1,5 +1,5 @@
 {
-  "schema": "ceph-messenger-evidence/v1",
+  "schema": "ceph-messenger-evidence/v2",
   "ceph_commit": "7f793731f1b39eb4f465e960113d2363c311b964",
   "bindings": [
     {
@@ -10,6 +10,8 @@
       ],
       "requirement": "targeted-command/osd-pg-mds",
       "case": "TestTargetedCommandRecipe",
+      "source": "internal/integration/targeted_command_integration_test.go",
+      "contract": "targeted-command/v1",
       "parent_marker": "TARGETED_COMMAND_RECEIPT",
       "marker": "MSGR_CASE_RECEIPT",
       "evidence": "native-state",

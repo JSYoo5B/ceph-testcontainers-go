@@ -16,7 +16,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 | Ceph recovery | `ceph-recovery.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `recovery` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
 | Ceph periodic | `ceph-periodic.yml` | every 3 hours, gated (see [Periodic runs](#periodic-runs)); daily at 04:23 UTC for the [representative campaign](#representative-campaign); manual | Every runtime category on every [supported release](#supported-releases) (Tentacle 20.2.4 and Squid 19.2.5), on `main`; the representative batches repeated on a pinned commit and pinned images |
 | Ceph release matrix | `ceph-release-matrix.yml` | push to `main` and pull request while `CI_RELEASE_PHASE` is `true`; manual | Every runtime category on each supported release other than the current one (Squid 19.2.5) |
-| Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch, with an optional RGW image override |
+| Native regressions | `native-regressions.yml` | manual only | The optional `native_rgw_translation` batch by default, or the explicitly requested, deliberately failing `failure_archive` proof |
 | CI command | `ci-command.yml` | a pull request comment `/ci run ...` (see [Running chosen batches from a comment](#running-chosen-batches-from-a-comment)) | The named runtime batches, of any category or optional, on the pull request's head commit and the chosen releases |
 
 The category runtime workflows call the reusable template `tagged-runtime.yml`
@@ -1282,6 +1282,70 @@ Three outcomes are recorded separately, and none implies the next:
 An archive holds a snapshot taken before the cluster's termination, not
 continuous history. Nothing is archived when the runner is lost or the test
 process is killed or panics, for example at the job timeout or the Go test timeout.
+
+#### Controlled failed-native download proof
+
+The optional `failure_archive` batch runs two genuinely failed native subtests:
+an ordinary assertion deliberately expects two OSDs after independently checking
+the one-OSD native control, and a finalization verification requires a crash that
+has not happened. Both use the real `testing.T`, not a recorder that turns an
+expected failure into a passing test. Both end the workload context before
+finalization; each archive records the original trigger, the before-cleanup
+snapshot, and later debug restoration and termination outcomes. A single owned
+OSD debug window is tracked with the existing local receipt API, so the initial
+`applied-verified` copy and later `restored-verified` copy remain distinct.
+
+This batch is outside `all` and all required runtime profiles. Run it only by
+an explicit request. The existing manual workflow accepts a boolean input;
+its default remains the RGW regression batch:
+
+```sh
+gh workflow run native-regressions.yml --ref <branch> -f failure_archive=true
+```
+
+The native step and workflow **must remain failed**. A failed compile, image
+preparation, cleanup, missing archive or unrelated assertion is not a successful
+proof of failure-archive delivery. The ordinary tagged runner, phase reports,
+resource checker and always-run upload handle this batch without a separate
+failure framework or a native retry. The workflow's `Failure archive` summary
+records upload outcome and artifact ID; retain that independently of the files.
+
+After the attempt finishes, download its scenario, image preparation and cleanup
+artifacts using their exact names from that attempt. Do not combine artifacts
+from different attempts or derive the expected image cohort from the archive:
+
+```sh
+gh run view <run-id> --json headSha,attempt,jobs
+gh api repos/<owner>/<repo>/actions/runs/<run-id>/artifacts
+gh run download <run-id> -n <tag-scenario-artifact> -D artifacts/archive-proof/scenario
+gh run download <run-id> -n <scenario-images-artifact> -D artifacts/archive-proof/images
+gh run download <run-id> -n <runtime-cleanup-artifact> -D artifacts/archive-proof/cleanup
+
+# Run against the source checkout of that exact head.
+python3 .github/scripts/failed_archive_proof.py \
+  --scenario artifacts/archive-proof/scenario \
+  --images artifacts/archive-proof/images --cleanup artifacts/archive-proof/cleanup \
+  --root . --revision <full-checked-out-commit> --run-id <run-id> --attempt <attempt> \
+  --output artifacts/archive-proof/audit.json
+```
+
+The offline audit requires both complete failed native cases, matching compiled
+binary/source hashes, independent image-preparation IDs and platform, both
+retained archives and their manifest-listed file sizes, original failure
+triggers, separate debug receipt copies, successful restoration/termination and
+zero new resources on the same engine. It also checks the history row's source
+and run identity. Missing manifest provenance stays explicitly missing; the
+independently retained compile/history records do not rewrite the manifest.
+Its zero exit means `archive_verification: verified`; the result still says
+`native_outcome: failed` and does not claim a passing workflow. These records
+are not cryptographic attestation, and an offline directory alone does not
+establish upload: preserve the actual upload step/API identity and successful
+download as separate evidence.
+
+This proof covers one healthy cluster's assertion/post-check failure path and
+the tracked debug restore. It does not establish every collector failure,
+partial bootstrap, disk failure, forced process exit or runner-loss path under
+#49/#51, and it does not close either issue by itself.
 
 ### Scenario history
 
