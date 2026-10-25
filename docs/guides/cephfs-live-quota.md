@@ -13,6 +13,22 @@ counts until it sees the selected limit and unchanged baseline counts, under
 a 90-second deadline. It then attempts one exclusive file create and must receive `EDQUOT`. An
 independent client confirms that this rejected create left no file.
 
+Each synchronous observation uses the phase's remaining time as an
+`ITIMER_REAL` watchdog in the owned actor process. Its default `SIGALRM`
+action terminates a blocked native call; it is deliberately not a Python
+exception handler that could wait until that call returned. A completed
+sample is checked again against the monotonic deadline before readiness is
+accepted. Normal returns and exceptions cancel the timer and restore its
+prior handler; an already active timer is refused. No timer or handler is
+changed in the administrator, daemon, test runner or any other process.
+
+A watchdog exit is a failed actor/observation, not `EDQUOT` or another
+application-level create result. The supervised native command reports the
+exit, no create is admitted, and the existing actor and fresh-context quota
+cleanup paths still run. Synthetic subprocess controls cover a blocked C
+call and a matching sample arriving at 90.5 seconds; those controls are
+separate from native quota execution.
+
 The administrator next raises the limit by one slot. After the same retained
 client observes that limit, it attempts the confirmed-absent file once, writes and
 fsyncs its predetermined bytes. The original descriptor still reads its exact

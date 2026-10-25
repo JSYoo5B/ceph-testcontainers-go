@@ -17,7 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-const cephFSQuotaActor cephFSActorScript = cephFSActorHelpers + `
+const cephFSQuotaActor cephFSActorScript = cephFSActorHelpers + cephFSQuotaObservation + `
 import errno
 directory, baseline_path, create_path = (arg.encode() for arg in sys.argv[4:7])
 base, new = (bytes.fromhex(arg) for arg in sys.argv[7:9])
@@ -35,19 +35,6 @@ def sample():
     return dict(limit=quota(), files=int(fs.getxattr(directory, "ceph.dir.rfiles")),
                 directories=int(fs.getxattr(directory, "ceph.dir.rsubdirs")),
                 entries=int(fs.getxattr(directory, "ceph.dir.rentries")))
-def observe(limit, entries=None):
-    start = time.monotonic()
-    count = 0
-    last = None
-    while time.monotonic() - start < 90:
-        last = sample()
-        count += 1
-        if (last["limit"] == limit and last["files"] == 1 and last["directories"] > 0
-                and last["entries"] == last["files"] + last["directories"]
-                and (entries is None or last["entries"] == entries)):
-            return dict(last, samples=count, elapsed_ms=int((time.monotonic()-start)*1000))
-        time.sleep(0.2)
-    raise RuntimeError("quota read-only gate did not observe limit=%r entries=%r: %r" % (limit, entries, last))
 fs.mkdir(directory, 0o755)
 fd = fs.open(baseline_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)
 fs.write(fd, base, 0)
@@ -57,12 +44,12 @@ def publish_state(phase, **extra):
     publish(phase, client=fs.get_instance_id(), inode=stat.st_ino,
             dir_inode=fs.stat(directory).st_ino, size=stat.st_size,
             full=fs.read(fd, 0, stat.st_size+1).hex(), **extra)
-initial = observe(0)
+initial = observe_quota(sample, 0)
 entries = initial["entries"]
 publish_state(1, ops=initial)
 for phase, gate_name, limit in [(2, "limited", entries), (3, "relaxed", entries+1)]:
     gate(gate_name)
-    result = observe(limit, entries)
+    result = observe_quota(sample, limit, entries)
     result["create_errno"] = 0
     try:
         created = fs.open(create_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o644)

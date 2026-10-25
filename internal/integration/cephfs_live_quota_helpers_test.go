@@ -10,6 +10,51 @@ import (
 	"fmt"
 )
 
+// The actor owns this process and its otherwise unused ITIMER_REAL. The
+// default SIGALRM action terminates even a blocked synchronous native call;
+// a Python exception handler would only run after that call returns. Its
+// enclosing RunNativeCommand must report and supervise this failure, never
+// interpret it as a successful quota observation or retry a create.
+const cephFSQuotaObservation = `
+import signal, time
+def quota_sample_before(sample, deadline, clock):
+    remaining = deadline - clock()
+    if remaining <= 0:
+        raise TimeoutError("quota observation deadline expired before sample")
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise RuntimeError("quota actor real-time timer is already in use")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, remaining)
+        value = sample()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+    if clock() >= deadline:
+        raise TimeoutError("quota sample completed after the observation deadline")
+    return value
+def observe_quota(sample, limit, entries=None, timeout=90, clock=time.monotonic, sleep=time.sleep):
+    start = clock()
+    deadline = start + timeout
+    count = 0
+    last = None
+    while True:
+        last = quota_sample_before(sample, deadline, clock)
+        count += 1
+        observed = clock()
+        if observed >= deadline:
+            raise TimeoutError("quota observation expired before readiness")
+        if (last["limit"] == limit and last["files"] == 1 and last["directories"] > 0
+                and last["entries"] == last["files"] + last["directories"]
+                and (entries is None or last["entries"] == entries)):
+            return dict(last, samples=count, elapsed_ms=int((observed-start)*1000))
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise TimeoutError("quota read-only gate did not observe limit=%r entries=%r: %r" % (limit, entries, last))
+        sleep(min(0.2, remaining))
+`
+
 type cephFSQuotaStep struct {
 	Limit        *uint64 `json:"limit"`
 	Files        *uint64 `json:"files"`
@@ -42,7 +87,7 @@ func validateLiveQuotaStep(first, current cephFSActorReceipt, limit uint64, base
 	}
 	if step.Limit == nil || *step.Limit != limit || step.Files == nil || *step.Files != 1 ||
 		step.Directories == nil || *step.Directories == 0 || step.Entries == nil || *step.Entries != *step.Files+*step.Directories ||
-		step.Samples == 0 || step.ElapsedMS < 0 || step.CreateErrno == nil || *step.CreateErrno != wantErrno {
+		step.Samples == 0 || step.ElapsedMS < 0 || step.ElapsedMS >= 90_000 || step.CreateErrno == nil || *step.CreateErrno != wantErrno {
 		return step, fmt.Errorf("quota gate/create result is incomplete or unexpected: %s", current.Ops)
 	}
 	if wantErrno != 0 {
