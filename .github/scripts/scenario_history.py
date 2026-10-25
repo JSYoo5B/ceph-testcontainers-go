@@ -225,6 +225,19 @@ def messenger_history(row, compiled, native, log, prepared, root=None):
                 raise ValueError(reason)
         binary = compiled.get("binary", {})
         ran = native.get("binary", {})
+        need(isinstance(inventory, list) and inventory
+             and all(isinstance(case, str) and re.fullmatch(r"Test[A-Za-z0-9_]+", case) for case in inventory)
+             and len(inventory) == len(set(inventory)), "invalid_compiled_inventory")
+        completion = native.get("completion")
+        strict = native.get("strict_completion")
+        need(native.get("passed") is True and native.get("classification") == "passed"
+             and type(native.get("exit_code")) is int and native["exit_code"] == 0
+             and native.get("timed_out") is False
+             and isinstance(completion, dict) and completion.get("passed") is True
+             and completion.get("errors") == []
+             and "strict_completion" in native
+             and (strict is None or isinstance(strict, dict) and strict.get("passed") is True
+                  and strict.get("errors") == []), "native_terminal_metadata_refused")
         need(row["comparability"]["status"] == "complete", "incomplete_provenance")
         need(re.fullmatch(r"[0-9a-f]{40}", row["source"]["checkout_commit"]), "missing_checkout_identity")
         need(re.fullmatch(r"[0-9a-f]{64}", binary.get("sha256", ""))
@@ -268,6 +281,8 @@ def messenger_history(row, compiled, native, log, prepared, root=None):
             output.seek(0)
             report = messenger_evidence.report(root, output.read(), expected)
         need(report["native_cases"], "no_native_case_accepted")
+        need(all(case["case"] in inventory for case in report["native_cases"]),
+             "case_absent_from_compiled_inventory")
         result.update(status="accepted", report=report)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
         result.update(status="invalid", reason="case_evidence_refused")

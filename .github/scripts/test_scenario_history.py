@@ -85,6 +85,7 @@ class Job:
         write(self.scenario / "native/native.log", log)
         write(self.scenario / "native/report.json", {
             "profile": PROFILE, "network": "", "exit_code": 0 if passed else 1, "elapsed_seconds": elapsed,
+            "timed_out": False,
             "completion": {"passed": passed, "errors": [] if passed else ["native log contains failed tests"]},
             "strict_completion": None, "classification": classification, "passed": passed,
             "binary": {"sha256": "d" * 64}})
@@ -185,6 +186,51 @@ class MessengerHistoryTest(unittest.TestCase):
         self.assertEqual(row["row_sha256"], history.row_hash(row))
         self.assertIn("Messenger native-state evidence | accepted", history.provenance_summary(row))
 
+    def test_accepted_case_must_belong_to_valid_compiled_inventory(self):
+        for inventory in (["TestUnrelated"], [], [self.case_fixture.case, self.case_fixture.case],
+                          [self.case_fixture.case, "not a selector"], None, self.case_fixture.case, [{}]):
+            with self.subTest(inventory=inventory):
+                self.compiled["binary"]["tests"] = inventory
+                write(self.job.scenario / "compile/compile-report.json", self.compiled)
+                row = self.row()
+                self.assertEqual(row["outcome"]["status"], "passed")
+                self.assertEqual(row["messenger"]["status"], "invalid")
+                self.assertEqual(row["messenger"].get("report", {}).get("native_cases", []), [])
+
+    def test_explicit_native_failure_metadata_cannot_be_overridden_by_valid_log(self):
+        changes = (
+            {"completion": {"passed": False, "errors": ["incomplete execution"]}},
+            {"completion": {"passed": True, "errors": ["contradictory error"]}},
+            {"completion": {}},
+            {"exit_code": 1}, {"exit_code": None}, {"exit_code": False},
+            {"timed_out": True}, {"timed_out": None},
+            {"classification": "native-test-failure"},
+            {"strict_completion": {"passed": False, "errors": ["missing selected test"]}},
+            {"strict_completion": {"passed": True, "errors": ["contradictory error"]}},
+            {"strict_completion": False},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                write(self.job.scenario / "native/report.json", self.native | change)
+                row = self.row()
+                # Additive case admission must not rewrite legacy scenario
+                # verdict policy, even when that policy reports this as passed.
+                self.assertEqual(row["outcome"]["status"], "passed")
+                self.assertEqual(row["messenger"]["status"], "invalid")
+                self.assertEqual(row["messenger"]["report"]["native_cases"], [])
+
+    def test_missing_terminal_metadata_refuses_but_valid_strict_completion_accepts(self):
+        for field in ("completion", "exit_code", "timed_out", "classification", "strict_completion"):
+            with self.subTest(field=field):
+                report = {name: value for name, value in self.native.items() if name != field}
+                write(self.job.scenario / "native/report.json", report)
+                row = self.row()
+                self.assertEqual(row["outcome"]["status"], "passed")
+                self.assertEqual(row["messenger"]["status"], "invalid")
+        write(self.job.scenario / "native/report.json",
+              self.native | {"strict_completion": {"passed": True, "errors": []}})
+        self.assertEqual(self.row()["messenger"]["status"], "accepted")
+
     def test_phase_failures_never_accept_case(self):
         for phase_name, outcome in (("native", "failure"), ("native", "cancelled"),
                                     ("native", "skipped"), ("cleanup", "failure")):
@@ -235,7 +281,9 @@ class MessengerHistoryTest(unittest.TestCase):
 
     def test_nonselected_and_legacy_rows_do_not_invent_case_evidence(self):
         self.job = Job(self.directory.name).passing()
-        row = self.job.row()
+        with mock.patch.object(history.messenger_evidence, "case_index", side_effect=AssertionError("no AST indexing")), \
+             mock.patch.object(history.subprocess, "run", side_effect=AssertionError("no event converter")):
+            row = self.job.row()
         self.assertEqual(row["messenger"]["status"], "not_selected")
         del row["messenger"]
         row["row_sha256"] = history.row_hash(row)
