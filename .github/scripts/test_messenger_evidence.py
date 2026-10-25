@@ -239,6 +239,101 @@ class MessengerEvidenceTests(unittest.TestCase):
     def test_duplicate_binding(self):
         self.alter_binding(lambda d: d["bindings"].append(d["bindings"][0]))
 
+    def test_two_bindings_for_one_case(self):
+        path = self.root / m.BINDINGS
+        data = m.loads(path.read_bytes())
+        second = copy.deepcopy(data["bindings"][0])
+        second["id"] = "targeted-command/second"
+        data["bindings"].append(second)
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(m.EvidenceError, "only one binding per Go case"):
+            m.catalogue(self.root)
+
+    def test_binding_can_move_to_another_source_file(self):
+        path = self.root / m.BINDINGS
+        data = m.loads(path.read_bytes())
+        binding = data["bindings"][0]
+        moved = "internal/integration/moved_command_integration_test.go"
+        (self.root / binding["source"]).rename(self.root / moved)
+        binding["source"] = moved
+        path.write_text(json.dumps(data))
+        source_only = m.report(self.root)
+        self.assertEqual(source_only["unexecuted_bindings"], [binding["id"]])
+        self.assertEqual(source_only["native_cases"], [])
+        self.receipt["sources"] = m.source_digests(self.root)
+        result = self.check()
+        self.assertEqual(result["native_cases"][0]["source"], moved)
+        self.assertEqual(result["native_cases"][0]["contract"], "targeted-command/v1")
+
+    def test_stale_case_source(self):
+        self.alter_binding(lambda d: d["bindings"][0].update(source=m.EMITTER))
+
+    def test_missing_case_source(self):
+        self.alter_binding(lambda d: d["bindings"][0].update(source="internal/integration/missing_test.go"))
+
+    def test_noncanonical_or_external_case_source(self):
+        for source in ("/internal/integration/case_test.go", "../case_test.go", "internal/integration/../case_test.go",
+                       "internal//integration/case_test.go", "internal/integration/./case_test.go", "internal\\integration\\case_test.go"):
+            with self.subTest(source=source):
+                self.alter_binding(lambda d: d["bindings"][0].update(source=source))
+
+    def test_ambiguous_case_definition(self):
+        source = self.bindings["targeted-command/native-identities"]["source"]
+        (self.root / "internal/integration/duplicate_test.go").write_bytes((self.root / source).read_bytes())
+        with self.assertRaisesRegex(m.EvidenceError, "ambiguous"):
+            m.catalogue(self.root)
+
+    def test_case_declaration_in_comment_is_not_a_definition(self):
+        path = self.root / self.bindings["targeted-command/native-identities"]["source"]
+        path.write_text(path.read_text().replace("func TestTargetedCommandRecipe(", "func helperTargetedCommandRecipe(")
+                        + "\n// func TestTargetedCommandRecipe(t *testing.T) {}\n")
+        with self.assertRaisesRegex(m.EvidenceError, "case source missing"):
+            m.catalogue(self.root)
+
+    def test_parent_marker_in_comment_is_not_a_log_call(self):
+        path = self.root / self.bindings["targeted-command/native-identities"]["source"]
+        path.write_text(path.read_text().replace('t.Logf("TARGETED_COMMAND_RECEIPT %s", data)',
+                                               '_ = "TARGETED_COMMAND_RECEIPT" // no log call'))
+        with self.assertRaisesRegex(m.EvidenceError, "not a literal log call"):
+            m.catalogue(self.root)
+
+    def test_ambiguous_subtest_selector(self):
+        self.alter_binding(lambda d: d["bindings"][0].update(case=self.case + "/child"))
+
+    def test_unknown_assertion_contract(self):
+        self.alter_binding(lambda d: d["bindings"][0].update(contract="unreviewed/v1"))
+
+    def test_parent_marker_from_another_contract(self):
+        path = self.root / m.COVERAGE
+        coverage = m.loads(path.read_bytes())
+        for row in coverage["rows"]:
+            if row["id"] == "targeted-command/osd-pg-mds":
+                for case in row["cases"]:
+                    if case["test"] == self.case:
+                        case["receipt"] = "OTHER_PARENT_RECEIPT"
+        path.write_text(json.dumps(coverage))
+        self.alter_binding(lambda d: d["bindings"][0].update(parent_marker="OTHER_PARENT_RECEIPT"))
+
+    def test_parent_from_another_assertion_shape(self):
+        # A matching FSID alone must not bypass the targeted-command contract.
+        self.parent = {"fsid": self.fsid, "read_bytes": 17, "stat_size": 17}
+        with self.assertRaisesRegex(m.EvidenceError, "missing OSDMap epoch"):
+            self.check()
+
+    def test_unsupported_contract_declaration(self):
+        # Even a known declaration cannot borrow this contract's assertions.
+        path = self.root / m.COVERAGE
+        coverage = m.loads(path.read_bytes())
+        extra = next(e for e in self.reference["entries"] if (e["kind"], e["symbol"]) not in m.CONTRACTS["targeted-command/v1"]["declarations"])
+        for row in coverage["rows"]:
+            if row["id"] == "targeted-command/osd-pg-mds":
+                row["symbols"].append(extra["symbol"])
+        path.write_text(json.dumps(coverage))
+        self.alter_binding(lambda d: d["bindings"][0]["declarations"].append({"kind": extra["kind"], "symbol": extra["symbol"]}))
+
+    def test_previous_binding_schema_requires_explicit_migration(self):
+        self.alter_binding(lambda d: d.update(schema="ceph-messenger-evidence/v1"))
+
     def test_stale_case(self):
         self.alter_binding(lambda d: d["bindings"][0].update(case="TestNoSuchCase"))
 

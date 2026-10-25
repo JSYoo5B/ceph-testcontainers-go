@@ -10,13 +10,45 @@ wire coverage or consumer implementation.
 ## Source schema
 
 [testdata/messenger_evidence.json](../../internal/integration/testdata/messenger_evidence.json)
-is the normative `ceph-messenger-evidence/v1` binding document. Each unique
+is the normative `ceph-messenger-evidence/v2` binding document. Each unique
 binding has a list of `(kind, symbol)` declarations, a requirement ID, an exact
-case selector, parent/case receipt markers, evidence class and execution context
+case selector, repository-relative `source`, a code-owned assertion `contract`,
+parent/case receipt markers, evidence class and execution context
 (roles, plane, authentication, placement and path). Multiple bindings may refer
 to one declaration or requirement; numeric aliases are never merged across
 namespaces. Unknown declarations, unrelated requirement symbols, missing cases,
 stale markers, duplicate links/IDs and a changed Ceph reference are errors.
+
+This increment permits **one binding per exact top-level Go test**, even when
+separate binding IDs would use different declarations. Subtest/regular-expression
+selectors and multiple binding records per test require a future producer/join
+contract; the current producer retains one pending record. A single binding may
+name several declarations only when its reviewed assertion contract explicitly
+supports every edge. Sharing a parent test PASS is insufficient.
+
+`source` must name a canonical, nonsymlink `internal/integration/*_test.go`
+file. The standard-library Go AST reader in `internal/tools/messengercases`
+indexes declarations without importing or executing the inspected source.
+Registration requires one unambiguous `func Test...(t *testing.T)` definition
+in that file and a literal parent-marker log call in its body. Comments, unused
+string literals, wrong signatures and duplicate definitions cannot supply that
+registration. It conservatively rejects duplicate names even across build-tag
+alternatives; source indexing does not prove reachability or execution.
+
+The closed Python dispatch currently has only `targeted-command/v1`. It retains
+the original OSD/PG/MDS generation, placement and refusal validator and permits
+only the `MSG_COMMAND`/`MSG_COMMAND_REPLY` declaration edges. JSON cannot import
+validators or invent a contract by naming another parent marker. New declaration
+families must add a reviewed validator with their own assertions before any
+native-state receipt can count. Validated reports retain the selected source and
+contract alongside the case.
+
+The binding catalogue moves from v1 to v2 with explicit source/contract fields;
+old catalogues are refused rather than silently assigned the first recipe's
+semantics. The runtime `ceph-messenger-case/v1` envelope and the existing test's
+assertions stay unchanged. Its source digests already bind the exact catalogue
+bytes, so historical receipts do not become current-source executions merely by
+adding these fields.
 
 The first evidence class is `native-state`. The validator deliberately refuses
 to elevate it to a wire claim. Future wire/opcode joins require their own actual
@@ -70,6 +102,10 @@ version; mismatched IDs, release, platform or pinned native build are refused.
 No Squid or additional platform support is established by this first increment.
 
 ## Validation and reports
+
+Source registration now requires Go 1.26 or later as well as Python, matching
+the repository toolchain. The AST helper is this validator's own trusted source;
+`--root` selects data to inspect, not Go code to run.
 
 ```sh
 # Source mapping only; all cases remain unexecuted.

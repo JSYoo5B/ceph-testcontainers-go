@@ -8,8 +8,10 @@ stream. This validator performs no network access and never retries a mutation.
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 import re
+import subprocess
 import sys
 import uuid
 
@@ -17,7 +19,6 @@ BASE = Path(__file__).resolve().parents[2]
 REFERENCE = "internal/integration/testdata/messenger_reference.json"
 COVERAGE = "internal/integration/testdata/messenger_coverage.json"
 BINDINGS = "internal/integration/testdata/messenger_evidence.json"
-CASE = "internal/integration/targeted_command_integration_test.go"
 EMITTER = "internal/integration/messenger_case_evidence_integration_helpers_test.go"
 SOURCES = (REFERENCE, COVERAGE, BINDINGS) + tuple(str(p.relative_to(BASE)) for p in sorted((BASE / "internal/integration").glob("*.go")))
 PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
@@ -76,18 +77,47 @@ def valid_uuid(value):
         return False
 
 
+def case_index(root):
+    # Run only this validator's trusted, standard-library AST reader. The
+    # inspected root is data; none of its Go packages are imported or run.
+    env = dict(os.environ, GOWORK="off", GOFLAGS="-mod=readonly")
+    try:
+        result = subprocess.run(["go", "run", str(BASE / "internal/tools/messengercases/main.go"), str(root.resolve())],
+                                cwd=BASE, env=env, capture_output=True, text=True, timeout=90)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise EvidenceError("cannot index Go test declarations: " + str(exc)) from exc
+    need(result.returncode == 0, "cannot index Go test declarations: " + result.stderr.strip())
+    return loads(result.stdout)
+
+
+def binding_source(root, binding, cases):
+    source, case = binding["source"], binding["case"]
+    need(isinstance(source, str) and "\\" not in source, "invalid case source path")
+    path = PurePosixPath(source)
+    need(str(path) == source and len(path.parts) == 3 and path.parts[:2] == ("internal", "integration")
+         and path.name.endswith("_test.go"), "case source must be a canonical integration test path")
+    selected = root / source
+    need(selected.is_file() and not selected.is_symlink()
+         and selected.resolve().is_relative_to(root.resolve()), "case source missing or outside repository")
+    need(isinstance(case, str) and re.fullmatch(r"Test[A-Za-z0-9_]+", case), "only exact top-level test selectors are supported")
+    definitions = [entry for entry in cases if entry["name"] == case]
+    need(len(definitions) == 1 and definitions[0]["source"] == source, "case source missing, stale or ambiguous")
+    need(binding["parent_marker"] in definitions[0]["markers"], "parent marker is not a literal log call in the selected case")
+
+
 def catalogue(root=BASE):
     reference, coverage, bindings = [loads((root / p).read_bytes()) for p in (REFERENCE, COVERAGE, BINDINGS)]
     fields(bindings, "schema ceph_commit bindings")
-    need(bindings["schema"] == "ceph-messenger-evidence/v1", "unsupported bindings schema")
+    need(bindings["schema"] == "ceph-messenger-evidence/v2", "unsupported bindings schema")
     need(reference["ceph_commit"] == coverage["ceph_commit"] == bindings["ceph_commit"], "stale Ceph reference")
     declarations = {(e["kind"], e["symbol"]) for e in reference["entries"]}
     need(len(declarations) == len(reference["entries"]), "duplicate source declaration")
     rows = {r["id"]: r for r in coverage["rows"]}
     need(len(rows) == len(coverage["rows"]), "duplicate requirement")
-    indexed = {}
+    indexed, selected_cases = {}, set()
+    cases = case_index(root)
     for binding in bindings["bindings"]:
-        fields(binding, "id declarations requirement case parent_marker marker evidence context")
+        fields(binding, "id declarations requirement case source contract parent_marker marker evidence context")
         ident = binding["id"]
         need(isinstance(ident, str) and ident and ident not in indexed, "duplicate or empty binding")
         row = rows.get(binding["requirement"])
@@ -95,6 +125,11 @@ def catalogue(root=BASE):
         need(any(c["test"] == binding["case"] and c.get("receipt") == binding["parent_marker"] for c in row["cases"]), "stale case or parent marker")
         need(binding["evidence"] == "native-state", "this first schema supports native-state evidence only")
         need(binding["marker"] == "MSGR_CASE_RECEIPT", "unsupported case marker")
+        need(isinstance(binding["contract"], str) and binding["contract"] in CONTRACTS, "unknown assertion contract")
+        contract = CONTRACTS[binding["contract"]]
+        need(binding["parent_marker"] == contract["parent_marker"], "parent marker belongs to another assertion contract")
+        need(isinstance(binding["case"], str), "invalid Go case selector")
+        need(binding["case"] not in selected_cases, "only one binding per Go case is supported")
         fields(binding["context"], "roles plane authentication placement path")
         need(all(binding["context"].values()), "missing execution context")
         keys = []
@@ -102,12 +137,13 @@ def catalogue(root=BASE):
             fields(declaration, "kind symbol")
             key = (declaration["kind"], declaration["symbol"])
             need(key in declarations and key[1] in row["symbols"], "unknown or unrelated declaration")
+            need(key in contract["declarations"], "declaration is not supported by the assertion contract")
             keys.append(key)
         need(keys and len(keys) == len(set(keys)), "empty or duplicate declaration link")
-        need(re.search(r"func " + re.escape(binding["case"]) + r"\(t \*testing.T\)", (root / CASE).read_text()), "case source missing")
-        need(binding["parent_marker"] in (root / CASE).read_text(), "parent marker source missing")
+        binding_source(root, binding, cases)
         need(binding["marker"] in (root / EMITTER).read_text(), "case marker source missing")
         indexed[ident] = binding
+        selected_cases.add(binding["case"])
     need(indexed, "no bindings")
     return reference, declarations, indexed
 
@@ -130,6 +166,15 @@ def validate_parent(parent, generation):
     denied = parent.get("server_refusals", {})
     need(set(denied.get("librados", {})) == {"osd0", "pg"} and all(r.get("ret") == -13 for r in denied["librados"].values()), "missing librados auth refusals")
     need(len(denied.get("cli", [])) == 2 and all(r.get("exit") == 13 for r in denied["cli"]), "missing CLI auth refusals")
+
+
+# This reviewed dispatch is code-owned, never an import or callable from JSON.
+# New families need their own validator and explicit declaration edges.
+CONTRACTS = {"targeted-command/v1": {
+    "parent_marker": "TARGETED_COMMAND_RECEIPT",
+    "declarations": {("message", "MSG_COMMAND"), ("message", "MSG_COMMAND_REPLY")},
+    "validate": validate_parent,
+}}
 
 
 def validate_stream(raw, root, reference, bindings, expected):
@@ -192,7 +237,7 @@ def validate_stream(raw, root, reference, bindings, expected):
         need(receipt["sources"] == expected_sources, "stale compiled source or inventory")
         need(receipt["cleanup"] == "passed", "cleanup incomplete")
         need(receipt["parent_sha256"] == digest(parents[0].encode()), "mixed or truncated parent")
-        validate_parent(parent, receipt["generation"])
+        CONTRACTS[binding["contract"]]["validate"](parent, receipt["generation"])
         cohort = receipt["cohort"]
         fields(cohort, "release platform images ceph_version go_version")
         need(all(cohort[k] == expected[k] for k in expected), "unexpected image/release/platform cohort")
@@ -200,7 +245,8 @@ def validate_stream(raw, root, reference, bindings, expected):
         need(cohort["ceph_version"].startswith("ceph version " + expected["release"] + " ") and "(" + reference["ceph_commit"] + ")" in cohort["ceph_version"] and cohort["go_version"].startswith("go"), "unexpected native build")
         # A post-cleanup marker must follow the assertion receipt.
         need(output[case].index(binding["parent_marker"] + " ") < output[case].index(binding["marker"] + " "), "case receipt preceded assertions")
-        accepted.append({"binding": ident, "case": case, "run_id": receipt["run_id"], "generation": receipt["generation"], "evidence": binding["evidence"], "cohort": cohort})
+        accepted.append({"binding": ident, "case": case, "source": binding["source"], "contract": binding["contract"],
+                         "run_id": receipt["run_id"], "generation": receipt["generation"], "evidence": binding["evidence"], "cohort": cohort})
     # Unknown case receipts may not be silently discarded as unrelated output.
     markers = sum(text.count("MSGR_CASE_RECEIPT ") for text in output.values())
     need(markers == len(accepted), "unmatched case receipts")
