@@ -103,8 +103,38 @@ must leave nothing changed.
 This does not cover abrupt exit, host or daemon restart durability, image
 changes between detach and reopen, reopening in another cluster, the tmpfs and
 MemStore backends, a held network delay or interruption at detach, cancelled
-or partially failed native detach and reopen, concurrent reopens from separate
-goroutines, or several retained stores in one native run. Unit tests cover a
+or partially failed native detach and reopen after admission, or several retained
+stores in one native run. Unit tests cover a
 cancelled reopen, partial detach and a failed reopen start with fakes only. A
 pending-resource ledger for a lost creation reply still relies on the existing
 owner-label scan.
+
+## Concurrent native admission and saved instances
+
+The separate `topology/osd_retained_concurrency` batch runs two goroutines
+against one detached pointer from a shared start barrier. Exactly one returns
+a successful new descriptor; the other must return the consumed-handle refusal.
+Docker create events bounded by daemon timestamps and filtered to this cluster
+require exactly one creation, naming the returned replacement. The independent
+Docker inventory includes stopped containers and requires exactly
+one container mounting this owned volume at the OSD data path. The helper's mount
+is at a different path. The replacement keeps the registration, OSD UUID, FSID
+and volume, and passes the same single-replica, 1,048,583-byte oracle.
+
+Both the saved descriptor and its separately captured raw container must refuse
+`Start`; both old native targets must refuse a command that succeeds on the
+replacement. These checks distinguish container generations from registration
+identity. They do not revoke an arbitrary caller-owned Docker handle.
+
+A third reopen call is cancelled only when its forwarding caller context observes
+the topology lock's contended wait. The first admitted call signals when its
+bounded operation context is derived, after acquiring topology. The waiter
+observes `Done` before its own context derivation and cancels then. The test
+requires that observation, a cancellation error and no returned candidate; an
+unobserved wait fails the scenario. This source-bound context observation is
+separate from the Docker inventory and byte checks. No sleep assumes admission,
+and no Docker response is intercepted or replayed.
+
+This qualification does not simulate uncertain native creation replies, partial
+container removal or failed volume release. Those require their own supervision
+and cleanup evidence; fake runner controls remain separate.
