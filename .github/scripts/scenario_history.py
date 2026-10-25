@@ -30,11 +30,14 @@ import hashlib
 import json
 import math
 import os
+import re
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
 
 import tag_scenarios
+import messenger_evidence
 
 
 SCHEMA = "ceph-scenario-history/v1"
@@ -189,6 +192,86 @@ def bug_compatibility(profile, requested):
                          + (",".join(selected) or "none"))
     return selected
 
+
+
+def messenger_history(row, compiled, native, log, prepared, root=None):
+    """Join existing case evidence; a job PASS alone never supplies a case.
+
+    Image preparation precedes native execution. Its immutable IDs are the
+    independent expected cohort, never a set reconstructed from case output.
+    This optional additive field leaves legacy rows and scenario verdicts alone.
+    """
+    root = Path(root or messenger_evidence.BASE).resolve()
+    result = {"status": "not_selected", "wire_coverage_claimed": False,
+              "consumer_implementation_claimed": False}
+    try:
+        document = messenger_evidence.loads((root / messenger_evidence.BINDINGS).read_bytes())
+        cases = {b["case"] for b in document["bindings"]}
+        inventory = (compiled or {}).get("binary", {}).get("tests", [])
+        observed = {test["name"] for test in row["tests"]} if isinstance(row["tests"], list) else set()
+        if not cases.intersection(set(inventory) | observed) and "MSGR_CASE_RECEIPT " not in (log or ""):
+            return result
+        result["status"] = "unexecuted"
+        # Inventory is retained even for failed/skipped jobs; no native case is
+        # promoted unless every execution and owned-cleanup phase passed.
+        mapping = messenger_evidence.report(root)
+        result["report"] = mapping
+        if row["outcome"]["status"] != "passed":
+            result["reason"] = "execution_not_passed"
+            return result
+        result["status"] = "invalid"
+        def need(value, reason):
+            if not value:
+                raise ValueError(reason)
+        binary = compiled.get("binary", {})
+        ran = native.get("binary", {})
+        need(row["comparability"]["status"] == "complete", "incomplete_provenance")
+        need(re.fullmatch(r"[0-9a-f]{40}", row["source"]["checkout_commit"]), "missing_checkout_identity")
+        need(re.fullmatch(r"[0-9a-f]{64}", binary.get("sha256", ""))
+             and binary.get("sha256") == ran.get("sha256")
+             and binary.get("build_key") == ran.get("build_key"), "binary_identity_mismatch")
+        sources = binary.get("sources")
+        need(isinstance(sources, dict) and sources, "missing_source_snapshot")
+        for name, expected in sources.items():
+            path = root / name
+            need(not Path(name).is_absolute() and ".." not in Path(name).parts
+                 and path.resolve().is_relative_to(root) and path.is_file() and not path.is_symlink(),
+                 "unsafe_source_snapshot")
+            need(hashlib.sha256(path.read_bytes()).hexdigest() == expected, "source_snapshot_mismatch")
+        need(set(messenger_evidence.SOURCES).issubset(sources), "incomplete_case_source_snapshot")
+        need(isinstance(prepared, dict) and prepared.get("preparation_passed") is True,
+             "missing_prepared_cohort")
+        # The pinned reference owns cohort eligibility, not a runtime label.
+        reference = messenger_evidence.loads((root / messenger_evidence.REFERENCE).read_bytes())
+        if prepared.get("release") != reference["ceph_release"]:
+            result["status"], result["reason"] = "unsupported_cohort", "unsupported_release"
+            return result
+        platform = prepared.get("platform")
+        images = prepared.get("images")
+        need(isinstance(images, dict) and images and isinstance(platform, str), "missing_prepared_cohort")
+        need(all(isinstance(image, dict) and image.get("platform") == platform
+                 and re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("image_id", ""))
+                 for image in images.values()), "invalid_prepared_cohort")
+        key = binary.get("build_key", {})
+        need(platform == str(key.get("goos")) + "/" + str(key.get("goarch")), "build_platform_mismatch")
+        expected = {"release": prepared["release"], "platform": platform,
+                    "images": sorted({image["image_id"] for image in images.values()})}
+        need(isinstance(log, str) and len(log.encode()) <= 64 * 1024 * 1024, "missing_or_large_native_log")
+        # Only the trusted Go tool reads a bounded retained log. No repository
+        # test binary, native operation, or inspected-source program executes.
+        with tempfile.TemporaryFile() as output:
+            converted = subprocess.run(["go", "tool", "test2json", "-p", messenger_evidence.PACKAGE],
+                                       input=log.encode(), stdout=output, stderr=subprocess.DEVNULL,
+                                       timeout=30, check=False)
+            need(converted.returncode == 0 and output.tell() <= 64 * 1024 * 1024,
+                 "native_event_conversion_refused")
+            output.seek(0)
+            report = messenger_evidence.report(root, output.read(), expected)
+        need(report["native_cases"], "no_native_case_accepted")
+        result.update(status="accepted", report=report)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
+        result.update(status="invalid", reason="case_evidence_refused")
+    return result
 
 def normalize(scenario, cleanup=None, images=None, metadata=None):
     metadata = dict(metadata or {})
@@ -368,6 +451,7 @@ def normalize(scenario, cleanup=None, images=None, metadata=None):
            "comparability": {"status": "complete" if not reasons else "incomplete", "reasons": reasons},
            "evidence": {"files": dict(sorted(evidence.files.items())),
                         "problems": dict(sorted(evidence.problems.items()))}}
+    row["messenger"] = messenger_history(row, receipts["compile"], receipts["native"], log, summary)
     row["row_sha256"] = row_hash(row)
     return row
 
@@ -458,8 +542,11 @@ def summarize(rows):
         release = row["runtime"].get("release") or row["runtime"].get("requested_release") or MISSING
         group = groups.setdefault(row["execution_key"]["profile_id"] + "@" + str(release), {
             "rows": 0, "cancelled": 0, "incomplete": 0, "passed": 0, "failed": 0,
-            "failures_by_phase": {}, "failures_by_classification": {}, "_seconds": []})
+            "failures_by_phase": {}, "failures_by_classification": {}, "messenger_attempts_by_status": {}, "_seconds": []})
         group["rows"] += 1
+        messenger_status = row.get("messenger", {}).get("status", "not_recorded")
+        counts = group["messenger_attempts_by_status"]
+        counts[messenger_status] = counts.get(messenger_status, 0) + 1
         status = row["outcome"]["status"]
         group[status] += 1
         if status == "failed":
@@ -628,8 +715,13 @@ def classify(rows):
             else:
                 by_config.setdefault(key, []).append(row)
         newest = sorted(by_config, key=lambda key: attempt_order(by_config[key][-1]), reverse=True)[:CONFIGS_KEPT]
+        messenger_counts = {}
+        for row in recent:
+            state = row.get("messenger", {}).get("status", "not_recorded")
+            messenger_counts[state] = messenger_counts.get(state, 0) + 1
         profiles[name] = {
             "rows": len(ordered), "incomparable_rows": incomparable,
+            "recent_messenger_attempts_by_status": dict(sorted(messenger_counts.items())),
             "recent": {"rows": len(recent), "attempts": sum(kinds.get(kind, 0) for kind in DECIDED),
                        "failed": sum(kinds.get(kind, 0) for kind in SCENARIO_FAILURES),
                        "kinds": dict(sorted(kinds.items()))},
@@ -736,6 +828,12 @@ def provenance_summary(row):
              "| Checkout tree | " + markdown_cell(row["source"]["checkout_tree"]) + " |",
              "| Release | " + markdown_cell(runtime.get("release", runtime["requested_release"])) + " |",
              "| Platform | " + markdown_cell(runtime.get("platform", runtime["status"])) + " |"]
+    messenger = row.get("messenger", {"status": "not_recorded"})
+    lines.append("| Messenger native-state evidence | " + markdown_cell(messenger["status"]) + " |")
+    report = messenger.get("report", {})
+    if report:
+        lines.append("| Messenger declarations mapped / total | " + str(report["mapped_declarations"]) + " / " + str(report["source_declarations"]) + " |")
+        lines.append("| Messenger accepted cases / unexecuted bindings | " + str(len(report["native_cases"])) + " / " + str(len(report["unexecuted_bindings"])) + " |")
     for role, image in sorted((runtime.get("roles") or {}).items()):
         lines.append("| Image `" + markdown_cell(role) + "` | " + markdown_cell(image["image_id"]) + " |")
     if runtime["status"] != "recorded":

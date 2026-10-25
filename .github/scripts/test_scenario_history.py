@@ -124,6 +124,128 @@ def phase(row, name):
     return next(item for item in row["phases"] if item["phase"] == name)
 
 
+
+class MessengerHistoryTest(unittest.TestCase):
+    """Synthetic receipts exercise the real validator/converter, not native I/O."""
+
+    @classmethod
+    def setUpClass(cls):
+        from test_messenger_evidence import MessengerEvidenceTests
+        cls.case_fixture = MessengerEvidenceTests()
+        cls.case_fixture.setUp()
+        cls.case_fixture.bindings_index = history.messenger_evidence.case_index(cls.case_fixture.root)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.case_fixture.doCleanups()
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.job = Job(self.directory.name).passing()
+        fixture = self.case_fixture
+        self.events = fixture.events()
+        self.log = ("=== RUN   " + fixture.case + "\n"
+                    + "".join("    " + e["Output"] for e in self.events if e["Action"] == "output")
+                    + "--- PASS: " + fixture.case + " (1.00s)\nPASS\n")
+        path = self.job.scenario / "compile/compile-report.json"
+        self.compiled = json.loads(path.read_text())
+        self.compiled["binary"].update(tests=[fixture.case], sources={
+            name: history.messenger_evidence.digest((fixture.root / name).read_bytes())
+            for name in history.messenger_evidence.SOURCES})
+        write(path, self.compiled)
+        path = self.job.scenario / "native/report.json"
+        self.native = json.loads(path.read_text())
+        self.native["binary"]["build_key"] = self.compiled["binary"]["build_key"]
+        write(path, self.native)
+        write(self.job.scenario / "native/native.log", self.log)
+        self.prepared = json.loads((self.job.images / "summary.json").read_text())
+        self.prepared["images"] = {"essential": {"image_id": fixture.expected["images"][0],
+                                                   "platform": fixture.expected["platform"]}}
+        write(self.job.images / "summary.json", self.prepared)
+
+    def row(self):
+        # The trusted AST helper remains the repository-owned program; only
+        # its inspected source root is the fixture's copied data.
+        with mock.patch.object(history.messenger_evidence, "BASE", self.case_fixture.root), \
+             mock.patch.object(history.messenger_evidence, "case_index",
+                               side_effect=lambda root: self.case_fixture.bindings_index):
+            return self.job.row()
+
+    def test_complete_case_is_native_state_only(self):
+        row = self.row()
+        report = row["messenger"]["report"]
+        self.assertEqual(row["messenger"]["status"], "accepted")
+        self.assertEqual(report["mapped_declarations"], 2)
+        self.assertEqual(len(report["unmapped_declarations"]), 355)
+        self.assertEqual(report["unexecuted_bindings"], [])
+        self.assertEqual(len(report["native_cases"]), 1)
+        self.assertFalse(report["wire_coverage_claimed"])
+        self.assertFalse(report["consumer_implementation_claimed"])
+        self.assertEqual(row["row_sha256"], history.row_hash(row))
+        self.assertIn("Messenger native-state evidence | accepted", history.provenance_summary(row))
+
+    def test_phase_failures_never_accept_case(self):
+        for phase_name, outcome in (("native", "failure"), ("native", "cancelled"),
+                                    ("native", "skipped"), ("cleanup", "failure")):
+            with self.subTest(phase=phase_name, outcome=outcome):
+                self.job.phases(**{phase_name: outcome})
+                result = self.row()["messenger"]
+                self.assertEqual(result["status"], "unexecuted")
+                self.assertEqual(result["report"]["native_cases"], [])
+                self.assertEqual(result["report"]["unexecuted_bindings"], list(self.case_fixture.bindings))
+
+    def test_independent_prepared_images_cannot_be_replaced_by_receipt(self):
+        self.prepared["images"]["essential"]["image_id"] = "sha256:" + "1" * 64
+        write(self.job.images / "summary.json", self.prepared)
+        self.assertEqual(self.row()["messenger"]["status"], "invalid")
+
+    def test_unsupported_release_keeps_mapping_unexecuted(self):
+        self.prepared["release"] = "19.2.5"
+        write(self.job.images / "summary.json", self.prepared)
+        result = self.row()["messenger"]
+        self.assertEqual(result["status"], "unsupported_cohort")
+        self.assertEqual(result["report"]["native_cases"], [])
+
+    def test_source_binary_and_platform_mismatches_refuse(self):
+        for label, edit in (
+            ("binary", lambda: self.native["binary"].update(sha256="f" * 64)),
+            ("build key", lambda: self.native["binary"].update(build_key={})),
+            ("source", lambda: self.compiled["binary"]["sources"].update({"go.mod": "f" * 64})),
+            ("missing source", lambda: self.compiled["binary"].update(sources={})),
+            ("platform", lambda: self.prepared.update(platform="linux/arm64")),
+        ):
+            with self.subTest(label=label):
+                import copy
+                originals = copy.deepcopy((self.compiled, self.native, self.prepared))
+                edit()
+                write(self.job.scenario / "compile/compile-report.json", self.compiled)
+                write(self.job.scenario / "native/report.json", self.native)
+                write(self.job.images / "summary.json", self.prepared)
+                self.assertEqual(self.row()["messenger"]["status"], "invalid")
+                self.compiled, self.native, self.prepared = originals
+
+    def test_truncated_and_pre_run_case_output_refuse(self):
+        for log in (self.log.removesuffix("PASS\n"),
+                    self.log.replace("=== RUN   " + self.case_fixture.case + "\n", "", 1),
+                    self.log.replace("MSGR_CASE_RECEIPT ", "MSGR_CASE_RECEIPT {truncated ")):
+            with self.subTest(log=log[:30]):
+                write(self.job.scenario / "native/native.log", log)
+                self.assertEqual(self.row()["messenger"]["status"], "invalid")
+
+    def test_nonselected_and_legacy_rows_do_not_invent_case_evidence(self):
+        self.job = Job(self.directory.name).passing()
+        row = self.job.row()
+        self.assertEqual(row["messenger"]["status"], "not_selected")
+        del row["messenger"]
+        row["row_sha256"] = history.row_hash(row)
+        history.validate_row(row)
+        self.assertIn("Messenger native-state evidence | not_recorded", history.provenance_summary(row))
+        summary = next(iter(history.summarize([row])["profiles"].values()))
+        self.assertEqual(summary["messenger_attempts_by_status"], {"not_recorded": 1})
+        classified = next(iter(history.classify([row])["profiles"].values()))
+        self.assertEqual(classified["recent_messenger_attempts_by_status"], {"not_recorded": 1})
+
 class NormalizeTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
