@@ -1,16 +1,24 @@
 package cephfs
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // cephFSRemovalCluster owns filesystem "app" whose configuration created
 // app-metadata and app-data; "attached" stands for a pool added later.
 func cephFSRemovalCluster(t *testing.T, present bool) (*ceph.Container, *cephStateFake) {
+	return cephFSRemovalClusterWithControl(t, present, nil)
+}
+
+func cephFSRemovalClusterWithControl(t *testing.T, present bool, wrap func(*cephStateFake) *shutdownSequenceCLI) (*ceph.Container, *cephStateFake) {
 	t.Helper()
 	f := newCephStateFake()
 	for _, name := range []string{"app-metadata", "app-data", "attached"} {
@@ -19,13 +27,45 @@ func cephFSRemovalCluster(t *testing.T, present bool) (*ceph.Container, *cephSta
 	if present {
 		f.Filesystems = []clustertest.FakeFilesystem{{Name: "app", Metadata: "app-metadata", Data: []string{"app-data", "attached"}}}
 	}
-	cluster := poolFixtureCluster(f, 3)
+	f.Output["fs get app --format json"] = shutdownMap(41, 0, `{}`)
+	var control testcontainers.Container = f
+	if wrap != nil {
+		control = wrap(f)
+	}
+	cluster := poolFixtureCluster(control, 3)
 	config, err := normalizeCephFSConfig(Config{Name: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	filesystems(cluster).byName = map[string]*Filesystem{"app": {FilesystemName: "app", MetadataPool: "app-metadata", DataPool: "app-data", cluster: cluster, config: config}}
 	return cluster, f
+}
+
+// shutdownSequenceCLI returns scripted native maps while the real removal
+// implementation controls ordering and the existing model owns pool cleanup.
+type shutdownSequenceCLI struct {
+	*cephStateFake
+	maps   []string
+	reads  int
+	onRead func(int)
+	onDown func()
+}
+
+func (f *shutdownSequenceCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	command := strings.Join(clustertest.ModuleArgs(args), " ")
+	if command == "fs get app --format json" && len(f.maps) != 0 {
+		index := min(f.reads, len(f.maps)-1)
+		f.Output[command] = f.maps[index]
+		f.reads++
+		if f.onRead != nil {
+			f.onRead(f.reads)
+		}
+	}
+	code, reader, err := f.cephStateFake.Exec(ctx, args, opts...)
+	if command == "fs set app down true" && code == 0 && err == nil && f.onDown != nil {
+		f.onDown()
+	}
+	return code, reader, err
 }
 
 func TestRemoveRemovesFilesystemAndConfiguredPools(t *testing.T) {
