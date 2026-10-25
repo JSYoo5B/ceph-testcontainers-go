@@ -7,7 +7,7 @@ other engines and data durability are separate experiments.
 
 ## Admission and budget
 
-`TestDaemonMemoryQualification` requires a local Unix endpoint for a rootful Docker engine on Linux,
+`TestDaemonMemoryFiniteRoundtrip` and `TestDaemonMemoryQualification` require a local Unix endpoint for a rootful Docker engine on Linux,
 cgroup v2 memory/swap support, readable host process and target-local cgroup
 identities/counters, permission to read the target PID1 executable, and at least
 4 GiB currently available runner memory.
@@ -62,8 +62,14 @@ excluded. The first-MON-only Run customizer does not set a cluster-wide limit.
 
 ```sh
 go test -tags integration,ci_optional,ci_batch_daemon_oom ./internal/integration \
-  -run '^TestDaemonMemoryQualification$' -count=1 -timeout=15m -v
+  -run '^TestDaemonMemoryFiniteRoundtrip$' -count=1 -timeout=15m -v
 ```
+
+The finite-roundtrip entry stops after the verified baseline is restored. The
+separate `TestDaemonMemoryQualification` entry additionally requires current
+usage above the fixed 32 MiB pressure ceiling before its single pressure step.
+It fails admission if that condition is absent; a finite-roundtrip pass never
+qualifies the additional OOM experiment.
 
 A controller without permission to read the target process is ineligible; a
 local Docker socket alone does not grant that host-process read permission.

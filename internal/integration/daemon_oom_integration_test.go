@@ -20,9 +20,14 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// TestDaemonMemoryQualification is an opt-in, local Linux/cgroup-v2 experiment.
+// TestDaemonMemoryFiniteRoundtrip qualifies the reversible prerequisite alone.
+func TestDaemonMemoryFiniteRoundtrip(t *testing.T) { testDaemonMemoryQualification(t, false) }
+
+// TestDaemonMemoryQualification additionally attempts the one gated OOM step.
 // An eligible but unobserved OOM fails; it is never relabeled as a native pass.
-func TestDaemonMemoryQualification(t *testing.T) {
+func TestDaemonMemoryQualification(t *testing.T) { testDaemonMemoryQualification(t, true) }
+
+func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	if runtime.GOOS != "linux" {
 		t.Skip("eligibility: Linux local cgroup-v2 observer required")
 	}
@@ -130,6 +135,7 @@ func TestDaemonMemoryQualification(t *testing.T) {
 		if err != nil || inspect.Container.HostConfig.Memory != limit || inspect.Container.HostConfig.MemorySwap != limit {
 			t.Fatal("inspect/effective resource settings disagree", err)
 		}
+		t.Logf("DAEMON_MEMORY_EFFECTIVE max=%d swap=%d current=%d events=%v", s.Max, s.Swap, s.Current, s.Events)
 		return s
 	}
 	admin(3)
@@ -151,6 +157,10 @@ func TestDaemonMemoryQualification(t *testing.T) {
 		admin(3)
 	}
 	t.Log("DAEMON_MEMORY_ROUNDTRIP qualified: finite baseline -> benign ceiling -> identical baseline; same process/cgroup, native quorum and no-swap observed")
+	if !pressure {
+		restored = true
+		return
+	}
 	// One predeclared step. The observer and client stay outside this cgroup;
 	// no allocator, debug command, stats exec or other worker is created in it.
 	baseline := same(daemonMemoryBaseline)
