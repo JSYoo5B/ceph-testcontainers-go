@@ -3,7 +3,6 @@
 package integration_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -312,22 +311,37 @@ type monReplacementPhase struct {
 // monReplacementDebug is one daemon's debug_monc window. Restored records
 // the outcome: the exact prior value, or why it was not written back.
 type monReplacementDebug struct {
-	Daemon    string `json:"daemon"`
-	StartedAt string `json:"started_at,omitempty"`
-	Prior     string `json:"prior,omitempty"`
-	Set       bool   `json:"set"`
-	Restored  string `json:"restored,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Daemon                 string `json:"daemon"`
+	StartedAt              string `json:"started_at,omitempty"`
+	Prior                  string `json:"prior,omitempty"`
+	Set                    bool   `json:"set"`
+	Restored               string `json:"restored,omitempty"`
+	Error                  string `json:"error,omitempty"`
+	Requested              string `json:"requested,omitempty"`
+	Current                string `json:"current,omitempty"`
+	RestoreAction          string `json:"restore_action,omitempty"`
+	RestoreAttempted       bool   `json:"restore_attempted,omitempty"`
+	ApplyStopUnconfirmed   bool   `json:"apply_stop_unconfirmed,omitempty"`
+	RestoreStopUnconfirmed bool   `json:"restore_stop_unconfirmed,omitempty"`
 }
 
 // monReplacementTrace is the tail of one container's log lines about its MON
 // client: hunting, authentication, beacons and mounts. Matched counts every
 // matching line; Lines keeps the newest of them.
 type monReplacementTrace struct {
-	Daemon  string   `json:"daemon"`
-	Matched int      `json:"matched"`
-	Lines   []string `json:"lines,omitempty"`
-	Error   string   `json:"error,omitempty"`
+	Daemon           string                     `json:"daemon"`
+	Matched          int                        `json:"matched"`
+	MatchedBytes     int                        `json:"matched_bytes"`
+	Lines            []string                   `json:"lines,omitempty"`
+	LineBytes        []monReplacementTraceBytes `json:"line_bytes,omitempty"`
+	RetainedBytes    int                        `json:"retained_bytes"`
+	ClippedLines     int                        `json:"clipped_lines"`
+	DroppedLines     int                        `json:"dropped_lines"`
+	Truncated        bool                       `json:"truncated"`
+	InvalidUTF8Lines int                        `json:"invalid_utf8_lines"`
+	StreamComplete   bool                       `json:"stream_complete"`
+	StreamAborted    bool                       `json:"stream_aborted"`
+	Error            string                     `json:"error,omitempty"`
 }
 
 var monReplacementTracePattern = regexp.MustCompile(`(?i)monclient|beacon|laggy|hunt|auth|mount|session`)
@@ -475,7 +489,7 @@ func (r *monReplacementRecorder) begin(ctx context.Context) {
 	r.debugMu.Lock()
 	defer r.debugMu.Unlock()
 	for _, warm := range r.Baseline.Warm {
-		window := monReplacementDebug{Daemon: warm.Daemon, StartedAt: warm.StartedAt}
+		window := monReplacementDebug{Daemon: warm.Daemon, StartedAt: warm.StartedAt, Requested: monReplacementDebugLevel}
 		if err := r.require(ctx, warm.Daemon, "config set"); err != nil {
 			window.Error = err.Error()
 			r.Debug = append(r.Debug, window)
@@ -496,6 +510,7 @@ func (r *monReplacementRecorder) begin(ctx context.Context) {
 		window.Set = true
 		if err != nil {
 			window.Error = "set: " + err.Error()
+			_, window.ApplyStopUnconfirmed = supervised.Unconfirmed(err)
 		}
 		r.Debug = append(r.Debug, window)
 	}
@@ -621,7 +636,8 @@ func (r *monReplacementRecorder) collect(parent context.Context, failed monRepla
 }
 
 // restoreDebug writes each window's exact prior debug_monc back, once, and
-// only to the same container generation that it was read from.
+// only to the same container generation that it was read from and when the
+// current value still equals its requested level. This is not atomic CAS.
 func (r *monReplacementRecorder) restoreDebug(parent context.Context) []monReplacementDebug {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.bounds.Snapshot)
 	defer cancel()
@@ -650,21 +666,49 @@ func (r *monReplacementRecorder) restoreDebug(parent context.Context) []monRepla
 			window.Restored = "skipped: container generation changed"
 			continue
 		}
-		queryCtx, cancelQuery := context.WithTimeout(ctx, r.bounds.Query)
-		_, err := r.adminSocket(queryCtx, window.Daemon, "config", "set", "debug_monc", window.Prior)
-		cancelQuery()
-		if err != nil {
-			window.Restored = "failed: " + err.Error()
+		if window.Requested == "" {
+			window.Restored = "unconfirmed: requested debug_monc unavailable"
 			continue
 		}
 		value, err := r.configGet(ctx, window.Daemon, "debug_monc")
+		if err != nil {
+			window.Restored = "unconfirmed before restore: " + err.Error()
+			_, window.RestoreStopUnconfirmed = supervised.Unconfirmed(err)
+			continue
+		}
+		window.Current = value
+		// An unconfirmed apply command may still write later. A read of the
+		// prior value does not prove that it can no longer change the level.
+		if window.ApplyStopUnconfirmed {
+			window.Restored = "unconfirmed: apply command stop not confirmed"
+			continue
+		}
+		if value == window.Prior {
+			window.Restored, window.RestoreAction = "ok", "already prior; no write"
+			continue
+		}
+		if value != window.Requested {
+			window.Restored = "conflict: current debug_monc differs from window"
+			continue
+		}
+		window.RestoreAttempted = true
+		queryCtx, cancelQuery := context.WithTimeout(ctx, r.bounds.Query)
+		_, err = r.adminSocket(queryCtx, window.Daemon, "config", "set", "debug_monc", window.Prior)
+		cancelQuery()
+		if err != nil {
+			window.Restored = "failed: " + err.Error()
+			_, window.RestoreStopUnconfirmed = supervised.Unconfirmed(err)
+			continue
+		}
+		value, err = r.configGet(ctx, window.Daemon, "debug_monc")
 		switch {
 		case err != nil:
 			window.Restored = "unconfirmed: " + err.Error()
+			_, window.RestoreStopUnconfirmed = supervised.Unconfirmed(err)
 		case value != window.Prior:
 			window.Restored = fmt.Sprintf("mismatch: %q", value)
 		default:
-			window.Restored = "ok"
+			window.Restored, window.RestoreAction = "ok", "restored and read back"
 		}
 	}
 	return slices.Clone(r.Debug)
@@ -952,26 +996,11 @@ func readMonReplacementTrace(parent context.Context, ctr testcontainers.Containe
 	defer cancel()
 	logs, err := ctr.Logs(ctx)
 	if err != nil {
+		trace.StreamAborted, trace.Truncated = true, true
 		return fmt.Errorf("logs: %w", err)
 	}
 	defer func() { _ = logs.Close() }()
-	scanner := bufio.NewScanner(logs)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !monReplacementTracePattern.MatchString(line) {
-			continue
-		}
-		trace.Matched++
-		if len(trace.Lines) == monReplacementTraceLines {
-			trace.Lines = trace.Lines[1:]
-		}
-		trace.Lines = append(trace.Lines, line[:min(len(line), monReplacementTraceLineSize)])
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("logs: %w", err)
-	}
-	return nil
+	return scanMonReplacementTrace(ctx, logs, trace)
 }
 
 // offers reports whether daemon lists command in its own help, read once per
