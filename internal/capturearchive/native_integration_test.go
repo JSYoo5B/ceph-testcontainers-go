@@ -208,7 +208,17 @@ func TestCaptureFailureArchive(t *testing.T) {
 				Trigger struct {
 					TestFailed bool `json:"test_failed"`
 				} `json:"trigger"`
-				Archive      struct{ Retained, Complete bool } `json:"archive"`
+				Phase   string `json:"phase"`
+				Archive struct {
+					Retained, Complete bool
+					Error              string
+				} `json:"archive"`
+				Collectors []struct {
+					Name               string
+					Reported, Complete bool
+					Error              string
+				} `json:"collectors"`
+				Files        []struct{ Name, Error string } `json:"files"`
 				CaptureFiles []struct {
 					Copied bool
 					Bytes  int64
@@ -223,8 +233,68 @@ func TestCaptureFailureArchive(t *testing.T) {
 			if err := json.Unmarshal(data, &m); err != nil {
 				t.Fatal(err)
 			}
-			if !m.Final || !m.Trigger.TestFailed || !m.Archive.Retained || !m.Archive.Complete || len(m.Captures) != 1 || !m.Captures[0].Reported || m.Captures[0].Error != "" {
+			if !m.Final || !m.Trigger.TestFailed || !m.Archive.Retained || m.Archive.Error != "" || m.Phase != "before-cleanup" || len(m.Captures) != 1 || !m.Captures[0].Reported || m.Captures[0].Error != "" {
 				t.Fatalf("manifest %s", data)
+			}
+
+			// A bounded diagnostic log tail may be truncated. Preserve that
+			// incomplete verdict; it is independent of capture copying. Only
+			// this observed condition is admitted, never a collector error,
+			// unsupported command, failed file write or unexplained omission.
+			diagnosticBytes, err := os.ReadFile(filepath.Join(filepath.Dir(manifests[0]), "diagnostics.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var diagnostics struct {
+				Complete  bool
+				Artifacts []struct {
+					Kind, Name, Role string
+					Truncated        bool
+					Error            string
+				}
+			}
+			if err := json.Unmarshal(diagnosticBytes, &diagnostics); err != nil {
+				t.Fatal(err)
+			}
+			truncated := []string{}
+			for _, artifact := range diagnostics.Artifacts {
+				if artifact.Error != "" {
+					t.Fatalf("diagnostic error %s/%s", artifact.Kind, artifact.Name)
+				}
+				if artifact.Truncated {
+					if artifact.Kind != "container-logs" {
+						t.Fatalf("unexpected truncated artifact %s", artifact.Kind)
+					}
+					truncated = append(truncated, artifact.Role+"/"+artifact.Name)
+				}
+			}
+			if diagnostics.Complete != (len(truncated) == 0) || len(m.Collectors) != 2 {
+				t.Fatal("unexplained diagnostic completeness")
+			}
+			for _, collector := range m.Collectors {
+				if !collector.Reported || collector.Error != "" {
+					t.Fatalf("collector outcome %+v", collector)
+				}
+				switch collector.Name {
+				case "diagnostics":
+					if collector.Complete != diagnostics.Complete {
+						t.Fatal("diagnostic verdict lost")
+					}
+				case "crash-metadata":
+					if !collector.Complete {
+						t.Fatal("incomplete crash metadata")
+					}
+				default:
+					t.Fatalf("unexpected collector %s", collector.Name)
+				}
+			}
+			for _, file := range m.Files {
+				if file.Error != "" {
+					t.Fatalf("archive write failed %s", file.Name)
+				}
+			}
+			if m.Archive.Complete != diagnostics.Complete {
+				t.Fatal("aggregate archive completeness contradicts its collectors")
 			}
 			rawPath := filepath.Join(filepath.Dir(manifests[0]), "capture-1-traffic.pcap")
 			if raw {
@@ -249,7 +319,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 			if err != nil || after.State == nil || !after.State.Running || after.State.StartedAt != inspected.State.StartedAt {
 				t.Fatal("caller target changed")
 			}
-			receipt := map[string]any{"raw_consent": raw, "source_sha256": digest, "source_bytes": len(original), "capture": report, "manifest": m, "caller_target_preserved": true}
+			receipt := map[string]any{"raw_consent": raw, "source_sha256": digest, "source_bytes": len(original), "capture": report, "manifest": m, "caller_target_preserved": true, "diagnostic_truncated_logs": truncated}
 			// The retained native receipt names only the basename of the caller file.
 			report.Output = filepath.Base(report.Output)
 			receipt["capture"] = report
