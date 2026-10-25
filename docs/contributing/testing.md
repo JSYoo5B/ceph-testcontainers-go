@@ -77,7 +77,7 @@ build tag, so it also checks the integration and go-ceph files, and the Code
 checks workflow runs the same version.
 
 `make test`, `make race` and `make vet` see only untagged files.
-`make tag-compile` first compiles `internal/integration` with only `integration`,
+`make tag-compile` first compiles the module with only `integration`,
 so shared helpers cannot accidentally require an unrelated capability tag.
 It also builds the module's `all` union, its consumer/native-regression/role
 union and its `all,cephfs_fuse` union. Every command runs nothing (`-run '^$'`):
