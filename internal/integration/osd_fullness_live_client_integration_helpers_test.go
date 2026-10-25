@@ -370,7 +370,9 @@ func testOSDFullnessLiveClient(t *testing.T) {
 			if now.Sub(start) > 4*time.Minute {
 				fail("no backfill_toofull window within 4 minutes; %d samples %v, %d errors; last pg query: %.16384s", len(samples), out.Samples, out.SampleErrors, lastRaw)
 			}
-			if !firstHold.IsZero() && now.Sub(firstHold) >= fullnessWindow {
+			// The window is long enough when the last observation began a full
+			// window after the first one ended; the latency of a read is not held time.
+			if !firstHold.IsZero() && len(live) > 0 && live[len(live)-1].Start.Sub(firstHold) >= fullnessWindow {
 				break
 			}
 			at := time.Now()
@@ -385,7 +387,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 				// kept as an inconclusive sample and the run fails.
 				if credited := recordFailedRead(samples, time.Now(), !firstHold.IsZero()); len(credited) != len(samples) {
 					out.Samples[barrierInconclusive]++
-					live = append(live, fullnessLiveSample{At: at, Verdict: barrierInconclusive, Err: err})
+					live = append(live, fullnessLiveSample{Start: at, End: time.Now(), Verdict: barrierInconclusive, Err: err})
 					fail("a PG read failed after backfill_toofull was first reported, so the window is not uninterrupted: %v", err)
 				}
 				if out.SampleErrors > 10 {
@@ -420,7 +422,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 			}
 			verdict, why := fullnessBarrierSample(base, sample)
 			events, eventsErr := minSizeLedger(ctx, cluster, client, fullnessLiveLedger)
-			ls := fullnessLiveSampleOf(base, at, raw, nil, events, eventsErr)
+			ls := fullnessLiveSampleOf(base, at, time.Now(), raw, nil, events, eventsErr)
 			if verdict == barrierHolds && ls.Err != nil {
 				// The primary's report is conclusive, the ledger is not: the
 				// sample is kept, and inside the credited window it fails the run.
@@ -434,10 +436,11 @@ func testOSDFullnessLiveClient(t *testing.T) {
 				continue
 			}
 			out.Samples[verdict]++
-			samples = append(samples, barrierSample{Verdict: verdict, At: time.Now()})
+			// The barrier is timed by the PG query, the live window by both bounds.
+			samples = append(samples, barrierSample{Verdict: verdict, At: ls.Start})
 			live = append(live, ls)
 			if verdict == barrierHolds && firstHold.IsZero() {
-				firstHold = time.Now()
+				firstHold = ls.End
 			}
 			if verdict != barrierHolds && verdict != barrierWaiting && !(verdict == barrierRunning && phase.revoke && firstHold.IsZero()) {
 				fail("barrier sample %s: %s\n%.16384s", verdict, why, raw)
@@ -461,15 +464,15 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		t.Logf("OSD_FULLNESS_LIVE_WINDOW case=%s samples=%v before_first=%v toofull_for=%s pg query: %.16384s", phase.name, out.Samples, judged.BeforeVerdictsByName, out.ToofullFor, lastRaw)
 
 		// The writer over the credited window, as the ledger recorded it.
-		window, err := judgeFullnessLive(live, fullnessLiveMinAcks, fullnessLiveGap)
+		window, err := judgeFullnessLive(live, fullnessLiveMinAcks, fullnessSpan, fullnessLiveGap)
 		if err != nil {
 			out.WindowError = err.Error()
 			fail("the writer window was not shown: %v", err)
 		}
 		out.Window = &window
-		if out.endOps, err = fullnessLiveOpsNow(ctx, cluster, client, false); err != nil {
-			fail("read the writer ledger at the end of the window: %v", err)
-		}
+		// The operations of the last credited sample, not a new read: one that was
+		// outstanding there must stay outstanding in the snapshot.
+		out.endOps = window.EndOps
 		t.Logf("OSD_FULLNESS_LIVE_WRITER case=%s %+v", phase.name, window)
 		// The observation is recorded; the promise is checked as a separate step
 		// and does not stop the restoration and readback below.
@@ -527,6 +530,9 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	for _, phase := range receipt.Phases {
 		if phase.Late, err = fullnessLiveSettle(phase.endOps, ops); err != nil {
 			fail("%s: %v", phase.Case, err)
+		}
+		if phase.Window != nil && len(phase.Late) != phase.Window.End.Outstanding {
+			fail("%s: %d late outcomes for %d operations outstanding at the end of the window", phase.Case, len(phase.Late), phase.Window.End.Outstanding)
 		}
 	}
 	final := secondFaultCount(ops)

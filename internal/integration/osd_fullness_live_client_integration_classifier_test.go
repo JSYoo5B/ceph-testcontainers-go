@@ -53,8 +53,13 @@ const (
 // held baseline, together with the writer's ledger read at the same time.
 // Err is set when either read failed or was malformed; such a sample is
 // inconclusive evidence and is kept in the window.
+//
+// Start is taken before the PG query and End after the ledger read, so the
+// observation lies somewhere inside [Start, End]. Both are used by the window
+// judge, which never credits the latency of a read as held time.
 type fullnessLiveSample struct {
-	At          time.Time
+	Start, End  time.Time
+	Ops         []secondFaultOp
 	Verdict     barrierVerdict
 	Err         error
 	Interval    uint64
@@ -66,9 +71,9 @@ type fullnessLiveSample struct {
 // failed or refused ledger, and a PG report without its epoch, interval,
 // acting set or recovery progress are inconclusive; none of them decodes into
 // an empty value that would count as evidence.
-func fullnessLiveSampleOf(base backfillBaseline, at time.Time, raw []byte, rawErr error, events []secondFaultEvent, eventsErr error) fullnessLiveSample {
-	s := fullnessLiveSample{At: at, Verdict: barrierInconclusive}
-	ledger := minSizeSampleOf(at, raw, rawErr, events, eventsErr)
+func fullnessLiveSampleOf(base backfillBaseline, start, end time.Time, raw []byte, rawErr error, events []secondFaultEvent, eventsErr error) fullnessLiveSample {
+	s := fullnessLiveSample{Start: start, End: end, Verdict: barrierInconclusive}
+	ledger := minSizeSampleOf(start, raw, rawErr, events, eventsErr)
 	if ledger.Err != nil {
 		s.Err = ledger.Err
 		return s
@@ -79,7 +84,12 @@ func fullnessLiveSampleOf(base backfillBaseline, at time.Time, raw []byte, rawEr
 		return s
 	}
 	verdict, why := fullnessBarrierSample(base, p)
-	s.Verdict, s.Interval, s.Mark, s.Outstanding = verdict, ledger.Interval, ledger.Mark, ledger.Outstanding
+	ops, err := secondFaultOps(events, false)
+	if err != nil {
+		s.Err = err
+		return s
+	}
+	s.Verdict, s.Interval, s.Mark, s.Outstanding, s.Ops = verdict, ledger.Interval, ledger.Mark, ledger.Outstanding, ops
 	if verdict == barrierInconclusive {
 		s.Err = errors.New(why)
 	}
@@ -94,7 +104,10 @@ type fullnessLiveJudgement struct {
 	Span    time.Duration     `json:"span_ns"`
 	Start   secondFaultMark   `json:"writer_at_first_toofull"`
 	End     secondFaultMark   `json:"writer_at_end_of_window"`
-	Blocked string            `json:"blocked_submission,omitempty"`
+	// EndOps are the operations parsed from the same last credited sample as
+	// End; late outcomes are settled against this frozen snapshot.
+	EndOps  []secondFaultOp `json:"-"`
+	Blocked string          `json:"blocked_submission,omitempty"`
 }
 
 // judgeFullnessLive classifies the writer over the credited window, which
@@ -106,7 +119,7 @@ type fullnessLiveJudgement struct {
 // side cannot be credited as one uninterrupted window. Operations are counted
 // where the ledger recorded them (acknowledgment, error), never replayed and
 // never reclassified by a later read.
-func judgeFullnessLive(samples []fullnessLiveSample, minAcks int, maxGap time.Duration) (fullnessLiveJudgement, error) {
+func judgeFullnessLive(samples []fullnessLiveSample, minAcks int, minSpan, maxGap time.Duration) (fullnessLiveJudgement, error) {
 	j := fullnessLiveJudgement{}
 	first := -1
 	for i, s := range samples {
@@ -120,7 +133,11 @@ func judgeFullnessLive(samples []fullnessLiveSample, minAcks int, maxGap time.Du
 	}
 	window := samples[first:]
 	j.Samples, j.Start, j.End = len(window), window[0].Mark, window[len(window)-1].Mark
-	j.Span = window[len(window)-1].At.Sub(window[0].At)
+	// The span the state was observed for is bounded from below: the first
+	// observation ended no earlier than it began to be true, and the last began
+	// no later than the state was last seen.
+	j.EndOps = window[len(window)-1].Ops
+	j.Span = window[len(window)-1].Start.Sub(window[0].End)
 	prev := window[0]
 	for i, s := range window {
 		switch {
@@ -130,12 +147,17 @@ func judgeFullnessLive(samples []fullnessLiveSample, minAcks int, maxGap time.Du
 			return j, fmt.Errorf("window sample %d is %s, not backfill_toofull", i, s.Verdict)
 		case s.Interval != window[0].Interval:
 			return j, fmt.Errorf("window sample %d is in interval %d, the first is in %d", i, s.Interval, window[0].Interval)
-		case i > 0 && (s.At.Before(prev.At) || s.At.Sub(prev.At) > maxGap):
-			return j, fmt.Errorf("window sample %d is %s after the previous one, want within %s", i, s.At.Sub(prev.At).Round(time.Millisecond), maxGap)
+		case s.End.Sub(s.Start) > maxGap:
+			return j, fmt.Errorf("window sample %d took %s to read, want within %s", i, s.End.Sub(s.Start).Round(time.Millisecond), maxGap)
+		case i > 0 && (s.Start.Before(prev.Start) || s.End.Sub(prev.Start) > maxGap):
+			return j, fmt.Errorf("window sample %d ended %s after the previous one began, want within %s", i, s.End.Sub(prev.Start).Round(time.Millisecond), maxGap)
 		case s.Mark.Submitted < prev.Mark.Submitted || s.Mark.Acked < prev.Mark.Acked || s.Mark.Refused < prev.Mark.Refused || s.Mark.Unknown < prev.Mark.Unknown:
 			return j, fmt.Errorf("window sample %d: writer counters went from %+v to %+v", i, prev.Mark, s.Mark)
 		}
 		prev = s
+	}
+	if j.Span < minSpan {
+		return j, fmt.Errorf("the window was observed for %s from the end of its first sample to the start of its last, want at least %s", j.Span.Round(time.Millisecond), minSpan)
 	}
 	acked := j.End.Acked - j.Start.Acked
 	failed := (j.End.Refused - j.Start.Refused) + (j.End.Unknown - j.Start.Unknown)
