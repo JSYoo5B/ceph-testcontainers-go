@@ -372,3 +372,29 @@ func TestAllocatorFailureReportsUnassignedAddress(t *testing.T) {
 		}
 	}
 }
+
+// The failed monitor probe reaches this helper with its original expired
+// context. It must use the existing unknown-engine fallback without letting
+// that diagnostic seed Testcontainers' process-wide host-discovery error.
+func TestHostNetworkHintEndedContextUsesUnknownEngineFallback(t *testing.T) {
+	for _, kind := range []string{"canceled", "deadline"} {
+		t.Run(kind, func(t *testing.T) {
+			var ctx context.Context
+			var cancel context.CancelFunc
+			if kind == "canceled" {
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			} else {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+			}
+			defer cancel()
+			if ctx.Err() == nil {
+				t.Fatal("fixture context has not ended")
+			}
+			const address = "127.0.0.1"
+			if got, want := hostNetworkHint(ctx, address), describeHostNetworkFailure("", "", address); got != want {
+				t.Fatalf("ended diagnostic changed fallback: got=%q want=%q", got, want)
+			}
+		})
+	}
+}

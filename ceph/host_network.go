@@ -316,6 +316,12 @@ func readBanner(conn net.Conn, banner string) error {
 }
 
 func hostNetworkHint(ctx context.Context, address string) string {
+	// Host discovery caches its first result process-wide. A diagnostic after
+	// the caller's deadline cannot learn engine state and must not cache that
+	// ended context as the failure of a future healthy operation.
+	if ctx.Err() != nil {
+		return describeHostNetworkFailure("", "", address)
+	}
 	var operatingSystem, daemonHost string
 	if docker, err := testcontainers.NewDockerClientWithOpts(ctx); err == nil {
 		if info, err := docker.Info(ctx, mobycl.InfoOptions{}); err == nil {
