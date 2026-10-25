@@ -101,12 +101,13 @@ func TestECReconstructionProgressUsesShardPeers(t *testing.T) {
 func TestECReconstructionPostQueryAdmission(t *testing.T) {
 	captured := ecAdmissionInstance{ContainerID: "owned", Running: true, Pid: 42, StartedAt: "generation-1"}
 	for name, change := range map[string]func(*ecAdmissionInstance){
-		"healthy":                  func(p *ecAdmissionInstance) { p.ExitCode = 17 },
-		"exited during query":      func(p *ecAdmissionInstance) { p.Running = false; p.Pid = 0; p.ExitCode = 42; p.FinishedAt = "finished" },
-		"OOM during query":         func(p *ecAdmissionInstance) { p.Running = false; p.Pid = 0; p.OOMKilled = true; p.ExitCode = 137 },
-		"restart during query":     func(p *ecAdmissionInstance) { p.StartedAt = "generation-2"; p.Pid = 43 },
-		"replacement during query": func(p *ecAdmissionInstance) { p.ContainerID = "replacement" },
-		"paused during query":      func(p *ecAdmissionInstance) { p.Paused = true },
+		"healthy":                   func(*ecAdmissionInstance) {},
+		"healthy refreshed receipt": func(p *ecAdmissionInstance) { p.ExitCode = 17 },
+		"exited during query":       func(p *ecAdmissionInstance) { p.Running = false; p.Pid = 0; p.ExitCode = 42; p.FinishedAt = "finished" },
+		"OOM during query":          func(p *ecAdmissionInstance) { p.Running = false; p.Pid = 0; p.OOMKilled = true; p.ExitCode = 137 },
+		"restart during query":      func(p *ecAdmissionInstance) { p.StartedAt = "generation-2"; p.Pid = 43 },
+		"replacement during query":  func(p *ecAdmissionInstance) { p.ContainerID = "replacement" },
+		"paused during query":       func(p *ecAdmissionInstance) { p.Paused = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			current := captured
