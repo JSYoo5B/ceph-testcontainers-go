@@ -139,6 +139,11 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 		return s
 	}
 	admin(3)
+	versions, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph", "versions", "--format", "json"}, Timeout: 10 * time.Second, MaxStdout: 64 << 10, MaxStderr: 4096, Label: "memory experiment daemon builds"})
+	if err != nil || !versions.Complete() || versions.ExitCode != 0 {
+		t.Fatal("daemon build observation incomplete", err)
+	}
+	t.Logf("DAEMON_MEMORY_BUILD versions=%s", strings.TrimSpace(string(versions.Stdout)))
 	before := same(daemonMemoryBaseline)
 	if before.Current >= uint64(daemonMemoryBenign)/2 {
 		t.Fatal("eligibility: benign transition lacks required memory headroom")
