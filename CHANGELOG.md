@@ -18,6 +18,12 @@ change the API.
 
 ### Added
 
+- An opt-in `debug_overhead` scenario compares `debug_osd` gathering and normal
+  output using `0/0`, `0/20` and `20/20` windows on one OSD generation. Three
+  cyclic trials retain independent native latency, container CPU/memory and
+  bounded Docker log-byte observations plus verified per-arm restoration.
+  This is measurement tooling, not recommended logging levels or a negligible
+  overhead claim. See `docs/research/osd-debug-overhead.md`.
 - `ceph.Finalization.Capture` registers a packet capture (`ceph.CaptureSettler`,
   implemented by `capture.Session` through `Settle` and `SettlementAllowance`)
   that the finalization settles after the checks and before the failure archive
