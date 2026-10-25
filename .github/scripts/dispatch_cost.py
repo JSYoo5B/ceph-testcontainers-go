@@ -106,9 +106,10 @@ def cache_state(job, ledger, repository):
            or row["outcome"] == "unknown" or (row.get("operation") in ("restore", "import")
                                                and row.get("evidence_source") != "log") for row in relevant):
         return None
-    if any(not isinstance(step, dict) or not isinstance(step.get("name"), str) for step in job.get("steps", [])):
+    steps = job.get("steps")
+    if not isinstance(steps, list) or any(not isinstance(step, dict) or not isinstance(step.get("name"), str) for step in steps):
         return None
-    cache_steps = [step for step in job.get("steps", []) if measurements.CACHE_STEP.match(step["name"])]
+    cache_steps = [step for step in steps if measurements.CACHE_STEP.match(step["name"])]
     if cache_steps and not relevant:
         return None
     try:
