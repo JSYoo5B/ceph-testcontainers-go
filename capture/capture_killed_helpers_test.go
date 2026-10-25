@@ -1,6 +1,4 @@
-//go:build all || integration
-
-package integration_test
+package capture_test
 
 import (
 	"bytes"

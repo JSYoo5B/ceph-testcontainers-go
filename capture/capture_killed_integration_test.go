@@ -2,7 +2,7 @@
 
 //ci: timeout=15m job-timeout=25
 
-package integration_test
+package capture_test
 
 import (
 	"archive/tar"

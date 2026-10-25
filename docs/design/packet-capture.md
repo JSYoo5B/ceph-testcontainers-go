@@ -162,7 +162,7 @@ reference helper always ends within the grace on `SIGTERM`.
 ### Killed helper observation
 
 `TestCaptureKilledHelperObservation` (`environment` category,
-`packet_capture_killed` batch, in `internal/integration`) records what a real
+`packet_capture_killed` batch, in `capture`) records what a real
 capture holds when its helper is killed from outside. It captures the
 requests of a client loop to a caller-owned target, waits for readiness, a
 completed request and 32 KiB of written file, freezes the helper to copy a
