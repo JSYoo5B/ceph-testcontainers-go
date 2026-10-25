@@ -141,6 +141,50 @@ are not silently counted as another case. Without execution, reports keep
 explicitly set wire and consumer implementation claims to false.
 
 The synthetic validator tests are offline controls, not stored native receipts.
-Other reference families, release/image cohorts, unsupported-case descriptions
-and automatic history/report integration remain follow-up work under #3. No new
-workflow or workflow per opcode is introduced.
+Other reference families, release/image cohorts and unsupported-case descriptions
+remain follow-up work under #3. No new workflow or workflow per opcode is introduced.
+
+
+## Automatic scenario history join
+
+The existing tagged-runtime history normalization now adds a `messenger` field
+when the compiled test inventory or retained log selects a mapped case. It runs
+no native command: the trusted Go `test2json` tool converts the saved verbose log,
+then the existing source/receipt validator checks those events. Conversion has a
+30-second limit and 64 MiB input/output bounds. Other profiles record
+`not_selected` without running the AST indexer or event converter.
+
+Acceptance needs the job's successful phases, owned cleanup, exact matching
+compile/native binary and build key, checked-out source file hashes, and the
+case's embedded source snapshot. Each accepted case's exact selector must also
+belong to the validated nonempty, unique compiled test inventory. Native receipt
+completion and any strict-completion check must pass without errors; the exit
+code must be zero and the terminal classification must be `passed`. The native
+`run_profile` producer does not emit `timed_out`; its authoritative completion,
+exit code and classification establish termination. If a producer explicitly
+supplies `timed_out`, only boolean false is accepted. The producer always records
+`strict_completion` (null when no checker is required); missing authoritative
+terminal fields are not successful evidence. A valid retained log cannot override
+contradictory native metadata. The expected release, platform and immutable
+image set come from the independently saved **pre-native image preparation**
+summary; they are never reconstructed from a case receipt. The compiled Go
+platform and prepared image platforms must agree. The history execution key,
+requested and actual checkout identities, evidence file hashes and scenario
+verdict remain independently recorded.
+
+`accepted` means the report contains validated native-state cases. Failed,
+canceled, skipped or incomplete jobs retain mapping and unexecuted bindings as
+`unexecuted`; unsupported pinned-release cohorts are `unsupported_cohort`, and
+inconsistent or missing case/source/build/cohort evidence is `invalid`. A missing
+receipt cannot become accepted merely because the overall scenario passed.
+These case states do not rewrite the scenario outcome or its failure category.
+All reports preserve unmapped declarations and wire/consumer claims as false.
+The Markdown job summary shows the case state and mapped/total declarations.
+
+Existing history rows lacking this additive field remain valid and are counted
+as `not_recorded`, never backfilled as successful case evidence. Summary and
+classification reports count **attempts by case-evidence status**; those counts
+are not unique-declaration coverage or a new release/platform qualification.
+The compile/native/image/cleanup artifact hashes in each row retain the inputs
+used for the join. Offline regression controls establish validation behavior;
+they do not establish an additional native execution.
