@@ -1207,6 +1207,13 @@ job list (`total_count`) or an incomplete dispatch envelope makes the whole
 input inconclusive (exit 2). The `Plan` job and other jobs of the caller are
 reported as `unmatched_actual`; jobs of other callers are `out_of_scope`.
 
+Receipts are accounted for as well: every `history-row.json` read ends in
+exactly one of attached to a matched job, `receipts_without_a_matched_job`,
+`receipts_other_run` or `invalid_receipts`. A receipt without a usable job key
+is invalid and is never associated with a job by guesswork, and the history
+format's `missing` marker in a compared field is a gap (inconclusive), never
+agreement or contradiction.
+
 `context.sha` is reported as `declared_workflow_sha`. The checkout identity
 comes only from receipts and is null when none states it.
 

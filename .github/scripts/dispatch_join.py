@@ -200,7 +200,7 @@ def receipt_key(row):
     key = row["execution_key"]
     parts = [key.get("repository"), identifier(key.get("run_id")), identifier(key.get("run_attempt")),
              identifier(key.get("job_id"))]
-    return tuple(parts) if all(is_text(part) for part in parts) else None
+    return tuple(parts) if all(is_text(part) and part != scenario_history.MISSING for part in parts) else None
 
 
 def known(value):
@@ -228,7 +228,9 @@ def read_receipts(candidates, entry):
             elif value != expected:
                 conflicts.append(path + ": " + field + " differs from the dispatch entry")
         network = key.get("network")
-        if not isinstance(network, str):
+        if not isinstance(network, str) or network == scenario_history.MISSING:
+            # MISSING is the history format's explicit unknown marker: a gap,
+            # neither agreement with an empty network nor a contradiction.
             gaps.append(path + ": network is missing or not text")
         elif entry["network"] and network != entry["network"]:
             # An empty entry network lets a batch run its default mode, which
@@ -263,7 +265,7 @@ def join(dispatch, job_documents, receipts=None, caller=None):
                         "checkout_identity": "from receipts only; null when no receipt states it"},
               "matched": [], "conflicts": [], "ambiguous": [], "unmatched_expected": [], "invalid_expected": [],
               "unmatched_actual": [], "invalid_actual": [], "out_of_scope": [],
-              "receipts_without_a_matched_job": [], "invalid_receipts": [], "not_established": list(NOT_ESTABLISHED)}
+              "receipts_without_a_matched_job": [], "receipts_other_run": [], "invalid_receipts": [], "not_established": list(NOT_ESTABLISHED)}
 
     # Jobs first: only a well-formed job of this run attempt can be a candidate.
     seen = {}
@@ -329,12 +331,20 @@ def join(dispatch, job_documents, receipts=None, caller=None):
     for position, job in scoped:
         by_name_jobs.setdefault(leaf(job["name"])[1], []).append((position, job))
 
-    by_job = None
+    by_job, receipt_paths = None, None
     if receipts is not None:
-        by_job = {}
+        by_job, receipt_paths = {}, [path for path, _ in receipts[0]] + [item["path"] for item in receipts[1]]
+        report["invalid_receipts"] = list(receipts[1])
         for path, row in receipts[0]:
-            by_job.setdefault(receipt_key(row), []).append((path, row))
-        report["invalid_receipts"] = receipts[1]
+            key = receipt_key(row)
+            if key is None:
+                # The job association is not guessed: the receipt stays visible.
+                report["invalid_receipts"].append({"path": path, "reason": "execution key lacks a usable "
+                                                   "repository, run, attempt or job ID; no job association"})
+            elif key[:3] != (repository, run, attempt):
+                report["receipts_other_run"].append({"path": path, "job_id": key[3]})
+            else:
+                by_job.setdefault(key, []).append((path, row))
     matched_keys = set()
     for name in sorted(set(by_name_entries) | set(by_name_jobs)):
         wanted, actual = by_name_entries.get(name, []), by_name_jobs.get(name, [])
@@ -360,16 +370,19 @@ def join(dispatch, job_documents, receipts=None, caller=None):
                                         "reason": "names are shared by " + str(len(wanted)) + " entries and "
                                                   + str(len(actual)) + " jobs; no one-to-one pairing is provable"})
     if by_job is not None:
-        for key, items in sorted(by_job.items(), key=lambda item: str(item[0])):
-            if key is not None and key[:3] == (repository, run, attempt) and key not in matched_keys:
+        for key, items in sorted(by_job.items()):
+            if key not in matched_keys:
                 report["receipts_without_a_matched_job"].append({"job_id": key[3], "paths": [p for p, _ in items]})
 
-    report["conservation"] = conserve(report, len(entries), len(jobs))
+    report["conservation"] = conserve(report, len(entries), len(jobs), receipt_paths)
     return report
 
 
-def conserve(report, entry_total, job_total):
-    """Count every input once through the report's own buckets."""
+def conserve(report, entry_total, job_total, receipt_paths=None):
+    """Count every input once through the report's own buckets. Every receipt
+    read (receipt_paths, None when none were supplied) ends in exactly one of:
+    attached to a matched or receipt-conflicted job, without a matched job,
+    of another run attempt, or invalid."""
     entries, jobs = [], []
     for record in report["matched"]:
         entries.append(record["entry"]["position"])
@@ -383,9 +396,18 @@ def conserve(report, entry_total, job_total):
         jobs += [item["position"] for item in record["jobs"]]
     entries += [item["position"] for key in ("unmatched_expected", "invalid_expected") for item in report[key]]
     jobs += [item["position"] for key in ("unmatched_actual", "invalid_actual", "out_of_scope") for item in report[key]]
-    return {"expected_entries": entry_total, "bucketed_entries": len(entries),
-            "actual_jobs": job_total, "bucketed_jobs": len(jobs),
-            "ok": sorted(entries) == list(range(entry_total)) and sorted(jobs) == list(range(job_total))}
+    result = {"expected_entries": entry_total, "bucketed_entries": len(entries),
+              "actual_jobs": job_total, "bucketed_jobs": len(jobs),
+              "ok": sorted(entries) == list(range(entry_total)) and sorted(jobs) == list(range(job_total))}
+    if receipt_paths is not None:
+        placed = [path for record in report["matched"] for path in record["receipt"]["paths"]]
+        placed += [path for record in report["conflicts"] if record["kind"] == "receipt"
+                   for path in record["receipt"]["paths"]]
+        placed += [path for record in report["receipts_without_a_matched_job"] for path in record["paths"]]
+        placed += [record["path"] for key in ("receipts_other_run", "invalid_receipts") for record in report[key]]
+        result.update(receipts_read=len(receipt_paths), bucketed_receipts=len(placed))
+        result["ok"] = result["ok"] and sorted(placed) == sorted(receipt_paths)
+    return result
 
 
 def main(argv=None):

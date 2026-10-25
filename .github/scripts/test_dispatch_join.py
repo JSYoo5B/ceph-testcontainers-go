@@ -11,6 +11,7 @@ import io
 import json
 from pathlib import Path
 import random
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -419,6 +420,124 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual([path for path, _ in rows], ["a/history-row.json"])
         self.assertEqual(sorted(item["path"] for item in invalid), ["b/history-row.json", "c/history-row.json"])
         self.assertNotIn(directory, json.dumps(invalid))
+
+
+class RealReceiptTests(unittest.TestCase):
+    """Receipts built by scenario_history.normalize, stored as artifacts and
+    read back by the loader, not assembled by hand."""
+
+    def setUp(self):
+        import test_scenario_history as rows
+        self.rows = rows
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.count = 0
+
+    def store(self, row):
+        self.count += 1
+        target = self.root / "receipts" / ("job-%d" % self.count) / "history-row.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps(row))
+
+    def reset(self):
+        shutil.rmtree(self.root / "receipts", ignore_errors=True)
+
+    def real(self, **metadata):
+        self.count += 1
+        return self.rows.Job(self.root / ("build-%d" % self.count)).passing().row(**metadata)
+
+    @staticmethod
+    def sentinel(row, field, value=scenario_history.MISSING):
+        """A hash-valid row whose execution key states a field as unknown."""
+        row = copy.deepcopy(row)
+        row["execution_key"][field] = value
+        row["row_sha256"] = scenario_history.row_hash(row)
+        return row
+
+    def join(self, network="", rows=()):
+        profile = self.rows.PROFILE["id"]
+        document = dispatch(entry("alpha", profile, network=network), repository="owner/repo", run_id="100",
+                            run_attempt="1")
+        document["context"]["repository"] = "owner/repo"
+        document["context"]["run_id"], document["context"]["run_attempt"] = "100", "1"
+        page = jobs_page(job(200, "alpha", run_id=100, run_attempt=1,
+                             url="https://api.example.test/repos/owner/repo/actions/jobs/200"))
+        for row in rows:
+            self.store(row)
+        return join.join(document, [page], join.load_receipts(self.root / "receipts"))
+
+    def test_a_real_receipt_is_consistent_and_names_the_checkout(self):
+        report = self.join(rows=[self.real()])
+        receipt = report["matched"][0]["receipt"]
+        self.assertEqual((receipt["state"], receipt["checkout_commit"]), ("consistent", "b" * 40))
+        self.assertTrue(report["conservation"]["ok"])
+
+    def test_the_unknown_network_marker_is_a_gap_for_default_and_explicit_networks(self):
+        base = self.real()
+        self.assertEqual(base["execution_key"]["network"], "")
+        for requested in ("", "host"):
+            with self.subTest(requested=requested):
+                self.reset()
+                report = self.join(requested, [self.sentinel(base, "network")])
+                self.assertEqual(report["conflicts"], [])
+                self.assertEqual(report["matched"][0]["receipt"]["state"], "inconclusive")
+                self.assertIn("network", " ".join(report["matched"][0]["receipt"]["reasons"]))
+
+    def test_a_known_network_is_still_consistent_or_a_conflict(self):
+        host = self.real()
+        host = self.sentinel(host, "network", "host")
+        report = self.join("host", [host])
+        self.assertEqual(report["matched"][0]["receipt"]["state"], "consistent")
+
+    def test_other_unknown_markers_in_compared_fields_are_gaps(self):
+        for field in ("profile_id", "repetition_id"):
+            with self.subTest(field=field):
+                self.reset()
+                row = self.sentinel(self.real(), field)
+                try:
+                    scenario_history.validate_row(row)
+                except ValueError:
+                    continue  # a row that cannot be told apart never loads
+                report = self.join(rows=[row])
+                self.assertEqual((report["conflicts"], report["matched"][0]["receipt"]["state"]),
+                                 ([], "inconclusive"))
+
+    def test_a_receipt_without_a_job_id_stays_visible_and_is_never_guessed(self):
+        row = self.real(job_id="")
+        self.assertEqual(row["execution_key"]["job_id"], scenario_history.MISSING)
+        report = self.join(rows=[row])
+        loaded, invalid = join.load_receipts(self.root / "receipts")
+        self.assertEqual((len(loaded), invalid), (1, []))
+        path = loaded[0][0]
+        self.assertEqual([item["path"] for item in report["invalid_receipts"]], [path])
+        self.assertEqual(report["matched"][0]["receipt"]["state"], "inconclusive")
+        self.assertEqual(report["matched"][0]["receipt"]["paths"], [])
+        self.assertEqual(report["receipts_without_a_matched_job"], [])
+        self.assertEqual(report["conservation"]["receipts_read"], 1)
+        self.assertTrue(report["conservation"]["ok"])
+
+    def test_every_loaded_receipt_ends_in_exactly_one_bucket(self):
+        rows = [self.real(), self.real(job_id=""), self.real(job_id="999"), self.real(run_id="101", job_id="200"),
+                self.real(job_id="200", run_attempt="2")]
+        (self.root / "receipts" / "broken").mkdir(parents=True)
+        (self.root / "receipts" / "broken" / "history-row.json").write_text("{")
+        report = self.join(rows=rows)
+        conservation = report["conservation"]
+        self.assertEqual((conservation["receipts_read"], conservation["bucketed_receipts"]), (6, 6))
+        self.assertTrue(conservation["ok"])
+        self.assertEqual(len(report["receipts_other_run"]), 2)
+        self.assertEqual(len(report["receipts_without_a_matched_job"]), 1)
+        self.assertEqual(len(report["invalid_receipts"]), 2)
+        for bucket in ("receipts_other_run", "receipts_without_a_matched_job", "invalid_receipts"):
+            with self.subTest(bucket=bucket):
+                dropped = copy.deepcopy(report)
+                dropped[bucket].pop()
+                paths = [p for r in dropped["matched"] for p in r["receipt"]["paths"]] + sum(
+                    ([r["path"]] if "path" in r else r["paths"] for k in
+                     ("receipts_other_run", "receipts_without_a_matched_job", "invalid_receipts")
+                     for r in report[k]), [])
+                self.assertFalse(join.conserve(dropped, 1, 1, paths)["ok"])
 
 
 class ConservationTests(unittest.TestCase):
