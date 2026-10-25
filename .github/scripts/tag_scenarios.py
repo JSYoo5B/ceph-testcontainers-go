@@ -768,13 +768,58 @@ def select_changed_plan(plan, changed):
             "changed_files": sorted(changed), "selected_profiles": len(selected)}
 
 
+def changed_comparison(base, root=ROOT, requested_head=""):
+    """Changed paths with explicit checkout/PR-parent provenance.
+
+    An event's base can precede the first parent of the tested PR merge.
+    Attribute only the merge result relative to that actual base parent, but
+    only after proving the requested PR head is the other parent and the
+    supplied base belongs to the actual base parent's history.
+    """
+    def git(*arguments):
+        result = subprocess.run(["git", *arguments], cwd=root, text=True, capture_output=True, timeout=60)
+        if result.returncode:
+            raise ValueError("cannot establish changed-file comparison: git " + arguments[0])
+        return result.stdout.strip()
+
+    def commit(value):
+        resolved = git("rev-parse", "--verify", "--end-of-options", value + "^{commit}")
+        if not re.fullmatch(r"[0-9a-f]{40}", resolved):
+            raise ValueError("changed-file comparison needs one resolved commit")
+        return resolved
+
+    supplied, actual = commit(base), commit("HEAD")
+    headers = git("cat-file", "-p", actual).split("\n\n", 1)[0]
+    parents = [line.split(" ", 1)[1] for line in headers.splitlines() if line.startswith("parent ")]
+    requested = commit(requested_head) if requested_head else None
+    if requested and actual != requested:
+        if len(parents) != 2 or parents[1] != requested or parents[0] == requested:
+            raise ValueError("checkout is neither the requested PR head nor its two-parent test merge")
+        ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", supplied, parents[0]], cwd=root,
+                                  text=True, capture_output=True, timeout=60)
+        if ancestor.returncode != 0:
+            raise ValueError("supplied PR base is not proven in the actual merge base parent's history")
+        comparison_base, mode = parents[0], "pr-test-merge"
+    elif requested:
+        bases = git("merge-base", "--all", supplied, actual).splitlines()
+        if len(bases) != 1:
+            raise ValueError("changed-file comparison has no unique merge base")
+        comparison_base, mode = bases[0], "pr-head"
+    else:
+        # Preserve the manual three-dot behavior; no PR-parent proof is
+        # inferred when the caller did not identify a requested PR head.
+        comparison_base, mode = git("merge-base", supplied, actual), "legacy-merge-base"
+    comparison_range = (comparison_base + ".." + actual if requested else supplied + "..." + actual)
+    changed = git("diff", "--name-only", "--no-renames", "--no-ext-diff", comparison_range, "--").splitlines()
+    return changed, {"mode": mode, "requested_pr_head": requested, "supplied_base": base,
+                     "resolved_supplied_base": supplied, "checkout_commit": actual, "checkout_parents": parents,
+                     "comparison_base": comparison_base, "comparison_head": actual,
+                     "comparison_range": comparison_range}
+
+
 def changed_paths(base, root=ROOT):
-    """Paths that the checked-out commit changed since its merge base with base."""
-    result = subprocess.run(["git", "diff", "--name-only", "--no-renames", base + "...HEAD"], cwd=root,
-                            text=True, capture_output=True, timeout=60)
-    if result.returncode:
-        raise ValueError("git diff since " + base + " failed: " + result.stderr.strip())
-    return result.stdout.splitlines()
+    """Legacy manual comparison, retained without an inferred PR identity."""
+    return changed_comparison(base, root)[0]
 
 
 def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
@@ -1446,6 +1491,9 @@ def main(argv=None):
                                  help="File with one changed path per line; keep only batches whose test files changed")
             command.add_argument("--changed-since", default="",
                                  help="Base commit; keep only batches whose test files changed since it. Empty keeps all")
+            command.add_argument("--changed-head", default="", metavar="HEAD",
+                                 help="Requested PR head; with --changed-since, prove the tested merge parents "
+                                      "and compare against its actual base parent")
             command.add_argument("--select-declarations", default="", metavar="BASE",
                                  help="Base commit; record which batches reach a declaration changed since it. "
                                       "Advisory unless --apply-declarations")
@@ -1505,6 +1553,8 @@ def main(argv=None):
                 raise ValueError("repetitions must be 1 to " + str(MAX_REPETITIONS))
             if args.batch is not None and not args.optional:
                 raise ValueError("plan --batch requires explicit --optional")
+            if args.changed_head and not args.changed_since:
+                raise ValueError("plan --changed-head requires --changed-since")
             if args.changed_files is not None and args.changed_since:
                 raise ValueError("plan takes --changed-files or --changed-since, not both")
             if (args.changed_files is not None or args.changed_since) and (args.optional or args.verify or args.category is None):
@@ -1586,7 +1636,9 @@ def main(argv=None):
                     if args.changed_files is not None:
                         report = select_changed_plan(report, args.changed_files.read_text().splitlines())
                     elif args.changed_since:
-                        report = select_changed_plan(report, changed_paths(args.changed_since))
+                        changed, comparison = changed_comparison(args.changed_since, requested_head=args.changed_head)
+                        report = select_changed_plan(report, changed)
+                        report["changed_selection"] = comparison
                     if args.verify:
                         # The source filter affects workflow execution only;
                         # verification always proves the whole required suite.

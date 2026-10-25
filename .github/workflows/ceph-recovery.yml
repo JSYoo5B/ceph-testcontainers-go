@@ -49,3 +49,8 @@ jobs:
         !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
         vars.CI_RELEASE_PHASE != 'true' &&
         github.event.pull_request.base.sha || '' }}
+      changed_head: >-
+        ${{ github.event_name == 'pull_request' &&
+        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&
+        vars.CI_RELEASE_PHASE != 'true' &&
+        github.event.pull_request.head.sha || '' }}

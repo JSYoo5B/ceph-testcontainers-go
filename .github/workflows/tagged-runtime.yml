@@ -31,6 +31,10 @@ on:
         description: Base commit of a pull request; run only the batches whose own test files changed since it. Empty runs every batch
         default: ''
         type: string
+      changed_head:
+        description: Requested PR head for changed-file selection; proves checkout merge parents before comparing to the actual base parent
+        default: ''
+        type: string
       select_declarations:
         description: Base commit of a pull request that opted in with the ci:selected-batches label; run only the batches that reach a declaration changed since it, and list every batch with its reason in the job summary. Empty runs every batch
         default: ''
@@ -123,6 +127,7 @@ jobs:
           SCENARIO_OPTIONAL_BATCH: ${{ inputs.optional_batch }}
           SCENARIO_PROFILES: ${{ inputs.profiles }}
           SCENARIO_CHANGED_SINCE: ${{ inputs.changed_since }}
+          SCENARIO_CHANGED_HEAD: ${{ inputs.changed_head }}
           SCENARIO_SELECT_DECLARATIONS: ${{ inputs.select_declarations }}
           SCENARIO_NETWORKS: ${{ inputs.networks }}
           SCENARIO_RELEASE: ${{ inputs.release }}
@@ -142,7 +147,7 @@ jobs:
           elif [ -n "$SCENARIO_SELECT_DECLARATIONS" ]; then
             python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --select-declarations "$SCENARIO_SELECT_DECLARATIONS" --apply-declarations --summary "$GITHUB_STEP_SUMMARY" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           else
-            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
+            python3 .github/scripts/tag_scenarios.py plan --category "$SCENARIO_CATEGORY" --changed-since "$SCENARIO_CHANGED_SINCE" --changed-head "$SCENARIO_CHANGED_HEAD" --networks "$SCENARIO_NETWORKS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --output artifacts/tag-plan.json --github-output "$GITHUB_OUTPUT" --dispatch-output artifacts/tag-dispatch.json
           fi
       - name: Download every Go module
         if: steps.modules_cache.outputs.cache-hit != 'true'

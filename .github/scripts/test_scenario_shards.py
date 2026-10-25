@@ -300,13 +300,19 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                                   "        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&\n"
                                   "        vars.CI_RELEASE_PHASE != 'true' &&\n"
                                   "        github.event.pull_request.base.sha || '' }}\n", callers[0])
+                    self.assertIn("      changed_head: >-\n        ${{ github.event_name == 'pull_request' &&\n"
+                                  "        !contains(github.event.pull_request.labels.*.name, 'ci:full') &&\n"
+                                  "        vars.CI_RELEASE_PHASE != 'true' &&\n"
+                                  "        github.event.pull_request.head.sha || '' }}\n", callers[0])
                 elif filename in self.OPT_IN:
                     # Evaluated per event in OptInDeclarationSelectionTests.
                     self.assertNotIn("changed_since", callers[0])
+                    self.assertNotIn("changed_head", callers[0])
                     self.assertIn("select_declarations", callers[0])
                 else:
                     self.assertNotRegex(callers[0], r"(?m)^    if:")
                     self.assertNotIn("changed_since", callers[0])
+                    self.assertNotIn("changed_head", callers[0])
                     self.assertNotIn("select_declarations", callers[0])
                 self.assertNotIn("steps:", callers[0])
                 self.assertNotRegex(workflow, r"\bTest[A-Z][A-Za-z0-9_]*")
@@ -506,6 +512,8 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         command = engine_command(steps(plan), "plan", "--changed-since")
         self.assertIn("--changed-since", command)
         self.assertEqual(command[command.index("--changed-since") + 1], "$SCENARIO_CHANGED_SINCE")
+        self.assertEqual(command[command.index("--changed-head") + 1], "$SCENARIO_CHANGED_HEAD")
+        self.assertEqual(scalar(engine_step(steps(plan), "plan"), "SCENARIO_CHANGED_HEAD"), "${{ inputs.changed_head }}")
         self.assertIn("\n    if: needs.plan.outputs.count != '0'\n", runtime)
         self.assertEqual(scalar(runtime, "needs"), "plan")
         self.assertEqual(scalar(runtime, "matrix"), "${{ fromJSON(needs.plan.outputs.matrix) }}")
@@ -1035,6 +1043,33 @@ def folded(text, key):
     return " ".join(line for line in lines if line)
 
 
+class ChangedSelectionIdentityWorkflowTests(unittest.TestCase):
+    """Base and requested head are one selection input pair, never a policy toggle."""
+
+    def test_scoped_callers_pair_base_and_head_under_the_same_conditions(self):
+        base, head = "1" * 40, "2" * 40
+        for category in ("topology", "recovery", "multicluster"):
+            workflow = (ROOT / (".github/workflows/ceph-" + category + ".yml")).read_text()
+            caller = dict(blocks(workflow.split("\njobs:\n", 1)[1], r"^  ([\w-]+):$"))["scenarios"]
+            for event, labels, phase, selected in (
+                ("pull_request", [], "", True),
+                ("pull_request", ["ci:full"], "", False),
+                ("pull_request", [], "true", False),
+                ("push", [], "", False),
+                ("push", [], "true", False),
+                ("workflow_dispatch", [], "", False),
+            ):
+                with self.subTest(category=category, event=event, labels=labels, phase=phase):
+                    context = {"github": {"event_name": event, "event": {"pull_request": {
+                        "base": {"sha": base}, "head": {"sha": head},
+                        "labels": [{"name": name} for name in labels]}}},
+                        "vars": {"CI_RELEASE_PHASE": phase}}
+                    self.assertEqual(interpolate(folded(caller, "changed_since"), context), base if selected else "")
+                    self.assertEqual(interpolate(folded(caller, "changed_head"), context), head if selected else "")
+        for filename in ("ceph-short.yml", "ceph-periodic.yml", "ceph-release-matrix.yml"):
+            self.assertNotIn("changed_head", (ROOT / (".github/workflows/" + filename)).read_text())
+
+
 class OptInDeclarationSelectionTests(unittest.TestCase):
     """Ceph short narrows a pull request to the declaration selection only
     when the pull request carries the opt-in label. Every other event,
@@ -1119,6 +1154,7 @@ class OptInDeclarationSelectionTests(unittest.TestCase):
             recorder.chmod(0o755)
             environment = {"PATH": str(directory / "bin") + ":/usr/bin:/bin", "RECORD": str(directory / "record"),
                            "SCENARIO_CATEGORY": "short", "SCENARIO_OPTIONAL_BATCH": "", "SCENARIO_CHANGED_SINCE": "",
+                           "SCENARIO_CHANGED_HEAD": "",
                            "SCENARIO_SELECT_DECLARATIONS": selection, "SCENARIO_NETWORKS": "default",
                            "SCENARIO_REPETITIONS": "1", "GITHUB_OUTPUT": str(directory / "output"),
                            "GITHUB_STEP_SUMMARY": str(directory / "summary")}
