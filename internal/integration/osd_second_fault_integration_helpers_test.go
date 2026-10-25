@@ -365,7 +365,11 @@ func secondFaultReceipt(t *testing.T, ctx context.Context, cluster *ceph.Contain
 // The scheduler is set to WPQ with a recovery sleep before any OSD starts, so
 // that backfill has an observable duration: Ceph ignores the sleep under
 // mClock.
-func testOSDSecondFault(t *testing.T) {
+func testOSDSecondFault(t *testing.T) { testOSDSecondFaultPool(t, false) }
+
+// testOSDSecondFaultPool shares the fault, progress and writer ledger protocol.
+// erasure changes only pool construction and shard-shaped placement admission.
+func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
 	const ledger, stopFile = "/tmp/tc-second-fault.jsonl", "/tmp/tc-second-fault.stop"
@@ -424,8 +428,12 @@ func testOSDSecondFault(t *testing.T) {
 			}
 		}
 	}
-	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-paths", PGNum: 1, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
+	pool, err := cluster.CreatePool(ctx, secondFaultPoolConfig(erasure))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if erasure {
+		ecAdmissionPool(t, ctx, cluster, pool)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
@@ -470,18 +478,42 @@ func testOSDSecondFault(t *testing.T) {
 	// Every OSD is captured as a running instance before any fault; a stop is
 	// admitted only for that same instance, and its result is read back apart
 	// from the request.
+	ecInstances := map[int]ecAdmissionInstance{}
 	instances := map[int]secondFaultInstance{}
 	for _, osd := range cluster.OSDs() {
 		instances[osd.ID] = secondFaultInstanceOf(t, ctx, osd)
+		if erasure {
+			ecInstances[osd.ID] = ecAdmissionInstanceOf(t, ctx, osd)
+		}
 		if !instances[osd.ID].Running {
 			t.Fatalf("osd.%d is not running before any fault: %+v", osd.ID, instances[osd.ID])
 		}
 	}
+	var reconstructionBase *backfillBaseline
 	stopOSD := func(osd *ceph.OSDContainer) {
 		t.Helper()
 		now := secondFaultInstanceOf(t, ctx, osd)
+		if erasure {
+			if err := checkECAdmissionStop(ecInstances[osd.ID], ecAdmissionInstanceOf(t, ctx, osd)); err != nil {
+				t.Fatalf("EC osd.%d stop refused: %v", osd.ID, err)
+			}
+		}
 		if err := secondFaultAdmitStop(instances[osd.ID], now); err != nil {
 			t.Fatalf("osd.%d stop refused: %v", osd.ID, err)
+		}
+		if erasure && osd == d && reconstructionBase != nil {
+			raw, err := pgQueryRaw(ctx, cluster, pgid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sample, err := parsePGProgress(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if verdict, why := backfillProgress(*reconstructionBase, sample); verdict != progressReached {
+				t.Fatalf("EC destination no longer has observable unfinished progress before Stop: %s: %s", verdict, why)
+			}
+			t.Logf("EC_RECONSTRUCTION_PRE_STOP %.16384s", raw)
 		}
 		stopped[osd.ID] = true
 		timeout := 10 * time.Second
@@ -489,6 +521,11 @@ func testOSDSecondFault(t *testing.T) {
 			t.Fatal(err)
 		}
 		after := secondFaultInstanceOf(t, ctx, osd)
+		if erasure {
+			if err := checkECAdmissionStopped(ecInstances[osd.ID], ecAdmissionInstanceOf(t, ctx, osd)); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if after.Running || after.OOMKilled {
 			t.Fatalf("osd.%d after the stop request: %+v", osd.ID, after)
 		}
@@ -538,7 +575,7 @@ func testOSDSecondFault(t *testing.T) {
 	// First fault: one acting replica stops and keeps its store.
 	stopOSD(a)
 	secondFaultWaitPG(t, ctx, cluster, "active on the two remaining replicas", func(pg ceph.PGState) bool {
-		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
+		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Acting, a.ID) && secondFaultTwoSurvivors(pg, clean, a.ID, erasure)
 	})
 	secondFaultReceipt(t, ctx, cluster, "first-fault", stopped)
 	secondFaultAcks(t, ctx, cluster, client, ledger, mark, 2, "with one replica down")
@@ -568,6 +605,12 @@ func testOSDSecondFault(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("backfill to osd.%d was never seen held: %v\n%.16384s", d.ID, err, heldRaw)
 		}
+	}
+	if erasure {
+		if !ecReconstructionTarget(base, clean, a.ID, d.ID) {
+			t.Fatalf("EC replacement shifted shard positions: %+v original %+v", base, clean)
+		}
+		reconstructionBase = &base
 	}
 	t.Logf("OSD_SECOND_FAULT_HELD baseline=%+v pg query: %.16384s", base, heldRaw)
 	time.Sleep(5 * time.Second)
@@ -625,7 +668,7 @@ func testOSDSecondFault(t *testing.T) {
 	// Second fault: the destination stops with its transfer unfinished.
 	stopOSD(d)
 	secondFaultWaitPG(t, ctx, cluster, "active on the two surviving replicas without the spare", func(pg ceph.PGState) bool {
-		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Up, d.ID) && !slices.Contains(pg.Acting, d.ID) && !slices.Contains(pg.Acting, a.ID) && len(pg.Acting) == 2
+		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && !slices.Contains(pg.Up, d.ID) && !slices.Contains(pg.Acting, d.ID) && !slices.Contains(pg.Acting, a.ID) && secondFaultTwoSurvivors(pg, clean, a.ID, erasure)
 	})
 	secondFaultReceipt(t, ctx, cluster, "second-fault", stopped)
 	// The pre-stop watermark joined the progress sample. Acknowledgments seen
@@ -704,6 +747,9 @@ func testOSDSecondFault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("OSD_SECOND_FAULT_RECEIPT %s", receipt)
+	if erasure {
+		t.Logf("EC_RECONSTRUCTION_RECEIPT %s", receipt)
+	}
 }
 
 // secondFaultWaitPG is waitPG that keeps the last PG it saw for its failure
