@@ -43,3 +43,9 @@ unit rendering matrix assert public configuration refusal instead of skipping.
 They use an already-cancelled context as a no-Docker guard and require the specific
 invalid-request error. Valid golden files are unchanged. These are unit admission
 controls, not native qualification of that unsupported combination.
+
+A host-network diagnostic also returns its existing unknown-engine fallback when
+its caller context has already ended. Attempting Docker discovery there could
+cache a deadline error process-wide and poison the later healthy native case.
+The monitor-refusal unit case and the subsequent real-container scenario exercise
+that interaction in the same optional profile. No host cache is reset or warmed.
