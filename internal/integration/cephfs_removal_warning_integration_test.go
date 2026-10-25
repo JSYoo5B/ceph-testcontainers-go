@@ -58,29 +58,88 @@ finally:
 		t.Fatal(err)
 	}
 	readConfig := func(probe context.Context) (string, error) {
-		out, err := cluster.Ceph(probe, "config", "get", "mds."+aBefore.Active[0].Name, "mds_cache_memory_limit")
-		return strings.TrimSpace(string(out)), err
+		out, err := cluster.Ceph(probe, "tell", "mds."+aBefore.Active[0].Name, "config", "get", "mds_cache_memory_limit")
+		if err != nil {
+			return "", err
+		}
+		var values map[string]string
+		if err := json.Unmarshal(out, &values); err != nil {
+			return "", err
+		}
+		value, ok := values["mds_cache_memory_limit"]
+		if !ok || value == "" {
+			return "", fmt.Errorf("missing native cache limit: %s", out)
+		}
+		return value, nil
 	}
 	prior, err := readConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds." + aBefore.Active[0].Name, Name: "mds_cache_memory_limit", Value: "1"})
-	restored := false
-	if change != nil {
-		t.Cleanup(func() {
-			if restored {
-				return
-			}
-			fresh, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := change.Restore(fresh); err != nil {
-				t.Errorf("restore owned MDS cache configuration: %v", err)
-			}
+	var pending *ceph.NativeCommandUnstoppedError
+	setConfig := func(probe context.Context, value string) error {
+		r, err := cluster.RunNativeCommand(probe, cluster.ControlContainer(), ceph.NativeCommand{
+			Argv:    []string{"ceph", "tell", "mds." + aBefore.Active[0].Name, "config", "set", "mds_cache_memory_limit", value},
+			Timeout: 30 * time.Second, MaxStdout: 16 << 10, MaxStderr: 16 << 10, Label: "owned MDS cache limit",
 		})
+		if err != nil {
+			errors.As(err, &pending)
+			return err
+		}
+		if r.ExitCode != 0 || !r.Complete() {
+			return fmt.Errorf("native cache limit set exit=%d complete=%t stderr=%s", r.ExitCode, r.Complete(), r.Stderr)
+		}
+		return nil
 	}
-	if err != nil {
+	restored := false
+	restore := func(probe context.Context) error {
+		if pending != nil {
+			if err := pending.Stop(probe); err != nil {
+				return err
+			}
+			pending = nil
+		}
+		status, err := a.MDSStatus(probe)
+		if err != nil || len(status.Active) != 1 || status.Active[0].GID != aBefore.Active[0].GID {
+			return fmt.Errorf("cannot restore another MDS generation: %+v err=%v", status, err)
+		}
+		current, err := readConfig(probe)
+		if err != nil {
+			return err
+		}
+		if current == prior {
+			restored = true
+			return nil
+		}
+		if current != "1" {
+			return fmt.Errorf("owned cache limit changed outside fixture: %s", current)
+		}
+		if err := setConfig(probe, prior); err != nil {
+			return err
+		}
+		current, err = readConfig(probe)
+		if err != nil || current != prior {
+			return fmt.Errorf("native cache restore unconfirmed: value=%s err=%v", current, err)
+		}
+		restored = true
+		return nil
+	}
+	t.Cleanup(func() {
+		if restored {
+			return
+		}
+		fresh, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := restore(fresh); err != nil {
+			t.Errorf("restore owned MDS cache configuration: %v", err)
+		}
+	})
+	if err := setConfig(ctx, "1"); err != nil {
 		t.Fatal(err)
+	}
+	applied, err := readConfig(ctx)
+	if err != nil || applied != "1" {
+		t.Fatalf("native MDS cache limit not applied: value=%s err=%v", applied, err)
 	}
 	var warning json.RawMessage
 	_, _, err = boundedPoll(ctx, realPollClock, 90*time.Second, time.Second, func(probe context.Context) (bool, bool, error) {
@@ -137,7 +196,7 @@ finally:
 			t.Fatalf("refusal was not an EPERM at preparatory fs fail: %v", removeErr)
 		}
 	}
-	if err := change.Restore(ctx); err != nil {
+	if err := restore(ctx); err != nil {
 		t.Fatal(err)
 	}
 	restored = true
@@ -180,6 +239,6 @@ finally:
 			t.Fatalf("refused target state changed: %+v pools=%s", bAfter, pools)
 		}
 	}
-	receipt, _ := json.Marshal(map[string]any{"expected": expect, "observed": result, "selection": "ordinary/no-tag", "versions": json.RawMessage(versions), "warning": warning, "a_before": aBefore, "a_after": aAfter, "b_before": bBefore, "filesystem_list": json.RawMessage(fsList), "pool_list": json.RawMessage(pools), "config_prior": prior, "config_restored": afterConfig, "survivor_read": data, "remove_started": started, "remove_ended": ended, "ordinary_error": failure, "role_images": map[string]string{"essential": os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), "client": os.Getenv("CEPH_TEST_CLIENT_IMAGE"), "cephfs": os.Getenv("CEPH_TEST_CEPHFS_IMAGE")}})
+	receipt, _ := json.Marshal(map[string]any{"expected": expect, "observed": result, "selection": "ordinary/no-tag", "versions": json.RawMessage(versions), "warning": warning, "a_before": aBefore, "a_after": aAfter, "b_before": bBefore, "filesystem_list": json.RawMessage(fsList), "pool_list": json.RawMessage(pools), "config_prior": prior, "config_applied": applied, "config_restored": afterConfig, "survivor_read": data, "remove_started": started, "remove_ended": ended, "ordinary_error": failure, "role_images": map[string]string{"essential": os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), "client": os.Getenv("CEPH_TEST_CLIENT_IMAGE"), "cephfs": os.Getenv("CEPH_TEST_CEPHFS_IMAGE")}})
 	t.Logf("CEPHFS_REMOVAL_WARNING_RECEIPT %s", receipt)
 }
