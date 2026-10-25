@@ -107,9 +107,11 @@ type captureKillInput struct {
 	// HelperExitCode is the exit status the engine recorded for the helper
 	// after the kill, taken before Stop removed it.
 	HelperExitCode int
-	// RequestsBefore and RequestsAfter are the client's completed
-	// requests when the kill was sent and after the kill had taken effect.
-	RequestsBefore, RequestsAfter int
+	// RequestsAtStop is the client's completed-request counter read after the
+	// helper was confirmed stopped, and RequestsLater the last read of the
+	// bounded wait for a further increment. A negative value is a counter
+	// that could not be read.
+	RequestsAtStop, RequestsLater int
 	// TargetUnchanged is the caller's comparison of the target before the
 	// capture with the target after cleanup.
 	TargetUnchanged bool
@@ -121,8 +123,8 @@ type captureKillInput struct {
 type captureKillObservation struct {
 	SnapshotBytes   int    `json:"snapshot_bytes"`
 	SnapshotRecords int    `json:"snapshot_records"`
-	RequestsBefore  int    `json:"requests_before_kill"`
-	RequestsAfter   int    `json:"requests_after_kill"`
+	RequestsAtStop  int    `json:"requests_at_helper_stop"`
+	RequestsLater   int    `json:"requests_later"`
 	HelperExitCode  int    `json:"helper_exit_code"`
 	End             string `json:"capture_end"`
 	ReportExitCode  int    `json:"capture_exit_code"`
@@ -165,7 +167,7 @@ func observeCaptureKill(in captureKillInput) (captureKillObservation, error) {
 	sum := sha256.Sum256(in.Retrieved)
 	o := captureKillObservation{
 		SnapshotBytes: len(in.Snapshot), SnapshotRecords: snapshot.Report.Packets,
-		RequestsBefore: in.RequestsBefore, RequestsAfter: in.RequestsAfter,
+		RequestsAtStop: in.RequestsAtStop, RequestsLater: in.RequestsLater,
 		HelperExitCode: in.HelperExitCode, End: string(r.End), ReportExitCode: r.ExitCode,
 		Target: string(r.Target), HelperRemoved: r.HelperRemoved,
 		Tail: tail.Kind, TailStatus: string(tail.Report.Status), TailReason: tail.Report.Reason, Records: tail.Report.Packets,
@@ -188,8 +190,11 @@ func observeCaptureKill(in captureKillInput) (captureKillObservation, error) {
 		violate("the killed helper recorded exit status 0")
 	}
 	// Traffic was in flight: the client kept completing requests past the kill.
-	if in.RequestsAfter <= in.RequestsBefore {
-		violate("the client completed no request after the kill (%d, then %d)", in.RequestsBefore, in.RequestsAfter)
+	switch {
+	case in.RequestsAtStop < 0 || in.RequestsLater < 0:
+		violate("the client's request counter was unavailable after the kill (%d, then %d)", in.RequestsAtStop, in.RequestsLater)
+	case in.RequestsLater <= in.RequestsAtStop:
+		violate("the client completed no request after the helper stopped (%d, then %d)", in.RequestsAtStop, in.RequestsLater)
 	}
 	// Records before the kill: the snapshot is whole records the parser read.
 	if o.SnapshotRecords == 0 {
@@ -231,4 +236,37 @@ func observeCaptureKill(in captureKillInput) (captureKillObservation, error) {
 		violate("the caller's target changed (report %s, caller check %t)", r.Target, in.TargetUnchanged)
 	}
 	return o, nil
+}
+
+// captureCounterBaseline reads a counter that can be momentarily unreadable
+// (the writer truncates it on every update): it retries up to attempts reads
+// and returns -1 when none is valid.
+func captureCounterBaseline(read func() int, attempts int, wait func()) int {
+	for i := 0; i < attempts; i++ {
+		if n := read(); n >= 0 {
+			return n
+		}
+		wait()
+	}
+	return -1
+}
+
+// captureCounterAfter polls up to attempts reads for a value above base and
+// returns it, or the last valid read (or -1) when there was none. An
+// unavailable base is never compared.
+func captureCounterAfter(read func() int, base, attempts int, wait func()) int {
+	last := -1
+	if base < 0 {
+		return last
+	}
+	for i := 0; i < attempts; i++ {
+		if n := read(); n >= 0 {
+			last = n
+			if n > base {
+				return n
+			}
+		}
+		wait()
+	}
+	return last
 }

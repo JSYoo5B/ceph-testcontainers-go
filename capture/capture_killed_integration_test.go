@@ -264,7 +264,6 @@ func TestCaptureKilledHelperObservation(t *testing.T) {
 
 	// Kill the helper, not the target: SIGKILL gives tcpdump no chance to
 	// flush or print statistics.
-	input.RequestsBefore = killedCaptureRequests(ctx, client)
 	state, err := docker.ContainerInspect(ctx, helperID, mobycl.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -289,9 +288,12 @@ func TestCaptureKilledHelperObservation(t *testing.T) {
 	}
 	input.HelperRunningAfterKill, input.HelperExitCode = killed.Running, killed.ExitCode
 	t.Logf("helper after SIGKILL: exit %d, oom-killed %t, engine error %q, finished %s", killed.ExitCode, killed.OOMKilled, killed.Error, killed.FinishedAt)
-	// The client's loop keeps going past the kill: the traffic was in flight.
-	time.Sleep(time.Second)
-	input.RequestsAfter = killedCaptureRequests(ctx, client)
+	// The baseline is taken only now, with the helper confirmed stopped; the
+	// traffic was in flight if the client's counter then still increases.
+	read := func() int { return killedCaptureRequests(ctx, client) }
+	wait := func() { time.Sleep(100 * time.Millisecond) }
+	input.RequestsAtStop = captureCounterBaseline(read, 50, wait)
+	input.RequestsLater = captureCounterAfter(read, input.RequestsAtStop, 300, wait)
 
 	report, stopErr := session.Stop(ctx)
 	data, _ := json.MarshalIndent(report, "", "  ")

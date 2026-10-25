@@ -118,7 +118,7 @@ func killedFixtureInput(final []byte) captureKillInput {
 	return captureKillInput{
 		Report: killedFixtureReport(final), Retrieved: final, Snapshot: snapshot,
 		HelperRunningBeforeKill: true, HelperRunningAfterKill: false, HelperExitCode: 137,
-		RequestsBefore: 10, RequestsAfter: 13, TargetUnchanged: true, Limits: killedFixtureLimits,
+		RequestsAtStop: 10, RequestsLater: 13, TargetUnchanged: true, Limits: killedFixtureLimits,
 	}
 }
 
@@ -183,7 +183,9 @@ func TestObserveCaptureKillNamesEveryBrokenInvariant(t *testing.T) {
 		{"helper not running at the kill", func(in *captureKillInput) { in.HelperRunningBeforeKill = false }, "not running when the kill"},
 		{"helper still running", func(in *captureKillInput) { in.HelperRunningAfterKill = true }, "still ran after the kill"},
 		{"exit status zero", func(in *captureKillInput) { in.HelperExitCode = 0; in.Report.ExitCode = 0 }, "exit status 0"},
-		{"no traffic after the kill", func(in *captureKillInput) { in.RequestsAfter = in.RequestsBefore }, "no request after the kill"},
+		{"no traffic after the helper stopped", func(in *captureKillInput) { in.RequestsLater = in.RequestsAtStop }, "no request after the helper stopped"},
+		{"unavailable baseline", func(in *captureKillInput) { in.RequestsAtStop = -1 }, "counter was unavailable"},
+		{"unavailable later read", func(in *captureKillInput) { in.RequestsLater = -1 }, "counter was unavailable"},
 		{"no record before the kill", func(in *captureKillInput) { in.Snapshot = in.Retrieved[:24] }, "no complete record"},
 		{"snapshot not a prefix", func(in *captureKillInput) { in.Snapshot = slices.Clone(in.Snapshot); in.Snapshot[30] ^= 0xff }, "not a prefix of the retrieved"},
 		{"not a pcap", func(in *captureKillInput) {
@@ -212,5 +214,52 @@ func TestObserveCaptureKillNamesEveryBrokenInvariant(t *testing.T) {
 				t.Fatalf("violations %q do not name %q", o.Violations, test.want)
 			}
 		})
+	}
+}
+
+func counterReader(values ...int) (read func() int, reads *int) {
+	reads = new(int)
+	return func() int {
+		n := values[min(*reads, len(values)-1)]
+		*reads++
+		return n
+	}, reads
+}
+
+func TestCaptureCounterBaselineRetriesEmptyReadsAndRefusesUnavailable(t *testing.T) {
+	noWait := func() {}
+	read, _ := counterReader(-1, -1, 7)
+	if got := captureCounterBaseline(read, 5, noWait); got != 7 {
+		t.Fatalf("baseline %d after transient empty reads", got)
+	}
+	read, reads := counterReader(-1)
+	if got := captureCounterBaseline(read, 5, noWait); got != -1 || *reads != 5 {
+		t.Fatalf("baseline %d after %d reads of an unavailable counter", got, *reads)
+	}
+}
+
+func TestCaptureCounterAfterNeedsALaterIncrement(t *testing.T) {
+	noWait := func() {}
+	read, _ := counterReader(10, 10, -1, 11)
+	if got := captureCounterAfter(read, 10, 6, noWait); got != 11 {
+		t.Fatalf("later %d", got)
+	}
+	// Progress confined to the interval before the baseline: the counter
+	// never rises above it, and the result is refused by the observation.
+	read, reads := counterReader(10)
+	later := captureCounterAfter(read, 10, 4, noWait)
+	if later != 10 || *reads != 4 {
+		t.Fatalf("later %d after %d reads", later, *reads)
+	}
+	input := killedFixtureInput(killedFixtureFile(60, 40, 96))
+	input.RequestsAtStop, input.RequestsLater = 10, later
+	o, err := observeCaptureKill(input)
+	if err != nil || len(o.Violations) != 1 || !strings.Contains(o.Violations[0], "no request after the helper stopped") {
+		t.Fatalf("%+v, %v", o.Violations, err)
+	}
+	// An unavailable baseline is never compared.
+	read, reads = counterReader(50)
+	if got := captureCounterAfter(read, -1, 4, noWait); got != -1 || *reads != 0 {
+		t.Fatalf("later %d after %d reads against an unavailable baseline", got, *reads)
 	}
 }
