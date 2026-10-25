@@ -1,6 +1,7 @@
 package debugoverhead_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strconv"
 	"time"
 
 	mobycl "github.com/moby/moby/client"
@@ -24,40 +26,113 @@ func (g containerGeneration) valid() bool { return g.ID != "" && g.StartedAt != 
 
 type debugOverheadSample struct {
 	Generation containerGeneration `json:"generation"`
-	Read       time.Time           `json:"read"`
-	CPUNanos   uint64              `json:"cpu_total_usage_ns"`
-	Memory     uint64              `json:"memory_usage_bytes"`
+	// StatsIdentity distinguishes an ID supplied by the response from a
+	// one-shot response bound only by the addressed, twice-inspected endpoint.
+	StatsIdentity string    `json:"stats_identity"`
+	Read          time.Time `json:"read"`
+	CPUNanos      uint64    `json:"cpu_total_usage_ns"`
+	Memory        uint64    `json:"memory_usage_bytes"`
 }
 
 // parseDebugOverheadSample keeps absolute Docker counters, not docker stats'
 // CPU percentage or a guessed process RSS. Missing counters are not zeroes.
+// Moby 28's one-shot GetContainerStats path can omit id; sampleDebugOverhead
+// binds that response to the addressed container and checks its generation
+// before and after the request. An ID that is present must still match.
 func parseDebugOverheadSample(gen containerGeneration, body []byte) (debugOverheadSample, error) {
-	var raw struct {
-		ID   string `json:"id"`
-		Read string `json:"read"`
-		CPU  struct {
-			Usage struct {
-				Total *uint64 `json:"total_usage"`
-			} `json:"cpu_usage"`
-		} `json:"cpu_stats"`
-		Memory struct {
-			Usage *uint64 `json:"usage"`
-		} `json:"memory_stats"`
+	fields := debugOverheadFields{JSON: "invalid", Generation: "incomplete", ResponseID: "unknown", Read: "unknown", CPU: "unknown", Memory: "unknown"}
+	if gen.valid() {
+		fields.Generation = "complete"
 	}
-	if !gen.valid() || json.Unmarshal(body, &raw) != nil {
-		return debugOverheadSample{}, errors.New("invalid debug accounting generation or JSON")
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(body, &raw) != nil || raw == nil {
+		return debugOverheadSample{}, fields.refusal()
 	}
-	if raw.ID != gen.ID || raw.Read == "" {
-		return debugOverheadSample{}, errors.New("debug accounting identity or timestamp unavailable")
+	fields.JSON = "valid"
+	responseID, idState := debugOverheadString(raw, "id")
+	fields.ResponseID = idState
+	if idState == "valid" {
+		switch {
+		case responseID == "":
+			fields.ResponseID = "empty"
+		case responseID != gen.ID:
+			fields.ResponseID = "contradictory"
+		default:
+			fields.ResponseID = "matched"
+		}
 	}
-	read, err := time.Parse(time.RFC3339Nano, raw.Read)
-	if err != nil || read.Year() < 2000 {
-		return debugOverheadSample{}, errors.New("invalid debug accounting timestamp")
+	stamp, readState := debugOverheadString(raw, "read")
+	fields.Read = readState
+	read, err := time.Parse(time.RFC3339Nano, stamp)
+	if readState == "valid" && (err != nil || read.Year() < 2000) {
+		fields.Read = "invalid"
 	}
-	if raw.CPU.Usage.Total == nil || raw.Memory.Usage == nil || *raw.Memory.Usage > math.MaxInt64 {
-		return debugOverheadSample{}, errors.New("debug accounting CPU or memory counter unavailable")
+	cpu, cpuState := debugOverheadCounter(raw, "cpu_stats", "cpu_usage", "total_usage")
+	memory, memoryState := debugOverheadCounter(raw, "memory_stats", "usage")
+	fields.CPU, fields.Memory = cpuState, memoryState
+	if memoryState == "valid" && memory > math.MaxInt64 {
+		fields.Memory = "out_of_range"
 	}
-	return debugOverheadSample{gen, read, *raw.CPU.Usage.Total, *raw.Memory.Usage}, nil
+	if !gen.valid() || (fields.ResponseID != "missing" && fields.ResponseID != "matched") || fields.Read != "valid" || fields.CPU != "valid" || fields.Memory != "valid" {
+		return debugOverheadSample{}, fields.refusal()
+	}
+	identity := "endpoint-generation"
+	if fields.ResponseID == "matched" {
+		identity = "response-and-endpoint-generation"
+	}
+	return debugOverheadSample{Generation: gen, StatsIdentity: identity, Read: read, CPUNanos: cpu, Memory: memory}, nil
+}
+
+// Refusals retain only fixed field states, never raw JSON, IDs, invalid time
+// text or unknown response fields. This keeps failure evidence bounded and
+// allowlisted even when a malformed response contains sensitive data.
+type debugOverheadFields struct {
+	JSON, Generation, ResponseID, Read, CPU, Memory string
+}
+
+func (f debugOverheadFields) refusal() error {
+	return fmt.Errorf("debug accounting refused: json=%s generation=%s response_id=%s read=%s cpu_total_usage=%s memory_usage=%s", f.JSON, f.Generation, f.ResponseID, f.Read, f.CPU, f.Memory)
+}
+
+func debugOverheadString(raw map[string]json.RawMessage, name string) (string, string) {
+	data, ok := raw[name]
+	if !ok {
+		return "", "missing"
+	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return "", "null"
+	}
+	var value string
+	if json.Unmarshal(data, &value) != nil {
+		return "", "invalid"
+	}
+	return value, "valid"
+}
+
+func debugOverheadCounter(raw map[string]json.RawMessage, path ...string) (uint64, string) {
+	for i, name := range path {
+		data, ok := raw[name]
+		if !ok {
+			return 0, "missing"
+		}
+		data = bytes.TrimSpace(data)
+		if bytes.Equal(data, []byte("null")) {
+			return 0, "null"
+		}
+		if i == len(path)-1 {
+			value, err := strconv.ParseUint(string(data), 10, 64)
+			if err != nil {
+				return 0, "invalid"
+			}
+			return value, "valid"
+		}
+		var next map[string]json.RawMessage
+		if json.Unmarshal(data, &next) != nil || next == nil {
+			return 0, "invalid"
+		}
+		raw = next
+	}
+	return 0, "missing"
 }
 
 func debugOverheadDelta(before, after debugOverheadSample) (uint64, int64, error) {

@@ -73,10 +73,22 @@ cleanup failure is not a successful completed measurement.
 | `before/after.memory_usage_bytes`, `memory_usage_delta_bytes` | Two Docker memory-usage endpoints, including cache/accounting effects. Signed delta; not peak memory, heap/RSS, or a recent-ring-only measurement. |
 | `docker_log_payload_bytes` | Stdout/stderr payload bytes selected by engine-clock start/end, without Docker framing/timestamps, at most 16 MiB per arm. Other backends are not included. |
 
-The target must use unrotated `json-file` logs. Invalid/truncated/over-limit
-streams, missing counters, CPU rollback, nonadvancing sample time, restart or
-replacement refuse comparison. An observed zero remains distinct from missing
-input. The receipt records the effective file/stderr/syslog/journal backend
+The target must use unrotated `json-file` logs. The pinned client requests one-shot
+non-streaming Docker stats from the selected container ID. The sampler inspects
+that endpoint's ID, start time and running/unpaused state before and after the
+stats call. A response `id`, when supplied, must match; a one-shot response that
+omits it remains bound by those endpoint/generation inspections. The sample's
+`stats_identity` records whether a matching response ID was also supplied.
+Moby 28.0.4's [direct one-shot path](https://github.com/moby/moby/blob/v28.0.4/daemon/stats.go#L39-L53)
+encodes the [Linux stats constructor](https://github.com/moby/moby/blob/v28.0.4/daemon/stats_unix.go#L47-L49)
+without the ID assignment performed by its other collection path.
+An explicit null, empty, mistyped or contradictory response ID is refused.
+Invalid/truncated/over-limit streams, missing counters, CPU rollback,
+nonadvancing sample time, restart or replacement refuse comparison. An observed
+zero remains distinct from missing input. Parse refusals report bounded,
+allowlisted field states for JSON, generation, response ID, read time, CPU and
+memory, without retaining the raw body, IDs or invalid field text. The receipt
+records the effective file/stderr/syslog/journal backend
 switches and `log_max_new`/`log_max_recent` values. This reports the current
 bounded recent-ring policy; it does not modify or clear it.
 

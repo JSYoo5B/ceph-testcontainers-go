@@ -22,6 +22,9 @@ change the API.
   output using `0/0`, `0/20` and `20/20` windows on one OSD generation. Three
   cyclic trials retain independent native latency, container CPU/memory and
   bounded Docker log-byte observations plus verified per-arm restoration.
+  One-shot stats may omit a response ID while the addressed endpoint remains
+  fenced by generation inspections; contradictory identity is still refused,
+  and invalid selected fields have bounded allowlisted failure diagnostics.
   This is measurement tooling, not recommended logging levels or a negligible
   overhead claim. See `docs/research/osd-debug-overhead.md`.
 - `ceph.Finalization.Capture` registers a packet capture (`ceph.CaptureSettler`,
