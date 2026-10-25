@@ -18,6 +18,12 @@ change the API.
 
 ### Added
 
+- A retained libcephfs client observes a live directory file-count quota,
+  receives `EDQUOT` for one create at the limit, then creates and fsyncs the
+  known file after relaxation. Independent clients verify absence and exact
+  bytes; quota restoration precedes teardown. Metrics, reclaim and byte quota
+  coverage remain explicit gaps.
+
 - `ceph.Finalization.Capture` registers a packet capture (`ceph.CaptureSettler`,
   implemented by `capture.Session` through `Settle` and `SettlementAllowance`)
   that the finalization settles after the checks and before the failure archive

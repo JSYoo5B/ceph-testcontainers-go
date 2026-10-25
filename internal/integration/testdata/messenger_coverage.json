@@ -974,11 +974,17 @@
         "CEPH_MSG_CLIENT_RECLAIM_REPLY",
         "CEPH_FEATURE_MDS_QUOTA"
       ],
-      "status": "uncovered",
-      "evidence": "none",
-      "cases": [],
-      "gap": "No recipe sets a quota against a live client or records client metrics or reclaim.",
-      "owner": "#5"
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSLiveQuota",
+          "receipt": "CEPHFS_LIVE_QUOTA_RECEIPT",
+          "asserts": "one retained libcephfs client and fd observe directory max_files at its recursive entry count then EDQUOT, one additional slot then one successful create; independent clients verify absent/created files and known bytes before quota restoration"
+        }
+      ],
+      "gap": "Only live directory max_files enforcement and relaxation are exercised. Byte quotas, client metrics and session reclaim have no recipe; no quota wire-message or consumer implementation claim.",
+      "owner": "#60"
     },
     {
       "id": "rbd/image-io",
