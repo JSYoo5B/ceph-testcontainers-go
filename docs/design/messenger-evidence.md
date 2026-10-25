@@ -159,10 +159,13 @@ compile/native binary and build key, checked-out source file hashes, and the
 case's embedded source snapshot. Each accepted case's exact selector must also
 belong to the validated nonempty, unique compiled test inventory. Native receipt
 completion and any strict-completion check must pass without errors; the exit
-code must be zero, timeout must be false, and the terminal classification must be
-`passed`. The producer always records `strict_completion` (null when no checker
-is required); missing terminal fields are not successful evidence. A valid retained
-log cannot override contradictory native metadata. The expected release, platform and immutable
+code must be zero and the terminal classification must be `passed`. The native
+`run_profile` producer does not emit `timed_out`; its authoritative completion,
+exit code and classification establish termination. If a producer explicitly
+supplies `timed_out`, only boolean false is accepted. The producer always records
+`strict_completion` (null when no checker is required); missing authoritative
+terminal fields are not successful evidence. A valid retained log cannot override
+contradictory native metadata. The expected release, platform and immutable
 image set come from the independently saved **pre-native image preparation**
 summary; they are never reconstructed from a case receipt. The compiled Go
 platform and prepared image platforms must agree. The history execution key,

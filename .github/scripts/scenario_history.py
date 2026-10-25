@@ -232,7 +232,7 @@ def messenger_history(row, compiled, native, log, prepared, root=None):
         strict = native.get("strict_completion")
         need(native.get("passed") is True and native.get("classification") == "passed"
              and type(native.get("exit_code")) is int and native["exit_code"] == 0
-             and native.get("timed_out") is False
+             and ("timed_out" not in native or native["timed_out"] is False)
              and isinstance(completion, dict) and completion.get("passed") is True
              and completion.get("errors") == []
              and "strict_completion" in native

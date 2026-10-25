@@ -85,7 +85,6 @@ class Job:
         write(self.scenario / "native/native.log", log)
         write(self.scenario / "native/report.json", {
             "profile": PROFILE, "network": "", "exit_code": 0 if passed else 1, "elapsed_seconds": elapsed,
-            "timed_out": False,
             "completion": {"passed": passed, "errors": [] if passed else ["native log contains failed tests"]},
             "strict_completion": None, "classification": classification, "passed": passed,
             "binary": {"sha256": "d" * 64}})
@@ -203,7 +202,7 @@ class MessengerHistoryTest(unittest.TestCase):
             {"completion": {"passed": True, "errors": ["contradictory error"]}},
             {"completion": {}},
             {"exit_code": 1}, {"exit_code": None}, {"exit_code": False},
-            {"timed_out": True}, {"timed_out": None},
+            {"timed_out": True}, {"timed_out": None}, {"timed_out": 0}, {"timed_out": "false"},
             {"classification": "native-test-failure"},
             {"strict_completion": {"passed": False, "errors": ["missing selected test"]}},
             {"strict_completion": {"passed": True, "errors": ["contradictory error"]}},
@@ -220,7 +219,7 @@ class MessengerHistoryTest(unittest.TestCase):
                 self.assertEqual(row["messenger"]["report"]["native_cases"], [])
 
     def test_missing_terminal_metadata_refuses_but_valid_strict_completion_accepts(self):
-        for field in ("completion", "exit_code", "timed_out", "classification", "strict_completion"):
+        for field in ("completion", "exit_code", "classification", "strict_completion"):
             with self.subTest(field=field):
                 report = {name: value for name, value in self.native.items() if name != field}
                 write(self.job.scenario / "native/report.json", report)
@@ -229,6 +228,46 @@ class MessengerHistoryTest(unittest.TestCase):
                 self.assertEqual(row["messenger"]["status"], "invalid")
         write(self.job.scenario / "native/report.json",
               self.native | {"strict_completion": {"passed": True, "errors": []}})
+        self.assertEqual(self.row()["messenger"]["status"], "accepted")
+
+    def test_real_run_profile_report_without_timeout_field_is_accepted(self):
+        # Keep the actual report constructor, completion checker and terminal
+        # classifier. Only native process execution and its binary-admission
+        # boundary are stubbed; the consumer must not invent producer fields.
+        engine = history.tag_scenarios
+        profile = PROFILE | {"timeout": "20m"}
+        case = self.case_fixture.case
+        source = self.case_fixture.bindings["targeted-command/native-identities"]["source"]
+        catalog = [{"path": source, "sha256": self.compiled["binary"]["sources"][source],
+                    "constraint": {"op": "tag", "tag": "ci"}, "tests": [case]}]
+        root = self.job.root / "producer"
+        root.mkdir()
+        (root / "go.mod").write_text("module " + history.messenger_evidence.PACKAGE.rsplit("/internal/", 1)[0] + "\n")
+        log = self.log
+
+        class Child:
+            def __init__(self, *args, **kwargs):
+                self.stdout = io.StringIO(log)
+
+            def wait(self):
+                return 0
+
+        with mock.patch.object(engine, "verified_binary", return_value=(root / "fixture.test", self.compiled["binary"])), \
+             mock.patch.object(engine.subprocess, "Popen", Child), contextlib.redirect_stdout(io.StringIO()):
+            report = engine.run_profile(catalog, {"include": [profile]}, profile["category"], profile["batch"],
+                                        profile["package"], root / "native", root, binary=root / "compile")
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["completion"]["passed"])
+        self.assertIsNone(report["strict_completion"])
+        self.assertNotIn("timed_out", report)
+        write(self.job.scenario / "native/report.json", report)
+        self.assertEqual(self.row()["messenger"]["status"], "accepted")
+        # Optional explicit metadata from another producer remains conservative.
+        for timed_out in (True, None, 0, "false"):
+            with self.subTest(timed_out=timed_out):
+                write(self.job.scenario / "native/report.json", report | {"timed_out": timed_out})
+                self.assertEqual(self.row()["messenger"]["status"], "invalid")
+        write(self.job.scenario / "native/report.json", report | {"timed_out": False})
         self.assertEqual(self.row()["messenger"]["status"], "accepted")
 
     def test_phase_failures_never_accept_case(self):
