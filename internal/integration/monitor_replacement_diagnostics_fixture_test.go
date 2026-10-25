@@ -719,8 +719,8 @@ func TestMonReplacementCollectionReturnsWhileTopologyIsHeld(t *testing.T) {
 	real := holdTopology(t)
 	r := fakeMDS(f, newMonReplacementRecorder("source", heldTopologyMonCluster{f, real}, heldTopologyBounds))
 	r.Debug = []monReplacementDebug{
-		{Daemon: "mgr.x", StartedAt: "t0", Prior: "1/5", Set: true},
-		{Daemon: "mds.fs-a", StartedAt: "t0", Prior: "1/5", Set: true},
+		{Daemon: "mgr.x", StartedAt: "t0", Prior: "1/5", Set: true, Requested: monReplacementDebugLevel},
+		{Daemon: "mds.fs-a", StartedAt: "t0", Prior: "1/5", Set: true, Requested: monReplacementDebugLevel},
 	}
 	f.debug["mgr.x"], f.debug["mds.fs-a"] = monReplacementDebugLevel, monReplacementDebugLevel
 	failed := monReplacementPhase{Seq: 1, Name: "add d", Error: "join monitor d to quorum: context deadline exceeded", Handle: "mon.d"}
