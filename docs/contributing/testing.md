@@ -77,10 +77,12 @@ build tag, so it also checks the integration and go-ceph files, and the Code
 checks workflow runs the same version.
 
 `make test`, `make race` and `make vet` see only untagged files.
-`make tag-compile` builds the test packages with `-tags=all` and with
-`-tags=all,goceph,native_regression` and runs nothing (`-run '^$'`), so every
-integration file is at least compiled. It compiles all files together, so it
-cannot catch a helper that only another CI batch compiles. Use
+`make tag-compile` first compiles `internal/integration` with only `integration`,
+so shared helpers cannot accidentally require an unrelated capability tag.
+It also builds the module's `all` union, its consumer/native-regression/role
+union and its `all,cephfs_fuse` union. Every command runs nothing (`-run '^$'`):
+compilation does not establish native execution. These projections still cannot
+check every individual CI batch's helper dependencies. Use
 `plan --verify` for that (see
 [Verify batch profiles before pushing](#verify-batch-profiles-before-pushing)).
 
