@@ -288,11 +288,12 @@ func TestRadosMutationCheckpointCompleteAndBounded(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			copy := *run.checkpoint
 			copy.Events = append([]json.RawMessage(nil), copy.Events...)
-			if change == "loss count" {
+			switch change {
+			case "loss count":
 				copy.Dropped++
-			} else if change == "mutation missing" {
+			case "mutation missing":
 				copy.Mutations = copy.Mutations[:2]
-			} else {
+			default:
 				var event map[string]any
 				if err := json.Unmarshal(copy.Events[0], &event); err != nil {
 					t.Fatal(err)
