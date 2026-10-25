@@ -26,17 +26,20 @@ type CaptureSettler interface {
 }
 
 type finalizationCapture struct {
-	name    string
-	session CaptureSettler
+	name      string
+	session   CaptureSettler
+	fileLimit int64
 }
 
 // finalizationCaptureReport is a settled capture's report, kept for the
 // archive.
 type finalizationCaptureReport struct {
 	// sequence is the capture's registration order, from one.
-	sequence int
-	name     string
-	report   any
+	sequence  int
+	name      string
+	report    any
+	source    CaptureFileSource
+	fileLimit int64
 }
 
 // Capture registers a packet capture that the finalization settles after the
@@ -92,9 +95,9 @@ func (f *Finalization) settleCaptures(run *finalizationRun, captures []finalizat
 		}})
 		cancel()
 		mu.Lock()
-		if reported {
+		if reported || capture.fileLimit > 0 {
 			f.mu.Lock()
-			f.captureReports = append(f.captureReports, finalizationCaptureReport{sequence: i + 1, name: capture.name, report: report})
+			f.captureReports = append(f.captureReports, finalizationCaptureReport{sequence: i + 1, name: capture.name, report: report, source: captureFileSource(capture), fileLimit: capture.fileLimit})
 			f.mu.Unlock()
 		}
 		run.manifest.Captures = append(run.manifest.Captures, finalizationCaptureOutcome{

@@ -5300,3 +5300,18 @@ The cluster owns partial/successful toolkit teardown. RBD/CephFS operations,
 sockets and process observations stay on their daemon. ClientConfig and
 WithClientIdentity keep identity/credential ownership; a separate public
 client lifecycle type is unnecessary.
+
+### Copying a capture file explicitly
+
+```golang
+func (f *Finalization) CaptureWithFile(name string, session CaptureFileSource, maxBytes int64)
+```
+
+This is the raw-packet consent form of `Capture`. Settlement and metadata
+handling are identical; only a failure archive opens and verifies the selected
+file. See [capture file retention](capture.md#raw-files-in-a-failure-archive)
+for byte/count budgets, identity checks, privacy and retention outcomes.
+`CaptureFileSource` embeds `CaptureSettler` and provides
+`CaptureFile(context.Context) (io.ReadCloser, int64, string, error)` for a
+read-only finalized file with its frozen retrieved byte count and full SHA256.
+It must honor context and leave the caller's original file untouched.

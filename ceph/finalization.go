@@ -410,6 +410,7 @@ func (f *Finalization) archive(run *finalizationRun, phase string) {
 	for _, report := range captureReports {
 		m.Files = append(m.Files, f.writeReport(directory, captureReportFile(report.sequence, report.name), report.report))
 	}
+	f.archiveCaptureFiles(ctx, directory, captureReports, m)
 	m.Archive.FinishedAt = f.now()
 	m.Archive.Complete = true
 	for _, collector := range m.Collectors {
@@ -555,6 +556,7 @@ type finalizationManifest struct {
 	Archive       finalizationArchive          `json:"archive"`
 	Collectors    []finalizationCollector      `json:"collectors"`
 	Files         []finalizationFile           `json:"files"`
+	CaptureFiles  []finalizationCaptureFile    `json:"capture_files,omitempty"`
 	Cleanups      []finalizationOutcome        `json:"cleanups"`
 	// DebugWindows are the registered debug level windows, one per
 	// registration, each with an archive-phase and a final receipt copy.

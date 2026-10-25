@@ -146,3 +146,49 @@ which is snaplen truncation, not a malformed file. `SHA256` covers exactly
 The report carries JSON field tags for delivery. A pcap holds payloads,
 addresses and identifiers; text and JSON redaction do not sanitize it, so
 keep capture files only where the caller deliberately selects them.
+
+## Raw files in a failure archive
+
+`Finalization.Capture` keeps metadata only. For deliberate retention of raw
+packet payloads and endpoint identifiers, register the session with
+`Finalization.CaptureWithFile("traffic", session, maxBytes)` instead. The
+original capture file remains caller-owned. This is consent to raw inclusion
+in that failure archive; JSON/text redaction does not sanitize its bytes.
+Choose the archive's storage and upload audience accordingly. The SDK does
+not upload anything.
+
+`Session.CaptureFile(ctx)` implements `ceph.CaptureFileSource`: after settlement
+it opens the original regular file read-only and returns its complete retrieved
+size and SHA256. It never starts/stops the capture. `Report.RetrievedSHA256`
+identifies all delivered bytes, independently of `File.SHA256`, which may
+identify only the structurally checked prefix. A malformed or cut-tail pcap
+can therefore still be retained byte-for-byte; that does not turn its
+structural verdict into valid or its observation into complete.
+
+Raw copying happens only for a failure archive. A known workload/check/capture
+failure copies after settlement and before caller cleanup. If cleanup produces
+the first failure, the archive runs afterward; a source removed by that cleanup
+is unavailable, not silently recovered. Keep the source file and its directory
+available until finalization returns. In particular, a `t.TempDir` cleanup
+registered after `TerminateOnCleanup` runs first: create that directory before
+registering finalization, or use `t.ArtifactDir` for its lifetime. Passing runs
+never open the source. Each selected `maxBytes`
+is positive and at most 64 MiB; each finalization admits at most 16 raw files
+and 64 MiB of attempted copy bytes together. Oversized files are omitted,
+never silently truncated. Copies share `ArchiveTimeout`, check cancellation
+between chunks and wait for filesystem operations to return; a blocked local
+filesystem call can outlast the deadline. No copying goroutine is abandoned
+while cleanup removes a target. Custom `CaptureFileSource` implementations
+must honor the context in their opener/reader and preserve their frozen
+size/hash descriptor.
+
+The archive verifies EOF, exact size and full SHA256 before publishing a
+private temporary file by rename as `capture-<registration>-<name>.pcap`.
+Failed/unverified temporary copies are removed. Registration numbers keep
+same-name sessions distinct. The manifest's `capture_files` separates the
+expected identity, attempted copy bytes/hash, successful copy and bounded
+failure reason; source host paths and arbitrary reader errors are omitted.
+Metadata is kept even if copying fails, and cleanup/termination continue.
+Archive `retained`, successful copy and any subsequent upload remain separate
+outcomes. Symlink/nonregular sources are refused, and mutation after retrieval
+causes size/hash verification to fail rather than accepting a new identity.

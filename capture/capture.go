@@ -12,6 +12,7 @@ package capture
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -297,6 +298,9 @@ type Report struct {
 	Output         string `json:"output"`
 	Retrieved      bool   `json:"retrieved"`
 	RetrievedBytes int64  `json:"retrieved_bytes"`
+	// RetrievedSHA256 identifies all bytes successfully delivered to Output,
+	// independently of the structural check's possibly shorter prefix.
+	RetrievedSHA256 string `json:"retrieved_sha256,omitempty"`
 	// File is the structural check of Output; its Status is empty when
 	// nothing was retrieved.
 	File FileReport `json:"file"`
@@ -751,7 +755,8 @@ func (s *Session) retrieve(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(fmt.Errorf("open the capture output: %w", err), content.Close())
 	}
-	written, copyErr := io.Copy(output, io.LimitReader(content, s.report.MaxBytes))
+	digest := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(content, s.report.MaxBytes))
 	// One byte past the bound only shows that the helper's file is larger;
 	// it is passed to the check but not kept.
 	var beyond []byte
@@ -768,6 +773,7 @@ func (s *Session) retrieve(ctx context.Context) error {
 		return fmt.Errorf("%w: retrieve the capture file: %w", ErrFailed, err)
 	}
 	s.report.Retrieved = true
+	s.report.RetrievedSHA256 = fmt.Sprintf("%x", digest.Sum(nil))
 	delivered, err := os.Open(s.request.Output)
 	if err != nil {
 		return fmt.Errorf("check the capture file: %w", err)
