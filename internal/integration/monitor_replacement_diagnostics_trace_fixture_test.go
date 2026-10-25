@@ -129,11 +129,15 @@ func TestMonReplacementTraceBounds(t *testing.T) {
 	t.Run("total input budget", func(t *testing.T) {
 		// Every individual line fits the scanner, but the stream exceeds its
 		// independent finite byte budget before a later authentication result.
-		input := strings.Repeat(strings.Repeat("x", 1023)+"\n", monReplacementTraceInputBytes/1024+1) + "auth result=-13\n"
+		const lineBytes = 64 << 10
+		// Use large valid UTF-8 lines: this is a byte-boundary test, not
+		// a benchmark of case-insensitive ASCII regexp scanning under -race.
+		line := strings.Repeat("😀", (lineBytes-4)/4) + "xxx\n"
+		input := strings.Repeat(line, monReplacementTraceInputBytes/lineBytes+1) + "auth result=-13\n"
 		var trace monReplacementTrace
 		// This is the byte-budget oracle, not the deadline oracle above.
 		// Leave room for race-instrumented scanning of the full 8 MiB.
-		err := readMonReplacementTrace(t.Context(), monTraceText(input), 30*time.Second, &trace)
+		err := readMonReplacementTrace(t.Context(), monTraceText(input), 10*time.Second, &trace)
 		if err == nil || !trace.StreamAborted || trace.Matched != 0 || !strings.Contains(fmt.Sprint(err), "input exceeds") {
 			t.Fatalf("input budget: %+v %v", trace, err)
 		}
