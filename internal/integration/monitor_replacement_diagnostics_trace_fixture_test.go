@@ -131,7 +131,9 @@ func TestMonReplacementTraceBounds(t *testing.T) {
 		// independent finite byte budget before a later authentication result.
 		input := strings.Repeat(strings.Repeat("x", 1023)+"\n", monReplacementTraceInputBytes/1024+1) + "auth result=-13\n"
 		var trace monReplacementTrace
-		err := readMonReplacementTrace(t.Context(), monTraceText(input), 5*time.Second, &trace)
+		// This is the byte-budget oracle, not the deadline oracle above.
+		// Leave room for race-instrumented scanning of the full 8 MiB.
+		err := readMonReplacementTrace(t.Context(), monTraceText(input), 30*time.Second, &trace)
 		if err == nil || !trace.StreamAborted || trace.Matched != 0 || !strings.Contains(fmt.Sprint(err), "input exceeds") {
 			t.Fatalf("input budget: %+v %v", trace, err)
 		}
