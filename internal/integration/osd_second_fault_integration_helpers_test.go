@@ -502,23 +502,40 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 			t.Fatalf("osd.%d stop refused: %v", osd.ID, err)
 		}
 		if erasure && osd == d && reconstructionBase != nil {
-			raw, err := pgQueryRaw(ctx, cluster, pgid)
+			err := ecReconstructionDispatch(ecInstances[osd.ID], func() error {
+				raw, err := pgQueryRaw(ctx, cluster, pgid)
+				if err != nil {
+					return err
+				}
+				sample, err := parsePGProgress(raw)
+				if err != nil {
+					return err
+				}
+				if verdict, why := backfillProgress(*reconstructionBase, sample); verdict != progressReached {
+					return fmt.Errorf("EC destination no longer has observable unfinished progress before Stop: %s: %s", verdict, why)
+				}
+				t.Logf("EC_RECONSTRUCTION_PRE_STOP %.16384s", raw)
+				return nil
+			}, func() ecAdmissionInstance {
+				return ecAdmissionInstanceOf(t, ctx, osd)
+			}, func(admitted ecAdmissionInstance) error {
+				// Only this freshly admitted, post-query observation supplies
+				// the request receipt and ownership of a planned restart.
+				now = secondFaultInstance{Running: admitted.Running, OOMKilled: admitted.OOMKilled, Pid: admitted.Pid, StartedAt: admitted.StartedAt}
+				t.Logf("EC_RECONSTRUCTION_STOP_REQUEST %s", mustAdmissionJSON(t, map[string]any{"osd": osd.ID, "captured": ecInstances[osd.ID], "admitted": admitted}))
+				stopped[osd.ID] = true
+				timeout := 10 * time.Second
+				return osd.Stop(ctx, &timeout)
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			sample, err := parsePGProgress(raw)
-			if err != nil {
+		} else {
+			stopped[osd.ID] = true
+			timeout := 10 * time.Second
+			if err := osd.Stop(ctx, &timeout); err != nil {
 				t.Fatal(err)
 			}
-			if verdict, why := backfillProgress(*reconstructionBase, sample); verdict != progressReached {
-				t.Fatalf("EC destination no longer has observable unfinished progress before Stop: %s: %s", verdict, why)
-			}
-			t.Logf("EC_RECONSTRUCTION_PRE_STOP %.16384s", raw)
-		}
-		stopped[osd.ID] = true
-		timeout := 10 * time.Second
-		if err := osd.Stop(ctx, &timeout); err != nil {
-			t.Fatal(err)
 		}
 		after := secondFaultInstanceOf(t, ctx, osd)
 		if erasure {

@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -57,4 +58,18 @@ func ecReconstructionTarget(base backfillBaseline, original ceph.PGState, missin
 		}
 	}
 	return base.Target == target
+}
+
+// ecReconstructionDispatch owns the actual query -> fresh admission -> dispatch
+// order used by the second EC Stop. A target can exit or change generation while
+// the PG query is in flight, even when that query returns valid progress.
+func ecReconstructionDispatch(captured ecAdmissionInstance, query func() error, inspect func() ecAdmissionInstance, dispatch func(ecAdmissionInstance) error) error {
+	if err := query(); err != nil {
+		return err
+	}
+	admitted := inspect()
+	if err := checkECAdmissionStop(captured, admitted); err != nil {
+		return fmt.Errorf("EC post-query Stop admission refused: %w", err)
+	}
+	return dispatch(admitted)
 }

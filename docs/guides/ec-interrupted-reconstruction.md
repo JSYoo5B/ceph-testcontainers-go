@@ -19,6 +19,11 @@ The observation and engine Stop are separate operations, not atomic interruption
 of a particular object or byte. This is graceful container Stop of a retained
 OSD, not power loss, storage corruption or permanent shard loss.
 
+After the blocking pre-Stop PG query returns, a fresh engine inspection must
+still match the captured CID/PID/start and healthy running/non-OOM state. A prior
+exit, OOM, pause or replacement during that query refuses Stop without acquiring
+planned-restart ownership. `EC_RECONSTRUCTION_STOP_REQUEST` retains this fresh
+post-query admission separately from the resulting stopped-state receipt.
 The original CID/PID/start and running/non-OOM state admit both EC stops; their
 resulting stopped generations are checked independently. Surviving fragment
 positions, primary and advancing map epochs must match the original two
