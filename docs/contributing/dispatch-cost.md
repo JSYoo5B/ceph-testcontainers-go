@@ -23,6 +23,10 @@ run identity is inconclusive, not a complete ledger. `--cache-ledger caches.json
 optionally reads the existing `ci_measurements.py caches` output. Missing cache
 restore/import evidence remains unknown; a supplied restore/import observation
 must have log evidence and belong to this repository/run/attempt/job.
+Every observed cache step needs its own ledger row with the matching step,
+operation and compatible cache kind. A save-only or otherwise partial ledger
+cannot establish a known restore condition; repeated steps require distinct
+rows. Removing an unknown restore row never makes an attempt comparable.
 
 Each identifiable job has exactly one cost bucket. Dispatch association uses
 `dispatch_join`; source/profile/network/immutable-image grouping uses

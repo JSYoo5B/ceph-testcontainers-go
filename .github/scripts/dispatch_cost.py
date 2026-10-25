@@ -116,8 +116,20 @@ def cache_state(job, ledger, repository):
     if not isinstance(steps, list) or any(not isinstance(step, dict) or not isinstance(step.get("name"), str) for step in steps):
         return None
     cache_steps = [step for step in steps if measurements.CACHE_STEP.match(step["name"])]
-    if cache_steps and not relevant:
-        return None
+    # A successful save cannot stand in for a missing restore. Reconcile
+    # each observed operation with its own producer-bound row before reducing
+    # the ledger to a cache condition; duplicate steps consume distinct rows.
+    remaining = list(relevant)
+    for step in cache_steps:
+        name = step["name"]
+        operation = "save" if name.lower().startswith(("save", "post")) else "restore"
+        kind = measurements.step_kind(name)
+        match = next((index for index, row in enumerate(remaining)
+                      if row.get("step") == name and row.get("operation") == operation
+                      and (row.get("kind") == kind or "other" in (kind, row.get("kind")))), None)
+        if match is None:
+            return None
+        remaining.pop(match)
     try:
         return measurements.cache_condition(relevant)
     except (KeyError, TypeError):

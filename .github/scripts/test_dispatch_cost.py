@@ -11,6 +11,7 @@ import dispatch_cost as cost
 import dispatch_join
 import scenario_history
 import tag_scenarios
+from test_ci_measurements import BUILD_KEY, cache_section, log_text
 from test_scenario_history import Job, PROFILE
 
 REPO = "owner/repository"
@@ -132,6 +133,55 @@ class DispatchCostTest(unittest.TestCase):
         self.assertEqual(cost.compare([first, second])["status"], "uncomparable")
         del self.dispatch["networks"]
         self.assertFalse(self.assess()["comparison"]["eligible"])
+
+    def cache_rows(self, *, restore=True):
+        lines = []
+        if restore:
+            lines += cache_section("restore", BUILD_KEY, "~/.cache/go-build",
+                                   "Cache restored from key: " + BUILD_KEY)
+        lines += cache_section("save", BUILD_KEY, "~/.cache/go-build",
+                               "Cache saved with key: " + BUILD_KEY)
+        excerpt, truncated = cost.measurements.cache_excerpt(log_text(*lines))
+        return cost.measurements.cache_ledger([self.run], {str(self.run["id"]): self.jobs},
+            {str(self.jobs[1]["id"]): {"lines": excerpt, "truncated": truncated}}, REPO)
+
+    def test_partial_cache_ledger_cannot_upgrade_missing_restore_evidence(self):
+        self.jobs[1]["steps"][0]["name"] = "Restore the Go build cache"
+        self.jobs[1]["steps"][-1]["name"] = "Save the Go build cache"
+        first = None
+        for attempt in range(2):
+            if attempt:
+                self.second()
+            rows = self.cache_rows(restore=False)
+            self.assertEqual([row["outcome"] for row in rows], ["unknown", "saved"])
+            for ledger in ([], rows, [row for row in rows if row["operation"] == "save"]):
+                report = self.assess(cache_ledger=ledger)
+                self.assertIn("unknown_cache_condition", report["comparison"]["reasons"])
+                if first is not None:
+                    self.assertEqual(cost.compare([first, report])["status"], "uncomparable")
+            first = report
+
+    def test_each_cache_step_requires_its_own_matching_operation(self):
+        self.jobs[1]["steps"][0]["name"] = "Restore the Go build cache"
+        self.jobs[1]["steps"][-1]["name"] = "Save the Go build cache"
+        rows = self.cache_rows()
+        self.assertTrue(self.assess(cache_ledger=rows)["comparison"]["eligible"])
+        for change in ({"step": "Restore another cache"}, {"operation": "save"},
+                       {"kind": "go-module"}, {"evidence_source": "step"}):
+            with self.subTest(change=change):
+                altered = [rows[0] | change, rows[1]]
+                self.assertFalse(self.assess(cache_ledger=altered)["comparison"]["eligible"])
+        self.jobs[1]["steps"][1]["name"] = "Restore the Go build cache"
+        self.assertFalse(self.assess(cache_ledger=rows)["comparison"]["eligible"],
+                         "one row cannot cover two observed operations")
+
+    def test_complete_producer_cache_ledgers_still_compare(self):
+        self.jobs[1]["steps"][0]["name"] = "Restore the Go build cache"
+        self.jobs[1]["steps"][-1]["name"] = "Save the Go build cache"
+        first = self.assess(cache_ledger=self.cache_rows())
+        self.second()
+        second = self.assess(cache_ledger=self.cache_rows())
+        self.assertEqual(cost.compare([first, second])["status"], "matched")
 
     def test_failed_and_cancelled_allocations_retain_cost(self):
         for conclusion in ("failure", "cancelled", "timed_out"):
