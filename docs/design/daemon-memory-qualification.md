@@ -7,7 +7,7 @@ other engines and data durability are separate experiments.
 
 ## Admission and budget
 
-`TestDaemonMemoryQualification` requires a local Unix Docker endpoint on Linux,
+`TestDaemonMemoryQualification` requires a local Unix endpoint for a rootful Docker engine on Linux,
 cgroup v2 memory/swap support, readable host process and target-local cgroup
 identities/counters, permission to read the target PID1 executable, and at least
 4 GiB currently available runner memory.
@@ -67,7 +67,8 @@ go test -tags integration,ci_optional,ci_batch_daemon_oom ./internal/integration
 
 A controller without permission to read the target process is ineligible; a
 local Docker socket alone does not grant that host-process read permission.
-An authorized runner may execute the already compiled test binary with the
+The receipt records the controller EUID. An authorized runner may execute the
+already compiled, checksum-verified test binary with the
 required process-read permissions, without changing host security settings.
 
 Run Docker/native checks on an authorized Linux runner with the shared run lock;

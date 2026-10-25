@@ -26,6 +26,7 @@ func TestDaemonMemoryQualification(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("eligibility: Linux local cgroup-v2 observer required")
 	}
+	t.Logf("DAEMON_MEMORY_CONTROLLER euid=%d local_process_observer=true", os.Geteuid())
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
@@ -39,6 +40,11 @@ func TestDaemonMemoryQualification(t *testing.T) {
 	info, err := docker.Info(ctx, mobycl.InfoOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, option := range info.Info.SecurityOptions {
+		if strings.Contains(option, "rootless") {
+			t.Skip("eligibility: rootful local Docker engine required")
+		}
 	}
 	if info.Info.CgroupVersion != "2" || !info.Info.MemoryLimit || !info.Info.SwapLimit {
 		t.Skip("eligibility: cgroup v2 memory and swap controllers required")
