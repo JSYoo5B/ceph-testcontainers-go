@@ -1,6 +1,8 @@
 package ceph
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"maps"
 	"os"
@@ -40,7 +42,16 @@ func TestAddressFamilyBootstrapRenderingGolden(t *testing.T) {
 					case layout == "separate":
 						pair, ok := subnets[family]
 						if !ok {
-							t.Skip("the family cannot be combined with WithSeparateClusterNetwork")
+							// A cancelled context prevents Docker allocation even if the
+							// admission guard regresses. Require the specific invalid request,
+							// rather than treating cancellation as proof of configuration refusal.
+							ctx, cancel := context.WithCancel(t.Context())
+							cancel()
+							refused, err := Run(ctx, DefaultImage, WithAddressFamily(family), WithSeparateClusterNetwork(), WithMessengerMode(mode))
+							if refused != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "cannot be combined with WithSeparateClusterNetwork") {
+								t.Fatalf("unsupported address-family/layout admission: container=%v error=%v", refused != nil, err)
+							}
+							return
 						}
 						public, cluster = pair[0], pair[1]
 					case family == AddressDualStack:

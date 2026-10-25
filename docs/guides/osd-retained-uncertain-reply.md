@@ -37,3 +37,9 @@ Because this batch targets `./ceph`, its source-owned profile also selects that
 package's ordinary unit tests. Compilation, those unit outcomes, the native
 scenario and cleanup are distinct evidence. The batch requires explicit opt-in
 and is excluded from `all` and ordinary required runtime profiles.
+
+The three unsupported IPv4-mapped/separate-network combinations in the existing
+unit rendering matrix assert public configuration refusal instead of skipping.
+They use an already-cancelled context as a no-Docker guard and require the specific
+invalid-request error. Valid golden files are unchanged. These are unit admission
+controls, not native qualification of that unsupported combination.
