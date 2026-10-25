@@ -155,9 +155,36 @@ The same scenario then covers the negative and partial cases:
   with a nonzero status; otherwise `Stop` ends it.
 
 A pass is evidence only for the runner's engine and architecture
-(`linux/amd64`). A killed capture (`EndKilled`) and a cut-off final record stay
-offline checks: the reference helper always ends within the grace on
-`SIGTERM`.
+(`linux/amd64`). `EndKilled` (the stop grace expired and `Stop` killed the
+helper) and a cut-off final record stay offline checks in this scenario: the
+reference helper always ends within the grace on `SIGTERM`.
+
+### Killed helper observation
+
+`TestCaptureKilledHelperObservation` (`environment` category,
+`packet_capture_killed` batch, in `capture`) records what a real
+capture holds when its helper is killed from outside. It captures the
+requests of a client loop to a caller-owned target, waits for readiness, a
+completed request and 32 KiB of written file, freezes the helper to copy a
+snapshot of the file, unfreezes it and sends `SIGKILL` to that helper while
+the client keeps requesting. It then calls `Stop`, which finds a helper that
+already ended, and runs the existing parser over exactly the delivered bytes
+again, independently of the report. The outcome (end reason, exit status,
+tail shape, record count, byte count, SHA256, statistics with an absent
+counter kept "unknown") is recorded as observed. It asserts only invariants:
+the helper ran before and stopped after the kill with a nonzero engine
+status, the client completed requests after the kill, the snapshot holds
+whole records and is a byte prefix of the delivered file, the delivered bytes
+are a prefix of a valid classic pcap file (a clean end or a cut final record
+header or record data), the report describes those same bytes, the capture is
+not reported as stopped or at the packet limit, the helper is removed and the
+target is unchanged. Docker-free fixtures cover the tail classification and
+every invariant with negative controls.
+
+This is an external `SIGKILL` of the helper, not an `EndKilled` capture. It
+does not show where the cut falls (a clean end is the likely result of
+`tcpdump -U`), that a cut final record occurs, stability across runs,
+`linux/arm64`, other engines or a published helper.
 
 ## Next steps
 
