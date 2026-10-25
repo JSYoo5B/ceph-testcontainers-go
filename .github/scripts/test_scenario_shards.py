@@ -770,6 +770,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             else:
                 tag_sets = [{tag for tag in token.removeprefix("-tags=").split(",")}
                             for command in commands for token in command if token.startswith("-tags=")]
+                self.assertIn({"integration"}, tag_sets)
                 self.assertIn({"all"}, tag_sets)
                 self.assertTrue(any({"all", "goceph", "native_regression", "role_images", "ci_optional"} <= tags for tags in tag_sets))
 
