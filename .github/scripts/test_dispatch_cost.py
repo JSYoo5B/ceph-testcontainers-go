@@ -40,6 +40,10 @@ class DispatchCostTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         fixture = Job(self.temporary.name).passing()
         self.row = fixture.row(repository=REPO, run_id="700", run_attempt="1", job_id="10")
+        self.row["build"]["build_key"].update(package=PROFILE["package"], tags=PROFILE["tags"],
+                                               go_environment=dict(tag_scenarios.GO_EXECUTION_ENV))
+        self.row["build"]["native_build_key"] = copy.deepcopy(self.row["build"]["build_key"])
+        self.rehash()
         self.entry = {"id": PROFILE["id"], "name": "rbd", "category": "recovery", "batch": "rbd",
                       "package": "./internal/integration", "network": "", "tests": "", "repetition": "1",
                       "artifact_suffix": "", "job_timeout": 35}
@@ -97,6 +101,8 @@ class DispatchCostTest(unittest.TestCase):
         self.second()
         for field, edit in (
             ("source", lambda: self.row["source"].update(checkout_tree="f" * 40)),
+            ("compiled source", lambda: self.row["build"].update(sources_sha256="f" * 64)),
+            ("native binding", lambda: self.row["build"].update(native_build_key={})),
             ("image", lambda: self.row["runtime"]["roles"]["control"].update(image_id="sha256:" + "8" * 64)),
             ("network", lambda: self.row["execution_key"].update(network="bridge")),
             ("platform", lambda: self.row["runtime"].update(platform="linux/arm64")),
@@ -111,6 +117,21 @@ class DispatchCostTest(unittest.TestCase):
         report = self.assess()
         self.assertIn("unknown_cache_condition", report["comparison"]["reasons"])
         self.assertEqual(cost.compare([first, report])["status"], "uncomparable")
+
+    def test_foreign_repository_and_missing_dispatch_context_never_match(self):
+        first = self.assess()
+        self.second()
+        self.run["repository"]["full_name"] = "other/repository"
+        self.dispatch["context"]["repository"] = "other/repository"
+        self.row["execution_key"]["repository"] = "other/repository"
+        for job in self.jobs:
+            job["url"] = job["url"].replace(REPO, "other/repository")
+        self.rehash()
+        second = self.assess()
+        self.assertTrue(second["comparison"]["eligible"])
+        self.assertEqual(cost.compare([first, second])["status"], "uncomparable")
+        del self.dispatch["networks"]
+        self.assertFalse(self.assess()["comparison"]["eligible"])
 
     def test_failed_and_cancelled_allocations_retain_cost(self):
         for conclusion in ("failure", "cancelled", "timed_out"):

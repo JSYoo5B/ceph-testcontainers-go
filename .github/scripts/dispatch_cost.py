@@ -93,7 +93,13 @@ def complete_config(identity):
         return False
     key, platform, images = identity.get("build_key"), identity.get("platform"), identity.get("images")
     return (isinstance(identity.get("release"), str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", identity["release"])
-            and isinstance(key, dict) and platform == str(key.get("goos")) + "/" + str(key.get("goarch"))
+            and isinstance(key, dict)
+            and all(isinstance(key.get(name), str) and key[name] and key[name] != scenario_history.MISSING
+                    for name in ("package", "tags", "go_version", "goos", "goarch"))
+            and key["go_version"].startswith("go")
+            and isinstance(key.get("go_environment"), dict) and bool(key["go_environment"])
+            and all(isinstance(name, str) and isinstance(value, str) for name, value in key["go_environment"].items())
+            and platform == str(key.get("goos")) + "/" + str(key.get("goarch"))
             and isinstance(images, dict) and bool(images)
             and all(isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in images.values()))
 
@@ -166,6 +172,21 @@ def assess(dispatch, job_documents, run, receipts=None, caller=None, cache_ledge
         except (ValueError, KeyError, TypeError, AttributeError):
             invalid_rows.append({"path": path, "reason": "incomplete_history_contract"})
     cohorts = measurements.cohorts([run], {run_id: canonical_jobs}, valid_rows, repository)
+    source_stamps = defaultdict(set)
+    for row in valid_rows:
+        key, build, runtime = row["execution_key"], row["build"], row["runtime"]
+        if (key.get("repository") == repository and str(key.get("run_id")) == run_id
+                and str(key.get("run_attempt")) == attempt):
+            stamp = build.get("sources_sha256")
+            bound = (build.get("native_binary") == "matches_compile"
+                     and build.get("build_key") == build.get("native_build_key")
+                     and isinstance(build.get("binary_sha256"), str)
+                     and re.fullmatch(r"[0-9a-f]{64}", build["binary_sha256"])
+                     and build["binary_sha256"] == build.get("native_binary_sha256")
+                     and isinstance(stamp, str) and re.fullmatch(r"[0-9a-f]{64}", stamp)
+                     and all(role.get("platform") == runtime.get("platform")
+                             for role in runtime.get("roles", {}).values() if isinstance(role, dict)))
+            source_stamps[str(key.get("job_id"))].add(stamp if bound else None)
     configs, outcomes = {}, {}
     for config in cohorts["configs"]:
         for sample in config["samples"]:
@@ -201,13 +222,15 @@ def assess(dispatch, job_documents, run, receipts=None, caller=None, cache_ledge
         if record["bucket"] == "matched_passed":
             association = matched.get(pos)
             config = configs.get(identifier)
+            stamps = source_stamps.get(identifier, set())
             if (association is None or association["receipt"]["state"] != "consistent" or not complete_config(config)
+                    or len(stamps) != 1 or None in stamps
                     or config.get("release") != context.get("release")
                     or record["conclusion"] != "success" or job.get("status") != "completed"):
                 reasons.append("incomplete_or_inconsistent_runtime_identity")
             else:
                 entry = entries[association["entry"]["position"]]
-                runtime_identity.append({"entry": entry, "configuration": config,
+                runtime_identity.append({"entry": entry, "configuration": config, "compiled_sources_sha256": next(iter(stamps)),
                                          "cache_condition": cache, "runner_labels": labels})
         elif record["bucket"] == "unmatched_actual" and dispatch_join.leaf(job.get("name", ""))[1] == "Plan":
             if record["conclusion"] != "success" or job.get("status") != "completed":
@@ -225,7 +248,11 @@ def assess(dispatch, job_documents, run, receipts=None, caller=None, cache_ledge
         reasons.append("incomplete_dispatched_execution_set")
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         reasons.append("attempt_not_successful")
-    if not isinstance(run.get("name"), str) or not isinstance(run.get("event"), str):
+    if (not isinstance(run.get("name"), str) or not run["name"]
+            or not isinstance(run.get("event"), str) or not run["event"]
+            or not isinstance(context.get("category"), str) or not context["category"]
+            or dispatch.get("networks") not in ("default", "all")
+            or type(dispatch.get("repetitions")) is not int or dispatch["repetitions"] < 1):
         reasons.append("unknown_workflow_context")
     buckets = {}
     for record in records:
@@ -256,7 +283,7 @@ def assess(dispatch, job_documents, run, receipts=None, caller=None, cache_ledge
     wall = (max(ends) - created).total_seconds() if created is not None and ends and created <= min(ends) else None
     if wall is None:
         reasons.append("unknown_observed_wall")
-    identity = {"workflow": run.get("name"), "event": run.get("event"), "category": context.get("category"),
+    identity = {"repository": repository, "workflow": run.get("name"), "event": run.get("event"), "category": context.get("category"),
                 "release": context.get("release"), "networks": dispatch.get("networks"),
                 "repetitions": dispatch.get("repetitions"),
                 "runtime": sorted(runtime_identity, key=canonical), "overhead": sorted(overhead, key=canonical)}

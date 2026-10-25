@@ -61,9 +61,10 @@ python3 .github/scripts/dispatch_cost.py compare before.json after.json \
 
 A comparison needs two distinct complete successful attempts. Every dispatched
 entry must join consistently to a passed execution receipt with a complete
-configuration: exact checkout tree/build key, release, profile, resolved network,
+configuration: exact checkout tree/build key, matching compile/native binary and
+source-snapshot bindings, release, profile, resolved network,
 platform and immutable Ceph-role image IDs. The expanded dispatch multiset,
-repetitions, workflow/event, recorded runner labels and known cache conditions
+repetitions, repository, workflow/event, recorded runner labels and known cache conditions
 must also match. Only a successful `Plan` overhead job may remain outside the
 runtime entries; other unmatched/out-of-scope allocations, missing entries,
 conflicting receipts, unknown timing/cache or cancelled attempts refuse total
