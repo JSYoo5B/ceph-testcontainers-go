@@ -183,7 +183,7 @@ func TestDaemonMemoryQualification(t *testing.T) {
 	window := <-windowResult
 	oomErr := daemonMemoryOOM(baseline.Events, window.Events, unchanged, !window.OtherProcess, oomKilled, stopped)
 	if !window.PressureObserved {
-		oomErr = fmt.Errorf("effective pressure ceiling was not observed: %w", oomErr)
+		oomErr = fmt.Errorf("effective pressure ceiling was not observed (OOM evidence: %v)", oomErr)
 	}
 	t.Logf("DAEMON_MEMORY_OOM before=%v after=%v stopped=%t docker_oom=%t local_window_error=%v verdict=%v", baseline.Events, window.Events, stopped, oomKilled, window.Error, oomErr)
 	// Restore the finite configuration before an explicit restart. A successful
@@ -216,7 +216,7 @@ func TestDaemonMemoryQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal("new generation restored limits unavailable", err)
 	}
-	defer recovered.Events.Close()
+	defer func() { _ = recovered.Events.Close() }()
 	effective, err := recovered.sample()
 	if err != nil || effective.Max != uint64(daemonMemoryBaseline) || effective.Swap != 0 {
 		t.Fatal("restarted effective finite baseline/no-swap missing", err)
