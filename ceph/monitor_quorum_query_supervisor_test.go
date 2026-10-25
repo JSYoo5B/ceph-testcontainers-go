@@ -124,6 +124,8 @@ type monitorQuorumHangObservation struct {
 	ExecEntered            time.Duration // since the start of the run
 	SupervisorUp           time.Duration // interpreter launched
 	SupervisorEnd          time.Duration // supervisor exited and its report was complete
+	Started                time.Time
+	Settled                time.Duration // end of the PID probe and heartbeat observations; zero until observed
 	Returned               time.Duration // queryMonitorQuorum returned
 	CallerErr              error         // caller context state at return
 	Report                 monitorQuorumTestEnvelope
@@ -163,6 +165,7 @@ while time.monotonic()<deadline: time.sleep(0.01)
 `
 	markers := t.TempDir()
 	started := time.Now()
+	obs.Started = started
 	control := &diagnosticsTestContainer{exec: func(_ context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 		obs.ExecEntered = time.Since(started)
 		if !monitorQuorumTestCommand(args) {
@@ -211,12 +214,27 @@ func monitorQuorumVerifyNoFalseSuccess(obs monitorQuorumHangObservation) error {
 }
 
 // monitorQuorumVerifyOverallBound is the explicit wall-clock bound; it is not
-// the admission margin against the caller deadline.
+// the admission margin against the caller deadline. It bounds both the query
+// return and the end of the settlement observations: evidence collected after
+// the descendant's intrinsic expiry cannot tell supervisor cleanup from
+// natural expiry, so it is rejected.
 func monitorQuorumVerifyOverallBound(obs monitorQuorumHangObservation) error {
-	if obs.Returned >= monitorQuorumHangOverallBound {
-		return fmt.Errorf("run exceeded the explicit overall bound %s: %s", monitorQuorumHangOverallBound, obs)
+	if obs.Settled == 0 {
+		return fmt.Errorf("settlement observations did not complete: %s", obs)
+	}
+	if obs.Returned >= monitorQuorumHangOverallBound || obs.Settled >= monitorQuorumHangOverallBound {
+		return fmt.Errorf("run or settlement observation exceeded the explicit overall bound %s (settled=%s): %s", monitorQuorumHangOverallBound, obs.Settled, obs)
 	}
 	return nil
+}
+
+// monitorQuorumObserveSettlement runs the direct-child and descendant
+// observations and records when they finished. Each error is independent.
+func monitorQuorumObserveSettlement(t *testing.T, python string, obs *monitorQuorumHangObservation) error {
+	t.Helper()
+	err := errors.Join(monitorQuorumVerifyDirectChildReaped(t, python, obs.PIDPath), monitorQuorumVerifyDescendantSettled(obs.HeartbeatPath))
+	obs.Settled = time.Since(obs.Started)
+	return err
 }
 
 // monitorQuorumVerifyDirectChildReaped checks the recorded child PID
@@ -264,10 +282,7 @@ func TestMonitorQuorumPythonFullJSONThenHangKillsAndReapsOwnedGroup(t *testing.T
 	if err := monitorQuorumVerifyNoFalseSuccess(obs); err != nil {
 		t.Error(err)
 	}
-	if err := monitorQuorumVerifyDirectChildReaped(t, python, obs.PIDPath); err != nil {
-		t.Error(err)
-	}
-	if err := monitorQuorumVerifyDescendantSettled(obs.HeartbeatPath); err != nil {
+	if err := monitorQuorumObserveSettlement(t, python, &obs); err != nil {
 		t.Error(err)
 	}
 	if err := monitorQuorumVerifyOverallBound(obs); err != nil {
@@ -285,8 +300,8 @@ func TestMonitorQuorumHangControlStartupDelayBreaksOnlyWallClockMargin(t *testin
 	if obs.Returned < monitorQuorumHangCaller {
 		t.Fatalf("injected delay did not cross the former strict margin: %s", obs)
 	}
-	if err := errors.Join(monitorQuorumVerifyNoFalseSuccess(obs), monitorQuorumVerifyDirectChildReaped(t, python, obs.PIDPath),
-		monitorQuorumVerifyDescendantSettled(obs.HeartbeatPath), monitorQuorumVerifyOverallBound(obs)); err != nil {
+	if err := errors.Join(monitorQuorumVerifyNoFalseSuccess(obs), monitorQuorumObserveSettlement(t, python, &obs),
+		monitorQuorumVerifyOverallBound(obs)); err != nil {
 		t.Fatalf("delayed admission broke a semantic contract: %v", err)
 	}
 }
@@ -307,6 +322,7 @@ func TestMonitorQuorumHangVerifiersRejectBrokenOutcomes(t *testing.T) {
 	if monitorQuorumVerifyNoFalseSuccess(notTimedOut) == nil {
 		t.Error("accepted a report that does not show the supervisor timeout")
 	}
+	good.Settled = time.Since(good.Started)
 	slow := good
 	slow.Returned = monitorQuorumHangOverallBound
 	if monitorQuorumVerifyOverallBound(slow) == nil {
@@ -332,6 +348,27 @@ func TestMonitorQuorumHangVerifiersRejectBrokenOutcomes(t *testing.T) {
 	escaped := runMonitorQuorumHang(t, 0, "import os\nos.setsid()\n"+monitorQuorumOwnedDescendant)
 	if monitorQuorumVerifyDescendantSettled(escaped.HeartbeatPath) == nil {
 		t.Error("accepted an active descendant outside the killed group as settled")
+	}
+
+	// Delayed observation: the escaped descendant is active at first, then the
+	// observations are delayed past its intrinsic expiry. Every individual
+	// verifier accepts the stale evidence; only the bound on the end of the
+	// observations rejects it.
+	late := runMonitorQuorumHang(t, 0, "import os\nos.setsid()\n"+monitorQuorumOwnedDescendant)
+	if before, err := os.ReadFile(late.HeartbeatPath); err != nil || len(before) == 0 {
+		t.Fatalf("escaped descendant was not active before the delay: %d, %v", len(before), err)
+	}
+	time.Sleep(1600 * time.Millisecond)
+	if settleErr := monitorQuorumObserveSettlement(t, python, &late); settleErr != nil {
+		t.Fatalf("delayed observation was expected to look settled through natural expiry: %v", settleErr)
+	}
+	if late.Returned >= monitorQuorumHangOverallBound || monitorQuorumVerifyOverallBound(late) == nil {
+		t.Errorf("accepted settlement evidence collected after the intrinsic expiry: %s", late)
+	}
+	unobserved := good
+	unobserved.Settled = 0
+	if monitorQuorumVerifyOverallBound(unobserved) == nil {
+		t.Error("accepted a run whose settlement observations never completed")
 	}
 }
 
