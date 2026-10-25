@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -18,22 +19,52 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/containerd/errdefs"
 )
 
-// This qualification calls only the ordinary public operation. The caller
-// supplies its cohort expectation rather than deriving bug state from a release.
+// These are contract controls for the ordinary graceful public removal.
 func TestCephFSRemovalWarningQualification(t *testing.T) {
-	expect := os.Getenv("CEPH_TEST_REMOVAL_WARNING_EXPECT")
-	if expect != "refused" && expect != "removed" {
-		t.Fatal("set CEPH_TEST_REMOVAL_WARNING_EXPECT to refused or removed for the actual build under qualification")
+	for _, condition := range []string{"unrelated", "target", "none"} {
+		t.Run(condition, func(t *testing.T) { testCephFSRemovalWarning(t, condition) })
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+}
+
+func testCephFSRemovalWarning(t *testing.T, condition string) {
+	const expect = "removed"
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: "warning-a"}, cephfs.Config{Name: "warning-b"}))
+	bConfig := cephfs.Config{Name: "warning-b"}
+	if condition == "unrelated" {
+		bConfig.StandbyMDS = 1
+		bConfig.StandbyReplay = true
+	}
+	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: "warning-a"}, bConfig))
 	a, b := cephFSOwnedFilesystem(t, cluster, "warning-a"), cephFSOwnedFilesystem(t, cluster, "warning-b")
 	aBefore, bBefore := cephFSTopologyStatus(t, ctx, a), cephFSTopologyStatus(t, ctx, b)
 	if len(aBefore.Active) != 1 || len(bBefore.Active) != 1 || aBefore.FilesystemID == bBefore.FilesystemID || a.MetadataPool == b.MetadataPool || a.DataPool == b.DataPool {
 		t.Fatal("distinct single-MDS owned filesystems required")
+	}
+	bDaemons := b.MDSs()
+	if condition == "unrelated" && (len(bDaemons) != 2 || len(bBefore.StandbyReplay) != 1) {
+		t.Fatalf("target standby replay was not established: %+v", bBefore)
+	}
+	induced, inducedBefore, otherBefore := a, aBefore, bBefore
+	if condition == "target" {
+		induced, inducedBefore, otherBefore = b, bBefore, aBefore
+	}
+	inducedDaemon := cephFSOwnedMDS(t, induced, inducedBefore.Active[0].Name)
+	inducedState, err := inducedDaemon.State(ctx)
+	if err != nil || inducedState == nil || !inducedState.Running || inducedState.StartedAt == "" {
+		t.Fatalf("induced daemon generation unavailable: %+v %v", inducedState, err)
+	}
+	const attached = "warning-b-attached"
+	if condition == "unrelated" {
+		if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: attached, Application: "cephfs", PGNum: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.AddDataPool(ctx, attached); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
@@ -58,7 +89,7 @@ finally:
 		t.Fatal(err)
 	}
 	readConfig := func(probe context.Context) (string, error) {
-		out, err := cluster.Ceph(probe, "tell", "mds."+aBefore.Active[0].Name, "config", "get", "mds_cache_memory_limit")
+		out, err := cluster.Ceph(probe, "tell", "mds."+inducedBefore.Active[0].Name, "config", "get", "mds_cache_memory_limit")
 		if err != nil {
 			return "", err
 		}
@@ -76,10 +107,26 @@ finally:
 	if err != nil {
 		t.Fatal(err)
 	}
+	guardGeneration := func(probe context.Context) error {
+		status, err := induced.MDSStatus(probe)
+		if err != nil || status == nil || status.FilesystemID != inducedBefore.FilesystemID || !slices.ContainsFunc(status.Active, func(mds cephfs.MDSStatus) bool {
+			return mds.Name == inducedBefore.Active[0].Name && mds.GID == inducedBefore.Active[0].GID && mds.Owned
+		}) {
+			return fmt.Errorf("native induced filesystem/MDS generation unavailable or changed: %+v err=%v", status, err)
+		}
+		state, err := inducedDaemon.State(probe)
+		if err != nil || state == nil || !state.Running || state.StartedAt != inducedState.StartedAt {
+			return fmt.Errorf("induced container process generation unavailable or changed: %+v err=%v", state, err)
+		}
+		return nil
+	}
 	var pending *ceph.NativeCommandUnstoppedError
 	setConfig := func(probe context.Context, value string) error {
+		if err := guardGeneration(probe); err != nil {
+			return err
+		}
 		r, err := cluster.RunNativeCommand(probe, cluster.ControlContainer(), ceph.NativeCommand{
-			Argv:    []string{"ceph", "tell", "mds." + aBefore.Active[0].Name, "config", "set", "mds_cache_memory_limit", value},
+			Argv:    []string{"ceph", "tell", "mds." + inducedBefore.Active[0].Name, "config", "set", "mds_cache_memory_limit", value},
 			Timeout: 30 * time.Second, MaxStdout: 16 << 10, MaxStderr: 16 << 10, Label: "owned MDS cache limit",
 		})
 		if err != nil {
@@ -91,17 +138,19 @@ finally:
 		}
 		return nil
 	}
-	restored := false
+	restored := condition == "none"
 	restore := func(probe context.Context) error {
+		if restored {
+			return nil
+		}
 		if pending != nil {
 			if err := pending.Stop(probe); err != nil {
 				return err
 			}
 			pending = nil
 		}
-		status, err := a.MDSStatus(probe)
-		if err != nil || len(status.Active) != 1 || status.Active[0].GID != aBefore.Active[0].GID {
-			return fmt.Errorf("cannot restore another MDS generation: %+v err=%v", status, err)
+		if err := guardGeneration(probe); err != nil {
+			return fmt.Errorf("restore unconfirmed: %w", err)
 		}
 		current, err := readConfig(probe)
 		if err != nil {
@@ -134,12 +183,15 @@ finally:
 			t.Errorf("restore owned MDS cache configuration: %v", err)
 		}
 	})
-	if err := setConfig(ctx, "1"); err != nil {
-		t.Fatal(err)
-	}
-	applied, err := readConfig(ctx)
-	if err != nil || applied != "1" {
-		t.Fatalf("native MDS cache limit not applied: value=%s err=%v", applied, err)
+	applied := ""
+	if condition != "none" {
+		if err := setConfig(ctx, "1"); err != nil {
+			t.Fatal(err)
+		}
+		applied, err = readConfig(ctx)
+		if err != nil || applied != "1" {
+			t.Fatalf("native MDS cache limit not applied: value=%s err=%v", applied, err)
+		}
 	}
 	var warning json.RawMessage
 	_, _, err = boundedPoll(ctx, realPollClock, 90*time.Second, time.Second, func(probe context.Context) (bool, bool, error) {
@@ -160,21 +212,30 @@ finally:
 		}
 		found := false
 		for _, code := range []string{"MDS_CACHE_OVERSIZED", "MDS_TRIM"} {
-			for _, detail := range h.Checks[code].Detail {
-				if strings.Contains(detail.Message, "mds."+bBefore.Active[0].Name+"(") {
-					return false, false, fmt.Errorf("target B has relevant warning: %s", detail.Message)
+			check, present := h.Checks[code]
+			if !present {
+				continue
+			}
+			if condition == "none" {
+				return false, false, fmt.Errorf("unexpected relevant warning in no-warning control: %s", out)
+			}
+			if len(check.Detail) == 0 {
+				return false, false, fmt.Errorf("warning lacks daemon attribution: %s", out)
+			}
+			for _, detail := range check.Detail {
+				if strings.Contains(detail.Message, "mds."+otherBefore.Active[0].Name+"(") || !strings.Contains(detail.Message, "mds."+inducedBefore.Active[0].Name+"(") {
+					return false, false, fmt.Errorf("warning not exclusively on selected daemon: %s", detail.Message)
 				}
-				if strings.Contains(detail.Message, "mds."+aBefore.Active[0].Name+"(") {
-					found = true
-				}
+				found = true
 			}
 		}
-		return found, found, nil
+		ready := condition == "none" || found
+		return ready, ready, nil
 	})
 	if err != nil {
-		t.Fatalf("native warning on A alone not established: %v health=%s", err, warning)
+		t.Fatalf("native selected warning condition not established: %v health=%s", err, warning)
 	}
-	// This single public call includes the unmodified preparatory fs fail.
+	// One ordinary public call must complete the graceful drain/removal contract.
 	started := time.Now()
 	removeErr := cephfs.Remove(ctx, cluster, b.FilesystemName)
 	ended := time.Now()
@@ -190,33 +251,21 @@ finally:
 	if result != expect {
 		t.Fatalf("ordinary removal result %s, expected %s: %v", result, expect, removeErr)
 	}
-	if removeErr != nil {
-		var native *ceph.NativeFailure
-		if !strings.Contains(failure, `fail cephfs "warning-b"`) || !errors.As(removeErr, &native) || native.Errno != "EPERM" {
-			t.Fatalf("refusal was not an EPERM at preparatory fs fail: %v", removeErr)
+
+	afterConfig := ""
+	disposition := "disposed-with-target"
+	if condition != "target" {
+		disposition = "restored"
+		if condition == "none" {
+			disposition = "unchanged"
 		}
-	}
-	if err := restore(ctx); err != nil {
-		t.Fatal(err)
-	}
-	restored = true
-	afterConfig, err := readConfig(ctx)
-	if err != nil || afterConfig != prior {
-		t.Fatalf("cache configuration not restored: prior=%s current=%s err=%v", prior, afterConfig, err)
-	}
-	readA, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", cephFSIndependentReader, a.FilesystemName, "/qualification"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent survivor reader"})
-	var data struct {
-		Client uint64 `json:"client"`
-		Inode  uint64 `json:"inode"`
-		Size   int    `json:"size"`
-		Data   string `json:"data"`
-	}
-	if err != nil || readA.ExitCode != 0 || !readA.Complete() || json.Unmarshal([]byte(lastJSONLine(string(readA.Stdout))), &data) != nil || data.Client == 0 || data.Inode == 0 || data.Size != len(seed) || data.Data != hex.EncodeToString(seed) {
-		t.Fatalf("survivor data: %+v exit=%d err=%v stderr=%s", data, readA.ExitCode, err, readA.Stderr)
-	}
-	aAfter := cephFSTopologyStatus(t, ctx, a)
-	if aAfter.FilesystemID != aBefore.FilesystemID || len(aAfter.Active) != 1 || aAfter.Active[0].GID != aBefore.Active[0].GID || aAfter.Active[0].Name != aBefore.Active[0].Name {
-		t.Fatalf("A identity changed: %+v -> %+v", aBefore, aAfter)
+		if err := restore(ctx); err != nil {
+			t.Fatal(err)
+		}
+		afterConfig, err = readConfig(ctx)
+		if err != nil || afterConfig != prior {
+			t.Fatalf("cache configuration not restored: prior=%s current=%s err=%v", prior, afterConfig, err)
+		}
 	}
 	fsList, err := cluster.Ceph(ctx, "fs", "ls", "--format", "json")
 	if err != nil {
@@ -233,12 +282,67 @@ finally:
 	if result == "removed" && (slices.Contains(names, b.MetadataPool) || slices.Contains(names, b.DataPool)) {
 		t.Fatalf("target pools remain: %s", pools)
 	}
-	if result == "refused" {
-		bAfter := cephFSTopologyStatus(t, ctx, b)
-		if len(bAfter.Active) != 1 || bAfter.FilesystemID != bBefore.FilesystemID || bAfter.Active[0].GID != bBefore.Active[0].GID || !slices.Contains(names, b.MetadataPool) || !slices.Contains(names, b.DataPool) {
-			t.Fatalf("refused target state changed: %+v pools=%s", bAfter, pools)
+	var nativeFilesystems []struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(fsList, &nativeFilesystems) != nil || slices.ContainsFunc(nativeFilesystems, func(item struct {
+		Name string `json:"name"`
+	}) bool {
+		return item.Name == b.FilesystemName
+	}) {
+		t.Fatalf("target filesystem remains: %s", fsList)
+	}
+	if slices.ContainsFunc(cephfs.Filesystems(cluster), func(owned *cephfs.Filesystem) bool { return owned.FilesystemName == b.FilesystemName }) {
+		t.Fatal("target still registered as owned")
+	}
+	for _, daemon := range bDaemons {
+		if _, err := daemon.State(ctx); !errdefs.IsNotFound(err) {
+			t.Fatalf("removed target mds.%s container still exists: %v", daemon.ID, err)
+		}
+		if _, err := cluster.Ceph(ctx, "auth", "get", "mds."+daemon.ID); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("target mds.%s auth key remains or lookup uncertain: %v", daemon.ID, err)
 		}
 	}
-	receipt, _ := json.Marshal(map[string]any{"expected": expect, "observed": result, "selection": "ordinary/no-tag", "versions": json.RawMessage(versions), "warning": warning, "a_before": aBefore, "a_after": aAfter, "b_before": bBefore, "filesystem_list": json.RawMessage(fsList), "pool_list": json.RawMessage(pools), "config_prior": prior, "config_applied": applied, "config_restored": afterConfig, "survivor_read": data, "remove_started": started, "remove_ended": ended, "ordinary_error": failure, "role_images": map[string]string{"essential": os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), "client": os.Getenv("CEPH_TEST_CLIENT_IMAGE"), "cephfs": os.Getenv("CEPH_TEST_CEPHFS_IMAGE")}})
+	if condition == "unrelated" && !slices.Contains(names, attached) {
+		t.Fatalf("later-attached pool was removed: %s", pools)
+	}
+	if condition == "target" {
+		restored = true
+	}
+	var clearHealth json.RawMessage
+	_, _, err = boundedPoll(ctx, realPollClock, 90*time.Second, time.Second, func(probe context.Context) (bool, bool, error) {
+		out, err := cluster.Ceph(probe, "health", "detail", "--format", "json")
+		clearHealth = slices.Clone(out)
+		if err != nil {
+			return false, false, err
+		}
+		var health struct {
+			Checks map[string]json.RawMessage `json:"checks"`
+		}
+		if err := json.Unmarshal(out, &health); err != nil {
+			return false, false, err
+		}
+		_, cache := health.Checks["MDS_CACHE_OVERSIZED"]
+		_, trim := health.Checks["MDS_TRIM"]
+		return !cache && !trim, !cache && !trim, nil
+	})
+	if err != nil {
+		t.Fatalf("native warning did not clear after restoration/disposal: %v health=%s", err, clearHealth)
+	}
+	readA, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", cephFSIndependentReader, a.FilesystemName, "/qualification"}, Timeout: time.Minute, MaxStdout: 64 << 10, MaxStderr: 16 << 10, Label: "independent survivor reader"})
+	var data struct {
+		Client uint64 `json:"client"`
+		Inode  uint64 `json:"inode"`
+		Size   int    `json:"size"`
+		Data   string `json:"data"`
+	}
+	if err != nil || readA.ExitCode != 0 || !readA.Complete() || json.Unmarshal([]byte(lastJSONLine(string(readA.Stdout))), &data) != nil || data.Client == 0 || data.Inode == 0 || data.Size != len(seed) || data.Data != hex.EncodeToString(seed) {
+		t.Fatalf("survivor data: %+v exit=%d err=%v stderr=%s", data, readA.ExitCode, err, readA.Stderr)
+	}
+	aAfter := cephFSTopologyStatus(t, ctx, a)
+	if aAfter.FilesystemID != aBefore.FilesystemID || len(aAfter.Active) != 1 || aAfter.Active[0].GID != aBefore.Active[0].GID || aAfter.Active[0].Name != aBefore.Active[0].Name {
+		t.Fatalf("A identity changed: %+v -> %+v", aBefore, aAfter)
+	}
+	receipt, _ := json.Marshal(map[string]any{"condition": condition, "expected": expect, "observed": result, "selection": "ordinary/no-tag", "versions": json.RawMessage(versions), "warning": warning, "health_after_restoration": clearHealth, "b_owned_mds_count_removed": len(bDaemons), "later_attached_pool_retained": condition == "unrelated", "a_before": aBefore, "a_after": aAfter, "b_before": bBefore, "filesystem_list": json.RawMessage(fsList), "pool_list": json.RawMessage(pools), "config_prior": prior, "config_applied": applied, "config_after": afterConfig, "config_disposition": disposition, "survivor_read": data, "remove_started": started, "remove_ended": ended, "ordinary_error": failure, "role_images": map[string]string{"essential": os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), "client": os.Getenv("CEPH_TEST_CLIENT_IMAGE"), "cephfs": os.Getenv("CEPH_TEST_CEPHFS_IMAGE")}})
 	t.Logf("CEPHFS_REMOVAL_WARNING_RECEIPT %s", receipt)
 }
