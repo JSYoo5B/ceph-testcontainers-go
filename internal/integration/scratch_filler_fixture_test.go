@@ -405,3 +405,47 @@ func TestScratchReleaseGateRequiresClosureIdentityAndCapacity(t *testing.T) {
 		}
 	}
 }
+
+// The real producer must give the classifier what a create refusal needs: the
+// containing filesystem's capacity at the refusal and its mount identity,
+// observed without a created file. Only os.open is made to raise ENOSPC; the
+// capacity and mount observations are replaced to stand in for a tmpfs.
+func TestScratchCreateRefusalProducerToClassifier(t *testing.T) {
+	requireScratchPython(t)
+	patch := func(favail int, fstype string) string {
+		hook := "import errno as _e\n" +
+			"def _nospace(*a, **k): raise OSError(_e.ENOSPC, 'injected')\n" +
+			"os.open = _nospace\n"
+		if favail >= 0 {
+			hook += "_v = vfs\n" +
+				"def vfs(p):\n    v = _v(p)\n    v['favail'] = " + strconv.Itoa(favail) + "\n    return v\n" +
+				"def mountinfo(dev): return {'id': '0:50', 'mountpoint': '/scratch', 'fstype': '" + fstype + "'}\n"
+		}
+		return strings.Replace(scratchFillerScript, "m, a = sys.argv[1]", hook+"m, a = sys.argv[1]", 1)
+	}
+	for name, tc := range map[string]struct {
+		favail int
+		fstype string
+		want   string
+	}{
+		"no free inodes on tmpfs":  {0, "tmpfs", scratchInodeLimit},
+		"inodes remain on tmpfs":   {10, "tmpfs", scratchUnclassifiedNS},
+		"no free inodes elsewhere": {0, "ext4", scratchUnclassifiedNS},
+		"unmodified observations":  {-1, "", scratchUnclassifiedNS},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := runScratchScript(t, patch(tc.favail, tc.fstype), "write", t.TempDir(), "filler", "4096", "4096", "30", "0")
+			r := mustScratchReceipt(t, out)
+			if *r.Opened || !*r.Closed || *r.Ops[0].Op != "create" || *r.Ops[0].ErrName != "ENOSPC" {
+				t.Fatalf("receipt %s", out)
+			}
+			if r.VFSRefusal == nil || r.Mount == nil {
+				t.Fatalf("a create refusal left no capacity or mount identity: %s", out)
+			}
+			got, err := classifyScratchFill(r)
+			if err != nil || got != tc.want {
+				t.Fatalf("%q, %v, want %q: %s", got, err, tc.want, out)
+			}
+		})
+	}
+}

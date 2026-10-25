@@ -70,6 +70,10 @@ def write(d, name, chunk, budget, deadline, pause):
          "ops": [], "outcome": "", "exception": "", "opened": False, "closed": False,
          "close_errno": 0, "vfs_before": vfs(d), "vfs_refusal": None, "vfs_after_close": None,
          "file": None, "mount": None}
+    try:
+        r["mount"] = mountinfo(os.stat(d).st_dev)
+    except OSError:
+        pass
     fd = -1
     attempted = 0
     start = time.monotonic()
@@ -84,9 +88,9 @@ def write(d, name, chunk, budget, deadline, pause):
             op("create", 0, 0, None)
         except OSError as e:
             op("create", 0, 0, e)
+            r["vfs_refusal"] = vfs(d)
             r["outcome"] = "errno"
         if fd >= 0:
-            r["mount"] = mountinfo(os.fstat(fd).st_dev)
             buf = b"\xa5" * chunk
             while not r["outcome"]:
                 if stop:
