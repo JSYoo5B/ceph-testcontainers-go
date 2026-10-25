@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -45,7 +46,7 @@ import cephfs, os, sys
 f=cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf");f.conf_set("client_mount_timeout","30");f.mount(filesystem_name=sys.argv[1].encode())
 try:
  fd=f.open(b"/qualification",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
- data=bytes.fromhex(sys.argv[2]);assert f.write(fd,0,data)==len(data);f.fsync(fd,False);f.close(fd)
+ data=bytes.fromhex(sys.argv[2]);assert f.write(fd,data,0)==len(data);f.fsync(fd,False);f.close(fd)
 finally:
  f.unmount();f.shutdown()
 `, name, hex.EncodeToString(data))
@@ -130,8 +131,11 @@ finally:
 	if result != expect {
 		t.Fatalf("ordinary removal result %s, expected %s: %v", result, expect, removeErr)
 	}
-	if removeErr != nil && (!strings.Contains(failure, `fail cephfs "warning-b"`) || !strings.Contains(failure, "fs fail")) {
-		t.Fatalf("refusal was not identified at preparatory fs fail: %v", removeErr)
+	if removeErr != nil {
+		var native *ceph.NativeFailure
+		if !strings.Contains(failure, `fail cephfs "warning-b"`) || !errors.As(removeErr, &native) || native.Errno != "EPERM" {
+			t.Fatalf("refusal was not an EPERM at preparatory fs fail: %v", removeErr)
+		}
 	}
 	if err := change.Restore(ctx); err != nil {
 		t.Fatal(err)
