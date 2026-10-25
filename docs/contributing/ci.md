@@ -1182,6 +1182,45 @@ The periodic `History` job still downloads the current run's artifacts
 before storing its rows on the durable `scenario-history` branch. Retention
 applies to new uploads only; existing artifacts keep their recorded expiry.
 
+### Dispatch join
+
+`dispatch_join.py` joins a downloaded `tag-dispatch.json` to the jobs of the
+same repository, run and attempt. It is offline: the jobs are a saved
+jobs-API response (repeat `--jobs` for pages), and `--receipts` optionally
+reads `history-row.json` files.
+
+```sh
+python3 .github/scripts/dispatch_join.py --dispatch tag-dispatch.json \
+  --jobs jobs.json [--receipts downloaded-artifacts] [--caller "Tentacle short"]
+```
+
+Every dispatch entry and every listed job ends in exactly one bucket, and the
+report checks that itself (exit 3 if not): `matched`, `conflicts`,
+`ambiguous`, `unmatched_expected` and `invalid_expected` for entries;
+`matched`, `conflicts`, `ambiguous`, `unmatched_actual`, `invalid_actual` and
+`out_of_scope` for jobs. A job matches an entry by its own name (the part
+after `<caller> / `); names shared by several entries or jobs stay
+`ambiguous`. A job of another run, attempt or repository, a repeated job ID or
+a receipt that contradicts the entry is a conflict. Missing, null or
+wrong-typed fields are invalid or inconclusive, never matched, and a truncated
+job list (`total_count`) or an incomplete dispatch envelope makes the whole
+input inconclusive (exit 2). The `Plan` job and other jobs of the caller are
+reported as `unmatched_actual`; jobs of other callers are `out_of_scope`.
+
+Receipts are accounted for as well: every `history-row.json` read ends in
+exactly one of attached to a matched job, `receipts_without_a_matched_job`,
+`receipts_other_run` or `invalid_receipts`. A receipt without a usable job key
+is invalid and is never associated with a job by guesswork, and the history
+format's `missing` marker in a compared field is a gap (inconclusive), never
+agreement or contradiction.
+
+`context.sha` is reported as `declared_workflow_sha`. The checkout identity
+comes only from receipts and is null when none states it.
+
+A match proves neither runner allocation nor native execution. The report
+computes no cost, billing, native outcome or empirical cohort and changes no
+scheduling or selection; it is not wired into any workflow.
+
 `native/report.json` has these fields of interest:
 
 - `classification`:
