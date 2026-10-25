@@ -1,4 +1,4 @@
-//go:build all || (integration && topology)
+//go:build all || integration
 
 package integration_test
 
