@@ -153,6 +153,17 @@ class DispatchCostTest(unittest.TestCase):
         self.assertEqual(report["metrics"]["known_runner_seconds"], 26)
         self.assertFalse(report["comparison"]["eligible"])
 
+    def test_executed_step_evidence_requires_a_valid_recorded_outcome(self):
+        self.jobs[1].update(runner_id=0, runner_name="")
+        self.assertEqual(self.assess()["metrics"]["known_runner_seconds"], 26)
+        for invalid in (None, False, 0, "skipped", "invalid"):
+            with self.subTest(outcome=invalid):
+                self.jobs[1]["steps"] = [step("Set up job", 10, 15) | {"conclusion": invalid}]
+                report = self.assess()
+                self.assertEqual(report["conservation"]["unknown_cost_jobs"], 1)
+                self.assertEqual(report["metrics"]["known_runner_seconds"], 6)
+                self.assertFalse(report["comparison"]["eligible"])
+
     def test_empty_steps_without_assignment_or_missing_window_stay_unknown_not_zero(self):
         self.jobs[1].update(steps=[], conclusion="cancelled", runner_id=0, runner_name="")
         for assigned in (False, True):

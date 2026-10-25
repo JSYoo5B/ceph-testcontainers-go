@@ -41,7 +41,7 @@ def window(job):
     assigned = ((type(job.get("runner_id")) is int and job["runner_id"] > 0)
                 or isinstance(job.get("runner_name"), str) and bool(job["runner_name"].strip()))
     executed = isinstance(steps, list) and any(
-        isinstance(step, dict) and step.get("conclusion") not in (None, "skipped")
+        isinstance(step, dict) and step.get("conclusion") in ("success", "failure", "cancelled", "timed_out", "neutral", "action_required")
         and timestamp(step.get("started_at")) is not None for step in steps)
     if not assigned and not executed:
         return {"allocation": "unknown", "runner_seconds": None, "reason": "no_positive_allocation_evidence"}
