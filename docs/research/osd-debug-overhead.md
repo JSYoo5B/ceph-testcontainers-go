@@ -29,6 +29,10 @@ discovered from source; it does not add a workflow or change PR gating policy.
 ## Three controlled arms
 
 The same OSD/container start generation runs three trials, each with three arms.
+Before measurement, one fixed unmeasured 128-pair workload creates and exercises
+the object, followed by a one-second wait. Every measured write thus replaces an
+existing object under the same API semantics.
+The warm-up's own receipt is retained, and it does not reset all caches or logs.
 The fixed cyclic orders are `0/0, 0/20, 20/20`, `0/20, 20/20, 0/0`, and
 `20/20, 0/0, 0/20`. Each level thus occupies each position once. Only
 `debug_osd` changes; other subsystems retain their existing settings.

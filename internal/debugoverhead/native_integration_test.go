@@ -107,6 +107,15 @@ func TestOSDDebugOverhead(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Create and exercise the object before any measured arm. All measured
+	// writes then replace an existing object. This fixed warm-up is
+	// unmeasured and does not claim that all cache/ring history was reset.
+	warmupText := execOutput(t, ctx, client, "python3", "-c", debugOverheadWorkload, pool, fmt.Sprint(operations), fmt.Sprint(objectBytes))
+	var warmup debugOverheadWorkloadReport
+	if err := json.Unmarshal([]byte(warmupText), &warmup); err != nil || warmup.Writes != operations || warmup.Reads != operations || warmup.ObjectBytes != objectBytes {
+		t.Fatalf("fixed warm-up did not complete: %s %v", warmupText, err)
+	}
+	time.Sleep(time.Second)
 	get := func(name string) string {
 		t.Helper()
 		out, err := cluster.AdminSocket(ctx, "osd.0", "config", "get", name)
@@ -189,7 +198,7 @@ func TestOSDDebugOverhead(t *testing.T) {
 			if err != nil || arm.Restored.State != ceph.DebugLevelRestored || arm.Restored.Restored != prior || get("debug_osd") != prior {
 				t.Fatalf("prior debug_osd was not restored: %+v %v", arm.Restored, err)
 			}
-			if len(arms) != 0 && arms[0].Workload.SHA256 != arm.Workload.SHA256 {
+			if warmup.SHA256 != arm.Workload.SHA256 {
 				t.Fatal("the arms did not use the same known bytes")
 			}
 			arms = append(arms, arm)
@@ -220,7 +229,7 @@ print(json.dumps(dict(bytes=len(actual),sha256=hashlib.sha256(actual).hexdigest(
 		"client_version": strings.TrimSpace(execOutput(t, ctx, client, "rados", "--version")),
 		"platform":       runtime.GOOS + "/" + runtime.GOARCH, "go_version": runtime.Version(),
 		"effective_log_options": options, "fixed_post_workload_wait_ns": time.Second.Nanoseconds(), "log_limit_bytes_per_arm": debugOverheadLogLimit,
-		"recent_ring_reset": false, "dump_recent_executed": false, "arms": arms, "fresh_reader": freshReader,
+		"recent_ring_reset": false, "dump_recent_executed": false, "warmup": warmup, "arms": arms, "fresh_reader": freshReader,
 		"notes": []string{"measurement controls, not recommended levels", "same generation and recent ring across arms; restored thresholds do not clear the ring",
 			"CPU is Docker cumulative container CPU time; memory is two total-usage endpoints including caches, not peak or process RSS",
 			"normal output counts bounded Docker stdout/stderr payloads within engine-clock windows; file/syslog/journal output bytes are not counted",
