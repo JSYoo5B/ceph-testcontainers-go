@@ -859,7 +859,7 @@
     {
       "id": "client-mds/file-locks",
       "area": "client-mds",
-      "requirement": "flock contention and lock state across MDS failover.",
+      "requirement": "flock and POSIX record-lock contention and retained lock state across MDS failover.",
       "symbols": [
         "CEPH_FEATURE_FLOCK"
       ],
@@ -879,9 +879,14 @@
           "test": "TestCephFSFuseMount",
           "receipt": "CEPHFS_FCNTL_LOCK_RECEIPT",
           "asserts": "through two ceph-fuse mounts, a second client's fcntl record lock is EAGAIN, its F_SETLKW waits in the MDS (rule 1) until the holder unlocks, and a killed holder's lock lasts until its eviction"
+        },
+        {
+          "test": "TestCephFSFcntlStandbyTakeover",
+          "receipt": "CEPHFS_FCNTL_TAKEOVER_RECEIPT",
+          "asserts": "two retained ceph-fuse sessions and descriptors observe an already-held POSIX write range before and after standby takeover, with independent contention and disjoint-range control before the holder-only unlock admits a verified same-fd write"
         }
       ],
-      "gap": "POSIX (fcntl) record locks have a receipt only through an opt-in ceph-fuse mount, which needs /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance; fcntl lock state across an MDS failover has no receipt.",
+      "gap": "POSIX (fcntl) receipts require an opt-in ceph-fuse mount with /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance; standby-takeover evidence covers an already-held write range, not queued F_SETLKW replay, fairness, multiple active ranks, remote POSIX PID attribution or all native client/release combinations.",
       "owner": "#5"
     },
     {
