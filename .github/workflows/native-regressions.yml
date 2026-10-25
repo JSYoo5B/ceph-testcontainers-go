@@ -7,6 +7,10 @@ on:
         description: Existing RGW role image for strict upstream regressions (empty uses published role; no build)
         type: string
         default: ''
+      failure_archive:
+        description: 'Run the deliberately FAILED native failure-archive proof instead of RGW regressions'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,6 +21,6 @@ jobs:
     uses: ./.github/workflows/tagged-runtime.yml
     with:
       category: optional
-      check_name: Native RGW regressions
-      optional_batch: native_rgw_translation
+      check_name: Manual native checks
+      optional_batch: ${{ inputs.failure_archive && 'failure_archive' || 'native_rgw_translation' }}
       rgw_image: ${{ inputs.rgw_image }}
