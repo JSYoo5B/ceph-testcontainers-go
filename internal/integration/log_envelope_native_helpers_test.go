@@ -150,6 +150,9 @@ func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe,
 			fail("the token appears in %d %s lines, which makes the control void: %+v", quoted.Priorities[priority], priority, quoted)
 		}
 	}
+	if quoted.Unrecognized != 0 {
+		fail("%d MON lines carry the token outside any recognized envelope, which the verifier reports as a gap: %+v", quoted.Unrecognized, quoted)
+	}
 	if len(problems) == 0 {
 		return nil
 	}

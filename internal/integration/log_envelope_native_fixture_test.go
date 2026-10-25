@@ -88,6 +88,7 @@ func TestEnvelopeEvidenceRefusesMissingOrBrokenEvidence(t *testing.T) {
 		{"only an unrecognized quote", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) {
 			quoted.Priorities, quoted.Unrecognized = map[string]int{}, 1
 		}, "no INF line"},
+		{"quote outside any envelope", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Unrecognized = 1 }, "outside any recognized envelope"},
 		{"quote also in a WRN line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["WRN"] = 1 }, "void"},
 		{"quote also in an ERR line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["ERR"] = 1 }, "void"},
 	}

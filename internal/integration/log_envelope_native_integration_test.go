@@ -20,7 +20,7 @@ import (
 // TestPostTestVerificationLogEnvelope pairs a real WRN cluster log entry of
 // the MON with INF entries that quote a WRN marker. The probe is the MON's
 // own health check entry for a set noout flag. The INF entries are produced
-// by `ceph log`, which the MON writes at INF to the cluster channel and, as
+// by the `log` command, which the MON writes at INF to the cluster channel and, as
 // the command line, to the audit channel. A required warning that only the
 // quoting INF entries could satisfy must stay unsatisfied, while the real
 // WRN probe satisfies its own. The raw MON output is read independently to
@@ -61,9 +61,12 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 
 	// The INF entries: the cluster channel entry and the audit entry of the
 	// command, both quoting a warning marker in their message.
-	if _, err := cluster.Ceph(ctx, "log", token+" quotes [WRN]"); err != nil {
-		t.Fatal(err)
-	}
+	// The MON echoes every command it handles to its own output at level 0
+	// ("handle_command mon_command(...)"), outside any log envelope. The
+	// command therefore carries the marker as JSON escapes, which the MON
+	// decodes into the message but never prints as a literal marker.
+	quoteCommand := `{"prefix": "log", "logtext": ["` + token + ` quotes \u005bWRN\u005d"]}`
+	t.Logf("quote command accepted: %s", execOutput(t, ctx, cluster.Container, "python3", "-c", envelopeMonCommand, quoteCommand))
 	// The real WRN entry: a set noout flag fails the OSDMAP_FLAGS check.
 	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if noout != nil {
@@ -137,3 +140,16 @@ func waitEnvelopeLines(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		}
 	}
 }
+
+// envelopeMonCommand sends one raw JSON command to the MON through librados,
+// so that the command text reaches the MON byte for byte.
+const envelopeMonCommand = `import rados,sys,json
+client=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_mon_op_timeout':'30'})
+client.connect()
+try:
+    r,out,err=client.mon_command(sys.argv[1],b'')
+    print(json.dumps({'r':r,'status':err}))
+    sys.exit(0 if r==0 else 1)
+finally:
+    client.shutdown()
+`
