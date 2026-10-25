@@ -51,9 +51,10 @@ PRODUCER_PARTIAL = "producer_declared_partial"
 PRODUCER_FAILED_ABSENT = "producer_declared_failed_absent"
 DIGEST_MISMATCH = "digest_mismatch"
 INCONCLUSIVE = "inconclusive"
+UNREADABLE = "unreadable"
 UNEXPECTED_RETAINED = "failed_copy_file_present"
 PROBLEM_STATES = {MISSING, UNSAFE, SIZE_MISMATCH, UNREADABLE_JSON, DIGEST_MISMATCH, INCONCLUSIVE,
-                  UNEXPECTED_RETAINED}
+                  UNEXPECTED_RETAINED, UNREADABLE}
 
 # Capture record states reuse the file states and add the omission and join ones.
 VERIFIED = "verified"
@@ -104,7 +105,7 @@ def audit_file(root, entry, raw=False):
     error = entry.get("error", "")
     record = {"name": name, "declared_bytes": declared, "producer_error": error or None,
               "producer_write": "failed" if error else "succeeded",
-              "available": False, "retained_bytes": None, "sha256": None, "json_readable": None}
+              "available": False, "read_error": False, "retained_bytes": None, "sha256": None, "json_readable": None}
     if not safe_name(name) or not is_int(declared) or not isinstance(error, str):
         record["state"] = UNSAFE
         return record
@@ -120,7 +121,10 @@ def audit_file(root, entry, raw=False):
         record["state"] = UNSAFE
         return record
     except OSError:
-        record["state"] = MISSING
+        # Presence was not established as absence: the file could not be
+        # inspected (for example permissions), which is not FileNotFoundError.
+        record["read_error"] = True
+        record["state"] = UNREADABLE
         return record
     if data is not None:
         record["available"] = True
@@ -223,6 +227,10 @@ def join_capture(root, record, entries):
         return out
     if entry["declared_bytes"] != record["bytes"] or (entry["producer_error"] or "") != record.get("error", ""):
         out.update(state=INCONCLUSIVE, reason="the files entry disagrees with the capture record")
+        return out
+    if entry["read_error"]:
+        # Neither confirmed absent nor verified: never a failed absence.
+        out.update(state=UNREADABLE, reason="the final file could not be inspected")
         return out
     out["downloaded"] = entry["available"]
     out["retained_bytes"] = entry["retained_bytes"]

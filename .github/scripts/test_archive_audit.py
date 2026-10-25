@@ -342,6 +342,36 @@ class CaptureIdentity(CaptureArchive):
         self.assertEqual(len(record["sha256"]), 64)
         self.assertFalse(archive_audit.audit(self.root)["evidence_complete"])
 
+    def test_unreadable_final_file_is_not_a_confirmed_absence(self):
+        # A failed atomic copy whose final file exists but cannot be read, and
+        # an injected PermissionError, must not look like the explained omission.
+        path = self.root / WRONG_DIGEST
+        path.write_bytes(b"x" * 22)
+        original = Path.read_bytes
+
+        def deny(self_path):
+            if self_path.name == WRONG_DIGEST:
+                raise PermissionError("denied")
+            return original(self_path)
+        with mock.patch.object(Path, "read_bytes", deny):
+            record = self.captures()[WRONG_DIGEST]
+            self.assertEqual(record["state"], archive_audit.UNREADABLE)
+            self.assertIsNone(record["downloaded"])
+            self.assertFalse(archive_audit.audit(self.root)["evidence_complete"])
+            files = {r["name"]: r for r in archive_audit.audit(self.root)["files"]}
+            self.assertTrue(files[WRONG_DIGEST]["read_error"])
+
+    @unittest.skipIf(hasattr(__import__("os"), "geteuid") and __import__("os").geteuid() == 0, "root reads mode 000")
+    def test_mode_000_final_file(self):
+        for name, copied in [(WRONG_DIGEST, False), (VALID, True)]:
+            with self.subTest(name):
+                self.setUp()
+                if not copied:
+                    (self.root / name).write_bytes(b"x" * 22)
+                (self.root / name).chmod(0)
+                self.addCleanup((self.root / name).chmod, 0o600)
+                self.assertEqual(self.state(name), archive_audit.UNREADABLE)
+
     def test_capture_file_absent_from_files(self):
         self.manifest(lambda d: d.update(files=[f for f in d["files"] if f["name"] != VALID]))
         record = self.captures()[VALID]
