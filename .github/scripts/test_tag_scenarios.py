@@ -1835,5 +1835,153 @@ class BugCompatibilityRegistryTests(unittest.TestCase):
         self.assertEqual(documented, set(registry["tags"]))
 
 
+class ChangedComparisonGitTests(unittest.TestCase):
+    """Real Git ancestry, independent base advancement and fail-closed proof."""
+
+    PR_PATHS = (".github/scripts/scenario_history.py", ".github/scripts/test_scenario_history.py",
+                "docs/design/messenger-evidence.md")
+    INCOMING_PATHS = ("internal/integration/ec_four_two_integration_test.go",
+                      "internal/integration/osd_retained_concurrency_integration_test.go")
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / "repo"
+        self.root.mkdir()
+        self.git("init", "--initial-branch=main")
+        self.write("README.md", "base\n")
+        self.base = self.commit("base")
+        self.git("checkout", "-b", "pr")
+        for path in self.PR_PATHS:
+            self.write(path, "pull request\n")
+        self.head = self.commit("pull request")
+        self.git("checkout", "main")
+        for path in self.INCOMING_PATHS:
+            self.write(path, "independent main\n")
+        self.main = self.commit("advanced main")
+        self.git("merge", "--no-ff", "pr", "-m", "test merge")
+        self.merge = self.git("rev-parse", "HEAD")
+
+    def git(self, *args):
+        result = subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                 "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+                                cwd=self.root, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def write(self, name, content):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def commit(self, message):
+        self.git("add", ".")
+        self.git("commit", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def plan(self, paths):
+        return engine.select_changed_plan({"include": [{"sources": [path]} for path in self.INCOMING_PATHS]}, paths)
+
+    def test_advanced_base_does_not_attribute_incoming_main_wrappers_to_pr(self):
+        legacy = engine.changed_paths(self.base, self.root)
+        self.assertEqual(set(legacy), set(self.PR_PATHS + self.INCOMING_PATHS))
+        self.assertEqual(self.plan(legacy)["selected_profiles"], 2)
+        paths, source = engine.changed_comparison(self.base, self.root, self.head)
+        self.assertEqual(set(paths), set(self.PR_PATHS))
+        self.assertEqual(self.plan(paths)["selected_profiles"], 0)
+        self.assertEqual(source, {"mode": "pr-test-merge", "requested_pr_head": self.head,
+                                 "supplied_base": self.base, "resolved_supplied_base": self.base,
+                                 "checkout_commit": self.merge, "checkout_parents": [self.main, self.head],
+                                 "comparison_base": self.main, "comparison_head": self.merge,
+                                 "comparison_range": self.main + ".." + self.merge})
+
+    def test_requested_branch_checkout_uses_supplied_base_merge_base(self):
+        self.git("checkout", "pr")
+        paths, source = engine.changed_comparison(self.base, self.root, self.head)
+        self.assertEqual(set(paths), set(self.PR_PATHS))
+        self.assertEqual(source["mode"], "pr-head")
+        self.assertEqual(source["comparison_base"], self.base)
+        self.assertEqual(source["checkout_parents"], [self.base])
+
+    def test_own_changed_test_wrapper_still_selects_its_profile(self):
+        self.git("checkout", "pr")
+        owned = "internal/integration/owned_integration_test.go"
+        self.write(owned, "PR-owned wrapper\n")
+        head = self.commit("own native wrapper")
+        self.git("checkout", "-b", "next-merge", self.main)
+        self.git("merge", "--no-ff", "pr", "-m", "next test merge")
+        paths, _ = engine.changed_comparison(self.base, self.root, head)
+        selected = engine.select_changed_plan({"include": [{"sources": [path]} for path in (*self.INCOMING_PATHS, owned)]}, paths)
+        self.assertEqual(selected["include"], [{"sources": [owned]}])
+
+    def test_requested_head_must_be_proven_not_inferred_from_head_parent(self):
+        for head in (self.base, self.main):
+            with self.subTest(head=head), self.assertRaisesRegex(ValueError, "neither the requested PR head"):
+                engine.changed_comparison(self.base, self.root, head)
+
+    def test_octopus_checkout_is_not_treated_as_a_two_parent_pr_merge(self):
+        self.git("checkout", "-b", "extra", self.base)
+        self.write("extra", "third branch\n")
+        self.commit("extra")
+        self.git("checkout", "-b", "octopus", self.main)
+        self.git("merge", "--no-ff", "pr", "extra", "-m", "octopus")
+        with self.assertRaisesRegex(ValueError, "two-parent test merge"):
+            engine.changed_comparison(self.base, self.root, self.head)
+
+    def test_direct_pr_head_with_ambiguous_merge_base_refuses(self):
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        first = self.git("commit-tree", tree, "-p", self.head, "-p", self.main, "-m", "first merge")
+        second = self.git("commit-tree", tree, "-p", self.main, "-p", self.head, "-m", "second merge")
+        self.git("checkout", first)
+        with self.assertRaisesRegex(ValueError, "no unique merge base"):
+            engine.changed_comparison(second, self.root, first)
+        # No requested head retains the historical Git three-dot behavior.
+        expected = self.git("diff", "--name-only", "--no-renames", second + "...HEAD").splitlines()
+        self.assertEqual(engine.changed_paths(second, self.root), expected)
+
+    def test_unrelated_supplied_base_is_refused(self):
+        self.git("checkout", "--orphan", "unrelated")
+        self.git("rm", "-rf", ".")
+        self.write("unrelated", "separate history\n")
+        unrelated = self.commit("unrelated")
+        self.git("checkout", self.merge)
+        with self.assertRaisesRegex(ValueError, "not proven"):
+            engine.changed_comparison(unrelated, self.root, self.head)
+
+    def test_missing_requested_head_in_shallow_checkout_refuses(self):
+        shallow = Path(self.temporary.name) / "shallow"
+        subprocess.run(["git", "clone", "--depth=1", "--no-local", self.root.as_uri(), str(shallow)],
+                       capture_output=True, check=True, timeout=30)
+        with self.assertRaisesRegex(ValueError, "cannot establish"):
+            engine.changed_comparison(self.merge, shallow, self.head)
+
+    def test_legacy_manual_comparison_is_explicitly_identified(self):
+        paths, source = engine.changed_comparison(self.base, self.root)
+        self.assertEqual(set(paths), set(self.PR_PATHS + self.INCOMING_PATHS))
+        self.assertEqual(source["mode"], "legacy-merge-base")
+        self.assertIsNone(source["requested_pr_head"])
+        self.assertEqual(source["comparison_base"], self.base)
+
+    def test_cli_records_comparison_and_rejects_unpaired_head(self):
+        catalog = [fixture(path=path, tests=("Test" + str(index),), category="topology", batch="slice" + str(index))
+                   for index, path in enumerate(self.INCOMING_PATHS)]
+        compare = engine.changed_comparison
+        with patch.object(engine, "load_catalog", return_value=catalog), \
+             patch.object(engine, "changed_comparison", side_effect=lambda base, requested_head: compare(base, self.root, requested_head)), \
+             patch("sys.stdout", new=io.StringIO()), patch("sys.stderr", new=io.StringIO()):
+            output = Path(self.temporary.name) / "plan.json"
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-since", self.base,
+                                          "--changed-head", self.head, "--output", str(output)]), 0)
+            plan = json.loads(output.read_bytes())
+            self.assertEqual(plan["selected_profiles"], 0)
+            self.assertEqual(plan["changed_selection"]["checkout_commit"], self.merge)
+            self.assertEqual(plan["changed_selection"]["requested_pr_head"], self.head)
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-head", self.head]), 1)
+            refused = Path(self.temporary.name) / "refused.json"
+            self.assertEqual(engine.main(["plan", "--category", "topology", "--changed-since", self.base,
+                                          "--changed-head", self.base, "--output", str(refused)]), 1)
+            self.assertFalse(refused.exists(), "unproven identity must not publish an empty valid matrix")
+
+
 if __name__ == "__main__":
     unittest.main()

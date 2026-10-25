@@ -51,6 +51,29 @@ those paths, and Code checks still runs the API inventory test against
 the batches as usual. Each `Plan` job's `tag-plan.json` artifact lists the changed
 files and the selected batches.
 
+For this own-test-file selection, the caller supplies both the event's base
+commit (`changed_since`) and requested PR head (`changed_head`). The planner
+records them alongside the actual checkout commit/parents and the exact
+comparison range in `changed_selection`. A two-parent test merge is accepted
+only when its second parent is the requested head and the supplied base is an
+ancestor of its first parent. Selection then compares that actual base parent
+to the tested merge result. Independently advanced `main` files are not
+attributed to the PR merely because the event supplied an older base.
+
+A checkout of the requested PR head itself uses its unique merge base with the
+supplied base. Missing commits, ambiguous merge bases, unproven parent identity
+or unrelated base history fail planning instead of producing an empty selection.
+This comparison uses proven commit identities, not an assumed `HEAD^`.
+
+To inspect the same comparison manually, run `tag_scenarios.py plan --category
+recovery --changed-since BASE_SHA --changed-head PR_HEAD_SHA --output plan.json`.
+Omitting `--changed-head` preserves the legacy manual merge-base comparison and
+records `legacy-merge-base`; it does not infer a PR identity. Explicit
+`--changed-files` remains a separate manual input. These inputs do not change
+`ci:full`, release-phase, Short, periodic or compiled-coverage policy. The
+selection provenance establishes which execution set was requested, not a
+measured cost saving.
+
 Pushes to `main` run Code checks, Docker checks and Ceph short. Every other
 batch, and every batch on Squid 19.2.5, runs in Ceph periodic within 3 hours
 of a new commit on `main`.
