@@ -273,3 +273,19 @@ elapsed=time.monotonic_ns()-started
 io.close(); cluster.shutdown()
 print(json.dumps(dict(writes=n,reads=n,object_bytes=size,sha256=hashlib.sha256(payload).hexdigest(),elapsed_ns=elapsed,write_read_pair_ns=samples)))
 `
+
+// debugOperationInterval is the controller's before/after client-exec envelope,
+// not Python pair latency, the wider counter interval, or the full raised-level
+// interval recorded by the applied/restored handle transitions.
+type debugOperationInterval struct {
+	StartedAt   time.Time `json:"started_at"`
+	FinishedAt  time.Time `json:"finished_at"`
+	BudgetNanos int64     `json:"budget_ns"`
+}
+
+func (i debugOperationInterval) validate() error {
+	if i.StartedAt.IsZero() || i.FinishedAt.IsZero() || i.BudgetNanos <= 0 || !i.FinishedAt.After(i.StartedAt) || i.FinishedAt.Sub(i.StartedAt) > time.Duration(i.BudgetNanos) {
+		return errors.New("debug workload operation interval unavailable or outside its selected budget")
+	}
+	return nil
+}

@@ -130,3 +130,23 @@ func TestDebugOverheadLogPayloadAccounting(t *testing.T) {
 		t.Fatal("unbounded TTY output accepted")
 	}
 }
+
+func TestDebugOperationIntervalRefusesUnboundedOrUnorderedEvidence(t *testing.T) {
+	begin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	valid := debugOperationInterval{StartedAt: begin, FinishedAt: begin.Add(time.Second), BudgetNanos: int64(2 * time.Second)}
+	if err := valid.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, interval := range []debugOperationInterval{
+		{FinishedAt: valid.FinishedAt, BudgetNanos: valid.BudgetNanos},
+		{StartedAt: begin, BudgetNanos: valid.BudgetNanos},
+		{StartedAt: begin, FinishedAt: begin, BudgetNanos: valid.BudgetNanos},
+		{StartedAt: valid.FinishedAt, FinishedAt: begin, BudgetNanos: valid.BudgetNanos},
+		{StartedAt: begin, FinishedAt: valid.FinishedAt},
+		{StartedAt: begin, FinishedAt: valid.FinishedAt, BudgetNanos: int64(time.Millisecond)},
+	} {
+		if err := interval.validate(); err == nil {
+			t.Fatalf("invalid interval admitted %+v", interval)
+		}
+	}
+}

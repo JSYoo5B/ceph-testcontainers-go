@@ -34,8 +34,9 @@ the object, followed by a one-second wait. Every measured write thus replaces an
 existing object under the same API semantics.
 The warm-up's own receipt is retained, and it does not reset all caches or logs.
 The fixed cyclic orders are `0/0, 0/20, 20/20`, `0/20, 20/20, 0/0`, and
-`20/20, 0/0, 0/20`. Each level thus occupies each position once. Only
-`debug_osd` changes; other subsystems retain their existing settings.
+`20/20, 0/0, 0/20`. Each level thus occupies each position once. Only the explicitly selected option changes; other subsystems retain their
+existing settings. The `debug_overhead` profile selects `debug_osd`; the separate
+`debug_ms_window` profile below selects `debug_ms`.
 
 | Arm | Selected log/gather levels | Interpretation |
 | --- | --- | --- |
@@ -107,5 +108,73 @@ way to subtract the carryover. Three trials per arm are descriptive samples,
 not a confidence bound or proof of negligible overhead. Cache warming, PG/MON
 background work, engine scheduling and observation itself can perturb timing;
 do not treat differences as additive causal components or a later pass as a
-repair of an earlier race. `debug_ms`, other roles/images/platforms, repeated
-independent-cluster campaigns and stronger memory attribution remain #50 work.
+repair of an earlier race. Broader roles/images/platforms, repeated independent
+clusters and stronger memory attribution are possible later experiments, not
+claims supplied by either current OSD cohort.
+
+
+## Explicit Messenger operation-window cohort
+
+`TestOSDMessengerDebugOverhead` uses the same workload, cyclic controls,
+restoration ownership, output cap and endpoint-generation accounting as the
+original OSD cohort. It changes only `debug_ms`, and has its own explicit
+optional profile; `debug_osd` measurements do not substitute for this option.
+
+```sh
+python3 .github/scripts/tag_scenarios.py optional \
+  --batch debug_ms_window --package ./internal/debugoverhead \
+  --directory artifacts/debug-ms-window
+```
+
+For a direct named execution, select `-tags=integration,debug_ms_window` and
+`-run '^TestOSDMessengerDebugOverhead$'`. Neither measurement executes under
+`all` alone or required CI. Prepare the same immutable essential/client images
+and retain the exact source/build/image/native/cleanup receipts with the JSON.
+
+Each arm records `operation_interval.started_at`, `finished_at` and `budget_ns`:
+the controller's UTC envelope immediately around the client exec request, with
+an explicit one-minute request budget. Zero/reversed/nonadvancing or over-budget
+intervals refuse acceptance. It includes Python startup, connection and
+shutdown; Python's monotonic pair/loop latencies exclude connection setup.
+The wider OSD CPU/memory interval also includes instrumentation and the fixed
+post-workload wait. Applied/restored handle transitions delimit the full
+raised-level interval, including sampling and bounded log collection. These
+are separate observation intervals; none is silently reported as another.
+The one-minute request budget and one-second observation are fixed experiment
+inputs, not application timeout recommendations or a process-quiescence claim
+for a lost exec response. Failed operations are not successful measurements;
+registered restoration and owned resource cleanup still run.
+
+## Level and interval policy
+
+The supported helper policy is **caller-selected level and bounded operation
+interval, with no generic logging default**. Choose one owned supported daemon
+and the option relevant to a concrete operation, open the window before that
+operation, and end it immediately after the selected operation returns. The
+caller supplies a workload timeout appropriate to that operation, registers any
+non-nil handle (also with an apply error), and restores using a fresh bounded
+context. The existing finalization collects a known failure before restoration
+and retains the later restoration receipt. Never use an expired workload
+context as the only restoration context.
+
+This decision follows the evidence boundary, rather than assuming a successful
+verbose run proves safety. The accepted `debug_osd` cohort's
+[analysis](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/50#issuecomment-6398628334)
+already shows that nearly quiet normal output can coincide with different
+container CPU and workload observations under high gathering. A separate
+`debug_ms` cohort supplies that option's actual windows and cost observations,
+not a transport-independent optimum. Both contain only three cyclic samples
+on one surviving generation, persistent recent-ring/cache history and one
+selected workload. They do not compare every useful diagnostic event/level or
+independent cluster conditions, so neither `20/20`, `0/20` nor a fixed duration
+is selected as a universal diagnostic default. `0/0` is also a control rather
+than a silence guarantee. Callers must weigh the selected event coverage,
+observed output/cost and timing perturbation for their operation, and retain
+its original success criteria.
+
+This completes the policy decision for the explicitly supported surviving-OSD
+admin-socket model: explicit selection and verified restoration, rather than
+auto-enabling logging on failure. It does not claim a negligible-cost threshold,
+causal cost decomposition, race repair, or replacement-spanning policy. Such
+claims need their own workload and evidence; broader roles are not required to
+use the current helper's declared model.
