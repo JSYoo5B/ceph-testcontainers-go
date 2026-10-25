@@ -11,11 +11,12 @@ package integration_test
 //   - late: a truncate, a remove and a guarded compound write whose client
 //     gives up after timeout seconds while the OSD still holds them.
 //   - state: the objects of the late phase.
-const radosMutationContractScript = `import ctypes,json,sys,time,rados
+const radosMutationContractScript = radosMutationDiagnosticsScript + `import ctypes,json,sys,time,rados
 phase,pool,namespace=sys.argv[1],sys.argv[2],sys.argv[3]
-def connected(timeout='10'):
+if phase=='late': diag_start(phase,pool,namespace,sys.argv[6],sys.argv[7])
+def connected(timeout='10',label='client'):
     c=rados.Rados(conffile='/etc/ceph/ceph.conf',conf={'keyring':'/etc/ceph/ceph.client.admin.keyring','rados_osd_op_timeout':timeout,'rados_mon_op_timeout':'10'})
-    c.connect(); return c
+    c.connect();diag_connected(c,label,timeout,'10');return c
 def refused(io,name,build):
     try:
         with rados.WriteOpCtx() as op:
@@ -26,16 +27,16 @@ def refused(io,name,build):
     return 0
 def view(io,name):
     try:
-        size,_=io.stat(name)
+        size,_=diag_call(io,name,'stat',lambda:io.stat(name))
     except rados.ObjectNotFound:
         return {'exists':False}
-    data=io.read(name,size or 1,0)
+    data=diag_call(io,name,'read',lambda:io.read(name,size or 1,0))
     xattr=None
     try:
-        xattr=io.get_xattr(name,'tc').decode()
+        xattr=diag_call(io,name,'get_xattr',lambda:io.get_xattr(name,'tc')).decode()
     except rados.NoData:
         pass
-    return {'exists':True,'size':size,'data':data.hex(),'xattr':xattr,'version':io.get_last_version()}
+    return {'exists':True,'size':size,'data':data.hex(),'xattr':xattr,'version':diag_call(io,name,'get_last_version',lambda:io.get_last_version())}
 def cmpxattr(name,value,data):
     # python-rados has no cmpxattr; call librados directly.
     lib=ctypes.CDLL('librados.so.2')
@@ -59,9 +60,9 @@ def cmpxattr(name,value,data):
         lib.rados_shutdown(cluster)
 clients=[]; ioctxs=[]
 def opened(c):
-    i=c.open_ioctx(pool); i.set_namespace(namespace); ioctxs.append(i); return i
+    i=c.open_ioctx(pool); i.set_namespace(namespace);ioctxs.append(i);diag_opened(c,i);return i
 try:
-    writer,reader=connected(),connected(); clients+=[writer,reader]
+    writer,reader=connected('10','writer'),connected('10','reader');clients+=[writer,reader]
     a,b=opened(writer),opened(reader)
     receipt={}
     if phase=='contracts':
@@ -100,17 +101,20 @@ try:
             receipt[name]=view(b,name)
     elif phase=='late':
         timeout,bound=sys.argv[4],float(sys.argv[5])
-        late=connected(timeout); clients.append(late)
+        late=connected(timeout,'late-writer');clients.append(late)
         l=opened(late)
         receipt['client']='client.%d'%late.get_instance_id()
         receipt['completed']=[]
         for key,name,build in (('truncate','late-truncate',lambda op: op.truncate(10)),
                                ('remove','late-remove',lambda op: op.remove()),
                                ('compound','late-compound',lambda op: (op.cmpext(b'0123456789',0),op.write_full(b'compound'),op.set_xattr('tc',b'v2')))):
+            diag_event(l,name,key,'started')
             receipt[key]=refused(l,name,build)
             receipt['completed'].append(time.time())
+            diag_mutation(l,name,key,receipt[key],receipt['completed'][-1])
         # Stay connected until the OSD has applied all three: it discards an
         # operation whose connection closed before it started.
+        diag_stage('observing')
         deadline=time.monotonic()+bound
         while True:
             truncated,removed,compound=view(b,'late-truncate'),view(b,'late-remove'),view(b,'late-compound')
@@ -121,8 +125,20 @@ try:
     elif phase=='state':
         for name in ('late-truncate','late-remove','late-compound'):
             receipt[name]=view(b,name)
+    diag_stage('complete')
     print(json.dumps(receipt))
 finally:
-    for i in ioctxs: i.close()
-    for c in clients: c.shutdown()
+    if _diag is None:
+        for i in ioctxs: i.close()
+        for c in clients: c.shutdown()
+    else:
+        primary=sys.exc_info()[1]
+        cleanup_error=None
+        for kind,items,method in (('ioctx',ioctxs,'close'),('client',clients,'shutdown')):
+            for item in items:
+                try: getattr(item,method)()
+                except Exception as error:
+                    diag_cleanup(kind,error)
+                    if cleanup_error is None: cleanup_error=error
+        if primary is None and cleanup_error is not None: raise cleanup_error
 `

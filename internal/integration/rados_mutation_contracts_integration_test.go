@@ -50,12 +50,37 @@ func TestRADOSMutationContracts(t *testing.T) {
 	checkMemStoreLegacyPool(t, ctx, cluster, pool)
 	phase := func(out any, args ...string) {
 		t.Helper()
+		path, token := "", ""
+		if args[0] == "late" {
+			var allocationErr error
+			path, token, allocationErr = allocateRadosMutationCheckpoint()
+			if allocationErr != nil {
+				t.Fatal(allocationErr)
+			}
+			args = append(slices.Clone(args), path, token)
+		}
 		result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 			Argv: append([]string{"python3", "-c", radosMutationContractScript}, args...), Timeout: 3 * time.Minute,
 			MaxStdout: 1 << 20, MaxStderr: 64 << 10, Label: "mutation contract " + args[0],
 		})
-		if err != nil || result.ExitCode != 0 || json.Unmarshal(result.Stdout, out) != nil {
+		if err != nil || result.ExitCode != 0 || !result.Complete() || json.Unmarshal(result.Stdout, out) != nil {
+			t.Logf("RADOS_MUTATION_PHASE phase=%s exit=%d complete=%t timed_out=%t stdout_truncated=%t stderr_truncated=%t", args[0], result.ExitCode, result.Complete(), result.TimedOut, result.StdoutTruncated, result.StderrTruncated)
+			if args[0] == "late" {
+				captureRadosMutationFailure(t, ctx, client, pool, namespace, path, token)
+			}
 			t.Fatalf("%s: %v, exit %d: %s %s", args[0], err, result.ExitCode, result.Stdout, result.Stderr)
+		}
+		if args[0] == "late" {
+			captureCtx, cancelCapture := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			checkpoint, captureErr := captureRadosMutationCheckpoint(captureCtx, client, "late", pool, namespace, path, token)
+			cancelCapture()
+			logRadosMutationCheckpoint(t, checkpoint, captureErr)
+			if captureErr == nil {
+				captureErr = completeRadosMutationCheckpoint(checkpoint)
+			}
+			if captureErr != nil {
+				t.Fatalf("late native result succeeded but diagnostic checkpoint is incomplete: %v", captureErr)
+			}
 		}
 	}
 
