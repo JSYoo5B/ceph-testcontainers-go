@@ -138,3 +138,15 @@ and no Docker response is intercepted or replayed.
 This qualification does not simulate uncertain native creation replies, partial
 container removal or failed volume release. Those require their own supervision
 and cleanup evidence; fake runner controls remain separate.
+
+## Cancellation after creation
+
+The optional `retained_cancel_after_admission` batch
+cancels the caller context of one real `ReopenOSD` right after the runner
+returned a ready container. The call returns an error with the owned
+candidate, the detached handle stays consumed and a retry refuses without
+another dispatch. The candidate is then detached with a fresh context and
+reopened once more with an exact known-byte readback. See the
+[guide](../guides/osd-retained-cancel-after-admission.md) for its limits. It does
+not cover cancellation during creation, readiness or detach, unsettled creation
+or failed release.
