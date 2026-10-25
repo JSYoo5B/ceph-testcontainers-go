@@ -9,7 +9,8 @@ other engines and data durability are separate experiments.
 
 `TestDaemonMemoryQualification` requires a local Unix Docker endpoint on Linux,
 cgroup v2 memory/swap support, readable host process and target-local cgroup
-identities/counters, and at least 4 GiB currently available runner memory.
+identities/counters, permission to read the target PID1 executable, and at least
+4 GiB currently available runner memory.
 Eligibility refusal is not native qualification. The target is the first MON
 of a new three-MON cluster with no MGR or OSD; a separate client observes quorum.
 
@@ -64,6 +65,11 @@ go test -tags integration,ci_optional,ci_batch_daemon_oom ./internal/integration
   -run '^TestDaemonMemoryQualification$' -count=1 -timeout=15m -v
 ```
 
+A controller without permission to read the target process is ineligible; a
+local Docker socket alone does not grant that host-process read permission.
+An authorized runner may execute the already compiled test binary with the
+required process-read permissions, without changing host security settings.
+
 Run Docker/native checks on an authorized Linux runner with the shared run lock;
 keep substantial compilation/fixtures under its check lock. The optional source
 owns `ci_batch_daemon_oom`; ordinary `all` does not execute pressure. Retain the
@@ -72,8 +78,11 @@ observed limits/counters, process generations, native results and owned cleanup.
 Do not publish personal host paths or raw unrelated process/environment data.
 
 Docker-free controls exercise missing/decreasing counters, wrong generation,
-non-daemon/helper attribution, generic SIGKILL and a still-running daemon. These
-are classifier controls, not native OOM, pressure or recovery evidence.
+non-daemon/helper attribution, generic SIGKILL and a still-running daemon. The tests also exercise the actual file observer against a replaced cgroup
+identity, the actual recorder against an extra process, and the real inspect
+fence against a changed generation. Plain fixture-file handle behavior does not
+prove that a removed native cgroup remains readable. These are controls, not
+native OOM, pressure or recovery evidence.
 
 References: [Docker memory/swap semantics](https://docs.docker.com/engine/containers/resource_constraints/),
 [kernel cgroup-v2 memory events](https://docs.kernel.org/admin-guide/cgroup-v2.html),

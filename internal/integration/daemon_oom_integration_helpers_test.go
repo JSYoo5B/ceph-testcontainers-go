@@ -107,8 +107,11 @@ func daemonMemoryBind(ctx context.Context, docker *mobycl.Client, id string) (*d
 	pid := c.State.Pid
 	proc := filepath.Join("/proc", strconv.Itoa(pid))
 	exe, err := os.Readlink(filepath.Join(proc, "exe"))
-	if err != nil || filepath.Base(exe) != "ceph-mon" {
-		return nil, errors.New("container PID1 is not observed ceph-mon")
+	if err != nil {
+		return nil, errors.New("controller cannot read the target PID1 executable")
+	}
+	if filepath.Base(exe) != "ceph-mon" {
+		return nil, errors.New("observed target PID1 executable is not ceph-mon")
 	}
 	stat, err := os.ReadFile(filepath.Join(proc, "stat"))
 	if err != nil {
