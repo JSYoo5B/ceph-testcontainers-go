@@ -61,12 +61,12 @@ excluded. The first-MON-only Run customizer does not set a cluster-wide limit.
 ## Execution and evidence
 
 ```sh
-go test -tags integration,ci_optional,ci_batch_daemon_oom ./internal/integration \
+go test -tags integration,ci_optional,ci_batch_daemon_memory_roundtrip ./internal/integration \
   -run '^TestDaemonMemoryFiniteRoundtrip$' -count=1 -timeout=15m -v
 ```
 
 The finite-roundtrip entry stops after the verified baseline is restored. The
-separate `TestDaemonMemoryQualification` entry additionally requires current
+separate `ci_batch_daemon_oom` / `TestDaemonMemoryQualification` entry additionally requires current
 usage above the fixed 32 MiB pressure ceiling before its single pressure step.
 It fails admission if that condition is absent; a finite-roundtrip pass never
 qualifies the additional OOM experiment.
@@ -79,7 +79,8 @@ required process-read permissions, without changing host security settings.
 
 Run Docker/native checks on an authorized Linux runner with the shared run lock;
 keep substantial compilation/fixtures under its check lock. The optional source
-owns `ci_batch_daemon_oom`; ordinary `all` does not execute pressure. Retain the
+owns separate `ci_batch_daemon_memory_roundtrip` and `ci_batch_daemon_oom`
+profiles; ordinary `all` executes neither native experiment. Retain the
 exact source SHA, image IDs/platform/build, engine version, requested transition,
 observed limits/counters, process generations, native results and owned cleanup.
 Do not publish personal host paths or raw unrelated process/environment data.
@@ -94,3 +95,21 @@ native OOM, pressure or recovery evidence.
 References: [Docker memory/swap semantics](https://docs.docker.com/engine/containers/resource_constraints/),
 [kernel cgroup-v2 memory events](https://docs.kernel.org/admin-guide/cgroup-v2.html),
 and [existing resource accounting adapter](../../internal/integration/container_accounting_helpers_test.go).
+
+## Initial observed boundary
+
+An unprivileged controller attempt at `7037e497b9eef7d19fc9e6a9cdd1c3e4a3fff020`
+failed PID1-executable admission before any resource update. A separate,
+checksum-verified privileged attempt at `0f0f20590c8c318f8ddbf59768f0727e028f2733`
+on Linux amd64 / Docker 29.9.1 / the official Ceph 20.2.4 image observed the
+finite same-generation round trip and three-member native quorum. The complete
+OOM test still failed: current MON usage was at or below the predeclared 32 MiB
+pressure ceiling, so no pressure update was dispatched. Owned containers were
+removed. No limit was progressively reduced to obtain a kill.
+
+Those observations qualify the finite controller prerequisite only. Actual OOM,
+Ceph-victim attribution, the event-file behavior after a real cgroup teardown,
+and OOM recovery remain unqualified. The separately selectable finite-roundtrip
+entry lets that useful prerequisite run without disguising the experimental
+OOM admission failure as a passing native OOM test. Exact final-source checks
+and immutable image/build receipts belong with each execution report.

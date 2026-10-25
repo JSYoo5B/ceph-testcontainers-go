@@ -153,4 +153,14 @@ func TestDaemonMemoryObserverRejectsWrongGeneration(t *testing.T) {
 	if err := target.fence(t.Context(), client); err == nil || err.Error() != "target daemon generation changed" {
 		t.Fatal("wrong generation did not fail at engine fence", err)
 	}
+	// The same actual inspect adapter must refuse an unadmitted baseline.
+	if _, err := daemonMemoryBind(t.Context(), client, target.ID); err == nil {
+		t.Fatal("missing finite baseline admitted")
+	}
+	// This transport deliberately refuses POST: a lost/refused update reply
+	// cannot be converted into success by the real controller adapter.
+	if err := daemonMemoryUpdate(t.Context(), client, target.ID, daemonMemoryBaseline); err == nil {
+		t.Fatal("missing update reply treated as success")
+	}
+
 }

@@ -21,7 +21,6 @@ import (
 // These are experiment ceilings, not product defaults. There is one pressure
 // step, never a search for the smallest limit that kills a process.
 const daemonMemoryBaseline int64 = 1 << 30
-const daemonMemoryBenign int64 = 768 << 20
 const daemonMemoryPressure int64 = 32 << 20
 
 type daemonMemorySample struct {
