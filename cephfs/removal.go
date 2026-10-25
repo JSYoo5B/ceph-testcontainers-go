@@ -41,10 +41,10 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, name string) error
 		return err
 	}
 	if present {
-		// fs fail stops every rank so fs rm accepts the filesystem; daemons
-		// that are already gone are simply recorded as failed.
-		if _, err := c.Ceph(ctx, "fs", "fail", name); err != nil {
-			return fmt.Errorf("fail cephfs %q: %w", name, err)
+		// Gracefully drain only this filesystem. Older monitors can refuse
+		// fs fail because an unrelated filesystem's MDS has a warning.
+		if err := drainFilesystemForRemoval(ctx, c, fs); err != nil {
+			return fmt.Errorf("drain cephfs %q: %w", name, err)
 		}
 		if _, err := c.Ceph(ctx, "fs", "rm", name, "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("remove cephfs %q: %w", name, err)

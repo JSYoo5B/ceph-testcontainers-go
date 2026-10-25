@@ -46,15 +46,17 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 	return filesystems(c).sorted()
 }
 
-// Remove deletes an owned filesystem: it fails and removes it in the
-// FSMap, terminates its MDS daemons, deletes their Cephx keys and removes the
+// Remove deletes an owned filesystem: it gracefully stops its ranks and removes
+// it in the FSMap, terminates its MDS daemons, deletes their Cephx keys and removes the
 // metadata, default data and AdditionalDataPools that its configuration
 // created, together with their CRUSH rules and EC profiles. Pools attached
 // later with AddDataPool are detached but kept; remove them with
 // ceph.Container.RemovePool. File data in the removed pools is destroyed. Stop
 // clients, CephFS mirrors and subvolume operations on the filesystem first;
 // their handles fail afterwards. A retry after an error continues with
-// whatever remains.
+// whatever remains. If graceful shutdown cannot complete within the caller or
+// startup timeout, removal returns an error without forcing the MDSs to fail.
+// The filesystem may remain marked down and stays owned for a later retry.
 func Remove(ctx context.Context, c *ceph.Container, name string) error {
 	if c == nil {
 		return errNilCluster

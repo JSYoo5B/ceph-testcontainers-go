@@ -367,7 +367,7 @@ descriptor whose setup partially failed.
 func Remove(ctx context.Context, c *ceph.Container, name string) error
 ```
 
-Deletes an owned filesystem. It fails and removes the filesystem in the FSMap,
+Deletes an owned filesystem. It gracefully stops its ranks and removes the filesystem in the FSMap,
 terminates its MDS daemons, deletes their Cephx keys, and deletes the metadata,
 default data and `AdditionalDataPools` pools created from its `Config`, together
 with their CRUSH rules and erasure-code profiles. Pools attached later with
@@ -376,6 +376,22 @@ with their CRUSH rules and erasure-code profiles. Pools attached later with
 All file data in the deleted pools is destroyed. Stop clients, mirrors and
 subvolume operations on the filesystem first; their handles fail afterwards. A
 retry after an error continues with whatever remains.
+
+Removal requests `fs set <name> down true`, then requires the same filesystem's
+explicit native `up` map to be empty before `fs rm` and resource cleanup. A rank
+that is stopping or reconnecting still blocks removal. This uses the ordinary
+[graceful shutdown](https://docs.ceph.com/en/squid/cephfs/administration/#taking-the-cluster-down)
+contract, including journal flushing, rather than forcing `fs fail` through a
+health warning. Target warnings do not authorize a forced removal: the target
+must finish draining even when it has warnings. Errors, cancellation or timeout
+leave ownership intact and may leave the filesystem marked down; no automatic
+force fallback or rollback runs. A fresh-context retry reconciles the current
+state. The caller must still stop operations on the target filesystem first.
+
+This common sequence avoids the unrelated-MDS warning refusal in affected
+`fs fail` implementations without selecting by runtime release strings or
+registering a compatibility tag. Qualification and its remaining scope are
+tracked in [#125](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/125).
 
 #### Filesystem
 
