@@ -88,7 +88,13 @@ func TestEnvelopeEvidenceRefusesMissingOrBrokenEvidence(t *testing.T) {
 		{"only an unrecognized quote", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) {
 			quoted.Priorities, quoted.Unrecognized = map[string]int{}, 1
 		}, "no INF line"},
-		{"quote outside any envelope", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Unrecognized = 1 }, "outside any recognized envelope"},
+		{"quote outside any envelope", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Unrecognized = 1 }, "literal severity marker outside any recognized envelope"},
+		{"literal marker in the command echo", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) {
+			*quoted = rawEnvelopeCounts([]string{
+				"2026-10-26T01:02:03.123+0000 7f3a1c0e5640  0 log_channel(cluster) log [INF] : " + envelopeFixtureToken + " quotes [WRN]",
+				`2026-10-26T01:02:03.100+0000 7f3a1c0e5640  0 mon.a@0(leader) e1 handle_command mon_command([{"prefix": "log", "logtext": ["` + envelopeFixtureToken + ` quotes [WRN]"]}] v 0)`,
+			}, envelopeFixtureToken)
+		}, "literal severity marker outside any recognized envelope"},
 		{"quote also in a WRN line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["WRN"] = 1 }, "void"},
 		{"quote also in an ERR line", func(_ *ceph.VerificationReport, _, quoted *envelopeRaw) { quoted.Priorities["ERR"] = 1 }, "void"},
 	}
@@ -132,5 +138,22 @@ func TestEnvelopeRawCountsUseTheStructuralPriority(t *testing.T) {
 	}
 	if none := rawEnvelopeCounts(nil, token); len(none.Priorities) != 0 {
 		t.Fatalf("no lines counted %+v", none)
+	}
+}
+
+// The real pair of the MON for a quoted marker: the level 0 echo of the
+// handled command carries the token with the marker JSON-escaped, and the
+// decoded message is an INF entry. The echo is harmless, and the pair still
+// passes the judge; a literal marker in the echo does not.
+func TestEnvelopeEvidenceAcceptsAnEncodedCommandEcho(t *testing.T) {
+	echo := `2026-10-26T01:02:03.100+0000 7f3a1c0e5640  0 mon.a@0(leader) e1 handle_command mon_command([{"prefix": "log", "logtext": ["` + envelopeFixtureToken + ` quotes \u005bWRN\u005d"]}] v 0)`
+	decoded := "2026-10-26T01:02:03.123+0000 7f3a1c0e5640  0 log_channel(cluster) log [INF] : " + envelopeFixtureToken + " quotes [WRN]"
+	quoted := rawEnvelopeCounts([]string{echo, decoded}, envelopeFixtureToken)
+	if quoted.Priorities["INF"] != 1 || quoted.Echo != 1 || quoted.Unrecognized != 0 {
+		t.Fatalf("counts %+v", quoted)
+	}
+	probe, _ := envelopeFixtureRaw()
+	if err := judgeEnvelopeEvidence(envelopeFixtureReport(), envelopeFixtureToken, probe, quoted); err != nil {
+		t.Fatal(err)
 	}
 }

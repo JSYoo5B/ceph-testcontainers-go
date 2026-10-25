@@ -50,12 +50,18 @@ var (
 )
 
 // envelopeRaw counts the raw container lines that contain a token by the
-// priority of their structural envelope. Unrecognized counts the lines that
-// contain the token without a recognized envelope.
+// priority of their structural envelope. Lines without a recognized envelope
+// are split like the verifier splits them: Unrecognized counts those that
+// carry a literal severity marker (which the verifier reports as a gap), and
+// Echo counts those that do not, such as the MON's level 0 echo of a handled
+// command whose marker is JSON-escaped.
 type envelopeRaw struct {
 	Priorities   map[string]int
 	Unrecognized int
+	Echo         int
 }
+
+var rawSeverityMarker = regexp.MustCompile(`\[(ERR|SEC|WRN)\]`)
 
 // rawEnvelopeCounts classifies the lines that contain token.
 func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
@@ -72,7 +78,11 @@ func rawEnvelopeCounts(lines []string, token string) envelopeRaw {
 			match = rawClusterEnvelope.FindStringSubmatch(line)
 		}
 		if match == nil {
-			raw.Unrecognized++
+			if rawSeverityMarker.MatchString(line) {
+				raw.Unrecognized++
+			} else {
+				raw.Echo++
+			}
 			continue
 		}
 		raw.Priorities[match[1]]++
@@ -151,7 +161,7 @@ func judgeEnvelopeEvidence(report *ceph.VerificationReport, token string, probe,
 		}
 	}
 	if quoted.Unrecognized != 0 {
-		fail("%d MON lines carry the token outside any recognized envelope, which the verifier reports as a gap: %+v", quoted.Unrecognized, quoted)
+		fail("%d MON lines carry the token and a literal severity marker outside any recognized envelope, which the verifier reports as a gap: %+v", quoted.Unrecognized, quoted)
 	}
 	if len(problems) == 0 {
 		return nil
