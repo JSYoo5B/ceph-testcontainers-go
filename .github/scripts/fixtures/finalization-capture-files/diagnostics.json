@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "started_at": "0001-01-01T00:00:00Z",
+  "finished_at": "0001-01-01T00:00:00Z",
+  "host_network": false,
+  "closed": false,
+  "complete": true,
+  "artifacts": [
+    {
+      "kind": "ceph",
+      "name": "status",
+      "data": "{}"
+    }
+  ]
+}

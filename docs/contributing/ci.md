@@ -1370,6 +1370,59 @@ the tracked debug restore. It does not establish every collector failure,
 partial bootstrap, disk failure, forced process exit or runner-loss path under
 #49/#51, and it does not close either issue by itself.
 
+### Retained archive audit
+
+`archive_audit.py` audits one already downloaded finalization archive
+directory (`manifest.json` and the files it lists). It only reads files,
+recollects nothing and never changes a test verdict:
+
+```sh
+python3 .github/scripts/archive_audit.py <archive-directory> --output audit.json
+```
+
+It reports these facts separately for each file and for the archive:
+availability inside the archive root (no link or path escape), the producer's
+recorded write outcome, JSON readability, size agreement, the producer's
+`archive.complete` declaration, and `final` plus recorded termination.
+`evidence_complete` is true only when the producer declared the archive
+complete, the manifest is final with a termination, and every listed file and
+capture copy is verified. `final=true` or a successful copy never upgrades an
+archive the producer declared incomplete.
+
+A write the producer recorded as failed has `bytes: 0` (or the staged count)
+regardless of what was kept. A retained fragment is hashed and reported as
+producer-declared partial, never as download corruption, and an absent file is
+reported as a producer-declared failed absence.
+
+Each `capture_files` record (a raw packet copy registered with
+`CaptureWithFile`) is joined to the `files` entry of the same name:
+
+| Producer `copied` | Downloaded file | Capture state |
+|---|---|---|
+| true | present, copied size = expected size = file size, full SHA256 agrees three ways | `verified` |
+| true | absent | `missing` |
+| true | size or digest disagrees | `size_mismatch` or `digest_mismatch` |
+| false with producer error | absent | `producer_declared_failed_absent` (explained omission) |
+| false with producer error | present | `failed_copy_file_present` (unexpected retained file) |
+
+The raw copy is atomic, so a failed copy publishes no final file even when it
+staged bytes (`bytes` is nonzero); that absence is not evidence of upload loss.
+Raw captures are not parsed as JSON. Missing, null or wrong-typed fields, a
+contradictory error field, a `files` entry that disagrees with the record, an
+unsafe name, a duplicate name or a record with no `files` entry are not
+matches (`inconclusive`, `duplicate_name` or `not_in_files`). Extra `.pcap`
+or `.capture-*` files with no record are listed in `unrecorded_capture_files`,
+apart from the records and from `unlisted_files`. The producer outcome
+(`producer_copy`), downloaded availability (`downloaded`) and the archive
+fields stay independent keys, never one boolean.
+
+The fixtures under `.github/scripts/fixtures/` are real finalization producer
+output (a failed JSON write, and four raw copies: valid identity, same-size
+wrong digest, read error after bytes, limit exceeded with 0 bytes). The audit
+does not establish a real packet capture, an upload or download, a filesystem
+under pressure, or any native run: it checks the stated producer contract on
+bytes that were already downloaded.
+
 ### Scenario history
 
 `scenario_history.py` turns one job's receipts into one JSON row with schema

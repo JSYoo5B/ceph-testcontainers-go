@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "test": "TestWorkload/case_1",
+  "cluster": "0123456789abcdef0123",
+  "execution": {
+    "id": "17239d612838f083",
+    "started_at": "2026-10-25T18:57:34.376949Z",
+    "go_version": "go1.27.3",
+    "platform": "darwin/arm64"
+  },
+  "images": {
+    "Essential": "example.invalid/ceph:test",
+    "Client": "",
+    "CephFS": "",
+    "RBDAux": "",
+    "RGW": "",
+    "All": ""
+  },
+  "missing_provenance": [
+    "source revision",
+    "CI run identity",
+    "scenario",
+    "bug compatibility selection"
+  ],
+  "phase": "before-cleanup",
+  "trigger": {
+    "test_failed": true,
+    "check_failed": false,
+    "cleanup_failed": false,
+    "check_reported_failure": false,
+    "cleanup_reported_failure": false
+  },
+  "checks": [],
+  "captures": [
+    {
+      "name": "valid",
+      "started_at": "2026-10-25T18:57:34.376981Z",
+      "finished_at": "2026-10-25T18:57:34.377302Z",
+      "failed_test": false,
+      "allowance": "1m30s",
+      "reported": true
+    },
+    {
+      "name": "wrong-digest",
+      "started_at": "2026-10-25T18:57:34.377305Z",
+      "finished_at": "2026-10-25T18:57:34.377324Z",
+      "failed_test": false,
+      "allowance": "1m30s",
+      "reported": true
+    },
+    {
+      "name": "read-error",
+      "started_at": "2026-10-25T18:57:34.377326Z",
+      "finished_at": "2026-10-25T18:57:34.377341Z",
+      "failed_test": false,
+      "allowance": "1m30s",
+      "reported": true
+    },
+    {
+      "name": "over-limit",
+      "started_at": "2026-10-25T18:57:34.377342Z",
+      "finished_at": "2026-10-25T18:57:34.377356Z",
+      "failed_test": false,
+      "allowance": "1m30s",
+      "reported": true
+    }
+  ],
+  "archive": {
+    "id": "ceph-0123456789ab-17239d612838f083",
+    "retained": true,
+    "timeout": "3m0s",
+    "started_at": "2026-10-25T18:57:34.377375Z",
+    "finished_at": "2026-10-25T18:57:34.379167Z",
+    "cluster_closed": false,
+    "complete": false
+  },
+  "collectors": [
+    {
+      "name": "diagnostics",
+      "file": "diagnostics.json",
+      "started_at": "2026-10-25T18:57:34.377607Z",
+      "finished_at": "2026-10-25T18:57:34.377624Z",
+      "reported": true,
+      "complete": true
+    },
+    {
+      "name": "crash-metadata",
+      "file": "crash-metadata.json",
+      "started_at": "2026-10-25T18:57:34.377599Z",
+      "finished_at": "2026-10-25T18:57:34.377618Z",
+      "reported": true,
+      "complete": true,
+      "crash_outcomes": {
+        "empty": 1,
+        "records": 1
+      }
+    }
+  ],
+  "files": [
+    {
+      "name": "diagnostics.json",
+      "bytes": 270
+    },
+    {
+      "name": "crash-metadata.json",
+      "bytes": 693
+    },
+    {
+      "name": "capture-1-valid.json",
+      "bytes": 56
+    },
+    {
+      "name": "capture-2-wrong-digest.json",
+      "bytes": 56
+    },
+    {
+      "name": "capture-3-read-error.json",
+      "bytes": 56
+    },
+    {
+      "name": "capture-4-over-limit.json",
+      "bytes": 56
+    },
+    {
+      "name": "capture-1-valid.pcap",
+      "bytes": 22
+    },
+    {
+      "name": "capture-2-wrong-digest.pcap",
+      "bytes": 22,
+      "error": "capture source size or digest changed"
+    },
+    {
+      "name": "capture-3-read-error.pcap",
+      "bytes": 22,
+      "error": "capture source read failed"
+    },
+    {
+      "name": "capture-4-over-limit.pcap",
+      "bytes": 0,
+      "error": "capture file byte limit exceeded"
+    }
+  ],
+  "capture_files": [
+    {
+      "registration": 1,
+      "name": "capture-1-valid.pcap",
+      "limit": 128,
+      "expected_bytes": 22,
+      "expected_sha256": "6f7341d269266a7cb812b15967204b558dc76941371826c5dd21294b40e99b8b",
+      "bytes": 22,
+      "sha256": "6f7341d269266a7cb812b15967204b558dc76941371826c5dd21294b40e99b8b",
+      "copied": true
+    },
+    {
+      "registration": 2,
+      "name": "capture-2-wrong-digest.pcap",
+      "limit": 128,
+      "expected_bytes": 22,
+      "expected_sha256": "6f7341d269266a7cb812b15967204b558dc76941371826c5dd21294b40e99b8b",
+      "bytes": 22,
+      "sha256": "ec4a4fcd915a7672085936bb477cc50561660015653ad41616c8419727e97ff1",
+      "copied": false,
+      "error": "capture source size or digest changed"
+    },
+    {
+      "registration": 3,
+      "name": "capture-3-read-error.pcap",
+      "limit": 128,
+      "expected_bytes": 22,
+      "expected_sha256": "6f7341d269266a7cb812b15967204b558dc76941371826c5dd21294b40e99b8b",
+      "bytes": 22,
+      "copied": false,
+      "error": "capture source read failed"
+    },
+    {
+      "registration": 4,
+      "name": "capture-4-over-limit.pcap",
+      "limit": 4,
+      "expected_bytes": 22,
+      "expected_sha256": "6f7341d269266a7cb812b15967204b558dc76941371826c5dd21294b40e99b8b",
+      "bytes": 0,
+      "copied": false,
+      "error": "capture file byte limit exceeded"
+    }
+  ],
+  "cleanups": [],
+  "debug_windows": [],
+  "termination": {
+    "name": "terminate",
+    "started_at": "2026-10-25T18:57:34.379455Z",
+    "finished_at": "2026-10-25T18:57:34.379458Z",
+    "failed_test": false
+  },
+  "final": true,
+  "notes": [
+    "The reports are a snapshot taken during finalization: observations are not atomic and log tails are not continuous history.",
+    "No crash records is not proof that a daemon never crashed; a removed container takes its records along.",
+    "Cleanup and termination outcomes were recorded after the snapshot; nothing was collected after termination.",
+    "Nothing is archived after a forced process exit or a lost runner."
+  ]
+}
