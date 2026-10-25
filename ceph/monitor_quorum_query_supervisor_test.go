@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -106,66 +107,268 @@ while pending:
 	monitorQuorumAssertDescendantStopped(t, heartbeatPath)
 }
 
-func TestMonitorQuorumPythonFullJSONThenHangKillsAndReapsOwnedGroup(t *testing.T) {
+// monitorQuorumHangOverallBound is the explicit bound on one hang fixture
+// run. It sits below the fixture child's intrinsic expiry (2s), so a run that
+// reaches it has stopped depending on the supervisor to settle the group.
+const monitorQuorumHangOverallBound = 1500 * time.Millisecond
+
+// monitorQuorumHangCaller is the caller deadline of the hang fixture. It
+// shortens the supervisor's child duration to a fraction of itself.
+const monitorQuorumHangCaller = 900 * time.Millisecond
+
+// monitorQuorumHangObservation records the phases of one hang fixture run so
+// a failure shows which phase used the wall-clock allowance.
+type monitorQuorumHangObservation struct {
+	StartupDelay           time.Duration // injected before the interpreter is launched
+	Effective              string        // child duration the caller side handed to the supervisor
+	ExecEntered            time.Duration // since the start of the run
+	SupervisorUp           time.Duration // interpreter launched
+	SupervisorEnd          time.Duration // supervisor exited and its report was complete
+	Started                time.Time
+	Settled                time.Duration // end of the PID probe and heartbeat observations; zero until observed
+	Returned               time.Duration // queryMonitorQuorum returned
+	CallerErr              error         // caller context state at return
+	Report                 monitorQuorumTestEnvelope
+	ReportErr              error
+	Status                 QuorumStatus
+	Err                    error
+	PIDPath, HeartbeatPath string
+}
+
+func (o monitorQuorumHangObservation) String() string {
+	return fmt.Sprintf("delay=%s effective=%ss exec=%s up=%s end=%s returned=%s caller=%v timedOut=%v exit=%d stdoutBytes=%d reportErr=%v status=%+v err=%v",
+		o.StartupDelay, o.Effective, o.ExecEntered, o.SupervisorUp, o.SupervisorEnd, o.Returned, o.CallerErr, o.Report.TimedOut, o.Report.ExitCode, len(o.Report.Stdout), o.ReportErr, o.Status, o.Err)
+}
+
+// runMonitorQuorumHang executes the production supervisor around a child that
+// prints complete quorum JSON and then hangs with a descendant. The
+// supervisor runs under its own bounded context, not the caller's, so a caller
+// deadline cannot cut it off before it settles the group. descendant is the
+// Python source of the descendant; a variant may leave the owned group.
+func runMonitorQuorumHang(t *testing.T, startupDelay time.Duration, descendant string) monitorQuorumHangObservation {
+	t.Helper()
 	python := diagnosticsInstalledPython(t)
-	pidPath := filepath.Join(t.TempDir(), "child-pid")
-	heartbeatPath := filepath.Join(t.TempDir(), "descendant-heartbeat")
+	obs := monitorQuorumHangObservation{
+		StartupDelay:  startupDelay,
+		PIDPath:       filepath.Join(t.TempDir(), "child-pid"),
+		HeartbeatPath: filepath.Join(t.TempDir(), "descendant-heartbeat"),
+	}
 	// Intrinsic expiry bounds failed fixtures without signaling a recorded PID
 	// after the supervisor may already have released its ownership by reaping.
 	const child = `import os,subprocess,sys,time
 deadline=time.monotonic()+2
 with open(sys.argv[1],'w') as f: f.write(str(os.getpid()))
-descendant="import sys,time\ndeadline=time.monotonic()+2\nwith open(sys.argv[1],'ab',buffering=0) as f:\n while time.monotonic()<deadline:\n  f.write(b'x'); time.sleep(0.01)"
-subprocess.Popen([sys.executable,'-c',descendant,sys.argv[2]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.Popen([sys.executable,'-c',sys.argv[4],sys.argv[2]],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 sys.stdout.write(sys.argv[3]); sys.stdout.flush()
 os.close(1); os.close(2)
 while time.monotonic()<deadline: time.sleep(0.01)
 `
 	markers := t.TempDir()
-	control := &diagnosticsTestContainer{exec: func(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	started := time.Now()
+	obs.Started = started
+	control := &diagnosticsTestContainer{exec: func(_ context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+		obs.ExecEntered = time.Since(started)
 		if !monitorQuorumTestCommand(args) {
 			t.Fatal("native read did not use the fixed quorum supervisor")
 		}
+		obs.Effective = args[5]
 		// Execute the exact production supervisor, replacing only its fixed Ceph
 		// child with this local native-process fixture and moving its marker
 		// below a test directory. No Docker is involved.
 		argv := append([]string{}, args[1:6]...)
-		argv = append(argv, python, "-c", child, pidPath, heartbeatPath, monitorConfigQuorum)
+		argv = append(argv, python, "-c", child, obs.PIDPath, obs.HeartbeatPath, monitorConfigQuorum, descendant)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		time.Sleep(startupDelay)
 		cmd := exec.CommandContext(ctx, python, argv...)
 		cmd.Env = append(os.Environ(), supervisorTestEnvironment(opts, markers)...)
+		obs.SupervisorUp = time.Since(started)
 		output, err := cmd.Output()
+		obs.SupervisorEnd = time.Since(started)
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			t.Logf("actual quorum supervisor stderr: %s", exitErr.Stderr)
 		}
+		obs.ReportErr = json.Unmarshal(output, &obs.Report)
 		return 0, bytes.NewReader(output), err
 	}}
-	ctx, cancel := context.WithTimeout(t.Context(), 900*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), monitorQuorumHangCaller)
 	defer cancel()
-	started := time.Now()
-	status, err := queryMonitorQuorum(ctx, control)
-	if !errors.Is(err, context.DeadlineExceeded) || len(status.QuorumNames) != 0 || ctx.Err() != nil || time.Since(started) >= 900*time.Millisecond {
-		t.Fatalf("full JSON before a stuck process became success or exceeded caller budget: %+v, %v, caller=%v elapsed=%s", status, err, ctx.Err(), time.Since(started))
+	obs.Status, obs.Err = queryMonitorQuorum(ctx, control)
+	obs.Returned = time.Since(started)
+	obs.CallerErr = ctx.Err()
+	return obs
+}
+
+// monitorQuorumVerifyNoFalseSuccess checks the semantic contract: complete
+// JSON from a child that never exits is a deadline error with an empty status,
+// and the supervisor itself reported the timeout.
+func monitorQuorumVerifyNoFalseSuccess(obs monitorQuorumHangObservation) error {
+	if !errors.Is(obs.Err, context.DeadlineExceeded) || len(obs.Status.QuorumNames) != 0 {
+		return fmt.Errorf("full JSON before a stuck process became success: %s", obs)
 	}
+	stdout, err := base64.StdEncoding.DecodeString(obs.Report.Stdout)
+	if obs.ReportErr != nil || err != nil || !obs.Report.TimedOut || string(stdout) != monitorConfigQuorum {
+		return fmt.Errorf("supervisor did not report the stuck child as timed out with its full output: %s", obs)
+	}
+	return nil
+}
+
+// monitorQuorumVerifyOverallBound is the explicit wall-clock bound; it is not
+// the admission margin against the caller deadline. It bounds both the query
+// return and the end of the settlement observations: evidence collected after
+// the descendant's intrinsic expiry cannot tell supervisor cleanup from
+// natural expiry, so it is rejected.
+func monitorQuorumVerifyOverallBound(obs monitorQuorumHangObservation) error {
+	if obs.Settled == 0 {
+		return fmt.Errorf("settlement observations did not complete: %s", obs)
+	}
+	if obs.Returned >= monitorQuorumHangOverallBound || obs.Settled >= monitorQuorumHangOverallBound {
+		return fmt.Errorf("run or settlement observation exceeded the explicit overall bound %s (settled=%s): %s", monitorQuorumHangOverallBound, obs.Settled, obs)
+	}
+	return nil
+}
+
+// monitorQuorumObserveSettlement runs the direct-child and descendant
+// observations and records when they finished. Each error is independent.
+func monitorQuorumObserveSettlement(t *testing.T, python string, obs *monitorQuorumHangObservation) error {
+	t.Helper()
+	err := errors.Join(monitorQuorumVerifyDirectChildReaped(t, python, obs.PIDPath), monitorQuorumVerifyDescendantSettled(obs.HeartbeatPath))
+	obs.Settled = time.Since(obs.Started)
+	return err
+}
+
+// monitorQuorumVerifyDirectChildReaped checks the recorded child PID
+// independently of the returned error. kill(pid, 0) must fail after p.wait():
+// killing without reaping is insufficient.
+func monitorQuorumVerifyDirectChildReaped(t *testing.T, python, pidPath string) error {
+	t.Helper()
 	pid, err := os.ReadFile(pidPath)
 	if err != nil {
-		t.Fatal("child did not publish its owned identity", err)
+		return fmt.Errorf("child did not publish its owned identity: %w", err)
 	}
-	// kill(pid, 0) must fail after p.wait(): killing without reaping is insufficient.
 	probe, err := exec.CommandContext(t.Context(), python, "-c", "import os,sys\ntry:\n os.kill(int(sys.argv[1]),0); print('alive')\nexcept ProcessLookupError: print('reaped')", string(pid)).Output()
 	if err != nil || strings.TrimSpace(string(probe)) != "reaped" {
-		t.Fatalf("supervisor returned before reaping its direct child: %q, %v", probe, err)
+		return fmt.Errorf("supervisor returned before reaping its direct child: %q, %v", probe, err)
 	}
+	return nil
+}
+
+func monitorQuorumVerifyDescendantSettled(heartbeatPath string) error {
 	before, err := os.ReadFile(heartbeatPath)
 	if err != nil || len(before) == 0 {
-		t.Fatalf("descendant did not demonstrate activity before timeout: bytes=%d err=%v", len(before), err)
+		return fmt.Errorf("descendant did not demonstrate activity before timeout: bytes=%d err=%v", len(before), err)
 	}
 	time.Sleep(100 * time.Millisecond)
 	after, err := os.ReadFile(heartbeatPath)
 	if err != nil || len(after) != len(before) {
-		t.Fatalf("owned descendant remained active after return: before=%d after=%d err=%v", len(before), len(after), err)
+		return fmt.Errorf("owned descendant remained active after return: before=%d after=%d err=%v", len(before), len(after), err)
 	}
-	if elapsed := time.Since(started); elapsed >= 1500*time.Millisecond {
-		t.Fatalf("descendant observation approached the fixture's intrinsic expiry: %s", elapsed)
+	return nil
+}
+
+const monitorQuorumOwnedDescendant = `import sys,time
+deadline=time.monotonic()+2
+with open(sys.argv[1],'ab',buffering=0) as f:
+ while time.monotonic()<deadline:
+  f.write(b'x'); time.sleep(0.01)
+`
+
+func TestMonitorQuorumPythonFullJSONThenHangKillsAndReapsOwnedGroup(t *testing.T) {
+	python := diagnosticsInstalledPython(t)
+	obs := runMonitorQuorumHang(t, 0, monitorQuorumOwnedDescendant)
+	t.Logf("phases: %s", obs)
+	// Each contract is checked independently so one failure does not hide the
+	// others, and none is inferred from the returned error.
+	if err := monitorQuorumVerifyNoFalseSuccess(obs); err != nil {
+		t.Error(err)
+	}
+	if err := monitorQuorumObserveSettlement(t, python, &obs); err != nil {
+		t.Error(err)
+	}
+	if err := monitorQuorumVerifyOverallBound(obs); err != nil {
+		t.Error(err)
+	}
+}
+
+// With interpreter admission delayed past the caller-relative allowance, the
+// former strict condition (elapsed below the caller deadline) is violated by
+// construction, while the semantic contract and the explicit bound still hold.
+func TestMonitorQuorumHangControlStartupDelayBreaksOnlyWallClockMargin(t *testing.T) {
+	python := diagnosticsInstalledPython(t)
+	obs := runMonitorQuorumHang(t, 300*time.Millisecond, monitorQuorumOwnedDescendant)
+	t.Logf("phases: %s", obs)
+	if obs.Returned < monitorQuorumHangCaller {
+		t.Fatalf("injected delay did not cross the former strict margin: %s", obs)
+	}
+	if err := errors.Join(monitorQuorumVerifyNoFalseSuccess(obs), monitorQuorumObserveSettlement(t, python, &obs),
+		monitorQuorumVerifyOverallBound(obs)); err != nil {
+		t.Fatalf("delayed admission broke a semantic contract: %v", err)
+	}
+}
+
+// Negative controls: the verifiers must fail on outcomes they exist to catch.
+func TestMonitorQuorumHangVerifiersRejectBrokenOutcomes(t *testing.T) {
+	python := diagnosticsInstalledPython(t)
+	good := runMonitorQuorumHang(t, 0, monitorQuorumOwnedDescendant)
+
+	falseSuccess := good
+	falseSuccess.Err = nil
+	falseSuccess.Status = QuorumStatus{QuorumNames: []string{"a"}}
+	if monitorQuorumVerifyNoFalseSuccess(falseSuccess) == nil {
+		t.Error("accepted full JSON from a stuck child as success")
+	}
+	notTimedOut := good
+	notTimedOut.Report.TimedOut = false
+	if monitorQuorumVerifyNoFalseSuccess(notTimedOut) == nil {
+		t.Error("accepted a report that does not show the supervisor timeout")
+	}
+	good.Settled = time.Since(good.Started)
+	slow := good
+	slow.Returned = monitorQuorumHangOverallBound
+	if monitorQuorumVerifyOverallBound(slow) == nil {
+		t.Error("accepted a run at the explicit overall bound")
+	}
+
+	// A live process in place of the recorded child: the direct child is not reaped.
+	sleeper := exec.CommandContext(t.Context(), python, "-c", "import time;time.sleep(5)")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sleeper.Wait() }()
+	alivePath := filepath.Join(t.TempDir(), "alive-pid")
+	if err := os.WriteFile(alivePath, []byte(strconv.Itoa(sleeper.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if monitorQuorumVerifyDirectChildReaped(t, python, alivePath) == nil {
+		t.Error("accepted a live direct child as reaped")
+	}
+	_ = sleeper.Process.Kill()
+
+	// A descendant that left the owned process group survives the group kill.
+	escaped := runMonitorQuorumHang(t, 0, "import os\nos.setsid()\n"+monitorQuorumOwnedDescendant)
+	if monitorQuorumVerifyDescendantSettled(escaped.HeartbeatPath) == nil {
+		t.Error("accepted an active descendant outside the killed group as settled")
+	}
+
+	// Delayed observation: the escaped descendant is active at first, then the
+	// observations are delayed past its intrinsic expiry. Every individual
+	// verifier accepts the stale evidence; only the bound on the end of the
+	// observations rejects it.
+	late := runMonitorQuorumHang(t, 0, "import os\nos.setsid()\n"+monitorQuorumOwnedDescendant)
+	if before, err := os.ReadFile(late.HeartbeatPath); err != nil || len(before) == 0 {
+		t.Fatalf("escaped descendant was not active before the delay: %d, %v", len(before), err)
+	}
+	time.Sleep(1600 * time.Millisecond)
+	if settleErr := monitorQuorumObserveSettlement(t, python, &late); settleErr != nil {
+		t.Fatalf("delayed observation was expected to look settled through natural expiry: %v", settleErr)
+	}
+	if late.Returned >= monitorQuorumHangOverallBound || monitorQuorumVerifyOverallBound(late) == nil {
+		t.Errorf("accepted settlement evidence collected after the intrinsic expiry: %s", late)
+	}
+	unobserved := good
+	unobserved.Settled = 0
+	if monitorQuorumVerifyOverallBound(unobserved) == nil {
+		t.Error("accepted a run whose settlement observations never completed")
 	}
 }
 
