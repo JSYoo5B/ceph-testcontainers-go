@@ -261,6 +261,14 @@ func (p *upgradePhase) capability(target, id string, probe func() (bool, error))
 	if err != nil {
 		return false, fmt.Errorf("probe %q on %q: %w", id, target, err)
 	}
+	// The probe may have moved the target or opened a later phase; its answer
+	// then describes a state that no longer belongs to this phase.
+	if err := p.open(); err != nil {
+		return false, err
+	}
+	if p.owner.generation[target] != g {
+		return false, fmt.Errorf("%w: target %q changed during the probe of %q", errUpgradeStale, target, id)
+	}
 	p.caps[key] = answer
 	return answer, nil
 }

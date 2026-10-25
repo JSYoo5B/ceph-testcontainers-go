@@ -175,3 +175,66 @@ func TestUpgradeObservationUnavailableAndUnknown(t *testing.T) {
 		t.Fatal("advanced an unknown target")
 	}
 }
+
+func TestUpgradeCapabilityProbeRaces(t *testing.T) {
+	t.Run("generation advanced inside the probe", func(t *testing.T) {
+		targets := newUpgradeTargets("cli", "mon.a")
+		phase := targets.begin("baseline")
+		got, err := phase.capability("cli", "feature", func() (bool, error) {
+			if err := targets.advance("cli"); err != nil {
+				t.Fatal(err)
+			}
+			return true, nil
+		})
+		if !errors.Is(err, errUpgradeStale) || got {
+			t.Fatalf("answer from a moved target = %v, %v, want errUpgradeStale", got, err)
+		}
+		if _, ok := phase.caps[upgradeCapKey{target: "cli", generation: 1, id: "feature"}]; ok {
+			t.Fatal("stale answer was cached")
+		}
+	})
+	t.Run("later phase begun inside the probe", func(t *testing.T) {
+		targets := newUpgradeTargets("cli")
+		phase := targets.begin("baseline")
+		got, err := phase.capability("cli", "feature", func() (bool, error) {
+			targets.begin("next")
+			return true, nil
+		})
+		if !errors.Is(err, errUpgradePhaseClosed) || got {
+			t.Fatalf("answer from a closed phase = %v, %v, want errUpgradePhaseClosed", got, err)
+		}
+		if len(phase.caps) != 0 {
+			t.Fatal("closed phase cached an answer")
+		}
+	})
+	t.Run("unrelated target advanced inside the probe", func(t *testing.T) {
+		targets := newUpgradeTargets("cli", "mon.a")
+		phase := targets.begin("baseline")
+		got, err := phase.capability("cli", "feature", func() (bool, error) {
+			if err := targets.advance("mon.a"); err != nil {
+				t.Fatal(err)
+			}
+			return true, nil
+		})
+		if err != nil || !got {
+			t.Fatalf("unrelated transition = %v, %v, want the answer", got, err)
+		}
+	})
+}
+
+// The presence checks for "mon" and "overall" are the first guard, ahead of
+// the role decoder and the overall comparison, which would also reject these
+// documents. The test pins the first guard's own message so it cannot be
+// removed unnoticed.
+func TestUpgradeInventoryRequiredObjectsReported(t *testing.T) {
+	for doc, want := range map[string]string{
+		`{"overall":{"` + upgradeSrc + `":1}}`:            `no "mon" object`,
+		`{"mon":null,"overall":{"` + upgradeSrc + `":1}}`: `no "mon" object`,
+		`{"mon":{"` + upgradeSrc + `":1}}`:                `no "overall" object`,
+		`{"mon":{"` + upgradeSrc + `":1},"overall":null}`: `no "overall" object`,
+	} {
+		if _, err := parseUpgradeInventory([]byte(doc)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: error = %v, want %q", doc, err, want)
+		}
+	}
+}
