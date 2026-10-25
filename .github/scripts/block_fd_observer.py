@@ -17,6 +17,8 @@ Rules kept here:
     duplicated or malformed values stay unknown, never an empty or zero value;
   * the O_DIRECT bit is architecture specific; an unknown machine leaves the
     direct/buffered split unknown;
+  * the fdinfo "ino:" value must equal the inode of the surrounding stats, so an
+    A -> B -> A slot reuse cannot lend B's flags to A;
   * an fd whose identity or flags read raced with a close or reuse is recorded as
     a race and leaves the snapshot unverified instead of being dropped;
   * the O_EXCL bit is cleared by the kernel after open, so it is not an oracle;
@@ -61,6 +63,17 @@ def parse_fdinfo_flags(text):
     if not value or any(ch not in "01234567" for ch in value):
         return None
     return int(value, 8)
+
+
+def parse_fdinfo_ino(text):
+    """Return the decimal inode from the same fdinfo record, or None."""
+    if not isinstance(text, str):
+        return None
+    values = [line[len("ino:"):].strip() for line in text.splitlines()
+              if line.startswith("ino:")]
+    if len(values) != 1 or not values[0].isascii() or not values[0].isdigit():
+        return None
+    return int(values[0])
 
 
 def classify_flags(flags, machine):
@@ -173,6 +186,14 @@ def _observe_fd(host, snapshot, major_minor, machine, pid, fd):
     if after != before:
         snapshot["races"].append({"pid": pid, "fd": fd, "why": "identity-changed"})
         return
+    if text is not None:
+        # fdinfo resolves the fd slot on its own; flags and ino come from one
+        # referenced file, so its inode must match the surrounding stats.
+        ino = parse_fdinfo_ino(text)
+        if ino is None or ino != before[2]:
+            why = "fdinfo-identity-missing" if ino is None else "fdinfo-identity-mismatch"
+            snapshot["races"].append({"pid": pid, "fd": fd, "why": why})
+            return
     flags = parse_fdinfo_flags(text)
     snapshot["descriptors"].append({
         "pid": pid, "fd": fd, "inode": before[2],

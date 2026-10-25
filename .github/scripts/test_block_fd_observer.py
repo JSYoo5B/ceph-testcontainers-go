@@ -18,8 +18,8 @@ BUFFERED = RDWR | CLOEXEC | 0o100000
 DIRECT_FLAGS = RDWR | DIRECT | 0o100000
 
 
-def info(flags):
-    return "pos:\t0\nflags:\t%07o\nmnt_id:\t12\nino:\t5\n" % flags
+def info(flags, ino=77):
+    return "pos:\t0\nflags:\t%07o\nmnt_id:\t12\nino:\t%d\n" % (flags, ino)
 
 
 class FakeProc:
@@ -144,7 +144,7 @@ class Observation(unittest.TestCase):
 
     def test_unreadable_flags_are_kept_as_unknown_and_unverified(self):
         pids = {7: osd_fds()}
-        pids[7]["30"] = {"stat": (True, DEV, 77), "info": "pos:\t0\n"}
+        pids[7]["30"] = {"stat": (True, DEV, 77), "info": "pos:\t0\nino:\t77\n"}
         snap = run(pids)
         unknown = [d for d in snap["descriptors"] if d["fd"] == "30"][0]
         self.assertIsNone(unknown["flags"])
@@ -182,6 +182,31 @@ class Observation(unittest.TestCase):
         self.assertNotIn("10", [d["fd"] for d in snap["descriptors"]])
         self.assertEqual(obs.attachment_verdict(snap, 7), "unverified")
 
+    def test_slot_reuse_a_b_a_with_other_inode_in_fdinfo_is_a_race(self):
+        # Both surrounding stats see the buffered target A (inode 77) but the
+        # fdinfo read hit B (inode 999) whose flags are direct read/write.
+        pids = {7: {"10": {"stat": (True, DEV, 77), "info": info(DIRECT_FLAGS, 999)},
+                    "11": fd(BUFFERED)}}
+        snap = run(pids)
+        self.assertEqual([r["why"] for r in snap["races"]], ["fdinfo-identity-mismatch"])
+        self.assertNotIn("10", [d["fd"] for d in snap["descriptors"]])
+        self.assertFalse(snap["coherent"])
+        self.assertEqual(obs.attachment_verdict(snap, 7), "unverified")
+
+    def test_fdinfo_without_usable_ino_is_a_race(self):
+        for text in ("flags:\t0140002\n", "flags:\t0140002\nino:\t\n",
+                     "flags:\t0140002\nino:\tx\n",
+                     "flags:\t0140002\nino:\t77\nino:\t77\n"):
+            pids = {7: {"10": {"stat": (True, DEV, 77), "info": text}}}
+            snap = run(pids)
+            self.assertEqual(len(snap["races"]), 1, text)
+            self.assertEqual(snap["descriptors"], [], text)
+
+    def test_parse_fdinfo_ino(self):
+        self.assertEqual(obs.parse_fdinfo_ino(info(0, 5)), 5)
+        for bad in (None, 5, "", "ino:\t-1\n", "ino:\t1\nino:\t1\n"):
+            self.assertIsNone(obs.parse_fdinfo_ino(bad), repr(bad))
+
     def test_flag_read_error_other_than_vanish_stays_unknown(self):
         pids = {7: osd_fds()}
         pids[7]["10"]["info"] = OSError(errno.EACCES, "denied")
@@ -210,7 +235,7 @@ class Verdict(unittest.TestCase):
         self.assertEqual(obs.attachment_verdict(snap, 7), "foreign-opener")
 
     def test_foreign_unknown_flags_are_unverified(self):
-        other = {"3": {"stat": (True, DEV, 77), "info": "flags:\tzz\n"}}
+        other = {"3": {"stat": (True, DEV, 77), "info": "flags:\tzz\nino:\t77\n"}}
         snap = run({7: osd_fds(), 9: other})
         self.assertEqual(obs.attachment_verdict(snap, 7), "unverified")
 
