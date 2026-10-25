@@ -2,8 +2,8 @@
   "schema": "ceph-api-naming/v1",
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
-    "capture": 35,
-    "ceph": 364,
+    "capture": 36,
+    "ceph": 366,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
@@ -161,6 +161,14 @@
       "decision": "baseline"
     },
     {
+      "current": "capture.Session.CaptureFile",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (io.ReadCloser, int64, string, error)",
+      "receiver": "*Session",
+      "proposed": "capture.Session.CaptureFile",
+      "decision": "baseline"
+    },
+    {
       "current": "capture.Session.Settle",
       "kind": "method",
       "signature": "func(ctx context.Context) (any, error)",
@@ -297,6 +305,12 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistOverride",
       "proposed": "ceph.BlocklistOverride.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CaptureFileSource",
+      "kind": "type",
+      "proposed": "ceph.CaptureFileSource",
       "decision": "baseline"
     },
     {
@@ -1655,6 +1669,14 @@
       "signature": "func(name string, session CaptureSettler)",
       "receiver": "*Finalization",
       "proposed": "ceph.Finalization.Capture",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.CaptureWithFile",
+      "kind": "method",
+      "signature": "func(name string, session CaptureFileSource, maxBytes int64)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.CaptureWithFile",
       "decision": "baseline"
     },
     {

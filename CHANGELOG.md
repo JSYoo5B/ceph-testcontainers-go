@@ -6,6 +6,8 @@ change the API.
 
 ## Unreleased
 
+- Add explicit raw capture-file consent for failure archives, with bounded atomic copying, complete retrieved-file SHA256 verification and separate copy/retention outcomes. Metadata-only capture registration remains unchanged.
+
 ### API naming
 
 - Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes

@@ -8,23 +8,23 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **792** functions, declared methods on
+The declaration catalogue contains **795** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **1086** exported field/nested-record/embedding entries in
-**180** types. It scans exported declared interfaces as well; the only one in the
-current public packages is `ceph.CaptureSettler`, with two methods. Its synthetic scope test includes interface
+catalogue contains **1089** exported field/nested-record/embedding entries in
+**181** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
+`ceph.CaptureFileSource` (that embedding plus one read-only file method). Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 364 | 422 |
+| `ceph` | 366 | 424 |
 | `fault` | 35 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 126 | 204 |
-| `capture` | 35 | 55 |
-| Total | 792 | 1086 |
+| `capture` | 36 | 56 |
+| Total | 795 | 1089 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
@@ -137,7 +137,7 @@ declarations and 55 member entries in `Request`, `Report`, `Statistics` and
 
 ## Embeddings and externally defined interfaces
 
-The member catalogue records **16** explicit embeddings. Cluster/service/daemon
+The member catalogue records **17** explicit embeddings. Cluster/service/daemon
 wrappers embed `testcontainers.Container` or `*ceph.Container`; `Pool` embeds
 `PoolConfig`, and `PlacementState` embeds `PlacementConfig`. The local parent
 fields/methods are reviewed in their own catalogue entries. Testcontainers and
@@ -167,3 +167,16 @@ their role at the call site, ownership, undo/lifetime meaning and affected
 consumers, regenerate the inventories, then explicitly refresh the receipt and
 this assessment as needed. Keep published tags immutable; the selected source
 breaks target the next minor release without automatic permanent aliases.
+
+## Explicit raw capture archive addition
+
+`Finalization.CaptureWithFile` names the deliberate raw-file variant next to
+metadata-only `Capture`; its byte limit is explicit at the call site.
+`CaptureFileSource` extends `CaptureSettler` only for that opt-in and its
+`CaptureFile` method opens a finalized read-only source without transferring
+ownership. `Session.CaptureFile` implements the same contract, rather than
+adding a second settlement name. `Report.RetrievedSHA256` pairs with
+`RetrievedBytes` and distinguishes the complete retrieved file from
+`File.SHA256`'s possibly incomplete structural-validation prefix. These three
+new declarations, the interface embedding/method and the report member were
+reviewed together; existing `Capture`/`Settle` names and behavior are retained.

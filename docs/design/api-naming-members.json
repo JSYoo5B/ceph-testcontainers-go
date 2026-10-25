@@ -2,8 +2,8 @@
   "schema": "ceph-api-naming-members/v1",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in public types; dependency and promoted method sets are not expanded",
   "counts": {
-    "capture": 55,
-    "ceph": 422,
+    "capture": 56,
+    "ceph": 424,
     "cephfs": 247,
     "fault": 64,
     "rbd": 94,
@@ -46,6 +46,7 @@
       "Report.ReadyAt field time.Time `json:\"ready_at\"`",
       "Report.Retrieved field bool `json:\"retrieved\"`",
       "Report.RetrievedBytes field int64 `json:\"retrieved_bytes\"`",
+      "Report.RetrievedSHA256 field string `json:\"retrieved_sha256,omitempty\"`",
       "Report.SandboxID field string `json:\"sandbox_id\"`",
       "Report.SnapLen field int `json:\"snaplen\"`",
       "Report.StartedAt field time.Time `json:\"started_at\"`",
@@ -85,6 +86,10 @@
       "BlocklistEntry.Address field string",
       "BlocklistEntry.Range field bool",
       "BlocklistEntry.Until field time.Time"
+    ],
+    "ceph.CaptureFileSource": [
+      "CaptureFileSource embed CaptureSettler",
+      "CaptureFileSource.CaptureFile method func(ctx context.Context) (io.ReadCloser, int64, string, error)"
     ],
     "ceph.CaptureSettler": [
       "CaptureSettler.Settle method func(ctx context.Context) (report any, err error)",
