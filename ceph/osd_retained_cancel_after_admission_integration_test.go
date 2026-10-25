@@ -117,6 +117,14 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if err != nil || raw.Container.State == nil || !raw.Container.State.Running {
 		t.Fatal("canceled candidate container is not running", err)
 	}
+	// The candidate must finish booting before it is detached. A detach right
+	// after the cancellation stops a daemon that is still starting: it ignored
+	// the stop signal for the 10 s grace period in the first native attempt and
+	// its down state was then never observed. Only a booted daemon is
+	// expected to leave the OSDMap as down at a graceful stop.
+	if err := c.waitOSDsUp(ctx, []int{original.ID}); err != nil {
+		t.Fatal("canceled candidate never reached up/in", err)
+	}
 	second, err := c.DetachOSD(ctx, original.ID)
 	if err != nil {
 		t.Fatal("detach of the canceled candidate", err)
