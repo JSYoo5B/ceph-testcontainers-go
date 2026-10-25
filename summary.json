@@ -19728,49 +19728,6 @@
       }
      }
     },
-    "62c333e9b7cad434": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_rbd_mirror_path_fault"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
-       "rbd-aux": "sha256:ca716fb255b303f9334ec9612c1ddf1fb8217c0f637c66f0da1f72381f7df31d"
-      },
-      "network": "bridge",
-      "platform": "linux/amd64",
-      "profile_id": "multicluster-rbd_mirror_path_fault-28f2061b",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestRBDMirrorPeerPathCut": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestRBDMirrorPeerPathCut/bridge": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
-    },
     "795b9283a8fc8a5b": {
      "attempts": 1,
      "classification": "insufficient_samples",
@@ -19897,6 +19854,49 @@
       "TestRBDMirrorPeerPathCut/bridge": {
        "failed": 0,
        "ran": 1
+      }
+     }
+    },
+    "a4151c491dae2c7a": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_multicluster,ci_batch,ci_batch_rbd_mirror_path_fault"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
+       "rbd-aux": "sha256:ca716fb255b303f9334ec9612c1ddf1fb8217c0f637c66f0da1f72381f7df31d"
+      },
+      "network": "bridge",
+      "platform": "linux/amd64",
+      "profile_id": "multicluster-rbd_mirror_path_fault-28f2061b",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestRBDMirrorPeerPathCut": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestRBDMirrorPeerPathCut/bridge": {
+       "failed": 0,
+       "ran": 3
       }
      }
     },
@@ -20039,7 +20039,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "multicluster-rgw_sync_fixtures_account-9c10ccea@19.2.5": {
    "configs": {
@@ -40162,77 +40162,6 @@
       }
      }
     },
-    "79e5dae90ad62485": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_container_pause"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
-      },
-      "network": "host",
-      "platform": "linux/amd64",
-      "profile_id": "recovery-container_pause-b288784c",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestMessengerFaultInjection": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerFaultInjection/host": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerFaultInjection/host/client-blackhole": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerFaultInjection/host/client-delay": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerFaultInjection/host/mds-client-blackhole": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestPausedOSDFaults": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestPausedOSDFaults/host": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestPausedOSDFaults/host/frozen_down": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestPausedOSDFaults/host/frozen_up": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
-    },
     "7c689cd334332b0b": {
      "attempts": 1,
      "classification": "insufficient_samples",
@@ -40446,6 +40375,77 @@
       }
      }
     },
+    "c33c5a500f7e53a3": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_recovery,ci_batch,ci_batch_container_pause"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
+      },
+      "network": "host",
+      "platform": "linux/amd64",
+      "profile_id": "recovery-container_pause-b288784c",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestMessengerFaultInjection": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerFaultInjection/host": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerFaultInjection/host/client-blackhole": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerFaultInjection/host/client-delay": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerFaultInjection/host/mds-client-blackhole": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestPausedOSDFaults": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestPausedOSDFaults/host": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestPausedOSDFaults/host/frozen_down": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestPausedOSDFaults/host/frozen_up": {
+       "failed": 0,
+       "ran": 3
+      }
+     }
+    },
     "e1a216f6eabd9b13": {
      "attempts": 1,
      "classification": "insufficient_samples",
@@ -40527,7 +40527,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "recovery-ec_eligible_fragments-d64c22c7@19.2.5": {
    "configs": {
@@ -70067,80 +70067,6 @@
       }
      }
     },
-    "6867975ac9df0d01": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_client_auth"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
-      },
-      "network": "",
-      "platform": "linux/amd64",
-      "profile_id": "short-client_auth-166fa706",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestClientKeyReplacement": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientKeyReplacement/aes": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientKeyReplacement/aes256k": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientKeyReplacement/three_MONs": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation/aes": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation/aes256k": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation/late_restore": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation/no_capabilities": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestClientRevocation/three_MONs": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
-    },
     "98845543c7496c84": {
      "attempts": 3,
      "classification": "confirmed_pass",
@@ -70584,6 +70510,80 @@
        "ran": 1
       }
      }
+    },
+    "e52718c1c6c6b93b": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_client_auth"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
+      },
+      "network": "",
+      "platform": "linux/amd64",
+      "profile_id": "short-client_auth-166fa706",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestClientKeyReplacement": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientKeyReplacement/aes": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientKeyReplacement/aes256k": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientKeyReplacement/three_MONs": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation/aes": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation/aes256k": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation/late_restore": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation/no_capabilities": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestClientRevocation/three_MONs": {
+       "failed": 0,
+       "ran": 3
+      }
+     }
     }
    },
    "incomparable_rows": 0,
@@ -70595,7 +70595,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "short-cluster_fixtures-a45ee335-bridge@19.2.5": {
    "configs": {
@@ -84937,58 +84937,6 @@
       }
      }
     },
-    "99ce0c1b36c60715": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_messenger_policy"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
-       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
-      },
-      "network": "",
-      "platform": "linux/amd64",
-      "profile_id": "short-messenger_policy-09c1080d",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestClientMessengerPolicyOverridesSecureOnly": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerPolicy": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerPolicyV2Only": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerV2OnlyCRC": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
-    },
     "c858110d85eb1744": {
      "attempts": 3,
      "classification": "confirmed_pass",
@@ -85021,6 +84969,58 @@
       "release": "20.2.4"
      },
      "last_run_id": "39931784936",
+     "passed": 3,
+     "tests": {
+      "TestClientMessengerPolicyOverridesSecureOnly": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerPolicy": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerPolicyV2Only": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerV2OnlyCRC": {
+       "failed": 0,
+       "ran": 3
+      }
+     }
+    },
+    "cd80c77e73d5c644": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_messenger_policy"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
+       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
+      },
+      "network": "",
+      "platform": "linux/amd64",
+      "profile_id": "short-messenger_policy-09c1080d",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
      "passed": 3,
      "tests": {
       "TestClientMessengerPolicyOverridesSecureOnly": {
@@ -85259,7 +85259,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "short-messenger_receipts-a7a05d0e@19.2.5": {
    "configs": {
@@ -106433,6 +106433,48 @@
       }
      }
     },
+    "e7d914a465c02680": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
+      },
+      "network": "host",
+      "platform": "linux/amd64",
+      "profile_id": "short-rados_fixtures_watchers-52f45dc3",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestPausedObjectWatcher": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestPausedObjectWatcher/host": {
+       "failed": 0,
+       "ran": 3
+      }
+     }
+    },
     "eb670a2cc2f3a60a": {
      "attempts": 1,
      "classification": "insufficient_samples",
@@ -106474,48 +106516,6 @@
        "ran": 1
       }
      }
-    },
-    "f18530f0f359a0a4": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rados_fixtures_watchers"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64"
-      },
-      "network": "host",
-      "platform": "linux/amd64",
-      "profile_id": "short-rados_fixtures_watchers-52f45dc3",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestPausedObjectWatcher": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestPausedObjectWatcher/host": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
     }
    },
    "incomparable_rows": 0,
@@ -106527,7 +106527,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "short-rados_mutation_contracts-f835a8f7@19.2.5": {
    "configs": {
@@ -126677,6 +126677,57 @@
       }
      }
     },
+    "9652b696cc8cf29a": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_notifications"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
+       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
+      },
+      "network": "bridge",
+      "platform": "linux/amd64",
+      "profile_id": "short-rgw_notifications-f977b08a",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestRGWBucketNotifications": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestRGWBucketNotifications/bridge": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestRGWBucketNotifications/bridge/direct": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestRGWBucketNotifications/bridge/persistent": {
+       "failed": 0,
+       "ran": 3
+      }
+     }
+    },
     "9d71d9ef96503fc4": {
      "attempts": 3,
      "classification": "confirmed_pass",
@@ -126725,57 +126776,6 @@
       "TestRGWBucketNotifications/bridge/persistent": {
        "failed": 0,
        "ran": 3
-      }
-     }
-    },
-    "b31a223015f99c0d": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_short,ci_batch,ci_batch_rgw_notifications"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
-       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
-      },
-      "network": "bridge",
-      "platform": "linux/amd64",
-      "profile_id": "short-rgw_notifications-f977b08a",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestRGWBucketNotifications": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestRGWBucketNotifications/bridge": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestRGWBucketNotifications/bridge/direct": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestRGWBucketNotifications/bridge/persistent": {
-       "failed": 0,
-       "ran": 1
       }
      }
     },
@@ -126891,7 +126891,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "short-service_packages-8024816e-bridge@19.2.5": {
    "configs": {
@@ -146185,58 +146185,6 @@
       }
      }
     },
-    "2782b53e0d747051": {
-     "attempts": 1,
-     "classification": "insufficient_samples",
-     "excluded": {},
-     "failed": 0,
-     "first_failure": null,
-     "identity": {
-      "build_key": {
-       "go_environment": {
-        "CGO_ENABLED": "0",
-        "GOFLAGS": "-mod=readonly",
-        "GOWORK": "off"
-       },
-       "go_version": "go1.26.10",
-       "goarch": "amd64",
-       "goos": "linux",
-       "package": "./internal/integration",
-       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_messenger_secure"
-      },
-      "checkout_tree": "77a96ffbf52371861dd70db04914f436b35ba3ab",
-      "images": {
-       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
-       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
-       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
-       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
-      },
-      "network": "host",
-      "platform": "linux/amd64",
-      "profile_id": "topology-messenger_secure-ab6987e1",
-      "release": "20.2.4"
-     },
-     "last_run_id": "39905207325",
-     "passed": 1,
-     "tests": {
-      "TestMessengerV2SecureOnly": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerV2SecureOnly/host": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerV2SecureServices": {
-       "failed": 0,
-       "ran": 1
-      },
-      "TestMessengerV2SecureServices/host": {
-       "failed": 0,
-       "ran": 1
-      }
-     }
-    },
     "35ee8ccf3815ac8a": {
      "attempts": 1,
      "classification": "insufficient_samples",
@@ -146390,6 +146338,58 @@
       "TestMessengerV2SecureServices/host": {
        "failed": 0,
        "ran": 1
+      }
+     }
+    },
+    "464ad3fa66746bea": {
+     "attempts": 3,
+     "classification": "confirmed_pass",
+     "excluded": {},
+     "failed": 0,
+     "first_failure": null,
+     "identity": {
+      "build_key": {
+       "go_environment": {
+        "CGO_ENABLED": "0",
+        "GOFLAGS": "-mod=readonly",
+        "GOWORK": "off"
+       },
+       "go_version": "go1.26.10",
+       "goarch": "amd64",
+       "goos": "linux",
+       "package": "./internal/integration",
+       "tags": "auth,diagnostics,features,hostnetwork,integration,multicluster,topology,ci,ci_topology,ci_batch,ci_batch_messenger_secure"
+      },
+      "checkout_tree": "462dc0cf76d9ae6101ec04c2e5108d81b8707850",
+      "images": {
+       "cephfs": "sha256:8b8019361f19a318a24019dfdfcdbc72a47ecf55e3f46ab59f706bab4019afe8",
+       "client": "sha256:aed24218ebe2d95f5dee952d3b63e438b8d1dd35a043378c62076a97b3e8c91b",
+       "essential": "sha256:40c15164af14f2ea14d96266e92050c3a283dcaef4facc04d2f5c5812ae0fb64",
+       "rgw": "sha256:54ab9e24cd8af82ac745da01010ee9c5091ce54f3ef3972a64ae9dbe94118280"
+      },
+      "network": "host",
+      "platform": "linux/amd64",
+      "profile_id": "topology-messenger_secure-ab6987e1",
+      "release": "20.2.4"
+     },
+     "last_run_id": "40179812618",
+     "passed": 3,
+     "tests": {
+      "TestMessengerV2SecureOnly": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerV2SecureOnly/host": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerV2SecureServices": {
+       "failed": 0,
+       "ran": 3
+      },
+      "TestMessengerV2SecureServices/host": {
+       "failed": 0,
+       "ran": 3
       }
      }
     },
@@ -146663,7 +146663,7 @@
     },
     "rows": 20
    },
-   "rows": 29
+   "rows": 32
   },
   "topology-mon_majority_loss-0b8eea6b@19.2.5": {
    "configs": {
@@ -165345,6 +165345,6 @@
    "rows": 3
   }
  },
- "rows": 5203,
+ "rows": 5224,
  "schema": "ceph-scenario-history/v1/classification"
 }
