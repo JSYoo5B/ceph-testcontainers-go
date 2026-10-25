@@ -100,6 +100,20 @@ func mustAdmissionJSON(t *testing.T, value any) string {
 	return string(raw)
 }
 
+func ecAdmissionInstanceOf(t *testing.T, ctx context.Context, osd *ceph.OSDContainer) ecAdmissionInstance {
+	t.Helper()
+	inspected, err := osd.Inspect(ctx)
+	if err != nil || inspected == nil || inspected.State == nil {
+		t.Fatalf("inspect selected osd.%d: %+v, %v", osd.ID, inspected, err)
+	}
+	if inspected.ID != osd.GetContainerID() {
+		t.Fatalf("selected osd.%d inspected another container: %q, want %q", osd.ID, inspected.ID, osd.GetContainerID())
+	}
+	s := inspected.State
+	return ecAdmissionInstance{ContainerID: inspected.ID, Running: s.Running, Paused: s.Paused, Restarting: s.Restarting,
+		Dead: s.Dead, OOMKilled: s.OOMKilled, Pid: s.Pid, StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, ExitCode: s.ExitCode}
+}
+
 func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
@@ -136,6 +150,10 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if victim == nil {
 		t.Fatal("planned fragment holder is not owned")
 	}
+	captured := ecAdmissionInstanceOf(t, ctx, victim)
+	if err := checkECAdmissionHealthy(captured); err != nil {
+		t.Fatal(err)
+	}
 	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 	if noout != nil {
 		t.Cleanup(func() {
@@ -149,7 +167,11 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stopRequested := false
 	t.Cleanup(func() {
+		if !stopRequested {
+			return
+		}
 		cleanup, done := context.WithTimeout(context.Background(), time.Minute)
 		defer done()
 		state, err := victim.State(cleanup)
@@ -163,8 +185,19 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 			}
 		}
 	})
+	admitted := ecAdmissionInstanceOf(t, ctx, victim)
+	if err := checkECAdmissionStop(captured, admitted); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("EC_ADMISSION_STOP_REQUEST %s", mustAdmissionJSON(t, map[string]any{"plan": plan, "captured": captured, "admitted": admitted, "requested_at": time.Now().UTC()}))
 	stop := 20 * time.Second
+	stopRequested = true
 	if err := victim.Stop(ctx, &stop); err != nil {
+		t.Fatal(err)
+	}
+	stopped := ecAdmissionInstanceOf(t, ctx, victim)
+	t.Logf("EC_ADMISSION_STOP_RESULT %s", mustAdmissionJSON(t, map[string]any{"plan": plan, "result": stopped, "observed_at": time.Now().UTC()}))
+	if err := checkECAdmissionStopped(captured, stopped); err != nil {
 		t.Fatal(err)
 	}
 	var fault ceph.PoolPGSnapshot
@@ -184,15 +217,15 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	state, err := victim.State(ctx)
-	if err != nil || state.Running {
-		t.Fatalf("victim not stopped: %+v %v", state, err)
+	faultInstance := ecAdmissionInstanceOf(t, ctx, victim)
+	if err := checkECAdmissionStopped(captured, faultInstance); err != nil {
+		t.Fatal(err)
 	}
 	states, err := cluster.OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("EC_ADMISSION_FAULT %s", mustAdmissionJSON(t, map[string]any{"plan": plan, "before": before, "fault": fault, "victim_container": victim.GetContainerID(), "victim_state": state, "osds": states}))
+	t.Logf("EC_ADMISSION_FAULT %s", mustAdmissionJSON(t, map[string]any{"plan": plan, "before": before, "fault": fault, "captured": captured, "admitted": admitted, "stop_result": stopped, "fault_instance": faultInstance, "osds": states}))
 	ack := seed
 	if pool.MinSize == 2 {
 		ack = ecEligiblePhase(t, ctx, cluster, client, pool.Name, "overwrite", &seed)

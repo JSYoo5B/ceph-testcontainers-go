@@ -20,6 +20,53 @@ type ecAdmissionPlan struct {
 	WantActing  []int `json:"want_acting"`
 }
 
+// ecAdmissionInstance is one observed Docker instance, not just an OSD ID.
+// Keeping exit and OOM state separate from the generation lets the receipt
+// distinguish an admitted Stop from an already exited or restarted holder.
+type ecAdmissionInstance struct {
+	ContainerID                       string `json:"container_id"`
+	Running, Paused, Restarting, Dead bool
+	OOMKilled                         bool
+	Pid                               int
+	StartedAt, FinishedAt             string
+	ExitCode                          int
+}
+
+func checkECAdmissionHealthy(instance ecAdmissionInstance) error {
+	if instance.ContainerID == "" || instance.StartedAt == "" || instance.Pid <= 0 ||
+		!instance.Running || instance.Paused || instance.Restarting || instance.Dead || instance.OOMKilled {
+		return fmt.Errorf("fragment holder is not a healthy running instance: %+v", instance)
+	}
+	return nil
+}
+
+// A fresh read immediately before Stop must match the healthy captured
+// container/process generation. Docker inspection and Stop are not an atomic
+// compare-and-stop; these checks do not claim to eliminate that final interval.
+func checkECAdmissionStop(captured, current ecAdmissionInstance) error {
+	if err := checkECAdmissionHealthy(captured); err != nil {
+		return err
+	}
+	if err := checkECAdmissionHealthy(current); err != nil {
+		return err
+	}
+	if current.ContainerID != captured.ContainerID || current.Pid != captured.Pid || current.StartedAt != captured.StartedAt {
+		return fmt.Errorf("fragment holder generation changed: captured %+v; current %+v", captured, current)
+	}
+	return nil
+}
+
+func checkECAdmissionStopped(captured, stopped ecAdmissionInstance) error {
+	if err := checkECAdmissionHealthy(captured); err != nil {
+		return err
+	}
+	if stopped.ContainerID != captured.ContainerID || stopped.StartedAt != captured.StartedAt ||
+		stopped.Running || stopped.Paused || stopped.Restarting || stopped.Dead || stopped.OOMKilled || stopped.Pid != 0 {
+		return fmt.Errorf("Stop did not leave the captured holder stopped without OOM: %+v", stopped)
+	}
+	return nil
+}
+
 // This bounded plan is exactly 2+1. Shard positions are never compacted or
 // inferred from OSD IDs, and the default threshold is not lowered for the fault.
 func planECAdmission(acting []int, primary, minSize int, primaryLost bool) (ecAdmissionPlan, error) {

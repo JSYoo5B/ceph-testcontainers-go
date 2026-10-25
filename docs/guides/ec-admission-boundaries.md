@@ -20,6 +20,18 @@ It retains the missing slot (`CRUSH_ITEM_NONE`), the replacement primary, map
 epochs, FSID, pool identity and policy before/after I/O. A requested Stop or an
 old active PG report cannot supply this admission observation.
 
+Before installing noout, the scenario captures the healthy holder's actual
+container ID, PID and start time. Immediately before Stop it inspects the same
+holder again and requires that matching, running, non-OOM generation (also not
+paused, restarting or dead). An earlier unexpected exit or generation change
+fails before the planned Stop; it cannot be credited as the injected fault.
+`EC_ADMISSION_STOP_REQUEST` retains both observations and the request time;
+`EC_ADMISSION_STOP_RESULT` separately retains the resulting stopped generation,
+exit code and OOM state. The same stopped/non-OOM generation must still be
+present when the PG fault is recorded. Inspection and Stop remain separate
+engine operations, not an atomic compare-and-stop guarantee. Cleanup attempts a
+restart only after this scenario actually requested its admitted Stop.
+
 The permissive case uses separate writer and reader librados connections to
 acknowledge an overwrite under a self-managed snapshot context. After the
 original OSD returns, fresh connections check exact head/snapshot hashes and

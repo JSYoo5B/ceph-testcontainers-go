@@ -64,3 +64,59 @@ func TestECAdmissionState(t *testing.T) {
 		}
 	}
 }
+
+func TestECAdmissionStopInstance(t *testing.T) {
+	healthy := ecAdmissionInstance{ContainerID: "owned-container", Running: true, Pid: 40, StartedAt: "started-1"}
+	if err := checkECAdmissionStop(healthy, healthy); err != nil {
+		t.Fatal(err)
+	}
+	for name, alter := range map[string]func(*ecAdmissionInstance){
+		"already exited":          func(s *ecAdmissionInstance) { s.Running, s.Pid = false, 0; s.FinishedAt = "ended" },
+		"exited with OOM":         func(s *ecAdmissionInstance) { s.Running, s.Pid, s.OOMKilled = false, 0, true },
+		"running with OOM":        func(s *ecAdmissionInstance) { s.OOMKilled = true },
+		"paused":                  func(s *ecAdmissionInstance) { s.Paused = true },
+		"restarting":              func(s *ecAdmissionInstance) { s.Restarting = true },
+		"dead":                    func(s *ecAdmissionInstance) { s.Dead = true },
+		"missing PID":             func(s *ecAdmissionInstance) { s.Pid = 0 },
+		"missing start":           func(s *ecAdmissionInstance) { s.StartedAt = "" },
+		"missing container":       func(s *ecAdmissionInstance) { s.ContainerID = "" },
+		"another container":       func(s *ecAdmissionInstance) { s.ContainerID = "replacement-container" },
+		"another process":         func(s *ecAdmissionInstance) { s.Pid++ },
+		"new start with same PID": func(s *ecAdmissionInstance) { s.StartedAt = "started-2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			current := healthy
+			alter(&current)
+			if err := checkECAdmissionStop(healthy, current); err == nil {
+				t.Fatalf("admitted unplanned instance %+v", current)
+			}
+		})
+	}
+	for _, captured := range []ecAdmissionInstance{
+		{}, {ContainerID: "owned-container", Pid: 40, StartedAt: "started-1"},
+		{ContainerID: "owned-container", Running: true, Pid: 40, StartedAt: "started-1", OOMKilled: true},
+	} {
+		if err := checkECAdmissionStop(captured, healthy); err == nil {
+			t.Fatalf("admitted unhealthy captured baseline %+v", captured)
+		}
+	}
+	stopped := ecAdmissionInstance{ContainerID: healthy.ContainerID, StartedAt: healthy.StartedAt, FinishedAt: "ended", ExitCode: 0}
+	if err := checkECAdmissionStopped(healthy, stopped); err != nil {
+		t.Fatal(err)
+	}
+	for name, alter := range map[string]func(*ecAdmissionInstance){
+		"still running":               func(s *ecAdmissionInstance) { s.Running, s.Pid = true, 40 },
+		"OOM after Stop":              func(s *ecAdmissionInstance) { s.OOMKilled = true; s.ExitCode = 137 },
+		"different stopped container": func(s *ecAdmissionInstance) { s.ContainerID = "replacement-container" },
+		"restarted generation":        func(s *ecAdmissionInstance) { s.StartedAt = "started-2" },
+		"live PID":                    func(s *ecAdmissionInstance) { s.Pid = 41 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			current := stopped
+			alter(&current)
+			if err := checkECAdmissionStopped(healthy, current); err == nil {
+				t.Fatalf("accepted unconfirmed stop %+v", current)
+			}
+		})
+	}
+}
