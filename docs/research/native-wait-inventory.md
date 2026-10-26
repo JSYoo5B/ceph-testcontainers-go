@@ -40,8 +40,9 @@ Rules that keep the numbers honest:
   single definition in the same directory can be evaluated. A name defined more
   than once with different values is ambiguous. The scanner has no scopes, so a
   name that is also a function or closure parameter, result or receiver, a
-  short-variable or range declaration, a `var` without a value, or the target of
-  a compound assignment anywhere in the directory stops resolving there.
+  short-variable or range declaration, a `var` without a value, a member of a local `var`/`const` block or a
+  value-less member of a package-level block, or the target of a compound
+  assignment anywhere in the directory stops resolving there.
 - A duration that cannot be resolved stays null and is counted in the
   `unresolved` column. It is never summed as zero.
 - Sleeps and timers get a placement label. `poll_loop` means a `for` and a

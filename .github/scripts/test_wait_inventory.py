@@ -92,6 +92,28 @@ class ShadowTest(unittest.TestCase):
         self.assertEqual(self.sleeps("func f() {\n\tvar delay time.Duration\n\ttime.Sleep(delay)\n}\n"), [None])
         self.assertEqual(self.sleeps("func f() {\n\tdelay += time.Second\n\ttime.Sleep(delay)\n}\n"), [None])
 
+    def test_local_grouped_var_block_shadows(self):
+        body = "func f() {\n\tvar (\n\t\tdelay time.Duration\n\t)\n\ttime.Sleep(delay)\n}\n"
+        self.assertEqual(self.sleeps(body), [None])
+
+    def test_local_grouped_var_with_value_and_const_block_shadow(self):
+        body = "func f() {\n\tvar (\n\t\tdelay = runtimeValue()\n\t)\n\ttime.Sleep(delay)\n}\n"
+        self.assertEqual(self.sleeps(body), [None])
+        body = "func f() {\n\tconst (\n\t\tdelay = time.Minute\n\t)\n\ttime.Sleep(delay)\n}\n"
+        self.assertEqual(self.sleeps(body), [None])
+
+    def test_multi_name_var_lines_and_block_members_shadow(self):
+        self.assertEqual(self.sleeps("func f() {\n\tvar a, delay = 1, g()\n\ttime.Sleep(delay)\n}\n"), [None])
+        self.assertEqual(self.sleeps("func f() {\n\tvar (\n\t\ta, delay int64\n\t)\n\ttime.Sleep(time.Duration(delay))\n}\n"), [None])
+
+    def test_package_level_value_less_block_member_is_runtime(self):
+        recs = scan_files({"a.go": "package p\nvar (\n\tdelay time.Duration\n)\nfunc f() { time.Sleep(delay) }\n"})
+        self.assertEqual([r["seconds"] for r in recs], [None])
+
+    def test_package_level_grouped_constants_still_resolve(self):
+        src = "package p\nconst (\n\tshort = time.Second\n\tlong  = 3 * short\n)\nvar (\n\tpoll = 2 * time.Second\n)\nfunc f() {\n\ttime.Sleep(short)\n\ttime.Sleep(long)\n\ttime.Sleep(poll)\n}\n"
+        self.assertEqual([r["seconds"] for r in scan_files({"a.go": src})], [1.0, 3.0, 2.0])
+
     def test_shadow_in_another_file_of_the_directory_applies(self):
         recs = scan_files({
             "a.go": "package p\nconst delay = time.Second\nfunc f() { time.Sleep(delay) }\n",

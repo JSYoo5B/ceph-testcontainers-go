@@ -251,6 +251,39 @@ VAR_DECL_RE = re.compile(r"^\s*var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[^
 MUTATE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?:\+=|-=|\*=|/=)")
 
 
+BLOCK_OPEN_RE = re.compile(r"^(\s*)(?:var|const)\s*\(\s*$")
+BLOCK_CLOSE_RE = re.compile(r"^\s*\)\s*$")
+MEMBER_RE = re.compile(r"^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(.*)$")
+VAR_LIST_RE = re.compile(r"^\s*var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)")
+
+
+def grouped_declaration_names(code):
+    """Names declared as members of var ( ... ) and const ( ... ) blocks that
+    can bind something other than one evaluable package-level definition. A
+    block opened at column 0 is package level (gofmt form): its members that
+    carry a single value are ordinary definitions and keep resolving, while
+    value-less or multi-name members are runtime values. An indented block is
+    local to a function and every member shadows."""
+    names = set()
+    indent = None
+    for line in code.splitlines():
+        if indent is None:
+            m = BLOCK_OPEN_RE.match(line)
+            if m:
+                indent = len(m.group(1))
+            continue
+        if BLOCK_CLOSE_RE.match(line):
+            indent = None
+            continue
+        m = MEMBER_RE.match(line)
+        if not m:
+            continue
+        members = WORD_RE.findall(m.group(1))
+        if indent > 0 or len(members) > 1 or "=" not in m.group(2):
+            names.update(members)
+    return names
+
+
 def shadowed_names(code):
     """Names that some binding other than a single constant definition may
     take: function and closure parameters, results and receivers, short
@@ -258,7 +291,7 @@ def shadowed_names(code):
     declarations without a value, and compound assignments. The inventory has
     no scopes, so any such name stops resolving in its whole package directory.
     Over-invalidating only turns a duration into null."""
-    names = set()
+    names = grouped_declaration_names(code)
     for m in FUNC_RE.finditer(code):
         i, depth = m.end(), 0
         while i < len(code):
@@ -286,6 +319,9 @@ def shadowed_names(code):
             for part in line.split(":=")[:-1]:
                 names.update(WORD_RE.findall(part))
         m = VAR_DECL_RE.match(line)
+        if m:
+            names.update(WORD_RE.findall(m.group(1)))
+        m = VAR_LIST_RE.match(line)
         if m:
             names.update(WORD_RE.findall(m.group(1)))
         m = MUTATE_RE.match(line)
