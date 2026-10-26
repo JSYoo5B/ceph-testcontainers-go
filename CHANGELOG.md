@@ -43,6 +43,25 @@ change the API.
   rotating a MON key no longer compiles. `Tenant.PoolStatus` and
   `Tenant.PoolUsage` are unchanged. See
   `docs/guides/upgrading-handle-operations.md` for the migration table.
+- Give typed shapes to values that were plain strings or positional byte
+  slices. `ceph.OSDFlag` (with the eleven constants `OSDFlagNoUp`,
+  `OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
+  `OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
+  `OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim` and `OSDFlagNoAutoscale`) replaces
+  the `string` flag of `Container.OverrideOSDFlag` and the `[]string` result of
+  `Container.OSDFlags` and `Tenant.OSDFlags`. The type stays open because
+  `OSDFlags` reports flags without a constant; `OverrideOSDFlag` still refuses
+  any other value. `ceph.PGID` with `ParsePGID` and `String` replaces the
+  `string` PG ID of `DeepScrubPG`, `RepairPG`, `PGInconsistencies` and
+  `PGState.PGID`, so a PG from `Pool.PGs` passes straight to the scrub methods.
+  `ceph.ConnectionConfig` (`Conf` and `Keyring`) replaces the two `[]byte`
+  results of `Container.ConnectionConfig(ctx)` and `ClientConfig.ConnectionConfig()`,
+  which now return `(ConnectionConfig, error)` and the zero value on error.
+  Untyped string constants still compile for the flag and PG ID parameters; a
+  value in a `string` variable needs a conversion. Validation, error messages,
+  restoration and copy semantics do not change, and there is no deprecated phase
+  and no alias. See `docs/guides/upgrading-typed-values.md` for the migration
+  table.
 - Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
   `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
   error ownership and cleanup stay unchanged; there is no automatic expiry or

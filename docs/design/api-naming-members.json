@@ -3,7 +3,7 @@
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in public types; dependency and promoted method sets are not expanded",
   "counts": {
     "capture": 56,
-    "ceph": 424,
+    "ceph": 426,
     "cephfs": 247,
     "fault": 64,
     "rbd": 94,
@@ -118,6 +118,10 @@
       "ConfigSetting.Name field string",
       "ConfigSetting.Section field string",
       "ConfigSetting.Value field string"
+    ],
+    "ceph.ConnectionConfig": [
+      "ConnectionConfig.Conf field []byte",
+      "ConnectionConfig.Keyring field []byte"
     ],
     "ceph.Container": [
       "Container embed testcontainers.Container"
@@ -453,7 +457,7 @@
       "PGState.ActingPrimary field int",
       "PGState.LastEpochClean field uint32",
       "PGState.MappingEpoch field uint32",
-      "PGState.PGID field string",
+      "PGState.PGID field PGID",
       "PGState.ReportedEpoch field uint32",
       "PGState.ReportedSequence field uint64",
       "PGState.State field string",

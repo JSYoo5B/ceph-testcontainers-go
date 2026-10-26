@@ -62,7 +62,8 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	}
 	t.Logf("partial bootstrap (%v): %d containers read", err, len(partialReport.Containers))
 
-	_, keyring, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -162,7 +162,7 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	if entry.Key != "PRIVATE-KEY" || entry.Caps["mon"] != "allow r fsname=fixture" || !grant.identity.authorized {
 		t.Fatal("grant did not preserve a fresh scoped principal")
 	}
-	if _, _, err := grant.Client.ConnectionConfig(); err != nil {
+	if _, err := grant.Client.ConnectionConfig(); err != nil {
 		t.Fatal("confirmed principal has no credentials", err)
 	}
 	listing, err := fs.SubvolumeAuthorizedClients(t.Context(), volume.Name, volume.GroupName)

@@ -122,7 +122,9 @@ else:
 finally:
     s.close()
 `, address, strconv.Itoa(candidates[0]))
-	config, keyring, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	config := cc.Conf
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}

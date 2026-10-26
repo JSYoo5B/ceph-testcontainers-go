@@ -165,7 +165,7 @@ func integrationNativePoolPGs(t *testing.T, ctx context.Context, cluster *ceph.C
 		if s.Objects == nil || s.Bytes == nil || s.Copies == nil || s.ObjectsDegraded == nil || s.ObjectsMisplaced == nil || s.ObjectsUnfound == nil {
 			t.Fatal("native PG oracle counters incomplete")
 		}
-		rows = append(rows, ceph.PGState{PGID: p.ID, State: p.State, Up: *p.Up, Acting: *p.Acting,
+		rows = append(rows, ceph.PGState{PGID: ceph.PGID(p.ID), State: p.State, Up: *p.Up, Acting: *p.Acting,
 			UpPrimary: *p.UpPrimary, ActingPrimary: *p.ActingPrimary, ReportedEpoch: *p.ReportedEpoch, ReportedSequence: *p.ReportedSeq,
 			MappingEpoch: *p.MappingEpoch, LastEpochClean: *p.LastEpochClean, StatsInvalid: *p.StatsInvalid,
 			Stats: ceph.PGStats{Objects: *s.Objects, Bytes: *s.Bytes, ObjectCopies: *s.Copies,

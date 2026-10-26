@@ -90,7 +90,7 @@ func TestSharedCluster(t *testing.T) {
 				_, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
 				return err
 			},
-			"OverrideOSDFlag": func() error { _, err := cluster.OverrideOSDFlag(ctx, "noout", true); return err },
+			"OverrideOSDFlag": func() error { _, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true); return err },
 			"CreatePool":      func() error { _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "gated"}); return err },
 			"CreateClient": func() error {
 				_, err := cluster.CreateClient(ctx, "gated", ceph.ClientCaps{Mon: "allow *"})
@@ -224,7 +224,7 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if err != nil || status.FSID != fsid {
 		t.Fatalf("the exclusive lease got cluster %s (%v), want the shared %s", status.FSID, err, fsid)
 	}
-	if _, err := cluster.OverrideOSDFlag(ctx, "noout", true); err != nil {
+	if _, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true); err != nil {
 		t.Fatalf("OverrideOSDFlag under an exclusive lease: %v", err)
 	}
 	if _, err := cluster.Ceph(ctx, "osd", "set", "noscrub"); err != nil {

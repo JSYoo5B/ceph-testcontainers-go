@@ -226,7 +226,8 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil || !strings.Contains(bootstrap, "v2:") || strings.Contains(bootstrap, "v1:") {
 		t.Fatalf("MON bootstrap addresses are not v2-only: %q, %v", bootstrap, err)
 	}
-	config, _, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	config := cc.Conf
 	if err != nil || strings.Contains(string(config), "v1:") {
 		t.Fatalf("the connection configuration names a v1 address: %v", err)
 	}

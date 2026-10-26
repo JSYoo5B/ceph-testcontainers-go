@@ -65,11 +65,24 @@ func (client ClientConfig) GoString() string { return client.String() }
 // is a snapshot at creation; WithClientIdentity uses the current MON addresses.
 // Revocation does not erase already copied credentials or invalidate established
 // sessions immediately. Test revoked credentials with a fresh connection.
-func (client *ClientConfig) ConnectionConfig() ([]byte, []byte, error) {
+// On error it returns the zero ConnectionConfig.
+func (client *ClientConfig) ConnectionConfig() (ConnectionConfig, error) {
 	if client == nil || !client.ready || len(client.config) == 0 || len(client.keyring) == 0 {
-		return nil, nil, errors.New("cephx client credentials are unavailable")
+		return ConnectionConfig{}, errors.New("cephx client credentials are unavailable")
 	}
-	return bytes.Clone(client.config), bytes.Clone(client.keyring), nil
+	return ConnectionConfig{Conf: bytes.Clone(client.config), Keyring: bytes.Clone(client.keyring)}, nil
+}
+
+// ConnectionConfig holds the files that an external native client needs to
+// connect: the ceph.conf and the keyring. The fields are named so that the
+// two byte slices cannot be swapped by a positional assignment. Each value
+// returned by a ConnectionConfig method owns independent copies of the bytes.
+// The keyring is a credential: it is not redacted, so do not log the value.
+type ConnectionConfig struct {
+	// Conf is the content of ceph.conf.
+	Conf []byte
+	// Keyring is the content of the keyring file.
+	Keyring []byte
 }
 
 var clientIDPattern = naming.ClientID

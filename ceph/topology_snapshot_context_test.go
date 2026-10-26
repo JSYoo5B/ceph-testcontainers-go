@@ -21,7 +21,7 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 				var err error
 				switch getter {
 				case "config":
-					_, _, err = cluster.ConnectionConfig(ctx)
+					_, err = cluster.ConnectionConfig(ctx)
 				case "managers":
 					_, err = cluster.Managers(ctx)
 				case "monitors":
@@ -38,7 +38,7 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 func TestConnectionConfigContextBoundsConfigurationCacheWait(t *testing.T) {
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
 	assertSnapshotReadLockQueued(t, &cluster.configMu, func(ctx context.Context) error {
-		_, _, err := cluster.ConnectionConfig(ctx)
+		_, err := cluster.ConnectionConfig(ctx)
 		return err
 	})
 	if !cluster.mu.TryLock() {
@@ -85,7 +85,9 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T) {
 	a, b := &ManagerContainer{DaemonName: "a"}, &ManagerContainer{DaemonName: "b"}
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring"), managers: map[string]*ManagerContainer{"b": b, "a": a}}
-	config, keyring, err := cluster.ConnectionConfig(t.Context())
+	cc, err := cluster.ConnectionConfig(t.Context())
+	config := cc.Conf
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +104,7 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 		t.Fatal("manager snapshot modified ownership map")
 	}
 	cluster.closed = true
-	if _, _, err := cluster.ConnectionConfig(t.Context()); err == nil {
+	if _, err := cluster.ConnectionConfig(t.Context()); err == nil {
 		t.Fatal("closed cluster supplied bootstrap credentials")
 	}
 	// Descriptor snapshots permit inspection after termination.
@@ -150,7 +152,7 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, _, err := cluster.ConnectionConfig(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := cluster.ConnectionConfig(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("config: %v", err)
 	}
 	if _, err := cluster.Managers(ctx); !errors.Is(err, context.Canceled) {
@@ -162,7 +164,7 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 	if _, err := cluster.OSDs(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("osds: %v", err)
 	}
-	if _, _, err := cluster.ConnectionConfig(t.Context()); err != nil {
+	if _, err := cluster.ConnectionConfig(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -288,7 +290,7 @@ func TestControlContainerContextRetainsStableCLIAndFallbackIdentity(t *testing.T
 func TestTopologyAccessorsRejectANilCluster(t *testing.T) {
 	var cluster *Container
 	ctx := t.Context()
-	if _, _, err := cluster.ConnectionConfig(ctx); err == nil {
+	if _, err := cluster.ConnectionConfig(ctx); err == nil {
 		t.Error("ConnectionConfig accepted a nil cluster")
 	}
 	if control, err := cluster.ControlContainer(ctx); err == nil || control != nil {

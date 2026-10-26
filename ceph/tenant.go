@@ -236,7 +236,7 @@ func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object str
 }
 
 // OSDFlags lists the global OSD flags; see Container.OSDFlags.
-func (t *Tenant) OSDFlags(ctx context.Context) ([]string, error) {
+func (t *Tenant) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	c, err := t.cluster()
 	if err != nil {
 		return nil, err

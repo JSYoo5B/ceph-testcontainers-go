@@ -443,7 +443,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	clean := secondFaultWaitPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && !slices.Contains(pg.Acting, 2147483647)
 	})
-	pgid, primary := clean.PGID, clean.ActingPrimary
+	pgid, primary := clean.PGID.String(), clean.ActingPrimary
 	var a, d *ceph.OSDContainer
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		switch {
@@ -549,14 +549,14 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 		}
 		t.Logf("OSD_SECOND_FAULT_STOP osd=%d requested_from=%+v resulting=%+v", osd.ID, now, after)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		restore("noout", noout.Restore)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := cluster.OverrideOSDFlag(ctx, "nobackfill", true)
+	hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
 	if hold != nil {
 		restore("nobackfill", hold.Restore)
 	}

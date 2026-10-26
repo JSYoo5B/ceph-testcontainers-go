@@ -59,7 +59,9 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 
 func TestConnectionConfigCopiesCredentials(t *testing.T) {
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
-	config, keyring, err := cluster.ConnectionConfig(t.Context())
+	cc, err := cluster.ConnectionConfig(t.Context())
+	config := cc.Conf
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +70,10 @@ func TestConnectionConfigCopiesCredentials(t *testing.T) {
 		t.Fatal("exported credentials alias the cluster bootstrap data")
 	}
 	cluster.closed = true
-	if _, _, err := cluster.ConnectionConfig(t.Context()); err == nil {
+	if _, err := cluster.ConnectionConfig(t.Context()); err == nil {
 		t.Fatal("terminated cluster exported credentials")
 	}
-	if _, _, err := (&Container{}).ConnectionConfig(t.Context()); err == nil {
+	if _, err := (&Container{}).ConnectionConfig(t.Context()); err == nil {
 		t.Fatal("incomplete bootstrap exported credentials")
 	}
 }

@@ -40,7 +40,8 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 || clusteraccess.ControlContainer(t, cluster).GetContainerID() == cluster.GetContainerID() {
 				t.Fatal("HA fixture lacks separate control or daemon counts")
 			}
-			config, _, err := cluster.ConnectionConfig(ctx)
+			cc, err := cluster.ConnectionConfig(ctx)
+			config := cc.Conf
 			if err != nil || strings.Count(string(config), "[v2:") != 3 {
 				t.Fatalf("fresh client lacks three monitor addrvecs: %v: %s", err, config)
 			}

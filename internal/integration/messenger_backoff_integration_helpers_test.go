@@ -537,7 +537,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mapping heldMapping
-	if err := json.Unmarshal(out, &mapping); err != nil || mapping.PGID != clean.PGID || mapping.ActingPrimary != clean.ActingPrimary {
+	if err := json.Unmarshal(out, &mapping); err != nil || mapping.PGID != clean.PGID.String() || mapping.ActingPrimary != clean.ActingPrimary {
 		t.Fatalf("osd map of %s: %v: %.1024s, PG %s primary %d", backoffObject, err, out, clean.PGID, clean.ActingPrimary)
 	}
 	var primary, replica *ceph.OSDContainer
@@ -552,7 +552,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if primary == nil || replica == nil {
 		t.Fatalf("no primary and replica OSD containers for %+v", clean)
 	}
-	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID, Object: backoffObject}
+	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: backoffObject}
 	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
 	receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, primary), imageID(t, ctx, client)
 	version := targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")
@@ -611,7 +611,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 		t.Fatalf("reader ready mark %v", ready)
 	}
 
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() { restore("noout", noout.Restore) })
 	}

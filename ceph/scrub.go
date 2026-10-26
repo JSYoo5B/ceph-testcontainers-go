@@ -42,11 +42,33 @@ func validatePGID(pgid string) error {
 	return nil
 }
 
+// PGID identifies one placement group as "<pool>.<hex>": the decimal native
+// pool ID, a dot and the lowercase hexadecimal PG number, for example "1.0" or
+// "3.1f". PoolPGs reports PGs with this type, so a reported PG passes straight
+// to DeepScrubPG, RepairPG and PGInconsistencies. An untyped string constant
+// converts to PGID without validation, so these methods check the grammar
+// again and refuse an invalid value; ParsePGID checks it up front.
+type PGID string
+
+// ParsePGID returns s as a PGID when it matches the grammar
+// "<pool>.<hex>", which is exactly what DeepScrubPG, RepairPG and
+// PGInconsistencies accept. Otherwise it returns an error that matches
+// ErrInvalidRequest and the zero PGID.
+func ParsePGID(s string) (PGID, error) {
+	if err := validatePGID(s); err != nil {
+		return "", err
+	}
+	return PGID(s), nil
+}
+
+// String returns the native PG ID.
+func (p PGID) String() string { return string(p) }
+
 // DeepScrubPG requests a native deep scrub of one PG and waits until the PG
 // reports a deep-scrub stamp newer than before the request. Inconsistencies
 // are reported, not repaired. The noscrub and nodeep-scrub flags or an
 // unavailable primary can keep the wait from finishing before its deadline.
-func (c *Container) DeepScrubPG(ctx context.Context, pgid string) error {
+func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 	if gateErr := c.sharedGate("DeepScrubPG"); gateErr != nil {
 		return gateErr
 	}
@@ -58,7 +80,7 @@ func (c *Container) DeepScrubPG(ctx context.Context, pgid string) error {
 // newer deep-scrub stamp and is no longer inconsistent. Repair rewrites bad
 // replicas from an authoritative copy; it cannot recover an object without
 // one, and the wait then ends with the PG still inconsistent.
-func (c *Container) RepairPG(ctx context.Context, pgid string) error {
+func (c *Container) RepairPG(ctx context.Context, pgid PGID) error {
 	if gateErr := c.sharedGate("RepairPG"); gateErr != nil {
 		return gateErr
 	}
@@ -69,8 +91,8 @@ func (c *Container) RepairPG(ctx context.Context, pgid string) error {
 	return err
 }
 
-func (c *Container) scrubPG(ctx context.Context, pgid, operation string) (string, error) {
-	if err := validatePGID(pgid); err != nil {
+func (c *Container) scrubPG(ctx context.Context, pgid PGID, operation string) (string, error) {
+	if err := validatePGID(string(pgid)); err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -80,7 +102,7 @@ func (c *Container) scrubPG(ctx context.Context, pgid, operation string) (string
 	}
 	before, _, err := c.pgScrubReport(ctx, pgid)
 	if err == nil {
-		_, err = c.cephCLI(ctx, "pg", operation, pgid)
+		_, err = c.cephCLI(ctx, "pg", operation, string(pgid))
 	}
 	c.mu.Unlock()
 	if err != nil {
@@ -104,11 +126,11 @@ func (c *Container) scrubPG(ctx context.Context, pgid, operation string) (string
 }
 
 // Caller holds c.mu. The PG's pool is resolved by its native ID each time.
-func (c *Container) pgScrubReport(ctx context.Context, pgid string) (time.Time, string, error) {
+func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, string, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return time.Time{}, "", err
 	}
-	poolID, _, _ := strings.Cut(pgid, ".")
+	poolID, _, _ := strings.Cut(string(pgid), ".")
 	pools, err := c.poolStates(ctx)
 	if err != nil {
 		return time.Time{}, "", err
@@ -137,7 +159,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid string) (time.Time, 
 		return time.Time{}, "", errors.New("decode native PG scrub reports")
 	}
 	for _, pg := range native.PGs {
-		if pg.PGID != pgid {
+		if PGID(pg.PGID) != pgid {
 			continue
 		}
 		stamp, err := time.Parse(scrubStampLayout, pg.Stamp)
@@ -152,8 +174,8 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid string) (time.Time, 
 // PGInconsistencies lists the objects that the last deep scrub of a PG found
 // inconsistent. An empty result means that scrub found none; it is not a new
 // scrub. A PG whose results are no longer available returns an error.
-func (c *Container) PGInconsistencies(ctx context.Context, pgid string) ([]InconsistentObject, error) {
-	if err := validatePGID(pgid); err != nil {
+func (c *Container) PGInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
+	if err := validatePGID(string(pgid)); err != nil {
 		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
@@ -167,7 +189,7 @@ func (c *Container) PGInconsistencies(ctx context.Context, pgid string) ([]Incon
 	if err != nil {
 		return nil, err
 	}
-	data, err := command(ctx, client, "rados", "list-inconsistent-obj", pgid, "--format=json")
+	data, err := command(ctx, client, "rados", "list-inconsistent-obj", string(pgid), "--format=json")
 	if err != nil {
 		return nil, err
 	}

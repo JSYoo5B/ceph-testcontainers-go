@@ -139,7 +139,7 @@ func TestOverrideOSDFlagRejectsOutsideChangesToNoopLease(t *testing.T) {
 }
 
 func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
-	for _, flag := range []string{"pause", "pauserd", "full", "pglog_hardlimit", "norecover,noout", "noout ", "--noout", ""} {
+	for _, flag := range []OSDFlag{"pause", "pauserd", "full", "pglog_hardlimit", "norecover,noout", "noout ", "--noout", ""} {
 		ctr := &osdPolicyFixture{}
 		if _, err := osdPolicyCluster(ctr).OverrideOSDFlag(t.Context(), flag, true); err == nil || len(ctr.calls) != 0 {
 			t.Fatal("unsupported/composite flag reached Ceph", flag)

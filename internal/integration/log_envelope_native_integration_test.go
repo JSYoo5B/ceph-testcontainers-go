@@ -69,7 +69,7 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	quoteCommand := `{"prefix": "log", "logtext": ["` + token + ` quotes \u005bWRN\u005d"]}`
 	t.Logf("quote command accepted: %s", execOutput(t, ctx, cluster.Container, "python3", "-c", envelopeMonCommand, quoteCommand))
 	// The real WRN entry: a set noout flag fails the OSDMAP_FLAGS check.
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			if err := noout.Restore(context.WithoutCancel(ctx)); err != nil {

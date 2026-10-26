@@ -119,12 +119,12 @@ if errors.Is(err, ceph.ErrHostNetworkUnavailable) {
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig(ctx)
+cfg, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-// Write config and keyring to files and pass them to a native client.
-_, _ = config, keyring
+// Write cfg.Conf and cfg.Keyring to files and pass them to a native client.
+_ = cfg
 ```
 
 | Option or method | Meaning |
@@ -210,8 +210,8 @@ The helper containers are released by the cluster, also in `Terminate`.
 
 ### Connecting from the test process
 
-`ConnectionConfig(ctx)` returns independent copies of the bootstrap `ceph.conf`
-and the admin keyring. In host mode the MON addresses in it are final.
+`ConnectionConfig(ctx)` returns a `ceph.ConnectionConfig` with independent copies of the
+bootstrap `ceph.conf` (`Conf`) and the admin keyring (`Keyring`). In host mode the MON addresses in it are final.
 `ConnectionConfig(ctx)` does the same while bounding the wait for
 concurrent topology changes. The copy is a snapshot: after `AddMonitor` or
 `MonitorContainer.Remove`, call it again.
@@ -227,17 +227,17 @@ this code in a test file of your own module with the build constraint
 `//go:build linux && cgo`.
 
 ```golang
-conf, keyring, err := cluster.ConnectionConfig(ctx)
+cfg, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }
 dir := t.TempDir()
 confPath := filepath.Join(dir, "ceph.conf")
 keyringPath := filepath.Join(dir, "ceph.client.admin.keyring")
-if err := os.WriteFile(confPath, conf, 0o600); err != nil {
+if err := os.WriteFile(confPath, cfg.Conf, 0o600); err != nil {
 	t.Fatal(err)
 }
-if err := os.WriteFile(keyringPath, keyring, 0o600); err != nil {
+if err := os.WriteFile(keyringPath, cfg.Keyring, 0o600); err != nil {
 	t.Fatal(err)
 }
 conn, err := rados.NewConn()

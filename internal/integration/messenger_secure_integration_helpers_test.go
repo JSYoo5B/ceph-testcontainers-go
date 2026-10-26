@@ -20,7 +20,8 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	if err != nil || !strings.Contains(addresses, "v2:") || strings.Contains(addresses, "v1:") {
 		t.Fatal("secure MON bootstrap is not v2-only", err)
 	}
-	config, _, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	config := cc.Conf
 	if err != nil || !strings.Contains(string(config), "v2:") || strings.Contains(string(config), "v1:") {
 		t.Fatal("secure connection config is not v2-only", err)
 	}

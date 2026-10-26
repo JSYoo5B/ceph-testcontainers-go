@@ -148,7 +148,7 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 		return invalid(errors.New("multicluster requires two running Ceph clusters"))
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if _, _, err := cluster.ConnectionConfig(ctx); err != nil {
+		if _, err := cluster.ConnectionConfig(ctx); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err)
 			}

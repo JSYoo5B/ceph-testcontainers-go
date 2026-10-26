@@ -181,7 +181,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	clean := waitPG(t, ctx, cluster, "clean on both OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 2 && !slices.Contains(pg.Acting, noOSD)
 	})
-	pgid, primary := clean.PGID, clean.ActingPrimary
+	pgid, primary := clean.PGID.String(), clean.ActingPrimary
 	var victim *ceph.OSDContainer
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID != primary && slices.Contains(clean.Acting, osd.ID) {
@@ -211,7 +211,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		return nil
 	})
 	captured := secondFaultInstanceOf(t, ctx, victim)
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		restore("noout", noout.Restore)
 	}
@@ -300,7 +300,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		var baseRaw []byte
 		haveBase := false
 		if phase.revoke {
-			hold, err = cluster.OverrideOSDFlag(ctx, "nobackfill", true)
+			hold, err = cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
 			if hold != nil {
 				restore("nobackfill "+phase.name, hold.Restore)
 			}

@@ -115,7 +115,7 @@ identity. Peers do not see a closed connection; they only stop getting
 replies. Use it to reproduce an unresponsive OSD, MDS or client.
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
+hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
 if hold != nil {
 	defer hold.Restore(cleanupCtx)
 }
@@ -939,9 +939,9 @@ if err != nil {
 	t.Fatal(err)
 }
 var mapping struct {
-	PGID          string `json:"pgid"`
-	Acting        []int  `json:"acting"`
-	ActingPrimary int    `json:"acting_primary"`
+	PGID          ceph.PGID `json:"pgid"`
+	Acting        []int     `json:"acting"`
+	ActingPrimary int       `json:"acting_primary"`
 }
 if err := json.Unmarshal(out, &mapping); err != nil {
 	t.Fatal(err)
@@ -1028,13 +1028,14 @@ if err != nil {
 ## Holding OSD map flags
 
 `OverrideOSDFlag` sets or clears one global OSD map flag and remembers the
-previous state. Supported flags: `noup`, `nodown`, `noout`, `noin`,
-`nobackfill`, `norebalance`, `norecover`, `noscrub`, `nodeep-scrub`,
-`nosnaptrim` and `noautoscale`. The composite `pause` flag and irreversible
+previous state. Supported flags are the `ceph.OSDFlag` constants: `OSDFlagNoUp`,
+`OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
+`OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
+`OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim` and `OSDFlagNoAutoscale`. The composite `pause` flag and irreversible
 compatibility flags are not supported.
 
 ```golang
-flag, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+flag, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 if flag != nil {
 	defer flag.Restore(cleanupCtx)
 }

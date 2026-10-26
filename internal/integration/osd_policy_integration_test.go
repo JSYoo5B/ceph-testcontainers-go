@@ -106,7 +106,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 					t.Fatal(err)
 				}
 			}
-			noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+			noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 			if noout != nil {
 				t.Cleanup(func() {
 					if err := noout.Restore(context.Background()); err != nil {
@@ -169,7 +169,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			probe("restarted")
 			// Preserve an original native flag, including the disable-and-restore path.
 			cephCommand(t, ctx, cluster, "osd", "set", "noout")
-			disabled, err := cluster.OverrideOSDFlag(ctx, "noout", false)
+			disabled, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, false)
 			if err != nil {
 				t.Fatal(err)
 			}

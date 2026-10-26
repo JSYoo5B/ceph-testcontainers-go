@@ -13,7 +13,8 @@ func TestClientCapsReplaceWithoutChangingKeyOrKeepingOmittedServices(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, keyBefore, _ := client.ConnectionConfig()
+	cc, _ := client.ConnectionConfig()
+	keyBefore := cc.Keyring
 	want := ClientCaps{Mon: "allow r", OSD: "allow r pool=tenant"}
 	if err := client.UpdateCaps(t.Context(), want); err != nil {
 		t.Fatal(err)
@@ -22,7 +23,8 @@ func TestClientCapsReplaceWithoutChangingKeyOrKeepingOmittedServices(t *testing.
 	if err != nil || got != want {
 		t.Fatalf("caps not replaced exactly: %+v %v", got, err)
 	}
-	_, keyAfter, _ := client.ConnectionConfig()
+	cc2, _ := client.ConnectionConfig()
+	keyAfter := cc2.Keyring
 	if !bytes.Equal(keyBefore, keyAfter) {
 		t.Fatal("caps update changed key")
 	}

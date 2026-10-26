@@ -58,7 +58,8 @@ func cephxKeyType(t *testing.T, keyring []byte, entity string) ceph.CephxCipher 
 
 func clientKeyring(t *testing.T, client *ceph.ClientConfig) []byte {
 	t.Helper()
-	_, keyring, err := client.ConnectionConfig()
+	cc, err := client.ConnectionConfig()
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,8 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 
 	// Every key the fixture created is AES, and the daemons run with the
 	// fractional lifetimes.
-	_, keyring, err := cluster.ConnectionConfig(ctx)
+	cc2, err := cluster.ConnectionConfig(ctx)
+	keyring := cc2.Keyring
 	if err != nil || cephxKeyType(t, keyring, "client.admin") != ceph.CipherAES {
 		t.Fatalf("client.admin key type: %v", err)
 	}

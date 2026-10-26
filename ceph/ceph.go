@@ -44,7 +44,7 @@ type Container struct {
 	controlMu              sync.RWMutex
 	configMu               sync.RWMutex
 	configOverrides        map[string]*ConfigOverrideHandle
-	flagOverrides          map[string]*OSDFlagOverrideHandle
+	flagOverrides          map[OSDFlag]*OSDFlagOverrideHandle
 	moduleOverrides        map[string]*MGRModuleOverrideHandle
 	controlPlane           testcontainers.Container
 	clientMu               sync.Mutex

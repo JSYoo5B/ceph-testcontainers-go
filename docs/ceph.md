@@ -1306,7 +1306,7 @@ func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error)
 func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error)
 func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error)
 func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)
-func (t *Tenant) OSDFlags(ctx context.Context) ([]string, error)
+func (t *Tenant) OSDFlags(ctx context.Context) ([]OSDFlag, error)
 func (t *Tenant) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error)
 
 const SharedPool = "tenants"
@@ -1442,7 +1442,7 @@ cluster:
 ```golang
 func TestRecoversWithNoout(t *testing.T) {
 	cluster := shared.Exclusive(t)
-	if _, err := cluster.OverrideOSDFlag(t.Context(), "noout", true); err != nil {
+	if _, err := cluster.OverrideOSDFlag(t.Context(), ceph.OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
 	osd, err := cluster.AddOSD(t.Context())
@@ -1541,6 +1541,11 @@ These rules apply across its methods:
   `CreatePool` and `CreateClient`, and cluster-wide operations stay on
   `Container`. [Upgrading to handle operations](guides/upgrading-handle-operations.md)
   maps each former method to its handle method.
+- Typed values. Global OSD flags are `OSDFlag`, PG IDs are `PGID` and the
+  bootstrap files are a `ConnectionConfig`. An untyped string constant still
+  converts to the flag and PG ID types, so the types do not replace the run-time
+  checks. [Upgrading to typed values](guides/upgrading-typed-values.md) has the
+  migration table.
 - Partial results. A method that creates something (an OSD, a pool, a client
   identity, a handle) can return a non-nil result together with an error. The
   result identifies what was attempted and stays owned by the cluster; inspect it,
@@ -2575,7 +2580,7 @@ the cluster. The OSD bootstrap checks the stored identity again and never
 formats a store that has its ready marker.
 
 ```golang
-noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 if err != nil {
 	t.Fatal(err)
 }
@@ -2629,29 +2634,33 @@ but does not block an explicit `OSDContainer.SetIn(ctx, false)`.
 #### OSDFlags
 
 ```golang
-func (c *Container) OSDFlags(ctx context.Context) ([]string, error)
+func (c *Container) OSDFlags(ctx context.Context) ([]ceph.OSDFlag, error)
 ```
 
-Lists the exact global OSDMap flag tokens, including Ceph's internal
-compatibility flags (for example `sortbitwise`). Per-OSD, CRUSH-node and
+Lists the exact global OSDMap flag tokens as [OSDFlag](#osdflag) values,
+including Ceph's internal compatibility flags (for example `sortbitwise`) that
+are not among the `OSDFlag` constants. Per-OSD, CRUSH-node and
 device-class flags are separate native state.
 
 #### OverrideOSDFlag
 
 ```golang
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*ceph.OSDFlagOverrideHandle, error)
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag ceph.OSDFlag, enabled bool) (*ceph.OSDFlagOverrideHandle, error)
 ```
 
 Sets or clears one global OSDMap flag and remembers its prior state. Supported
-flags: `noup`, `nodown`, `noout`, `noin`, `nobackfill`, `norebalance`,
-`norecover`, `noscrub`, `nodeep-scrub`, `nosnaptrim` and `noautoscale`. The
+flags are the eleven [OSDFlag](#osdflag) constants: `OSDFlagNoUp`,
+`OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
+`OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
+`OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim` and `OSDFlagNoAutoscale`. Any other
+value is refused with an error before Ceph is contacted. The
 composite `pause` flag and irreversible compatibility flags are not supported.
 `Restore` returns only this flag to its prior state (a flag that was already set
 stays set) and never touches other flags. While set, flags such as `noout` raise
 the `OSDMAP_FLAGS` health warning (per-OSD flags raise `OSD_FLAGS` instead).
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 ```
 
 ### Container Methods: Pools
@@ -2912,7 +2921,7 @@ any OSD exists. `ceph.PoolPGSnapshot` contains `FSID`, `PoolBefore`/`PoolAfter`
 (`PoolState` observed around the query; policies and epochs may differ),
 `OSDMapEpochBefore`/`OSDMapEpochAfter`, the manager's `PGReady` flag and `PGs`.
 
-Each `ceph.PGState` has `PGID`, the native `State` string, `Up` and `Acting` (in
+Each `ceph.PGState` has `PGID` (a [PGID](#pgid), which `DeepScrubPG`, `RepairPG` and `PGInconsistencies` accept as is), the native `State` string, `Up` and `Acting` (in
 native order), `UpPrimary` and `ActingPrimary` (`-1` means none),
 `ReportedEpoch`, `ReportedSequence`, `MappingEpoch`, `LastEpochClean`,
 `StatsInvalid` and `Stats`. `ceph.PGStats` holds signed counters: `Objects`,
@@ -3307,30 +3316,31 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
 #### ConnectionConfig
 
 ```golang
-func (c *Container) ConnectionConfig(ctx context.Context) ([]byte, []byte, error)
+func (c *Container) ConnectionConfig(ctx context.Context) (ceph.ConnectionConfig, error)
 ```
 
-Returns independent copies of the bootstrap `ceph.conf` and the admin keyring for
+Returns a [ConnectionConfig](#connectionconfig-type) with independent copies of the bootstrap `ceph.conf` (`Conf`) and the admin keyring (`Keyring`) for
 a native client that you start yourself, for example a test process using
 go-ceph in host mode or a custom client implementation. The configuration
 contains the addresses that the cluster advertises: container addresses in bridge
 mode, host addresses (with final MON ports) in host mode. The keyring grants full
 privileges. `ctx` bounds the wait for a concurrent topology change or
 configuration update. It fails after termination or before bootstrap completed,
-and a shared cluster refuses the call.
+and a shared cluster refuses the call. On error it returns the zero
+`ceph.ConnectionConfig`.
 
 ```golang
-config, keyring, err := cluster.ConnectionConfig(ctx)
+cfg, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }
 dir := t.TempDir()
 confPath := filepath.Join(dir, "ceph.conf")
 keyringPath := filepath.Join(dir, "ceph.client.admin.keyring")
-if err := os.WriteFile(confPath, config, 0o644); err != nil {
+if err := os.WriteFile(confPath, cfg.Conf, 0o644); err != nil {
 	t.Fatal(err)
 }
-if err := os.WriteFile(keyringPath, keyring, 0o600); err != nil {
+if err := os.WriteFile(keyringPath, cfg.Keyring, 0o600); err != nil {
 	t.Fatal(err)
 }
 // Point the client at confPath and keyringPath (for example librados
@@ -3865,7 +3875,7 @@ object's PG and acting set with
 #### DeepScrubPG
 
 ```golang
-func (c *Container) DeepScrubPG(ctx context.Context, pgid string) error
+func (c *Container) DeepScrubPG(ctx context.Context, pgid ceph.PGID) error
 ```
 
 Requests a deep scrub of one PG and waits until it reports a deep-scrub stamp
@@ -3876,7 +3886,7 @@ primary, keep the scrub from starting, and the wait then fails at the deadline.
 #### PGInconsistencies
 
 ```golang
-func (c *Container) PGInconsistencies(ctx context.Context, pgid string) ([]ceph.InconsistentObject, error)
+func (c *Container) PGInconsistencies(ctx context.Context, pgid ceph.PGID) ([]ceph.InconsistentObject, error)
 ```
 
 Lists the objects that the last deep scrub of a PG found inconsistent
@@ -3890,7 +3900,7 @@ replicated pools), `Primary` and `Errors`.
 #### RepairPG
 
 ```golang
-func (c *Container) RepairPG(ctx context.Context, pgid string) error
+func (c *Container) RepairPG(ctx context.Context, pgid ceph.PGID) error
 ```
 
 Requests a repair of one PG and waits until it reports a newer deep-scrub stamp
@@ -4253,6 +4263,58 @@ records. Its `Outcome` (a `ceph.CrashOutcome`) is one of:
 
 ### Other module functions and types
 
+#### OSDFlag
+
+```golang
+type OSDFlag string
+```
+
+A global OSDMap flag token. The constants name the eleven flags that
+[OverrideOSDFlag](#overrideosdflag) can change: `OSDFlagNoUp` (`noup`),
+`OSDFlagNoDown` (`nodown`), `OSDFlagNoOut` (`noout`), `OSDFlagNoIn` (`noin`),
+`OSDFlagNoBackfill` (`nobackfill`), `OSDFlagNoRebalance` (`norebalance`),
+`OSDFlagNoRecover` (`norecover`), `OSDFlagNoScrub` (`noscrub`),
+`OSDFlagNoDeepScrub` (`nodeep-scrub`), `OSDFlagNoSnapTrim` (`nosnaptrim`) and
+`OSDFlagNoAutoscale` (`noautoscale`). [OSDFlags](#osdflags) returns every flag
+the cluster reports, including native compatibility flags that have no
+constant, so the type stays open: a value outside the constants is
+representable and `OverrideOSDFlag` refuses it at run time. `String()` returns
+the token. An untyped string constant such as `"noout"` still converts to
+`OSDFlag`; a value held in a `string` variable needs an explicit conversion.
+
+#### PGID
+
+```golang
+type PGID string
+func ParsePGID(s string) (PGID, error)
+func (p PGID) String() string
+```
+
+A placement group ID in the form `<pool>.<hex>`: the decimal pool ID, a dot and
+the lowercase hexadecimal PG number, for example `1.0` or `3.1f`.
+`PGState.PGID` has this type, so a PG from [Pool.PGs](#poolpgs) passes straight
+to [DeepScrubPG](#deepscrubpg), [RepairPG](#repairpg) and
+[PGInconsistencies](#pginconsistencies). `ParsePGID` accepts and rejects
+exactly what those three methods accept; an invalid string returns an error
+that matches `ErrInvalidRequest` and the empty `PGID`. An untyped string constant
+converts without validation, so the three methods check the form again.
+
+#### ConnectionConfig type
+
+```golang
+type ConnectionConfig struct {
+	Conf    []byte // ceph.conf
+	Keyring []byte
+}
+```
+
+The result of [Container.ConnectionConfig](#connectionconfig) and
+[ClientConfig.ConnectionConfig](#clientconfig). The named fields replace two
+positional byte slices, so a swapped assignment of configuration and keyring
+no longer compiles. Both methods return independent copies of the bytes and
+the zero value with an error. The keyring is a credential; the type does not
+redact it.
+
 #### WithIdleEntrypoint
 
 ```golang
@@ -4484,7 +4546,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `Name() string` | The full entity, for example `client.reader`. |
 | `User() string` | The ID without `client.`, for APIs such as librados `rados_create` and go-ceph `rados.NewConnWithUser`. |
 | `KeyringPath() string` | The keyring path used inside attached containers, `/etc/ceph/ceph.client.<id>.keyring`. |
-| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced keeps returning its old key. |
+| `ConnectionConfig() (ceph.ConnectionConfig, error)` | A [ConnectionConfig](#connectionconfig-type) with independent copies of a `ceph.conf` (`Conf`) and the identity's keyring (`Keyring`) for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced keeps returning its old key. |
 | `String() string`, `GoString() string` | A description that never includes credentials, safe for logs and `%v`/`%#v`. |
 | `Capabilities(ctx)`, `UpdateCaps(ctx, caps)`, `ReplaceKey(ctx, opts...)`, `Revoke(ctx)`, `Delete(ctx)` | The operations on the identity. See [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps), [ClientConfig.ReplaceKey](#clientconfigreplacekey), [ClientConfig.Revoke](#clientconfigrevoke) and [ClientConfig.Delete](#clientconfigdelete). |
 
@@ -4939,7 +5001,7 @@ in [rbd](rbd.md) and [cephfs](cephfs.md).
 ### Keep an OSD down without data movement
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 if hold != nil {
 	defer hold.Restore(context.Background())
 }
@@ -4994,7 +5056,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 	t.Fatal(err)
 }
 // ... write objects with the client
-for _, flag := range []string{"nobackfill", "norecover"} {
+for _, flag := range []ceph.OSDFlag{ceph.OSDFlagNoBackfill, ceph.OSDFlagNoRecover} {
 	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 	if hold != nil {
 		defer hold.Restore(context.Background())
@@ -5049,9 +5111,9 @@ adds no client SDK.
 ```golang
 // A replicated pool with one PG and two replicas; the object "victim" exists.
 var mapping struct {
-	PGID          string `json:"pgid"`
-	Acting        []int  `json:"acting"`
-	ActingPrimary int    `json:"acting_primary"`
+	PGID          ceph.PGID `json:"pgid"`
+	Acting        []int     `json:"acting"`
+	ActingPrimary int       `json:"acting_primary"`
 }
 out, err := cluster.Ceph(ctx, "osd", "map", "app", "victim", "--format", "json")
 if err != nil {
@@ -5194,8 +5256,8 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig(ctx)
-// Write both files and point librados at them (see ConnectionConfig).
+cfg, err := cluster.ConnectionConfig(ctx)
+// Write cfg.Conf and cfg.Keyring to files and point librados at them (see ConnectionConfig).
 ```
 
 See [Host networking](guides/host-network.md) for remote engines, Docker
@@ -5211,8 +5273,8 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig(ctx)
-// Hand config and keyring to the client under test (for example an
+cfg, err := cluster.ConnectionConfig(ctx)
+// Hand cfg.Conf and cfg.Keyring to the client under test (for example an
 // independent Messenger v2 implementation), or attach a container with
 // cluster.WithClient() / cluster.WithClientIdentity(...).
 ```

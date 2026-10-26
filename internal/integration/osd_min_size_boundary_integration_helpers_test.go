@@ -161,7 +161,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	clean := secondFaultWaitPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && !slices.Contains(pg.Acting, noOSD)
 	})
-	pgid, primary := clean.PGID, clean.ActingPrimary
+	pgid, primary := clean.PGID.String(), clean.ActingPrimary
 	var a, b, d *ceph.OSDContainer
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		switch {
@@ -224,14 +224,14 @@ func testOSDMinSizeBoundary(t *testing.T) {
 		}
 		t.Logf("OSD_MIN_SIZE_STOP osd=%d requested_from=%+v resulting=%+v", osd.ID, now, after)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		restore("noout", noout.Restore)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := cluster.OverrideOSDFlag(ctx, "nobackfill", true)
+	hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
 	if hold != nil {
 		restore("nobackfill", hold.Restore)
 	}
