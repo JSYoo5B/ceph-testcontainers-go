@@ -135,6 +135,15 @@ const (
 	authExcerptUnavailable authExcerptStatus = "unavailable"
 )
 
+// authLineProvenance is the non-text record of one retained line. The excerpt
+// keeps no raw line text: only Text, after redaction and bounding, carries
+// content.
+type authLineProvenance struct {
+	Binding authExcerptBinding
+	At      time.Time
+	Stage   authFailureStage
+}
+
 // authFailureExcerpt is the redacted, bounded excerpt of one failed
 // operation. Text is empty unless Status is complete or clipped.
 type authFailureExcerpt struct {
@@ -144,7 +153,7 @@ type authFailureExcerpt struct {
 	Status        authExcerptStatus
 	Text          string
 	RetainedBytes int
-	Lines         []authFailureLine
+	Lines         []authLineProvenance
 	Stage         authFailureStage
 }
 
@@ -190,7 +199,9 @@ func buildAuthFailureExcerpt(operation string, selection authFailureSelection, s
 		}
 		texts = append(texts, line.Text)
 	}
-	excerpt.Lines = slices.Clone(selection.Lines)
+	for _, line := range selection.Lines {
+		excerpt.Lines = append(excerpt.Lines, authLineProvenance{Binding: line.Binding, At: line.At, Stage: line.Stage})
+	}
 	if redact == nil {
 		excerpt.Status = authExcerptWithheld
 		return excerpt

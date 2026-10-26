@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -225,10 +226,10 @@ func testAuthFailureExcerptLedger(t *testing.T) {
 		t.Fatalf("first changed: %+v later=%d", got, ledger.Later("op-1"))
 	}
 	// Returned and stored values are copies.
-	got.Lines[0].Text = "mutated"
-	first.Lines[0].Text = "mutated"
+	got.Lines[0].Stage = "mutated"
+	first.Lines[0].Stage = "mutated"
 	again, _ := ledger.First("op-1")
-	if again.Lines[0].Text != excerptMonRefusal {
+	if again.Lines[0].Stage != authStageMon {
 		t.Fatalf("ledger aliases caller data: %+v", again.Lines[0])
 	}
 	// A different operation has its own first; a missing one is absent.
@@ -255,6 +256,50 @@ func testAuthFailureExcerptLedger(t *testing.T) {
 	}
 }
 
+// excerptRetainedFields renders every field of an excerpt, so a raw secret in
+// any retained field is found.
+func excerptRetainedFields(e authFailureExcerpt) string { return fmt.Sprintf("%+v %#v", e, e) }
+
+func testAuthFailureExcerptRetainsNoRawText(t *testing.T) {
+	const secret = "SYNTHETICSECRETVALUE"
+	long := excerptMonRefusal + " token=" + secret + strings.Repeat(" padding", 400)
+	mask := func(text string) (string, error) { return strings.ReplaceAll(text, secret, "<redacted>"), nil }
+	failing := func(string) (string, error) { return "", errors.New("redaction expired") }
+	for name, c := range map[string]struct {
+		redact func(string) (string, error)
+		limit  int
+	}{
+		"masked":  {mask, authFailureExcerptLimit},
+		"clipped": {mask, 10},
+		"nil":     {nil, authFailureExcerptLimit},
+		"error":   {failing, authFailureExcerptLimit},
+	} {
+		e := excerptFor(t, excerptBinding, []string{long}, c.redact, c.limit)
+		ledger := newAuthExcerptLedger()
+		if _, err := ledger.record(e); err != nil {
+			t.Fatal(err)
+		}
+		first, _ := ledger.First("op-1")
+		if _, err := ledger.record(e); err != nil {
+			t.Fatal(err)
+		}
+		for where, got := range map[string]authFailureExcerpt{"returned": e, "ledger": first} {
+			if text := excerptRetainedFields(got); strings.Contains(text, secret) || strings.Contains(text, strings.Repeat(" padding", 200)) {
+				t.Errorf("%s/%s retains raw text: %.300s", name, where, text)
+			}
+			if len(got.Lines) != 1 || got.Lines[0].Binding != excerptBinding {
+				t.Fatalf("%s/%s lost line provenance: %+v", name, where, got.Lines)
+			}
+			if c.redact == nil || name == "error" {
+				if got.Text != "" || got.Status != authExcerptWithheld {
+					t.Fatalf("%s/%s kept text: %+v", name, where, got)
+				}
+			}
+		}
+	}
+}
+
+func TestAuthFailureExcerptNoRawText(t *testing.T) { testAuthFailureExcerptRetainsNoRawText(t) }
 func TestAuthFailureExcerptSelection(t *testing.T) { testAuthFailureExcerptSelection(t) }
 func TestAuthFailureExcerptRedaction(t *testing.T) { testAuthFailureExcerptRedactionAndClipping(t) }
 func TestAuthFailureExcerptStage(t *testing.T)     { testAuthFailureExcerptStage(t) }
