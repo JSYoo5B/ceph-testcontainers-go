@@ -10,6 +10,13 @@ change the API.
 
 ### API naming
 
+- Add `ceph.FactsOf(cluster) (ceph.ClusterFacts, error)`, an independent
+  snapshot of the ten static cluster facts with exported fields and no new
+  `Container` method. It also works on a terminated cluster, and a nil cluster
+  returns an error and the zero value. The snapshot holds copies only and
+  carries no control path or cleanup state. The ten `Container` accessors are
+  unchanged in this step; their migration is a separate change.
+
 - Keep one form of each topology accessor: the one that takes `ctx` and
   returns an error. `ceph.Container.ConnectionConfig`, `ControlContainer`,
   `Managers`, `Monitors` and `OSDs`, and `rgw.Gateways`, now take `ctx` and

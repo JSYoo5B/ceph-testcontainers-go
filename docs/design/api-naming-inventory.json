@@ -3,7 +3,7 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 36,
-    "ceph": 382,
+    "ceph": 384,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
@@ -491,6 +491,12 @@
       "signature": "func() string",
       "receiver": "ClientRevocationHandle",
       "proposed": "ceph.ClientRevocationHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterFacts",
+      "kind": "type",
+      "proposed": "ceph.ClusterFacts",
       "decision": "baseline"
     },
     {
@@ -1501,6 +1507,13 @@
       "current": "ceph.ExpectationResult",
       "kind": "type",
       "proposed": "ceph.ExpectationResult",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FactsOf",
+      "kind": "function",
+      "signature": "func(c *Container) (ClusterFacts, error)",
+      "proposed": "ceph.FactsOf",
       "decision": "baseline"
     },
     {
