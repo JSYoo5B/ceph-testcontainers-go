@@ -13,7 +13,6 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -98,7 +97,7 @@ func TestSharedCluster(t *testing.T) {
 				return err
 			},
 			"AddOSD": func() error { _, err := cluster.AddOSD(ctx); return err },
-			"ControlContainerContext": func() error {
+			"ControlContainer": func() error {
 				_, err := cluster.ControlContainer(ctx)
 				return err
 			},
@@ -109,8 +108,11 @@ func TestSharedCluster(t *testing.T) {
 				t.Errorf("%s on the shared cluster returned %v, want ErrSharedCluster", name, err)
 			}
 		}
-		if clusteraccess.ControlContainer(t, cluster) != nil || clusteraccess.OSDs(t, cluster) != nil {
-			t.Error("the shared cluster handed out a container")
+		if control, err := cluster.ControlContainer(ctx); control != nil || !errors.Is(err, ceph.ErrSharedCluster) {
+			t.Errorf("ControlContainer = %v, %v, want no handle and ErrSharedCluster", control, err)
+		}
+		if osds, err := cluster.OSDs(ctx); osds != nil || !errors.Is(err, ceph.ErrSharedCluster) {
+			t.Errorf("OSDs = %v, %v, want no handles and ErrSharedCluster", osds, err)
 		}
 		if status, err := cluster.Status(ctx); err != nil || status.FSID != fsid {
 			t.Fatalf("a read-only view failed: %s, %v", status.FSID, err)
