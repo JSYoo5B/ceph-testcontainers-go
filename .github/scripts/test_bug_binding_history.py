@@ -82,7 +82,18 @@ class TransitionTests(unittest.TestCase):
 
     def test_alias_does_not_permit_reactivation(self):
         record = decide([entry(status="retired")], [entry(tracker=MOVED)], {TAG: [LINK]})[TAG]
-        self.assertRefused(record, history.RULE_REACTIVATION)
+        self.assertRefused(record, history.RULE_LINK_EDIT_CHANGES_STATUS, history.RULE_REACTIVATION)
+
+    def test_alias_never_covers_a_link_edit_combined_with_a_status_change(self):
+        aliases = {TAG: [LINK]}
+        record = decide([entry()], [entry(status="retired", tracker=MOVED)], aliases)[TAG]
+        self.assertRefused(record, history.RULE_LINK_EDIT_CHANGES_STATUS)
+        # Independent controls: each edit alone is permitted.
+        self.assertPermitted(decide([entry()], [entry(tracker=MOVED)], aliases)[TAG])
+        self.assertPermitted(decide([entry()], [entry(status="retired")], aliases)[TAG])
+        # Without the alias the same combined edit is refused for the missing alias.
+        self.assertRefused(decide([entry()], [entry(status="retired", tracker=MOVED)])[TAG],
+                           history.RULE_TRACKER_WITHOUT_ALIAS)
 
     def test_each_tag_is_decided_independently(self):
         records = decide([entry(), entry(OTHER, "retired")], [entry(status="retired")])
@@ -217,6 +228,25 @@ class RevisionTests(unittest.TestCase):
         code, _, err = self.run_main("--base", "HEAD")
         self.assertEqual(code, 2)
         self.assertIn("registry is unreadable", err)
+
+    def test_type_errors_from_a_malformed_entry_are_inconclusive_for_base_and_candidate(self):
+        bad = entry()
+        bad["sources"] = [[]]  # the validator reaches set(sources) and raises TypeError
+        write_registry(self.root, bad)
+        self.commit("malformed base")
+        write_registry(self.root, entry())
+        code, out, err = self.run_main("--base", "HEAD")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("base revision registry is invalid", err)
+        write_registry(self.root, entry())
+        self.commit("good base")
+        write_registry(self.root, bad)
+        code, out, err = self.run_main("--base", "HEAD")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("candidate registry is invalid", err)
+        # A real policy refusal stays exit 1 with a report.
+        write_registry(self.root)
+        self.assertEqual(self.run_main("--base", "HEAD")[0], 1)
 
     def test_production_registry_is_unchanged_against_itself(self):
         base = engine.load_bug_registry()

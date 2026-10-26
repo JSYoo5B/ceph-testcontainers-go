@@ -31,6 +31,7 @@ RULE_RETIRED_DELETED = "retired-entry-deleted"
 RULE_SUPPORTED_DELETED = "supported-entry-deleted-without-retirement"
 RULE_TRACKER_REASSIGNED = "tracker-reassigned"
 RULE_TRACKER_WITHOUT_ALIAS = "tracker-changed-without-reviewed-alias"
+RULE_LINK_EDIT_CHANGES_STATUS = "link-edit-changes-status"
 RULE_REACTIVATION = "reactivation-undecided"
 REGISTRY_PATH = "docs/guides/bug-compatibility-tags.json"
 
@@ -59,7 +60,7 @@ def compare_bindings(base, candidate, aliases=None):
     A record holds the tag, its base and candidate (status, tracker) or None,
     the decision and the names of every rule that refuses it. A tracker edit is
     a permitted link edit only when the candidate's reviewed alias history
-    records the base tracker; the validator cannot tell an alias from another
+    records the base tracker and the status is unchanged; the validator cannot tell an alias from another
     defect's link on its own."""
     before, after = _entries(base, "base"), _entries(candidate, "candidate")
     history = reviewed_aliases(aliases)
@@ -72,6 +73,10 @@ def compare_bindings(base, candidate, aliases=None):
         elif old is not None and old["tracker"] != new["tracker"]:
             if old["tracker"] not in history.get(name, frozenset()):
                 rules.append(RULE_TRACKER_REASSIGNED if old["status"] == "retired" else RULE_TRACKER_WITHOUT_ALIAS)
+            elif old["status"] != new["status"]:
+                # A link edit preserves status and a retirement preserves the
+                # tracker, so a reviewed alias never covers a combined edit.
+                rules.append(RULE_LINK_EDIT_CHANGES_STATUS)
         if old is not None and new is not None and old["status"] == "retired" and new["status"] == "supported":
             rules.append(RULE_REACTIVATION)
         records.append({
@@ -120,7 +125,7 @@ def load_revision_registry(revision, root, path=REGISTRY_PATH):
         raise ValueError("base revision registry is unreadable: " + revision)
     try:
         return engine.bug_registry(json.loads(completed.stdout))
-    except ValueError as error:
+    except (ValueError, TypeError) as error:
         raise ValueError("base revision registry is invalid: " + str(error)) from None
 
 
@@ -140,7 +145,10 @@ def main(argv=None):
             aliases.setdefault(name, []).append(link)
         root = Path(args.root)
         base = load_revision_registry(args.base, root)
-        candidate = engine.load_bug_registry(root / REGISTRY_PATH)
+        try:
+            candidate = engine.load_bug_registry(root / REGISTRY_PATH)
+        except TypeError as error:  # the validator can fail on a malformed entry
+            raise ValueError("candidate registry is invalid: " + str(error)) from None
         refused = report(compare_bindings(base, candidate, aliases))
     except ValueError as error:
         print("inconclusive: " + str(error), file=sys.stderr)
