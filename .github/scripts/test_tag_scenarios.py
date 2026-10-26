@@ -1835,6 +1835,8 @@ class BugCompatibilityRegistryTests(unittest.TestCase):
             "inactive platform file": ("rbd/compat_windows.go", header.format("windows && " + BUG_B, "rbd")),
             "test helper without tests": ("internal/integration/guard_helper_test.go", header.format("!" + BUG_B, "x")),
             "legacy constraint": ("rbd/old.go", "// +build " + BUG_B + "\n\npackage rbd\n"),
+            "BOM before go:build": ("rbd/bom.go", "\ufeff" + header.format(BUG_B, "rbd")),
+            "BOM before legacy constraint": ("rbd/bomold.go", "\ufeff// +build " + BUG_B + "\n\npackage rbd\n"),
             "after a license block": ("rbd/lic.go", "/* license\n" + BUG_B + " */\n//go:build " + BUG_B + "\n\npackage rbd\n"),
         }
         for label, (path, text) in refused.items():

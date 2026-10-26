@@ -221,7 +221,7 @@ def bug_retired_sources(registry, root=ROOT):
                 continue
             path = Path(directory) / filename
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_text(encoding="utf-8-sig")  # Go accepts one leading BOM
             except (OSError, UnicodeDecodeError):
                 raise ValueError("Go source is unreadable: " + path.relative_to(root).as_posix()) from None
             words = {word for line in go_constraint_lines(text) for word in re.findall(r"[A-Za-z0-9_.]+", line)}
