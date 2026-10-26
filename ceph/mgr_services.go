@@ -22,11 +22,7 @@ func (c *Container) ManagerServices(ctx context.Context) (map[string]string, err
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	data, err := c.cephCLI(ctx, "mgr", "services", "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeManagerServices(data)
+	return readManagerServices(ctx, c.cephCLI)
 }
 
 func decodeManagerServices(data []byte) (map[string]string, error) {

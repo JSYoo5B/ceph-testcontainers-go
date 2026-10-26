@@ -129,15 +129,7 @@ func (c *Container) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	dump, err := c.osdPolicyDump(ctx)
-	if err != nil {
-		return nil, err
-	}
-	flags := make([]OSDFlag, len(dump.flags))
-	for i, flag := range dump.flags {
-		flags[i] = OSDFlag(flag)
-	}
-	return flags, nil
+	return readOSDFlags(ctx, c.cephCLI)
 }
 
 // OSDFlagOverrideHandle manages restoration of one global OSDMap flag, retaining
@@ -278,11 +270,7 @@ type osdPolicySnapshot struct {
 }
 
 func (c *Container) osdPolicyDump(ctx context.Context) (osdPolicySnapshot, error) {
-	data, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
-	if err != nil {
-		return osdPolicySnapshot{osds: make(map[int]OSDState)}, err
-	}
-	return decodeOSDPolicyDump(data)
+	return readOSDPolicyDump(ctx, c.cephCLI)
 }
 
 // decodeOSDPolicyDump decodes the flags and OSDs of the output of osd dump.

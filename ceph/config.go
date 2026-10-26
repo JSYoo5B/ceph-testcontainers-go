@@ -283,11 +283,7 @@ func findConfigEntry(entries []ConfigEntry, setting ConfigSetting) *ConfigEntry 
 }
 
 func (c *Container) configuration(ctx context.Context) ([]ConfigEntry, error) {
-	data, err := c.configCommand(ctx, "dump", "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeConfiguration(data)
+	return readConfiguration(ctx, c.cephCLI)
 }
 
 // decodeConfiguration decodes the output of config dump.
@@ -314,12 +310,5 @@ func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 }
 
 func (c *Container) configCommand(ctx context.Context, args ...string) ([]byte, error) {
-	data, err := c.cephCLI(ctx, append([]string{"config"}, args...)...)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("Ceph configuration command: %w", ctx.Err())
-		}
-		return nil, quiet(errors.New("Ceph configuration command failed; native output is redacted"), err)
-	}
-	return data, nil
+	return runConfigCommand(ctx, c.cephCLI, args...)
 }
