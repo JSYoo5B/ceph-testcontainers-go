@@ -289,5 +289,139 @@ class SnapshotAndBorrowTest(unittest.TestCase):
         self.assertEqual(verdict(seen=seen)["verdict"], join.UNVERIFIED)
 
 
+class UnclassifiedAssociationTest(unittest.TestCase):
+    def with_extra(self, **entry):
+        seen = observed()
+        extra = {"name": "/dev/loop6", "dev": "7:6", "back_dev": "8:1", "back_ino": 4242,
+                 "offset": 0, "sizelimit": 0}
+        extra.update(entry)
+        for key in [k for k, v in entry.items() if v is join]:
+            del extra[key]
+        seen["loop_devices"]["entries"].append(extra)
+        return verdict(seen=seen)
+
+    def test_known_match_plus_unclassifiable_backing_is_unverified(self):
+        marker = join  # sentinel meaning "delete this key"
+        for label, over in (
+                ("ino-null", {"back_ino": None}), ("ino-missing", {"back_ino": marker}),
+                ("ino-false", {"back_ino": False}), ("ino-str", {"back_ino": "4242"}),
+                ("dev-null", {"back_dev": None}), ("dev-missing", {"back_dev": marker}),
+                ("dev-false", {"back_dev": False}), ("dev-int", {"back_dev": 8}),
+                ("both-missing", {"back_dev": marker, "back_ino": marker})):
+            with self.subTest(label=label):
+                res = self.with_extra(**over)
+                self.assertEqual(res["verdict"], join.UNVERIFIED, res["checks"])
+                self.assertIn({"field": "loop.association-count", "state": "unknown"},
+                              res["checks"])
+
+    def test_two_known_matches_stay_a_conflict_even_with_an_unclassified_entry(self):
+        seen = observed()
+        entries = seen["loop_devices"]["entries"]
+        entries.append(dict(entries[0], name="/dev/loop4", dev="7:4"))
+        entries.append({"name": "/dev/loop7", "back_ino": None, "back_dev": "8:1"})
+        self.assertEqual(verdict(seen=seen)["verdict"], join.CONFLICT)
+
+    def test_well_typed_difference_is_proven_unrelated_even_if_other_field_is_bad(self):
+        res = self.with_extra(back_ino=1, back_dev=None)
+        self.assertEqual(res["verdict"], join.JOINED)
+
+    def test_absent_owned_association_plus_unclassified_entry_is_unverified(self):
+        seen = observed()
+        seen["loop_devices"]["entries"] = [{"name": "/dev/loop6", "back_ino": None}]
+        self.assertEqual(verdict(seen=seen)["verdict"], join.UNVERIFIED)
+
+
+class MalformedNestedRecordsTest(unittest.TestCase):
+    def test_malformed_snapshot_contents_are_unverified_not_raised(self):
+        for label, mutate in (
+                ("descriptors-missing", lambda sn: sn.pop("descriptors")),
+                ("descriptors-none", lambda sn: sn.update(descriptors=None)),
+                ("descriptors-str", lambda sn: sn.update(descriptors="x")),
+                ("entry-none", lambda sn: sn.update(descriptors=[None])),
+                ("entry-str", lambda sn: sn.update(descriptors=["x"])),
+                ("pid-missing", lambda sn: sn["descriptors"][0].pop("pid")),
+                ("pid-none", lambda sn: sn["descriptors"][0].update(pid=None)),
+                ("class-missing", lambda sn: sn["descriptors"][0].pop("class")),
+                ("class-unhashable", lambda sn: sn["descriptors"][0].update({"class": []})),
+                ("machine-missing", lambda sn: sn.pop("machine")),
+                ("observer-pid-missing", lambda sn: sn.pop("observer_pid"))):
+            with self.subTest(label=label):
+                seen = observed()
+                mutate(seen["snapshot"])
+                res = verdict(seen=seen)
+                self.assertEqual(res["verdict"], join.UNVERIFIED, res["checks"])
+                self.assertIn({"field": "snapshot.attachment", "state": "unknown"},
+                              res["checks"])
+
+    def test_malformed_borrow_contents_are_unverified_not_raised(self):
+        for label, over in (("borrowed-none-entry", {"borrowed": [None]}),
+                            ("borrowed-str-entry", {"borrowed": ["x"]}),
+                            ("borrowed-none", {"borrowed": None}),
+                            ("borrowed-str", {"borrowed": "x"})):
+            with self.subTest(label=label):
+                seen = observed()
+                seen["borrow"] = borrow_record(**over)
+                res = verdict(seen=seen)
+                self.assertEqual(res["verdict"], join.UNVERIFIED, res["checks"])
+
+    def test_conflict_precedence_survives_malformed_nested_records(self):
+        seen = observed()
+        seen["snapshot"]["descriptors"] = [None]
+        seen["borrow"] = borrow_record(borrowed=[None])
+        seen["dm"]["uuid"] = "other"
+        self.assertEqual(verdict(seen=seen)["verdict"], join.CONFLICT)
+
+
+class SystematicMutationTest(unittest.TestCase):
+    BAD = (None, "", "x", 0, -1, True, False, 1.5, [], {}, [None], {"x": 1}, ["x"])
+
+    def paths(self, node, prefix=()):
+        yield prefix
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield from self.paths(v, prefix + (k,))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                yield from self.paths(v, prefix + (i,))
+
+    def mutated(self, rec, path, bad, delete):
+        rec = copy.deepcopy(rec)
+        if not path:
+            return bad
+        parent = rec
+        for key in path[:-1]:
+            parent = parent[key]
+        if delete:
+            del parent[path[-1]]
+        else:
+            parent[path[-1]] = bad
+        return rec
+
+    def test_no_single_mutation_of_any_nested_field_raises(self):
+        base_seen = observed()
+        base_seen["borrow"] = borrow_record()
+        count = 0
+        for which in ("lease", "seen"):
+            root = lease() if which == "lease" else base_seen
+            for path in self.paths(root):
+                options = [(b, False) for b in self.BAD]
+                if path:
+                    options.append((None, True))
+                for bad, delete in options:
+                    mut = self.mutated(root, path, bad, delete)
+                    args = (mut, base_seen) if which == "lease" else (lease(), mut)
+                    with self.subTest(which=which, path=path, bad=repr(bad), delete=delete):
+                        res = join.join_attachment(*args)
+                        self.assertIn(res["verdict"], (join.JOINED, join.UNVERIFIED, join.CONFLICT))
+                        self.assertIsInstance(res["checks"], list)
+                    count += 1
+        self.assertGreater(count, 500)
+
+    def test_baseline_with_borrow_joins(self):
+        seen = observed()
+        seen["borrow"] = borrow_record()
+        self.assertEqual(verdict(seen=seen)["verdict"], join.JOINED)
+
+
 if __name__ == "__main__":
     unittest.main()

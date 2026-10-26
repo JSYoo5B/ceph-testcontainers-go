@@ -136,6 +136,45 @@ def _loop_associations(observed):
     return entries
 
 
+def _classify_backing(owned, entry):
+    """Return match, unrelated or unknown for one loop entry's backing identity.
+
+    'unrelated' needs a well-typed value that differs from the owned one; an
+    entry with missing, null or mistyped identity stays 'unknown'.
+    """
+    ino, dev = entry.get("back_ino"), entry.get("back_dev")
+    ino_ok, dev_ok = _valid(INT, ino), _valid(STR, dev)
+    if (ino_ok and ino != owned["ino"]) or (dev_ok and dev != owned["dev"]):
+        return "unrelated"
+    if ino_ok and dev_ok:
+        return "match"
+    return "unknown"
+
+
+def _snapshot_usable(snapshot):
+    """Check the nested shape the reused observer helper indexes into."""
+    if not isinstance(snapshot, dict):
+        return False
+    if not _valid(STR, snapshot.get("machine")):
+        return False
+    descriptors = snapshot.get("descriptors")
+    if not isinstance(descriptors, list):
+        return False
+    if snapshot.get("coherent") is True and not _valid(INT, snapshot.get("observer_pid")):
+        return False
+    for d in descriptors:
+        if not isinstance(d, dict) or not _valid(INT, d.get("pid")):
+            return False
+        if not isinstance(d.get("class"), str):
+            return False
+    return True
+
+
+def _borrow_usable(record):
+    borrowed = record.get("borrowed")
+    return (isinstance(borrowed, list) and all(isinstance(b, dict) for b in borrowed))
+
+
 def join_attachment(lease, observed):
     """Join the owned lease to a fresh observation of the running OSD.
 
@@ -157,17 +196,28 @@ def join_attachment(lease, observed):
         j.unknown("loop.scan")
     else:
         owned_back = _section(lease, "backing")
-        assoc = [e for e in entries
-                 if e.get("back_ino") == owned_back.get("ino")
-                 and e.get("back_dev") == owned_back.get("dev")]
         if not _valid(INT, owned_back.get("ino")) or not _valid(STR, owned_back.get("dev")):
             j.unknown("loop.association-count")
-        elif len(assoc) != 1:
-            # Zero is absence of the owned association; several include a foreign one.
-            j.mismatch("loop.association-count")
         else:
-            j.match("loop.association-count")
-            _compare_section(j, "loop", _LEASE_SPEC["loop"], o_loop, assoc[0])
+            known, unclassified = [], 0
+            for e in entries:
+                kind = _classify_backing(owned_back, e)
+                if kind == "match":
+                    known.append(e)
+                elif kind == "unknown":
+                    unclassified += 1
+            if len(known) > 1:
+                j.mismatch("loop.association-count")  # two known associations
+            elif unclassified:
+                # An entry whose backing identity cannot be classified may be
+                # another association to the owned file: exactly-one is unproven.
+                j.unknown("loop.association-count")
+            elif not known:
+                j.mismatch("loop.association-count")  # owned association absent
+            else:
+                j.match("loop.association-count")
+            if len(known) == 1:
+                _compare_section(j, "loop", _LEASE_SPEC["loop"], o_loop, known[0])
     o_dm = _section(lease, "dm")
     s_dm = _section(observed, "dm")
     _compare_section(j, "dm", _LEASE_SPEC["dm"], o_dm, s_dm)
@@ -211,7 +261,12 @@ def _join_daemon(j, lease, observed):
     else:
         j.match("snapshot.device")
     if _valid(INT, pid) and pid != 0:
-        verdict = _obs.attachment_verdict(snapshot, pid)
+        verdict = "unverified"
+        if _snapshot_usable(snapshot):
+            try:
+                verdict = _obs.attachment_verdict(snapshot, pid)
+            except Exception:
+                verdict = "unverified"
         if verdict == "attached-io":
             j.match("snapshot.attachment")
         elif verdict == "unverified":
@@ -225,7 +280,12 @@ def _join_daemon(j, lease, observed):
     if not isinstance(record, dict):
         j.unknown("borrow.record")
         return
-    evidence = _bor.attachment_evidence(record)
+    evidence = "unverified"
+    if _borrow_usable(record):
+        try:
+            evidence = _bor.attachment_evidence(record)
+        except Exception:
+            evidence = "unverified"
     if evidence == "borrowed-match":
         j.match("borrow.evidence")
     elif evidence in ("unverified", "no-borrow"):
