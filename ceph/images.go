@@ -71,10 +71,7 @@ func (c *Container) Images() ImageSet {
 	if c == nil {
 		return ImageSet{}
 	}
-	if c.settings.imageSet != nil {
-		return *c.settings.imageSet
-	}
-	return ImageSet{Essential: c.settings.controlImage, Client: c.settings.controlImage, CephFS: c.settings.mdsImage, RBDAux: c.settings.controlImage, RGW: c.settings.rgwImage}
+	return c.settings.effectiveImages()
 }
 
 func configureImages(o *options) error {
