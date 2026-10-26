@@ -76,6 +76,8 @@ type crashSighting struct {
 	Posted     bool
 	Done       bool
 	State      string
+	// Read is true when the container's whole crash directory was read.
+	Read bool
 }
 
 // crashSightings collects every sighting of id and every rejected meta file
@@ -84,8 +86,10 @@ type crashSighting struct {
 func crashSightings(r crashRead, id string) (found []crashSighting, rejected []string, others []string, unread []string) {
 	seen := map[string]bool{}
 	for _, container := range r.Report.Containers {
+		fullRead := false
 		switch container.Outcome {
 		case CrashRecordsFound, CrashDirectoryEmpty, CrashDirectoryAbsent:
+			fullRead = true
 		default:
 			unread = append(unread, fmt.Sprintf("%s/%s:%s", container.Role, container.Name, container.Outcome))
 		}
@@ -97,7 +101,7 @@ func crashSightings(r crashRead, id string) (found []crashSighting, rejected []s
 				}
 				continue
 			}
-			found = append(found, crashSighting{Generation: container.ContainerID, Path: record.Path, Posted: record.Posted, Done: record.Done, State: container.State})
+			found = append(found, crashSighting{Generation: container.ContainerID, Path: record.Path, Posted: record.Posted, Done: record.Done, State: container.State, Read: fullRead})
 		}
 		for _, omission := range container.Omitted {
 			if path.Base(path.Dir(omission.Path)) == id && path.Base(omission.Path) == "meta" {
@@ -159,6 +163,11 @@ func judgeCrashCompletion(expected string, early, late crashRead) crashCompletio
 		}
 		return false
 	}
+	// A rejected meta of the expected identity makes every verdict about it
+	// inconclusive, whether or not another sighting of it was accepted.
+	if len(eRejected) > 0 || len(lRejected) > 0 {
+		return inconclusive(fmt.Sprintf("a meta file of the expected crash was rejected (early %v, late %v)", eRejected, lRejected))
+	}
 	// Writer-order contradictions in either read.
 	for name, sightings := range map[string][]crashSighting{"early": eFound, "late": lFound} {
 		for _, s := range sightings {
@@ -202,14 +211,16 @@ func judgeCrashCompletion(expected string, early, late crashRead) crashCompletio
 	case len(lFound) > 0:
 		verdict.Kind = crashInterrupted
 		for _, s := range lFound {
+			if !s.Read {
+				// The unread suffix of that generation may hold the marker.
+				return inconclusive(fmt.Sprintf("generation %s was not fully read, so the missing done marker is not evidence", s.Generation))
+			}
 			if s.State == "" || s.State == "running" || s.State == "restarting" || s.State == "created" || s.State == "paused" {
 				verdict.Kind = crashPending
 			}
 		}
 		verdict.Reasons = append(verdict.Reasons, "no done marker in the late read")
 		return verdict
-	case len(lRejected) > 0 || len(eRejected) > 0:
-		return inconclusive(fmt.Sprintf("a meta file of the expected crash was rejected (early %v, late %v)", eRejected, lRejected))
 	case len(eUnread) > 0 || len(lUnread) > 0:
 		return inconclusive(fmt.Sprintf("absence is not supported: unread containers early %v, late %v", eUnread, lUnread))
 	case len(eFound) > 0:
@@ -259,6 +270,8 @@ func crashJudgeEntries(t *testing.T, parts ...string) []byte {
 			entries = append(entries, crashEntry{name: "crash/posted/" + crashJudgeID + "/meta", body: coverageMeta(crashJudgeID)})
 		case "posted-done":
 			entries = append(entries, crashEntry{name: "crash/posted/" + crashJudgeID + "/done"})
+		case "bad-posted-meta":
+			entries = append(entries, crashEntry{name: "crash/posted/" + crashJudgeID + "/meta", body: `{"crash_id": "2026-10`})
 		case "other":
 			entries = append(entries, crashEntry{name: "crash/2026-10-12_b/meta", body: coverageMeta("2026-10-12_b")})
 		default:
@@ -298,6 +311,10 @@ func TestCrashCompletionJudgeVerdicts(t *testing.T) {
 		{"empty-meta-is-not-absence", nil, []string{"empty-meta"}, crashJudgeExited, crashInconclusive, ""},
 		{"partial-meta-beside-another-record", nil, []string{"partial-meta", "other"}, crashJudgeExited, crashInconclusive, ""},
 		{"empty-meta-seen-early-beside-another-record", []string{"empty-meta", "other"}, nil, crashJudgeExited, crashInconclusive, ""},
+		{"accepted-active-and-rejected-posted-same-id", []string{"meta"}, []string{"meta", "done", "bad-posted-meta"}, crashJudgeExited, crashInconclusive, ""},
+		{"accepted-active-pending-and-rejected-posted-same-id", []string{"meta"}, []string{"meta", "bad-posted-meta"}, crashJudgeExited, crashInconclusive, ""},
+		{"rejected-posted-same-id-seen-early", []string{"meta", "bad-posted-meta"}, []string{"meta", "done"}, crashJudgeExited, crashInconclusive, ""},
+		{"posted-same-id-accepted-control", []string{"meta"}, []string{"meta", "done", "posted-meta", "posted-done"}, crashJudgeExited, crashCompleted, "pending_then_done"},
 		{"posted-without-done-contradicts", []string{"meta"}, []string{"posted-meta"}, crashJudgeExited, crashInconclusive, ""},
 		{"done-then-gone", []string{"meta", "done"}, nil, crashJudgeExited, crashInconclusive, ""},
 		{"done-then-lost-marker", []string{"meta", "done"}, []string{"meta"}, crashJudgeExited, crashInconclusive, ""},
@@ -434,5 +451,39 @@ func TestCrashCompletionJudgeKindsAreDistinct(t *testing.T) {
 	kinds := map[crashCompletionKind]bool{pending.Kind: true, complete.Kind: true, absent.Kind: true}
 	if len(kinds) != 3 {
 		t.Fatalf("pending %+v, complete %+v, absent %+v are not three distinct verdicts", pending, complete, absent)
+	}
+}
+
+// An incomplete archive read keeps the records read before the cut. A record
+// without done from such a read does not show that done is absent, while a
+// done marker that was read stays positive evidence.
+func TestCrashCompletionJudgeIncompleteReadOfExpectedCrash(t *testing.T) {
+	cutRead := func(start int, cut int, parts ...string) crashRead {
+		archive := crashJudgeEntries(t, parts...)
+		if cut < 0 || cut > len(archive) {
+			t.Fatalf("bad cut %d of %d", cut, len(archive))
+		}
+		return crashJudgeRead(t, start, map[string]*fakeCrashContainer{"mgr-a": {archive: archive[:cut], state: crashJudgeExited}}, crashContainer("mgr", "a", "mgr-a"))
+	}
+	early := crashJudgeOne(t, 0, crashJudgeExited, "meta")
+	// One meta entry is a 512-byte header and one padded 512-byte block.
+	beforeDone := cutRead(10, 1024, "meta", "done")
+	if c := beforeDone.Report.Containers[0]; c.Outcome != CrashArchiveIncomplete || len(c.Records) != 1 || c.Records[0].Done {
+		t.Fatalf("fixture is not a cut after the meta: %+v", c)
+	}
+	if got := judgeCrashCompletion(crashJudgeID, early, beforeDone); got.Kind != crashInconclusive {
+		t.Fatalf("a cut before done: %+v", got)
+	}
+	// The same record from a complete read is the interrupted dump.
+	if got := judgeCrashCompletion(crashJudgeID, early, crashJudgeOne(t, 10, crashJudgeExited, "meta")); got.Kind != crashInterrupted {
+		t.Fatalf("complete control: %+v", got)
+	}
+	// Cutting after done keeps the positive marker.
+	afterDone := cutRead(10, 1536, "meta", "done")
+	if c := afterDone.Report.Containers[0]; c.Outcome != CrashArchiveIncomplete || !c.Records[0].Done {
+		t.Fatalf("fixture is not a cut after done: %+v", c)
+	}
+	if got := judgeCrashCompletion(crashJudgeID, early, afterDone); got.Kind != crashCompleted {
+		t.Fatalf("a cut after done: %+v", got)
 	}
 }
