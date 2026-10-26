@@ -23,10 +23,7 @@ const (
 // ClusterNetworkName returns the replication bridge. With a single bridge it
 // returns NetworkName; in host mode both traffic planes share "host".
 func (c *Container) ClusterNetworkName() string {
-	if c.clusterNetwork != nil {
-		return c.clusterNetwork.Name
-	}
-	return c.NetworkName()
+	return c.settings.clusterNetworkName(c.network, c.clusterNetwork)
 }
 
 // HasSeparateClusterNetwork reports whether OSDs have a dedicated second bridge.

@@ -464,13 +464,7 @@ func (c *Container) monitorJoinEnvironment(name string) map[string]string {
 
 // NetworkName returns the cluster's bridge name, or "host" in host mode.
 func (c *Container) NetworkName() string {
-	if c.settings.hostNetwork {
-		return "host"
-	}
-	if c.network == nil {
-		return ""
-	}
-	return c.network.Name
+	return c.settings.publicNetworkName(c.network)
 }
 
 // UsesHostNetwork reports whether the cluster shares Docker's host network.
@@ -478,10 +472,7 @@ func (c *Container) UsesHostNetwork() bool { return c.settings.hostNetwork }
 
 // PublicAddress returns the advertised host-mode IPv4 address; empty in bridge mode.
 func (c *Container) PublicAddress() string {
-	if !c.settings.hostNetwork {
-		return ""
-	}
-	return c.settings.publicAddress
+	return c.settings.advertisedPublicAddress()
 }
 
 func (c *Container) trackHostPortLease(lease *hostPortLease) {
