@@ -44,6 +44,8 @@ ERROR = "error"
 CLOSED = "closed"
 UNCONFIRMED = "unconfirmed"
 NOTHING_BORROWED = "nothing-borrowed"
+NOT_ENTERED = "not-entered"
+ACTIVE = "active"
 
 
 class BorrowLease:
@@ -66,30 +68,45 @@ class BorrowLease:
             "permission": None, "permission_errno": None,
             "borrowed": [], "validation": [],
             "first_failure": None, "close_failures": [],
-            "closure": NOTHING_BORROWED,
+            "closure": NOT_ENTERED,
         }
         self._pidfd = None
-        self._open = []
+        self._uncertain = False
+        self._acquired = False
 
     def __enter__(self):
+        # Python does not call __exit__ when __enter__ raises, so any escape from
+        # the acquisition phase unwinds here and then re-raises.
+        self.record["closure"] = ACTIVE
+        try:
+            self._acquire()
+        except BaseException as exc:
+            self._unwind(type(exc))
+            raise
+        return self
+
+    def _acquire(self):
         rec = self.record
         try:
             rec["start_before"] = self.host.start_identity(self.pid)
         except OSError as exc:
             rec["permission"] = PROCESS_GONE if exc.errno in (errno.ENOENT, errno.ESRCH) else ERROR
             rec["first_failure"] = "start-identity"
-            return self
+            return
+        self._uncertain = True  # an interrupt inside the call may leave a new fd
         try:
             self._pidfd = self.host.pidfd_open(self.pid)
+            self._acquired = True
+            self._uncertain = False
         except OSError as exc:
+            self._uncertain = False
             self._permission_failure(exc)
-            return self
+            return
         for entry in self.entries:
             if not self._borrow(entry):
                 break
         if rec["permission"] is None and rec["borrowed"]:
             rec["permission"] = GRANTED
-        return self
 
     def _permission_failure(self, exc):
         rec = self.record
@@ -107,12 +124,14 @@ class BorrowLease:
 
     def _borrow(self, entry):
         rec = self.record
+        self._uncertain = True
         try:
             new_fd = self.host.pidfd_getfd(self._pidfd, int(entry["fd"]))
+            self._uncertain = False
         except OSError as exc:
+            self._uncertain = False
             self._permission_failure(exc)
             return False
-        self._open.append(new_fd)
         item = {"target_fd": entry["fd"], "borrowed_fd": new_fd, "closed": False}
         rec["borrowed"].append(item)
         problem = self._validate(new_fd, entry)
@@ -141,9 +160,16 @@ class BorrowLease:
         return None
 
     def __exit__(self, exc_type, exc, tb):
+        self._unwind(exc_type)
+        return False
+
+    def _unwind(self, exc_type):
+        """Attempt every close, then settle the closure outcome and identity."""
         rec = self.record
         failures = rec["close_failures"]
         for item in rec["borrowed"]:
+            if item["closed"]:
+                continue
             try:
                 self.host.close(item["borrowed_fd"])
                 item["closed"] = True
@@ -152,17 +178,21 @@ class BorrowLease:
         if self._pidfd is not None:
             try:
                 self.host.close(self._pidfd)
+                self._pidfd = None
             except OSError as err:
                 failures.append({"fd": self._pidfd, "errno": err.errno})
-        if rec["borrowed"] or self._pidfd is not None:
-            rec["closure"] = UNCONFIRMED if failures else CLOSED
+        if failures or self._uncertain:
+            rec["closure"] = UNCONFIRMED
+        elif self._acquired:
+            rec["closure"] = CLOSED
+        else:
+            rec["closure"] = NOTHING_BORROWED
         if exc_type is not None and rec["first_failure"] is None:
             rec["first_failure"] = "scope-" + exc_type.__name__
         try:
             rec["start_after"] = self.host.start_identity(self.pid)
-        except OSError:
+        except Exception:
             rec["start_after"] = None
-        return False
 
 
 def attachment_evidence(record):
@@ -201,6 +231,9 @@ def release_gate(record, daemon_stopped, fresh_snapshot, device):
     observer's own references are gone; an opener list is not a substitute.
     """
     if not isinstance(record, dict):
+        return "unverified"
+    if (not isinstance(device, str) or not device
+            or record.get("device") != device):
         return "unverified"
     if record.get("closure") not in (CLOSED, NOTHING_BORROWED):
         return "observer-reference-unconfirmed"

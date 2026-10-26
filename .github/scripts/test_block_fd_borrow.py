@@ -212,6 +212,56 @@ class BorrowLeaseTest(unittest.TestCase):
         self.assertEqual(lease.record["first_failure"], "scope-KeyboardInterrupt")
         self.assertEqual(len(host.closed), 3)
 
+    def _interrupted_enter(self, host):
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with self.assertRaises(KeyboardInterrupt):
+            with lease:
+                self.fail("body must not run")
+        return lease
+
+    def test_interrupt_during_validation_unwinds_acquired_references(self):
+        host = FakeBorrowHost()
+        host.fstat_error = KeyboardInterrupt()
+        lease = self._interrupted_enter(host)
+        rec = lease.record
+        self.assertEqual(sorted(host.closed), [100, 101])  # pidfd and borrowed fd
+        self.assertEqual(rec["closure"], bor.CLOSED)
+        self.assertEqual(rec["first_failure"], "scope-KeyboardInterrupt")
+        self.assertEqual(
+            bor.release_gate(rec, True, clean_snapshot(), DEV), "release-eligible")
+
+    def test_interrupt_during_validation_keeps_close_failures_separate(self):
+        host = FakeBorrowHost()
+        host.fstat_error = KeyboardInterrupt()
+        host.close_error[101] = OSError(errno.EIO, "io")
+        rec = self._interrupted_enter(host).record
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)
+        self.assertEqual(rec["first_failure"], "scope-KeyboardInterrupt")
+        self.assertEqual(rec["close_failures"], [{"fd": 101, "errno": errno.EIO}])
+        self.assertEqual(host.closed, [100])  # pidfd close still attempted
+        self.assertEqual(
+            bor.release_gate(rec, True, clean_snapshot(), DEV),
+            "observer-reference-unconfirmed")
+
+    def test_interrupt_inside_pidfd_getfd_is_unconfirmed(self):
+        host = FakeBorrowHost()
+        host.getfd_error["10"] = KeyboardInterrupt()
+        rec = self._interrupted_enter(host).record
+        self.assertEqual(host.closed, [100])
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)  # a new fd may exist
+
+    def test_interrupt_inside_pidfd_open_is_unconfirmed(self):
+        host = FakeBorrowHost()
+        host.pidfd_error = KeyboardInterrupt()
+        rec = self._interrupted_enter(host).record
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)
+
+    def test_interrupt_before_any_acquisition_holds_nothing(self):
+        host = FakeBorrowHost()
+        host.start_error = KeyboardInterrupt()
+        rec = self._interrupted_enter(host).record
+        self.assertEqual(rec["closure"], bor.NOTHING_BORROWED)
+
     def test_close_failure_stays_unconfirmed_and_separate_from_first_failure(self):
         host = FakeBorrowHost()
         host.targets["10"] = ((True, "8:0", 77), info(DIRECT_FLAGS))
@@ -251,11 +301,50 @@ class ReleaseGateTest(unittest.TestCase):
                          "observer-reference-unconfirmed")
 
     def test_record_without_closure_outcome_blocks(self):
-        for rec in ({}, {"closure": None}, {"closure": "weird"}):
+        for rec in ({"device": DEV}, {"device": DEV, "closure": None},
+                    {"device": DEV, "closure": "weird"},
+                    {"device": DEV, "closure": bor.NOT_ENTERED}):
             self.assertEqual(bor.release_gate(rec, True, clean_snapshot(), DEV),
                              "observer-reference-unconfirmed")
         self.assertEqual(bor.release_gate(None, True, clean_snapshot(), DEV),
                          "unverified")
+
+    def test_active_scope_is_not_release_eligible(self):
+        host = FakeBorrowHost()
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with lease:
+            self.assertEqual(lease.record["closure"], bor.ACTIVE)
+            self.assertEqual(
+                bor.release_gate(lease.record, True, clean_snapshot(), DEV),
+                "observer-reference-unconfirmed")
+        self.assertEqual(
+            bor.release_gate(lease.record, True, clean_snapshot(), DEV),
+            "release-eligible")
+
+    def test_unentered_lease_is_not_release_eligible(self):
+        lease = bor.BorrowLease(FakeBorrowHost(), PID, DEV, "x86_64", entries())
+        self.assertEqual(bor.release_gate(lease.record, True, clean_snapshot(), DEV),
+                         "observer-reference-unconfirmed")
+
+    def test_closure_record_is_joined_to_the_requested_device(self):
+        rec = self.closed_record()  # for DEV
+        other = "8:0"
+        self.assertEqual(
+            bor.release_gate(rec, True, clean_snapshot(device=other), other),
+            "unverified")
+        self.assertEqual(
+            bor.release_gate(rec, True, clean_snapshot(device=other), DEV),
+            "unverified")
+        for bad in (None, "", 252):
+            self.assertEqual(
+                bor.release_gate(rec, True, clean_snapshot(), bad), "unverified")
+        missing = dict(rec)
+        del missing["device"]
+        self.assertEqual(bor.release_gate(missing, True, clean_snapshot(), DEV),
+                         "unverified")
+        self.assertEqual(
+            bor.release_gate(dict(rec, device=None), True, clean_snapshot(), DEV),
+            "unverified")
 
     def test_running_or_unconfirmed_daemon_blocks(self):
         for stopped in (False, None, 1, "yes"):
