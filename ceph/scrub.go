@@ -185,15 +185,7 @@ func (c *Container) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsi
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	client, err := c.clientContainerContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	data, err := command(ctx, client, "rados", "list-inconsistent-obj", string(pgid), "--format=json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeInconsistentObjects(data)
+	return readPGInconsistencies(ctx, c.clientRadosLookup(), pgid)
 }
 
 func decodeInconsistentObjects(data []byte) ([]InconsistentObject, error) {

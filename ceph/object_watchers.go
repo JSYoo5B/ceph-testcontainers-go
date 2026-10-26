@@ -40,20 +40,7 @@ func (c *Container) ObjectWatchers(ctx context.Context, pool, namespace, object 
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	args := []string{"rados", "--pool", pool}
-	if namespace != "" {
-		args = append(args, "--namespace", namespace)
-	}
-	// rados ignores --format for listwatchers and always prints text.
-	client, err := c.clientContainerContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	data, err := command(ctx, client, append(args, "listwatchers", object)...)
-	if err != nil {
-		return nil, fmt.Errorf("list watchers of object %q in pool %q: %w", object, pool, err)
-	}
-	return parseObjectWatchers(string(data))
+	return readObjectWatchers(ctx, c.clientRadosLookup(), pool, namespace, object)
 }
 
 // validateRADOSArgument keeps a name from being read as a rados option or
