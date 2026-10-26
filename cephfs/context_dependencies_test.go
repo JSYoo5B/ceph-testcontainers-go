@@ -129,7 +129,7 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 }
 
 func TestCephFSInheritedCreatePoolAdmissionHonorsBusyOwner(t *testing.T) {
-	native := &poolFixtureContainer{}
+	native := &poolFixtureContainer{Output: map[string]string{"osd pool ls detail --format json": `[{"pool_id":5,"pool_name":"queued-cephfs","type":1,"size":2,"min_size":1,"pg_num":8}]`}}
 	cluster := poolFixtureCluster(native, 2)
 	assertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error {
 		pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "queued-cephfs"})

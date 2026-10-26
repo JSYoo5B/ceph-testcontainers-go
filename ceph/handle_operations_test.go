@@ -1,12 +1,16 @@
 package ceph
 
 import (
+	"context"
 	"errors"
+	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 // requireStale fails unless err refuses a stale or foreign handle as an
@@ -356,5 +360,68 @@ func TestSharedGateClassifiesEveryHandleOperation(t *testing.T) {
 	}
 	if sharedHandlePolicies["Pool.Status"] != sharedOpen {
 		t.Fatal("reading a pool is open on a shared cluster")
+	}
+}
+
+// listingContainer answers each native pool listing from listings in turn, or
+// fails it when the entry is empty, and repeats the last entry.
+type listingContainer struct {
+	*poolFixtureContainer
+	listings []string
+	reads    int
+}
+
+func (ctr *listingContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
+	if slices.Contains(args, "detail") {
+		listing := ctr.listings[min(ctr.reads, len(ctr.listings)-1)]
+		ctr.reads++
+		if listing == "" {
+			return 0, nil, errors.New("injected listing failure")
+		}
+		ctr.Output["osd pool ls detail --format json"] = listing
+	}
+	return ctr.poolFixtureContainer.Exec(ctx, args, opts...)
+}
+
+func idListing(id string) string {
+	return `[{"pool_id":` + id + `,"pool_name":"fixture","type":1,"size":2,"min_size":1,"pg_num":8,"crush_rule":3}]`
+}
+
+// A CreatePool that returns without an error has read the native ID of its
+// pool, so a pool that later takes the name is refused. When the read fails,
+// the creation is reported as an error that still carries the handle.
+func TestCreatePoolBindsTheNativeIDBeforeReturningSuccess(t *testing.T) {
+	ctr := &listingContainer{poolFixtureContainer: relocationFixture(), listings: []string{idListing("11"), idListing("12")}}
+	pool, err := poolFixtureCluster(ctr, 3).CreatePool(t.Context(), PoolConfig{Name: "fixture"})
+	if err != nil || pool == nil || !pool.ident.bound || pool.ident.id != 11 {
+		t.Fatalf("created pool %+v, error %v", pool, err)
+	}
+	// The pool was removed and created again under the same name as ID 12.
+	if _, err := pool.Status(t.Context()); !errors.Is(err, errStalePool) {
+		t.Fatalf("the handle reached the pool that replaced it: %v", err)
+	}
+	if err := pool.Remove(t.Context()); !errors.Is(err, errStalePool) {
+		t.Fatalf("Remove of a replaced pool: %v", err)
+	}
+	for _, call := range ctr.Calls {
+		if slices.Contains(call, "rm") {
+			t.Fatalf("the replacing pool was deleted: %v", call)
+		}
+	}
+}
+
+func TestCreatePoolReportsAnIdentityReadFailureWithTheHandle(t *testing.T) {
+	ctr := &listingContainer{poolFixtureContainer: relocationFixture(), listings: []string{"", idListing("12")}}
+	pool, err := poolFixtureCluster(ctr, 3).CreatePool(t.Context(), PoolConfig{Name: "fixture"})
+	if err == nil || !strings.Contains(err.Error(), "was created but its native ID could not be read") {
+		t.Fatalf("a creation without an identity succeeded: %v", err)
+	}
+	if pool == nil || pool.ident.bound || pool.Name != "fixture" {
+		t.Fatalf("the handle for cleanup was not returned unbound: %+v", pool)
+	}
+	// The documented fallback of this error path: the handle binds to the
+	// pool of its name at its first successful operation.
+	if _, err := pool.Status(t.Context()); err != nil || !pool.ident.bound || pool.ident.id != 12 {
+		t.Fatalf("first use did not bind: %v", err)
 	}
 }

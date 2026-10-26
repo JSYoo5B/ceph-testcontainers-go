@@ -88,8 +88,11 @@ name.
   through an old handle. Copies of a `Pool` share that identity. A `Pool` that
   does not come from `CreatePool` or `Pool` has no cluster and its methods return
   an error.
-- `CreatePool` reads the native ID of the pool it created. If that read fails,
-  the handle binds to the pool at its first successful operation.
+- `CreatePool` reads the native ID of the pool it created before it returns
+  without an error. If that read fails, `CreatePool` returns the handle together
+  with an error. That handle is not bound yet and binds to the pool of its name
+  at its first successful operation, so use it only to clean up. A handle
+  returned without an error is always bound.
 - An error from a handle operation that a shared cluster refuses names the
   operation as `Type.Method` in `OperationError.Op`, for example
   `OSDContainer.Remove` or `Pool.Remove`. The shared-cluster policy of each

@@ -105,7 +105,7 @@ func TestExistingCephFSDoesNotCreatePoolsOrChangeFilesystem(t *testing.T) {
 
 func TestCephFSSetsReplayAndAffinityOnlyAfterFilesystemCreation(t *testing.T) {
 	ctr := &poolFixtureContainer{
-		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`},
+		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`, "osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`},
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
 	cluster := poolFixtureCluster(ctr, 2)
@@ -136,7 +136,7 @@ func TestCephFSSetsReplayAndAffinityOnlyAfterFilesystemCreation(t *testing.T) {
 // fs set commands that still run before any MDS starts.
 func TestCephFSSetsRankCountsSeparatelyOnCeph19(t *testing.T) {
 	ctr := &poolFixtureContainer{
-		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`},
+		Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`, "osd pool ls detail --format json": `[{"pool_id":1,"pool_name":"tenant-metadata","type":1,"size":2,"min_size":1,"pg_num":8},{"pool_id":2,"pool_name":"tenant-data","type":1,"size":2,"min_size":1,"pg_num":8}]`},
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
 	cluster := poolFixtureCluster(ctr, 2)

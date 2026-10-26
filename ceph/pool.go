@@ -73,6 +73,8 @@ type Pool struct {
 // ID once it is known and whether the handle removed the pool. The owner's
 // c.mu guards it, because every operation on a Pool holds that lock.
 type poolIdentity struct {
+	// bound is false only for a handle that CreatePool returned with an
+	// error, before it could read the pool's native ID.
 	bound   bool
 	id      int64
 	removed bool
@@ -83,6 +85,9 @@ type poolIdentity struct {
 // any Ceph command. Existing pools, profiles and rules are rejected rather than
 // changed. A non-nil Pool returned with an error identifies resources whose
 // creation was attempted; inspect them or terminate the disposable cluster.
+// That Pool may not know the native ID of its pool yet: it then binds to the
+// pool of its name at its first successful operation, so use it only to clean
+// up. A Pool returned without an error is always bound to its native pool.
 // It never deletes data after a partial command failure. Use WaitForClean before
 // application I/O. For RBD, create images in a replicated metadata pool and pass
 // the EC pool as data_pool in the native client (or --data-pool to the RBD CLI).
@@ -188,9 +193,14 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 			return pool, fmt.Errorf("create pool %q: %w", pool.Name, err)
 		}
 	}
-	if state, err := c.poolState(ctx, pool.Name); err == nil {
-		pool.ident.bound, pool.ident.id = true, state.ID
+	// A successful result always identifies its native pool. If the ID cannot
+	// be read, the pool exists but no handle may claim it by name later, so
+	// the result is an error that still carries the handle for cleanup.
+	state, err := c.poolState(ctx, pool.Name)
+	if err != nil {
+		return pool, fmt.Errorf("pool %q was created but its native ID could not be read; the handle is not bound to the pool and binds to the pool of that name at its first successful operation: %w", pool.Name, err)
 	}
+	pool.ident.bound, pool.ident.id = true, state.ID
 	return pool, nil
 }
 

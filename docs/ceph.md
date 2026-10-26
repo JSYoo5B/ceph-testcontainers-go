@@ -2675,7 +2675,10 @@ returned `*ceph.Pool` embeds the resolved `PoolConfig` and adds `CRUSHRule` and
 `ErasureCodeProfile`. It describes the requested settings at creation; use
 [Pool.Status](#poolstatus) for current state.
 
-A non-nil `Pool` with an error identifies resources whose creation was attempted;
+A non-nil `Pool` with an error identifies resources whose creation was attempted
+(this includes a pool that was created but whose native ID could not be read; the
+handle then binds to the pool of its name at its first successful operation, so
+use it only to clean up; a `Pool` returned without an error is always bound);
 no data is deleted after a partial failure. Call [WaitForClean](#waitforclean)
 before application I/O.
 

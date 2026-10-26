@@ -111,7 +111,7 @@ func TestPoolPlacementCountsDistinctEligibleDomains(t *testing.T) {
 
 func TestPoolPlacementSelectsReplicatedAndECConstraints(t *testing.T) {
 	for _, erasure := range []bool{false, true} {
-		ctr := &poolFixtureContainer{}
+		ctr := &poolFixtureContainer{Output: createdPoolOutput()}
 		cluster := poolFixtureCluster(ctr, 4)
 		for id := range 3 {
 			cluster.osds[id].placement = OSDConfig{Host: "host-" + string(rune('a'+id)), Rack: "rack-" + string(rune('a'+id)), Root: "data", DeviceClass: "fast"}
@@ -142,14 +142,14 @@ func TestPoolPlacementSelectsReplicatedAndECConstraints(t *testing.T) {
 }
 
 func TestReplicatedPoolUsesClusterDefaults(t *testing.T) {
-	ctr := &poolFixtureContainer{}
+	ctr := &poolFixtureContainer{Output: createdPoolOutput()}
 	cluster := poolFixtureCluster(ctr, 3)
 	cluster.settings.poolReplicas, cluster.settings.poolMinSize = 3, 2
 	pool, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "fixture"})
 	if err != nil || pool.Replicas != 3 || pool.MinSize != 2 {
 		t.Fatalf("cluster defaults lost: pool=%+v error=%v", pool, err)
 	}
-	ctr = &poolFixtureContainer{}
+	ctr = &poolFixtureContainer{Output: createdPoolOutput()}
 	cluster = poolFixtureCluster(ctr, 3)
 	cluster.settings.poolReplicas, cluster.settings.poolMinSize = 3, 2
 	pool, err = cluster.CreatePool(t.Context(), PoolConfig{Name: "fixture", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}})
@@ -206,7 +206,7 @@ func TestPoolCreationFailurePreservesPartialResources(t *testing.T) {
 }
 
 func TestSingleReplicaPoolExplicitlyAcknowledgesFixtureSetting(t *testing.T) {
-	ctr := &poolFixtureContainer{}
+	ctr := &poolFixtureContainer{Output: createdPoolOutput()}
 	pool, err := poolFixtureCluster(ctr, 1).CreatePool(t.Context(), PoolConfig{Name: "fixture", Replicas: 1, Application: "rados"})
 	if err != nil || pool == nil {
 		t.Fatal(err)
@@ -228,4 +228,10 @@ func poolFixtureCluster(ctr testcontainers.Container, count int) *Container {
 		cluster.osds[id] = &OSDContainer{ID: id, Container: ctr}
 	}
 	return cluster
+}
+
+// createdPoolOutput answers the native read that CreatePool makes last, for
+// fixtures that do not model the created pool.
+func createdPoolOutput() map[string]string {
+	return map[string]string{"osd pool ls detail --format json": `[{"pool_id":9,"pool_name":"fixture","type":1,"size":3,"min_size":2,"pg_num":8,"crush_rule":3}]`}
 }
