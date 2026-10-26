@@ -50,6 +50,11 @@ func TestAttachmentJudgeOutcomes(t *testing.T) {
 		{"inode limit", func(r *attachRun) { r.Fill = syntheticScratchFill("create", "tmpfs", 28, 0, 5, 0) }, attachNotByteCeiling},
 		{"other errno", func(r *attachRun) { r.Fill = syntheticScratchFill("write", "tmpfs", 5, 4096, 0, 100) }, attachNotByteCeiling},
 		{"unmatched ENOSPC", func(r *attachRun) { r.Fill = syntheticScratchFill("write", "tmpfs", 28, 4096, 10, 100) }, attachNotByteCeiling},
+		{"filler owned no allocation and nothing was reclaimed", func(r *attachRun) {
+			zero := int64(0)
+			r.Fill.File.Allocated = &zero
+			r.Release.VFSAfter = scratchVFSOf(4096, 0, 100)
+		}, attachNoReclaim},
 		{"daemon exited", func(r *attachRun) { r.Daemon = daemonAborted; r.Recovered = nil }, attachDaemonAborted},
 		{"daemon state unknown", func(r *attachRun) { r.Daemon = daemonUnknown; r.Recovered = nil }, attachDaemonIndefinite},
 		{"unknown mutation read back is not promoted", func(r *attachRun) { r.Recovered["b"] = "db" }, attachRecovered},

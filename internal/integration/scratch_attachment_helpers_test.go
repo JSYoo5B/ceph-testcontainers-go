@@ -12,13 +12,14 @@ import (
 // judge below only combines receipts that earlier slices already classify; it
 // observes nothing itself and has no native producer yet.
 const (
-	attachNotAttached      = "not-attached"             // the OSD store is not shown to be on the owned filesystem
-	attachAllocUnproved    = "allocation-unproved"      // the block backing may already cover its length
-	attachUnreached        = "unreached"                // no byte-ceiling refusal was produced
-	attachNotByteCeiling   = "fill-not-byte-ceiling"    // the refusal was another errno, an inode limit or unclassified
-	attachRecovered        = "exhausted-recovered"      // byte ceiling, released, daemon up, acknowledged data intact
-	attachDaemonAborted    = "exhausted-aborted"        // byte ceiling, released, daemon exited; readback not attempted
-	attachDaemonIndefinite = "exhausted-daemon-unknown" // byte ceiling, released, daemon state not determined
+	attachNotAttached      = "not-attached"                // the OSD store is not shown to be on the owned filesystem
+	attachAllocUnproved    = "allocation-unproved"         // the block backing may already cover its length
+	attachUnreached        = "unreached"                   // no byte-ceiling refusal was produced
+	attachNotByteCeiling   = "fill-not-byte-ceiling"       // the refusal was another errno, an inode limit or unclassified
+	attachRecovered        = "exhausted-recovered"         // byte ceiling, released, daemon up, acknowledged data intact
+	attachNoReclaim        = "exhausted-nothing-reclaimed" // byte ceiling, but the filler owned no allocation, so no capacity was returned
+	attachDaemonAborted    = "exhausted-aborted"           // byte ceiling, released, daemon exited; readback not attempted
+	attachDaemonIndefinite = "exhausted-daemon-unknown"    // byte ceiling, released, daemon state not determined
 )
 
 // Daemon states observed after the filler was released.
@@ -124,6 +125,12 @@ func judgeScratchAttachment(r *attachRun) (string, error) {
 	}
 	if err := checkScratchRelease(r.Fill, r.Release, r.SeedSHA); err != nil {
 		return "", fmt.Errorf("release: %w", err)
+	}
+	// An already-full filesystem can refuse the first write, leaving a filler
+	// with no allocation. Unlinking it frees nothing (0 >= 0 passes the release
+	// check), so no recovery claim can rest on it.
+	if *r.Fill.File.Allocated <= 0 || (*r.Release.VFSAfter.BAvail-*r.Release.VFSBefore.BAvail)*(*r.Release.VFSAfter.BSize) <= 0 {
+		return attachNoReclaim, nil
 	}
 	if r.KeeperStarted[0] == "" || r.KeeperStarted[1] == "" || !r.KeeperRunning {
 		return "", errors.New("keeper generation or liveness is not recorded")
