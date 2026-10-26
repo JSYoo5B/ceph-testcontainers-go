@@ -1827,9 +1827,62 @@ class BugCompatibilityRegistryTests(unittest.TestCase):
             source.write_text("//go:build !" + BUG_A + "\n\npackage rbd\n")
             engine.bug_registry_sources(registry, root)
 
+    def test_retired_tag_is_refused_in_every_maintained_go_source(self):
+        registry = bug_registry(supported=(BUG_A,), retired=(BUG_B,))
+        header = "//go:build {}\n\npackage {}\n"
+        refused = {
+            "production": ("rbd/compat.go", header.format("linux && !" + BUG_B, "rbd")),
+            "inactive platform file": ("rbd/compat_windows.go", header.format("windows && " + BUG_B, "rbd")),
+            "test helper without tests": ("internal/integration/guard_helper_test.go", header.format("!" + BUG_B, "x")),
+            "legacy constraint": ("rbd/old.go", "// +build " + BUG_B + "\n\npackage rbd\n"),
+            "after a license block": ("rbd/lic.go", "/* license\n" + BUG_B + " */\n//go:build " + BUG_B + "\n\npackage rbd\n"),
+        }
+        for label, (path, text) in refused.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target = root / path
+                target.parent.mkdir(parents=True)
+                target.write_text(text)
+                with self.assertRaisesRegex(ValueError, re.escape(path + " (" + BUG_B + ")")):
+                    engine.bug_retired_sources(registry, root)
+
+    def test_retired_tag_outside_a_constraint_or_the_maintained_tree_is_ignored(self):
+        registry = bug_registry(supported=(BUG_A,), retired=(BUG_B,))
+        files = {
+            "rbd/clean.go": "//go:build linux\n\npackage rbd\n",
+            "rbd/supported.go": "//go:build " + BUG_A + "\n\npackage rbd\n",
+            "rbd/longer.go": "//go:build " + BUG_B + "_x\n\npackage rbd\n",
+            "rbd/comment.go": "// " + BUG_B + " is retired\n//go:build linux\n\npackage rbd\n",
+            "rbd/body.go": "package rbd\n\n// go:build " + BUG_B + "\n//go:build " + BUG_B + "\nvar x = `\n//go:build " + BUG_B + "\n`\n",
+            "rbd/testdata/fixture.go": "//go:build " + BUG_B + "\n\npackage fixture\n",
+            "vendor/m/m.go": "//go:build " + BUG_B + "\n\npackage m\n",
+            ".hidden/h.go": "//go:build " + BUG_B + "\n\npackage h\n",
+            "rbd/notes.txt": "//go:build " + BUG_B + "\n",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for path, text in files.items():
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_text(text)
+            engine.bug_retired_sources(registry, root)
+            engine.bug_retired_sources(bug_registry(supported=(BUG_A, BUG_B)), root)
+
+    def test_every_offending_retired_source_is_named(self):
+        registry = bug_registry(supported=(), retired=(BUG_A, BUG_B))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "a.go").write_text("//go:build " + BUG_A + " || " + BUG_B + "\n\npackage a\n")
+            (root / "b.go").write_text("//go:build !" + BUG_B + "\n\npackage b\n")
+            with self.assertRaises(ValueError) as caught:
+                engine.bug_retired_sources(registry, root)
+        message = str(caught.exception)
+        for expected in ("a.go (" + BUG_A + ")", "a.go (" + BUG_B + ")", "b.go (" + BUG_B + ")"):
+            self.assertIn(expected, message)
+
     def test_checked_in_registry_matches_the_catalogue(self):
         registry = engine.load_bug_registry()
         engine.bug_registry_sources(registry)
+        engine.bug_retired_sources(registry)
         catalogue = (engine.ROOT / "docs/guides/bug-compatibility-tags.md").read_text()
         documented = set(re.findall(r"`(ceph_bug_[a-z0-9_]+)`", catalogue))
         self.assertEqual(documented, set(registry["tags"]))

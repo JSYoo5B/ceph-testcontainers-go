@@ -157,6 +157,7 @@ synthetic controls behind them are recorded in
 | --- | --- |
 | Single-snapshot validator (`bug_registry`): exact v1 fields, one `https` tracker string, no repeated spelling | Implemented. It accepts two distinct tags with the same tracker URL, so it does not prove identity. |
 | Registered-source check (`bug_registry_sources`) and the retired-source guard, which refuses a retired tag still guarding a test | Implemented. A valid retirement must also remove those source references. |
+| Retired-source scan (`bug_retired_sources`): refuses a retired tag in the `//go:build` or `// +build` header of any maintained Go file, including production, inactive platform and test-helper files, and names each path | Implemented. `testdata`, `vendor` and dot or underscore directories are outside its scope, and tag words in comments or string literals are not constraints. It runs in every planner command. |
 | Selection refusal of unregistered, retired, repeated and conflicting tags | Implemented. |
 | Revision-to-revision comparison against a named maintained base | Proposed only. No such check exists and no workflow runs one. |
 | Reporting the exact refused transition from the table above | Proposed only. |
