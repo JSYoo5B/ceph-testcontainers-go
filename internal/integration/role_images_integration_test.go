@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"os"
 	"testing"
 	"time"
@@ -95,7 +96,7 @@ func TestRoleImagesRGWWithoutClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := rgw.RunMultisite(t.Context(), images.RGW, rgw.MultisiteConfig{Source: source, Destination: destination})
+	f, err := multisite.Run(t.Context(), images.RGW, multisite.Config{Source: source, Destination: destination})
 	if f != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

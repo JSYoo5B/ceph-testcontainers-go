@@ -20,7 +20,7 @@ native changes conflict with what the fixture tracks.
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
 | `radosgw-admin` in a gateway's realm and zone | `rgw.Gateway.Admin(ctx, args...)` | The gateway container |
-| `radosgw-admin` in a multisite zone | `rgw.Multisite.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The fixture's setup client for that zone |
+| `radosgw-admin` in a multisite zone | `multisite.Fixture.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The fixture's setup client for that zone |
 | `rbd` on either side of a mirror link | `rbd.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
 | A daemon's admin socket command | `cluster.Ceph(ctx, "tell", daemon, ...)`, or `ceph --admin-daemon` in the daemon's container | Control container or daemon container |
 | A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
@@ -134,8 +134,8 @@ exceptions:
 | Command | Output | Typed alternative |
 | --- | --- | --- |
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `cluster.ObjectWatchers` |
-| `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `rgw.Multisite.BucketSyncStatus`, `WaitBucketSyncReady` |
-| `radosgw-admin sync status` | The comparison with remote logs appears only in the human-readable output, even with `--format json` | `rgw.Multisite.SyncStatus`, `WaitSyncReady` |
+| `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.Fixture.BucketSyncStatus`, `WaitBucketSyncReady` |
+| `radosgw-admin sync status` | The comparison with remote logs appears only in the human-readable output, even with `--format json` | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
 | `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbd.Mirror.PolicyStatus` |
 
 Decode only the fields you need, and keep unknown fields tolerated: Ceph adds
@@ -954,8 +954,8 @@ zone, err := site.ZoneAdmin(ctx, "c", "zone", "get", "--format", "json")
 ```
 
 `SourceAdmin` and `DestinationAdmin` address the two zones of
-`rgw.RunMultisite`; `ZoneAdmin(ctx, name, ...)` addresses any owned zone of
-`rgw.RunTopology`, including a partially added one. These do not add
+`multisite.Run`; `ZoneAdmin(ctx, name, ...)` addresses any owned zone of
+`multisite.RunTopology`, including a partially added one. These do not add
 `--format json`. Do not edit periods or zones while `AddZone`, `AddZonegroup`,
 `RemoveZone` or `ApplySyncGroup` runs, or while a metadata master transition is
 in progress.

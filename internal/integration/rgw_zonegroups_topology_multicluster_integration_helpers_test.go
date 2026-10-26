@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"slices"
@@ -15,7 +16,6 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -50,7 +50,7 @@ func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool
 	return control, rgwGateway, clusters
 }
 
-func rgwTopologyCleanup(t *testing.T, fixture *rgw.Multisite) {
+func rgwTopologyCleanup(t *testing.T, fixture *multisite.Fixture) {
 	t.Helper()
 	if fixture == nil {
 		return
@@ -77,7 +77,7 @@ func rgwTopologyCleanup(t *testing.T, fixture *rgw.Multisite) {
 	})
 }
 
-func rgwTopologyS3(t *testing.T, ctx context.Context, zone rgw.Zone) s3HTTPClient {
+func rgwTopologyS3(t *testing.T, ctx context.Context, zone multisite.Zone) s3HTTPClient {
 	t.Helper()
 	endpoint, err := zone.Gateway.S3Endpoint(ctx)
 	if err != nil {
@@ -86,7 +86,7 @@ func rgwTopologyS3(t *testing.T, ctx context.Context, zone rgw.Zone) s3HTTPClien
 	return s3HTTPClient{endpoint: endpoint, accessKey: zone.Gateway.AccessKey, secretKey: zone.Gateway.SecretKey, region: zone.Gateway.Region, http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
-func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *rgw.Multisite) {
+func rgwAssertZonegroupPeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture) {
 	t.Helper()
 	expected := fixture.Zonegroups()
 	for _, local := range fixture.Zones() {
@@ -148,9 +148,9 @@ func testRGWInitialZonegroupsTopology(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, host)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{MasterZonegroup: "us", Zonegroups: []rgw.ZonegroupConfig{
-		{Name: "eu", MasterZone: "c", Zones: []rgw.ZoneConfig{{Name: "c", Cluster: clusters[1]}}},
-		{Name: "us", MasterZone: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}}},
+	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{MasterZonegroup: "us", Zonegroups: []multisite.ZonegroupConfig{
+		{Name: "eu", MasterZone: "c", Zones: []multisite.ZoneConfig{{Name: "c", Cluster: clusters[1]}}},
+		{Name: "us", MasterZone: "a", Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}}},
 	}})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
@@ -174,12 +174,12 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 3, host)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{Zonegroup: "us", MetadataMaster: "a", Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
+	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{Zonegroup: "us", MetadataMaster: "a", Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := fixture.AddZonegroup(ctx, rgwGateway, rgw.ZonegroupConfig{Name: "eu", MasterZone: "c", Zones: []rgw.ZoneConfig{{Name: "c", Cluster: clusters[2]}}})
+	group, err := fixture.AddZonegroup(ctx, rgwGateway, multisite.ZonegroupConfig{Name: "eu", MasterZone: "c", Zones: []multisite.ZoneConfig{{Name: "c", Cluster: clusters[2]}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if _, err := fixture.ZoneAdmin(ctx, "b", "period", "get"); err == nil {
 		t.Fatal("detached CLI still accessible")
 	}
-	if _, err := fixture.AddZone(ctx, rgwGateway, rgw.ZoneConfig{Name: "b", Cluster: clusters[1]}); err == nil {
+	if _, err := fixture.AddZone(ctx, rgwGateway, multisite.ZoneConfig{Name: "b", Cluster: clusters[1]}); err == nil {
 		t.Fatal("detached storage adopted as fresh")
 	}
 	rgwAssertZonegroupPeriod(t, ctx, fixture)

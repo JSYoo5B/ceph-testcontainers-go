@@ -55,7 +55,7 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 // WithGateways starts named gateways during Run. No arguments starts one
 // default gateway. Repeated options replace the list. All gateways share this
 // cluster's backing zone; multisite scope is configured separately by
-// RunMultisite and RunTopology.
+// multisite.Run and multisite.RunTopology.
 func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}
@@ -66,7 +66,7 @@ func WithGateways(configs ...Config) ceph.Option {
 // WithImage selects the image for every gateway of the cluster, those
 // started by Run with WithGateways as well as those started later with Start.
 // If omitted, gateways use the image passed to Run. Use matching Ceph
-// versions. Multisite gateways are not affected: RunMultisite and RunTopology
+// versions. Multisite gateways are not affected: multisite.Run and multisite.RunTopology
 // take their gateway image as an argument.
 func WithImage(image string) ceph.Option { return servicehook.WithServiceImage("rgw", image) }
 

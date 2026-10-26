@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"slices"
@@ -52,9 +52,9 @@ func TestRGWSetupImageRejectsMissingOrBlankSelection(t *testing.T) {
 }
 
 func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
-	fixture := &Multisite{
+	fixture := &Fixture{
 		RealmID: "realm-id", SourceZoneID: "source-id", DestinationZoneID: "destination-id",
-		config:    MultisiteConfig{Zonegroup: "us-east-1", SourceZone: "primary", DestinationZone: "secondary"},
+		config:    Config{Zonegroup: "us-east-1", SourceZone: "primary", DestinationZone: "secondary"},
 		sourceURL: "http://127.0.0.1:42345", destinationURL: "http://127.0.0.1:42346",
 	}
 	const committed = `{"realm_id":"realm-id","master_zone":"source-id","period_map":{"zonegroups":[{"name":"us-east-1","master_zone":"source-id","endpoints":["http://127.0.0.1:42345"],"zones":[{"id":"source-id","name":"primary","endpoints":["http://127.0.0.1:42345"]},{"id":"destination-id","name":"secondary","endpoints":["http://127.0.0.1:42346"]}]}]}}`
@@ -76,7 +76,7 @@ func TestRGWCommittedPeriodRequiresActualPeerEndpoints(t *testing.T) {
 }
 
 func TestRGWTopologyRequiresEveryZoneIdentityAndEndpoint(t *testing.T) {
-	fixture := &Multisite{RealmID: "realm", config: MultisiteConfig{Zonegroup: "group"}}
+	fixture := &Fixture{RealmID: "realm", config: Config{Zonegroup: "group"}}
 	states := []*rgwZoneState{
 		{Zone: Zone{Name: "a", ID: "id-a", PeerEndpoint: "http://a:7480"}},
 		{Zone: Zone{Name: "b", ID: "id-b", PeerEndpoint: "http://b:7480"}},
@@ -102,7 +102,7 @@ func TestRGWTopologyRequiresEveryZoneIdentityAndEndpoint(t *testing.T) {
 }
 
 func TestRGWZonePreflightAndTerminationRetainOwnership(t *testing.T) {
-	fixture := &Multisite{config: MultisiteConfig{SourceZone: "a", DestinationZone: "b"},
+	fixture := &Fixture{config: Config{SourceZone: "a", DestinationZone: "b"},
 		additionalZones: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "id-c"}}}}
 	if zone, err := fixture.AddZone(t.Context(), "image", ZoneConfig{Name: "--invalid"}); err == nil || zone != nil {
 		t.Fatal("unsafe zone name was accepted")

@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -44,7 +44,7 @@ type rgwSyncBucketCheckpoint struct {
 // require a bucket-scoped group. Concrete bucket instance IDs remain fixed.
 // A caught-up checkpoint does not prove filter semantics or copied payloads;
 // applications should quiesce writes and verify their S3 bytes separately.
-func (f *Multisite) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
+func (f *Fixture) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	if f == nil {
 		return BucketSyncStatus{}, errors.New("RGW multisite fixture is required")
 	}
@@ -67,7 +67,7 @@ func (f *Multisite) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, 
 // It changes no sync state, leases, permissions or object data. When the wait
 // ends without readiness, the returned status is the last one that was read,
 // so its lag survives a later attempt that failed or was canceled.
-func (f *Multisite) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
+func (f *Fixture) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	if f == nil {
 		return BucketSyncStatus{}, errors.New("RGW multisite fixture is required")
 	}
@@ -108,7 +108,7 @@ func (f *Multisite) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeI
 	}
 }
 
-func (f *Multisite) syncBucketCheckpoint(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (*rgwSyncBucketCheckpoint, error) {
+func (f *Fixture) syncBucketCheckpoint(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (*rgwSyncBucketCheckpoint, error) {
 	if err := f.validateSyncGroup(g, false); err != nil {
 		return nil, err
 	}
@@ -203,7 +203,7 @@ func syncPipeBucketIdentity(g *SyncGroup, key string) (SyncBucketIdentity, error
 	return identity, nil
 }
 
-func (f *Multisite) checkSyncBucketInstance(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) error {
+func (f *Fixture) checkSyncBucketInstance(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) error {
 	selected := &SyncGroup{scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: bucket.Name, Tenant: bucket.Tenant}, groupID: g.groupID}
 	id, err := f.syncBucketID(ctx, zone, selected)
 	if err != nil {
@@ -215,7 +215,7 @@ func (f *Multisite) checkSyncBucketInstance(ctx context.Context, zone *rgwZoneSt
 	return nil
 }
 
-func (f *Multisite) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucketCheckpoint) (BucketSyncStatus, error) {
+func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucketCheckpoint) (BucketSyncStatus, error) {
 	g := checkpoint.group
 	result := BucketSyncStatus{RealmID: g.realmID, ZonegroupID: g.groupID, SourceZone: checkpoint.source.Name, SourceZoneID: checkpoint.source.ID, Zone: checkpoint.destination.Name, ZoneID: checkpoint.destination.ID, SourceBucket: checkpoint.sourceBucket, DestinationBucket: checkpoint.destBucket}
 	master, current, err := f.syncPolicyMaster(ctx)
