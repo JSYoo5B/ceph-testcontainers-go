@@ -159,8 +159,8 @@ synthetic controls behind them are recorded in
 | Registered-source check (`bug_registry_sources`) and the retired-source guard, which refuses a retired tag still guarding a test | Implemented. A valid retirement must also remove those source references. |
 | Retired-source scan (`bug_retired_sources`): refuses a retired tag in the `//go:build` or `// +build` header of any maintained Go file, including production, inactive platform and test-helper files, and names each path | Implemented. `testdata`, `vendor` and dot or underscore directories are outside its scope, and tag words in comments or string literals are not constraints. It runs in every planner command. |
 | Selection refusal of unregistered, retired, repeated and conflicting tags | Implemented. |
-| Revision-to-revision comparison against a named maintained base | Proposed only. No such check exists and no workflow runs one. |
-| Reporting the exact refused transition from the table above | Proposed only. |
+| Revision-to-revision comparison against a named maintained base (`bug_binding_history.py --base <revision>`) | Implemented as a standalone script. It reads the base registry from the named revision, and an unresolvable or invalid base is inconclusive, never an empty base. No workflow runs it yet, and `tag_scenarios.py` does not call it. |
+| Reporting the exact refused transition from the table above | Implemented by the same script: each refused tag is printed with its base and candidate state and the rule names. A deleted supported entry is also refused, since retirement keeps a tombstone. A reviewed alias is an explicit input, not parsed from the catalogue page, and covers only a link edit that leaves status unchanged. |
 | Deriving a defect key (tracker namespace and project plus issue ID) from `tracker` so a link edit can be told apart from reassignment mechanically | Not decided. It may need a reviewed schema change, which this document does not make. |
 
 The production catalogue is empty, so none of these transitions has occurred.
