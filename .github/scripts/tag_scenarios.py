@@ -170,6 +170,66 @@ def bug_registry_sources(registry, root=ROOT):
                 raise ValueError(name + ": registered source does not constrain on the tag: " + path)
 
 
+# Directories Go itself ignores, plus fixture and third-party trees, hold no
+# maintained build constraint.
+BUG_SOURCE_SKIPPED_DIRECTORIES = frozenset({"testdata", "vendor", "node_modules"})
+GO_LEGACY_BUILD_LINE = re.compile(r"^//\s*\+build\s+(.+)$")
+
+
+def go_constraint_lines(text):
+    """The //go:build and // +build lines of a Go file's leading comments.
+
+    Only the header before the first declaration is a constraint; the same
+    words in a later comment or string literal are not."""
+    lines = []
+    in_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if in_block:
+            in_block = "*/" not in stripped
+            continue
+        if not stripped:
+            continue
+        if stripped.startswith("/*"):
+            in_block = "*/" not in stripped[2:]
+            continue
+        if not stripped.startswith("//"):
+            break
+        match = re.match(r"^//go:build\s+(.+)$", stripped) or GO_LEGACY_BUILD_LINE.match(stripped)
+        if match:
+            lines.append(match.group(1))
+    return lines
+
+
+def bug_retired_sources(registry, root=ROOT):
+    """No maintained Go file still constrains on a retired tag.
+
+    The test catalogue reads only test files and the planner only files that
+    declare tests, so a production, platform or helper file would keep a
+    retired tag unnoticed. Scan every Go file in the maintained tree, including
+    inactive ones, and name each offending path."""
+    retired = {name for name, entry in registry["tags"].items() if entry["status"] == "retired"}
+    if not retired:
+        return
+    root = Path(root)
+    found = []
+    for directory, names, files in os.walk(root):
+        names[:] = sorted(name for name in names if name not in BUG_SOURCE_SKIPPED_DIRECTORIES
+                          and not name.startswith((".", "_")))
+        for filename in sorted(files):
+            if not filename.endswith(".go") or filename.startswith((".", "_")):
+                continue
+            path = Path(directory) / filename
+            try:
+                text = path.read_text(encoding="utf-8-sig")  # Go accepts one leading BOM
+            except (OSError, UnicodeDecodeError):
+                raise ValueError("Go source is unreadable: " + path.relative_to(root).as_posix()) from None
+            words = {word for line in go_constraint_lines(text) for word in re.findall(r"[A-Za-z0-9_.]+", line)}
+            found.extend(path.relative_to(root).as_posix() + " (" + name + ")" for name in sorted(retired & words))
+    if found:
+        raise ValueError("retired bug compatibility tag still constrains source: " + ", ".join(found))
+
+
 def load_bug_registry(path=BUG_REGISTRY):
     try:
         document = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -1572,6 +1632,7 @@ def main(argv=None):
         registry = load_bug_registry()
         bugs = bug_selection(registry, getattr(args, "bug_compatibility", ""))
         bug_registry_sources(registry)
+        bug_retired_sources(registry)
         catalog = load_catalog()
         plan = discover(catalog, bugs)
         if args.command == "releases":
