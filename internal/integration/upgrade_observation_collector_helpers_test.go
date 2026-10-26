@@ -135,6 +135,9 @@ type upgradeCollectorConfig struct {
 	// Commands overrides the default command table. Every entry is still
 	// checked against the allowlist before it is run.
 	Commands []upgradeCollectCommand
+	// BeforeConsume runs between a collection and its consumption by
+	// collectAndSettle. It exists so tests can change ownership in that gap.
+	BeforeConsume func()
 }
 
 type upgradeCollector struct {
@@ -201,6 +204,29 @@ func (c *upgradeCollector) collect(ctx context.Context, phase *upgradePhase, dae
 	return ev
 }
 
+// collectAndSettle is the checked way to hand collected evidence to the
+// sequence. A plain upgradeSettled carries no ownership, so the phase is
+// revalidated immediately before the sequence advances: a target that changed
+// generation, or a phase that was superseded, between the collection and this
+// call keeps the sequence where it is. Evidence from collect must not be
+// passed to settle directly.
+func (c *upgradeCollector) collectAndSettle(ctx context.Context, phase *upgradePhase, daemon string, want upgradeCheckpoint, seq *upgradeSequence) error {
+	if seq == nil {
+		return errors.New("no sequence to settle")
+	}
+	ev := c.collect(ctx, phase, daemon, want)
+	if ev.ObservationErr != nil {
+		return seq.settle(ev) // the sequence refuses and records nothing
+	}
+	if c.cfg.BeforeConsume != nil {
+		c.cfg.BeforeConsume()
+	}
+	if err := phase.current(); err != nil {
+		return fmt.Errorf("evidence for %q expired before it was consumed: %w", daemon, err)
+	}
+	return seq.settle(ev)
+}
+
 func (c *upgradeCollector) run(ctx context.Context, phase *upgradePhase) (upgradeObservationOutputs, error) {
 	var out upgradeObservationOutputs
 	if phase == nil {
@@ -250,9 +276,20 @@ func (c *upgradeCollector) run(ctx context.Context, phase *upgradePhase) (upgrad
 			return upgradeObservationOutputs{}, err
 		}
 		req := upgradeCommandRequest{Executor: c.cfg.Executor, Generation: generation, Phase: phase.seq, Argv: append([]string(nil), cmd.Argv...)}
-		res, err := c.cfg.Runner.Run(ctx, req)
+		// The runner gets a child context bounded by the remaining phase
+		// budget (measured on the injected clock), so a cooperative runner
+		// that waits on ctx.Done() is released at the phase deadline even when
+		// the caller has no deadline. No goroutine is started: the context's
+		// own timer is released as soon as the command returns.
+		runCtx, release := context.WithTimeout(ctx, c.cfg.Deadline.Sub(c.cfg.Now()))
+		res, err := c.cfg.Runner.Run(runCtx, req)
+		phaseExpired := runCtx.Err() != nil && ctx.Err() == nil
+		release()
 		// The caller's cancellation or the phase deadline wins over whatever
 		// the runner reported, so it is never blamed on the probe.
+		if phaseExpired {
+			return upgradeObservationOutputs{}, fmt.Errorf("%w: phase budget used up during %s", errUpgradeCollectDeadline, cmd.Name)
+		}
 		if expired := c.expired(ctx); expired != nil {
 			return upgradeObservationOutputs{}, expired
 		}

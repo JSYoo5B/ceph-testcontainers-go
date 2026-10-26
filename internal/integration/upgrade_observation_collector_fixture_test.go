@@ -30,6 +30,7 @@ type collectRunner struct {
 	outputs map[string][]byte
 	step    time.Duration
 	calls   [][]string
+	bounded []bool // whether the context of each call carried a deadline
 	hook    func(i int, req upgradeCommandRequest, res *upgradeCommandResult) error
 }
 
@@ -45,8 +46,10 @@ func collectOutputsByArgv(o upgradeObservationOutputs) map[string][]byte {
 	return out
 }
 
-func (r *collectRunner) Run(_ context.Context, req upgradeCommandRequest) (upgradeCommandResult, error) {
+func (r *collectRunner) Run(ctx context.Context, req upgradeCommandRequest) (upgradeCommandResult, error) {
 	i := len(r.calls)
+	_, has := ctx.Deadline()
+	r.bounded = append(r.bounded, has)
 	r.calls = append(r.calls, req.Argv)
 	res := upgradeCommandResult{
 		Stdout: r.outputs[strings.Join(req.Argv, " ")], Executor: req.Executor, Generation: req.Generation, Phase: req.Phase,
@@ -632,4 +635,150 @@ func TestUpgradeCollectorRejectsBadConfiguration(t *testing.T) {
 	if len(env.runner.calls) != 0 {
 		t.Fatalf("runner got %q", env.runner.calls)
 	}
+}
+
+func TestUpgradeCollectorBoundsTheRunnerByThePhaseBudget(t *testing.T) {
+	t.Run("every command gets a deadline even for a background caller", func(t *testing.T) {
+		env := newCollectEnv(t, 1)
+		if ev := env.collect("mon.a"); ev.ObservationErr != nil {
+			t.Fatal(ev.ObservationErr)
+		}
+		for i, has := range env.runner.bounded {
+			if !has {
+				t.Errorf("command %d got an unbounded context", i)
+			}
+		}
+	})
+	t.Run("a blocked cooperative runner is released at the phase deadline", func(t *testing.T) {
+		env := newCollectEnv(t, 1)
+		begin := time.Now()
+		col := env.newCollector(func(c *upgradeCollectorConfig) {
+			c.Runner = blockingRunner{}
+			c.Now = time.Now
+			c.Deadline = begin.Add(20 * time.Millisecond)
+			c.MaxSpan = 50 * time.Millisecond
+		})
+		// A caller without a deadline would block this runner forever; the
+		// guard context only keeps a regression from hanging the suite.
+		guard, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ev := col.collect(guard, env.phase, "mon.a", env.want)
+		elapsed := time.Since(begin)
+		requireOnlyError(t, "blocked", ev, env.phase, errUpgradeCollectDeadline)
+		if errors.Is(ev.ObservationErr, errUpgradeCollectProbe) {
+			t.Fatalf("phase expiry was attributed to the probe: %v", ev.ObservationErr)
+		}
+		if elapsed > time.Second {
+			t.Fatalf("collection returned after %s, the phase deadline was 20ms", elapsed)
+		}
+	})
+	t.Run("an expired budget runs nothing", func(t *testing.T) {
+		env := newCollectEnv(t, 1)
+		col := env.newCollector(func(c *upgradeCollectorConfig) { c.Deadline = env.clock.now })
+		env.clock.now = env.clock.now.Add(time.Nanosecond)
+		requireOnlyError(t, "expired", col.collect(context.Background(), env.phase, "mon.a", env.want), env.phase, errUpgradeCollectDeadline)
+		if len(env.runner.calls) != 0 {
+			t.Fatalf("runner got %q", env.runner.calls)
+		}
+	})
+}
+
+type blockingRunner struct{}
+
+func (blockingRunner) Run(ctx context.Context, _ upgradeCommandRequest) (upgradeCommandResult, error) {
+	<-ctx.Done()
+	return upgradeCommandResult{}, ctx.Err()
+}
+
+// sequenceAtConfirmedMon returns a sequence whose first transition (mon.a) is
+// native-confirmed and waits for settled evidence.
+func sequenceAtConfirmedMon(t *testing.T) *upgradeSequence {
+	t.Helper()
+	s := newSeq(t, goodFacts(t))
+	id, d, err := s.admit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerOK(t, s.ledger.fence(id, d))
+	ledgerOK(t, s.ledger.oldAbsent(id, false, nil))
+	ledgerOK(t, s.ledger.startAttempted(id, "dst-"+id))
+	ledgerOK(t, s.ledger.confirm(id, upgradeNativeEvidence{Instance: "dst-" + id, Version: "20.2.4", FSID: d.FSID, StoreID: d.StoreID}))
+	return s
+}
+
+func TestUpgradeCollectorEvidenceKeepsItsOwnershipUntilConsumed(t *testing.T) {
+	t.Run("plain evidence does not (characterization)", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		ev := env.collect("mon.a")
+		if ev.ObservationErr != nil {
+			t.Fatal(ev.ObservationErr)
+		}
+		if err := env.targets.advance("osd.2"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := env.phase.satisfied(); !errors.Is(err, errUpgradeStale) {
+			t.Fatalf("phase is not stale: %v", err)
+		}
+		// This is why collect's result must go through collectAndSettle.
+		if err := s.settle(ev); err != nil {
+			t.Fatalf("plain settle = %v; the characterization changed", err)
+		}
+	})
+	for _, change := range []string{"osd.2", "mon.b", "cli", "new phase"} {
+		t.Run("change of "+change+" between collection and consumption", func(t *testing.T) {
+			s := sequenceAtConfirmedMon(t)
+			env := newCollectEnv(t, 1)
+			col := env.newCollector(func(c *upgradeCollectorConfig) {
+				c.BeforeConsume = func() {
+					if change == "new phase" {
+						env.targets.begin("next")
+						return
+					}
+					if err := env.targets.advance(change); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+			err := col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, s)
+			if err == nil || !(errors.Is(err, errUpgradeStale) || errors.Is(err, errUpgradePhaseClosed)) {
+				t.Fatalf("collectAndSettle = %v", err)
+			}
+			if _, _, err := s.admit(); err == nil {
+				t.Fatal("the sequence admitted the next transition on expired evidence")
+			}
+		})
+	}
+	t.Run("unchanged ownership settles and admits the next daemon", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		if err := env.col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, s); err != nil {
+			t.Fatal(err)
+		}
+		if _, d, err := s.admit(); err != nil || d.key() != "mon.b" {
+			t.Fatalf("admit = %v, %v", d, err)
+		}
+	})
+	t.Run("a failed collection settles nothing", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		env.runner.hook = func(i int, _ upgradeCommandRequest, _ *upgradeCommandResult) error {
+			if i == 4 {
+				return errors.New("mgr stat failed")
+			}
+			return nil
+		}
+		if err := env.col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, s); !errors.Is(err, errUpgradeCollectProbe) {
+			t.Fatalf("collectAndSettle = %v", err)
+		}
+		if _, _, err := s.admit(); err == nil {
+			t.Fatal("admitted after a failed collection")
+		}
+	})
+	t.Run("no sequence", func(t *testing.T) {
+		env := newCollectEnv(t, 1)
+		if err := env.col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, nil); err == nil {
+			t.Fatal("accepted a nil sequence")
+		}
+	})
 }
