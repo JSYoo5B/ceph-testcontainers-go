@@ -154,3 +154,81 @@ func TestUpgradeMonHandoffRetainedRecordGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestUpgradeMonHandoffBaselineIsNotAliased(t *testing.T) {
+	// Changing the constructor input after construction.
+	for name, mutate := range map[string]func(*upgradeMonAddr){
+		"address": func(a *upgradeMonAddr) { a.IP = netip.MustParseAddr("10.0.0.3") },
+		"v2 port": func(a *upgradeMonAddr) { a.V2 = 3301 },
+		"v1 port": func(a *upgradeMonAddr) { a.V1 = 6790 },
+	} {
+		t.Run("constructor input "+name, func(t *testing.T) {
+			r := retainedMon()
+			h, err := newUpgradeMonHandoff(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(&r.Addrs[0])
+			if plan, err := h.admit(launchFor(r)); err == nil {
+				t.Fatalf("launch reserving the mutated endpoint admitted: %+v", plan)
+			}
+			plan, err := h.admit(launchFor(retainedMon()))
+			if err != nil || plan.Env["CEPH_PUBLIC_ADDRESS"] != "10.0.0.2" || plan.Env["CEPH_MON_PORT_V2"] != "3300" || plan.Env["CEPH_MON_PORT_V1"] != "6789" {
+				t.Fatalf("original endpoint plan = %+v, %v", plan, err)
+			}
+		})
+	}
+
+	t.Run("returned record", func(t *testing.T) {
+		h, err := newUpgradeMonHandoff(retainedMon())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := h.record()
+		got.Addrs[0] = monAddr("10.0.0.3", 3301, 6790)
+		got.Name = "z"
+		if again := h.record(); !again.Addrs.sameSet(retainedMon().Addrs) || again.Name != "a" {
+			t.Fatalf("record changed through its copy: %+v", again)
+		}
+		if _, err := h.admit(launchFor(retainedMon())); err != nil {
+			t.Fatalf("baseline moved: %v", err)
+		}
+	})
+
+	t.Run("returned plan", func(t *testing.T) {
+		h, err := newUpgradeMonHandoff(retainedMon())
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := h.admit(launchFor(retainedMon()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		first.Env["CEPH_PUBLIC_ADDRESS"] = "10.0.0.9"
+		delete(first.Env, "CEPH_MON_PORT_V2")
+		again := launchFor(retainedMon())
+		again.Transition = "second"
+		second, err := h.admit(again)
+		if err != nil || second.Env["CEPH_PUBLIC_ADDRESS"] != "10.0.0.2" || second.Env["CEPH_MON_PORT_V2"] != "3300" {
+			t.Fatalf("plan shared state with an earlier plan: %+v, %v", second, err)
+		}
+	})
+
+	t.Run("launch request vector", func(t *testing.T) {
+		// The request's vector is only read: admission must not store it or
+		// change it, and a later edit of it cannot affect an admitted plan.
+		h, err := newUpgradeMonHandoff(retainedMon())
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := launchFor(retainedMon())
+		plan, err := h.admit(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Reserved[0].IP = netip.MustParseAddr("10.0.0.9")
+		if plan.Env["CEPH_PUBLIC_ADDRESS"] != "10.0.0.2" || !h.record().Addrs.sameSet(retainedMon().Addrs) {
+			t.Fatalf("request edit reached the plan or baseline: %+v", plan)
+		}
+	})
+}

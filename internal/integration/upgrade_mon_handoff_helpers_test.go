@@ -5,6 +5,7 @@ package integration_test
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 )
@@ -141,7 +142,18 @@ func newUpgradeMonHandoff(r upgradeMonRetained) (*upgradeMonHandoff, error) {
 	if len(r.Addrs) != 1 || !r.Addrs[0].IP.Is4() {
 		return nil, fmt.Errorf("retained MON %s: the bounded experiment supports one IPv4 endpoint, got %s", r.Name, r.Addrs.describe())
 	}
+	// The handoff owns its baseline: later changes to the caller's slice must
+	// not move it.
+	r.Addrs = slices.Clone(r.Addrs)
 	return &upgradeMonHandoff{retained: r, admitted: map[string]bool{}}, nil
+}
+
+// record returns a copy of the retained record. Changing the copy does not
+// change the admission baseline.
+func (h *upgradeMonHandoff) record() upgradeMonRetained {
+	r := h.retained
+	r.Addrs = slices.Clone(r.Addrs)
+	return r
 }
 
 // admit decides a launch before any writer exists. A rejected request changes
