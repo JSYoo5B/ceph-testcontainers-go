@@ -101,10 +101,10 @@ func (f *Multisite) syncPipeConfig(ctx context.Context, master *rgwZoneState, g 
 			return nil, nil, err
 		}
 		if destinationInfo == nil {
-			return nil, nil, invalid(errors.New("RGW owner translation requires a concrete destination bucket"))
+			return nil, nil, multisiteInvalid(errors.New("RGW owner translation requires a concrete destination bucket"))
 		}
 		if config.User != nil && destinationInfo["owner"] != info.ID {
-			return nil, nil, invalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
+			return nil, nil, multisiteInvalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
 		}
 		destParams["acl_translation"] = map[string]any{"owner": info.ID}
 		args = append(args, "--dest-owner", info.ID)
@@ -121,7 +121,7 @@ func (f *Multisite) syncPipeConfig(ctx context.Context, master *rgwZoneState, g 
 			return nil, nil, accountPipeUnsupported(zone)
 		}
 		if destinationInfo == nil {
-			return nil, nil, invalid(errors.New("RGW user mode requires a concrete destination bucket"))
+			return nil, nil, multisiteInvalid(errors.New("RGW user mode requires a concrete destination bucket"))
 		}
 		params["mode"], params["user"] = "user", info.ID
 		args = append(args, "--mode", "user", "--uid", info.ID)
@@ -133,14 +133,14 @@ func (f *Multisite) syncPipeConfig(ctx context.Context, master *rgwZoneState, g 
 		destParams["storage_class"] = config.DestinationStorageClass
 		args = append(args, "--storage-class", config.DestinationStorageClass)
 	} else if len(config.DestinationPlacements) > 0 {
-		return nil, nil, invalid(errors.New("RGW destination placements require a requested storage class"))
+		return nil, nil, multisiteInvalid(errors.New("RGW destination placements require a requested storage class"))
 	}
 	return args, map[string]any{"id": config.ID, "source": src, "dest": dst, "params": params}, nil
 }
 
 func checkSyncPrincipalTenants(scope SyncPolicyScope, config SyncPipeConfig, tenant string) error {
 	if scope.Bucket == "" && (config.SourceBucket == nil || config.DestinationBucket == nil) {
-		return invalid(errors.New("RGW sync principal requires concrete bucket namespaces"))
+		return multisiteInvalid(errors.New("RGW sync principal requires concrete bucket namespaces"))
 	}
 	sourceTenant, destTenant := scope.Tenant, scope.Tenant
 	if config.SourceBucket != nil {
@@ -150,7 +150,7 @@ func checkSyncPrincipalTenants(scope SyncPolicyScope, config SyncPipeConfig, ten
 		destTenant = config.DestinationBucket.Tenant
 	}
 	if sourceTenant != tenant || destTenant != tenant || (scope.Bucket != "" && scope.Tenant != tenant) {
-		return invalid(errors.New("RGW sync principal and all selected bucket tenants must match; cross-tenant translation is unproven"))
+		return multisiteInvalid(errors.New("RGW sync principal and all selected bucket tenants must match; cross-tenant translation is unproven"))
 	}
 	return nil
 }
@@ -159,7 +159,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	result := slices.Clone(tags)
 	for _, tag := range result {
 		if tag.Key == "" || utf8.RuneCountInString(tag.Key) > 128 || utf8.RuneCountInString(tag.Value) > 256 || strings.ContainsAny(tag.Key, ",=") || strings.Contains(tag.Value, ",") || strings.IndexFunc(tag.Key+tag.Value, unicode.IsControl) != -1 {
-			return nil, invalid(errors.New("RGW sync tags require exact key/value pairs without native CLI comma delimiters"))
+			return nil, multisiteInvalid(errors.New("RGW sync tags require exact key/value pairs without native CLI comma delimiters"))
 		}
 	}
 	slices.SortFunc(result, func(a, b SyncObjectTag) int {
@@ -170,7 +170,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	})
 	for i := 1; i < len(result); i++ {
 		if result[i] == result[i-1] {
-			return nil, invalid(errors.New("RGW sync tag pairs must be unique"))
+			return nil, multisiteInvalid(errors.New("RGW sync tag pairs must be unique"))
 		}
 	}
 	return result, nil
@@ -178,7 +178,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 
 func (f *Multisite) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, map[string]any, error) {
 	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
-		return "", nil, invalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
+		return "", nil, multisiteInvalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
 	selected := &SyncGroup{owner: f, scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: selector.Name, Tenant: selector.Tenant}, realmID: g.realmID, groupID: g.groupID}
 	id, err := f.syncBucketID(ctx, master, selected)
@@ -196,7 +196,7 @@ func (f *Multisite) syncOrdinaryPrincipal(ctx context.Context, g *SyncGroup, use
 		return UserInfo{}, err
 	}
 	if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
-		return UserInfo{}, invalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
+		return UserInfo{}, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
 	}
 	return info, nil
 }
@@ -217,11 +217,11 @@ func (f *Multisite) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *
 			continue
 		}
 		if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
-			return UserInfo{}, invalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
+			return UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
 		}
 		return info, nil
 	}
-	return UserInfo{}, invalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
+	return UserInfo{}, multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 }
 
 func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info UserInfo, source, destination map[string]any) error {
@@ -230,26 +230,26 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 	}
 	if info.AccountID == "" {
 		if info.Type != "" && info.Type != "rgw" {
-			return invalid(errors.New("RGW sync user-mode principal is not an ordinary owned user"))
+			return multisiteInvalid(errors.New("RGW sync user-mode principal is not an ordinary owned user"))
 		}
 		return nil
 	}
 	// Native --uid is the canonical root user's ID, never the account ID.
 	// UserInfo has already checked its private creation account and lifetime.
 	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || source["owner"] != info.AccountID || destination["owner"] != info.AccountID {
-		return invalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
+		return multisiteInvalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
 	}
 	return nil
 }
 
 func (f *Multisite) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info map[string]any) error {
 	if info == nil || len(config.DestinationPlacements) != len(config.DestinationZones) || slices.Contains(config.DestinationZones, "*") {
-		return invalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
+		return multisiteInvalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
 	}
 	rule, _ := info["placement_rule"].(string)
 	target := strings.SplitN(rule, "/", 2)[0]
 	if target == "" {
-		return invalid(errors.New("RGW destination bucket native placement is missing"))
+		return multisiteInvalid(errors.New("RGW destination bucket native placement is missing"))
 	}
 	for _, name := range config.DestinationZones {
 		var zone *rgwZoneState
@@ -259,14 +259,14 @@ func (f *Multisite) syncDestinationClass(ctx context.Context, g *SyncGroup, conf
 			}
 		}
 		if zone == nil || zone.Gateway == nil {
-			return invalid(errors.New("RGW destination placement zone is not attached and owned"))
+			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
 		state, err := zone.Gateway.PlacementStatus(ctx, config.DestinationPlacements[name])
 		if err != nil {
 			return err
 		}
 		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c StorageClassConfig) bool { return c.Name == config.DestinationStorageClass }) {
-			return invalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
+			return multisiteInvalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
 		}
 		_, period, err := f.syncPolicyMaster(ctx)
 		if err != nil {
@@ -287,7 +287,7 @@ func (f *Multisite) syncDestinationClass(ctx context.Context, g *SyncGroup, conf
 		}
 		classes, _ := committed["storage_classes"].([]any)
 		if !slices.Contains(classes, any(config.DestinationStorageClass)) {
-			return invalid(errors.New("RGW destination class has not been published in the current committed period"))
+			return multisiteInvalid(errors.New("RGW destination class has not been published in the current committed period"))
 		}
 	}
 	return nil
