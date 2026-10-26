@@ -174,8 +174,10 @@ func startAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	callCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	call := &adminSocketCall{cancel: cancel, done: make(chan error, 1)}
+	// Resolve the handle in the test goroutine, before the call can be canceled.
+	osd := osdHandle(t, ctx, cluster, 0)
 	go func() {
-		_, err := osdHandle(t, callCtx, cluster, 0).AdminSocket(callCtx, "status")
+		_, err := osd.AdminSocket(callCtx, "status")
 		call.done <- err
 	}()
 	waitCtx, cancelWait := context.WithTimeout(ctx, time.Minute)
@@ -232,9 +234,12 @@ func cancelAdminSocketCallAfter(t *testing.T, ctx context.Context, cluster *ceph
 	name := "cancel after " + delay.String()
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Resolve the handle with the parent context: callCtx may be canceled
+	// before the goroutine runs, and a fatal helper must not run in it.
+	osd := osdHandle(t, ctx, cluster, 0)
 	done := make(chan error, 1)
 	go func() {
-		_, err := osdHandle(t, callCtx, cluster, 0).AdminSocket(callCtx, "status")
+		_, err := osd.AdminSocket(callCtx, "status")
 		done <- err
 	}()
 	time.Sleep(delay)

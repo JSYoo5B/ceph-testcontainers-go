@@ -281,7 +281,11 @@ func testCephFSOSDRecovery(t *testing.T) {
 		cleanPGs, total := 0, 0
 		var seen []string
 		for _, pool := range []string{m.fs.MetadataPool, m.fs.DataPool} {
-			snapshot, err := poolHandle(t, probeCtx, m.cluster, pool).PGs(probeCtx)
+			handle, err := findPool(probeCtx, m.cluster, pool)
+			if err != nil {
+				return "", false, err
+			}
+			snapshot, err := handle.PGs(probeCtx)
 			if err != nil {
 				return "", false, err
 			}

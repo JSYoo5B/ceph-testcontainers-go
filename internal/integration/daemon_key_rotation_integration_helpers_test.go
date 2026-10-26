@@ -142,7 +142,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	err := osdHandle(t, callCtx, cluster, 0).RotateKey(callCtx)
 	callCancel()
 	signalContainer(t, ctx, osd, "CONT")
-	if err == nil || !strings.Contains(err.Error(), "RotateDaemonKey again") {
+	if err == nil || !strings.Contains(err.Error(), "RotateKey again") {
 		t.Fatalf("a handoff to a stopped OSD returned %v", err)
 	}
 	handed := pendingKey(t, ctx, cluster, "osd.0")

@@ -418,7 +418,11 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := observe(ctx, 2*time.Minute, 20*time.Second, 2*time.Second, func(ctx context.Context) (string, bool, error) {
-		snapshot, err := poolHandle(t, ctx, cluster, "tc-topology").PGs(ctx)
+		handle, err := findPool(ctx, cluster, "tc-topology")
+		if err != nil {
+			return "", false, err
+		}
+		snapshot, err := handle.PGs(ctx)
 		if err != nil || len(snapshot.PGs) != 1 {
 			return "", false, err
 		}
