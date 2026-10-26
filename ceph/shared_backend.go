@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 	"strings"
 	"syscall"
 
 	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
 // sharedBackend is what a SharedCluster needs from one cluster. The
@@ -44,131 +45,8 @@ type sharedBackend interface {
 type sharedStarter func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error)
 
 // sharedInvariants is the state that a tenant cannot change through its own
-// scope. Config values are compared but never reported.
-type sharedInvariants struct {
-	// Auth maps each entity to its capabilities.
-	Auth map[string]string
-	// Pools maps each pool name to its policy.
-	Pools     map[string]string
-	OSDFlags  []string
-	Config    map[string]string
-	Blocklist []string
-	// Health lists the codes of the unmuted health checks.
-	Health []string
-	// Namespaces counts the objects of each namespace of SharedPool.
-	Namespaces map[string]int
-	// Resources maps the service resources that the registered probes list
-	// to the tenant ID, or other name, that owns them.
-	Resources map[string]string
-	// Unsettled says why the cluster cannot admit a tenant yet, such as PGs
-	// that are not all active+clean; it is empty when it can.
-	Unsettled string
-}
-
-// tenantOwns reports whether entity is one of the clients that a tenant
-// names after its ID.
-func tenantOwns(id, entity string) bool {
-	return entity == "client."+id || strings.HasPrefix(entity, "client."+id+"-")
-}
-
-// admissionDiff lists the conditions that admit a tenant and differ from
-// the baseline: health, OSD flags and the blocklist.
-func (b sharedInvariants) admissionDiff(current sharedInvariants) []string {
-	var problems []string
-	if current.Unsettled != "" {
-		problems = append(problems, current.Unsettled)
-	}
-	if !slices.Equal(b.Health, current.Health) {
-		problems = append(problems, fmt.Sprintf("health checks are %v, not %v", current.Health, b.Health))
-	}
-	if !slices.Equal(b.OSDFlags, current.OSDFlags) {
-		problems = append(problems, fmt.Sprintf("OSD flags are %v, not %v", current.OSDFlags, b.OSDFlags))
-	}
-	if !slices.Equal(b.Blocklist, current.Blocklist) {
-		problems = append(problems, fmt.Sprintf("the blocklist has %d entries, not %d", len(current.Blocklist), len(b.Blocklist)))
-	}
-	return problems
-}
-
-// releaseDiff lists what differs from the baseline after tenant self was
-// cleaned up, ignoring the scopes of the other tenants. lagging reports a
-// health difference, which can still settle.
-func (b sharedInvariants) releaseDiff(current sharedInvariants, self string, others map[string]bool) (problems []string, lagging bool) {
-	ownedByOther := func(entity string) bool {
-		for id := range others {
-			if tenantOwns(id, entity) {
-				return true
-			}
-		}
-		return false
-	}
-	for _, entity := range sortedKeys(current.Auth) {
-		caps, known := b.Auth[entity]
-		switch {
-		case tenantOwns(self, entity):
-			problems = append(problems, "tenant client "+entity+" remains")
-		case ownedByOther(entity):
-		case !known:
-			problems = append(problems, "auth entity "+entity+" was added")
-		case caps != current.Auth[entity]:
-			problems = append(problems, "capabilities of "+entity+" changed")
-		}
-	}
-	for _, entity := range sortedKeys(b.Auth) {
-		if _, ok := current.Auth[entity]; !ok {
-			problems = append(problems, "auth entity "+entity+" was removed")
-		}
-	}
-	problems = append(problems, mapDiff("pool", b.Pools, current.Pools)...)
-	problems = append(problems, mapDiff("config entry", b.Config, current.Config)...)
-	if !slices.Equal(b.OSDFlags, current.OSDFlags) {
-		problems = append(problems, fmt.Sprintf("OSD flags are %v, not %v", current.OSDFlags, b.OSDFlags))
-	}
-	if !slices.Equal(b.Blocklist, current.Blocklist) {
-		problems = append(problems, fmt.Sprintf("the blocklist has %d entries, not %d", len(current.Blocklist), len(b.Blocklist)))
-	}
-	for _, namespace := range sortedKeys(current.Namespaces) {
-		count := current.Namespaces[namespace]
-		switch {
-		case namespace == self:
-			problems = append(problems, fmt.Sprintf("namespace %s of pool %s still has %d objects", namespace, SharedPool, count))
-		case others[namespace]:
-		case count != b.Namespaces[namespace]:
-			problems = append(problems, fmt.Sprintf("namespace %q of pool %s has %d objects, not %d", namespace, SharedPool, count, b.Namespaces[namespace]))
-		}
-	}
-	for _, namespace := range sortedKeys(b.Namespaces) {
-		if _, ok := current.Namespaces[namespace]; !ok {
-			problems = append(problems, fmt.Sprintf("namespace %q of pool %s lost its objects", namespace, SharedPool))
-		}
-	}
-	problems = append(problems, resourceDiff(b.Resources, current.Resources, self, others)...)
-	return problems, !slices.Equal(b.Health, current.Health)
-}
-
-// mapDiff names the keys added, removed or changed, never the values.
-func mapDiff(kind string, baseline, current map[string]string) []string {
-	var problems []string
-	for _, key := range sortedKeys(current) {
-		before, ok := baseline[key]
-		switch {
-		case !ok:
-			problems = append(problems, kind+" "+key+" was added")
-		case before != current[key]:
-			problems = append(problems, kind+" "+key+" changed")
-		}
-	}
-	for _, key := range sortedKeys(baseline) {
-		if _, ok := current[key]; !ok {
-			problems = append(problems, kind+" "+key+" was removed")
-		}
-	}
-	return problems
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	return slices.Sorted(maps.Keys(m))
-}
+// scope; the comparison logic lives in internal/sharedinvariants.
+type sharedInvariants = sharedinvariants.Invariants
 
 // sharedIgnoredHealth lists the health checks that report the Docker host
 // rather than the cluster: the free space of the engine's disk flaps around
@@ -233,7 +111,7 @@ func (b containerBackend) invariants(ctx context.Context, pool string) (sharedIn
 	state.Auth = map[string]string{}
 	for _, entry := range listing.AuthDump {
 		caps := make([]string, 0, len(entry.Caps))
-		for _, service := range sortedKeys(entry.Caps) {
+		for _, service := range sharedinvariants.SortedKeys(entry.Caps) {
 			caps = append(caps, service+"="+entry.Caps[service])
 		}
 		state.Auth[entry.Entity] = strings.Join(caps, ";")
@@ -474,7 +352,7 @@ func (b containerBackend) daemonsRunning(ctx context.Context) error {
 	}
 	b.c.controlMu.RUnlock()
 	var exited []string
-	for _, name := range sortedKeys(daemons) {
+	for _, name := range sharedinvariants.SortedKeys(daemons) {
 		state, err := daemons[name].State(ctx)
 		if err != nil {
 			return fmt.Errorf("inspect %s: %w", name, classifyDocker(ctx, err))
