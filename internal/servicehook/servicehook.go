@@ -112,9 +112,8 @@ func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
 func Closed(c *ceph.Container) bool { return get().Closed(c) }
 
 // TenantCluster returns the shared cluster of a live tenant, or nil. Its
-// gate refuses the methods that a tenant cannot use. Only rgw (whose gateway
-// state is keyed by the cluster) and integration tests still use it; rbd and
-// cephfs use Tenant.
+// gate refuses the methods that a tenant cannot use. Only the native
+// integration tests still use it; the service adapters use Tenant.
 func TenantCluster(t *ceph.Tenant) *ceph.Container { return get().TenantCluster(t) }
 
 // TenantPort is what an adapter may do for one live tenant. It does not
@@ -141,6 +140,14 @@ type TenantPort = interface {
 	// removed too. Each key is attached once per tenant.
 	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
 	WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
+	// WithTopology runs fn while it holds the cluster mutex, the one that
+	// serializes fixture mutations, and returns fn's error. fn must not call
+	// WithTopology again.
+	WithTopology(fn func() error) error
+	// Extension returns the service state that the cluster keeps for kind,
+	// created by create on first use. Call it only inside WithTopology,
+	// because the state is guarded by the cluster mutex.
+	Extension(kind string, create func() any) any
 }
 
 // Tenant returns the port of a live tenant, or the error that says it is

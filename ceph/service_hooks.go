@@ -51,7 +51,8 @@ func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliCon
 func (serviceHooks) Closed(c *Container) bool { return c.closed }
 
 // TenantCluster returns the shared cluster of a live tenant, whose gate
-// still refuses the methods a tenant cannot use, or nil.
+// still refuses the methods a tenant cannot use, or nil. Only the native
+// gate and release tests use it; the service adapters use the tenant port.
 func (serviceHooks) TenantCluster(t *Tenant) *Container {
 	c, err := t.cluster()
 	if err != nil {
@@ -81,6 +82,14 @@ type tenantPort = interface {
 	// removes, in reverse order and before its clients are deleted.
 	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
 	WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
+	// WithTopology runs fn while it holds the cluster mutex, the one that
+	// serializes fixture mutations, and returns fn's error. fn must not call
+	// WithTopology again.
+	WithTopology(fn func() error) error
+	// Extension returns the service state that the cluster keeps for kind,
+	// created by create on first use. fn of WithTopology is the only caller
+	// that may use it, because the state is guarded by the cluster mutex.
+	Extension(kind string, create func() any) any
 }
 
 // tenantLease is the tenantPort of one tenant. It holds the cluster that the
@@ -111,6 +120,16 @@ func (l tenantLease) AttachScope(key string, release func(ctx context.Context) (
 
 func (l tenantLease) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return l.t.WithClientIdentity(client, opts...)
+}
+
+func (l tenantLease) WithTopology(fn func() error) error {
+	l.c.mu.Lock()
+	defer l.c.mu.Unlock()
+	return fn()
+}
+
+func (l tenantLease) Extension(kind string, create func() any) any {
+	return serviceHooks{}.Extension(l.c, kind, create)
 }
 
 // TenantPort returns the port of a live tenant, or the error that says it is
