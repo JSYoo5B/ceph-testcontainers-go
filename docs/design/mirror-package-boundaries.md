@@ -39,6 +39,7 @@ measurement, not a design review of the resulting API.
 | Initial daemon name sequence (`a` to `z`, then `node-27` onward) | Identical sequence in both `RunMirror` loops, documented identically. | Extracted: `multicluster.InitialMirrorDaemonName` |
 | `MirrorDaemon.Terminate` | Same lock, remembered-success flag, missing-resource handling, nil-container no-op and retry-on-failure semantics. The flag is `terminated` in `rbd` and `removed` in `cephfs`. | Extracted: `multicluster.TerminateOnce`; each daemon keeps its own mutex and flag |
 | Daemon name validation | Different rules: `rbd` forbids dots and a leading hyphen, `cephfs` allows dots. Different messages. | Not duplicated |
+| `Mirror.Terminate` | Same sequence in both families: bounded lock, set the closed flag, run the owned cleanup actions, return their error without touching membership, and only on success drop the daemon list and the initial-daemon handle. The fields (`closed`, `daemons`, `Container`, `owned`, `mu`) belong to each fixture type. | Extracted: `multicluster.TerminateFixture`; each fixture keeps its own fields and passes a callback that clears them |
 | `AddDaemon` | Different credentials (per-daemon `client.rbd-mirror.*` against the destination, versus one shared source entity), commands, sockets, startup timeouts, and peer network (`rbd` joins the source network, `cephfs` the destination network). Only the "append customizers, run, register partial result" skeleton is alike. `cephfs` also binds an original-process observer. | Domain-specific |
 | `RemoveDaemon` | Parallel shape, but the initial-handle clear is keyed by name in `rbd` and by container ID in `cephfs`, and unknown-daemon errors differ in kind. | Not extracted |
 | `Daemons` snapshot | Four lines over different element types. A generic helper would be larger than the code it removes. | Not extracted |
@@ -86,6 +87,17 @@ mutex still exercise the original fields. This change adds deterministic unit
 controls only; it has no native Ceph evidence of its own. Native mirror
 scenarios exercise the same code paths in CI and are reported separately on the
 pull request.
+
+## Follow-up: fixture termination
+
+Issue #144 is closed, but #146 (reducing `ceph.Container`) is still open and
+changes the internal dependencies of the mirror families. The package move
+therefore stays deferred. The next proven duplication was the fixture-level
+`Terminate`, extracted as `multicluster.TerminateFixture` without changing any
+exported name, error value, lock order or retry behavior. Deterministic unit
+controls cover retry after a failed cleanup (membership kept, closed flag set)
+and a lock wait bounded by the context. Existing `rbd` and `cephfs` unit tests
+that terminate a fixture were rerun unchanged. No native evidence is claimed.
 
 ## Not covered
 

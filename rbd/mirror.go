@@ -662,17 +662,10 @@ func (m *Mirror) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 	if m == nil {
 		return nil
 	}
-	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
-		return err
-	}
-	defer m.mu.Unlock()
-	m.closed = true
-	if err := m.owned.Terminate(ctx, opts...); err != nil {
-		return err
-	}
-	m.daemons = nil
-	m.Container = nil
-	return nil
+	return multicluster.TerminateFixture(ctx, &m.mu, &m.closed, &m.owned, func() {
+		m.daemons = nil
+		m.Container = nil
+	}, opts...)
 }
 
 func normalizeRBDMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
