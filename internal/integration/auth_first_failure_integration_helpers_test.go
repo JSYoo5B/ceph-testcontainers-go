@@ -153,27 +153,33 @@ type authManagerObservation struct {
 // the rejection. Its success shows that a new client authenticated with its
 // own ticket; it says nothing about the tested client's ticket.
 type authControl struct {
-	Target   string    `json:"target"`
-	Command  string    `json:"command"`
-	Phase    string    `json:"phase"`
-	Started  time.Time `json:"started"`
-	ExitCode int       `json:"exit_code"`
-	Complete bool      `json:"complete"`
+	Target string `json:"target"`
+	// Operation is the control's own attempt identity, never the rejected
+	// attempt's.
+	Operation string    `json:"operation,omitempty"`
+	Command   string    `json:"command"`
+	Phase     string    `json:"phase"`
+	Started   time.Time `json:"started"`
+	ExitCode  int       `json:"exit_code"`
+	Complete  bool      `json:"complete"`
 }
 
 // authFirstFailureBundle is what a collection retains after the first
 // rejection of a tested authentication.
 type authFirstFailureBundle struct {
-	Schema             string                   `json:"schema"`
-	Provenance         authProvenance           `json:"provenance"`
-	Release            string                   `json:"release"`
-	Images             map[string]string        `json:"images"`
-	Expected           authExpectedTarget       `json:"expected_target"`
-	Budget             string                   `json:"budget"`
-	QueryBound         string                   `json:"query_bound"`
-	Started            time.Time                `json:"started"`
-	Ended              time.Time                `json:"ended"`
-	Rejection          authTestedRejection      `json:"first_failure"`
+	Schema     string              `json:"schema"`
+	Provenance authProvenance      `json:"provenance"`
+	Release    string              `json:"release"`
+	Images     map[string]string   `json:"images"`
+	Expected   authExpectedTarget  `json:"expected_target"`
+	Budget     string              `json:"budget"`
+	QueryBound string              `json:"query_bound"`
+	Started    time.Time           `json:"started"`
+	Ended      time.Time           `json:"ended"`
+	Rejection  authTestedRejection `json:"first_failure"`
+	// FirstExcerpt is the redacted, bounded excerpt of the original rejected
+	// operation's own stderr, nil when the producer attached none.
+	FirstExcerpt       *authFirstExcerptRecord  `json:"first_failure_excerpt,omitempty"`
 	Held               *authHeldSession         `json:"held_session,omitempty"`
 	Tickets            []authTicketRecord       `json:"consumer_tickets,omitempty"`
 	Monitors           []authMonitorObservation `json:"monitors"`
@@ -204,8 +210,14 @@ type authBundleVerdict struct {
 	// ReusedSecretIDs are secret IDs that tickets of different runs or
 	// cycles share. A secret ID repeats across wipes and identifies no
 	// generation.
-	ReusedSecretIDs    []uint64
-	ControlsSucceeded  bool
+	ReusedSecretIDs   []uint64
+	ControlsSucceeded bool
+	// ExcerptStatus is the first-failure excerpt's own status, or "absent".
+	// It is separate from the command's stderr completeness and does not make
+	// a bundle incomplete: a refusal may leave no prefix.
+	ExcerptStatus string
+	// Cause is always unavailable: no excerpt or control establishes it.
+	Cause              string
 	Result             int
 	GenerationEquality string
 }
@@ -214,7 +226,8 @@ type authBundleVerdict struct {
 // never establishes generation equality: a stock bundle cannot.
 func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 	rejection := bundle.Rejection
-	verdict := authBundleVerdict{Target: "unavailable", RefusedClient: "unknown", Result: rejection.Result, GenerationEquality: authGenerationUnavailable}
+	verdict := authBundleVerdict{Target: "unavailable", RefusedClient: "unknown", Result: rejection.Result, GenerationEquality: authGenerationUnavailable,
+		ExcerptStatus: "absent", Cause: authCauseUnavailable}
 	problem := func(format string, args ...any) {
 		verdict.Problems = append(verdict.Problems, fmt.Sprintf(format, args...))
 	}
@@ -234,6 +247,17 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 	}
 	for _, cleanup := range bundle.CleanupErrors {
 		problem("cleanup: %s", cleanup)
+	}
+	if bundle.FirstExcerpt != nil {
+		verdict.ExcerptStatus = bundle.FirstExcerpt.Status
+		if err := checkAuthFirstExcerpt(*bundle.FirstExcerpt, rejection); err != nil {
+			problem("first-failure excerpt: %v", err)
+		}
+	}
+	for _, control := range bundle.Controls {
+		if control.Operation != "" && control.Operation == authRejectionOperation(rejection) {
+			problem("control %s reuses the rejected attempt's identity", control.Target)
+		}
 	}
 	expected := bundle.Expected
 	for _, name := range expected.Monitors {
@@ -580,7 +604,7 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster authSources, 
 				}
 				stop()
 			}
-			bundle.Controls = append(bundle.Controls, authControl{Target: target, Command: "version", Phase: "after first failure", Started: started,
+			bundle.Controls = append(bundle.Controls, authControl{Target: target, Operation: authControlOperation(rejection, target), Command: "version", Phase: "after first failure", Started: started,
 				ExitCode: result.ExitCode, Complete: err == nil && result.Complete()})
 			if err == nil && bundle.Release == "" && result.ExitCode == 0 {
 				var version struct {
@@ -696,9 +720,28 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	if err != nil || tested.ExitCode != 13 || !bytes.Contains(tested.Stderr, []byte("[errno 13] RADOS permission denied")) {
 		t.Fatalf("the tested authentication was not refused: exit=%d err=%v stderr=%.512s", tested.ExitCode, err, tested.Stderr)
 	}
+	ended := time.Now().UTC()
 	lines := strings.Split(strings.TrimSpace(string(tested.Stderr)), "\n")
 	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1]}
 	recorded := rejection
+	// The excerpt of the original operation's own stderr: client-side lines,
+	// bound to this invocation's capture in the client container instance and
+	// to the operation's window, and not to the MGR it addressed. The command
+	// result exposes no process ID, so the capture is the invocation itself.
+	clientState, err := client.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstExcerpt, firstRecord := produceAuthFirstExcerpt(authFailedOperation{
+		Operation: authRejectionOperation(rejection),
+		Binding: authExcerptBinding{Daemon: "client.admin", Generation: "container " + client.GetContainerID() + " started " + clientState.StartedAt,
+			Capture: authRejectionOperation(rejection) + "/stderr/" + attempted.Format(time.RFC3339Nano)},
+		Start: attempted, End: ended, Stderr: tested.Stderr, StderrComplete: tested.Complete(),
+	}, newAuthExcerptRedactor(ctx, withSockets(t, cluster), authExcerptRedactionBudget), authFailureExcerptLimit)
+	excerpts := newAuthExcerptLedger()
+	if first, err := excerpts.record(firstExcerpt); err != nil || !first {
+		t.Fatalf("first excerpt not recorded: %v", err)
+	}
 	// The expected identities are frozen now, before any diagnostic.
 	expected := authExpectedTarget{FSID: monmap.FSID, Monitors: monitors, Manager: status.ActiveName, GID: status.ActiveGID}
 	for _, manager := range clusteraccess.Managers(t, cluster) {
@@ -717,7 +760,10 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
-		return collectAuthFirstFailureBundle(ctx, withSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+		collected := collectAuthFirstFailureBundle(ctx, withSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+		attached := firstRecord
+		collected.FirstExcerpt = &attached
+		return collected
 	}
 	bundle := collect(time.Minute, 4096)
 	data, err := json.Marshal(bundle)
@@ -731,6 +777,18 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	if !verdict.Complete || !bundle.CollectionComplete || verdict.Target != "registered" || verdict.RefusedClient != "unknown" || !verdict.ControlsSucceeded ||
 		verdict.Result != -13 || verdict.GenerationEquality != authGenerationUnavailable || len(bundle.Monitors) != 3 || len(bundle.Managers) != 2 || len(bundle.Quorum) != 3 {
 		t.Fatalf("verdict %+v for bundle %s", verdict, data)
+	}
+	// The excerpt is the original operation's, with the command's stderr
+	// completeness kept apart from its own status. Tentacle and Squid may
+	// print no prefix, so no particular status is required; a clipped or
+	// withheld one stays visible. The controls ran as other attempts and the
+	// first excerpt is unchanged.
+	if bundle.FirstExcerpt == nil || bundle.FirstExcerpt.Operation != authRejectionOperation(rejection) || verdict.ExcerptStatus != firstRecord.Status ||
+		verdict.Cause != authCauseUnavailable || !bundle.FirstExcerpt.CommandStderrComplete {
+		t.Fatalf("first-failure excerpt %+v, verdict %+v", bundle.FirstExcerpt, verdict)
+	}
+	if first, ok := excerpts.First(authRejectionOperation(rejection)); !ok || first.Status != firstExcerpt.Status || excerpts.Later(authRejectionOperation(rejection)) != 0 {
+		t.Fatalf("first excerpt ledger %+v %v", first, ok)
 	}
 	if bundle.Rejection != recorded {
 		t.Fatalf("the rejection changed: %+v, recorded %+v", bundle.Rejection, recorded)
