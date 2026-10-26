@@ -40,9 +40,17 @@ except OSError as e:
 print(json.dumps(r), flush=True)
 `
 
-// scratchStoreViewScript observes PATH without writing: stat, up to 257
-// content bytes (digest and length), statvfs and the covering mountinfo line.
-// It runs as `python3 -I -c <script> PATH`.
+// scratchStoreViewScript observes PATH without writing. It opens PATH once with
+// O_RDONLY|O_NOFOLLOW|O_NONBLOCK and takes fstat, the content read (up to 257
+// bytes as length and digest) and fstatvfs from that one descriptor, so the
+// identity, content and capacity describe one opened inode. After the read it
+// looks PATH up again; "stable" is true only when that lookup is a non-symlink
+// with the descriptor's device and inode. A replaced path is reported as not
+// stable instead of being merged into one receipt. The covering mountinfo line
+// is chosen from the descriptor's device by the resolved path prefix; that is a
+// separate path-based observation and is not bound to the descriptor. The line
+// "# boundary-hook" marks where a fixture may inject a concurrent change. It
+// runs as `python3 -I -c <script> PATH`.
 const scratchStoreViewScript = `import hashlib, json, os, stat, sys
 
 def covering(path, dev):
@@ -63,18 +71,26 @@ def covering(path, dev):
         pass
     return best
 
-r = {"version": 1, "errno": 0, "regular": False, "dev": 0, "ino": 0, "nlink": 0, "size": 0,
+r = {"version": 2, "errno": 0, "stable": False, "regular": False, "dev": 0, "ino": 0, "nlink": 0, "size": 0,
      "content_len": 0, "content_sha256": "", "frsize": 0, "blocks": 0, "mount": None}
 path = sys.argv[1]
 try:
-    s = os.stat(path)
-    r.update(regular=stat.S_ISREG(s.st_mode), dev=s.st_dev, ino=s.st_ino, nlink=s.st_nlink, size=s.st_size)
-    v = os.statvfs(path)
-    r.update(frsize=v.f_frsize, blocks=v.f_blocks, mount=covering(path, s.st_dev))
-    if r["regular"]:
-        with open(path, "rb") as f:
-            data = f.read(257)
-        r.update(content_len=len(data), content_sha256=hashlib.sha256(data).hexdigest())
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        s = os.fstat(fd)
+        # boundary-hook
+        r.update(regular=stat.S_ISREG(s.st_mode), dev=s.st_dev, ino=s.st_ino, nlink=s.st_nlink, size=s.st_size)
+        v = os.fstatvfs(fd)
+        r.update(frsize=v.f_frsize, blocks=v.f_blocks)
+        if r["regular"]:
+            data = os.read(fd, 257)
+            r.update(content_len=len(data), content_sha256=hashlib.sha256(data).hexdigest())
+        r["mount"] = covering(path, s.st_dev)
+        # boundary-hook-after
+        t = os.lstat(path)
+        r["stable"] = (not stat.S_ISLNK(t.st_mode)) and t.st_dev == s.st_dev and t.st_ino == s.st_ino
+    finally:
+        os.close(fd)
 except OSError as e:
     r["errno"] = e.errno or -1
 print(json.dumps(r), flush=True)
@@ -91,6 +107,7 @@ type storeMountLine struct {
 type storeViewReceipt struct {
 	Version       *int            `json:"version"`
 	Errno         *int            `json:"errno"`
+	Stable        *bool           `json:"stable"`
 	Regular       *bool           `json:"regular"`
 	Dev           *uint64         `json:"dev"`
 	Ino           *uint64         `json:"ino"`
@@ -112,7 +129,7 @@ func parseStoreView(out []byte) (*storeViewReceipt, error) {
 	if err := decodeStrict(out, &r); err != nil {
 		return nil, fmt.Errorf("store view receipt: %w", err)
 	}
-	if r.Version == nil || *r.Version != 1 || r.Errno == nil || r.Regular == nil || r.Dev == nil || r.Ino == nil ||
+	if r.Version == nil || *r.Version != 2 || r.Errno == nil || r.Stable == nil || r.Regular == nil || r.Dev == nil || r.Ino == nil ||
 		r.Nlink == nil || r.Size == nil || r.ContentLen == nil || r.ContentSHA256 == nil || r.Frsize == nil || r.Blocks == nil {
 		return nil, errors.New("store view receipt: version or fields missing, null or incomplete")
 	}
@@ -193,6 +210,9 @@ func classifyStoreLink(keeper, osd *storeViewReceipt, token string, wantBytes in
 		if *v.Errno != 0 {
 			return "", fmt.Errorf("%s view could not be examined (errno %d)", w.name, *v.Errno)
 		}
+		if !*v.Stable {
+			return "", fmt.Errorf("%s view path changed while it was observed", w.name)
+		}
 		if !*v.Regular || *v.Nlink < 1 {
 			return "", fmt.Errorf("%s view marker is not a linked regular file", w.name)
 		}
@@ -219,7 +239,7 @@ func classifyStoreLink(keeper, osd *storeViewReceipt, token string, wantBytes in
 		if size != wantBytes {
 			return "", fmt.Errorf("%s view mount ceiling is %d bytes, want %d", w.name, size, wantBytes)
 		}
-		if *v.Frsize <= 0 || *v.Blocks <= 0 || *v.Frsize > wantBytes || *v.Blocks > wantBytes || *v.Frsize**v.Blocks != wantBytes {
+		if wantBytes <= 0 || *v.Frsize <= 0 || *v.Blocks <= 0 || wantBytes%*v.Frsize != 0 || wantBytes / *v.Frsize != *v.Blocks {
 			return "", fmt.Errorf("%s view statvfs total is %d*%d bytes, want %d", w.name, *v.Frsize, *v.Blocks, wantBytes)
 		}
 	}

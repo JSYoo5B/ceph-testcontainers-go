@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -28,14 +29,14 @@ const (
 )
 
 func storeView(dev, ino uint64, token, fstype, options string) *storeViewReceipt {
-	v, errno, regular, nlink := 1, 0, true, int64(1)
+	v, errno, regular, nlink, stable := 2, 0, true, int64(1), true
 	size := int64(len(token))
 	sum := sha256.Sum256([]byte(token))
 	digest := hex.EncodeToString(sum[:])
 	frsize, blocks := int64(4096), int64(storeBytes/4096)
 	mountID, mountDev, mp := "812", "0:55", "/store"
 	return &storeViewReceipt{
-		Version: &v, Errno: &errno, Regular: &regular, Dev: &dev, Ino: &ino, Nlink: &nlink, Size: &size,
+		Version: &v, Errno: &errno, Stable: &stable, Regular: &regular, Dev: &dev, Ino: &ino, Nlink: &nlink, Size: &size,
 		ContentLen: &size, ContentSHA256: &digest, Frsize: &frsize, Blocks: &blocks,
 		Mount: &storeMountLine{MountID: &mountID, Dev: &mountDev, Mountpoint: &mp, FSType: &fstype, SuperOptions: &options},
 	}
@@ -72,6 +73,12 @@ func TestStoreLinkJudgeJoinsOneBoundedTmpfsInstance(t *testing.T) {
 func TestStoreLinkJudgeRefusesUnexaminedAndContradictoryViews(t *testing.T) {
 	mutations := map[string]func(*storeViewReceipt){
 		"errno":                  func(v *storeViewReceipt) { *v.Errno = 2 },
+		"path changed":           func(v *storeViewReceipt) { *v.Stable = false },
+		"int64 product wraps":    func(v *storeViewReceipt) { *v.Frsize, *v.Blocks = 1<<33, 1<<32+1 },
+		"uint64 product wraps":   func(v *storeViewReceipt) { *v.Frsize, *v.Blocks = 1<<32, 1<<32 },
+		"negative blocks":        func(v *storeViewReceipt) { *v.Blocks = -int64(storeBytes / 4096) },
+		"negative fragment":      func(v *storeViewReceipt) { *v.Frsize = -4096 },
+		"fragment not a divisor": func(v *storeViewReceipt) { *v.Frsize, *v.Blocks = 3, storeBytes/3 },
 		"not a regular file":     func(v *storeViewReceipt) { *v.Regular = false },
 		"unlinked marker":        func(v *storeViewReceipt) { *v.Nlink = 0 },
 		"other token":            func(v *storeViewReceipt) { *v.ContentSHA256 = strings.Repeat("0", 64) },
@@ -158,14 +165,14 @@ func TestStoreLinkParsersRefuseMissingNullAndWrongTypes(t *testing.T) {
 	for name, bad := range map[string]string{
 		"empty":           "",
 		"not JSON":        "garbage",
-		"missing version": strings.Replace(text, `"version": 1, `, "", 1),
-		"wrong version":   strings.Replace(text, `"version": 1`, `"version": 2`, 1),
+		"missing version": strings.Replace(text, `"version": 2, `, "", 1),
+		"wrong version":   strings.Replace(text, `"version": 2`, `"version": 3`, 1),
 		"missing errno":   strings.Replace(text, `"errno": 0, `, "", 1),
 		"null ino":        regexp.MustCompile(`"ino": \d+`).ReplaceAllString(text, `"ino": null`),
 		"string size":     regexp.MustCompile(`"size": \d+`).ReplaceAllString(text, `"size": "0"`),
 		"null digest":     regexp.MustCompile(`"content_sha256": "[0-9a-f]*"`).ReplaceAllString(text, `"content_sha256": null`),
 		"missing blocks":  regexp.MustCompile(`, "blocks": \d+`).ReplaceAllString(text, ""),
-		"unknown field":   strings.Replace(text, `"version": 1`, `"version": 1, "extra": true`, 1),
+		"unknown field":   strings.Replace(text, `"version": 2`, `"version": 2, "extra": true`, 1),
 		"two receipts":    text + "\n" + text,
 	} {
 		if v, err := parseStoreView([]byte(bad)); err == nil {
@@ -285,4 +292,88 @@ func TestStoreLinkProducerViewsJoinOnDeviceInodeAndDigest(t *testing.T) {
 	if got, err := classifyStoreLink(view(marker), missing, storeToken, storeBytes); err == nil {
 		t.Errorf("missing OSD marker produced %q", got)
 	}
+}
+
+// A path replaced by another inode at an observation boundary must not yield a
+// receipt that merges the old identity with the replacement content. The hook
+// lines of the view script are replaced here by a rename of a second file
+// (with the same token) into the observed path.
+func TestStoreViewDetectsPathReplacedAtObservationBoundary(t *testing.T) {
+	requireScratchPython(t)
+	for _, hook := range []string{"# boundary-hook\n", "# boundary-hook-after\n"} {
+		dir := t.TempDir()
+		marker := filepath.Join(dir, "marker")
+		replacement := filepath.Join(dir, "replacement")
+		for _, p := range []string{marker, replacement} {
+			if _, err := parseStoreMarker(runScratchScript(t, scratchStoreMarkerScript, p, storeToken)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		keeper, err := parseStoreView(runScratchScript(t, scratchStoreViewScript, marker))
+		if err != nil || !*keeper.Stable {
+			t.Fatalf("undisturbed view: %v, %+v", err, keeper)
+		}
+		inject := "os.rename(" + pyQuote(replacement) + ", sys.argv[1])\n"
+		script := strings.Replace(scratchStoreViewScript, hook, inject, 1)
+		if script == scratchStoreViewScript {
+			t.Fatalf("hook %q not found", hook)
+		}
+		osd, err := parseStoreView(runScratchScript(t, script, marker))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if *osd.Stable {
+			t.Errorf("%q: replacement at the boundary reported a stable path: %+v", hook, osd)
+		}
+		// The replacement carries the same token and mount substitutes make the
+		// remaining fields agree, so only the stability flag can refuse it.
+		sub := func(v *storeViewReceipt) {
+			fstype, options, id, mdev, mp := "tmpfs", "rw,size=32768k", "812", "0:55", "/store"
+			frsize, blocks := int64(4096), int64(storeBytes/4096)
+			v.Mount = &storeMountLine{MountID: &id, Dev: &mdev, Mountpoint: &mp, FSType: &fstype, SuperOptions: &options}
+			v.Frsize, v.Blocks = &frsize, &blocks
+		}
+		sub(keeper)
+		sub(osd)
+		*osd.Dev, *osd.Ino = *keeper.Dev, *keeper.Ino // the old identity the unfixed receipt would carry
+		if got, err := classifyStoreLink(keeper, osd, storeToken, storeBytes); err == nil {
+			t.Errorf("%q: replaced path judged %q", hook, got)
+		}
+	}
+}
+
+func pyQuote(s string) string { return strconv.Quote(s) }
+
+// Capacity is validated by division and remainder, so a product that wraps
+// int64 back to the configured ceiling is not accepted.
+func TestStoreLinkJudgeRejectsWrappedCapacityProduct(t *testing.T) {
+	const want = int64(1) << 33
+	view := func(frsize, blocks int64) *storeViewReceipt {
+		v := goodStoreView()
+		*v.Mount.SuperOptions = "rw,size=8388608k"
+		*v.Frsize, *v.Blocks = frsize, blocks
+		return v
+	}
+	if got, err := classifyStoreLink(view(4096, want/4096), view(4096, want/4096), storeToken, want); err != nil || got != storeLinkSame {
+		t.Fatalf("honest 8 GiB views: %q, %v", got, err)
+	}
+	for name, v := range map[string]*storeViewReceipt{
+		"2^33 * (2^32+1) wraps to 2^33": view(1<<33, 1<<32+1),
+		"2^32 * 2^32 wraps to zero":     view(1<<32, 1<<32),
+		"2^62 * 4 wraps":                view(1<<62, 4),
+		"zero blocks":                   view(4096, 0),
+		"zero fragment":                 view(0, want/4096),
+		"negative fragment":             view(-4096, -want/4096),
+	} {
+		if got, err := classifyStoreLink(v, goodStoreViewSized(), storeToken, want); err == nil {
+			t.Errorf("%s accepted as %q", name, got)
+		}
+	}
+}
+
+func goodStoreViewSized() *storeViewReceipt {
+	v := goodStoreView()
+	*v.Mount.SuperOptions = "rw,size=8388608k"
+	*v.Frsize, *v.Blocks = 4096, (1<<33)/4096
+	return v
 }
