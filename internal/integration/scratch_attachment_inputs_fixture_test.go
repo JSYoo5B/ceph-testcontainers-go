@@ -87,6 +87,8 @@ func TestAttachPolicyOfRendersOrderedRatiosAndRefusesDefects(t *testing.T) {
 		"empty":                    nil,
 		"null document":            []byte("null"),
 		"trailing":                 append(append([]byte{}, good...), []byte(`{}`)...),
+		"dangling brace":           append(append([]byte{}, good...), '}'),
+		"dangling bracket":         append(append([]byte{}, good...), ']'),
 		"wrong fsid":               attachDump("other", "0.85", "0.9", "0.95"),
 		"missing full":             []byte(fmt.Sprintf(`{"fsid":%q,"backfillfull_ratio":0.9,"nearfull_ratio":0.85}`, attachFSID)),
 		"null full":                attachDump(attachFSID, "0.85", "0.9", "null"),
@@ -148,6 +150,8 @@ func TestAttachContainerStateParserRefusesMissingNullAndWrongTypes(t *testing.T)
 		"empty start":      string(attachInspect("running", true, 0, false, "")),
 		"unparsable start": string(attachInspect("running", true, 0, false, "yesterday")),
 		"empty":            "",
+		"dangling brace":   good + "}",
+		"dangling bracket": good + "]",
 	} {
 		if _, err := parseAttachContainerState([]byte(doc)); err == nil {
 			t.Errorf("%s accepted", name)
@@ -243,6 +247,8 @@ func TestAttachLedgerParserRefusesDefects(t *testing.T) {
 		"empty array":         "[]",
 		"not an array":        "{}",
 		"two lines":           "[]\n[]",
+		"dangling brace":      "[" + ok("a", mutAcked, a) + "]}",
+		"dangling bracket":    "[" + ok("a", mutAcked, a) + "]]",
 		"missing key":         `[{"outcome":"acked","sha256":"` + a + `"}]`,
 		"null key":            `[{"key":null,"outcome":"acked","sha256":"` + a + `"}]`,
 		"empty key":           "[" + ok("", mutAcked, a) + "]",
@@ -355,16 +361,18 @@ func TestAttachBuildRunFeedsTheJudge(t *testing.T) {
 		"acknowledged changed": func(r *attachRawInputs) {
 			r.Readback = []byte(`[{"key":"a","status":"present","sha256":"` + attachDigests["b"] + `"}]`)
 		},
-		"acknowledged unread":   func(r *attachRawInputs) { r.Readback = []byte(`[{"key":"b","status":"absent"}]`) },
-		"readback missing":      func(r *attachRawInputs) { r.Readback = nil },
-		"ledger empty":          func(r *attachRawInputs) { r.Ledger = []byte("[]") },
-		"writer not joined":     func(r *attachRawInputs) { r.WriterJoined = false },
-		"seed digest differs":   func(r *attachRawInputs) { r.SeedSHA = "other" },
-		"fill receipt null":     func(r *attachRawInputs) { r.Fill = []byte("null") },
-		"release receipt empty": func(r *attachRawInputs) { r.Release = nil },
-		"backing receipt empty": func(r *attachRawInputs) { r.BlockBacking = nil },
-		"view receipt empty":    func(r *attachRawInputs) { r.OSDView = nil },
-		"daemon identity empty": func(r *attachRawInputs) { r.DaemonAtAttach = nil },
+		"acknowledged unread":     func(r *attachRawInputs) { r.Readback = []byte(`[{"key":"b","status":"absent"}]`) },
+		"readback missing":        func(r *attachRawInputs) { r.Readback = nil },
+		"ledger empty":            func(r *attachRawInputs) { r.Ledger = []byte("[]") },
+		"writer not joined":       func(r *attachRawInputs) { r.WriterJoined = false },
+		"seed digest differs":     func(r *attachRawInputs) { r.SeedSHA = "other" },
+		"fill receipt null":       func(r *attachRawInputs) { r.Fill = []byte("null") },
+		"release receipt empty":   func(r *attachRawInputs) { r.Release = nil },
+		"backing receipt empty":   func(r *attachRawInputs) { r.BlockBacking = nil },
+		"view receipt empty":      func(r *attachRawInputs) { r.OSDView = nil },
+		"policy dangling brace":   func(r *attachRawInputs) { r.PolicyBefore = append(r.PolicyBefore, '}') },
+		"policy dangling bracket": func(r *attachRawInputs) { r.PolicyBefore = append(r.PolicyBefore, ']') },
+		"daemon identity empty":   func(r *attachRawInputs) { r.DaemonAtAttach = nil },
 	} {
 		in := goodAttachRaw(t)
 		mutate(in)

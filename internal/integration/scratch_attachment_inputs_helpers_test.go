@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -36,10 +37,36 @@ func exactObject(data []byte) (map[string]json.RawMessage, error) {
 	if m == nil {
 		return nil, errors.New("document is null, not an object")
 	}
-	if dec.More() {
-		return nil, errors.New("trailing data after the JSON document")
+	if err := requireEOF(dec); err != nil {
+		return nil, err
 	}
 	return m, nil
+}
+
+// requireEOF reports anything left after the first document. Decoder.More is
+// an iteration predicate that is false before a closing delimiter, so a
+// dangling "}" or "]" would pass it; a second Decode must return io.EOF.
+func requireEOF(dec *json.Decoder) error {
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("trailing data after the JSON document")
+	}
+	return nil
+}
+
+// decodeOneDocument is decodeStrict with the end-of-document check above:
+// exactly one JSON line, no unknown fields, nothing after the value.
+func decodeOneDocument(data []byte, into any) error {
+	data = bytes.TrimSpace(data)
+	if bytes.Contains(data, []byte("\n")) {
+		return errors.New("expected exactly one JSON line")
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(into); err != nil {
+		return err
+	}
+	return requireEOF(dec)
 }
 
 func rawString(m map[string]json.RawMessage, name string) (string, error) {
@@ -243,7 +270,7 @@ type attachLedgerEntry struct {
 // readback.
 func parseAttachLedger(out []byte) ([]attachMutation, error) {
 	var entries []attachLedgerEntry
-	if err := decodeStrict(out, &entries); err != nil {
+	if err := decodeOneDocument(out, &entries); err != nil {
 		return nil, fmt.Errorf("mutation ledger: %w", err)
 	}
 	if len(entries) == 0 {
@@ -293,7 +320,7 @@ type attachReadbackEntry struct {
 // mutations may be read but the judge never promotes them.
 func attachRecoveredOf(ledger []attachMutation, out []byte) (map[string]string, error) {
 	var entries []attachReadbackEntry
-	if err := decodeStrict(out, &entries); err != nil {
+	if err := decodeOneDocument(out, &entries); err != nil {
 		return nil, fmt.Errorf("readback: %w", err)
 	}
 	inLedger := map[string]string{}
