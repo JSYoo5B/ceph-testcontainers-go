@@ -63,11 +63,6 @@ CONFIG_NAME_RE = re.compile(
 CONFIG_ENTRY_RE = re.compile(r'Name:\s*"([^"]+)"\s*,\s*Value:\s*"([^"]*)"')
 TEMP_CONFIG_RE = re.compile(r'temporaryConfig\(\s*"([^"]+)"\s*,\s*"([^"]*)"\s*\)')
 
-ASSIGN_RE = re.compile(
-    r"^\s*(?:(?:const|var)\s+)?([A-Za-z_]\w*)\s*(?:time\.Duration\s*)?=\s*(.+?)\s*$"
-)
-
-
 def blank_comments_and_strings(src):
     """Return (code, text): src with comments blanked; code also blanks string
     and rune literal contents. Newlines and offsets are preserved."""
@@ -245,114 +240,225 @@ def _eval_ns(expr, consts, depth):
     return v
 
 
-FUNC_RE = re.compile(r"\bfunc\b")
-WORD_RE = re.compile(r"[A-Za-z_]\w*")
-VAR_DECL_RE = re.compile(r"^\s*var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[^=\s][^=]*$")
-MUTATE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?:\+=|-=|\*=|/=)")
+GO_KEYWORDS = frozenset(
+    "break case chan const continue default defer else fallthrough for func go goto "
+    "if import interface map package range return select struct switch type var".split()
+)
+GO_TOKEN_RE = re.compile(
+    r"""(?P<ws>\s+)
+    |(?P<str>"[^"\n]*"|'[^'\n]*'|`[^`]*`)
+    |(?P<num>0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)
+    |(?P<id>[A-Za-z_]\w*)
+    |(?P<op>\.\.\.|<<=|>>=|&\^=|&&|\|\||<-|\+\+|--|:=|==|!=|<=|>=|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<|>>|&\^|.)""",
+    re.VERBOSE,
+)
+OPENERS = {"(": ")", "[": "]", "{": "}"}
+CLOSERS = frozenset(OPENERS.values())
+ASSIGN_OPS = frozenset(["=", ":=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "&^="])
 
 
-BLOCK_OPEN_RE = re.compile(r"^(\s*)(?:var|const)\s*\(\s*$")
-BLOCK_CLOSE_RE = re.compile(r"^\s*\)\s*$")
-MEMBER_RE = re.compile(r"^\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)(.*)$")
-VAR_LIST_RE = re.compile(r"^\s*var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)")
+class Tok:
+    __slots__ = ("kind", "text", "start", "end", "line")
+
+    def __init__(self, kind, text, start, end, line):
+        self.kind, self.text, self.start, self.end, self.line = kind, text, start, end, line
+
+    def is_op(self, *texts):
+        return self.kind == "op" and self.text in texts
 
 
-def grouped_declaration_names(code):
-    """Names declared as members of var ( ... ) and const ( ... ) blocks that
-    can bind something other than one evaluable package-level definition. A
-    block opened at column 0 is package level (gofmt form): its members that
-    carry a single value are ordinary definitions and keep resolving, while
-    value-less or multi-name members are runtime values. An indented block is
-    local to a function and every member shadows."""
-    names = set()
-    indent = None
-    for line in code.splitlines():
-        if indent is None:
-            m = BLOCK_OPEN_RE.match(line)
-            if m:
-                indent = len(m.group(1))
-            continue
-        if BLOCK_CLOSE_RE.match(line):
-            indent = None
-            continue
-        m = MEMBER_RE.match(line)
-        if not m:
-            continue
-        members = WORD_RE.findall(m.group(1))
-        if indent > 0 or len(members) > 1 or "=" not in m.group(2):
-            names.update(members)
-    return names
+def go_tokens(code):
+    """Tokens of comment-and-string-blanked Go source with line numbers."""
+    out, line = [], 1
+    for m in GO_TOKEN_RE.finditer(code):
+        kind = m.lastgroup
+        text = m.group()
+        if kind != "ws":
+            out.append(Tok(kind, text, m.start(), m.end(), line))
+        line += text.count("\n")
+    return out
 
 
-def shadowed_names(code):
-    """Names that some binding other than a single constant definition may
-    take: function and closure parameters, results and receivers, short
-    variable declarations (including range, if and for clauses), var
-    declarations without a value, and compound assignments. The inventory has
-    no scopes, so any such name stops resolving in its whole package directory.
-    Over-invalidating only turns a duration into null."""
-    names = grouped_declaration_names(code)
-    for m in FUNC_RE.finditer(code):
-        i, depth = m.end(), 0
-        while i < len(code):
-            ch = code[i]
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-            elif depth == 0 and ch in "{\n;":
-                if ch == "\n" and code[m.end():i].strip() == "":
-                    i += 1
-                    continue
-                break
-            elif depth > 0:
-                j = i
-                while j < len(code) and (code[j].isalnum() or code[j] == "_"):
-                    j += 1
-                if j > i:
-                    names.add(code[i:j])
-                    i = j
-                    continue
-            i += 1
-    for line in code.splitlines():
-        if ":=" in line:
-            for part in line.split(":=")[:-1]:
-                names.update(WORD_RE.findall(part))
-        m = VAR_DECL_RE.match(line)
-        if m:
-            names.update(WORD_RE.findall(m.group(1)))
-        m = VAR_LIST_RE.match(line)
-        if m:
-            names.update(WORD_RE.findall(m.group(1)))
-        m = MUTATE_RE.match(line)
-        if m:
-            names.add(m.group(1))
-    return names
+def _ends_statement(tok):
+    """Go inserts a semicolon after these tokens at a line break."""
+    if tok.kind in ("id", "num", "str"):
+        return tok.kind != "id" or tok.text not in GO_KEYWORDS or tok.text in ("break", "continue", "fallthrough", "return")
+    return tok.text in (")", "]", "}", "++", "--")
+
+
+def _match(toks, i):
+    """Index of the bracket closing the opener at toks[i], or len(toks)."""
+    depth = 0
+    for k in range(i, len(toks)):
+        t = toks[k]
+        if t.kind == "op" and t.text in OPENERS:
+            depth += 1
+        elif t.kind == "op" and t.text in CLOSERS:
+            depth -= 1
+            if depth == 0:
+                return k
+    return len(toks)
+
+
+def _spec_end(toks, pos, limit):
+    """End (exclusive) of the declaration spec that starts at toks[pos]: the
+    first line break after a statement-ending token outside any bracket, a
+    semicolon, or limit. Brackets of any kind (multi-line calls, composite
+    literals, function literals) are skipped as a unit."""
+    nest = 0
+    k = pos
+    while k < limit:
+        t = toks[k]
+        if t.kind == "op" and t.text in OPENERS:
+            nest += 1
+        elif t.kind == "op" and t.text in CLOSERS:
+            nest -= 1
+            if nest < 0:
+                return k
+        elif nest == 0 and t.is_op(";"):
+            return k
+        if nest == 0 and k + 1 < limit and toks[k + 1].line > t.line and _ends_statement(t):
+            return k + 1
+        k += 1
+    return limit
+
+
+def _decl_spec(toks, pos, end):
+    """Parse one var/const spec toks[pos:end] into (names, eq_index or None)."""
+    names, k = [], pos
+    while k < end and toks[k].kind == "id" and toks[k].text not in GO_KEYWORDS:
+        names.append(toks[k].text)
+        k += 1
+        if k < end and toks[k].is_op(","):
+            k += 1
+        else:
+            break
+    nest = 0
+    for j in range(k, end):
+        t = toks[j]
+        if t.kind == "op" and t.text in OPENERS:
+            nest += 1
+        elif t.kind == "op" and t.text in CLOSERS:
+            nest -= 1
+        elif nest == 0 and t.is_op("="):
+            return names, j
+    return names, None
+
+
+def analyze(code):
+    """Return (bindings, definitions) for one Go file.
+
+    bindings maps a name to how many places may bind or rebind it anywhere in
+    the file, whatever the scope: var/const specs (single or grouped, at any
+    depth), function and closure parameters, results, receivers and type
+    parameters, every name on the left of :=, = or an operator assignment
+    (which covers if/for/switch/select init statements, range clauses and type
+    switches), operands of ++ and --, and names whose address is taken.
+    definitions maps a name to the expression text of a package-level spec
+    that declares exactly that one name with a value.
+
+    A name is trustworthy only when it has exactly one binding and a
+    definition, so any name that could be rebound in the package is unresolved.
+    There are no scopes: over-counting only turns a duration into null."""
+    toks = go_tokens(code)
+    bindings, definitions, decl_eq = {}, {}, set()
+
+    def bind(name):
+        if name != "_":
+            bindings[name] = bindings.get(name, 0) + 1
+
+    brace = []
+    depth = 0
+    for t in toks:
+        brace.append(depth)
+        if t.is_op("{"):
+            depth += 1
+        elif t.is_op("}"):
+            depth -= 1
+    for i, t in enumerate(toks):
+        if t.kind == "id" and t.text in ("var", "const") and (i == 0 or not toks[i - 1].is_op(".")):
+            if i + 1 < len(toks) and toks[i + 1].is_op("("):
+                close = _match(toks, i + 1)
+                pos = i + 2
+                specs = []
+                while pos < close:
+                    end = _spec_end(toks, pos, close)
+                    specs.append((pos, end))
+                    pos = max(end, pos + 1)
+                    if pos < close and toks[pos].is_op(";"):
+                        pos += 1
+            else:
+                specs = [(i + 1, _spec_end(toks, i + 1, len(toks)))]
+            for pos, end in specs:
+                names, eq = _decl_spec(toks, pos, end)
+                for n in names:
+                    bind(n)
+                if eq is not None:
+                    decl_eq.add(eq)
+                    if len(names) == 1 and brace[pos] == 0 and eq + 1 < end:
+                        definitions[names[0]] = " ".join(code[toks[eq + 1].start:toks[end - 1].end].split())
+        elif t.kind == "id" and t.text == "func":
+            seen, nest, k = set(), 0, i + 1
+            while k < len(toks):
+                u = toks[k]
+                if u.kind == "op" and u.text in OPENERS:
+                    if nest == 0 and u.text == "{":
+                        break
+                    nest += 1
+                elif u.kind == "op" and u.text in CLOSERS:
+                    nest -= 1
+                    if nest < 0:
+                        break
+                elif nest == 0 and (u.is_op(";", ",", "=") or u.kind == "str"):
+                    break
+                elif u.kind == "id" and u.text not in GO_KEYWORDS:
+                    seen.add(u.text)
+                if nest == 0 and k + 1 < len(toks) and toks[k + 1].line > u.line and k > i + 1 and _ends_statement(u):
+                    break
+                k += 1
+            for n in seen:
+                bind(n)
+        elif t.kind == "id" and t.text == "type" and i + 2 < len(toks) and toks[i + 1].kind == "id" and toks[i + 2].is_op("["):
+            for u in toks[i + 3:_match(toks, i + 2)]:
+                if u.kind == "id" and u.text not in GO_KEYWORDS:
+                    bind(u.text)
+    for i, t in enumerate(toks):
+        if t.kind == "op" and t.text in ASSIGN_OPS and i not in decl_eq:
+            j = i - 1
+            while j >= 0 and toks[j].kind == "id" and toks[j].text not in GO_KEYWORDS:
+                if j > 0 and toks[j - 1].is_op("."):
+                    break
+                bind(toks[j].text)
+                if j > 0 and toks[j - 1].is_op(","):
+                    j -= 2
+                else:
+                    break
+        elif t.kind == "op" and t.text in ("++", "--") and i > 0 and toks[i - 1].kind == "id":
+            if not (i > 1 and toks[i - 2].is_op(".")):
+                bind(toks[i - 1].text)
+        elif t.kind == "id" and t.text not in GO_KEYWORDS and i > 0 and toks[i - 1].is_op("&"):
+            bind(t.text)
+    return bindings, definitions
 
 
 def collect_consts(files):
-    """Map directory -> {name: expr or None}. A name defined more than once
-    with different expressions, or shadowed or mutated anywhere in the
-    directory (see shadowed_names), is ambiguous (None)."""
-    per_dir = {}
-    shadow = {}
-    for path, text, code in files:
-        table = per_dir.setdefault(path.parent, {})
-        shadow.setdefault(path.parent, set()).update(shadowed_names(code))
-        for line in text.splitlines():
-            m = ASSIGN_RE.match(line)
-            if not m or "time." not in m.group(2) and not re.fullmatch(r"[\d.\s*+()\w]+", m.group(2)):
-                continue
-            name, expr = m.group(1), m.group(2).rstrip(",;")
-            if name in table and table[name] != expr:
-                table[name] = None
-            elif name not in table:
-                table[name] = expr
-    for directory, names in shadow.items():
-        for name in names:
-            if name in per_dir[directory]:
-                per_dir[directory][name] = None
-    return per_dir
+    """Map directory -> {name: expression or None}. A name resolves only when
+    the whole directory (one Go package) binds it exactly once, at package
+    level, with a value (see analyze). Every other name is None."""
+    total, defs = {}, {}
+    for path, _text, code in files:
+        bindings, definitions = analyze(code)
+        d = path.parent
+        total.setdefault(d, {})
+        defs.setdefault(d, {})
+        for name, n in bindings.items():
+            total[d][name] = total[d].get(name, 0) + n
+        for name, expr in definitions.items():
+            defs[d][name] = expr
+    table = {}
+    for d in total:
+        table[d] = {name: (defs[d].get(name) if n == 1 else None) for name, n in total[d].items()}
+    return table
 
 
 def deadline_arg(arg):

@@ -36,13 +36,18 @@ Rules that keep the numbers honest:
   converted to seconds only at the end, so a bare `time.Sleep(5)` is 5 ns and
   `time.Second + 1` is 1.000000001 s. Conversions that are not integral or do
   not fit a Duration stay unresolved.
-- A duration is resolved only from literals, `time.` units and constants whose
-  single definition in the same directory can be evaluated. A name defined more
-  than once with different values is ambiguous. The scanner has no scopes, so a
-  name that is also a function or closure parameter, result or receiver, a
-  short-variable or range declaration, a `var` without a value, a member of a local `var`/`const` block or a
-  value-less member of a package-level block, or the target of a compound
-  assignment anywhere in the directory stops resolving there.
+- A duration is resolved only from literals, `time.` units and named constants
+  that pass a conservative binding check. The scanner tokenizes each file
+  (brackets, strings, raw strings and comments are skipped as units) and counts
+  every place a name may be bound in the package directory: `var`/`const` specs
+  (single or grouped, at any depth), function, closure and receiver parameters,
+  results and type parameters, the left side of `:=`, `=` and operator
+  assignments (which covers `if`/`for`/`switch`/`select` init statements, range
+  clauses and type switches), `++`/`--` operands, and names whose address is
+  taken. A name resolves only when it is bound exactly once, by a package-level
+  spec that declares that one name with a value. Anything else, including a
+  constant defined in two files, stays unresolved. There are no scopes, so
+  over-counting can only turn a duration into null.
 - A duration that cannot be resolved stays null and is counted in the
   `unresolved` column. It is never summed as zero.
 - Sleeps and timers get a placement label. `poll_loop` means a `for` and a
@@ -61,9 +66,9 @@ Call sites: 1591 total, 1043 in native scenarios.
 
 | Area | Scope | sleep | poll_interval | timer | budget | config_timing | unresolved |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| capture | non-test | 0 | 0 | 3 | 5 | 0 | 2 |
+| capture | non-test | 0 | 0 | 3 | 5 | 0 | 5 |
 | capture | test | 8 | 0 | 0 | 9 | 0 | 0 |
-| ceph | non-test | 0 | 5 | 10 | 96 | 0 | 84 |
+| ceph | non-test | 0 | 5 | 10 | 96 | 0 | 85 |
 | ceph | test | 12 | 0 | 45 | 50 | 3 | 7 |
 | cephfs | non-test | 0 | 2 | 10 | 42 | 0 | 20 |
 | cephfs | test | 0 | 0 | 50 | 33 | 0 | 3 |
@@ -93,7 +98,7 @@ Resolved durations per category (all areas; per call site, not per execution):
 | --- | ---: | ---: | ---: | ---: | ---: |
 | sleep | 163 | 155 | 5ms | 500ms | 1m |
 | poll_interval | 16 | 15 | 5ms | 500ms | 2s |
-| timer | 311 | 284 | 5ms | 1s | 3m |
+| timer | 311 | 280 | 5ms | 1s | 3m |
 | budget | 1082 | 920 | 1ms | 105s | 35m |
 | config_timing | 19 | 19 | 0ms | 2s | 120m |
 

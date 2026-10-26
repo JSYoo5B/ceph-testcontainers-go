@@ -129,6 +129,120 @@ class ShadowTest(unittest.TestCase):
         self.assertEqual(self.sleeps('// func f(delay D)\nvar s = "delay := 1"\nfunc f() { time.Sleep(delay) }\n'), [1.0])
 
 
+# Each body binds delay to a value the scanner cannot know, then sleeps on it.
+# The package declares const delay = time.Second. Every body must stay null.
+SHADOW_BODIES = {
+    "param": ("func f(delay time.Duration) {\n\ttime.Sleep(delay)\n}\n"),
+    "result": ("func f() (delay time.Duration) {\n\ttime.Sleep(delay)\n\treturn\n}\n"),
+    "receiver": ("type T struct{}\nfunc (delay T) f() {\n\ttime.Sleep(delay.d)\n}\n"),
+    "generic": ("func f[delay ~int64](x int64) {\n\ttime.Sleep(time.Duration(delay(x)))\n}\n"),
+    "short": ("func f() {\n\tdelay := unknown()\n\ttime.Sleep(delay)\n}\n"),
+    "short multi": ("func f() {\n\ta, delay := two()\n\t_ = a\n\ttime.Sleep(delay)\n}\n"),
+    "assign": ("func f() {\n\tdelay = unknown()\n\ttime.Sleep(delay)\n}\n"),
+    "assign multi": ("func f() {\n\tvar a int\n\ta, delay = two()\n\t_ = a\n\ttime.Sleep(delay)\n}\n"),
+    "op assign": ("func f() {\n\tdelay += time.Second\n\ttime.Sleep(delay)\n}\n"),
+    "increment": ("func f() {\n\tdelay++\n\ttime.Sleep(delay)\n}\n"),
+    "address taken": ("func f() {\n\tp := &delay\n\t*p = 0\n\ttime.Sleep(delay)\n}\n"),
+    "var no value": ("func f() {\n\tvar delay time.Duration\n\ttime.Sleep(delay)\n}\n"),
+    "var list": ("func f() {\n\tvar a, delay = 1, g()\n\t_ = a\n\ttime.Sleep(delay)\n}\n"),
+    "var group": ("func f() {\n\tvar (\n\t\tdelay time.Duration\n\t)\n\ttime.Sleep(delay)\n}\n"),
+    "var group call": ("func f() {\n\tvar (\n\t\tx = g(\n\t\t\t1,\n\t\t)\n\t\tdelay time.Duration\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group composite": ("func f() {\n\tvar (\n\t\tx = []int{\n\t\t\t1,\n\t\t}\n\t\tdelay = unknown()\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group func literal": ("func f() {\n\tvar (\n\t\tx = func() int {\n\t\t\treturn (1)\n\t\t}\n\t\tdelay time.Duration\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group string parens": ("func f() {\n\tvar (\n\t\tx = \")\"\n\t\tdelay time.Duration\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group comment parens": ("func f() {\n\tvar (\n\t\tx = 1 // )\n\t\t/* ) */\n\t\tdelay time.Duration\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group raw string": ("func f() {\n\tvar (\n\t\tx = `\n)\n`\n\t\tdelay time.Duration\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "var group same line": ("func f() {\n\tvar (x = 1; delay time.Duration)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "const group": ("func f() {\n\tconst (\n\t\tx = g(\n\t\t\t1,\n\t\t)\n\t\tdelay = time.Minute\n\t)\n\t_ = x\n\ttime.Sleep(delay)\n}\n"),
+    "iota member": ("func f() {\n\tconst (\n\t\ta = iota\n\t\tdelay\n\t)\n\t_ = a\n\ttime.Sleep(delay)\n}\n"),
+    "closure param": ("func f() {\n\tg := func(delay time.Duration) {\n\t\ttime.Sleep(delay)\n\t}\n\tg(1)\n}\n"),
+    "nested closure": ("func f() {\n\tfunc() {\n\t\tfunc(delay time.Duration) {\n\t\t\ttime.Sleep(delay)\n\t\t}(1)\n\t}()\n}\n"),
+    "closure param with func type": ("func f() {\n\tg := func(cb func(delay time.Duration), n int) {}\n\tg(nil, 1)\n\ttime.Sleep(delay)\n}\n"),
+    "if init": ("func f() {\n\tif delay := unknown(); delay > 0 {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "if init multi": ("func f() {\n\tif delay, ok := g(); ok {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "for init": ("func f() {\n\tfor delay := unknown(); delay > 0; delay-- {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "for assign init": ("func f() {\n\tvar delay time.Duration\n\tfor delay = 0; delay < 3; delay++ {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "range": ("func f() {\n\tfor _, delay := range xs {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "range key": ("func f() {\n\tfor delay := range xs {\n\t\ttime.Sleep(time.Duration(delay))\n\t}\n}\n"),
+    "range assign": ("func f() {\n\tvar delay time.Duration\n\tfor _, delay = range xs {\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "switch init": ("func f() {\n\tswitch delay := unknown(); {\n\tcase delay > 0:\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "type switch": ("func f(v any) {\n\tswitch delay := v.(type) {\n\tcase time.Duration:\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "select receive": ("func f(c chan time.Duration) {\n\tselect {\n\tcase delay := <-c:\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "select assign": ("func f(c chan time.Duration) {\n\tvar delay time.Duration\n\tselect {\n\tcase delay = <-c:\n\t\ttime.Sleep(delay)\n\t}\n}\n"),
+    "labeled loop": ("func f() {\nouter:\n\tfor delay := range xs {\n\t\ttime.Sleep(time.Duration(delay))\n\t\tbreak outer\n\t}\n}\n"),
+    "multiline initializer before": ("func f() {\n\tx := g(\n\t\t1,\n\t\t2,\n\t)\n\tdelay := h(x)\n\ttime.Sleep(delay)\n}\n"),
+}
+
+
+class ShadowPropertyTest(unittest.TestCase):
+    PRELUDE = "package p\nconst delay = time.Second\n"
+
+    def sleeps(self, source):
+        recs = scan_files({"a.go": source})
+        return [r["seconds"] for r in recs if r["kind"] == "time.Sleep"]
+
+    def test_every_binding_form_keeps_the_name_unresolved(self):
+        for name, body in SHADOW_BODIES.items():
+            with self.subTest(form=name):
+                got = self.sleeps(self.PRELUDE + body)
+                self.assertTrue(got and all(v is None for v in got), got)
+
+    def test_binding_in_another_file_or_after_use_applies(self):
+        for name, body in SHADOW_BODIES.items():
+            with self.subTest(form=name):
+                recs = scan_files({"a.go": self.PRELUDE + "func use() { time.Sleep(delay) }\n",
+                                   "b.go": "package p\n" + body})
+                self.assertIsNone(only([r for r in recs if r["file"] == "a.go"], "time.Sleep")["seconds"])
+
+    def test_package_level_forms_make_the_name_a_runtime_value(self):
+        for name, extra in {
+            "value-less var": "var delay time.Duration\n",
+            "value-less group member": "var (\n\tx = g(\n\t\t1,\n\t)\n\tdelay time.Duration\n)\n",
+            "multi-name var": "var a, delay = 1, g()\n",
+            "init assignment": "func init() { delay = unknown() }\n",
+            "address taken": "var p = &delay\n",
+        }.items():
+            with self.subTest(form=name):
+                src = "package p\nconst delay = time.Second\n" + extra + "func use() { time.Sleep(delay) }\n"
+                self.assertEqual(self.sleeps(src), [None])
+
+
+class ShadowPositiveTest(unittest.TestCase):
+    def sleeps(self, source):
+        recs = scan_files({"a.go": source})
+        return [r["seconds"] for r in recs if r["kind"] == "time.Sleep"]
+
+    def test_package_constant_resolves_beside_unrelated_syntax(self):
+        noise = [
+            "func g(n int) int {\n\treturn n\n}\n",
+            "func h() {\n\tx := g(\n\t\t1,\n\t)\n\t_ = x\n}\n",
+            "func i() {\n\ts := \"delay := (\" // delay = 5)\n\t_ = s\n}\n",
+            "func j() {\n\ts := `delay := 1\nfunc(delay D)`\n\t_ = s\n}\n",
+            "func k() {\nlabel:\n\tfor {\n\t\tbreak label\n\t}\n}\n",
+            "type T struct{ d time.Duration }\nfunc l() T {\n\treturn T{d: delay}\n}\n",
+            "func m(t *T) {\n\tt.d = 3\n\tt.delay = 4\n}\n",
+            "func n() map[string]int {\n\treturn map[string]int{\n\t\t\"delay\": 1,\n\t}\n}\n",
+            "type S struct{ delay int }\nfunc o() S {\n\treturn S{delay: 1}\n}\n",
+            "func p() {\n\tfor i := 0; i < 3; i++ {\n\t}\n}\n",
+            "func q(v any) {\n\tswitch x := v.(type) {\n\tcase int:\n\t\t_ = x\n\t}\n}\n",
+            "var (\n\tother = 2 * time.Second\n\tmore  = g(\n\t\t1,\n\t)\n)\n",
+        ]
+        for i, n in enumerate(noise):
+            with self.subTest(noise=i):
+                src = "package p\nconst delay = time.Second\n" + n + "func use() { time.Sleep(delay) }\n"
+                self.assertEqual(self.sleeps(src), [1.0])
+
+    def test_grouped_package_declarations_with_values_resolve(self):
+        src = ("package p\nconst (\n\tshort = time.Second\n\tlong  = 3 * short\n)\n"
+               "var (\n\tpoll = g(\n\t\t1,\n\t)\n\tslow = 2 * time.Second\n)\n"
+               "func f() {\n\ttime.Sleep(short)\n\ttime.Sleep(long)\n\ttime.Sleep(slow)\n\ttime.Sleep(poll)\n}\n")
+        self.assertEqual(self.sleeps(src), [1.0, 3.0, 2.0, None])
+
+    def test_multiline_package_initializer_resolves(self):
+        src = "package p\nconst delay = 2 *\n\ttime.Second\nfunc f() { time.Sleep(delay) }\n"
+        self.assertEqual(self.sleeps(src), [2.0])
+
+
 class MaskTest(unittest.TestCase):
     def test_comments_and_strings_are_not_calls(self):
         src = (
@@ -198,8 +312,17 @@ func f(ctx context.Context) {
         self.assertEqual([r["seconds"] for r in recs], [None, None])
 
     def test_single_definition_resolves(self):
-        recs = scan_files({"a.go": "package p\nfunc f() {\n\tvar delay = time.Second\n\ttime.Sleep(delay)\n}\n"})
+        recs = scan_files({"a.go": "package p\nvar delay = time.Second\nfunc f() { time.Sleep(delay) }\n"})
         self.assertEqual(only(recs, "time.Sleep")["seconds"], 1.0)
+
+    def test_function_local_definition_is_not_trusted(self):
+        recs = scan_files({"a.go": "package p\nfunc f() {\n\tvar delay = time.Second\n\ttime.Sleep(delay)\n}\n"})
+        self.assertIsNone(only(recs, "time.Sleep")["seconds"])
+
+    def test_same_definition_in_two_files_is_unresolved(self):
+        recs = scan_files({"a.go": "package p\nconst delay = time.Second\nfunc f() { time.Sleep(delay) }\n",
+                           "b.go": "package p\nconst delay = time.Second\n"})
+        self.assertIsNone(only(recs, "time.Sleep")["seconds"])
 
     def test_constants_do_not_leak_across_directories(self):
         recs = scan_files({
