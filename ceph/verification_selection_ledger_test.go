@@ -240,7 +240,7 @@ func judgeSelectionLedger(l selectionLedger) error {
 		if e.Kind == "crash" {
 			received = l.Crashes.Received
 		}
-		switch n := strings.Count(" "+strings.Join(received, " ")+" ", " "+e.ID+" "); {
+		switch n := countEqual(received, e.ID); {
 		case n > 1:
 			bad("event %s was received %d times", e.ID, n)
 		case n == 1 && !e.Want:
@@ -441,7 +441,11 @@ func TestVerificationSelectionLedgerJudgeControls(t *testing.T) {
 		"late crash lost": func(l *selectionLedger) {
 			l.Crashes.Received = slices.DeleteFunc(l.Crashes.Received, func(id string) bool { return strings.HasSuffix(id, "_late") })
 		},
-		"duplicate sighting": func(l *selectionLedger) { l.Logs.Received = append(l.Logs.Received, "log-inside") },
+		"duplicate sighting":     func(l *selectionLedger) { l.Logs.Received = append(l.Logs.Received, "log-inside") },
+		"adjacent duplicate log": func(l *selectionLedger) { l.Logs.Received = repeatInPlace(l.Logs.Received, "log-inside") },
+		"adjacent duplicate crash": func(l *selectionLedger) {
+			l.Crashes.Received = repeatInPlace(l.Crashes.Received, "2026-10-23T01:00:20Z_late")
+		},
 		"unemitted crash": func(l *selectionLedger) {
 			l.Crashes.Received = append(l.Crashes.Received, "2026-10-23T01:09:00Z_ghost")
 		},
@@ -454,4 +458,25 @@ func TestVerificationSelectionLedgerJudgeControls(t *testing.T) {
 			}
 		})
 	}
+}
+
+// countEqual counts the elements equal to id, one by one, so that adjacent
+// repeats are all counted.
+func countEqual(ids []string, id string) int {
+	n := 0
+	for _, got := range ids {
+		if got == id {
+			n++
+		}
+	}
+	return n
+}
+
+// repeatInPlace repeats id right after its first occurrence.
+func repeatInPlace(ids []string, id string) []string {
+	i := slices.Index(ids, id)
+	if i < 0 {
+		panic("id not received: " + id)
+	}
+	return slices.Insert(slices.Clone(ids), i, id)
 }
