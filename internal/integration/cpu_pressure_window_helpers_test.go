@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -69,6 +70,9 @@ func parseCPUBurnReport(data []byte) (cpuBurnReport, error) {
 		if _, err := fmt.Sscanf(s, "%d", &n); err != nil || fmt.Sprint(n) != s {
 			return 0, fmt.Errorf("%w: burn report field %q is not a non-negative integer", errCPUPressure, key)
 		}
+		if n > math.MaxInt64 {
+			return 0, fmt.Errorf("%w: burn report field %q is out of range", errCPUPressure, key)
+		}
 		return n, nil
 	}
 	var r cpuBurnReport
@@ -123,6 +127,7 @@ type cpuPressureChecks struct {
 	skipBracket bool
 	skipQuota   bool
 	skipWall    bool
+	skipJoin    bool
 	skipPeriods bool
 }
 
@@ -134,6 +139,9 @@ func classifyCPUPressure(r cpuPressureRecord, checks cpuPressureChecks) (cpuPres
 	}
 	if r.Before == nil || r.After == nil {
 		return cpuPressureUnsupported, nil
+	}
+	if !checks.skipJoin && (r.Before.Generation != r.Generation || r.After.Generation != r.Generation) {
+		return cpuPressureIncomplete, fmt.Errorf("%w: readings do not belong to the declared worker generation", errCPUPressure)
 	}
 	if !checks.skipBurn {
 		if r.Burn == nil {
@@ -153,7 +161,10 @@ func classifyCPUPressure(r cpuPressureRecord, checks cpuPressureChecks) (cpuPres
 			return cpuPressureIncomplete, fmt.Errorf("%w: second reading was taken before the worker ended", errCPUPressure)
 		}
 	}
-	if !checks.skipWall && r.Burn != nil && time.Duration(r.Burn.WallNanos) > r.ExecEnd.Sub(r.ExecStart) {
+	// Compared as unsigned values: converting an oversized report to a signed
+	// duration would wrap it negative. The window is positive here unless the
+	// bracket rule was disabled, in which case a non-positive window refuses.
+	if window := r.ExecEnd.Sub(r.ExecStart); !checks.skipWall && r.Burn != nil && (window <= 0 || r.Burn.WallNanos > uint64(window)) {
 		return cpuPressureIncomplete, fmt.Errorf("%w: worker duration exceeds the observed execution window", errCPUPressure)
 	}
 	if !checks.skipQuota {

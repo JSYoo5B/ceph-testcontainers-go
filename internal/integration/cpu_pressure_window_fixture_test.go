@@ -59,6 +59,9 @@ func TestCPUBurnReportRequiresEveryTypedField(t *testing.T) {
 		"float cpu":         `{"wall_ns":1,"cpu_ns":1.5,"iterations":1,"completed":true}`,
 		"exponent":          `{"wall_ns":1e3,"cpu_ns":1,"iterations":1,"completed":true}`,
 		"leading zero":      `{"wall_ns":01,"cpu_ns":1,"iterations":1,"completed":true}`,
+		"wall at 2^63":      `{"wall_ns":9223372036854775808,"cpu_ns":1,"iterations":1,"completed":true}`,
+		"wall at 2^64-1":    `{"wall_ns":18446744073709551615,"cpu_ns":1,"iterations":1,"completed":true}`,
+		"cpu at 2^63":       `{"wall_ns":1,"cpu_ns":9223372036854775808,"iterations":1,"completed":true}`,
 		"trailing object":   cpuBurnGood + cpuBurnGood,
 		"trailing garbage":  cpuBurnGood + "killed",
 	}
@@ -94,7 +97,17 @@ func TestCPUPressureThrottledNeedsEveryRule(t *testing.T) {
 		"quota removed after":         func(r *cpuPressureRecord) { r.After.Max = cpuMax{Unlimited: true, Period: 100000} },
 		"expected quota unlimited":    func(r *cpuPressureRecord) { r.Expected = cpuMax{Unlimited: true, Period: 100000} },
 		"generation incomplete":       func(r *cpuPressureRecord) { r.Generation = containerGeneration{} },
-		"generation replaced":         func(r *cpuPressureRecord) { r.After.Generation.StartedAt = "2026-10-25T00:01:00Z" },
+		"record id differs":           func(r *cpuPressureRecord) { r.Generation.ID = "c2" },
+		"record start differs":        func(r *cpuPressureRecord) { r.Generation.StartedAt = "2026-10-25T00:01:00Z" },
+		"pair from another container": func(r *cpuPressureRecord) {
+			r.Before.Generation.ID, r.After.Generation.ID = "c2", "c2"
+		},
+		"pair from another start": func(r *cpuPressureRecord) {
+			r.Before.Generation.StartedAt, r.After.Generation.StartedAt = "2026-10-25T00:01:00Z", "2026-10-25T00:01:00Z"
+		},
+		"wall wraps negative": func(r *cpuPressureRecord) { r.Burn.WallNanos = 1 << 63 },
+		"wall max uint64":     func(r *cpuPressureRecord) { r.Burn.WallNanos = ^uint64(0) },
+		"generation replaced": func(r *cpuPressureRecord) { r.After.Generation.StartedAt = "2026-10-25T00:01:00Z" },
 	}
 	for name, mutate := range cases {
 		w := cpuPressureWindow(t, cpuStatHit, "25000 100000\n")
@@ -146,6 +159,13 @@ func TestCPUPressureNegativeControlsBreakEachRule(t *testing.T) {
 		{"bracket", func(r *cpuPressureRecord) { r.Before.At = r.ExecStart.Add(time.Second) }, cpuStatHit, cpuPressureChecks{skipBracket: true}},
 		{"quota", func(r *cpuPressureRecord) { r.Expected.Quota = 50000 }, cpuStatHit, cpuPressureChecks{skipQuota: true}},
 		{"wall", func(r *cpuPressureRecord) { r.Burn.WallNanos = uint64(7 * time.Second) }, cpuStatHit, cpuPressureChecks{skipWall: true}},
+		{"join id", func(r *cpuPressureRecord) {
+			r.Generation.ID = "c2"
+		}, cpuStatHit, cpuPressureChecks{skipJoin: true}},
+		{"join start", func(r *cpuPressureRecord) {
+			r.Generation.StartedAt = "2026-10-25T00:01:00Z"
+		}, cpuStatHit, cpuPressureChecks{skipJoin: true}},
+		{"wall wraps", func(r *cpuPressureRecord) { r.Burn.WallNanos = 1 << 63 }, cpuStatHit, cpuPressureChecks{skipWall: true}},
 		{"periods", func(r *cpuPressureRecord) {}, cpuStatBase + "nr_periods 15\nnr_throttled 30\nthrottled_usec 1500\n", cpuPressureChecks{skipPeriods: true}},
 	}
 	for _, c := range cases {
