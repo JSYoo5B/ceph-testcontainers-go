@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 )
 
 // managerMetricsLimit bounds one scrape's output, and managerMetricsTimeout
@@ -92,45 +90,7 @@ func (m ManagerMetrics) Value(name string, labels map[string]string) (float64, e
 // 32 MiB, and a failed fetch or unparsable output is a *NativeFailure or an
 // error.
 func (c *Container) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
-	services, err := c.ManagerServices(ctx)
-	if err != nil {
-		return ManagerMetrics{}, err
-	}
-	endpoint := services["prometheus"]
-	if endpoint == "" {
-		return ManagerMetrics{}, invalidRequest("the MGR prometheus module serves no metrics: enable it with OverrideMGRModule and wait for ManagerServices")
-	}
-	if !strings.HasSuffix(endpoint, "/") {
-		endpoint += "/"
-	}
-	endpoint += "metrics"
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return ManagerMetrics{}, fmt.Errorf("select the control container: %w", err)
-	}
-	report, err := supervised.Run(ctx, control, "scrape manager metrics", managerMetricsTimeout, managerMetricsLimit, 64<<10,
-		"python3", "-c", managerMetricsScript, endpoint)
-	if err != nil {
-		return ManagerMetrics{}, fmt.Errorf("scrape %s: %w", endpoint, err)
-	}
-	switch {
-	case report.TimedOut:
-		return ManagerMetrics{}, fmt.Errorf("scrape %s timed out after %v", endpoint, managerMetricsTimeout)
-	case report.ExitCode != 0:
-		return ManagerMetrics{}, fmt.Errorf("scrape %s: %w", endpoint, nativeFailure("python3", report.ExitCode, nil, report.Stderr))
-	case report.StdoutTruncated:
-		return ManagerMetrics{}, fmt.Errorf("scrape %s: the metrics exceed %d bytes", endpoint, managerMetricsLimit)
-	}
-	metrics, err := parseMetrics(string(report.Stdout))
-	if err != nil {
-		return ManagerMetrics{}, fmt.Errorf("parse the metrics of %s: %w", endpoint, err)
-	}
-	if len(metrics.Samples) == 0 {
-		// A standby manager answers with an empty page.
-		return ManagerMetrics{}, fmt.Errorf("%s served no samples", endpoint)
-	}
-	metrics.URL = endpoint
-	return metrics, nil
+	return readManagerMetrics(ctx, c.ManagerServices, c.controlSupervisedLookup())
 }
 
 // parseMetrics reads the Prometheus text exposition format.
