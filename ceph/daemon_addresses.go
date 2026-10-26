@@ -68,29 +68,7 @@ type DaemonAddresses struct {
 // has: a host-network cluster advertises its host address, and an OSD that
 // is down keeps its last addresses.
 func (c *Container) DaemonAddresses(ctx context.Context) (DaemonAddresses, error) {
-	var result DaemonAddresses
-	mon, err := c.cephCLI(ctx, "mon", "dump", "--format", "json")
-	if err != nil {
-		return DaemonAddresses{}, fmt.Errorf("read monmap: %w", err)
-	}
-	mgr, err := c.cephCLI(ctx, "mgr", "dump", "--format", "json")
-	if err != nil {
-		return DaemonAddresses{}, fmt.Errorf("read mgrmap: %w", err)
-	}
-	osd, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
-	if err != nil {
-		return DaemonAddresses{}, fmt.Errorf("read osdmap: %w", err)
-	}
-	if err := parseMonitorAddresses(mon, &result); err != nil {
-		return DaemonAddresses{}, err
-	}
-	if err := parseManagerAddresses(mgr, &result); err != nil {
-		return DaemonAddresses{}, err
-	}
-	if err := parseOSDAddresses(osd, &result); err != nil {
-		return DaemonAddresses{}, err
-	}
-	return result, nil
+	return readDaemonAddresses(ctx, c.cephCLI)
 }
 
 type nativeAddressVector struct {

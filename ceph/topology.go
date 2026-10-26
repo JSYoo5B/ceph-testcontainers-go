@@ -914,12 +914,7 @@ type ManagerStatus struct {
 }
 
 func (c *Container) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
-	var status ManagerStatus
-	data, err := c.cephCLI(ctx, "mgr", "dump", "--format", "json")
-	if err == nil {
-		err = json.Unmarshal(data, &status)
-	}
-	return status, err
+	return readManagerStatus(ctx, c.cephCLI)
 }
 
 // monitorRemovalObserveInterval spaces membership reads while a removal runs.

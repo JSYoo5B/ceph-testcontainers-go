@@ -1,10 +1,6 @@
 package ceph
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-)
+import "context"
 
 // Status contains the subset of ceph status JSON used for readiness.
 // Use Ceph for other commands or the full JSON response.
@@ -32,15 +28,7 @@ type Status struct {
 
 // Status queries the monitor's JSON API through the container-local CLI.
 func (c *Container) Status(ctx context.Context) (Status, error) {
-	var s Status
-	data, err := c.cephCLI(ctx, "status", "--format", "json")
-	if err != nil {
-		return s, err
-	}
-	if err := json.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("decode ceph status: %w", err)
-	}
-	return s, nil
+	return readStatus(ctx, c.cephCLI)
 }
 
 // WaitForClean waits until a manager is available, the native OSD count
