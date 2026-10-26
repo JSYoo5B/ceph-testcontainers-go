@@ -182,3 +182,19 @@ adding a second settlement name. `Report.RetrievedSHA256` pairs with
 `File.SHA256`'s possibly incomplete structural-validation prefix. These three
 new declarations, the interface embedding/method and the report member were
 reviewed together; existing `Capture`/`Settle` names and behavior are retained.
+
+## RBD mirror package move
+
+The 41 exported declarations and 74 members of the RBD mirror family moved from
+`rbd` to the service-specific package `rbd/mirror` (the declaration count of
+`rbd` and `rbd/mirror` together is the previous 77, the member count the
+previous 94). The inventory labels the package by its directory,
+`rbd/mirror.`. The package name is `mirror`, so the repeated `Mirror` prefix was
+dropped from the types, constants and `RunMirror` functions (`Config`, `Mode`,
+`Scope`, `Daemon`, `ImageStatus`, `Namespace`, `Run`, `RunWithImages` and so
+on), while `Mirror` itself and every method name, receiver and signature
+shape were retained. No operation verb, handle or undo name changed, and no
+alias remains. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-rbd-mirror-package.md). The receipt was
+refreshed for this deliberate move only. CephFS mirror names are not yet part
+of it.

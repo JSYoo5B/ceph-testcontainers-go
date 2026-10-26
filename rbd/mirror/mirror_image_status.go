@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -13,17 +13,17 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// MirrorImageStatus is a read-only observation of the image in this link's
+// ImageStatus is a read-only observation of the image in this link's
 // selected source and destination namespaces. State, Description and LastUpdate
 // are the destination's native local status, not its remote peer status.
 // ReplayReady means an owned receiving process is currently replaying this
 // source-primary/destination-secondary pair. It proves neither completion of a
 // particular write nor completion of a mirror snapshot. Verify application data
 // or the application's explicit checkpoint separately.
-type MirrorImageStatus struct {
+type ImageStatus struct {
 	Pool, SourceNamespace, DestinationNamespace, Name string
 	GlobalID, SourceImageID, DestinationImageID       string
-	Mode                                              MirrorMode
+	Mode                                              Mode
 	SourcePrimary, DestinationPrimary                 bool
 	SourceMirrorState, DestinationMirrorState         string
 	State, Description, LastUpdate                    string
@@ -36,8 +36,8 @@ type MirrorImageStatus struct {
 // ownership or restarts a process. Original pool and namespace policy identities
 // are checked before and after reading the image. Source/destination global IDs
 // must agree. A non-zero partial observation can accompany an error.
-func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (MirrorImageStatus, error) {
-	var result MirrorImageStatus
+func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
+	var result ImageStatus
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return result, err
 	}
@@ -64,8 +64,8 @@ func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (MirrorImage
 
 // The original owner's gate is held throughout this bounded read. A non-nil
 // scope belongs to a retained view; it never replaces the owner's config.
-func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (MirrorImageStatus, error) {
-	var result MirrorImageStatus
+func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
+	var result ImageStatus
 	pool, sourceNS, destinationNS := m.config.Pool, m.config.SourceNamespace, m.config.DestinationNamespace
 	mode := m.config.Mode
 	checkIdentities := m.checkRBDMirrorObservedIdentities
@@ -95,7 +95,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 	result.SourceMirrorState = source.State
 	if scope != nil {
 		mode, result.Mode = source.Mode, source.Mode
-		if scope.policies.source.selected.Mode == "pool" && mode != MirrorModeJournal {
+		if scope.policies.source.selected.Mode == "pool" && mode != ModeJournal {
 			return result, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
 		}
 	}
@@ -176,7 +176,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 				if err != nil {
 					return result, err
 				}
-				result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool MirrorPoolReplayerStatus) bool {
+				result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
 					return pool.Pool == m.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
 				})
 				break
@@ -233,22 +233,22 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 // appears its local image identity is pinned as well.
 // Source and destination image replacements are rejected, never adopted.
 // Deadline/cancellation returns the last observation and the last query error.
-func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (MirrorImageStatus, error) {
+func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
-		return MirrorImageStatus{}, err
+		return ImageStatus{}, err
 	}
 	if m == nil {
-		return MirrorImageStatus{}, rbdImageGuardError("RBD mirror fixture is unavailable")
+		return ImageStatus{}, rbdImageGuardError("RBD mirror fixture is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	return waitRBDMirrorReplay(ctx, time.Second, func(attempt context.Context) (MirrorImageStatus, error) {
+	return waitRBDMirrorReplay(ctx, time.Second, func(attempt context.Context) (ImageStatus, error) {
 		return m.ImageStatus(attempt, imageName)
 	})
 }
 
-func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorImageStatus, error)) (MirrorImageStatus, error) {
-	var last MirrorImageStatus
+func waitRBDMirrorReplay(ctx context.Context, interval time.Duration, observe func(context.Context) (ImageStatus, error)) (ImageStatus, error) {
+	var last ImageStatus
 	var lastErr error
 	var sourceID, destinationID, globalID string
 	enrolled := false
@@ -351,10 +351,10 @@ func validateRBDMirrorObservedImage(name string) error {
 type rbdObservedInfo struct {
 	ID, GlobalID, State string
 	Primary             bool
-	Mode                MirrorMode
+	Mode                Mode
 }
 
-func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Container, spec, name string, mode MirrorMode) (rbdObservedInfo, error) {
+func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Container, spec, name string, mode Mode) (rbdObservedInfo, error) {
 	var result rbdObservedInfo
 	data, err := multicluster.Exec(ctx, client, "rbd", "info", spec, "--format", "json")
 	if err != nil {
@@ -363,7 +363,7 @@ func readRBDMirrorObservedInfo(ctx context.Context, client testcontainers.Contai
 	return decodeRBDMirrorObservedInfo(data, name, mode)
 }
 
-func decodeRBDMirrorObservedInfo(data []byte, name string, mode MirrorMode) (rbdObservedInfo, error) {
+func decodeRBDMirrorObservedInfo(data []byte, name string, mode Mode) (rbdObservedInfo, error) {
 	var result rbdObservedInfo
 	// Explicit native key tags matter: global_id is not Go's GlobalID.
 	var tagged struct {
@@ -390,7 +390,7 @@ func decodeRBDMirrorObservedInfo(data []byte, name string, mode MirrorMode) (rbd
 		return result, rbdImageGuardError("decode RBD mirror image info: missing or differing mirroring fields")
 	}
 	result.ID, result.GlobalID, result.State, result.Primary = *tagged.ID, *mirror.GlobalID, *mirror.State, *mirror.Primary
-	result.Mode = MirrorMode(*mirror.Mode)
+	result.Mode = Mode(*mirror.Mode)
 	return result, nil
 }
 
@@ -553,12 +553,12 @@ func readRBDMirrorObservedPolicy(ctx context.Context, client testcontainers.Cont
 	return policy, nil
 }
 
-func readRBDMirrorObservedDaemon(ctx context.Context, daemon testcontainers.Container) (*MirrorDaemonStatus, error) {
+func readRBDMirrorObservedDaemon(ctx context.Context, daemon testcontainers.Container) (*DaemonStatus, error) {
 	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status")
 	if err != nil {
 		return nil, rbdImageQueryError("read RBD receiving process status", err)
 	}
-	var status MirrorDaemonStatus
+	var status DaemonStatus
 	if json.Unmarshal(data, &status) != nil || status.PoolReplayers == nil {
 		return nil, rbdImageGuardError("decode RBD receiving process status: missing or malformed pool replayers")
 	}

@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -13,35 +13,35 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// MirrorReceiverStatus observes the selected pool/namespace and an exact
+// ReceiverStatus observes the selected pool/namespace and an exact
 // owned receiver cohort. Ready means scope discovery and native leader/member
 // agreement, including an owned leader. It requires no mirrored image and
 // proves neither image replay nor delivery of a particular write/checkpoint.
 // ForeignInstances makes the exact-cohort predicate false; it does not mean
 // that another fixture sharing the receiving pool is unhealthy.
-type MirrorReceiverStatus struct {
+type ReceiverStatus struct {
 	Pool, SourceNamespace, DestinationNamespace string
 	SourceFSID, DestinationFSID                 string
 	SourcePoolID, DestinationPoolID             int64
 	PeerID                                      string
 	ExpectedDaemons                             []string
-	Daemons                                     map[string]MirrorReceiverDaemonStatus
+	Daemons                                     map[string]ReceiverDaemonStatus
 	LeaderDaemonName, LeaderInstanceID          string
 	Instances, ForeignInstances                 []string
 	DaemonProblems                              map[string]string
 	Ready                                       bool
 }
 
-// MirrorReceiverDaemonStatus is one current owned receiver's selected native
+// ReceiverDaemonStatus is one current owned receiver's selected native
 // pool/peer and namespace discovery, not an aggregate image replay state.
-type MirrorReceiverDaemonStatus struct {
+type ReceiverDaemonStatus struct {
 	ContainerID, ClientName, StartedAt      string
 	InstanceID, LeaderInstanceID, PoolState string
 	Running, NamespaceDiscovered, Leader    bool
 }
 
 type rbdReceiverMemberWitness struct {
-	daemon      *MirrorDaemon
+	daemon      *Daemon
 	handle      testcontainers.Container
 	cid, client string
 }
@@ -64,7 +64,7 @@ type rbdReceiverWitness struct {
 // owned daemon is stopped. It never adopts a process, bootstraps a peer or
 // creates an image. The observation takes at most 30 seconds, bounded by ctx,
 // including owner/member admission. A partial report may accompany an error.
-func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (MirrorReceiverStatus, error) {
+func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	status, _, err := m.receiverStatus(ctx, expectedDaemons, nil)
 	return status, err
 }
@@ -76,19 +76,19 @@ func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) 
 // Same-container Stop/Start may produce a new native instance. Polls release
 // the fixture lock. Cancellation returns the last useful report, with Ready
 // cleared, and only canonical context causes in the secret-safe error chain.
-func (m *Mirror) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (MirrorReceiverStatus, error) {
+func (m *Mirror) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if m == nil {
-		return MirrorReceiverStatus{}, rbdReceiverGuard("RBD receiver fixture is unavailable")
+		return ReceiverStatus{}, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	return waitRBDReceiverReady(ctx, time.Second, func(ctx context.Context, previous *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	return waitRBDReceiverReady(ctx, time.Second, func(ctx context.Context, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 		return m.receiverStatus(ctx, expectedDaemons, previous)
 	})
 }
 
-func waitRBDReceiverReady(ctx context.Context, interval time.Duration, observe func(context.Context, *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error)) (MirrorReceiverStatus, error) {
-	var last MirrorReceiverStatus
+func waitRBDReceiverReady(ctx context.Context, interval time.Duration, observe func(context.Context, *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error)) (ReceiverStatus, error) {
+	var last ReceiverStatus
 	var witness *rbdReceiverWitness
 	var lastErr error
 	for {
@@ -134,7 +134,7 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 		return nil, err
 	}
 	all := len(names) == 0
-	owned := make(map[string]*MirrorDaemon)
+	owned := make(map[string]*Daemon)
 	for _, d := range m.daemons {
 		if d == nil || d.DaemonName == "" || owned[d.DaemonName] != nil {
 			return nil, rbdReceiverGuard("RBD owned receiver inventory is malformed")
@@ -176,12 +176,12 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 	return w, nil
 }
 
-func (m *Mirror) receiverStatus(ctx context.Context, names []string, previous *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+func (m *Mirror) receiverStatus(ctx context.Context, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 	return m.receiverStatusForScope(ctx, nil, names, previous)
 }
 
-func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
-	var result MirrorReceiverStatus
+func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
+	var result ReceiverStatus
 	if m == nil {
 		return result, previous, rbdReceiverGuard("RBD receiver fixture is unavailable")
 	}
@@ -198,10 +198,10 @@ func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverS
 	if err != nil {
 		return result, previous, err
 	}
-	result = MirrorReceiverStatus{
+	result = ReceiverStatus{
 		Pool: scope.selection[0], SourceNamespace: scope.selection[1], DestinationNamespace: scope.selection[2],
 		SourceFSID: w.clusters.source, DestinationFSID: w.clusters.destination, SourcePoolID: w.pools.source, DestinationPoolID: w.pools.destination, PeerID: w.peer.uuid,
-		ExpectedDaemons: slices.Clone(w.names), Daemons: make(map[string]MirrorReceiverDaemonStatus), DaemonProblems: make(map[string]string),
+		ExpectedDaemons: slices.Clone(w.names), Daemons: make(map[string]ReceiverDaemonStatus), DaemonProblems: make(map[string]string),
 	}
 	if err := m.checkRBDReceiverScopeIdentities(ctx, scope); err != nil {
 		return result, w, err
@@ -248,7 +248,7 @@ func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverS
 }
 
 type rbdReceiverNativeObservation struct {
-	report  MirrorReceiverDaemonStatus
+	report  ReceiverDaemonStatus
 	members []string
 	problem string
 }
@@ -458,7 +458,7 @@ func legacyRBDNamespaceReplayers(images, names json.RawMessage) (json.RawMessage
 	return data, nil
 }
 
-func deriveRBDReceiverElection(result *MirrorReceiverStatus, observations map[string]rbdReceiverNativeObservation) {
+func deriveRBDReceiverElection(result *ReceiverStatus, observations map[string]rbdReceiverNativeObservation) {
 	ids := make(map[string]bool)
 	ownedIDs := make(map[string]bool)
 	for _, name := range result.ExpectedDaemons {

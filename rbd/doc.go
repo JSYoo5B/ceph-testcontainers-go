@@ -1,6 +1,6 @@
 // Package rbd prepares RBD server fixtures in disposable Ceph clusters:
-// initialized image pools, namespaces, pool and image mirroring between two
-// clusters, and full or incremental backup transport.
+// initialized image pools, namespaces and full or incremental backup transport.
+// Mirroring between two clusters is in the rbd/mirror package.
 //
 // Run starts a cluster with at least one initialized RBD pool. InitPool
 // prepares a pool on a cluster created by ceph.Run or another service

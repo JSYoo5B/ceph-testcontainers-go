@@ -104,3 +104,67 @@ that terminate a fixture were rerun unchanged. No native evidence is claimed.
 The decision step for moving packages is deferred as described above. No
 CHANGELOG or migration entry is added because no public name, signature or
 behavior changes.
+
+## Owner decision and RBD move
+
+The layout question above is settled: the public mirror families live in
+service-specific subpackages, `rbd/mirror` and `cephfs/mirror`, with no common
+public Mirror abstraction and no new shared framework. The proven shared
+mechanics stay in `internal/multicluster`. This change moves the RBD family
+only; the CephFS family remains in `cephfs` and is moved by a following change
+with its own inventory.
+
+### Old to new (RBD)
+
+Moved files: `rbd/mirror*.go`, `rbd/network.go` (`InterruptPeerLink`) and their
+tests (`mirror*_test.go`, `context_lock_test.go`, `wait_context_test.go`) to
+`rbd/mirror/`, plus the role-image integration scenario
+`TestRoleImagesMirrorRefresh`, whose test name and `//ci:` batch name are
+unchanged. Exported names: `RunMirror` becomes `Run`, `RunMirrorWithImages`
+becomes `RunWithImages`, `Mirror` is kept, and the `Mirror` prefix is dropped
+from `MirrorConfig`, `MirrorMode` (and its two constants), `MirrorScope` (and its
+two constants), `MirrorDaemon`, `MirrorDaemonStatus`, `MirrorPoolReplayerStatus`,
+`MirrorImageStatus`, `MirrorNamespace`, `MirrorNamespaceState`, `MirrorPolicies`,
+`MirrorReceiverStatus` and `MirrorReceiverDaemonStatus`. All 74 members keep
+their names, receivers and signature shapes; only the type names inside the
+signatures follow the table. The full table is in
+[the upgrade guide](../guides/upgrading-rbd-mirror-package.md). Callers: 18 Go
+files under `internal/integration` and the unit tests moved with the package.
+Docs: `docs/rbd.md` keeps pool, namespace, client and backup reference; the
+mirror reference, examples, limitations and pitfalls moved to
+`docs/rbd-mirror.md`.
+
+### Parent-owned declarations and bridges
+
+The compile-level measurement above held: the moved files needed the three-line
+`invalid` helper (copied as an unexported helper in `rbd/mirror/errors.go`, same
+error kind) and `ListNamespaces`, which the mirror package calls through the
+exported `rbd.ListNamespaces`. No unexported parent state is shared, and no
+method needed to be added to a type declared in the parent.
+
+### Import graph
+
+```
+rbd/mirror --> rbd ----------> ceph
+rbd/mirror --> internal/multicluster --> ceph, fault, internal/servicehook
+rbd/mirror --> internal/clusterutil, ceph, fault
+rbd ----------> ceph, internal/multicluster (no import of rbd/mirror)
+cephfs -------> internal/multicluster (unchanged, not yet moved)
+```
+
+`rbd` does not import `rbd/mirror` (checked with `go list -deps ./rbd`), so the
+new edge `rbd/mirror` to `rbd` is acyclic.
+
+### Behavior preserved
+
+Declaration bodies, locking, admission, scoped identity, generation and
+lifecycle ownership, cancellation, uncertain outcomes, retryable cleanup and the
+independent native data checks are byte for byte as before except for the
+renamed identifiers and the package clause. The unit tests moved with their
+assertions unchanged. This change adds no native evidence of its own.
+
+### Remaining
+
+`cephfs/mirror` (17 exported types and 32 functions and methods at the
+inventory above, 13 caller files, 3 Markdown pages) is not moved here, and no
+CephFS name is renamed.

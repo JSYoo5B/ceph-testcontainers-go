@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 )
 
 // TestRBDMirrorPeerPathCut cuts one path of an RBD snapshot mirror: the
@@ -46,7 +47,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -162,7 +163,7 @@ type rbdMirrorProgress struct {
 
 // rbdMirrorSnapshotProgress reads the destination's mirror status of image
 // and decodes the JSON after "replaying, " in its description.
-func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbd.Mirror, image string) rbdMirrorProgress {
+func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbdmirror.Mirror, image string) rbdMirrorProgress {
 	t.Helper()
 	progress, err := rbdMirrorImageProgress(ctx, mirror, image)
 	if err != nil {
@@ -172,7 +173,7 @@ func rbdMirrorSnapshotProgress(t *testing.T, ctx context.Context, mirror *rbd.Mi
 }
 
 // rbdMirrorImageProgress is rbdMirrorSnapshotProgress that returns its error.
-func rbdMirrorImageProgress(ctx context.Context, mirror *rbd.Mirror, image string) (rbdMirrorProgress, error) {
+func rbdMirrorImageProgress(ctx context.Context, mirror *rbdmirror.Mirror, image string) (rbdMirrorProgress, error) {
 	status, err := mirror.ImageStatus(ctx, image)
 	if err != nil {
 		return rbdMirrorProgress{}, fmt.Errorf("mirror status of %s: %w", image, err)

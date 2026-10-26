@@ -21,7 +21,7 @@ native changes conflict with what the fixture tracks.
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
 | `radosgw-admin` in a gateway's realm and zone | `rgw.Gateway.Admin(ctx, args...)` | The gateway container |
 | `radosgw-admin` in a multisite zone | `rgw.Multisite.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The fixture's setup client for that zone |
-| `rbd` on either side of a mirror link | `rbd.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
+| `rbd` on either side of a mirror link | `rbdmirror.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
 | A daemon's admin socket command | `cluster.Ceph(ctx, "tell", daemon, ...)`, or `ceph --admin-daemon` in the daemon's container | Control container or daemon container |
 | A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
 
@@ -136,7 +136,7 @@ exceptions:
 | `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `cluster.ObjectWatchers` |
 | `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `rgw.Multisite.BucketSyncStatus`, `WaitBucketSyncReady` |
 | `radosgw-admin sync status` | The comparison with remote logs appears only in the human-readable output, even with `--format json` | `rgw.Multisite.SyncStatus`, `WaitSyncReady` |
-| `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbd.Mirror.PolicyStatus` |
+| `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Mirror.PolicyStatus` |
 
 Decode only the fields you need, and keep unknown fields tolerated: Ceph adds
 fields between releases. See [Ceph releases and images](releases-and-images.md)
@@ -836,8 +836,8 @@ out, err = exec(ctx, fsDaemon, "ceph", "--admin-daemon",
 	"/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", "tc-cephfs@1")
 ```
 
-Prefer the typed observers when they cover your case: `rbd.MirrorDaemon.Status`,
-`rbd.Mirror.ReceiverStatus`, `ImageStatus`, `cephfs.Mirror.DirectoryStatus`.
+Prefer the typed observers when they cover your case: `rbdmirror.Daemon.Status`,
+`rbdmirror.Mirror.ReceiverStatus`, `ImageStatus`, `cephfs.Mirror.DirectoryStatus`.
 
 ### Observing Cephx keys from the daemon side
 
@@ -893,7 +893,7 @@ any key, see the
 
 ## RBD mirror setup clients
 
-`rbd.RunMirror` starts one setup client per side. `SourceRBD` and
+`rbdmirror.Run` starts one setup client per side. `SourceRBD` and
 `DestinationRBD` run `rbd <args>` in them, with that cluster's configuration
 and credentials. Use them for operations the link does not wrap, such as
 promotion, demotion, resync or explicit peer inspection:
@@ -1031,7 +1031,7 @@ cannot even be detected.
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | Subvolume helpers, which check native identity | The typed subvolume helpers |
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
-| `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbd.Mirror` operations, which compare captured policies | `rbd.Mirror` methods, `Rebootstrap` |
+| `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `OverrideConfig` refuses them | Choose `WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 
@@ -1065,8 +1065,8 @@ and refuse to overwrite outside edits.
   `ControlContainer`, `ControlImage`, `Configuration`, `OverrideConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
-- [rbd.md](../rbd.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
-  `MirrorDaemon.Status`.
+- [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
+  `Daemon.Status`.
 - [cephfs.md](../cephfs.md): `Filesystem.Sessions`, `Mirror.DirectoryStatus`.
 - [rgw.md](../rgw.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
   `DestinationAdmin`, `ZoneAdmin`.

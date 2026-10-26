@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -24,9 +24,9 @@ func newNamespaceImageHarness(t *testing.T, count int) *namespaceImageHarness {
 	t.Helper()
 	h := namespaceImageHarnessForReceiver(t, newNamespaceBindingHarness(t, count))
 	for i, mapping := range [][2]string{{"ns-a", "ns-b"}, {"ns-c", "ns-d"}, {"ns-e", "ns-f"}} {
-		mode := MirrorModeSnapshot
+		mode := ModeSnapshot
 		if i == 2 {
-			mode = MirrorModeJournal
+			mode = ModeJournal
 		}
 		h.setImages(mapping, mode, fmt.Sprint(i))
 	}
@@ -71,7 +71,7 @@ func namespaceImageHarnessForReceiver(t *testing.T, base *receiverHarness) *name
 	return h
 }
 
-func (h *namespaceImageHarness) setImages(mapping [2]string, mode MirrorMode, suffix string) {
+func (h *namespaceImageHarness) setImages(mapping [2]string, mode Mode, suffix string) {
 	source := rbdMirrorImageSpec("images", mapping[0], "volume")
 	destination := rbdMirrorImageSpec("images", mapping[1], "volume")
 	global := "global-" + suffix
@@ -112,9 +112,9 @@ func TestRBDNamespaceImageStatusUsesBoundScopesAndActualModes(t *testing.T) {
 	for i, mapping := range [][2]string{{"ns-a", "ns-b"}, {"ns-c", "ns-d"}, {"ns-e", "ns-f"}} {
 		view := namespaceBindingMustBind(t, h.receiverHarness, mapping[0], mapping[1])
 		status, err := view.ImageStatus(t.Context(), "volume")
-		mode := MirrorModeSnapshot
+		mode := ModeSnapshot
 		if i == 2 {
-			mode = MirrorModeJournal
+			mode = ModeJournal
 		}
 		if err != nil || !status.ReplayReady || status.Mode != mode || status.SourceNamespace != mapping[0] || status.DestinationNamespace != mapping[1] || status.GlobalID != fmt.Sprint("global-", i) || status.SourceImageID != fmt.Sprint("source-", i) || status.DestinationImageID != fmt.Sprint("destination-", i) || status.DaemonName != "a" || status.InstanceID != "100" {
 			t.Fatalf("bound image report: %+v %v", status, err)
@@ -124,13 +124,13 @@ func TestRBDNamespaceImageStatusUsesBoundScopesAndActualModes(t *testing.T) {
 		}
 	}
 	// Image-scoped native policy can also contain a journal image.
-	h.setImages([2]string{"ns-c", "ns-d"}, MirrorModeJournal, "journal-image")
+	h.setImages([2]string{"ns-c", "ns-d"}, ModeJournal, "journal-image")
 	view := namespaceBindingMustBind(t, h.receiverHarness, "ns-c", "ns-d")
-	if status, err := view.ImageStatus(t.Context(), "volume"); err != nil || !status.ReplayReady || status.Mode != MirrorModeJournal {
+	if status, err := view.ImageStatus(t.Context(), "volume"); err != nil || !status.ReplayReady || status.Mode != ModeJournal {
 		t.Fatalf("image policy native journal: %+v %v", status, err)
 	}
 	owner, err := h.m.ImageStatus(t.Context(), "volume")
-	if err != nil || !owner.ReplayReady || owner.SourceNamespace != "ns-a" || owner.Mode != MirrorModeSnapshot || h.m.config != config || h.m.policyIdentities != policies || h.m.receiverPeer != peer || len(h.m.daemons) != 1 {
+	if err != nil || !owner.ReplayReady || owner.SourceNamespace != "ns-a" || owner.Mode != ModeSnapshot || h.m.config != config || h.m.policyIdentities != policies || h.m.receiverPeer != peer || len(h.m.daemons) != 1 {
 		t.Fatal("view changed original owner contract", err)
 	}
 	namespaceImageReadOnly(t, h)
@@ -140,7 +140,7 @@ func TestRBDNamespaceImageStatusDefaultNamespaceSelections(t *testing.T) {
 	for _, mapping := range [][2]string{{"", ""}, {"", "ns-b"}, {"ns-a", ""}} {
 		t.Run(fmt.Sprint(mapping), func(t *testing.T) {
 			h := namespaceImageHarnessForReceiver(t, newReceiverHarness(t, mapping[0], mapping[1], 1))
-			h.setImages(mapping, MirrorModeSnapshot, "default")
+			h.setImages(mapping, ModeSnapshot, "default")
 			view := namespaceBindingMustBind(t, h.receiverHarness, mapping[0], mapping[1])
 			status, err := view.ImageStatus(t.Context(), "volume")
 			if err != nil || !status.ReplayReady || status.SourceNamespace != mapping[0] || status.DestinationNamespace != mapping[1] {
@@ -174,7 +174,7 @@ func TestRBDNamespaceImageStatusModeAndNativeSchemaGuards(t *testing.T) {
 			case "destination-mode":
 				h.destinationInfo[dst] = rbdImageStatusInfo("destination-2", "snapshot", "global-2", false)
 			case "pool-snapshot":
-				h.setImages([2]string{"ns-e", "ns-f"}, MirrorModeSnapshot, "2")
+				h.setImages([2]string{"ns-e", "ns-f"}, ModeSnapshot, "2")
 			case "global-id":
 				h.destinationInfo[dst] = rbdImageStatusInfo("destination-2", "journal", "foreign", false)
 			case "info-duplicate":
@@ -230,7 +230,7 @@ func TestRBDNamespaceImageStatusTransitionsAndMissingReports(t *testing.T) {
 				values[dst] = namespaceImagePatch(t, values[dst], func(v map[string]any) { v["mirroring"].(map[string]any)["state"] = state })
 			}
 			status, err := view.ImageStatus(t.Context(), "volume")
-			if err != nil || status.ReplayReady || status.SourceImageID == "" || status.DestinationImageID == "" || status.Mode != MirrorModeSnapshot {
+			if err != nil || status.ReplayReady || status.SourceImageID == "" || status.DestinationImageID == "" || status.Mode != ModeSnapshot {
 				t.Fatalf("transition report: %+v %v", status, err)
 			}
 		})
@@ -376,7 +376,7 @@ func TestRBDNamespaceImageWaitPinsModeAndImageDuringDestinationPending(t *testin
 	for _, change := range []string{"mode", "source-id", "global-id"} {
 		t.Run(change, func(t *testing.T) {
 			h := newNamespaceImageHarness(t, 1)
-			h.setImages([2]string{"ns-c", "ns-d"}, MirrorModeJournal, "1")
+			h.setImages([2]string{"ns-c", "ns-d"}, ModeJournal, "1")
 			view := namespaceBindingMustBind(t, h.receiverHarness, "ns-c", "ns-d")
 			calls := 0
 			h.destination.failure = func(args []string) error {
@@ -463,7 +463,7 @@ func TestRBDNamespaceImageObserverPreservesCanonicalCausesAndGates(t *testing.T)
 				unlock = h.m.daemons[0].mu.Unlock
 			}
 			type observed struct {
-				status MirrorImageStatus
+				status ImageStatus
 				err    error
 			}
 			got := receiverTestBoundedCall(t, cancel, unlock, func() observed { s, e := view.ImageStatus(ctx, "volume"); return observed{s, e} })
@@ -536,7 +536,7 @@ func TestRBDNamespaceImageWaitReleasesOwnerAndRetainsLastReport(t *testing.T) {
 	}
 	// The legacy loop callback boundary occurs after ImageStatus releases owner.
 	var observed bool
-	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(attempt context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(attempt context.Context) (ImageStatus, error) {
 		s, e := view.ImageStatus(attempt, "volume")
 		if !h.m.mu.TryLock() {
 			t.Fatal("observation held owner across poll boundary")
@@ -612,7 +612,7 @@ func TestRBDNamespaceImageObserverRejectsUnavailableBeforeNative(t *testing.T) {
 			t.Fatal("unsafe name reached native CLI")
 		}
 	}
-	for _, view := range []*MirrorNamespace{nil, {}, {owner: &Mirror{}}} {
+	for _, view := range []*Namespace{nil, {}, {owner: &Mirror{}}} {
 		if s, e := view.ImageStatus(t.Context(), "volume"); e == nil || s.ReplayReady {
 			t.Fatal("unavailable image view accepted")
 		}
@@ -636,7 +636,7 @@ func TestRBDNamespaceImageWaitAcceptsPendingDestinationAndCurrentOneShotCohort(t
 		return nil
 	}
 	status, err := view.waitReplayReady(t.Context(), time.Millisecond, "volume")
-	if err != nil || !status.ReplayReady || status.Mode != MirrorModeJournal || status.SourceImageID != "source-2" || status.DestinationImageID != "destination-2" || calls != 3 {
+	if err != nil || !status.ReplayReady || status.Mode != ModeJournal || status.SourceImageID != "source-2" || status.DestinationImageID != "destination-2" || calls != 3 {
 		t.Fatalf("legitimate pending destination failed: %+v %v calls=%d", status, err, calls)
 	}
 	zero := newNamespaceImageHarness(t, 0)
@@ -698,7 +698,7 @@ func TestRBDNamespaceImagePublicWaitDeadlineAndGuardAreSecretSafe(t *testing.T) 
 	// legacy loop rather than adopting another valid status on a later attempt.
 	calls := 0
 	safe := scopedRBDImageError(t.Context(), errors.Join(rbdReceiverQuery(t.Context(), "native query", errors.New("mixed-secret")), fmt.Errorf("wrapped: %w", rbdReceiverGuard("fixed guard"))))
-	_, err = waitRBDMirrorReplay(t.Context(), time.Millisecond, func(context.Context) (MirrorImageStatus, error) { calls++; return MirrorImageStatus{}, safe })
+	_, err = waitRBDMirrorReplay(t.Context(), time.Millisecond, func(context.Context) (ImageStatus, error) { calls++; return ImageStatus{}, safe })
 	if err == nil || !scopedRBDImagePermanent(err) || calls != 1 || strings.Contains(err.Error(), "mixed-secret") {
 		t.Fatalf("mixed guard did not stop immediately: calls=%d %v", calls, err)
 	}

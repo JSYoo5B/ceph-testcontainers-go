@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -11,44 +11,45 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// MirrorScope selects explicit image enrollment or automatic journal-image
+// Scope selects explicit image enrollment or automatic journal-image
 // enrollment for one pool/namespace. It is separate from snapshot/journal Mode.
-type MirrorScope string
+type Scope string
 
 const (
-	MirrorScopeImage MirrorScope = "image"
-	MirrorScopePool  MirrorScope = "pool"
+	ScopeImage Scope = "image"
+	ScopePool  Scope = "pool"
 )
 
-// MirrorNamespaceState reports native policy for a selected pool/namespace.
+// NamespaceState reports native policy for a selected pool/namespace.
 // An empty Namespace/RemoteNamespace identifies the actual default namespace.
 // Mode is disabled, init-only, image or pool. MirrorUUID is a native mirroring
 // identity, not the cluster FSID. A configured policy alone proves no replication.
-type MirrorNamespaceState struct {
+type NamespaceState struct {
 	PoolID                                             int64
 	Pool, Namespace, RemoteNamespace, Mode, MirrorUUID string
 }
 
-// MirrorPolicies reports both current native policies. Readback does not
+// Policies reports both current native policies. Readback does not
 // adopt ownership of namespaces or permit their deletion.
-type MirrorPolicies struct {
-	Source, Destination MirrorNamespaceState
+type Policies struct {
+	Source, Destination NamespaceState
 }
 
 // PolicyStatus reads this link's selected namespace policies after checking the
 // original native pool IDs. External policy changes are reported as native
 // state; callers compare Scope and RemoteNamespace with their desired fixture.
-func (m *Mirror) PolicyStatus(ctx context.Context) (MirrorPolicies, error) {
-	var status MirrorPolicies
+func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
+	var status Policies
 	if m == nil {
 		return status, invalid(errors.New("RBD mirror fixture is unavailable"))
 	}
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
-		return MirrorPolicies{}, err
+		return Policies{}, err
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
@@ -73,21 +74,21 @@ func (m *Mirror) PolicyStatus(ctx context.Context) (MirrorPolicies, error) {
 	return status, m.checkRBDMirrorPools(ctx)
 }
 
-func namespacePolicyState(pool, namespace string, native nativeRBDMirrorPolicy) MirrorNamespaceState {
+func namespacePolicyState(pool, namespace string, native nativeRBDMirrorPolicy) NamespaceState {
 	remote := ""
 	if native.RemoteNamespace != nil {
 		remote = *native.RemoteNamespace
 	}
-	return MirrorNamespaceState{Pool: pool, Namespace: namespace, RemoteNamespace: remote, Mode: native.Mode, MirrorUUID: native.MirrorUUID}
+	return NamespaceState{Pool: pool, Namespace: namespace, RemoteNamespace: remote, Mode: native.Mode, MirrorUUID: native.MirrorUUID}
 }
 
 var rbdMirrorNamespaceName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
-func normalizeRBDMirrorScopeAndNamespaces(config MirrorConfig) (MirrorConfig, error) {
+func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 	if config.Scope == "" {
-		config.Scope = MirrorScopeImage
+		config.Scope = ScopeImage
 	}
-	if config.Scope != MirrorScopeImage && config.Scope != MirrorScopePool {
+	if config.Scope != ScopeImage && config.Scope != ScopePool {
 		return config, invalid(errors.New("RBD mirror scope must be image or pool"))
 	}
 	for _, namespace := range []string{config.SourceNamespace, config.DestinationNamespace} {
@@ -95,11 +96,11 @@ func normalizeRBDMirrorScopeAndNamespaces(config MirrorConfig) (MirrorConfig, er
 			return config, invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
 		}
 	}
-	if config.Scope == MirrorScopePool {
+	if config.Scope == ScopePool {
 		if config.Mode == "" {
-			config.Mode = MirrorModeJournal
+			config.Mode = ModeJournal
 		}
-		if config.Mode != MirrorModeJournal {
+		if config.Mode != ModeJournal {
 			return config, invalid(errors.New("pool-scope RBD mirroring supports journal mode only"))
 		}
 	}
@@ -124,7 +125,7 @@ type rbdMirrorPoolIdentities struct {
 	sourcePool, destinationPool *ceph.Pool
 }
 
-func preflightRBDMirrorPools(ctx context.Context, config MirrorConfig) (*rbdMirrorPoolIdentities, error) {
+func preflightRBDMirrorPools(ctx context.Context, config Config) (*rbdMirrorPoolIdentities, error) {
 	identities := &rbdMirrorPoolIdentities{}
 	for _, site := range []struct {
 		cluster   *ceph.Container
@@ -147,7 +148,7 @@ func preflightRBDMirrorPools(ctx context.Context, config MirrorConfig) (*rbdMirr
 		if pool.Type != "replicated" {
 			return nil, errors.New("RBD mirror metadata pool must be replicated")
 		}
-		namespaces, err := ListNamespaces(ctx, site.cluster, config.Pool)
+		namespaces, err := rbd.ListNamespaces(ctx, site.cluster, config.Pool)
 		if err != nil {
 			return nil, err
 		}
@@ -240,7 +241,7 @@ func (m *Mirror) legacyClient(client testcontainers.Container) bool {
 // legacyCluster reports whether cluster cannot map namespaces: the rbd of its
 // control image, whose release its daemons run, has no --remote-namespace.
 // A patched image of an older release can have it. Without that evidence,
-// as for a link that RunMirror did not set up, the release decides.
+// as for a link that Run did not set up, the release decides.
 func (m *Mirror) legacyCluster(cluster *ceph.Container) bool {
 	if legacy, detected := m.legacyClusters[cluster]; detected {
 		return legacy
@@ -344,7 +345,7 @@ type rbdMirrorPolicyStep struct {
 	legacy bool
 }
 
-func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope MirrorScope, base, selected nativeRBDMirrorPolicy, legacy bool) ([]rbdMirrorPolicyStep, error) {
+func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope Scope, base, selected nativeRBDMirrorPolicy, legacy bool) ([]rbdMirrorPolicyStep, error) {
 	if base.Mode != "disabled" && base.SiteName != site {
 		return nil, invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 	}

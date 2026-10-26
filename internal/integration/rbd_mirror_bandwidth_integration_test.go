@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -60,7 +61,7 @@ func (s rbdMirrorSyncStatus) String() string {
 	return out + " updated " + s.LastUpdate
 }
 
-func rbdMirrorSyncState(ctx context.Context, mirror *rbd.Mirror, image string) (rbdMirrorSyncStatus, error) {
+func rbdMirrorSyncState(ctx context.Context, mirror *rbdmirror.Mirror, image string) (rbdMirrorSyncStatus, error) {
 	status, err := mirror.ImageStatus(ctx, image)
 	if err != nil {
 		return rbdMirrorSyncStatus{}, fmt.Errorf("mirror status of %s: %w", image, err)
@@ -120,7 +121,7 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -172,7 +172,7 @@ func rbdReceiverBootstrapFSID(config []byte) (string, error) {
 	return fsid, nil
 }
 
-func captureRBDReceiverClusters(ctx context.Context, config MirrorConfig) (*rbdReceiverClusterIdentities, error) {
+func captureRBDReceiverClusters(ctx context.Context, config Config) (*rbdReceiverClusterIdentities, error) {
 	ids := &rbdReceiverClusterIdentities{sourceCluster: config.Source, destinationCluster: config.Destination}
 	for _, site := range []struct {
 		cluster *ceph.Container

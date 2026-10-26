@@ -16,7 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -52,7 +52,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := rbdMirror.EnableImage(ctx, image); err != nil {
 				t.Fatal(err)
 			}
-			initialRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbd.MirrorModeJournal, "", "")
+			initialRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
 			originalRBDPeer := rbdScenarioPeer(t, ctx, rbdMirror, pool)
 			originalRBDHosts, originalRBDKey := monitorBootstrapRBDPeerConfig(t, ctx, destination, pool, originalRBDPeer)
 			rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
@@ -240,7 +240,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 					t.Fatal("cold-started client connected to a different cluster")
 				}
 			}
-			restartedRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbd.MirrorModeJournal, "", "")
+			restartedRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
 			if rbdScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
 				t.Fatal("RBD cold restart replaced the original receiving peer")
 			}

@@ -14,14 +14,14 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbd.Mirror {
+func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Mirror {
 	t.Helper()
 	image := source.ControlImage()
-	link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", image), rbd.MirrorConfig{
+	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite,
 	})
@@ -63,7 +63,7 @@ func rbdScenarioCommand(t *testing.T, ctx context.Context, command func(context.
 	return out
 }
 
-func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbd.Mirror) {
+func rbdScenarioStop(t *testing.T, ctx context.Context, link *rbdmirror.Mirror) {
 	t.Helper()
 	grace := 3 * time.Second
 	if err := link.Stop(ctx, &grace); err != nil {
@@ -106,7 +106,7 @@ func rbdScenarioWaitBytes(t *testing.T, parent context.Context, client testconta
 	}
 }
 
-func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbd.Mirror, image string) {
+func rbdScenarioWaitSplitBrain(t *testing.T, parent context.Context, link *rbdmirror.Mirror, image string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
@@ -192,7 +192,7 @@ func rbdScenarioRequireSnapshotAbsent(t *testing.T, ctx context.Context, client 
 	}
 }
 
-func rbdScenarioPeer(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) string {
+func rbdScenarioPeer(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool string) string {
 	t.Helper()
 	var info struct{ Peers []struct{ UUID string } }
 	if err := json.Unmarshal(rbdScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {
@@ -204,7 +204,7 @@ func rbdScenarioPeer(t *testing.T, ctx context.Context, link *rbd.Mirror, pool s
 	return info.Peers[0].UUID
 }
 
-func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbd.Mirror, pool string) {
+func rbdScenarioRequireNoPeers(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool string) {
 	t.Helper()
 	var info struct{ Peers []json.RawMessage }
 	if err := json.Unmarshal(rbdScenarioCommand(t, ctx, link.DestinationRBD, "mirror", "pool", "info", pool, "--format", "json"), &info); err != nil {

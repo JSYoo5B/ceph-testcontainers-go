@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -34,10 +34,10 @@ func TestMirrorInitialDaemonCountContracts(t *testing.T) {
 			t.Run(protocol+"/"+tc.name, func(t *testing.T) {
 				var count int
 				var err error
-				var normalized MirrorConfig
-				normalized, err = normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", DaemonCount: tc.count, NoInitialDaemons: tc.zero})
+				var normalized Config
+				normalized, err = normalizeRBDMirrorConfig(Config{Pool: "rbd", DaemonCount: tc.count, NoInitialDaemons: tc.zero})
 				count = normalized.DaemonCount
-				if err == nil && (normalized.SourceSite != "source" || normalized.DestinationSite != "destination" || normalized.Mode != MirrorModeSnapshot || normalized.Scope != MirrorScopeImage || normalized.NoInitialDaemons != tc.zero) {
+				if err == nil && (normalized.SourceSite != "source" || normalized.DestinationSite != "destination" || normalized.Mode != ModeSnapshot || normalized.Scope != ScopeImage || normalized.NoInitialDaemons != tc.zero) {
 					t.Fatal("count option changed existing RBD policy defaults")
 				}
 
@@ -67,7 +67,7 @@ func TestMirrorInitialDaemonRejectionPrecedesRuntimeAndCustomization(t *testing.
 				})
 				var nonnil bool
 				var err error
-				fixture, e := RunMirror(t.Context(), "example/ceph:version", MirrorConfig{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}, customizer)
+				fixture, e := Run(t.Context(), "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}, customizer)
 				nonnil, err = fixture != nil, e
 
 				if err == nil || nonnil || controlCalls.Load() != 0 || customizerCalls.Load() != 0 || factoryCalls.Load() != 0 {
@@ -102,7 +102,7 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customized.Add(1); return nil })
 				var err error
 				var nonnil bool
-				result, e := RunMirror(ctx, "example/ceph:version", MirrorConfig{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}, customizer)
+				result, e := Run(ctx, "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}, customizer)
 				nonnil, err = result != nil, e
 
 				if !errors.Is(err, wanted) || nonnil || native.Load() != 0 || customized.Load() != 0 || factory.Load() != 0 {

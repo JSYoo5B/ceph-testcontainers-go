@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -91,7 +92,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	owner, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	owner, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if owner != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -132,7 +133,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			}
 		}
 	}
-	views := make([]*rbd.MirrorNamespace, len(mappings))
+	views := make([]*rbdmirror.Namespace, len(mappings))
 	policies := make([][2]rbdReceiverIndependentPolicy, len(mappings))
 	for index, mapping := range mappings {
 		views[index], err = owner.BindNamespace(ctx, mapping[0], mapping[1])
@@ -227,14 +228,14 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			}
 		}
 	}
-	check := func(phase string, worker *rbd.MirrorDaemon) []rbd.MirrorImageStatus {
+	check := func(phase string, worker *rbdmirror.Daemon) []rbdmirror.ImageStatus {
 		t.Helper()
 		checkPolicies()
 		if members := owner.Daemons(); len(members) != 1 || members[0] != worker {
 			t.Fatal("scoped readiness changed the exact owned current cohort")
 		}
 		seenSource, seenDestination, seenGlobal := map[string]bool{}, map[string]bool{}, map[string]bool{}
-		reports := make([]rbd.MirrorImageStatus, len(views))
+		reports := make([]rbdmirror.ImageStatus, len(views))
 		for index, view := range views {
 			mode := "snapshot"
 			if index == 2 {
@@ -257,7 +258,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 			}
 			seenSource[image.sourceID], seenDestination[image.destinationID], seenGlobal[image.globalID] = true, true, true
 			images[index] = image
-			for _, observed := range []rbd.MirrorImageStatus{waited, report} {
+			for _, observed := range []rbdmirror.ImageStatus{waited, report} {
 				if observed.Pool != pool || observed.Name != "volume" || observed.SourceNamespace != mappings[index][0] || observed.DestinationNamespace != mappings[index][1] || string(observed.Mode) != mode || observed.SourceImageID != image.sourceID || observed.DestinationImageID != image.destinationID || observed.GlobalID != image.globalID || !observed.SourcePrimary || observed.DestinationPrimary || observed.SourceMirrorState != "enabled" || observed.DestinationMirrorState != "enabled" || observed.State != "up+replaying" || observed.DaemonName != worker.DaemonName || observed.InstanceID == "" {
 					t.Fatalf("%s scoped report differs from native identities: %+v", phase, observed)
 				}
@@ -429,7 +430,7 @@ type rbdScopedImageProcess struct {
 	pid       int
 }
 
-func rbdScopedImageRawProcess(t *testing.T, parent context.Context, oracle mirrorInitialDockerOracle, worker *rbd.MirrorDaemon, running bool) rbdScopedImageProcess {
+func rbdScopedImageRawProcess(t *testing.T, parent context.Context, oracle mirrorInitialDockerOracle, worker *rbdmirror.Daemon, running bool) rbdScopedImageProcess {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -461,7 +462,7 @@ func rbdScopedImageRawProcess(t *testing.T, parent context.Context, oracle mirro
 	return rbdScopedImageProcess{state.StartedAt, state.Pid}
 }
 
-func rbdScopedImageAttribution(t *testing.T, parent context.Context, oracle mirrorInitialDockerOracle, worker *rbd.MirrorDaemon, destination testcontainers.Container, pool string, mapping [2]string, identity rbdReceiverIndependentIdentity, report rbd.MirrorImageStatus) rbdScopedImageProcess {
+func rbdScopedImageAttribution(t *testing.T, parent context.Context, oracle mirrorInitialDockerOracle, worker *rbdmirror.Daemon, destination testcontainers.Container, pool string, mapping [2]string, identity rbdReceiverIndependentIdentity, report rbdmirror.ImageStatus) rbdScopedImageProcess {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()

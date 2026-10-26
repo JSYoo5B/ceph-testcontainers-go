@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -65,7 +65,7 @@ type rbdConnectionRefreshFixture struct {
 
 func newRBDConnectionRefreshFixture(t *testing.T, sourceNamespace, destinationNamespace string) *rbdConnectionRefreshFixture {
 	t.Helper()
-	link, _, _, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, sourceNamespace, destinationNamespace)
+	link, _, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, sourceNamespace, destinationNamespace)
 	source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
 	for _, site := range []struct {
 		client    *rbdNamespacePolicyFixture
@@ -92,7 +92,7 @@ func newRBDConnectionRefreshFixture(t *testing.T, sourceNamespace, destinationNa
 		})
 	}
 	link.sourceClient, link.destinationClient = fixture.clients[0], fixture.clients[1]
-	link.daemons = []*MirrorDaemon{
+	link.daemons = []*Daemon{
 		{Container: fixture.clients[2], DaemonName: "a", ClientName: "client.rbd-mirror.tc-a"},
 		{Container: fixture.clients[3], DaemonName: "b", ClientName: "client.rbd-mirror.tc-b"},
 	}
@@ -200,7 +200,7 @@ func TestRBDMirrorMonitorRefreshPreservesPoolScopeAndNamespacePolicies(t *testin
 		t.Run(mapping.source+"-"+mapping.destination, func(t *testing.T) {
 			fixture := newRBDConnectionRefreshFixture(t, mapping.source, mapping.destination)
 			link := fixture.link
-			link.config.Scope, link.config.Mode = MirrorScopePool, MirrorModeJournal
+			link.config.Scope, link.config.Mode = ScopePool, ModeJournal
 			for _, site := range []struct {
 				control   *rbdNamespacePolicyFixture
 				namespace string
@@ -222,7 +222,7 @@ func TestRBDMirrorMonitorRefreshPreservesPoolScopeAndNamespacePolicies(t *testin
 			if err := link.refreshRBDMirrorMonitorConfig(t.Context(), fixture.refresh); err != nil {
 				t.Fatal(err)
 			}
-			if link.config.Scope != MirrorScopePool || link.config.Mode != MirrorModeJournal ||
+			if link.config.Scope != ScopePool || link.config.Mode != ModeJournal ||
 				!sameRBDMirrorPolicy(link.policyIdentities.source.base, beforeSource.base) || !sameRBDMirrorPolicy(link.policyIdentities.source.selected, beforeSource.selected) ||
 				!sameRBDMirrorPolicy(link.policyIdentities.destination.base, beforeDestination.base) || !sameRBDMirrorPolicy(link.policyIdentities.destination.selected, beforeDestination.selected) || len(fixture.source.mutations)+len(fixture.destination.mutations) != 0 {
 				t.Fatal("monitor refresh changed pool journal enrollment or namespace mapping")

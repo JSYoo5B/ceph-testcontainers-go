@@ -25,7 +25,7 @@ versions keep their original APIs. Update imports and calls together:
 | `ceph.NetworkInterruption` | `fault.NetworkInterruption` |
 | Netem constants, rate units and `ErrNetem*` sentinels | Same names in `fault` |
 
-`rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink` and
+`rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink` and
 `rgw.Multisite.InterruptZoneLink` now return `*fault.NetworkInterruption`.
 `rgw.Multisite.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
 `*fault.NetworkProfileLease`. These service fixtures still register cleanup.

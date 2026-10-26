@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -20,20 +20,20 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// MirrorMode selects the per-image replication mechanism, independently of
+// Mode selects the per-image replication mechanism, independently of
 // the pool/namespace scope. Image scope enables images explicitly; pool scope
 // automatically enrolls images carrying the journaling feature.
-type MirrorMode string
+type Mode string
 
 const (
-	MirrorModeSnapshot MirrorMode = "snapshot"
-	MirrorModeJournal  MirrorMode = "journal"
+	ModeSnapshot Mode = "snapshot"
+	ModeJournal  Mode = "journal"
 )
 
-// MirrorConfig connects two existing clusters through destination-side
+// Config connects two existing clusters through destination-side
 // rbd-mirror daemons. Both clusters must already contain an initialized RBD Pool.
 // SourceSite and DestinationSite default to "source" and "destination".
-type MirrorConfig struct {
+type Config struct {
 	Source          *ceph.Container
 	Destination     *ceph.Container
 	Pool            string
@@ -41,14 +41,14 @@ type MirrorConfig struct {
 	DestinationSite string
 	// Scope defaults to image. Pool scope automatically mirrors every journaled
 	// image in the selected namespace, including existing images.
-	Scope MirrorScope
+	Scope Scope
 	// Each empty namespace means the unnamed default namespace. Both named
 	// namespaces must already exist; they are never created or removed here.
 	// Different names, including named/default pairs, are mapped explicitly.
 	SourceNamespace, DestinationNamespace string
 	// Mode defaults to snapshot for image scope and journal for pool scope.
 	// Pool scope supports journal only; it never creates mirror checkpoints.
-	Mode MirrorMode
+	Mode Mode
 	// DaemonCount defaults to one. Multiple daemons share the pool's receiving
 	// peer and participate in Ceph's native leader election and image assignment.
 	DaemonCount int
@@ -67,13 +67,13 @@ type MirrorConfig struct {
 type Mirror struct {
 	testcontainers.Container
 	sourceClient, destinationClient testcontainers.Container
-	config                          MirrorConfig
+	config                          Config
 	owned                           multicluster.Resources
 	mu                              sync.Mutex
 	closed                          bool
 	image                           string
 	daemonOpts                      []testcontainers.ContainerCustomizer
-	daemons                         []*MirrorDaemon
+	daemons                         []*Daemon
 	initialDaemonName               string
 	poolIdentities                  *rbdMirrorPoolIdentities
 	policyIdentities                *rbdMirrorPolicyIdentities
@@ -87,10 +87,10 @@ type Mirror struct {
 	legacyClusters map[*ceph.Container]bool
 }
 
-// MirrorDaemon is one destination-side rbd-mirror process. Every daemon has
+// Daemon is one destination-side rbd-mirror process. Every daemon has
 // a distinct Ceph user; receiving peer credentials remain in the destination's
 // config-key store. Stop and Start retain its identity and native pool state.
-type MirrorDaemon struct {
+type Daemon struct {
 	testcontainers.Container
 	DaemonName                                                  string
 	ClientName                                                  string
@@ -101,17 +101,17 @@ type MirrorDaemon struct {
 	receiverStartupConfirmed                                    bool
 }
 
-// MirrorDaemonStatus is the native daemon admin socket's pool membership and
+// DaemonStatus is the native daemon admin socket's pool membership and
 // election state. A running container can report no pool replayers until Ceph
 // completes discovery; callers must inspect the intended pool and peer.
-type MirrorDaemonStatus struct {
-	PoolReplayers []MirrorPoolReplayerStatus `json:"pool_replayers"`
+type DaemonStatus struct {
+	PoolReplayers []PoolReplayerStatus `json:"pool_replayers"`
 }
 
-// MirrorPoolReplayerStatus describes one pool/peer replayer. Image replay is
+// PoolReplayerStatus describes one pool/peer replayer. Image replay is
 // distributed among instances; being a pool leader does not mean replaying all
 // images locally.
-type MirrorPoolReplayerStatus struct {
+type PoolReplayerStatus struct {
 	Pool             string   `json:"pool"`
 	Peer             string   `json:"peer"`
 	State            string   `json:"state"`
@@ -123,7 +123,7 @@ type MirrorPoolReplayerStatus struct {
 
 // Status queries native rbd-mirror election state through this daemon's admin
 // socket. It fails when the process is stopped or its socket is unavailable.
-func (d *MirrorDaemon) Status(ctx context.Context) (*MirrorDaemonStatus, error) {
+func (d *Daemon) Status(ctx context.Context) (*DaemonStatus, error) {
 	if d == nil || d.Container == nil {
 		return nil, errors.New("RBD mirror daemon is unavailable")
 	}
@@ -131,7 +131,7 @@ func (d *MirrorDaemon) Status(ctx context.Context) (*MirrorDaemonStatus, error) 
 	if err != nil {
 		return nil, fmt.Errorf("read RBD mirror daemon %s status: %w", d.DaemonName, err)
 	}
-	var status MirrorDaemonStatus
+	var status DaemonStatus
 	if err := json.Unmarshal(data, &status); err != nil {
 		return nil, fmt.Errorf("decode RBD mirror daemon %s status: %w", d.DaemonName, err)
 	}
@@ -144,14 +144,14 @@ func (d *MirrorDaemon) Status(ctx context.Context) (*MirrorDaemonStatus, error) 
 // Terminate removes this daemon's container. Successful removals are remembered
 // so fixture cleanup does not repeat hooks; failed removals remain retryable.
 // Peer, CephX and image configuration belongs to the disposable clusters.
-func (d *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if d == nil {
 		return nil
 	}
 	return multicluster.TerminateOnce(ctx, &d.mu, &d.terminated, d.Container, opts...)
 }
 
-// RunMirror enables the selected scope on both pool/namespaces, imports a receiving
+// Run enables the selected scope on both pool/namespaces, imports a receiving
 // peer into the destination, and starts the configured initial daemons connected
 // to both clusters. NoInitialDaemons retains setup without launching a daemon.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
@@ -182,7 +182,7 @@ func (d *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.Ter
 // enabling pool scope. PolicyStatus reports the current native mapping.
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
-func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
@@ -244,14 +244,14 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 // Daemons returns a membership snapshot of this fixture's current daemons,
 // including stopped containers. It does not discover daemons owned by another
 // fixture, even if they replay the same pool.
-func (m *Mirror) Daemons() []*MirrorDaemon {
+func (m *Mirror) Daemons() []*Daemon {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	daemons := slices.Clone(m.daemons)
-	slices.SortFunc(daemons, func(a, b *MirrorDaemon) int { return strings.Compare(a.DaemonName, b.DaemonName) })
+	slices.SortFunc(daemons, func(a, b *Daemon) int { return strings.Compare(a.DaemonName, b.DaemonName) })
 	return daemons
 }
 
@@ -259,7 +259,7 @@ func (m *Mirror) Daemons() []*MirrorDaemon {
 // rebootstrap or image mutation. Construction customizers apply to every daemon;
 // opts are appended for this daemon only. A non-nil result on error is tracked
 // for RemoveDaemon or fixture Terminate, including partial startup failures.
-func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*MirrorDaemon, error) {
+func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable")
 	}
@@ -303,9 +303,9 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	daemonOpts = append(daemonOpts, m.daemonOpts...)
 	daemonOpts = append(daemonOpts, opts...)
 	ctr, err := testcontainers.Run(ctx, m.image, daemonOpts...)
-	var daemon *MirrorDaemon
+	var daemon *Daemon
 	if ctr != nil {
-		daemon = &MirrorDaemon{Container: ctr, DaemonName: name, ClientName: clientName, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
+		daemon = &Daemon{Container: ctr, DaemonName: name, ClientName: clientName, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
 		m.daemons = append(m.daemons, daemon)
 		m.owned.AddContainer(daemon)
 		if m.initialDaemonName == "" {
@@ -610,7 +610,7 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	if imageName == "" || strings.TrimSpace(imageName) != imageName || strings.HasPrefix(imageName, "-") || strings.ContainsAny(imageName, "/@\x00\t\r\n") {
 		return invalid(errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax"))
 	}
-	if m.config.Scope == MirrorScopePool {
+	if m.config.Scope == ScopePool {
 		return invalid(errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
@@ -644,7 +644,7 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 		}
 		return m.checkRBDMirrorPolicyIdentities(ctx)
 	}
-	if mode == MirrorModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
+	if mode == ModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
 		return invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
@@ -668,7 +668,7 @@ func (m *Mirror) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 	}, opts...)
 }
 
-func normalizeRBDMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
+func normalizeRBDMirrorConfig(config Config) (Config, error) {
 	count, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons)
 	if err != nil {
 		return config, fmt.Errorf("RBD %w", err)
@@ -707,21 +707,21 @@ func normalizeRBDMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
 	return config, nil
 }
 
-func normalizeRBDMirrorMode(mode MirrorMode) (MirrorMode, error) {
+func normalizeRBDMirrorMode(mode Mode) (Mode, error) {
 	if mode == "" {
-		return MirrorModeSnapshot, nil
+		return ModeSnapshot, nil
 	}
 	switch mode {
-	case MirrorModeSnapshot, MirrorModeJournal:
+	case ModeSnapshot, ModeJournal:
 		return mode, nil
 	default:
 		return "", invalid(fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode))
 	}
 }
 
-// RunMirrorWithImages selects the receiving cluster's rbd-aux runtime and each
+// RunWithImages selects the receiving cluster's rbd-aux runtime and each
 // cluster's independent client runtime. Later AddDaemon uses the same runtime.
-func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if config.Source == nil || config.Destination == nil {
 		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
@@ -729,5 +729,5 @@ func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testc
 	if image == "" {
 		return nil, invalid(fmt.Errorf("rbd-aux image is required"))
 	}
-	return RunMirror(ctx, image, config, opts...)
+	return Run(ctx, image, config, opts...)
 }

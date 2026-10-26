@@ -69,6 +69,16 @@ change the API.
 - Record the remaining public declaration/member retention decisions, including
   dependency-role APIs, and bind that review to generated source catalogues.
   Inventory regeneration alone cannot approve later API changes.
+- Move the RBD mirror fixture from `rbd` to the service-specific package
+  `rbd/mirror`: `rbd.RunMirror` and `rbd.RunMirrorWithImages` become
+  `Run` and `RunWithImages`, `rbd.Mirror` keeps its name, and the `Mirror`
+  prefix is dropped from `Config`, `Mode`, `Scope`, `Daemon`, `DaemonStatus`,
+  `PoolReplayerStatus`, `ImageStatus`, `Namespace`, `NamespaceState`,
+  `Policies`, `ReceiverStatus` and `ReceiverDaemonStatus` (and the mode and
+  scope constants). Methods, embedded container, error kinds, image admission,
+  locking, cancellation and cleanup are unchanged; there is no deprecated alias
+  or forwarding layer. CephFS mirroring is not part of this move yet. See
+  `docs/guides/upgrading-rbd-mirror-package.md`.
 
 ### Added
 

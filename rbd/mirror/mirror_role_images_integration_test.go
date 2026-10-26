@@ -2,7 +2,7 @@
 
 //ci: timeout=15m job-timeout=20 image-roles=essential,client,rbd-aux
 
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -70,7 +70,7 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		return c
 	}
 	source, destination := newCluster(), newCluster()
-	m, err := RunMirrorWithImages(ctx, MirrorConfig{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
+	m, err := RunWithImages(ctx, Config{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
 	if m != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)

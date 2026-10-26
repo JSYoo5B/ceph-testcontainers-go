@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"

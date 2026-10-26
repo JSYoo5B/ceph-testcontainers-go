@@ -36,7 +36,7 @@ several failures, such as a failed change and a failed restoration, can match
 several.
 
 `ErrInvalidRequest` is a validation refusal before any change. Documented
-feature preflights, such as `WithAuth` key-type validation and `RunMirror`
+feature preflights, such as `WithAuth` key-type validation and `rbdmirror.Run`
 namespace mapping checks, also refuse unsupported features before changes.
 Extension capability checks run before the fault is applied. These guarantees
 belong to the documented operation or preflight; an image or environment
@@ -95,7 +95,7 @@ arguments, raw native output or credentials.
 ## Native failures
 
 A module command that runs and exits nonzero returns a `*ceph.NativeFailure`:
-`cluster.Ceph`, the RBD, RGW and CephFS operations, `rbd.Mirror.SourceRBD`,
+`cluster.Ceph`, the RBD, RGW and CephFS operations, `rbdmirror.Mirror.SourceRBD`,
 `rgw.Multisite.SourceAdmin` and the other helpers that run Ceph's tools.
 
 | Field | Content |
