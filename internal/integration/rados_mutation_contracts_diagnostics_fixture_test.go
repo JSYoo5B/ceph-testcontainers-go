@@ -44,7 +44,17 @@ objects={'late-truncate':{'data':b'0123456789'*100,'xattr':b'v1','version':1},'l
 calls=[];next_client=100;lag=int(os.environ.get('STUB_LAG','0'))
 def record(kind,**fields):
     calls.append(dict(kind=kind,**fields))
-    with open(os.environ['STUB_CALLS'],'w') as output: json.dump(calls,output)
+    target=os.environ['STUB_CALLS'];temporary=target+'.tmp'
+    with open(temporary,'w') as output:
+        json.dump(calls,output);output.flush();os.fsync(output.fileno())
+    hold=os.environ.get('STUB_HOLD_KIND','')
+    if hold and kind==hold:
+        # Park between the complete temporary snapshot and its publication so
+        # a controller can cancel exactly here; the published trace must stay
+        # the previous complete snapshot.
+        with open(os.environ['STUB_HELD'],'w') as held: held.write('held')
+        time.sleep(60)
+    os.replace(temporary,target)
 class WriteOpCtx:
     def __init__(self):self.kind=''
     def __enter__(self):return self
@@ -106,6 +116,14 @@ type radosMutationFixtureRun struct {
 
 func runRadosMutationFixture(t *testing.T, phase, fault, cleanup string, lag int, writeFailure bool, limit time.Duration) radosMutationFixtureRun {
 	t.Helper()
+	return runRadosMutationFixtureHeld(t, phase, fault, cleanup, lag, writeFailure, limit, "")
+}
+
+// runRadosMutationFixtureHeld additionally parks the stub inside the
+// publication of its first call record of kind hold, then cancels the owned
+// child there. An empty hold is the ordinary run.
+func runRadosMutationFixtureHeld(t *testing.T, phase, fault, cleanup string, lag int, writeFailure bool, limit time.Duration, hold string) radosMutationFixtureRun {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("native diagnostic generation identity uses Linux /proc")
 	}
@@ -135,7 +153,20 @@ func runRadosMutationFixture(t *testing.T, phase, fault, cleanup string, lag int
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	var runErr error
-	if fault == "blocked" {
+	if hold != "" {
+		cmd.Env = append(cmd.Env, "STUB_HOLD_KIND="+hold, "STUB_HELD="+filepath.Join(dir, "held"))
+		runErr = cmd.Start()
+		if runErr == nil {
+			for ctx.Err() == nil {
+				if _, statErr := os.Stat(filepath.Join(dir, "held")); statErr == nil {
+					cancel()
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			runErr = cmd.Wait()
+		}
+	} else if fault == "blocked" {
 		runErr = cmd.Start()
 		if runErr == nil {
 			for ctx.Err() == nil {
@@ -227,6 +258,33 @@ func TestRadosMutationCheckpointBeforeBlockedCall(t *testing.T) {
 	}
 	if event["object"] != "late-compound" || event["operation"] != "stat" || event["state"] != "started" {
 		t.Fatalf("blocked call mislabeled: %v", event)
+	}
+}
+
+// The stub's call trace is a second JSON publication next to the diagnostic
+// checkpoint. Cancelling the child inside that publication must leave the
+// previous complete trace, never a truncated one.
+func TestRadosMutationCallTraceCancelledDuringPublication(t *testing.T) {
+	run := runRadosMutationFixtureHeld(t, "late", "", "", 0, false, 10*time.Second, "read")
+	if run.err == nil || run.contextErr == nil {
+		t.Fatalf("held fixture not cancelled by the controller: %v %v", run.err, run.contextErr)
+	}
+	assertRadosMutationCalls(t, run, 3)
+	for _, call := range run.calls {
+		if call["kind"] == "read" {
+			t.Fatalf("unpublished read record visible: %v", call)
+		}
+	}
+	got := run.checkpoint
+	if got == nil || got.Stage != "observing" || len(got.Mutations) != 3 {
+		t.Fatalf("pre-call checkpoint lost: %+v", got)
+	}
+	var event map[string]any
+	if err := json.Unmarshal(got.Events[len(got.Events)-1], &event); err != nil {
+		t.Fatal(err)
+	}
+	if event["state"] != "started" {
+		t.Fatalf("held call not recorded as started before dispatch: %v", event)
 	}
 }
 
