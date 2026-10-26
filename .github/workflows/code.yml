@@ -25,9 +25,37 @@ concurrency:
 # saves after downloading every module. Build caches are shared by exact Go
 # version; only default-branch vulnerability checks fill a missing one here.
 jobs:
+  # Decides whether a pull request changes only documentation that no check
+  # reads (see docs/contributing/ci.md). The jobs below stay in every run
+  # because their names are required status checks; they skip themselves
+  # instead, and a skipped job reports success. Anything but an explicit
+  # docs_only=true, including a failure of this job, runs every check.
+  changes:
+    name: Detect documentation-only changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Classify the changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ "$EVENT" = pull_request ] && [ -n "$BASE" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE" || true
+          fi
+          python3 .github/scripts/docs_only.py --event "$EVENT" --base "$BASE" --fork "$FORK"
+
   unit:
     name: Unit tests
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ github.event_name != 'schedule' && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -49,7 +77,8 @@ jobs:
 
   race:
     name: Race detector
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ github.event_name != 'schedule' && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -71,7 +100,8 @@ jobs:
 
   static:
     name: Vet, compile and CI tooling
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ github.event_name != 'schedule' && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -114,7 +144,8 @@ jobs:
 
   tag-coverage:
     name: Compiled tag coverage and helpers
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ github.event_name != 'schedule' && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -152,6 +183,11 @@ jobs:
   # every platform and tag set that make vulncheck lists. Docker-free.
   vulncheck:
     name: Vulnerability check (Go ${{ matrix.go }})
+    needs: changes
+    # A matrix job skipped by a job-level condition might report under its
+    # unexpanded name, which would leave the required check pending. The job
+    # therefore always runs, and a documentation-only change skips its steps.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -159,33 +195,39 @@ jobs:
       matrix:
         go: ['1.26.x', '1.27.x']
     steps:
-      - uses: actions/checkout@v7
+      - if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        uses: actions/setup-go@v7
         id: go
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
           cache: false
       - name: Restore the Go module cache
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         uses: actions/cache/restore@v6
         with:
           path: ~/go/pkg/mod
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Restore the Go build cache
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         id: build_cache
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Scan source and required modules
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: make vulncheck VULNCHECK_DIR=artifacts/vulncheck
       # The minimum Go version normally finds Plan's cache. A scheduled or
       # main run can fill a cache for the other toolchain without storing a
       # second copy of the module cache or saving PR-scoped build caches.
       - name: Save the Go build cache
         if: >-
+          needs.changes.outputs.docs_only != 'true' &&
           steps.build_cache.outputs.cache-hit != 'true' &&
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         continue-on-error: true
@@ -194,7 +236,7 @@ jobs:
           path: ~/.cache/go-build
           key: go-build-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
       - name: Save the scans
-        if: always()
+        if: ${{ always() && needs.changes.outputs.docs_only != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           retention-days: ${{ job.status == 'failure' && 14 || 7 }}

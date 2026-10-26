@@ -8,7 +8,7 @@ run tests locally and how to add them is described in [Testing](testing.md).
 
 | Workflow | File | Triggers | What it checks |
 | --- | --- | --- | --- |
-| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check |
+| Code checks | `code.yml` | push to `main`, pull request, manual; weekly (Monday 05:17 UTC) for the vulnerability check only | Unit tests, race detector, vet, tag compilation, CI tooling tests, compiled tag coverage, Go vulnerability check; skipped for a [documentation-only change](#documentation-only-changes) |
 | Docker checks | `docker.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `environment` category: Docker bridge behaviour without Ceph |
 | Ceph short | `ceph-short.yml` | push to `main`, pull request, manual; not for documentation-only changes | The `short` category on Tentacle 20.2.4 |
 | Ceph topology | `ceph-topology.yml` | pull request, manual; push to `main` in a release phase; not for documentation-only changes | The `topology` category on Tentacle 20.2.4: on a pull request only the changed batches (see [Pull request scope](#pull-request-scope)) |
@@ -45,8 +45,9 @@ the `ci:full` label (adding it starts the run), and a release phase. A change
 that touches nothing but `docs/`, the top-level Markdown files (`README.md`,
 `CHANGELOG.md`), `LICENSE` or the go-ceph probe under
 `internal/integration/goceph/` runs only Code checks: no runtime batch reads
-those paths, and Code checks still runs the API inventory test against
-`docs/`. A Markdown file anywhere else, for example under a package's
+those paths. Code checks skips most of its jobs for a smaller set of
+documentation (see [Documentation-only changes](#documentation-only-changes)).
+A Markdown file anywhere else, for example under a package's
 `testdata/`, can be a test's embedded or run-time input, so changing it runs
 the batches as usual. Each `Plan` job's `tag-plan.json` artifact lists the changed
 files and the selected batches.
@@ -116,6 +117,55 @@ of another batch (about 55 MB compressed). The cache only speeds the build
 up. Go reuses an entry only when its content hash matches, a stale entry is
 merely unused, a failed `buildcache` leaves the cache unsaved without failing
 `Plan`, and each job still compiles, records and verifies its own binary.
+
+### Documentation-only changes
+
+Code checks runs on every pull request, because its six checks are required
+status checks of the `main` protection ruleset. A workflow-level
+`paths-ignore` would never start the workflow for a documentation-only
+change and leave those checks pending, which blocks merging. The workflow
+therefore always starts, and its `Detect documentation-only changes` job runs
+`.github/scripts/docs_only.py`. When that reports `docs_only=true`, the six
+checks skip themselves and report success; GitHub documents that a job
+skipped by a condition reports success. The Vulnerability check matrix jobs
+skip their steps instead of the whole job, so that each keeps its expanded
+check name. The job names are unchanged.
+
+A pull request is documentation-only when every changed file is on this
+allowlist, and the allowlist contains only files that no check reads:
+- `README.md`, `CHANGELOG.md`, any other top-level `*.md` file and `LICENSE`;
+- Markdown files directly inside `docs/contributing/`, `docs/design/`,
+  `docs/guides/` and `docs/research/`, except the files below.
+
+These documentation files are read by a check and always run the full Code
+checks, as does every other path (including any non-Markdown file under
+`docs/`, a new top-level `docs/` page and a nested path):
+- `docs/ceph.md`, `docs/fault.md`, `docs/rbd.md`, `docs/cephfs.md`,
+  `docs/rgw.md` and `docs/capture.md`: the API inventory test requires every
+  exported name on its package page;
+- `docs/design/api-naming*`: the API naming audit, inventory, member and
+  review receipts, which the same package's tests compare with the code;
+- `docs/guides/messenger-client-fixtures.md`: cross-checked against the
+  messenger coverage manifest by a test in `internal/integration`;
+- `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and
+  its catalogue, read by `tag_scenarios.py` and its tests.
+
+`test_docs_only.py` scans the Go sources and `tag_scenarios.py` for documentation
+paths they name and fails when one of them is on the allowlist, so a new
+reader of a documentation file has to remove that file from it. Add the
+file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
+
+The detection fails open. Every push to `main`, the weekly schedule and
+manual runs always run every check. A pull request from a fork, a missing
+base commit, a base that cannot be fetched, a failed `git diff`, an empty
+change list, an unusable argument, a failure of the detection job itself and
+any exception in the script run every check too. Only an explicit
+`docs_only=true` skips, and the dependent jobs use `!cancelled()` so that a
+failed detection job runs them instead of skipping them (a job whose
+dependency failed is otherwise skipped, and a skipped job counts as a
+pass). The script compares the pull request's merge commit with the event's
+base commit, lists renames as a deletion and an addition, and so also sees a
+code file that is moved into `docs/`.
 
 ### Role image checks
 
