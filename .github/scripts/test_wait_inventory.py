@@ -45,6 +45,68 @@ class EvaluateTest(unittest.TestCase):
             wi.evaluate("a", {"a": "b", "b": "a"})
 
 
+class UnitTest(unittest.TestCase):
+    def test_bare_numbers_are_nanoseconds(self):
+        for expr, want in [("5", 5e-9), ("time.Duration(5)", 5e-9), ("1000000000", 1.0),
+                           ("time.Second + 1", 1.000000001), ("1 + time.Second", 1.000000001),
+                           ("time.Second - 1", 0.999999999), ("5 * time.Second", 5.0),
+                           ("time.Duration(3) * time.Second", 3.0), ("time.Second * 3", 3.0)]:
+            self.assertAlmostEqual(wi.evaluate(expr, {}), want, places=12, msg=expr)
+
+    def test_non_integral_or_overflowing_conversions_are_unresolved(self):
+        for expr in ["time.Duration(1.5)", "time.Hour * time.Hour * time.Hour"]:
+            with self.assertRaises(wi.Unresolved, msg=expr):
+                wi.evaluate(expr, {})
+
+    def test_scan_reports_bare_literal_sleep_in_nanoseconds(self):
+        recs = scan_files({"a.go": "package p\nfunc f() {\n\ttime.Sleep(5)\n\ttime.Sleep(time.Duration(5))\n\ttime.Sleep(time.Second + 1)\n}\n"})
+        self.assertEqual([round(r["seconds"], 12) for r in recs], [5e-9, 5e-9, 1.000000001])
+
+    def test_constant_without_unit_is_nanoseconds(self):
+        recs = scan_files({"a.go": "package p\nconst n = 5\nfunc f() { time.Sleep(n * time.Second); time.Sleep(n) }\n"})
+        self.assertEqual([round(r["seconds"], 12) for r in recs], [5.0, 5e-9])
+
+
+class ShadowTest(unittest.TestCase):
+    def sleeps(self, body):
+        recs = scan_files({"a.go": "package p\nconst delay = time.Second\n" + body})
+        return [r["seconds"] for r in recs if r["kind"] == "time.Sleep"]
+
+    def test_parameter_shadows_package_constant(self):
+        self.assertEqual(self.sleeps("func f(delay time.Duration) { time.Sleep(delay) }\n"), [None])
+
+    def test_grouped_and_result_parameters_shadow(self):
+        self.assertEqual(self.sleeps("func f(a, delay time.Duration, b int) { time.Sleep(delay) }\n"), [None])
+        self.assertEqual(self.sleeps("func f() (delay time.Duration) { time.Sleep(delay); return }\n"), [None])
+        self.assertEqual(self.sleeps("type T struct{}\nfunc (delay T) f() { time.Sleep(delay.d) }\n"), [None])
+
+    def test_closure_parameter_shadows(self):
+        self.assertEqual(self.sleeps("func f() { g := func(delay time.Duration) { time.Sleep(delay) }; g(1) }\n"), [None])
+
+    def test_short_declaration_shadows(self):
+        self.assertEqual(self.sleeps("func f() {\n\tdelay := unknownDuration()\n\ttime.Sleep(delay)\n}\n"), [None])
+        self.assertEqual(self.sleeps("func f() {\n\tfor _, delay := range xs {\n\t\ttime.Sleep(delay)\n\t}\n}\n"), [None])
+        self.assertEqual(self.sleeps("func f() {\n\tif delay, ok := g(); ok {\n\t\ttime.Sleep(delay)\n\t}\n}\n"), [None])
+
+    def test_value_less_var_and_mutation_shadow(self):
+        self.assertEqual(self.sleeps("func f() {\n\tvar delay time.Duration\n\ttime.Sleep(delay)\n}\n"), [None])
+        self.assertEqual(self.sleeps("func f() {\n\tdelay += time.Second\n\ttime.Sleep(delay)\n}\n"), [None])
+
+    def test_shadow_in_another_file_of_the_directory_applies(self):
+        recs = scan_files({
+            "a.go": "package p\nconst delay = time.Second\nfunc f() { time.Sleep(delay) }\n",
+            "b.go": "package p\nfunc g(delay time.Duration) {}\n",
+        })
+        self.assertEqual([r["seconds"] for r in recs], [None])
+
+    def test_unshadowed_constant_still_resolves(self):
+        self.assertEqual(self.sleeps("func f(other time.Duration) { time.Sleep(delay); _ = other }\n"), [1.0])
+        self.assertEqual(self.sleeps("func f() { time.Sleep(delay) }\nfunc g() { time.Sleep(2 * delay) }\n"), [1.0, 2.0])
+
+    def test_shadow_in_a_comment_or_string_does_not_apply(self):
+        self.assertEqual(self.sleeps('// func f(delay D)\nvar s = "delay := 1"\nfunc f() { time.Sleep(delay) }\n'), [1.0])
+
+
 class MaskTest(unittest.TestCase):
     def test_comments_and_strings_are_not_calls(self):
         src = (

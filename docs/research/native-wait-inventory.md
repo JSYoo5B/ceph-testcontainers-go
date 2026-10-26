@@ -14,7 +14,8 @@ python3 .github/scripts/wait_inventory.py scan --output wait-inventory.json
 python3 -m unittest discover -s .github/scripts -p 'test_wait_inventory.py'
 ```
 
-The figures below were produced from the commit that added this page. Run the
+The figures below were regenerated after the owner review fixes (unit handling
+and shadowed names), from the head of the pull request that added this page. Run the
 scanner again for current numbers.
 
 ## What the scanner counts
@@ -31,9 +32,16 @@ Rules that keep the numbers honest:
 
 - Comments and the contents of string and rune literals are blanked before call
   sites are matched, so a quoted or commented `time.Sleep(` is not counted.
+- Durations are evaluated in Go duration units (integer nanoseconds) and
+  converted to seconds only at the end, so a bare `time.Sleep(5)` is 5 ns and
+  `time.Second + 1` is 1.000000001 s. Conversions that are not integral or do
+  not fit a Duration stay unresolved.
 - A duration is resolved only from literals, `time.` units and constants whose
   single definition in the same directory can be evaluated. A name defined more
-  than once with different values (for example a local variable) is ambiguous.
+  than once with different values is ambiguous. The scanner has no scopes, so a
+  name that is also a function or closure parameter, result or receiver, a
+  short-variable or range declaration, a `var` without a value, or the target of
+  a compound assignment anywhere in the directory stops resolving there.
 - A duration that cannot be resolved stays null and is counted in the
   `unresolved` column. It is never summed as zero.
 - Sleeps and timers get a placement label. `poll_loop` means a `for` and a
@@ -52,7 +60,7 @@ Call sites: 1591 total, 1043 in native scenarios.
 
 | Area | Scope | sleep | poll_interval | timer | budget | config_timing | unresolved |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| capture | non-test | 0 | 0 | 3 | 5 | 0 | 1 |
+| capture | non-test | 0 | 0 | 3 | 5 | 0 | 2 |
 | capture | test | 8 | 0 | 0 | 9 | 0 | 0 |
 | ceph | non-test | 0 | 5 | 10 | 96 | 0 | 84 |
 | ceph | test | 12 | 0 | 45 | 50 | 3 | 7 |
@@ -72,7 +80,7 @@ Call sites: 1591 total, 1043 in native scenarios.
 | internal/supervised | test | 3 | 0 | 4 | 0 | 0 | 2 |
 | internal/tools | non-test | 0 | 0 | 1 | 2 | 0 | 1 |
 | native-scenarios | non-test | 0 | 0 | 1 | 0 | 0 | 0 |
-| native-scenarios | test | 137 | 6 | 159 | 724 | 16 | 58 |
+| native-scenarios | test | 137 | 6 | 159 | 724 | 16 | 61 |
 | rbd | non-test | 0 | 0 | 2 | 17 | 0 | 8 |
 | rbd | test | 0 | 0 | 5 | 19 | 0 | 1 |
 | rgw | non-test | 0 | 2 | 6 | 30 | 0 | 5 |
@@ -84,8 +92,8 @@ Resolved durations per category (all areas; per call site, not per execution):
 | --- | ---: | ---: | ---: | ---: | ---: |
 | sleep | 163 | 155 | 5ms | 500ms | 1m |
 | poll_interval | 16 | 15 | 5ms | 500ms | 2s |
-| timer | 311 | 285 | 5ms | 1s | 3m |
-| budget | 1082 | 923 | 1ms | 2m | 35m |
+| timer | 311 | 284 | 5ms | 1s | 3m |
+| budget | 1082 | 920 | 1ms | 105s | 35m |
 | config_timing | 19 | 19 | 0ms | 2s | 120m |
 
 Sleep and timer placement in native scenarios (heuristic, see wait_context):

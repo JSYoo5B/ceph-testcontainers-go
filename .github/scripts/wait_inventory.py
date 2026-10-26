@@ -27,6 +27,7 @@ Usage:
   wait_inventory.py summary [--root DIR] [--top N]
 """
 import argparse
+from fractions import Fraction
 import json
 import re
 import statistics
@@ -34,12 +35,12 @@ import sys
 from pathlib import Path
 
 UNITS = {
-    "Nanosecond": 1e-9,
-    "Microsecond": 1e-6,
-    "Millisecond": 1e-3,
-    "Second": 1.0,
-    "Minute": 60.0,
-    "Hour": 3600.0,
+    "Nanosecond": 1,
+    "Microsecond": 1000,
+    "Millisecond": 1000000,
+    "Second": 1000000000,
+    "Minute": 60000000000,
+    "Hour": 3600000000000,
 }
 
 CALLS = {
@@ -145,7 +146,7 @@ def tokenize(expr):
             break
         pos = m.end()
         if m.group(1):
-            out.append(("num", float(m.group(1))))
+            out.append(("num", m.group(1)))
         elif m.group(2):
             out.append(("id", m.group(2)))
         elif m.group(3) and not m.group(3).isspace():
@@ -153,12 +154,28 @@ def tokenize(expr):
     return out if pos >= len(expr.rstrip()) else None
 
 
+MAX_DURATION_NS = 2**63 - 1
+
+
 class Unresolved(Exception):
     pass
 
 
 def evaluate(expr, consts, depth=0):
-    """Evaluate a duration expression to seconds, or raise Unresolved."""
+    """Evaluate a duration expression to seconds, or raise Unresolved.
+
+    The arithmetic follows Go constant rules for time.Duration: the value is
+    counted in nanoseconds, an untyped number is a plain count (so a bare 5 is
+    5 ns, not 5 s), the time units are Durations, and Durations multiply as raw
+    nanosecond counts (time.Duration(3) * time.Second is 3 s) unless the
+    result overflows int64. Only the final value is
+    converted to seconds."""
+    ns = _eval_ns(expr, consts, depth)[0]
+    return float(ns) / 1e9
+
+
+def _eval_ns(expr, consts, depth):
+    """Return (nanoseconds as Fraction, is_duration)."""
     if depth > 8:
         raise Unresolved
     toks = tokenize(expr)
@@ -177,7 +194,7 @@ def evaluate(expr, consts, depth=0):
     def factor():
         kind, val = take()
         if kind == "num":
-            return val
+            return Fraction(val), False
         if kind == "op" and val == "(":
             v = additive()
             if take() != ("op", ")"):
@@ -185,26 +202,33 @@ def evaluate(expr, consts, depth=0):
             return v
         if kind == "id":
             if val.startswith("time.") and val[5:] in UNITS:
-                return UNITS[val[5:]]
+                return Fraction(UNITS[val[5:]]), True
             if val == "time.Duration":
                 if take() != ("op", "("):
                     raise Unresolved
                 v = additive()
                 if take() != ("op", ")"):
                     raise Unresolved
-                return v
+                if v[1]:
+                    return v
+                if v[0].denominator != 1:
+                    raise Unresolved  # a constant conversion must be integral
+                return v[0], True
             if val in consts:
                 sub = consts[val]
                 if sub is None:
                     raise Unresolved
-                return evaluate(sub, consts, depth + 1)
+                return _eval_ns(sub, consts, depth + 1)
         raise Unresolved
 
     def term():
         v = factor()
         while peek() == ("op", "*"):
             take()
-            v *= factor()
+            r = factor()
+            v = (v[0] * r[0], v[1] or r[1])
+            if abs(v[0]) > MAX_DURATION_NS:
+                raise Unresolved  # does not fit a Duration: a Go compile error
         return v
 
     def additive():
@@ -212,7 +236,7 @@ def evaluate(expr, consts, depth=0):
         while peek() in (("op", "+"), ("op", "-")):
             _, op = take()
             r = term()
-            v = v + r if op == "+" else v - r
+            v = (v[0] + r[0] if op == "+" else v[0] - r[0], v[1] or r[1])
         return v
 
     v = additive()
@@ -221,13 +245,65 @@ def evaluate(expr, consts, depth=0):
     return v
 
 
+FUNC_RE = re.compile(r"\bfunc\b")
+WORD_RE = re.compile(r"[A-Za-z_]\w*")
+VAR_DECL_RE = re.compile(r"^\s*var\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s+[^=\s][^=]*$")
+MUTATE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?:\+=|-=|\*=|/=)")
+
+
+def shadowed_names(code):
+    """Names that some binding other than a single constant definition may
+    take: function and closure parameters, results and receivers, short
+    variable declarations (including range, if and for clauses), var
+    declarations without a value, and compound assignments. The inventory has
+    no scopes, so any such name stops resolving in its whole package directory.
+    Over-invalidating only turns a duration into null."""
+    names = set()
+    for m in FUNC_RE.finditer(code):
+        i, depth = m.end(), 0
+        while i < len(code):
+            ch = code[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif depth == 0 and ch in "{\n;":
+                if ch == "\n" and code[m.end():i].strip() == "":
+                    i += 1
+                    continue
+                break
+            elif depth > 0:
+                j = i
+                while j < len(code) and (code[j].isalnum() or code[j] == "_"):
+                    j += 1
+                if j > i:
+                    names.add(code[i:j])
+                    i = j
+                    continue
+            i += 1
+    for line in code.splitlines():
+        if ":=" in line:
+            for part in line.split(":=")[:-1]:
+                names.update(WORD_RE.findall(part))
+        m = VAR_DECL_RE.match(line)
+        if m:
+            names.update(WORD_RE.findall(m.group(1)))
+        m = MUTATE_RE.match(line)
+        if m:
+            names.add(m.group(1))
+    return names
+
+
 def collect_consts(files):
     """Map directory -> {name: expr or None}. A name defined more than once
-    with different expressions is ambiguous (None): it may be a local."""
+    with different expressions, or shadowed or mutated anywhere in the
+    directory (see shadowed_names), is ambiguous (None)."""
     per_dir = {}
-    for path, code in files:
+    shadow = {}
+    for path, text, code in files:
         table = per_dir.setdefault(path.parent, {})
-        for line in code.splitlines():
+        shadow.setdefault(path.parent, set()).update(shadowed_names(code))
+        for line in text.splitlines():
             m = ASSIGN_RE.match(line)
             if not m or "time." not in m.group(2) and not re.fullmatch(r"[\d.\s*+()\w]+", m.group(2)):
                 continue
@@ -236,6 +312,10 @@ def collect_consts(files):
                 table[name] = None
             elif name not in table:
                 table[name] = expr
+    for directory, names in shadow.items():
+        for name in names:
+            if name in per_dir[directory]:
+                per_dir[directory][name] = None
     return per_dir
 
 
@@ -285,7 +365,7 @@ def scan(root):
         src = p.read_text(encoding="utf-8", errors="replace")
         code, text = blank_comments_and_strings(src)
         sources.append((p, src, code, text))
-    consts = collect_consts([(p, text) for p, _, _, text in sources])
+    consts = collect_consts([(p, text, code) for p, _, code, text in sources])
     records = []
     for p, src, code, text in sources:
         rel = p.relative_to(root)
