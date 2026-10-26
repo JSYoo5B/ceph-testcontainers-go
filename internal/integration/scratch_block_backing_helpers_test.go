@@ -88,19 +88,23 @@ func parseBlockBacking(out []byte) (*blockBackingReceipt, error) {
 }
 
 const (
-	blockBackingElsewhere    = "other-filesystem"   // block is not on the owned scratch filesystem
-	blockBackingNotFile      = "not-a-regular-file" // block resolves to a device or another file type
-	blockBackingSparse       = "sparse"             // no allocated bytes yet
-	blockBackingPartial      = "partially-allocated"
-	blockBackingPreallocated = "preallocated" // allocated bytes cover the whole length
+	blockBackingElsewhere   = "other-filesystem"           // block is not on the owned scratch filesystem
+	blockBackingNotFile     = "not-a-regular-file"         // block resolves to a device or another file type
+	blockBackingSparse      = "sparse"                     // no allocated bytes anywhere
+	blockBackingBelowLength = "allocation-below-length"    // some bytes allocated, fewer than the length
+	blockBackingAtLeastLen  = "allocation-at-least-length" // aggregate only: coverage of offsets within EOF is unknown
 )
 
 // classifyBlockBacking decides whether the block entry stands on the owned
-// scratch filesystem and how much of its length has backing bytes. A sparse or
-// partially allocated file means later writes can still need new filesystem
-// allocation. A preallocated one means overwriting it does not, so exhausting
-// the outer filesystem would say nothing about the data device. Unexaminable
-// paths are errors, not verdicts.
+// scratch filesystem and how aggregate allocation compares with its length.
+// No allocation, or less than the length, means some offset within EOF has no
+// backing, so a write there can need new filesystem allocation. Allocation
+// of at least the length is only an aggregate: st_blocks does not say which
+// offsets are backed (tmpfs fallocate with FALLOC_FL_KEEP_SIZE can allocate
+// wholly beyond EOF), so coverage within EOF is unknown and this verdict never
+// shows that an overwrite cannot allocate. That claim needs an independent
+// within-range coverage or admitted-layout witness. Unexaminable paths are
+// errors, not verdicts.
 func classifyBlockBacking(r *blockBackingReceipt) (string, error) {
 	if *r.Scratch.Errno != 0 {
 		return "", fmt.Errorf("scratch directory could not be examined (errno %d)", *r.Scratch.Errno)
@@ -125,22 +129,24 @@ func classifyBlockBacking(r *blockBackingReceipt) (string, error) {
 	case allocated == 0:
 		return blockBackingSparse, nil
 	case allocated < size:
-		return blockBackingPartial, nil
+		return blockBackingBelowLength, nil
 	}
-	return blockBackingPreallocated, nil
+	return blockBackingAtLeastLen, nil
 }
 
 const (
-	blockGrowthGrew      = "allocation-grew"      // the workload needed new filesystem allocation
-	blockGrowthUnchanged = "allocation-unchanged" // the workload did not; the exhaustion is unreached
+	blockGrowthGrew      = "allocation-grew" // allocation at the later endpoint is larger
+	blockGrowthNoNetGrow = "no-net-growth"   // endpoints equal: inconclusive about the workload
 )
 
-// classifyBlockGrowth compares two observations of the same block file around
-// a workload. Allocation that grew shows the workload did need new outer
-// allocation. Unchanged allocation means the workload only overwrote backing
-// that already existed, which cannot show data-device allocation failure.
-// Shrinking allocation (a punched hole), a changed length or a replaced file
-// is refused: this observer neither repairs nor explains them.
+// classifyBlockGrowth compares two endpoint observations of the same block
+// file. It is observational only. Larger allocation at the later endpoint is
+// reported as growth. Equal endpoints are "no net growth" and inconclusive:
+// they do not show an overwrite-only workload, because a write into a hole
+// refused with ENOSPC leaves them equal, and an intermediate truncate and
+// refill leaves them equal too. The workload's own operation results are kept
+// by the caller and are never inferred from these snapshots. Shrinking
+// allocation (a punched hole), a changed length or a replaced file is refused.
 func classifyBlockGrowth(before, after *blockBackingReceipt) (string, error) {
 	for _, r := range []*blockBackingReceipt{before, after} {
 		if *r.Block.Errno != 0 || !*r.Block.Regular {
@@ -160,5 +166,5 @@ func classifyBlockGrowth(before, after *blockBackingReceipt) (string, error) {
 	case *a.Allocated > *b.Allocated:
 		return blockGrowthGrew, nil
 	}
-	return blockGrowthUnchanged, nil
+	return blockGrowthNoNetGrow, nil
 }

@@ -43,13 +43,13 @@ func TestBlockBackingClassifierSeparatesSparseFromPreallocated(t *testing.T) {
 		want  string
 	}{
 		"sparse":                  {backingEntry(true, 50, 7, size, 0, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingSparse},
-		"partially allocated":     {backingEntry(true, 50, 7, size, 4096, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingPartial},
-		"allocated one byte less": {backingEntry(true, 50, 7, size, size-1, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingPartial},
-		"preallocated":            {backingEntry(true, 50, 7, size, size, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingPreallocated},
-		"other device":            {backingEntry(true, 51, 7, size, 0, "0:51", "/", "overlay"), blockBackingElsewhere},
-		"other mount id only":     {backingEntry(true, 50, 7, size, 0, "0:99", "/var/lib/ceph/osd", "tmpfs"), blockBackingElsewhere},
-		"same id other mount":     {backingEntry(true, 50, 7, size, 0, "0:50", "/other", "tmpfs"), blockBackingElsewhere},
-		"device node":             {backingEntry(false, 50, 7, 0, 0, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingNotFile},
+		"partially allocated":     {backingEntry(true, 50, 7, size, 4096, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingBelowLength},
+		"allocated one byte less": {backingEntry(true, 50, 7, size, size-1, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingBelowLength},
+		"total allocation equals length, coverage unknown": {backingEntry(true, 50, 7, size, size, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingAtLeastLen},
+		"other device":        {backingEntry(true, 51, 7, size, 0, "0:51", "/", "overlay"), blockBackingElsewhere},
+		"other mount id only": {backingEntry(true, 50, 7, size, 0, "0:99", "/var/lib/ceph/osd", "tmpfs"), blockBackingElsewhere},
+		"same id other mount": {backingEntry(true, 50, 7, size, 0, "0:50", "/other", "tmpfs"), blockBackingElsewhere},
+		"device node":         {backingEntry(false, 50, 7, 0, 0, "0:50", "/var/lib/ceph/osd", "tmpfs"), blockBackingNotFile},
 	} {
 		got, err := classifyBlockBacking(backingReceipt(tc.block, scratchTmpfsEntry()))
 		if err != nil || got != tc.want {
@@ -78,7 +78,7 @@ func TestBlockBackingClassifierSeparatesSparseFromPreallocated(t *testing.T) {
 	}
 }
 
-func TestBlockGrowthGateTreatsOverwriteOnlyAsUnreached(t *testing.T) {
+func TestBlockGrowthIsObservationalAndNeverInfersOverwriteOnly(t *testing.T) {
 	const size = 1 << 20
 	at := func(ino uint64, size, allocated int64) *blockBackingReceipt {
 		return backingReceipt(backingEntry(true, 50, ino, size, allocated, "0:50", "/var/lib/ceph/osd", "tmpfs"), scratchTmpfsEntry())
@@ -88,12 +88,12 @@ func TestBlockGrowthGateTreatsOverwriteOnlyAsUnreached(t *testing.T) {
 		want          string
 		fail          bool
 	}{
-		"grew into a hole":            {at(7, size, 0), at(7, size, 8192), blockGrowthGrew, false},
-		"overwrite of a sparse file":  {at(7, size, 4096), at(7, size, 4096), blockGrowthUnchanged, false},
-		"overwrite when preallocated": {at(7, size, size), at(7, size, size), blockGrowthUnchanged, false},
-		"hole punched":                {at(7, size, size), at(7, size, size/2), "", true},
-		"length changed":              {at(7, size, 0), at(7, size*2, 0), "", true},
-		"file replaced":               {at(7, size, 0), at(8, size, 4096), "", true},
+		"grew into a hole":                  {at(7, size, 0), at(7, size, 8192), blockGrowthGrew, false},
+		"equal endpoints, workload unknown": {at(7, size, 4096), at(7, size, 4096), blockGrowthNoNetGrow, false},
+		"equal endpoints at full length":    {at(7, size, size), at(7, size, size), blockGrowthNoNetGrow, false},
+		"hole punched":                      {at(7, size, size), at(7, size, size/2), "", true},
+		"length changed":                    {at(7, size, 0), at(7, size*2, 0), "", true},
+		"file replaced":                     {at(7, size, 0), at(8, size, 4096), "", true},
 	} {
 		got, err := classifyBlockGrowth(tc.before, tc.after)
 		if (err != nil) != tc.fail || got != tc.want {
@@ -187,10 +187,10 @@ func TestBlockBackingObserverSeesSparseAndFullFilesWithoutChangingThem(t *testin
 		t.Errorf("symlink was not resolved to the target file: %+v", lk.Block)
 	}
 	// Observing twice yields the same allocation: the observer does not touch the file.
-	if g, err := classifyBlockGrowth(sp, observe(sparse)); err != nil || g != blockGrowthUnchanged {
+	if g, err := classifyBlockGrowth(sp, observe(sparse)); err != nil || g != blockGrowthNoNetGrow {
 		t.Errorf("repeated observation: %q, %v", g, err)
 	}
-	// A real write into a hole grows allocation, as the gate expects.
+	// A real write into a hole grows allocation at the later endpoint.
 	wf, err := os.OpenFile(sparse, os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -204,13 +204,34 @@ func TestBlockBackingObserverSeesSparseAndFullFilesWithoutChangingThem(t *testin
 	if g, err := classifyBlockGrowth(sp, observe(sparse)); err != nil || g != blockGrowthGrew {
 		t.Errorf("write into a hole: %q, %v", g, err)
 	}
-	// An overwrite of already allocated bytes does not.
+	// A non-truncating overwrite of allocated bytes leaves the endpoints equal.
 	before := observe(full)
-	if err := os.WriteFile(full, bytes.Repeat([]byte{0x5a}, size), 0o600); err != nil {
+	of, err := os.OpenFile(full, os.O_WRONLY, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if g, err := classifyBlockGrowth(before, observe(full)); err != nil || g != blockGrowthUnchanged {
-		t.Errorf("overwrite of allocated bytes: %q, %v", g, err)
+	if _, err := of.WriteAt(bytes.Repeat([]byte{0x5a}, size), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := of.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := classifyBlockGrowth(before, observe(full)); err != nil || g != blockGrowthNoNetGrow {
+		t.Errorf("non-truncating overwrite: %q, %v", g, err)
+	}
+	// Truncate to zero and refill: same inode and equal endpoints, so the judge
+	// stays at no net growth. It must not read that as overwrite-only.
+	if err := os.Truncate(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	if mid := observe(full); *mid.Block.Allocated != 0 {
+		t.Skipf("filesystem kept %d bytes after truncation", *mid.Block.Allocated)
+	}
+	if err := os.WriteFile(full, bytes.Repeat([]byte{0x33}, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := classifyBlockGrowth(before, observe(full)); err != nil || g != blockGrowthNoNetGrow {
+		t.Errorf("truncate and refill: %q, %v", g, err)
 	}
 	// Local temp directories are not the owned tmpfs, whatever this host is.
 	if v, err := classifyBlockBacking(sp); err == nil && v != blockBackingElsewhere && v != blockBackingSparse {
@@ -226,5 +247,24 @@ func TestBlockBackingObserverSeesSparseAndFullFilesWithoutChangingThem(t *testin
 	}
 	if v, err := classifyBlockBacking(miss); err == nil {
 		t.Errorf("missing block entry classified as %q", v)
+	}
+}
+
+// The verdict wording is part of the contract: aggregate allocation of at
+// least the length must not read as backing coverage, and equal endpoints must
+// not read as an overwrite-only or unreached workload.
+func TestBlockBackingVerdictsDoNotOverclaim(t *testing.T) {
+	if blockBackingAtLeastLen != "allocation-at-least-length" {
+		t.Errorf("aggregate allocation verdict reads %q", blockBackingAtLeastLen)
+	}
+	if blockGrowthNoNetGrow != "no-net-growth" {
+		t.Errorf("equal-endpoint verdict reads %q", blockGrowthNoNetGrow)
+	}
+	for _, v := range []string{blockBackingAtLeastLen, blockBackingBelowLength, blockBackingSparse, blockGrowthGrew, blockGrowthNoNetGrow} {
+		for _, bad := range []string{"preallocated", "unreached", "overwrite", "unchanged", "partial"} {
+			if strings.Contains(v, bad) {
+				t.Errorf("verdict %q implies %q", v, bad)
+			}
+		}
 	}
 }
