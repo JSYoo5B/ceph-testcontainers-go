@@ -243,6 +243,9 @@ type scratchFillReceipt struct {
 	Mount         *scratchMount `json:"mount"`
 }
 
+// decodeStrict accepts exactly one JSON line with no unknown fields and nothing
+// after the value (requireEOF, not Decoder.More, which misses a dangling
+// closing delimiter).
 func decodeStrict(data []byte, into any) error {
 	data = bytes.TrimSpace(data)
 	if bytes.Contains(data, []byte("\n")) {
@@ -253,10 +256,7 @@ func decodeStrict(data []byte, into any) error {
 	if err := dec.Decode(into); err != nil {
 		return err
 	}
-	if dec.More() {
-		return errors.New("trailing data after the JSON document")
-	}
-	return nil
+	return requireEOF(dec)
 }
 
 func (v *scratchVFS) complete() bool {

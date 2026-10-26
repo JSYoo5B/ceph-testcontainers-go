@@ -54,19 +54,10 @@ func requireEOF(dec *json.Decoder) error {
 	return nil
 }
 
-// decodeOneDocument is decodeStrict with the end-of-document check above:
-// exactly one JSON line, no unknown fields, nothing after the value.
+// decodeOneDocument is the same boundary as decodeStrict: exactly one JSON
+// line, no unknown fields, nothing after the value.
 func decodeOneDocument(data []byte, into any) error {
-	data = bytes.TrimSpace(data)
-	if bytes.Contains(data, []byte("\n")) {
-		return errors.New("expected exactly one JSON line")
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(into); err != nil {
-		return err
-	}
-	return requireEOF(dec)
+	return decodeStrict(data, into)
 }
 
 func rawString(m map[string]json.RawMessage, name string) (string, error) {
