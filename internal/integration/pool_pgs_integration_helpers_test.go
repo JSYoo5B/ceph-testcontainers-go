@@ -21,7 +21,7 @@ func integrationPoolPGs(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	t.Helper()
 	for {
 		before := integrationNativePoolPGs(t, ctx, cluster, fsid, pool)
-		actual, err := cluster.PoolPGs(ctx, pool)
+		actual, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil {
 			t.Fatal("PoolPGs failed", phase, err)
 		}

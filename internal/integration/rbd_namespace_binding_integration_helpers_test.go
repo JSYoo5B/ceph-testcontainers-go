@@ -77,11 +77,11 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	sourcePool, err := source.PoolStatus(ctx, pool)
+	sourcePool, err := poolHandle(t, ctx, source, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationPool, err := destination.PoolStatus(ctx, pool)
+	destinationPool, err := poolHandle(t, ctx, destination, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

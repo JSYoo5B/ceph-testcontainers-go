@@ -156,7 +156,7 @@ func testClientKeyReplacement(t *testing.T) {
 			holder := startClientContainer(t, ctx, cluster, client)
 			startHeldSession(t, ctx, holder, client, "hold")
 			replacedAt := containerTime(t, ctx, holder)
-			next, err := cluster.ReplaceClientKey(ctx, client)
+			next, err := client.ReplaceKey(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,10 +168,10 @@ func testClientKeyReplacement(t *testing.T) {
 			if got := cephxKeyType(t, clientKeyring(t, next), client.Name()); got != cipher {
 				t.Fatalf("the new key is %s", got)
 			}
-			if got, err := cluster.ClientCapabilities(ctx, next); err != nil || got != caps {
+			if got, err := next.Capabilities(ctx); err != nil || got != caps {
 				t.Fatalf("ClientCapabilities with the new descriptor: %+v, %v", got, err)
 			}
-			if _, err := cluster.ClientCapabilities(ctx, client); err == nil {
+			if _, err := client.Capabilities(ctx); err == nil {
 				t.Fatal("the old descriptor still reads capabilities")
 			}
 			// The holder keeps the old keyring.
@@ -200,7 +200,7 @@ func testClientKeyReplacement(t *testing.T) {
 				if other == cipher {
 					other = ciphers[1]
 				}
-				changed, err := cluster.ReplaceClientKey(ctx, next, ceph.WithClientKeyType(other))
+				changed, err := next.ReplaceKey(ctx, ceph.WithClientKeyType(other))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -224,7 +224,7 @@ func testClientKeyReplacement(t *testing.T) {
 			}
 		})
 	}
-	if _, err := cluster.ClientCapabilities(ctx, bystander); err != nil {
+	if _, err := bystander.Capabilities(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -240,9 +240,9 @@ func testClientKeyReplacement(t *testing.T) {
 		current := client
 		for _, delay := range []time.Duration{50 * time.Millisecond, 300 * time.Millisecond, time.Second, 3 * time.Second} {
 			callCtx, callCancel := context.WithTimeout(ctx, delay)
-			attempted, err := cluster.ReplaceClientKey(callCtx, current)
+			attempted, err := current.ReplaceKey(callCtx)
 			callCancel()
-			resolved, resolveErr := cluster.ReplaceClientKey(ctx, current)
+			resolved, resolveErr := current.ReplaceKey(ctx)
 			if resolveErr != nil {
 				t.Fatalf("after a call canceled after %v (%v), the next call returned %v", delay, err, resolveErr)
 			}

@@ -80,14 +80,14 @@ func TestOSDRemovalKeepsUnconfirmedCommandAndRetriesBeforePurge(t *testing.T) {
 	// The stop failure's fallback inspection must see a still-existing instance.
 	inv.target = newNativeTarget(t, daemon.GetContainerID(), "tc-public")
 	c.nativeInvocations = map[*nativeInvocation]bool{inv: true}
-	if err := c.RemoveOSD(t.Context(), 3); !errors.Is(err, blocked) {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); !errors.Is(err, blocked) {
 		t.Fatalf("unconfirmed stop: %v", err)
 	}
 	if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || c.osds[3] == nil || registered(c) != 1 || !c.nativeFenced[daemon.GetContainerID()] || c.nativeClosed {
 		t.Fatal("failed drain lost ownership, purged, or closed unrelated admission")
 	}
 	inv.stopCommand = func(context.Context, testcontainers.Container, string, string) error { return nil }
-	if err := c.RemoveOSD(t.Context(), 3); err != nil || c.osds[3] != nil || registered(c) != 0 || control.purges != 1 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err != nil || c.osds[3] != nil || registered(c) != 0 || control.purges != 1 {
 		t.Fatalf("fresh retry did not finish removal: %v", err)
 	}
 }
@@ -110,12 +110,12 @@ func TestOSDRemovalRefusalDoesNotFenceAnInstance(t *testing.T) {
 	state := control.native[3]
 	state.UUID = osdLifecycleForeignUUID
 	control.native[3] = state
-	if err := c.RemoveOSD(t.Context(), 3); err == nil || len(c.nativeFenced) != 0 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeFenced) != 0 {
 		t.Fatalf("foreign identity changed admission: %v", err)
 	}
 	c, _, _ = newOSDLifecycleFixture()
 	delete(c.osds, 4)
-	if err := c.RemoveOSD(t.Context(), 3); err == nil || len(c.nativeFenced) != 0 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeFenced) != 0 {
 		t.Fatalf("last OSD refusal changed admission: %v", err)
 	}
 }

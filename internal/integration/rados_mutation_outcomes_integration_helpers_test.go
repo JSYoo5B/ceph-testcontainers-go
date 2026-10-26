@@ -166,7 +166,7 @@ func (op osdTrackedOp) event(name string) (time.Time, bool) {
 // PG and the flags, but not the object.
 func osdClientWrites(t *testing.T, ctx context.Context, cluster *ceph.Container, osd, command, pg string) []osdTrackedOp {
 	t.Helper()
-	out, err := cluster.AdminSocket(ctx, osd, command)
+	out, err := adminSocket(t, ctx, cluster, osd, command)
 	if err != nil {
 		t.Fatalf("%s %s: %v", osd, command, err)
 	}

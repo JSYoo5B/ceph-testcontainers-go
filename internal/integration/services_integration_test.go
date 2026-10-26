@@ -173,7 +173,7 @@ func advanceServiceTopology(t *testing.T, ctx context.Context, cluster *ceph.Con
 		t.Fatal(err)
 	}
 	logStatus(t, ctx, cluster, "service data after OSD addition")
-	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {

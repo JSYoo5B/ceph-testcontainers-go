@@ -31,7 +31,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverrideHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
-| An OSD leaves the cluster | `RemoveOSD`, `SetOSDIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `SetOSDIn(..., true)` |
+| An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `OSDContainer.SetIn(..., true)` |
 | The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
 | An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
@@ -1052,7 +1052,7 @@ Useful combinations:
 | A placement change or recovery stays incomplete | `nobackfill` and `norecover` together (`nobackfill` alone does not stop log-based recovery of small PGs) |
 | No background scrub interferes with a test | `noscrub`, `nodeep-scrub` (they can also keep `DeepScrubPG` from finishing) |
 
-`noout` only suppresses automatic out marking; an explicit `SetOSDIn(ctx, id,
+`noout` only suppresses automatic out marking; an explicit `OSDContainer.SetIn(ctx,
 false)` still marks the OSD out. Per-OSD, CRUSH-node and device-class flags
 are separate native state; set them with `cluster.Ceph` (for example
 `osd add-noout osd.1`) and undo them yourself.
@@ -1147,7 +1147,7 @@ if err := cluster.RepairPG(ctx, mapping.PGID); err != nil {
 
 ## Removing an OSD or marking it out
 
-`RemoveOSD(ctx, id)` is a planned removal: it drains the OSD, waits until
+`OSDContainer.Remove(ctx)` is a planned removal: it drains the OSD, waits until
 `safe-to-destroy`, stops it, waits for it to be down, purges it from Ceph and
 removes its container. It refuses the last owned OSD. If the remaining OSDs
 cannot hold the data (replica count or capacity), it times out and leaves the
@@ -1155,8 +1155,8 @@ OSD out and reweighted; it does not mark it back in. Each phase checks the
 OSD's registration UUID, and a lost purge reply can be retried with a fresh
 context. `AddOSD` is refused until a removal has finished.
 
-`SetOSDIn(ctx, id, false)` marks an owned OSD out without stopping it, so data
-migrates away while the daemon keeps running. `SetOSDIn(ctx, id, true)` brings
+`OSDContainer.SetIn(ctx, false)` marks an owned OSD out without stopping it, so data
+migrates away while the daemon keeps running. `OSDContainer.SetIn(ctx, true)` brings
 it back. `WaitForPGClean` waits for recovery while an OSD is intentionally
 out or down; `WaitForClean` also requires every owned OSD up and in.
 
@@ -1275,7 +1275,7 @@ query native state:
 | --- | --- |
 | `HealthDetails` | Health codes such as `SLOW_OPS`, `OSD_DOWN`, `OSD_FULL`, `OSD_SCRUB_ERRORS`, `PG_DAMAGED` |
 | `OSDStates`, `OSDFlags` | Up/in state and weight of owned OSDs, global flags |
-| `PoolPGs` | PG states, up/acting sets and primaries of one pool |
+| `Pool.PGs` | PG states, up/acting sets and primaries of one pool |
 | `QuorumStatus`, `ManagerStatus` | MON quorum and the active MGR |
 | `cephfs.Filesystem.MDSStatus`, `Sessions` | Rank ownership, standbys and client sessions |
 | `BlocklistEntries`, `ObjectWatchers`, `rbd.ImageClients` | Fencing, watches and locks |
@@ -1306,7 +1306,7 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 - [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
   `OverrideConfig`, `OverrideOSDFlag`, `TemporaryBlocklist`,
-  `OverrideFullRatios`, scrub helpers, `RemoveOSD`, `SetOSDIn`.
+  `OverrideFullRatios`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
 - [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.

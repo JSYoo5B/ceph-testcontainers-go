@@ -67,8 +67,11 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	if _, err := Start(ctx, nil, Config{}); err == nil {
 		t.Fatal("nil cluster started a gateway")
 	}
-	if err := Remove(ctx, nil, "a"); err == nil {
-		t.Fatal("nil cluster removed a gateway")
+	if err := (&Gateway{GatewayName: "a"}).Remove(ctx); err == nil {
+		t.Fatal("a gateway without a cluster was removed")
+	}
+	if err := (*Gateway)(nil).Remove(ctx); err == nil {
+		t.Fatal("a nil gateway was removed")
 	}
 	if _, err := Gateways(ctx, nil); err == nil {
 		t.Fatal("nil cluster listed gateways")
@@ -77,7 +80,9 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 
 func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 	operations := map[string]func(context.Context, *ceph.Container) error{
-		"Remove": func(ctx context.Context, c *ceph.Container) error { return Remove(ctx, c, "queued") },
+		"Remove": func(ctx context.Context, c *ceph.Container) error {
+			return (&Gateway{GatewayName: "queued", owner: c}).Remove(ctx)
+		},
 		"StartBridge": func(ctx context.Context, c *ceph.Container) error {
 			_, err := Start(ctx, c, Config{Name: "queued"})
 			return err

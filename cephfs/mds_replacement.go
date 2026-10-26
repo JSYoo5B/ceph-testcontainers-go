@@ -25,11 +25,11 @@ type cephFSMDSReplacement struct {
 	completed bool
 }
 
-// AddMDSReplacement starts a new indexed MDS for this filesystem's sole stopped
-// original member, preserving its pools, data and desired one-active/zero-standby
+// AddReplacement starts a new indexed MDS for the filesystem of this stopped
+// MDS, its sole original member, preserving its pools, data and desired one-active/zero-standby
 // policy. The old name must already be globally absent and rank zero failed;
 // native failure is caller-controlled. No native fail, auth deletion or old CID
-// removal is performed. Once the new rank is ready, RemoveStoppedMDS can retire
+// removal is performed. Once the new rank is ready, MDS.RemoveStopped can retire
 // the original old container using the new healthy survivor.
 //
 // Any failure after the auth/start attempt leaves this request cleanup-only,
@@ -40,8 +40,12 @@ type cephFSMDSReplacement struct {
 // Direct Start/Stop, native policy/failure edits and exported-field edits must
 // not run concurrently. Native name/GID and original Docker CID are independent
 // evidence; this method does not establish process-to-GID attribution.
-func (fs *Filesystem) AddMDSReplacement(ctx context.Context, stopped *MDS) (*MDS, error) {
-	if fs == nil || fs.cluster == nil {
+func (stopped *MDS) AddReplacement(ctx context.Context) (*MDS, error) {
+	if stopped == nil || stopped.identity == nil || stopped.identity.filesystem == nil {
+		return nil, errors.New("original owned MDS creation identity is unavailable")
+	}
+	fs := stopped.identity.filesystem
+	if fs.cluster == nil {
 		return nil, errors.New("original MDS replacement filesystem is unavailable")
 	}
 	return fs.addMDSReplacement(ctx, stopped, fs.startService)

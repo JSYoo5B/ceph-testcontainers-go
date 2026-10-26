@@ -66,17 +66,27 @@ func cephFSMDSFullCID(cid string) bool {
 	return err == nil && cid == string(bytes.ToLower([]byte(cid)))
 }
 
-// RemoveStoppedMDS retires one original owned, stopped container after its
+// RemoveStopped retires this original owned, stopped MDS container after its
 // immutable daemon name has left every native filesystem and global standby
 // list. Healthy original owned daemons must still serve every desired active
 // rank. It neither fails a native MDS nor deletes its auth entity or changes
-// desired capacity. Use ScaleMDS afterward to create missing replacement members.
+// desired capacity. Use Filesystem.ScaleMDS afterward to create missing
+// replacement members.
 //
 // Only successful original startups are eligible. A partial startup remains
 // owned for cluster Terminate. An uncertain Docker removal retains the original
 // handle for explicit retry; initial arbitrary absence is not success. Direct
 // failure injection, Start/Stop and raw policy changes must not run concurrently.
-func (fs *Filesystem) RemoveStoppedMDS(parent context.Context, daemon *MDS) error {
+func (daemon *MDS) RemoveStopped(ctx context.Context) error {
+	if daemon == nil || daemon.identity == nil || daemon.identity.filesystem == nil {
+		return errors.New("original owned MDS creation identity is unavailable")
+	}
+	return daemon.identity.filesystem.removeStoppedMDS(ctx, daemon)
+}
+
+// removeStoppedMDS implements MDS.RemoveStopped for the filesystem that
+// created daemon.
+func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 	if err := parent.Err(); err != nil {
 		return err
 	}

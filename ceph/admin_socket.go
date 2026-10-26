@@ -121,31 +121,11 @@ func (c *Container) runMount() []testcontainers.ContainerCustomizer {
 	return []testcontainers.ContainerCustomizer{c.run.mount()}
 }
 
-// AdminSocket runs a command on the admin socket of one MON, MGR or OSD that
-// this cluster owns and returns the command's output. daemon is the Ceph
-// daemon name, such as "mon.a", "mgr.b" or "osd.0", and args are the command
-// words, such as "status", "version" or "config", "get", "osd_heartbeat_grace";
-// "help" lists the daemon's commands.
-//
-// The command does not use the Messenger or Cephx: it reaches the daemon
-// through its local socket, so it works while the daemon cannot reach a
-// monitor and reports what the daemon itself has applied, for example the
-// newest OSDMap epoch in an OSD's "status". It runs in the control container,
-// which shares the daemons' run directory, so it also works with OSD images
-// that have no Ceph CLI. The daemon must be running; a stopped or removed
-// daemon returns an error. A paused daemon accepts the connection but does not
-// answer, so the call waits for ctx or the cluster's startup timeout, which
-// also bounds every call. When the call ends early, AdminSocket stops its CLI
-// in the control container before it returns, including one that Docker has
-// not started yet. A nonzero exit returns the output with an error.
-func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error) {
-	if gateErr := c.sharedGate("AdminSocket"); gateErr != nil {
-		return nil, gateErr
-	}
-	kind, id, err := parseAdminSocketDaemon(daemon)
-	if err != nil {
-		return nil, err
-	}
+// adminSocket implements the AdminSocket method of the daemon handles.
+// handle must be owned by c now; the checks run under the topology lock.
+func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args ...string) ([]byte, error) {
+	kind, id := handle.daemonRef()
+	daemon := kind + "." + id
 	if len(args) == 0 {
 		return nil, errors.New("admin socket command is empty")
 	}
@@ -159,15 +139,15 @@ func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...stri
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
-	closed, shared, owned := c.closed, c.run != nil && !c.run.removed, c.ownsDaemon(kind, id)
+	closed, shared, owned := c.closed, c.run != nil && !c.run.removed, handle.ownedBy(c)
 	c.mu.Unlock()
 	switch {
 	case closed:
 		return nil, errClusterTerminated
+	case !owned:
+		return nil, invalid(fmt.Errorf("daemon %s is not owned by this cluster, or this handle is stale", daemon))
 	case !shared:
 		return nil, errors.New("this cluster has no shared run directory for admin sockets")
-	case !owned:
-		return nil, invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
 	}
 	control, err := c.controlContainerContext(ctx)
 	if err != nil {

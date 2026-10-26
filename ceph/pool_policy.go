@@ -51,8 +51,9 @@ func (c *Container) Pools(ctx context.Context) ([]PoolState, error) {
 	return c.poolStates(ctx)
 }
 
-// PoolStatus looks up a pool by its exact native name.
-func (c *Container) PoolStatus(ctx context.Context, name string) (PoolState, error) {
+// poolStatus looks up a pool by its exact native name. A non-nil handle must
+// identify that pool.
+func (c *Container) poolStatus(ctx context.Context, name string, handle *Pool) (PoolState, error) {
 	if err := validateExistingPoolName(name); err != nil {
 		return PoolState{}, err
 	}
@@ -61,17 +62,14 @@ func (c *Container) PoolStatus(ctx context.Context, name string) (PoolState, err
 	if err := c.poolPolicyReady(); err != nil {
 		return PoolState{}, err
 	}
-	return c.poolState(ctx, name)
+	return c.handlePoolState(ctx, name, handle)
 }
 
-// SetPoolQuota replaces both limits, including zero values that remove a limit.
-// Commands are sequential and may partially succeed; inspect PoolStatus after
+// setPoolQuota implements Pool.SetQuota. It replaces both limits, including zero values that remove a limit.
+// Commands are sequential and may partially succeed; inspect Pool.Status after
 // an error. Existing data is never removed. External pool edits must not race
 // this operation; native pool IDs are checked before each mutation.
-func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuota) error {
-	if gateErr := c.sharedGate("SetPoolQuota"); gateErr != nil {
-		return gateErr
-	}
+func (c *Container) setPoolQuota(ctx context.Context, name string, handle *Pool, quota PoolQuota) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -82,7 +80,7 @@ func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuo
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.poolState(ctx, name)
+	pool, err := c.handlePoolState(ctx, name, handle)
 	if err != nil {
 		return err
 	}
@@ -106,15 +104,12 @@ func (c *Container) SetPoolQuota(ctx context.Context, name string, quota PoolQuo
 	return nil
 }
 
-// SetPoolReplication changes a replicated pool's size/min_size without changing
+// setPoolReplication implements Pool.SetReplication. It changes a replicated pool's size/min_size without changing
 // data, PG count or placement. It requires enough owned placement domains in the
 // native CRUSH rule. EC shard counts cannot be changed by this method. WaitForClean
-// waits for resulting recovery. On partial failure, inspect PoolStatus; no rollback
+// waits for resulting recovery. On partial failure, inspect Pool.Status; no rollback
 // or data deletion is attempted. External pool/CRUSH edits must not race this call.
-func (c *Container) SetPoolReplication(ctx context.Context, name string, replicas, minSize int) error {
-	if gateErr := c.sharedGate("SetPoolReplication"); gateErr != nil {
-		return gateErr
-	}
+func (c *Container) setPoolReplication(ctx context.Context, name string, handle *Pool, replicas, minSize int) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -128,7 +123,7 @@ func (c *Container) SetPoolReplication(ctx context.Context, name string, replica
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.poolState(ctx, name)
+	pool, err := c.handlePoolState(ctx, name, handle)
 	if err != nil {
 		return err
 	}

@@ -136,11 +136,11 @@ func (h *DebugLevelOverrideHandle) Receipt() DebugLevelReceipt {
 // still lets Terminate run.
 //
 // Each set is admitted only while the daemon still runs the window's
-// generation, and the cluster's own topology operations, such as RemoveOSD,
-// DetachOSD and ReopenOSD, wait until the set has ended. A set whose end
+// generation, and the cluster's own topology operations, such as OSDContainer.Remove,
+// OSDContainer.Detach and DetachedOSD.Reopen, wait until the set has ended. A set whose end
 // cannot be confirmed may still run: the window keeps it, and no later set or
-// terminal state is taken until it is confirmed stopped. Until then RemoveOSD
-// and DetachOSD first stop it, or refuse to replace the OSD.
+// terminal state is taken until it is confirmed stopped. Until then OSDContainer.Remove
+// and OSDContainer.Detach first stop it, or refuse to replace the OSD.
 //
 // The readbacks around each set are not an atomic compare-and-swap: another
 // writer of the same daemon and option must not race the window, and an
@@ -606,7 +606,7 @@ func (t *osdDebugTarget) generationLocked(ctx context.Context) (debugLevelGenera
 }
 
 func (t *osdDebugTarget) get(ctx context.Context, name string) (string, error) {
-	out, err := t.c.AdminSocket(ctx, t.daemon, "config", "get", name)
+	out, err := t.osd.AdminSocket(ctx, "config", "get", name)
 	if err != nil {
 		return "", err
 	}
@@ -618,7 +618,7 @@ func (t *osdDebugTarget) get(ctx context.Context, name string) (string, error) {
 // replace the OSD in between. The command is registered as a native
 // invocation of the OSD's container instance, as RunNativeCommand's are, and
 // one whose end is unconfirmed stays registered until settle confirms it: the
-// fence of RemoveOSD and DetachOSD drains it first or refuses, and Terminate
+// fence of OSDContainer.Remove and OSDContainer.Detach drains it first or refuses, and Terminate
 // stops it.
 func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) (func(context.Context) error, error) {
 	c := t.c

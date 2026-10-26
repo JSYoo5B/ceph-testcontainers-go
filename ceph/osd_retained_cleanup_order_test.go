@@ -169,12 +169,12 @@ func requireNoRegistrationOrStoreWrites(t *testing.T, f *retainedFixture) {
 // handle stays reusable and a retry reopens it once.
 func TestReopenRetriesAfterAFailedStaleSocketCleanup(t *testing.T) {
 	f, control := newCleanupFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	control.set("exit", 0)
-	osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+	osd, err := detached.Reopen(t.Context())
 	if err == nil || osd != nil || !strings.Contains(err.Error(), "rm failed") {
 		t.Fatalf("failed cleanup: %v %v", err, osd)
 	}
@@ -184,14 +184,14 @@ func TestReopenRetriesAfterAFailedStaleSocketCleanup(t *testing.T) {
 	requireNoRegistrationOrStoreWrites(t, f)
 
 	control.set("", 0)
-	reopened, err := f.cluster.ReopenOSD(t.Context(), detached)
+	reopened, err := detached.Reopen(t.Context())
 	if err != nil {
 		t.Fatal("retry after the known zero-dispatch failure:", err)
 	}
 	if f.runs != 1 || control.removeCount() != 2 || f.cluster.osds[3] != reopened || reopened.GetContainerID() != "osd-reopened-3" || !detached.reopened {
 		t.Fatalf("retry state runs=%d removes=%d", f.runs, control.removeCount())
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
+	if _, err := detached.Reopen(t.Context()); err == nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
 		t.Fatalf("a consumed handle was replayed: %v runs=%d", err, f.runs)
 	}
 }
@@ -201,13 +201,13 @@ func TestReopenRetriesAfterAFailedStaleSocketCleanup(t *testing.T) {
 func TestReopenSettlesAnUnconfirmedCleanupBeforeRetrying(t *testing.T) {
 	setup := func(t *testing.T) (*retainedFixture, *cleanupControl, *DetachedOSD) {
 		f, control := newCleanupFixture(t)
-		detached, err := f.cluster.DetachOSD(t.Context(), 3)
+		detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		// The first cleanup is lost, and its cancellation fails too.
 		control.set("stream", 1)
-		osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+		osd, err := detached.Reopen(t.Context())
 		if err == nil || osd != nil || f.runs != 0 || detached.reopened || f.cluster.detachedOSDs[3] != detached || control.removeCount() != 1 {
 			t.Fatalf("unconfirmed cleanup: %v %v runs=%d removes=%d", err, osd, f.runs, control.removeCount())
 		}
@@ -219,7 +219,7 @@ func TestReopenSettlesAnUnconfirmedCleanupBeforeRetrying(t *testing.T) {
 		f, control, detached := setup(t)
 		// The retry must not create a container nor start another cleanup.
 		control.set("", 1)
-		osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+		osd, err := detached.Reopen(t.Context())
 		if err == nil || osd != nil || !strings.Contains(err.Error(), "may still run") || f.runs != 0 || control.removeCount() != 1 || detached.reopened {
 			t.Fatalf("retry over an unsettled cleanup: %v %v runs=%d removes=%d", err, osd, f.runs, control.removeCount())
 		}
@@ -233,7 +233,7 @@ func TestReopenSettlesAnUnconfirmedCleanupBeforeRetrying(t *testing.T) {
 	t.Run("cancellation settles it", func(t *testing.T) {
 		f, control, detached := setup(t)
 		control.set("", 0)
-		osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+		osd, err := detached.Reopen(t.Context())
 		if err != nil || osd == nil || f.runs != 1 || control.removeCount() != 2 {
 			t.Fatalf("retry after settlement: %v runs=%d removes=%d", err, f.runs, control.removeCount())
 		}
@@ -249,17 +249,17 @@ func TestReopenSettlesAnUnconfirmedCleanupBeforeRetrying(t *testing.T) {
 // confirmed stopped, is known finished: the retry needs no settlement.
 func TestReopenRetriesAfterAConfirmedFinishedCleanup(t *testing.T) {
 	f, control := newCleanupFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	control.set("stream", 0)
-	if osd, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || osd != nil || len(detached.staleCleanups) != 0 || f.runs != 0 {
+	if osd, err := detached.Reopen(t.Context()); err == nil || osd != nil || len(detached.staleCleanups) != 0 || f.runs != 0 {
 		t.Fatalf("stopped cleanup: %v %v", err, osd)
 	}
 	control.release()
 	control.set("", 0)
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err != nil || f.runs != 1 || !control.hasSocket() {
+	if _, err := detached.Reopen(t.Context()); err != nil || f.runs != 1 || !control.hasSocket() {
 		t.Fatalf("retry after a confirmed stop: %v runs=%d", err, f.runs)
 	}
 }
@@ -268,13 +268,13 @@ func TestReopenRetriesAfterAConfirmedFinishedCleanup(t *testing.T) {
 // irreversible transition.
 func TestReopenRechecksCancellationAfterTheStaleSocketCleanup(t *testing.T) {
 	f, control := newCleanupFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	control.onClear = cancel
-	osd, err := f.cluster.ReopenOSD(ctx, detached)
+	osd, err := detached.Reopen(ctx)
 	if !errors.Is(err, context.Canceled) || osd != nil {
 		t.Fatalf("canceled reopen: %v %v", err, osd)
 	}
@@ -283,7 +283,7 @@ func TestReopenRechecksCancellationAfterTheStaleSocketCleanup(t *testing.T) {
 	}
 	requireNoRegistrationOrStoreWrites(t, f)
 	control.onClear = nil
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err != nil || f.runs != 1 {
+	if _, err := detached.Reopen(t.Context()); err != nil || f.runs != 1 {
 		t.Fatalf("retry after cancellation: %v runs=%d", err, f.runs)
 	}
 }
@@ -293,18 +293,18 @@ func TestReopenRechecksCancellationAfterTheStaleSocketCleanup(t *testing.T) {
 func TestReopenKeepsADispatchedCreationErrorConsumed(t *testing.T) {
 	f, _ := newCleanupFixture(t)
 	dispatches := runnerOutcome(f, false)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+	osd, err := detached.Reopen(t.Context())
 	if err == nil || osd == nil || osd.Container != nil || f.cluster.osds[3] != osd || !detached.reopened || f.cluster.detachedOSDs[3] != nil {
 		t.Fatalf("dispatched nil,error: %v %+v", err, osd)
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || !strings.Contains(err.Error(), "already reopened") {
+	if _, err := detached.Reopen(t.Context()); err == nil || !strings.Contains(err.Error(), "already reopened") {
 		t.Fatal("retry of the dispatched creation:", err)
 	}
-	if _, err := f.cluster.DetachOSD(t.Context(), 3); err == nil || !strings.Contains(err.Error(), "no container") {
+	if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err == nil || !strings.Contains(err.Error(), "no container") {
 		t.Fatal("detach of the container-less candidate:", err)
 	}
 	if *dispatches != 1 {
@@ -323,7 +323,7 @@ func TestCompetingReopensDispatchOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _ := newCleanupFixture(t)
 			dispatches := runnerOutcome(f, tc.withCandidate)
-			detached, err := f.cluster.DetachOSD(t.Context(), 3)
+			detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -340,7 +340,7 @@ func TestCompetingReopensDispatchOnce(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					<-start
-					osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+					osd, err := detached.Reopen(t.Context())
 					results <- result{osd, err}
 				}()
 			}
@@ -368,10 +368,10 @@ func TestCompetingReopensDispatchOnce(t *testing.T) {
 	}
 }
 
-// reopenOrderOK reports whether the ReopenOSD source cleans the stale socket
+// reopenOrderOK reports whether the reopenOSD source cleans the stale socket
 // and rechecks the context before it consumes the detached handle.
 func reopenOrderOK(src string) bool {
-	start := strings.Index(src, "func (c *Container) ReopenOSD(")
+	start := strings.Index(src, "func (c *Container) reopenOSD(")
 	if start < 0 {
 		return false
 	}
@@ -393,9 +393,9 @@ func TestReopenSourceCleansBeforeConsuming(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reopenOrderOK(string(src)) {
-		t.Fatal("ReopenOSD no longer cleans the stale socket and rechecks the context before consuming the handle")
+		t.Fatal("reopenOSD no longer cleans the stale socket and rechecks the context before consuming the handle")
 	}
-	old := `func (c *Container) ReopenOSD(ctx context.Context) {
+	old := `func (c *Container) reopenOSD(ctx context.Context) {
 	if err := ctx.Err(); err != nil {
 		return
 	}

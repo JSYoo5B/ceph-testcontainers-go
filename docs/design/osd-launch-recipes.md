@@ -2,7 +2,7 @@
 
 This is an internal preparation step for #6. It does not add a public retained
 store, detach/reopen API, attachment lease or replacement-container support.
-`AddOSD` still creates a new native registration; `RemoveOSD` drains and purges.
+`AddOSD` still creates a new native registration; `OSDContainer.Remove` drains and purges.
 Same-container Stop/Start remains available through its existing handle.
 
 ## Immutable inputs and fresh requests

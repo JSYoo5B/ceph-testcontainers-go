@@ -123,7 +123,7 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	if _, err := Start(ctx, nil, Config{}); err == nil {
 		t.Fatal("nil cluster started a filesystem")
 	}
-	if err := Remove(ctx, nil, "a"); err == nil || !strings.Contains(err.Error(), "unavailable") {
+	if err := (&Filesystem{FilesystemName: "a"}).Remove(ctx); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("nil cluster removed a filesystem: %v", err)
 	}
 	if Filesystems(nil) != nil {

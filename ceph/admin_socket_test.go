@@ -57,7 +57,7 @@ func TestAdminSocketRefusesBeforeRunningCommands(t *testing.T) {
 			if test.edit != nil {
 				test.edit(c)
 			}
-			_, err := c.AdminSocket(t.Context(), test.daemon, test.args...)
+			_, err := adminSocketOf(t, c, test.daemon, test.args...)
 			if err == nil || !strings.Contains(err.Error(), test.want) || len(control.Calls) != 0 {
 				t.Fatalf("err=%v calls=%v", err, control.Calls)
 			}
@@ -71,7 +71,7 @@ func TestAdminSocketBusyClusterHonorsDeadline(t *testing.T) {
 	defer c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := c.AdminSocket(ctx, "osd.0", "status"); err == nil || len(control.Calls) != 0 {
+	if _, err := osdHandle(t, ctx, c, 0).AdminSocket(ctx, "status"); err == nil || len(control.Calls) != 0 {
 		t.Fatalf("busy cluster ran a command: %v %v", err, control.Calls)
 	}
 }

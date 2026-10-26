@@ -58,7 +58,7 @@ func identityErr(c *Container, client *ClientConfig) error {
 func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	w, c, client := clientWorld()
 	old := w.clients["client.app"].key
-	next, err := c.ReplaceClientKey(t.Context(), client)
+	next, err := client.ReplaceKey(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,16 +74,16 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 		t.Fatalf("the old descriptor's credentials changed: %v", err)
 	}
 	for name, err := range map[string]error{
-		"ClientCapabilities": func() error { _, err := c.ClientCapabilities(t.Context(), client); return err }(),
+		"ClientCapabilities": func() error { _, err := client.Capabilities(t.Context()); return err }(),
 		"WithClientIdentity": identityErr(c, client),
-		"DeleteClient":       c.DeleteClient(t.Context(), client),
-		"UpdateClientCaps":   c.UpdateClientCaps(t.Context(), client, ClientCaps{Mon: "allow *"}),
+		"DeleteClient":       client.Delete(t.Context()),
+		"UpdateClientCaps":   client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow *"}),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "has a new key") {
 			t.Fatalf("%s with the old descriptor returned %v", name, err)
 		}
 	}
-	if caps, err := c.ClientCapabilities(t.Context(), next); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
+	if caps, err := next.Capabilities(t.Context()); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
 		t.Fatalf("ClientCapabilities with the new descriptor: %+v, %v", caps, err)
 	}
 	if err := identityErr(c, next); err != nil {
@@ -91,10 +91,10 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	}
 	// Replacing the old key again finds it replaced.
 	imports := w.counts["import"]
-	if again, err := c.ReplaceClientKey(t.Context(), client); err != nil || again != next || w.counts["import"] != imports {
+	if again, err := client.ReplaceKey(t.Context()); err != nil || again != next || w.counts["import"] != imports {
 		t.Fatalf("a repeated replacement returned %p (want %p), %v, after %d imports", again, next, err, w.counts["import"]-imports)
 	}
-	third, err := c.ReplaceClientKey(t.Context(), next, WithClientKeyType(CipherAES))
+	third, err := next.ReplaceKey(t.Context(), WithClientKeyType(CipherAES))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	if cipher, _ := keyCipher(clientKey(third.keyring, "client.app")); cipher != CipherAES {
 		t.Fatalf("WithClientKeyType(aes) gave a %s key", cipher)
 	}
-	if err := c.DeleteClient(t.Context(), third); err != nil {
+	if err := third.Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := w.clients["client.app"]; ok {
@@ -134,7 +134,7 @@ func TestReplaceClientKeyRefusesBeforeAnyChange(t *testing.T) {
 			w, c, client := clientWorld()
 			client = setup(w, c, client)
 			before := maps.Clone(w.clients)
-			if next, err := c.ReplaceClientKey(t.Context(), client); err == nil || next != nil {
+			if next, err := client.ReplaceKey(t.Context()); err == nil || next != nil {
 				t.Fatalf("returned %v, %v", next, err)
 			}
 			if w.counts["import"] != 0 || !maps.EqualFunc(before, w.clients, func(a, b fakeClient) bool { return a.key == b.key }) {
@@ -171,7 +171,7 @@ func TestReplaceClientKeyReadsTheOutcomeOfAFailedImport(t *testing.T) {
 		"connection failed":                      {"connect", failsBefore, false, false, "did not apply"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			w, c, client := clientWorld()
+			w, _, client := clientWorld()
 			old := w.clients["client.app"].key
 			w.faults[test.op] = rotationFault{occurrence: 1, effect: test.effect}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -180,7 +180,7 @@ func TestReplaceClientKeyReadsTheOutcomeOfAFailedImport(t *testing.T) {
 				w.onHang = cancel
 			}
 			w.route = "b"
-			next, err := c.ReplaceClientKey(ctx, client)
+			next, err := client.ReplaceKey(ctx)
 			w.onHang = nil
 			if test.applied {
 				if err != nil || next == nil || !next.ready {
@@ -194,7 +194,7 @@ func TestReplaceClientKeyReadsTheOutcomeOfAFailedImport(t *testing.T) {
 			}
 			w.requireClient(t, old)
 			// The descriptor still works, and so does a new replacement.
-			if next, err = c.ReplaceClientKey(t.Context(), client); err != nil {
+			if next, err = client.ReplaceKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireClient(t, clientKey(next.keyring, "client.app"))
@@ -238,7 +238,7 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			w.onHang = cancel
-			next, err := c.ReplaceClientKey(ctx, client)
+			next, err := client.ReplaceKey(ctx)
 			w.onHang = nil
 			if err == nil || next == nil || next.ready || !strings.Contains(err.Error(), "not known yet") {
 				t.Fatalf("an unsettled import returned %v, %v", next, err)
@@ -249,22 +249,22 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 			if err := identityErr(c, client); err == nil || !strings.Contains(err.Error(), "not resolved yet") {
 				t.Fatalf("WithClientIdentity while the import is uncertain returned %v", err)
 			}
-			if _, err := c.ReplaceClientKey(t.Context(), next); err == nil {
+			if _, err := next.ReplaceKey(t.Context()); err == nil {
 				t.Fatal("the unconfirmed descriptor was accepted")
 			}
-			if err := c.DeleteClient(t.Context(), next); err == nil {
+			if err := next.Delete(t.Context()); err == nil {
 				t.Fatal("DeleteClient accepted the unconfirmed descriptor")
 			}
 			newKey := clientKey(next.keyring, "client.app")
 			// A CLI that cannot be stopped yet keeps the identity fenced.
 			for attempt := 0; attempt < test.cancelFails; attempt++ {
-				if _, err := c.ClientCapabilities(t.Context(), client); err == nil || !strings.Contains(err.Error(), "cannot be stopped yet") {
+				if _, err := client.Capabilities(t.Context()); err == nil || !strings.Contains(err.Error(), "cannot be stopped yet") {
 					break
 				}
 			}
 			switch test.resolve {
 			case "replace":
-				again, err := c.ReplaceClientKey(t.Context(), client)
+				again, err := client.ReplaceKey(t.Context())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -277,16 +277,16 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 				}
 				return
 			case "caps":
-				_, err = c.ClientCapabilities(t.Context(), client)
+				_, err = client.Capabilities(t.Context())
 			case "delete":
-				err = c.DeleteClient(t.Context(), client)
+				err = client.Delete(t.Context())
 			}
 			if test.applies {
 				if err == nil || !strings.Contains(err.Error(), "has a new key") || next.ready {
 					t.Fatalf("after the import applied, the old descriptor returned %v (uncertain descriptor changed to ready: %t)", err, next.ready)
 				}
 				w.requireClient(t, newKey)
-				if current, err := c.ReplaceClientKey(t.Context(), client); err != nil || !current.ready || clientKey(current.keyring, "client.app") != newKey {
+				if current, err := client.ReplaceKey(t.Context()); err != nil || !current.ready || clientKey(current.keyring, "client.app") != newKey {
 					t.Fatalf("the old descriptor led to %v, %v", current, err)
 				}
 				return
@@ -308,17 +308,17 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 // An entry that changed outside the module while an import was uncertain is
 // reported, and the old descriptor no longer owns it.
 func TestReplaceClientKeyReportsAnOutsideChangeWhileUncertain(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	w.faults["import"] = rotationFault{occurrence: 1, effect: hangsQueued}
 	w.faults["barrier"] = rotationFault{occurrence: 1}
-	if _, err := c.ReplaceClientKey(t.Context(), client); err == nil {
+	if _, err := client.ReplaceKey(t.Context()); err == nil {
 		t.Fatal("an unsettled import succeeded")
 	}
 	w.clients["client.app"] = fakeClient{key: fakeCephxKey(CipherAES256K, 960), caps: maps.Clone(replacedCaps)}
-	if _, err := c.ReplaceClientKey(t.Context(), client); err == nil || !strings.Contains(err.Error(), "outside this module") {
+	if _, err := client.ReplaceKey(t.Context()); err == nil || !strings.Contains(err.Error(), "outside this module") {
 		t.Fatalf("returned %v", err)
 	}
-	if _, err := c.ReplaceClientKey(t.Context(), client); err == nil || !strings.Contains(err.Error(), "different key") {
+	if _, err := client.ReplaceKey(t.Context()); err == nil || !strings.Contains(err.Error(), "different key") {
 		t.Fatalf("a later call returned %v", err)
 	}
 	if w.clients["client.app"].key != fakeCephxKey(CipherAES256K, 960) {
@@ -346,7 +346,7 @@ func TestClientOperationsSettleEarlierChanges(t *testing.T) {
 		"removal whose CLI ran on, never delivered": {"remove", hangsUnsent, 2, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			w, c, client := clientWorld()
+			w, _, client := clientWorld()
 			w.faults[test.op] = rotationFault{occurrence: 1, effect: test.effect}
 			w.cancelFails = test.cancelFails
 			if test.cancelFails == 0 {
@@ -358,9 +358,9 @@ func TestClientOperationsSettleEarlierChanges(t *testing.T) {
 			w.onHang = cancel
 			var err error
 			if test.op == "caps" {
-				err = c.UpdateClientCaps(ctx, client, ClientCaps{Mon: "allow r", MGR: "allow r"})
+				err = client.UpdateCaps(ctx, ClientCaps{Mon: "allow r", MGR: "allow r"})
 			} else {
-				err = c.DeleteClient(ctx, client)
+				err = client.Delete(ctx)
 			}
 			w.onHang = nil
 			if err == nil {
@@ -369,7 +369,7 @@ func TestClientOperationsSettleEarlierChanges(t *testing.T) {
 			// A replacement waits while the earlier CLI may still run.
 			var next *ClientConfig
 			for attempt := 0; attempt <= test.cancelFails; attempt++ {
-				if next, err = c.ReplaceClientKey(t.Context(), client); err == nil || !strings.Contains(err.Error(), "cannot be stopped yet") {
+				if next, err = client.ReplaceKey(t.Context()); err == nil || !strings.Contains(err.Error(), "cannot be stopped yet") {
 					break
 				}
 				if len(w.clients["client.app"].key) == 0 && !test.applies {
@@ -403,9 +403,9 @@ func TestClientOperationsSettleEarlierChanges(t *testing.T) {
 }
 
 func TestReplaceClientKeyNeedsCapabilities(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	w.clients["client.app"] = fakeClient{key: w.clients["client.app"].key, caps: map[string]string{}}
-	if next, err := c.ReplaceClientKey(t.Context(), client); err == nil || next != nil || !strings.Contains(err.Error(), "no capabilities") {
+	if next, err := client.ReplaceKey(t.Context()); err == nil || next != nil || !strings.Contains(err.Error(), "no capabilities") {
 		t.Fatalf("returned %v, %v", next, err)
 	}
 	if w.counts["import"] != 0 {
@@ -416,25 +416,25 @@ func TestReplaceClientKeyNeedsCapabilities(t *testing.T) {
 // A descriptor that was replaced leads only to a successor that is still
 // current.
 func TestReplaceClientKeyChecksTheSuccessor(t *testing.T) {
-	_, c, first := clientWorld()
-	second, err := c.ReplaceClientKey(t.Context(), first)
+	_, _, first := clientWorld()
+	second, err := first.ReplaceKey(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := c.ReplaceClientKey(t.Context(), second)
+	third, err := second.ReplaceKey(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next, err := c.ReplaceClientKey(t.Context(), first); err == nil || next != nil {
+	if next, err := first.ReplaceKey(t.Context()); err == nil || next != nil {
 		t.Fatalf("the first descriptor led to %v, %v after a second replacement", next, err)
 	}
-	if next, err := c.ReplaceClientKey(t.Context(), second); err != nil || next != third {
+	if next, err := second.ReplaceKey(t.Context()); err != nil || next != third {
 		t.Fatalf("the second descriptor led to %v, %v", next, err)
 	}
-	if err := c.DeleteClient(t.Context(), third); err != nil {
+	if err := third.Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if next, err := c.ReplaceClientKey(t.Context(), second); err == nil || next != nil {
+	if next, err := second.ReplaceKey(t.Context()); err == nil || next != nil {
 		t.Fatalf("the second descriptor led to %v, %v after a removal", next, err)
 	}
 }
@@ -445,21 +445,21 @@ func TestReplaceClientKeyChecksTheSuccessor(t *testing.T) {
 func TestClientKeyFilesDoNotOutliveLateCopies(t *testing.T) {
 	for _, delay := range []int{1, 40} {
 		t.Run(fmt.Sprintf("lands after %d commands", delay), func(t *testing.T) {
-			w, c, client := clientWorld()
+			w, _, client := clientWorld()
 			w.faults["control-copy"] = rotationFault{occurrence: 1, effect: hangsPrepared}
 			w.lateCopyDelay = delay
-			if next, err := c.ReplaceClientKey(t.Context(), client); err == nil || next != nil {
+			if next, err := client.ReplaceKey(t.Context()); err == nil || next != nil {
 				t.Fatalf("returned %v, %v", next, err)
 			}
 			for len(w.lateCopies) > 0 {
-				if _, err := c.ClientCapabilities(t.Context(), client); err != nil {
+				if _, err := client.Capabilities(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if len(w.controlFiles) != 1 {
 				t.Fatalf("the late copy did not land after the removals: %v", w.controlFiles)
 			}
-			if _, err := c.ClientCapabilities(t.Context(), client); err != nil {
+			if _, err := client.Capabilities(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if len(w.controlFiles) != 0 {
@@ -475,7 +475,7 @@ func TestServicesSettleClientsFirst(t *testing.T) {
 	w, c, client := clientWorld()
 	w.faults["import"] = rotationFault{occurrence: 1, effect: hangsPrepared}
 	w.faults["barrier"] = rotationFault{occurrence: 1}
-	if _, err := c.ReplaceClientKey(t.Context(), client); err == nil {
+	if _, err := client.ReplaceKey(t.Context()); err == nil {
 		t.Fatal("an unsettled import succeeded")
 	}
 	err := serviceHooks{}.SettleClient(t.Context(), c, client)
@@ -487,7 +487,7 @@ func TestServicesSettleClientsFirst(t *testing.T) {
 	if future.clients["client.app"].key != w.clients["client.app"].key || len(w.late) != 0 {
 		t.Fatal("the import can still apply after SettleClient")
 	}
-	current, err := c.ReplaceClientKey(t.Context(), client)
+	current, err := client.ReplaceKey(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,27 +502,27 @@ func TestCopiedClientDescriptorsGoStale(t *testing.T) {
 	t.Run("replacement", func(t *testing.T) {
 		_, c, client := clientWorld()
 		copied := *client
-		if _, err := c.ReplaceClientKey(t.Context(), client); err != nil {
+		if _, err := client.ReplaceKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := identityErr(c, &copied); err == nil || !strings.Contains(err.Error(), "stale") {
 			t.Fatalf("WithClientIdentity with a copy of the replaced descriptor returned %v", err)
 		}
-		if _, err := c.ClientCapabilities(t.Context(), &copied); err == nil {
+		if _, err := (&copied).Capabilities(t.Context()); err == nil {
 			t.Fatal("ClientCapabilities accepted a copy of the replaced descriptor")
 		}
 	})
 	t.Run("removal", func(t *testing.T) {
 		w, c, client := clientWorld()
 		copied := *client
-		if err := c.DeleteClient(t.Context(), &copied); err != nil {
+		if err := (&copied).Delete(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := identityErr(c, client); err == nil || !strings.Contains(err.Error(), "stale") {
 			t.Fatalf("WithClientIdentity after a removal through a copy returned %v", err)
 		}
 		removals := w.counts["remove"]
-		if err := c.DeleteClient(t.Context(), client); err != nil || !client.revoked || w.counts["remove"] != removals {
+		if err := client.Delete(t.Context()); err != nil || !client.revoked || w.counts["remove"] != removals {
 			t.Fatalf("DeleteClient after a removal through a copy returned %v", err)
 		}
 	})
@@ -550,7 +550,7 @@ func TestDiagnosticsRedactOwnedClientKeys(t *testing.T) {
 	t.Run("confirmed replacement", func(t *testing.T) {
 		w, c, client := clientWorld()
 		old := w.clients["client.app"].key
-		next, err := c.ReplaceClientKey(t.Context(), client)
+		next, err := client.ReplaceKey(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -561,7 +561,7 @@ func TestDiagnosticsRedactOwnedClientKeys(t *testing.T) {
 		old := w.clients["client.app"].key
 		w.faults["import"] = rotationFault{occurrence: 1, effect: hangsPrepared}
 		w.faults["barrier"] = rotationFault{occurrence: 1}
-		attempted, err := c.ReplaceClientKey(t.Context(), client)
+		attempted, err := client.ReplaceKey(t.Context())
 		if err == nil || attempted == nil {
 			t.Fatalf("an unsettled import returned %v, %v", attempted, err)
 		}
@@ -571,7 +571,7 @@ func TestDiagnosticsRedactOwnedClientKeys(t *testing.T) {
 		w, c, client := clientWorld()
 		old := w.clients["client.app"].key
 		w.faults["control-copy"] = rotationFault{occurrence: 1}
-		if _, err := c.ReplaceClientKey(t.Context(), client); err == nil {
+		if _, err := client.ReplaceKey(t.Context()); err == nil {
 			t.Fatal("a failed input copy succeeded")
 		}
 		requireRedacted(t, c, old, fakeCephxKey(CipherAES256K, w.generated))

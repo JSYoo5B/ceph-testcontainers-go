@@ -49,7 +49,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if initial.ID != original.ID || !initial.Up || !initial.In || initial.UUID == "" {
 				t.Fatalf("invalid initial OSD identity: %+v", initial)
 			}
-			if err := cluster.SetOSDIn(ctx, original.ID, false); err != nil {
+			if err := original.SetIn(ctx, false); err != nil {
 				t.Fatal(err)
 			}
 			if err := cluster.WaitForPGClean(ctx); err != nil {
@@ -60,7 +60,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 				t.Fatalf("out changed identity or container: %+v", state)
 			}
 			probe("out")
-			if err := cluster.SetOSDIn(ctx, original.ID, true); err != nil {
+			if err := original.SetIn(ctx, true); err != nil {
 				t.Fatal(err)
 			}
 			if err := cluster.WaitForClean(ctx); err != nil {
@@ -148,7 +148,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := original.Start(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.SetOSDIn(ctx, original.ID, true); err != nil {
+			if err := original.SetIn(ctx, true); err != nil {
 				t.Fatal(err)
 			}
 			if err := cluster.WaitForClean(ctx); err != nil {

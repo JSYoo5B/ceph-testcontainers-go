@@ -47,7 +47,7 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 
 	// Removing the pool removes the clones that no snapshot removal trims,
 	// such as the one of the unallocated id.
-	if err := cluster.RemovePool(ctx, pool); err != nil {
+	if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	pools, err := cluster.Pools(ctx)

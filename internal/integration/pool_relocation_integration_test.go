@@ -58,7 +58,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			original, err := cluster.PoolStatus(ctx, poolName)
+			original, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
 			if err != nil || original.ID <= 0 || original.PGNum != 8 {
 				t.Fatal("native pool identity unavailable", original, err)
 			}
@@ -74,7 +74,7 @@ func TestPoolPGRelocation(t *testing.T) {
 				defer stop()
 				var last string
 				for {
-					snapshot, err := cluster.PoolPGs(deadline, poolName)
+					snapshot, err := poolHandle(t, deadline, cluster, poolName).PGs(deadline)
 					if err == nil && snapshot.PoolAfter.ID != original.ID {
 						t.Fatalf("%s: pool identity changed to %d", phase, snapshot.PoolAfter.ID)
 					}
@@ -117,14 +117,14 @@ func TestPoolPGRelocation(t *testing.T) {
 			}
 			resize := func(t *testing.T, phase string, count int, osd int) {
 				t.Helper()
-				if err := cluster.SetPoolPGCount(ctx, poolName, count); err != nil {
+				if err := poolHandle(t, ctx, cluster, poolName).SetPGCount(ctx, count); err != nil {
 					t.Fatal("set PG count", err)
 				}
-				requested, err := cluster.PoolStatus(ctx, poolName)
+				requested, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || requested.ID != original.ID || requested.PGNumTarget != count || requested.PGPlacementNumTarget != count {
 					t.Fatalf("native PG targets not recorded: %+v %v", requested, err)
 				}
-				if err := cluster.WaitForPoolPGCount(ctx, poolName, count); err != nil {
+				if err := poolHandle(t, ctx, cluster, poolName).WaitForPGCount(ctx, count); err != nil {
 					t.Fatal("wait for PG count", err)
 				}
 				if err := cluster.WaitForClean(ctx); err != nil {
@@ -160,10 +160,10 @@ func TestPoolPGRelocation(t *testing.T) {
 						t.Fatal("hold", flag, err)
 					}
 				}
-				if err := cluster.SetPoolPlacement(ctx, poolName, ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
+				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
 					t.Fatal("move pool to slow class", err)
 				}
-				moved, err := cluster.PoolStatus(ctx, poolName)
+				moved, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || moved.ID != original.ID || moved.CRUSHRule == original.CRUSHRule || moved.Size != 1 {
 					t.Fatalf("pool rule was not replaced in place: %+v %v", moved, err)
 				}
@@ -186,19 +186,19 @@ func TestPoolPGRelocation(t *testing.T) {
 			t.Run("merge", func(t *testing.T) { resize(t, "merge", 8, slow.ID) })
 
 			t.Run("return", func(t *testing.T) {
-				if err := cluster.SetPoolPlacement(ctx, poolName, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
+				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
 					t.Fatal("return pool to fast class", err)
 				}
-				returned, err := cluster.PoolStatus(ctx, poolName)
+				returned, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || returned.ID != original.ID || returned.CRUSHRule != original.CRUSHRule {
 					t.Fatalf("original CreatePool rule was not reused: %+v %v", returned, err)
 				}
-				if err := cluster.SetPoolPlacement(ctx, poolName, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
+				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
 					t.Fatal("repeat matching placement", err)
 				}
 				waitPGs(t, "returned", 8, fast.ID, true)
 				probe(t, "returned")
-				final, err := cluster.PoolStatus(ctx, poolName)
+				final, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || final.ID != original.ID || final.Size != original.Size || final.MinSize != original.MinSize || final.PGNum != original.PGNum || final.Quota != original.Quota {
 					t.Fatalf("relocation changed pool identity/policy: %+v %v", final, err)
 				}

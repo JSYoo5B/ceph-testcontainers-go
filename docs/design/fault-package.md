@@ -35,7 +35,7 @@ not change the package decisions or fault contracts recorded here.
 | --- | --- |
 | D1 | A new public package `github.com/JSYoo5B/ceph-testcontainers-go/fault`, in the same module and release stream. `fault` imports `ceph`; `ceph` never imports `fault`. There is no `fault.Run` and no second fixture lifetime: every cluster-bound fault takes the existing `*ceph.Container`. |
 | D2 | Six entry points are in the extraction inventory: `TemporaryNetworkDelay`, `TemporaryLinkDelay`, both `InterruptNetwork` forms, `PauseContainer` and `InjectObjectDataError`, with their request, status and handle types, constants and netem sentinel errors (35 exported identifiers in all, see [Moves to `fault`](#moves-to-fault)). |
-| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `OverrideFullRatios`, `FullRatiosOverride`, `OverrideConfig`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `OverrideOSDFlag` and `RevokeClient` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
+| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `OverrideFullRatios`, `FullRatiosOverride`, `OverrideConfig`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `OverrideOSDFlag` and `ClientConfig.Revoke` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
 | D4 | Service-package fault helpers (`rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink`, `rgw.Multisite.TemporaryZoneLinkDelay`) stay methods of their fixtures, because they select fixture-owned endpoints and register cleanup with the fixture. Only their return and parameter types change to `fault` types. |
 | D5 | Reversible leases keep their own undo (`Restore` or `Resume`). The one-shot `InjectObjectDataError` keeps returning no handle: its recovery is a rewrite (`RepairPG`) or an OSD restart. No universal `Restore`, `Close` or cleanup interface is introduced. |
 | D6 | Stage 2 adds a ceph-owned fault registry inside `*ceph.Container` and an internal typed facade `internal/faulthook`, registered through `internal/hookreg` the way `internal/servicehook` is. Terminate keeps calling the registered undo functions in today's fixed phase order. No mutex, map or general cleanup registration becomes public. |
@@ -52,8 +52,8 @@ fault  ──imports──▶  ceph  ──imports──▶  internal/hookreg
 rbd, cephfs, rgw, internal/multicluster ──imports──▶ fault, ceph
 ```
 
-- `ceph` keeps `Run`, `Terminate`, topology changes (`AddOSD`, `RemoveOSD`,
-  `SetOSDIn`, daemon `Stop`/`Start`), general configuration, status and
+- `ceph` keeps `Run`, `Terminate`, topology changes (`AddOSD`, `OSDContainer.Remove`,
+  `OSDContainer.SetIn`, daemon `Stop`/`Start`), general configuration, status and
   query APIs, and normal scrub and recovery (`DeepScrubPG`, `RepairPG`,
   `PGInconsistencies`, `WaitForPGClean`).
 - `fault` owns dedicated fault operations: netem delay, loss, rate and
@@ -116,19 +116,19 @@ defines its own unexported category error type with the same `Is` rule as
 | `(*Container).TemporaryBlocklist`, `BlocklistOverride`, `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Ceph session-admission control and ownership, plus read-only queries (`sharedOpen` for the tenant query). |
 | `(*Container).OverrideFullRatios`, `FullRatiosOverride`, `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Global OSDMap policy mutation, explicit restoration and read-only query. The explicit override name is implemented in `ceph`. |
 | `DeepScrubPG`, `RepairPG`, `PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
-| `SetOSDIn`, `RemoveOSD`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
-| `DaemonAddresses`, `HealthDetails`, `PoolPGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
+| `OSDContainer.SetIn`, `OSDContainer.Remove`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
+| `DaemonAddresses`, `HealthDetails`, `Pool.PGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
 | `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag`, `TemporaryClientRevocation` and their handles | See the next section. |
 
 ### Ambiguous `Temporary*` APIs
 
 | API | Decision | Reason |
 | --- | --- | --- |
-| `TemporaryConfig` / `ConfigOverride` (`ceph/config.go`) | Stays | General central configuration. The fault guide's `ms_blackhole_*`, `ms_inject_delay_*` and `osd_debug_inject_dispatch_delay_*` recipes are uses of it, not a fault API. `TemporaryMessengerPolicy` and `pool_removal.go:RemovePool` (its `mon_allow_pool_delete` check) depend on `c.configOverrides`. |
+| `TemporaryConfig` / `ConfigOverride` (`ceph/config.go`) | Stays | General central configuration. The fault guide's `ms_blackhole_*`, `ms_inject_delay_*` and `osd_debug_inject_dispatch_delay_*` recipes are uses of it, not a fault API. `TemporaryMessengerPolicy` and `pool_removal.go:Pool.Remove` (its `mon_allow_pool_delete` check) depend on `c.configOverrides`. |
 | `TemporaryMGRModule` / `MGRModuleOverride` (`ceph/mgr_modules.go`) | Stays | Module membership, coupled to service bootstrap requirements through `extensionsWith[serviceModules]`. Not a failure condition. |
 | `TemporaryMessengerPolicy` / `MessengerPolicyOverride` (`ceph/messenger_policy.go`) | Stays | Connection-mode policy composed from `TemporaryConfig` overrides; it changes which modes daemons accept, it does not inject a failure. |
 | `TemporaryOSDFlag` / `OSDFlagOverride` (`ceph/osd_policy.go`) | Stays | Ordinary operational OSDMap flags (`noout`, `noscrub`, `norebalance` ...) also used for maintenance and recovery control. Pairing it with `PauseContainer` (`nodown`) is a recipe. |
-| `TemporaryClientRevocation` / `ClientRevocation` (`ceph/client_revocation.go`) | Stays | Client identity lifecycle. It depends on `authFences`, `clientKeys` and `clientRevocations` and the fencing of `ReplaceClientKey`, and it is `sharedTenant`. Moving it means designing an auth boundary, which is outside this refactor. |
+| `TemporaryClientRevocation` / `ClientRevocation` (`ceph/client_revocation.go`) | Stays | Client identity lifecycle. It depends on `authFences`, `clientKeys` and `clientRevocations` and the fencing of `ClientConfig.ReplaceKey`, and it is `sharedTenant`. Moving it means designing an auth boundary, which is outside this refactor. |
 | `cephfs.Filesystem.TemporarySessionTimeouts`, `TemporarySnapshotSchedule`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Stay in `cephfs` | MDS and file system configuration. |
 | `rbd.StartImmutableObjectCache` | Stays in `rbd` | Client feature lease, not a fault. |
 

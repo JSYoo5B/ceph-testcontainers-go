@@ -185,7 +185,7 @@ func verifyRBDPoolUsage(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		if err := ctx.Err(); err != nil {
 			t.Fatalf("%s pool usage did not converge: last=%+v observation_error=%v context=%v", phase, last, lastErr, err)
 		}
-		usage, err := cluster.PoolUsage(ctx, expected.Name)
+		usage, err := poolHandle(t, ctx, cluster, expected.Name).Usage(ctx)
 		last, lastErr = usage, err
 		if err != nil {
 			// The API currently has no public absence sentinel. Match this single

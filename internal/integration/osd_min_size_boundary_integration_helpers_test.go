@@ -238,7 +238,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restore("osd in", func(cleanup context.Context) error { return cluster.SetOSDIn(cleanup, a.ID, true) })
+	restore("osd in", func(cleanup context.Context) error { return a.SetIn(cleanup, true) })
 
 	// The live writer keeps one connection and one ledger for the whole run.
 	actor := startNative(ctx, cluster, client, secondFaultCommand("actor", 20*time.Minute, "actor", "tc-paths", ledger, stopFile, "2", "600"))
@@ -301,7 +301,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	// Marking the stopped replica out admits the spare as a new member. The
 	// held backfill is the baseline: its interval, up and acting sets, and the
 	// destination's cursor at MIN.
-	if err := cluster.SetOSDIn(ctx, a.ID, false); err != nil {
+	if err := a.SetIn(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	secondFaultWaitPG(t, ctx, cluster, "held backfill to the spare", func(pg ceph.PGState) bool {
@@ -437,7 +437,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 
 	// Restoration: A returns first, so that the held backfill to the spare is
 	// replaced by the normal one; then the hold is lifted.
-	if err := cluster.SetOSDIn(ctx, a.ID, true); err != nil {
+	if err := a.SetIn(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Start(ctx); err != nil {

@@ -293,7 +293,7 @@ if errors.As(err, &unstopped) {
   it. Afterwards `RunNativeCommand` fails.
 - Stopping the process does not undo what the command already did. A MON
   command that it had sent may have applied, and the call never runs a
-  command again. Typed helpers such as `ReplaceClientKey` settle their own
+  command again. Typed helpers such as `ClientConfig.ReplaceKey` settle their own
   changes; a raw command's outcome is yours to read back.
 
 ### Standard input
@@ -568,7 +568,7 @@ Other outcomes:
   MemStore saves its data only on a clean stop, so it does not show
   durability.
 - **Cleanup.** A command that times out or is canceled is killed before its
-  `finally` runs. `RemovePool` deletes the owned pool with every clone,
+  `finally` runs. `Pool.Remove` deletes the owned pool with every clone,
   including the ones that no snapshot removal trims.
 
 `TestRADOSSelfManagedSnapshots` in `internal/integration` runs these cases
@@ -648,7 +648,7 @@ size is no longer aligned. Check the refusals in your test instead of
 skipping them: they are the native outcome of the pool's configuration.
 
 A pool with `MinSize` equal to K stays active while one shard is missing.
-After a clean stop of the OSD that holds shard 1, `PoolPGs` reported the PG as
+After a clean stop of the OSD that holds shard 1, `Pool.PGs` reported the PG as
 `active+undersized+degraded`, with `2147483647` (no OSD) in that slot of
 `Acting`. Reads returned the same bytes, rebuilt from the other shards, and a
 write under a snapshot context still preserved a clone. After the OSD started
@@ -765,8 +765,8 @@ _, err = exec(ctx, restricted, "rados", "--id", reader.User(), "-p", "volumes", 
 ```
 
 - `CreateClient` sets exactly the capabilities you pass. Existing identities
-  are rejected. `UpdateClientCaps` replaces all capabilities;
-  `ClientCapabilities` reads them back; `DeleteClient` revokes the identity.
+  are rejected. `ClientConfig.UpdateCaps` replaces all capabilities;
+  `ClientConfig.Capabilities` reads them back; `ClientConfig.Delete` revokes the identity.
   Sessions that are already established may keep their tickets, so check
   permission changes with a fresh connection.
 - `reader.Name()` is `client.reader`; `reader.User()` is `reader`, the form
@@ -790,11 +790,11 @@ Every daemon has an admin socket with commands for status, performance
 counters and debugging.
 
 For MON, MGR and OSD daemons, use
-[`Container.AdminSocket`](../ceph.md#adminsocket). It reaches the socket of
+the `AdminSocket` method of `OSDContainer`, `MonitorContainer` and `ManagerContainer` (see [AdminSocket](../ceph.md#adminsocket)). It reaches the socket of
 any owned daemon, whatever its image, without the Messenger or Cephx:
 
 ```golang
-status, err := cluster.AdminSocket(ctx, "osd.0", "status")
+status, err := osd.AdminSocket(ctx, "status") // osd is the *ceph.OSDContainer of osd.0
 ```
 
 `ceph tell` from the control container also works for MON, MGR, OSD and MDS
@@ -845,7 +845,7 @@ No admin socket command prints a daemon's own key or the rotating service
 secrets that it holds. Observe them in two ways instead.
 
 **The daemon's key.** After
-[`Container.RotateDaemonKey`](../ceph.md#rotatedaemonkey), `auth get-key` on
+[`RotateKey`](../ceph.md#rotatekey) of `OSDContainer` and `ManagerContainer`, `auth get-key` on
 the MONs returns the new key, and a restart of the daemon proves that it
 authenticates with the key in its keyring files.
 
@@ -857,7 +857,7 @@ two things to its container output:
 - the secret that decrypted each client ticket it accepts.
 
 ```golang
-_, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "10/10")
+_, err := osd.AdminSocket(ctx, "config", "set", "debug_auth", "10/10") // osd is the *ceph.OSDContainer of osd.0
 // ... let a client connect to osd.0 ...
 osds, err := cluster.OSDs(ctx)
 if err != nil {
@@ -1022,10 +1022,10 @@ cannot even be detected.
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `OverrideFullRatios` | `OverrideFullRatios` |
 | `mgr module enable`/`disable` | `OverrideMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `OverrideMGRModule` |
 | `osd blocklist add`/`rm` of an entry a handle owns | `TemporaryBlocklist` | `TemporaryBlocklist` |
-| Deleting, renaming or changing owned pools, their CRUSH rules or EC profiles | `CreatePool` descriptors, `RemovePool`, `SetPool*`, which check the native pool ID | `SetPoolReplication`, `SetPoolQuota`, `SetPoolPGCount`, `SetPoolPlacement`, `RemovePool` |
-| `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `SetOSDIn`, `RemoveOSD`, which check the OSD's UUID | `SetOSDIn`, `RemoveOSD` |
-| `auth` changes to identities created by `CreateClient`, or to daemon identities | `UpdateClientCaps`, `DeleteClient`, daemon restarts | `UpdateClientCaps`, `DeleteClient` |
-| `mon add`/`mon remove`, editing `/etc/ceph/ceph.conf` in any container | MON membership and the `mon_host` bookkeeping | `AddMonitor`, `RemoveMonitor`, `RefreshMonitorConfig` |
+| Deleting, renaming or changing owned pools, their CRUSH rules or EC profiles | `CreatePool` descriptors, `Pool.Remove`, `Pool.Set*`, which check the native pool ID | `Pool.SetReplication`, `Pool.SetQuota`, `Pool.SetPGCount`, `Pool.SetPlacement`, `Pool.Remove` |
+| `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `OSDContainer.SetIn`, `OSDContainer.Remove`, which check the OSD's UUID | `OSDContainer.SetIn`, `OSDContainer.Remove` |
+| `auth` changes to identities created by `CreateClient`, or to daemon identities | `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, daemon restarts | `ClientConfig.UpdateCaps`, `ClientConfig.Delete` |
+| `mon add`/`mon remove`, editing `/etc/ceph/ceph.conf` in any container | MON membership and the `mon_host` bookkeeping | `AddMonitor`, `MonitorContainer.Remove`, `RefreshMonitorConfig` |
 | `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `cephfs.Remove` | `ScaleMDS`, `cephfs.Remove` |
 | `fs set session_timeout`/`session_autoclose` | `OverrideSessionTimeouts` | `OverrideSessionTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | Subvolume helpers, which check native identity | The typed subvolume helpers |

@@ -34,14 +34,14 @@ type PoolUsageSnapshot struct {
 	UsedRatio          float64
 }
 
-// PoolUsage reads ceph df detail through the fixture's control CLI. It checks
+// poolUsage implements Pool.Usage. It reads ceph df detail through the fixture's control CLI. It checks
 // the original bootstrap FSID and exact native pool ID/name before and after
 // the observation. A pool without a statistics row is unavailable, not empty.
 // All failures, including cancellation after a query, return a zero snapshot.
 // This method makes no writes, retries or background workers. External pool or
 // control configuration writers must not race it; the native reads are not an
 // atomic transaction. Poll with a caller deadline for eventual assertions.
-func (c *Container) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error) {
+func (c *Container) poolUsage(ctx context.Context, name string, handle *Pool) (PoolUsageSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return PoolUsageSnapshot{}, err
 	}
@@ -57,6 +57,9 @@ func (c *Container) PoolUsage(ctx context.Context, name string) (PoolUsageSnapsh
 	defer c.mu.Unlock()
 	if c.closed {
 		return PoolUsageSnapshot{}, errClusterTerminated
+	}
+	if err := handle.matchLocked(name, -1); err != nil {
+		return PoolUsageSnapshot{}, err
 	}
 	control, err := c.controlContainerContext(ctx)
 	if err != nil {
@@ -109,6 +112,9 @@ func (c *Container) PoolUsage(ctx context.Context, name string) (PoolUsageSnapsh
 	}
 	id, err := readID()
 	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if err := handle.matchLocked(name, id); err != nil {
 		return PoolUsageSnapshot{}, err
 	}
 	data, err := query("df", "detail", "--format", "json")

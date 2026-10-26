@@ -238,7 +238,7 @@ finally:
 	}
 	// One ordinary public call must complete the graceful drain/removal contract.
 	started := time.Now()
-	removeErr := cephfs.Remove(ctx, cluster, b.FilesystemName)
+	removeErr := b.Remove(ctx)
 	ended := time.Now()
 	result := "removed"
 	if removeErr != nil {

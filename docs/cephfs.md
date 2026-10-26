@@ -129,7 +129,7 @@ returns after rank 0 is `up:active`.
 
 The returned `*cephfs.Container` embeds `*ceph.Container`, so every method
 documented in [Ceph](ceph.md) is available on it. Package functions that take a
-`*ceph.Container` (`Start`, `Filesystems`, `Remove`, and the `Source` and
+`*ceph.Container` (`Start`, `Filesystems`, and the `Source` and
 `Destination` fields of `MirrorConfig`) take the embedded value, for example
 `cephfs.Start(ctx, cluster.Container, config)`. The container's `Filesystems`
 method is a shortcut for `cephfs.Filesystems(cluster.Container)`.
@@ -270,7 +270,7 @@ func WithMDSImage(image string) ceph.Option
 ```
 
 Selects the image for every MDS container started by `Run`, `Start`,
-`ScaleMDS` and `AddMDSReplacement`. Without it, MDS daemons use the `Run` image.
+`ScaleMDS` and `MDS.AddReplacement`. Without it, MDS daemons use the `Run` image.
 Use an image of the same Ceph release.
 
 ```golang
@@ -308,12 +308,12 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `Ceph(ctx, args...)` | Run `ceph fs ...`, `ceph tell mds...` and other CLI commands in the control container. |
 | `WithClient()` | Attach a client container with `ceph.conf` and the admin keyring. |
 | `WithClientIdentity(client)` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
-| `CreateClient`, `DeleteClient` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
+| `CreateClient`, `ClientConfig.Delete` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
 | `OverrideConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
-| `CreatePool`, `RemovePool`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
+| `CreatePool`, `Pool.Remove`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
 | `ControlContainer(ctx)`, `ControlImage()` | The container that runs fixture commands and its image (mirror daemons usually use `ControlImage()`). |
 | `ServiceContainers()` | Owned MDS (and RGW) containers. |
 | `CephVersion()` | The Ceph release of the `Run` image. |
@@ -361,21 +361,23 @@ func Filesystems(c *ceph.Container) []*Filesystem
 Returns the cluster's owned filesystem descriptors sorted by name, including a
 descriptor whose setup partially failed.
 
-#### Remove
+#### Filesystem.Remove
 
 ```golang
-func Remove(ctx context.Context, c *ceph.Container, name string) error
+func (fs *Filesystem) Remove(ctx context.Context) error
 ```
 
-Deletes an owned filesystem. It gracefully stops its ranks and removes the filesystem in the FSMap,
+Deletes this owned filesystem. It gracefully stops its ranks and removes the filesystem in the FSMap,
 terminates its MDS daemons, deletes their Cephx keys, and deletes the metadata,
 default data and `AdditionalDataPools` pools created from its `Config`, together
 with their CRUSH rules and erasure-code profiles. Pools attached later with
-`AddDataPool` are detached but kept; delete them with `cluster.RemovePool`.
+`AddDataPool` are detached but kept; delete them with [Pool.Remove](ceph.md#poolremove).
 
 All file data in the deleted pools is destroyed. Stop clients, mirrors and
 subvolume operations on the filesystem first; their handles fail afterwards. A
-retry after an error continues with whatever remains.
+retry after an error continues with whatever remains. A descriptor that was
+already removed, or that is not the one the cluster owns for its name, returns an
+error instead of acting on a later filesystem of the same name.
 
 Removal requests `fs set <name> down true`, then requires the same filesystem's
 explicit native `up` map to be empty before `fs rm` and resource cleanup. A rank
@@ -462,7 +464,7 @@ deadline.
 
 Readiness includes standby capacity. After a standby has replaced a failed
 daemon, `WaitReady` fails until the standby count is restored by restarting the
-old container, or by `RemoveStoppedMDS` followed by `ScaleMDS`. Use `MDSStatus`
+old container, or by `MDS.RemoveStopped` followed by `ScaleMDS`. Use `MDSStatus`
 to check that a rank recovered.
 
 #### MDSStatus
@@ -534,24 +536,24 @@ if err := fs.WaitReady(ctx); err != nil {
 }
 ```
 
-#### RemoveStoppedMDS
+#### MDS.RemoveStopped
 
 ```golang
-func (fs *Filesystem) RemoveStoppedMDS(ctx context.Context, daemon *MDS) error
+func (m *MDS) RemoveStopped(ctx context.Context) error
 ```
 
 Removes the container of an original, stopped MDS after Ceph has dropped it.
 Use it after a failover when the test wants to retire the failed daemon instead
 of restarting it. Preconditions:
 
-- `daemon` comes from `MDSs()` and started successfully (partially started
+- this `*cephfs.MDS` comes from `MDSs()` and started successfully (partially started
   daemons stay owned for cluster cleanup);
 - its container is stopped, and its name is absent from every filesystem and
   from the global standby list. A stopped daemon that is still registered is
   refused. Ceph drops it after `mds_beacon_grace` (15 seconds by default), or at
   once with `ceph mds fail <gid>`;
 - healthy owned daemons still hold every configured active rank (after
-  `AddMDSReplacement`, the replacement counts).
+  `MDS.AddReplacement`, the replacement counts).
 
 It does not fail an MDS in Ceph, delete its Cephx key or change the requested
 counts. To restore standby capacity afterwards, call `ScaleMDS` with the
@@ -563,25 +565,25 @@ If removing the container fails or its reply is lost, the handle and its
 registration are kept: retry with the same handle (or a copy) after fixing the
 reported problem. A repeated call after success does not remove anything again.
 
-#### AddMDSReplacement
+#### MDS.AddReplacement
 
 ```golang
-func (fs *Filesystem) AddMDSReplacement(ctx context.Context, stopped *MDS) (*MDS, error)
+func (m *MDS) AddReplacement(ctx context.Context) (*MDS, error)
 ```
 
 Starts a replacement for the only MDS of a filesystem that has lost it. It
 applies to a filesystem configured with one active and no standby daemon and no
 standby replay. Preconditions:
 
-- `stopped` is that filesystem's original daemon, from `MDSs()`, and its
-  container is stopped;
+- this `*cephfs.MDS` is that filesystem's original daemon, from `MDSs()`, and
+  its container is stopped;
 - Ceph has failed rank 0: the old name is absent from the FSMap and no standby
   can take the rank. Without a standby, Ceph can keep a dead daemon registered
   as laggy, so fail its GID explicitly with `ceph mds fail <gid>`.
 
 The replacement gets a new indexed name and Cephx key; pools, data and the
 requested counts are unchanged. Once its rank is active, call
-`RemoveStoppedMDS(ctx, stopped)` to retire the old container. `AddMDSReplacement`
+`stopped.RemoveStopped(ctx)` to retire the old container. `MDS.AddReplacement`
 never fails a daemon in Ceph, deletes keys, removes the old container or changes
 `max_mds`.
 
@@ -589,7 +591,7 @@ Retrying after success returns the same replacement handle without starting
 another daemon. If the start fails after the new key or container was created,
 the request can only be cleaned up: a returned non-nil handle stays owned by the
 cluster, a retry returns it with an error and starts nothing, and `ScaleMDS` and
-`RemoveStoppedMDS` are refused for this filesystem. Do not start, stop or fail
+`MDS.RemoveStopped` are refused for this filesystem. Do not start, stop or fail
 daemons by hand while it runs. See
 [Fail over an MDS and replace a stopped MDS](#fail-over-an-mds-and-replace-a-stopped-mds).
 
@@ -1102,7 +1104,7 @@ Eviction can blocklist the client's address. An error can mean partial eviction
 across several MDS ranks; a retry repeats the same scope.
 
 To remove the principal itself afterwards, call
-`cluster.DeleteClient(ctx, grant.Client)`. See
+`grant.Client.Delete(ctx)`. See
 [Give each subvolume its own restricted principal](#give-each-subvolume-its-own-restricted-principal).
 
 ### Filesystem Methods: directory pins
@@ -2268,7 +2270,7 @@ if err := fs.DeauthorizeSubvolume(ctx, grant); err != nil {
 if err := fs.EvictSubvolumeClients(ctx, grant); err != nil {
 	t.Fatal(err)
 }
-if err := cluster.DeleteClient(ctx, grant.Client); err != nil { // optional
+if err := grant.Client.Delete(ctx); err != nil { // optional
 	t.Fatal(err)
 }
 ```
@@ -2368,7 +2370,7 @@ for {
 // Option 1: restart the old daemon; it rejoins as a standby with a new GID.
 //     err = old.Start(ctx)
 // Option 2: retire it and let ScaleMDS start a daemon with a new name.
-if err := fs.RemoveStoppedMDS(ctx, old); err != nil {
+if err := old.RemoveStopped(ctx); err != nil {
 	t.Fatal(err)
 }
 if err := fs.ScaleMDS(ctx, 1, 1); err != nil {
@@ -2386,7 +2388,7 @@ follower.
 When the filesystem has a single MDS and no standby, nothing can take over. The
 filesystem is unavailable: Ceph reports `FS_WITH_FAILED_MDS` and `FS_DEGRADED`
 (warning) and `MDS_ALL_DOWN` (error), and new mounts fail after
-`client_mount_timeout` with errno 110. `AddMDSReplacement` starts a new daemon
+`client_mount_timeout` with errno 110. `MDS.AddReplacement` starts a new daemon
 for the failed rank:
 
 ```golang
@@ -2404,11 +2406,11 @@ if err := old.Stop(ctx, &timeout); err != nil {
 if _, err := cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(status.Active[0].GID, 10)); err != nil {
 	t.Fatal(err)
 }
-replacement, err := fs.AddMDSReplacement(ctx, old)
+replacement, err := old.AddReplacement(ctx)
 if err != nil {
 	t.Fatal(err) // a non-nil replacement stays owned by the cluster
 }
-if err := fs.RemoveStoppedMDS(ctx, old); err != nil {
+if err := old.RemoveStopped(ctx); err != nil {
 	t.Fatal(err)
 }
 if err := fs.WaitReady(ctx); err != nil {
@@ -2844,7 +2846,7 @@ resources at the same time. More escape hatches are listed in
 - MDS names, keys, entrypoint and networking are fixed by the fixture; MDS
   customizers must not change them.
 - Each MDS is limited to a 128 MiB cache.
-- Recovery from damaged metadata, multi-rank replacement and `AddMDSReplacement`
+- Recovery from damaged metadata, multi-rank replacement and `MDS.AddReplacement`
   for filesystems with standbys or standby replay are not provided.
 
 **Subvolumes, snapshots and clones**

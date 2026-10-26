@@ -285,7 +285,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 		if written() {
 			return heldOp{}, false, fmt.Errorf("the write finished across the cut: %v", write.err)
 		}
-		data, err := cluster.AdminSocket(ctx, primaryName, "dump_ops_in_flight")
+		data, err := adminSocket(t, ctx, cluster, primaryName, "dump_ops_in_flight")
 		if err != nil {
 			return heldOp{}, false, err
 		}
@@ -330,7 +330,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 			receipt.Window.FirstEpoch = epoch
 		}
 		receipt.FSID, receipt.Window.LastEpoch = fsid, epoch
-		data, err := cluster.AdminSocket(ctx, primaryName, "dump_ops_in_flight")
+		data, err := adminSocket(t, ctx, cluster, primaryName, "dump_ops_in_flight")
 		if err != nil {
 			return epoch, false, err
 		}
@@ -418,7 +418,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := observe(ctx, 2*time.Minute, 20*time.Second, 2*time.Second, func(ctx context.Context) (string, bool, error) {
-		snapshot, err := cluster.PoolPGs(ctx, "tc-topology")
+		snapshot, err := poolHandle(t, ctx, cluster, "tc-topology").PGs(ctx)
 		if err != nil || len(snapshot.PGs) != 1 {
 			return "", false, err
 		}

@@ -39,7 +39,7 @@ func TestManagerRemovalPreflightDoesNotMutate(t *testing.T) {
 			case "foreign replacement":
 				control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"external","gid":303}]}`
 			}
-			if err := cluster.RemoveManager(t.Context(), name); err == nil {
+			if err := managerHandle(t, t.Context(), cluster, name).Remove(t.Context()); err == nil {
 				t.Fatal("unsafe removal was accepted")
 			}
 			if target.terminations != 0 || replacement.terminations != 0 {
@@ -63,7 +63,7 @@ func TestManagerActiveRemovalWaitsForAvailableReplacement(t *testing.T) {
 			control.status = `{"active_name":"b","active_gid":202,"available":true,"standbys":[]}`
 		}
 	}
-	if err := cluster.RemoveManager(t.Context(), "a"); err != nil {
+	if err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(control.events, []string{"terminate:a", "mgr fail 101", "starting:b", "auth del mgr.a"}) {
@@ -85,7 +85,7 @@ func TestManagerStandbyRemovalUsesObservedGIDForNumericName(t *testing.T) {
 	replacement.name = "42"
 	control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"42","gid":202}]}`
 	control.onFail = func() { control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[]}` }
-	if err := cluster.RemoveManager(t.Context(), "42"); err != nil {
+	if err := managerHandle(t, t.Context(), cluster, "42").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(control.events, []string{"terminate:42", "mgr fail 202", "auth del mgr.42"}) || target.terminations != 0 || cluster.ManagerContainer() != target {
@@ -106,7 +106,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 			default:
 				control.fail = failure
 			}
-			err := cluster.RemoveManager(t.Context(), "a")
+			err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context())
 			if err == nil || cluster.managers["a"] == nil || cluster.ManagerContainer() != target {
 				t.Fatalf("failed removal lost cleanup ownership: %v", err)
 			}
@@ -123,7 +123,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 			if failure == "unavailable" {
 				control.onFail()
 			}
-			if err := cluster.RemoveManager(t.Context(), "a"); err != nil {
+			if err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			wantTerminations := previousTerminations

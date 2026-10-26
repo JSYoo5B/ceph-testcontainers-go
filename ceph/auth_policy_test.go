@@ -15,10 +15,10 @@ func TestClientCapsReplaceWithoutChangingKeyOrKeepingOmittedServices(t *testing.
 	}
 	_, keyBefore, _ := client.ConnectionConfig()
 	want := ClientCaps{Mon: "allow r", OSD: "allow r pool=tenant"}
-	if err := cluster.UpdateClientCaps(t.Context(), client, want); err != nil {
+	if err := client.UpdateCaps(t.Context(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := cluster.ClientCapabilities(t.Context(), client)
+	got, err := client.Capabilities(t.Context())
 	if err != nil || got != want {
 		t.Fatalf("caps not replaced exactly: %+v %v", got, err)
 	}
@@ -35,23 +35,27 @@ func TestClientCapsRejectForeignRevokedOrReplacedIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A descriptor that names this identity but belongs to another cluster
+	// acts on that cluster, which does not own the identity.
 	other := authFixtureCluster(&authFixtureContainer{})
-	if err := other.UpdateClientCaps(t.Context(), client, ClientCaps{Mon: "allow r"}); err == nil {
+	foreign := *client
+	foreign.owner = other
+	if err := foreign.UpdateCaps(t.Context(), ClientCaps{Mon: "allow r"}); err == nil {
 		t.Fatal("foreign identity edited")
 	}
 	before := len(ctr.calls)
-	if err := cluster.UpdateClientCaps(t.Context(), client, ClientCaps{OSD: "allow *\n"}); err == nil || len(ctr.calls) != before {
+	if err := client.UpdateCaps(t.Context(), ClientCaps{OSD: "allow *\n"}); err == nil || len(ctr.calls) != before {
 		t.Fatal("invalid caps reached native command")
 	}
 	ctr.key = "EXTERNAL-KEY"
-	if err := cluster.UpdateClientCaps(t.Context(), client, ClientCaps{Mon: "allow *"}); err == nil {
+	if err := client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow *"}); err == nil {
 		t.Fatal("replaced identity edited")
 	}
 	ctr.key = "PRIVATE-KEY"
-	if err := cluster.DeleteClient(t.Context(), client); err != nil {
+	if err := client.Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cluster.ClientCapabilities(t.Context(), client); err == nil {
+	if _, err := client.Capabilities(t.Context()); err == nil {
 		t.Fatal("revoked identity accepted")
 	}
 }
@@ -64,7 +68,7 @@ func TestClientCapsErrorsRedactNativeKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctr.fail = "auth caps client.reader mon allow r"
-	if err := cluster.UpdateClientCaps(t.Context(), client, ClientCaps{Mon: "allow r"}); err == nil || strings.Contains(err.Error(), "PRIVATE-KEY") {
+	if err := client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow r"}); err == nil || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("failure leaked secret or ignored error")
 	}
 }

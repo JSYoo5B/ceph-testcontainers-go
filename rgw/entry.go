@@ -26,15 +26,17 @@ func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testco
 	return startGateway(ctx, c, config, opts...)
 }
 
-// Remove removes one owned gateway container. Zone configuration, S3 users,
+// Remove removes this owned gateway container. Zone configuration, S3 users,
 // buckets and data remain available through other gateways or a replacement.
 // Multisite period endpoints are not changed automatically. The last gateway
 // can be removed because RGW is optional. Failed cleanup remains tracked.
-func Remove(ctx context.Context, c *ceph.Container, name string) error {
-	if c == nil {
+// A gateway that Remove already removed, or that is not the one the cluster
+// owns for its name, returns an error.
+func (g *Gateway) Remove(ctx context.Context) error {
+	if g == nil || g.owner == nil {
 		return errNilCluster
 	}
-	return removeGateway(ctx, c, name)
+	return removeGateway(ctx, g.owner, g)
 }
 
 // Gateways returns sorted owned gateway descriptors, including partial

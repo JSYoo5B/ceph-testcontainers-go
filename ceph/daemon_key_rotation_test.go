@@ -26,15 +26,14 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func TestRotateDaemonKeyRefusesBeforeRunningCommands(t *testing.T) {
+func TestRotateKeyRefusesBeforeRunningCommands(t *testing.T) {
 	for name, test := range map[string]struct {
 		edit   func(*Container)
 		daemon string
 		want   string
 	}{
-		"MON":            {nil, "mon.a", "share the mon. key"},
-		"invalid name":   {nil, "osd.01", "must be"},
-		"MDS":            {nil, "mds.a", "must be"},
+		// A MON, an MDS or a malformed name has no handle with RotateKey, so
+		// the call does not compile and no runtime refusal remains.
 		"unknown OSD":    {nil, "osd.7", "not owned"},
 		"purged OSD":     {nil, "osd.1", "not owned"},
 		"terminated MGR": {nil, "mgr.b", "not owned"},
@@ -45,7 +44,7 @@ func TestRotateDaemonKeyRefusesBeforeRunningCommands(t *testing.T) {
 			if test.edit != nil {
 				test.edit(c)
 			}
-			err := c.RotateDaemonKey(t.Context(), test.daemon)
+			err := rotateKeyOf(t, c, test.daemon)
 			if err == nil || !strings.Contains(err.Error(), test.want) || len(control.Calls) != 0 {
 				t.Fatalf("err=%v calls=%v", err, control.Calls)
 			}
@@ -974,7 +973,7 @@ func TestRotateDaemonKeyCompletes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newRotationWorld()
 			w.renewAfterHandoff = renew
-			if err := rotationCluster(w).RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), rotationCluster(w), 0).RotateKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRotated(t, "key-1")
@@ -1011,12 +1010,12 @@ func TestRotateDaemonKeyKeepsBothKeysBeforeTheHandoff(t *testing.T) {
 			defer cancel()
 			setup(w, cancel)
 			c := rotationCluster(w)
-			if err := c.RotateDaemonKey(ctx, "osd.0"); err == nil || !strings.Contains(err.Error(), "accepting both keys") {
+			if err := osdHandle(t, ctx, c, 0).RotateKey(ctx); err == nil || !strings.Contains(err.Error(), "accepting both keys") {
 				t.Fatalf("the failed rotation returned %v", err)
 			}
 			w.onControlCopy, w.onDaemonCopy = nil, nil
 			w.requireUsable(t)
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRotated(t, "key-1")
@@ -1031,7 +1030,7 @@ func TestRotateDaemonKeyFinishesWhenARestartCommittedTheKey(t *testing.T) {
 	w.faults["control-copy"] = rotationFault{occurrence: 1}
 	w.onControlCopy = w.restart
 	c := rotationCluster(w)
-	if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+	if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 		t.Fatalf("a rotation that a restart finished returned %v", err)
 	}
 	w.requireRotated(t, "key-1")
@@ -1055,14 +1054,14 @@ func TestRotateDaemonKeyResumesAfterUnconfirmedHandoffOrCommit(t *testing.T) {
 			w := newRotationWorld()
 			w.faults[fault.op] = rotationFault{occurrence: 1, effect: fault.effect}
 			c := rotationCluster(w)
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "RotateDaemonKey again") {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "RotateKey again") {
 				t.Fatalf("failed rotation returned %v", err)
 			}
 			w.requireUsable(t)
 			if w.pending != "key-1" || w.current != "key-0" {
 				t.Fatalf("an uncertain rotation changed the accepted keys: current %s, pending %q", w.current, w.pending)
 			}
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRotated(t, "key-1")
@@ -1075,9 +1074,9 @@ func TestRotateDaemonKeyResumedFailureKeepsPendingKey(t *testing.T) {
 	w := newRotationWorld()
 	w.faults["tell"] = rotationFault{occurrence: 1, effect: failsAfter}
 	c := rotationCluster(w)
-	_ = c.RotateDaemonKey(t.Context(), "osd.0")
+	_ = osdHandle(t, t.Context(), c, 0).RotateKey(t.Context())
 	w.faults["control-copy"] = rotationFault{occurrence: 2}
-	if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil {
+	if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil {
 		t.Fatal("the failed resumed rotation succeeded")
 	}
 	w.requireUsable(t)
@@ -1093,7 +1092,7 @@ func TestRotateDaemonKeyReadsTheOutcomeOfAFailedCommit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newRotationWorld()
 			w.faults["commit"] = rotationFault{occurrence: 1, effect: effect}
-			if err := rotationCluster(w).RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), rotationCluster(w), 0).RotateKey(t.Context()); err != nil {
 				t.Fatalf("an applied commit was reported as %v", err)
 			}
 			w.requireRotated(t, "key-1")
@@ -1148,7 +1147,7 @@ func TestRotateDaemonKeyLeavesNoMonitorCommandBehind(t *testing.T) {
 			}
 			w.cancelFails = test.cancelFails
 			w.route = test.route
-			_ = c.RotateDaemonKey(ctx, "osd.0")
+			_ = osdHandle(t, ctx, c, 0).RotateKey(ctx)
 			w.onHang, w.route, w.barrierAlsoReaches, w.electionAfterBarrier = nil, "a", "", false
 			if w.nextRoute != "" {
 				w.route = w.nextRoute
@@ -1164,7 +1163,7 @@ func TestRotateDaemonKeyLeavesNoMonitorCommandBehind(t *testing.T) {
 			var err error
 			for attempt := 0; attempt < 4; attempt++ {
 				// A fence that cannot be lifted yet refuses without a change.
-				if err = c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "cannot be") {
+				if err = osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "cannot be") {
 					break
 				}
 				w.requireUsable(t)
@@ -1190,7 +1189,7 @@ func TestRotateDaemonKeyFencesAKilledSupervisor(t *testing.T) {
 			w.faults["commit"] = rotationFault{occurrence: 1, effect: effect}
 			w.killsSupervisor = true
 			c := rotationCluster(w)
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil {
 				t.Fatal("a call whose supervisor was killed succeeded")
 			}
 			w.killsSupervisor = false
@@ -1198,7 +1197,7 @@ func TestRotateDaemonKeyFencesAKilledSupervisor(t *testing.T) {
 			w.authenticate(w.live)
 			w.releaseBefore["tell"] = true
 			w.faults["tell"] = rotationFault{occurrence: w.counts["tell"] + 1}
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "hand the new key") {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "hand the new key") {
 				t.Fatalf("the failed handoff returned %v", err)
 			}
 			w.requireUsable(t)
@@ -1238,19 +1237,19 @@ func TestRotateDaemonKeyWaitsForARestartAfterAnUncertainHandoff(t *testing.T) {
 			w := newRotationWorld()
 			w.faults["tell"] = rotationFault{occurrence: 1, effect: effect}
 			c := rotationCluster(w)
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil {
 				t.Fatal("the uncertain handoff succeeded")
 			}
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRotated(t, "key-1")
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "until its container restarts") || w.generated != 1 {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "until its container restarts") || w.generated != 1 {
 				t.Fatalf("a new key after an uncertain handoff: %v, %d keys generated", err, w.generated)
 			}
 			w.requireRotated(t, "key-1")
 			w.restart()
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRotated(t, "key-2")
@@ -1263,25 +1262,25 @@ func TestRotateDaemonKeyKeepsFencesItCannotLift(t *testing.T) {
 	uncertainHandoff := func(w *rotationWorld) *Container {
 		w.faults["tell"] = rotationFault{occurrence: 1, effect: hangsPrepared}
 		c := rotationCluster(w)
-		_ = c.RotateDaemonKey(t.Context(), "osd.0")
+		_ = osdHandle(t, t.Context(), c, 0).RotateKey(t.Context())
 		return c
 	}
 	t.Run("unknown start time", func(t *testing.T) {
 		w := newRotationWorld()
 		w.started = ""
 		c := uncertainHandoff(w)
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		// The start time becomes known without a restart: the process that
 		// runs now may still get the handoff.
 		w.started = "start-1"
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || w.generated != 1 {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || w.generated != 1 {
 			t.Fatalf("a daemon whose start time was unknown got a new key: %v", err)
 		}
 		w.requireUsable(t)
 		w.restart()
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		w.requireRotated(t, "key-2")
@@ -1292,10 +1291,10 @@ func TestRotateDaemonKeyKeepsFencesItCannotLift(t *testing.T) {
 		w.onControlCopy = w.restart
 		c := uncertainHandoff(w)
 		w.onControlCopy = nil
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || w.generated != 1 {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || w.generated != 1 {
 			t.Fatalf("a new key while the handoff may reach the restarted daemon: %v", err)
 		}
 		w.requireUsable(t)
@@ -1304,19 +1303,19 @@ func TestRotateDaemonKeyKeepsFencesItCannotLift(t *testing.T) {
 		w := newRotationWorld()
 		c := uncertainHandoff(w)
 		w.pending = "key-other"
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || w.pending != "key-other" || w.current != "key-0" {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || w.pending != "key-other" || w.current != "key-0" {
 			t.Fatalf("a rotation resumed with another pending key: %v, current %s, pending %q", err, w.current, w.pending)
 		}
 	})
 	t.Run("recreated container", func(t *testing.T) {
 		w := newRotationWorld()
 		c := uncertainHandoff(w)
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		w.daemonID = "osd-0-ctr-2"
 		w.restart()
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		w.requireRotated(t, "key-2")
@@ -1330,22 +1329,22 @@ func TestRotateDaemonKeyKeepsFencesItCannotLift(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		w.onHang, w.cancelFails = cancel, 2
-		_ = c.RotateDaemonKey(ctx, "osd.0")
+		_ = osdHandle(t, ctx, c, 0).RotateKey(ctx)
 		w.onHang = nil
 		w.restart()
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || !strings.Contains(err.Error(), "cannot be stopped") {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || !strings.Contains(err.Error(), "cannot be stopped") {
 			t.Fatalf("a call went on while the handoff CLI may run: %v", err)
 		}
 		w.requireUsable(t)
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil || w.generated != 1 {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil || w.generated != 1 {
 			t.Fatalf("a new key right after the handoff CLI stopped: %v", err)
 		}
 		w.requireUsable(t)
 		w.restart()
-		if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+		if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		w.requireRotated(t, "key-2")
@@ -1396,7 +1395,7 @@ func TestRotateDaemonKeyWaitsForKeyringWrites(t *testing.T) {
 				t.Cleanup(func() { keyRotationCleanupTimeout = previous })
 			}
 			c := rotationCluster(w)
-			if err := c.RotateDaemonKey(t.Context(), "osd.0"); err == nil {
+			if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err == nil {
 				t.Fatal("the failed write succeeded")
 			}
 			w.requireUsable(t)
@@ -1404,7 +1403,7 @@ func TestRotateDaemonKeyWaitsForKeyringWrites(t *testing.T) {
 			// The second call finishes with the same key, and a third one
 			// moves on to another key, which no earlier write may replace.
 			for range 2 {
-				if err := c.RotateDaemonKey(t.Context(), "osd.0"); err != nil {
+				if err := osdHandle(t, t.Context(), c, 0).RotateKey(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				w.requireUsable(t)

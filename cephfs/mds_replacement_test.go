@@ -163,7 +163,7 @@ func TestMDSReplacementActualPublicationAndCompletedCopyRetry(t *testing.T) {
 	if err != nil || again != newDaemon || r.starts != 1 || r.n.mutations != 1 {
 		t.Fatal("completed copied-handle retry launched or adopted a new daemon", err)
 	}
-	if err := r.fs.RemoveStoppedMDS(t.Context(), &copy); err != nil {
+	if err := (&copy).RemoveStopped(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	again, err = r.fs.addMDSReplacement(t.Context(), &copy, r.start)
@@ -178,7 +178,7 @@ func TestMDSReplacementActualPublicationAndCompletedCopyRetry(t *testing.T) {
 }
 
 func TestMDSReplacementOwnerAndPublicAdmissionRejectsWithoutMutation(t *testing.T) {
-	if _, err := (*Filesystem)(nil).AddMDSReplacement(t.Context(), nil); err == nil {
+	if _, err := (*MDS)(nil).AddReplacement(t.Context()); err == nil {
 		t.Fatal("nil filesystem accepted")
 	}
 	for _, fault := range []string{"nil", "copy-export", "foreign-embed", "edited-original", "active-two", "standby-one", "replay", "partial-original", "closed", "registry", "duplicate", "fs-name", "metadata", "default-pool", "canceled"} {
@@ -727,14 +727,14 @@ func TestMDSReplacementIncompleteCreationCannotGainTypedAuthority(t *testing.T) 
 			if err := r.fs.ScaleMDS(t.Context(), 1, 0); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before {
 				t.Fatal("ordinary Scale adopted incomplete replacement authority", err)
 			}
-			if err := r.fs.RemoveStoppedMDS(t.Context(), r.old); err == nil || r.oldCID.removes != 0 || r.old.identity.removalAttempted {
+			if err := r.old.RemoveStopped(t.Context()); err == nil || r.oldCID.removes != 0 || r.old.identity.removalAttempted {
 				t.Fatal("incomplete replacement became Q survivor", err)
 			}
 			// A failed new member cannot itself be a Q retirement target, even
 			// with unrelated healthy original members later available.
 			r.newCID.state = container.State{Status: "exited"}
 			before = len(r.n.calls)
-			if err := r.fs.RemoveStoppedMDS(t.Context(), partial); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before || r.newCID.removes != 0 {
+			if err := partial.RemoveStopped(t.Context()); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before || r.newCID.removes != 0 {
 				t.Fatal("incomplete replacement gained typed retirement authority", err)
 			}
 			if r.starts != 1 || r.n.mutations != 1 {
@@ -771,7 +771,7 @@ func TestMDSReplacementAttemptWithoutNewHandleRemainsCleanupOnlyAfterRestart(t *
 			if err := r.fs.ScaleMDS(t.Context(), 1, 0); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before {
 				t.Fatal("restarted original escaped attempted fixture guard", err)
 			}
-			if err := r.fs.RemoveStoppedMDS(t.Context(), r.old); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before || r.oldCID.removes != 0 {
+			if err := r.old.RemoveStopped(t.Context()); err == nil || err.Error() != "attempted MDS replacement is cleanup-only" || len(r.n.calls) != before || r.oldCID.removes != 0 {
 				t.Fatal("original receipt gained typed retirement authority", err)
 			}
 			if again, err := r.add(t.Context()); again != nil || err == nil || err.Error() != "attempted MDS replacement is cleanup-only" {

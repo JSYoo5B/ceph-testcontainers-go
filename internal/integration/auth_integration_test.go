@@ -94,15 +94,15 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 				t.Fatal(err)
 			}
 			readOnlyCaps := ceph.ClientCaps{Mon: "allow r", OSD: "allow r pool=tc-auth namespace=blue"}
-			if err := cluster.UpdateClientCaps(ctx, writer, readOnlyCaps); err != nil {
+			if err := writer.UpdateCaps(ctx, readOnlyCaps); err != nil {
 				t.Fatal(err)
 			}
-			caps, err := cluster.ClientCapabilities(ctx, writer)
+			caps, err := writer.Capabilities(ctx)
 			if err != nil || caps != readOnlyCaps {
 				t.Fatalf("writer caps did not narrow exactly: %+v %v", caps, err)
 			}
 			probe(writerClient, writer, "readonly", writer.KeyringPath())
-			if err := cluster.UpdateClientCaps(ctx, writer, ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue"}); err != nil {
+			if err := writer.UpdateCaps(ctx, ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue"}); err != nil {
 				t.Fatal(err)
 			}
 			probe(writerClient, writer, "verify", writer.KeyringPath())
@@ -110,7 +110,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
 				t.Fatal("capability change replaced client credentials")
 			}
-			if err := cluster.DeleteClient(ctx, writer); err != nil {
+			if err := writer.Delete(ctx); err != nil {
 				t.Fatal(err)
 			}
 			probe(writerClient, writer, "bad-auth", writer.KeyringPath())

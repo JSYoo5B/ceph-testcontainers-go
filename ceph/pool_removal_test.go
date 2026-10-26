@@ -15,7 +15,7 @@ func TestRemovePoolDeletesFixtureResourcesAndRestoresPermission(t *testing.T) {
 			f := newCephStateFake()
 			f.AddFixturePool("data", erasure)
 			f.AddFixturePool("other", erasure)
-			if err := removalCluster(f).RemovePool(t.Context(), "data"); err != nil {
+			if err := poolHandle(t, t.Context(), removalCluster(f), "data").Remove(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if f.HasPool("data") || f.HasRule("tc-data-replicated") || f.HasRule("tc-data-ec") || strings.Contains(strings.Join(f.Profiles, ","), "tc-data-ec") {
@@ -36,7 +36,7 @@ func TestRemovePoolKeepsExistingPermission(t *testing.T) {
 		f := newCephStateFake()
 		f.AddFixturePool("data", false)
 		f.AllowDelete = &previous
-		if err := removalCluster(f).RemovePool(t.Context(), "data"); err != nil {
+		if err := poolHandle(t, t.Context(), removalCluster(f), "data").Remove(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if f.HasPool("data") || f.AllowDelete == nil || *f.AllowDelete != previous {
@@ -52,13 +52,13 @@ func TestRemovePoolRestoresPermissionWhenDeletionFails(t *testing.T) {
 	f.AllowDelete = &previous
 	f.FailNext("osd pool rm data data --yes-i-really-really-mean-it", 1)
 	cluster := removalCluster(f)
-	if err := cluster.RemovePool(t.Context(), "data"); err == nil || !strings.Contains(err.Error(), `remove pool "data"`) {
+	if err := poolHandle(t, t.Context(), cluster, "data").Remove(t.Context()); err == nil || !strings.Contains(err.Error(), `remove pool "data"`) {
 		t.Fatalf("RemovePool error = %v", err)
 	}
 	if !f.HasPool("data") || !f.HasRule("tc-data-replicated") || *f.AllowDelete != "false" {
 		t.Fatalf("failed removal changed state: %s", f)
 	}
-	if err := cluster.RemovePool(t.Context(), "data"); err != nil {
+	if err := poolHandle(t, t.Context(), cluster, "data").Remove(t.Context()); err != nil {
 		t.Fatal("retry:", err)
 	}
 	if f.HasPool("data") || f.HasRule("tc-data-replicated") || *f.AllowDelete != "false" {
@@ -71,7 +71,7 @@ func TestRemovePoolFinishesAfterPartialRemoval(t *testing.T) {
 	f.AddFixturePool("wide", true)
 	// A previous call deleted the pool and then failed on its rule.
 	f.Pools = f.Pools[:1]
-	if err := removalCluster(f).RemovePool(t.Context(), "wide"); err != nil {
+	if err := poolHandle(t, t.Context(), removalCluster(f), "wide").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if f.HasRule("tc-wide-ec") || strings.Contains(strings.Join(f.Profiles, ","), "tc-wide-ec") {
@@ -102,7 +102,7 @@ func TestRemovePoolRefusesUnownedOrUsedPools(t *testing.T) {
 				test.prepare(f)
 			}
 			before := f.Snapshot()
-			err := removalCluster(f).RemovePool(t.Context(), test.pool)
+			err := poolHandle(t, t.Context(), removalCluster(f), test.pool).Remove(t.Context())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("RemovePool error = %v, want %q", err, test.want)
 			}
@@ -122,7 +122,7 @@ func TestRemovePoolRefusesActivePermissionOverride(t *testing.T) {
 		t.Fatalf("OverrideConfig did not return a tracked handle: %v", err)
 	}
 	before := f.Snapshot()
-	if err := cluster.RemovePool(t.Context(), "data"); err == nil || !strings.Contains(err.Error(), "OverrideConfig override") {
+	if err := poolHandle(t, t.Context(), cluster, "data").Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "OverrideConfig override") {
 		t.Fatalf("RemovePool error = %v", err)
 	}
 	if after := f.Snapshot(); after != before {

@@ -60,7 +60,7 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal("standby reused the active manager's container")
 	}
 	checkMap("a", "b")
-	if err := cluster.RemoveManager(ctx, "a"); err != nil {
+	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkMap("b")
@@ -76,12 +76,12 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal("replacement manager did not receive a fresh container")
 	}
 	checkMap("b", "replacement")
-	if err := cluster.RemoveManager(ctx, "replacement"); err != nil {
+	if err := managerHandle(t, ctx, cluster, "replacement").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkMap("b")
 	managerLifecycleRBDReady(t, ctx, cluster)
-	if err := cluster.RemoveManager(ctx, "b"); err == nil {
+	if err := managerHandle(t, ctx, cluster, "b").Remove(ctx); err == nil {
 		t.Fatal("last manager candidate was removed")
 	}
 	checkMap("b")

@@ -189,7 +189,7 @@ A non-nil `Container` returned together with an error owns whatever was created
 and must still be terminated. `testcontainers.CleanupContainer(t, cluster)`
 before the error check handles this.
 
-The package-level functions that act on a cluster (`Start`, `Remove`,
+The package-level functions that act on a cluster (`Start`,
 `Gateways`) and the cluster fields of the multisite
 configuration take a `*ceph.Container`. Pass `cluster.Container` for a cluster
 returned by `rgw.Run` (or by `rbd.Run` or `cephfs.Run`), or pass the value
@@ -795,17 +795,18 @@ In host mode, the port is reserved on the Docker host and released just before
 the daemon binds it. If another process takes the port in between, startup is
 retried with a new port, up to five attempts.
 
-#### Remove
+#### Gateway.Remove
 
 ```golang
-func Remove(ctx context.Context, c *ceph.Container, name string) error
+func (g *Gateway) Remove(ctx context.Context) error
 ```
 
-Removes one gateway container (an empty name means `default`). Zone
-configuration, users, buckets and objects stay available through the other
+Removes this gateway container. Zone configuration, users, buckets and objects stay available through the other
 gateways or a replacement. The last gateway can be removed. Multisite period
 endpoints are not updated automatically. A failed removal stays tracked and is
-retried when the cluster terminates.
+retried when the cluster terminates. A descriptor that was already removed, or
+that is not the one the cluster owns for its name, returns an error instead of
+acting on a later gateway of the same name.
 
 #### Gateways
 
@@ -1899,7 +1900,7 @@ a, b := gateways[0], gateways[1]
 // Write through a with a's test user, read through b with the same keys.
 
 // Remove a; b keeps serving users, buckets and objects.
-if err := rgw.Remove(ctx, cluster.Container, "a"); err != nil {
+if err := a.Remove(ctx); err != nil {
 	t.Fatal(err)
 }
 ```

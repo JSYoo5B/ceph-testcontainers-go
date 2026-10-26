@@ -34,7 +34,7 @@ func TestNativePoolReplacement(t *testing.T) {
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			original, err := cluster.PoolStatus(ctx, pool)
+			original, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || original.ID <= 0 {
 				t.Fatal("original native pool ID unavailable", err)
 			}
@@ -63,7 +63,7 @@ func TestNativePoolReplacement(t *testing.T) {
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			replacement, err := cluster.PoolStatus(ctx, pool)
+			replacement, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || replacement.ID <= 0 || replacement.ID == original.ID {
 				t.Fatal("native replacement was not distinguished", err)
 			}

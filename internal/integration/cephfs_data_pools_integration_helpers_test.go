@@ -54,7 +54,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 		t.Fatalf("dynamic native registration=%+v error=%v", states, err)
 	}
 	for _, handle := range []*cephfs.DataPool{replicatedHandle, erasureHandle, unusedHandle} {
-		pool, err := cluster.PoolStatus(ctx, handle.Name)
+		pool, err := poolHandle(t, ctx, cluster, handle.Name).Status(ctx)
 		if err != nil || pool.ID != handle.ID || !slices.Contains(states, cephfs.DataPoolState{Name: handle.Name, ID: handle.ID}) {
 			t.Fatalf("pool identity was not registered: %+v state=%+v error=%v", handle, pool, err)
 		}
@@ -78,7 +78,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err := fs.RemoveUnusedDataPool(ctx, unusedHandle); err != nil {
 		t.Fatal("copied removal state did not converge", err)
 	}
-	if pool, err := cluster.PoolStatus(ctx, unused); err != nil || pool.ID != unusedHandle.ID {
+	if pool, err := poolHandle(t, ctx, cluster, unused).Status(ctx); err != nil || pool.ID != unusedHandle.ID {
 		t.Fatal("detachment deleted or replaced the pool", err)
 	}
 	data, err := cluster.Ceph(ctx, "osd", "pool", "application", "get", unused, "--format", "json")
@@ -159,7 +159,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if err != nil || !slices.Equal(states, beforeReplacement) {
 		t.Fatalf("empty replacement candidate detach changed native registrations: before=%+v after=%+v error=%v", beforeReplacement, states, err)
 	}
-	if original, err := cluster.PoolStatus(ctx, replaced); err != nil || original.ID != stale.ID {
+	if original, err := poolHandle(t, ctx, cluster, replaced).Status(ctx); err != nil || original.ID != stale.ID {
 		t.Fatal("empty candidate pool changed before the owned native replacement", err)
 	}
 	permission, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
@@ -178,7 +178,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	cephCommand(t, ctx, cluster, "osd", "pool", "delete", replaced, replaced, "--yes-i-really-really-mean-it")
 	cephCommand(t, ctx, cluster, "osd", "pool", "create", replaced, "1")
 	cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", replaced, "cephfs")
-	replacement, err := cluster.PoolStatus(ctx, replaced)
+	replacement, err := poolHandle(t, ctx, cluster, replaced).Status(ctx)
 	if err != nil || replacement.ID <= 0 || replacement.ID == stale.ID {
 		t.Fatalf("native FS-attached candidate replacement was not distinguished: %+v error=%v", replacement, err)
 	}
@@ -195,7 +195,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if addErr == nil || !strings.Contains(addErr.Error(), "previously attempted data pool was replaced") {
 		t.Fatalf("previously confirmed attachment did not refuse the replacement's native identity: %v", addErr)
 	}
-	if current, err := cluster.PoolStatus(ctx, replaced); err != nil || current.ID != replacement.ID {
+	if current, err := poolHandle(t, ctx, cluster, replaced).Status(ctx); err != nil || current.ID != replacement.ID {
 		t.Fatal("stale attachment altered the replacement pool identity", err)
 	}
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", replaced, "-N", "replacement", "get", "owned-marker", "/tmp/tc-dynamic-replacement-readback")

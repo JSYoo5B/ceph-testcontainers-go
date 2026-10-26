@@ -249,7 +249,7 @@ func startHeldReplicationWrite(t *testing.T, ctx context.Context, cluster *ceph.
 			t.Fatalf("the write finished while the backend was cut: %v", write.err)
 		default:
 		}
-		data, err := cluster.AdminSocket(ctx, primary, "dump_ops_in_flight")
+		data, err := adminSocket(t, ctx, cluster, primary, "dump_ops_in_flight")
 		if err != nil {
 			t.Fatal(err)
 		}

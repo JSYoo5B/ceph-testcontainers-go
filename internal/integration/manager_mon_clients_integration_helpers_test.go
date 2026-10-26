@@ -27,7 +27,7 @@ func managerMonSessions(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	t.Helper()
 	sessions := map[string][]monSession{}
 	for _, monitor := range clusteraccess.Monitors(t, cluster) {
-		out, err := cluster.AdminSocket(ctx, "mon."+monitor.DaemonName, "sessions")
+		out, err := monitorHandle(t, ctx, cluster, monitor.DaemonName).AdminSocket(ctx, "sessions")
 		if err != nil {
 			t.Fatalf("sessions of mon.%s: %v", monitor.DaemonName, err)
 		}

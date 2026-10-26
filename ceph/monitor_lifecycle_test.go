@@ -22,7 +22,7 @@ func TestMonitorRemovalCleansNeverJoinedDescriptor(t *testing.T) {
 	control := &monitorLifecycleControl{members: []string{"a"}, quorum: []string{"a"}}
 	cluster := monitorLifecycleFixture(control)
 	cluster.monitors["b"] = &MonitorContainer{DaemonName: "b"}
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.monitors["b"] != nil || control.removals != 0 || control.copies != 1 || cluster.monitorTerminated {
@@ -35,14 +35,14 @@ func TestMonitorRemovalRetriesDockerCleanupAfterMembershipDisappears(t *testing.
 	cluster := monitorLifecycleFixture(control)
 	daemon := &monitorLifecycleDaemon{terminateErr: errors.New("temporary Docker cleanup failure")}
 	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b"}
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err == nil || cluster.monitors["b"] == nil || slices.Contains(control.members, "b") {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err == nil || cluster.monitors["b"] == nil || slices.Contains(control.members, "b") {
 		t.Fatal("failed Docker cleanup did not retain the removed member's container")
 	}
 	// Another completed topology operation can leave only the surviving MON.
 	// Retrying b changes no membership and must not refuse that last member.
 	control.members, control.quorum = []string{"a"}, []string{"a"}
 	daemon.terminateErr = nil
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.monitors["b"] != nil || control.removals != 1 || daemon.terminations != 2 || cluster.monitorTerminated {
@@ -61,7 +61,7 @@ func TestMonitorRemovalProtectsQuorumForActualMembers(t *testing.T) {
 				cluster.monitors["b"] = &MonitorContainer{DaemonName: "b"}
 				name = "b"
 			}
-			if err := cluster.RemoveMonitor(t.Context(), name); err == nil || control.removals != 0 || cluster.monitorTerminated {
+			if err := monitorHandle(t, t.Context(), cluster, name).Remove(t.Context()); err == nil || control.removals != 0 || cluster.monitorTerminated {
 				t.Fatal("unsafe native membership removal was accepted")
 			}
 		})
@@ -74,7 +74,7 @@ func TestMonitorRemovalConvergesAfterTransientNativeRead(t *testing.T) {
 	cluster := monitorLifecycleFixture(control)
 	daemon := &monitorLifecycleDaemon{}
 	cluster.Container, cluster.controlPlane = daemon, control
-	if err := cluster.RemoveMonitor(t.Context(), "a"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if control.removals != 1 || daemon.terminations != 1 || control.copies != 1 || !cluster.monitorTerminated || len(cluster.monitorsLocked()) != 0 {
@@ -100,7 +100,7 @@ func TestMonitorRemovalWaitsForAbsentMemberAndWorkingQuorum(t *testing.T) {
 				afterRemoval: []monitorLifecycleRead{scenario.read}}
 			cluster := monitorLifecycleFixture(control)
 			cluster.Container, cluster.controlPlane = &monitorLifecycleDaemon{}, control
-			if err := cluster.RemoveMonitor(t.Context(), "a"); err != nil {
+			if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if control.removals != 1 || control.copies != 1 || strings.Count(string(cluster.config), "[v2:") != 3 {
@@ -126,12 +126,12 @@ func TestMonitorRemovalReadDeadlineRetainsOwnershipForRetry(t *testing.T) {
 	cluster.settings.startupTimeout = 20 * time.Millisecond
 	daemon := &monitorLifecycleDaemon{}
 	cluster.Container, cluster.controlPlane = daemon, control
-	err := cluster.RemoveMonitor(t.Context(), "a")
+	err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "after removing monitor a") || cluster.monitorTerminated || control.removals != 1 || control.copies != 0 || daemon.terminations != 1 {
 		t.Fatalf("failed refresh lost retry ownership or its deadline: %v", err)
 	}
 	cluster.settings.startupTimeout = time.Second
-	if err := cluster.RemoveMonitor(t.Context(), "a"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if control.removals != 1 || control.copies != 1 || daemon.terminations != 2 || !cluster.monitorTerminated {
@@ -145,11 +145,11 @@ func TestMonitorRemovalConfigCopyFailureRetainsOwnershipForRetry(t *testing.T) {
 	daemon := &monitorLifecycleDaemon{}
 	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b"}
 	before := bytes.Clone(cluster.config)
-	if err := cluster.RemoveMonitor(t.Context(), "b"); !errors.Is(err, control.copyErr) || cluster.monitors["b"] == nil || control.removals != 1 || !bytes.Equal(cluster.config, before) {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); !errors.Is(err, control.copyErr) || cluster.monitors["b"] == nil || control.removals != 1 || !bytes.Equal(cluster.config, before) {
 		t.Fatalf("failed copy published config or lost removed member ownership: %v", err)
 	}
 	control.copyErr = nil
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.monitors["b"] != nil || control.removals != 1 || daemon.terminations != 2 || control.copies != 2 || strings.Count(string(cluster.config), "[v2:") != 2 {
@@ -171,7 +171,7 @@ func TestMonitorRemovalExpiredContextDoesNotMutate(t *testing.T) {
 				cancel()
 				ctx = canceled
 			}
-			if err := cluster.RemoveMonitor(ctx, "b"); err == nil || len(control.calls) != 0 || control.removals != 0 || control.copies != 0 || cluster.monitors["b"] == nil {
+			if err := monitorHandle(t, ctx, cluster, "b").Remove(ctx); err == nil || len(control.calls) != 0 || control.removals != 0 || control.copies != 0 || cluster.monitors["b"] == nil {
 				t.Fatal("expired operation changed membership, ownership or config")
 			}
 		})
@@ -213,7 +213,7 @@ func TestMonitorRemovalRetriesBlockedPreflightReadWithinOriginalBudget(t *testin
 		}
 		return attempt.Err()
 	}
-	if err := cluster.RemoveMonitor(ctx, "b"); err != nil {
+	if err := monitorHandle(t, ctx, cluster, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if control.quorumReads != 3 || control.removals != 1 || control.copies != 1 || daemon.terminations != 1 || daemon.starts != 0 || cluster.monitors["b"] != nil || time.Since(started) >= cluster.settings.startupTimeout {
@@ -236,7 +236,7 @@ func TestMonitorRemovalSustainedPreflightTimeoutHasNoEffects(t *testing.T) {
 		<-attempt.Done()
 		return attempt.Err()
 	}
-	err := cluster.RemoveMonitor(t.Context(), "b")
+	err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "membership before removal") || cluster.monitors["b"] != owned || control.removals != 0 || control.copies != 0 || daemon.terminations != 0 || daemon.starts != 0 || !bytes.Equal(before, cluster.config) {
 		t.Fatalf("blocked preflight lost its deadline or changed owned state: %v", err)
 	}
@@ -249,14 +249,14 @@ func TestMonitorRemovalUncertainMutationIsNotResent(t *testing.T) {
 	owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
 	cluster.monitors["b"] = owned
 	before := bytes.Clone(cluster.config)
-	err := cluster.RemoveMonitor(t.Context(), "b")
+	err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "native membership") || control.removals != 1 || daemon.terminations != 0 || control.copies != 0 || cluster.monitors["b"] != owned || !bytes.Equal(before, cluster.config) {
 		t.Fatalf("uncertain membership reply was retried or published cleanup: %v", err)
 	}
 	// The server committed, but the first client received no successful reply.
 	// Only an explicit fresh call may observe absence and complete owned cleanup.
 	control.removalErr = nil
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if control.removals != 1 || daemon.terminations != 1 || daemon.starts != 0 || control.copies != 1 || cluster.monitors["b"] != nil || slices.Contains(control.members, "b") {
@@ -271,7 +271,7 @@ func TestMonitorRemovalObservesCommitWhenReplyIsLost(t *testing.T) {
 	daemon := &monitorLifecycleDaemon{}
 	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b"}
 	started := time.Now()
-	if err := cluster.RemoveMonitor(t.Context(), "b"); err != nil {
+	if err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
@@ -290,7 +290,7 @@ func TestMonitorRemovalEmptyPreflightMapRetainsOwnedState(t *testing.T) {
 	owned := &MonitorContainer{Container: daemon, DaemonName: "b"}
 	cluster.monitors["b"] = owned
 	before := bytes.Clone(cluster.config)
-	err := cluster.RemoveMonitor(t.Context(), "b")
+	err := monitorHandle(t, t.Context(), cluster, "b").Remove(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "membership map is empty") || cluster.monitors["b"] != owned || control.removals != 0 || control.copies != 0 || daemon.terminations != 0 || daemon.starts != 0 || !bytes.Equal(before, cluster.config) {
 		t.Fatalf("empty membership was treated as authoritative absence and changed owned state: %v", err)
 	}

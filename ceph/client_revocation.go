@@ -23,7 +23,7 @@ type clientRevocationState struct {
 	// original is the auth entry that Restore puts back.
 	original clientRecord
 	// restored means that the identity holds original again, and deleted that
-	// DeleteClient removed it for good.
+	// ClientConfig.Delete removed it for good.
 	restored, deleted bool
 }
 
@@ -41,33 +41,8 @@ func (r ClientRevocationHandle) String() string {
 // GoString excludes credentials from formatted Go representations as well.
 func (r ClientRevocationHandle) GoString() string { return r.String() }
 
-// RevokeClient removes a client identity that this cluster
-// created from the MONs until Restore puts back exactly its key and
-// capabilities, so that a test can observe its rejection and then the
-// recovery of the same credentials. The identity must still have the key of
-// client; one changed outside the module is refused. While it is revoked,
-// the descriptor works only for ConnectionConfig, whose credentials stay
-// valid for after Restore; WithClientIdentity, ClientCapabilities,
-// UpdateClientCaps and ReplaceClientKey fail, CreateClient refuses its name,
-// and DeleteClient makes the removal permanent.
-//
-// A fresh connection with the client's key fails at once. A client that
-// authenticated before keeps its sessions until it renews its tickets, within
-// auth_mon_ticket_ttl (AuthConfig.MonTicketTTL), when the MONs reject the
-// renewal; it keeps the MGR and OSD sessions it already holds. Tentacle also
-// drops its MON session, and a librados client then does not authenticate
-// again on its own, while Squid keeps an open MON session answering. A new
-// connection with the same credentials works once Restore returns.
-//
-// The removal and the restoration are fenced like the import of
-// ReplaceClientKey. A failed call settles the MONs and reports what they
-// hold. When that stays uncertain, RevokeClient returns the
-// revocation with the error, and Restore settles first and then restores.
-// The cluster needs no Restore before Terminate.
-func (c *Container) RevokeClient(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error) {
-	if gateErr := c.sharedGate("RevokeClient"); gateErr != nil {
-		return nil, gateErr
-	}
+// revokeClient implements ClientConfig.Revoke, which documents the behavior.
+func (c *Container) revokeClient(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error) {
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
@@ -98,7 +73,7 @@ func (c *Container) RevokeClient(ctx context.Context, client *ClientConfig) (*Cl
 // Restore puts back the identity's original key and capabilities and makes
 // its descriptor usable again. It succeeds again once restored, as long as
 // the identity still holds them. It refuses an identity that was created
-// again with another key or other capabilities, and one that DeleteClient
+// again with another key or other capabilities, and one that ClientConfig.Delete
 // removed for good. The restoration is fenced like the removal: when its
 // outcome stays uncertain, the next Restore settles first.
 func (r *ClientRevocationHandle) Restore(ctx context.Context) error {

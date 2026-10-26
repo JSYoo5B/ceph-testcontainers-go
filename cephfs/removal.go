@@ -18,7 +18,8 @@ import (
 // and the pools its configuration created. Pools attached later with
 // AddDataPool are detached by the native removal but kept. A retry after an
 // error continues with whatever remains.
-func removeFilesystem(ctx context.Context, c *ceph.Container, name string) error {
+func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem) error {
+	name := handle.FilesystemName
 	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
 		return err
 	}
@@ -31,8 +32,8 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, name string) error
 		return err
 	}
 	fs := filesystems(c).byName[name]
-	if fs == nil {
-		return invalid(fmt.Errorf("cephfs filesystem %q is not owned by this cluster", name))
+	if fs == nil || fs != handle {
+		return invalid(fmt.Errorf("cephfs filesystem %q is not owned by this cluster, or this descriptor is stale", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()

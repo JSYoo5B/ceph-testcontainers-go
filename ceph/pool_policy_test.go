@@ -34,13 +34,13 @@ func TestPoolPolicyValidatesBeforeMutation(t *testing.T) {
 		size, min int
 	}{{"--option", 2, 1}, {"fixture", 0, 1}, {"fixture", 2, 3}} {
 		ctr := policyFixture("2", "1", "1")
-		if err := poolFixtureCluster(ctr, 3).SetPoolReplication(t.Context(), tc.name, tc.size, tc.min); err == nil || len(ctr.Calls) != 0 {
+		if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), tc.name).SetReplication(t.Context(), tc.size, tc.min); err == nil || len(ctr.Calls) != 0 {
 			t.Fatal("invalid policy reached native CLI")
 		}
 	}
 	for _, kind := range []string{"1", "3"} {
 		ctr := policyFixture("2", "1", kind)
-		if err := poolFixtureCluster(ctr, 1).SetPoolReplication(t.Context(), "fixture", 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
+		if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 1), "fixture").SetReplication(t.Context(), 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
 			t.Fatal("EC/insufficient domains accepted")
 		}
 	}
@@ -57,7 +57,7 @@ func TestPoolReplicationPreservesValidIntermediateSizes(t *testing.T) {
 		{"2", "2", 1, 1, []string{"osd pool set fixture min_size 1", "osd pool set fixture size 1 --yes-i-really-mean-it"}},
 	} {
 		ctr := policyFixture(tc.oldSize, tc.oldMin, "1")
-		if err := poolFixtureCluster(ctr, 3).SetPoolReplication(t.Context(), "fixture", tc.size, tc.min); err != nil {
+		if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetReplication(t.Context(), tc.size, tc.min); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(policyMutations(ctr), tc.want) {
@@ -69,7 +69,7 @@ func TestPoolReplicationPreservesValidIntermediateSizes(t *testing.T) {
 func TestPoolPolicyPartialFailureDoesNotRollback(t *testing.T) {
 	ctr := policyFixture("2", "1", "1")
 	ctr.Fail = "osd pool set fixture min_size 2"
-	if err := poolFixtureCluster(ctr, 3).SetPoolReplication(t.Context(), "fixture", 3, 2); err == nil {
+	if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetReplication(t.Context(), 3, 2); err == nil {
 		t.Fatal("failure ignored")
 	}
 	if !slices.Equal(policyMutations(ctr), []string{"osd pool set fixture size 3", ctr.Fail}) {
@@ -77,7 +77,7 @@ func TestPoolPolicyPartialFailureDoesNotRollback(t *testing.T) {
 	}
 	ctr = policyFixture("2", "1", "1")
 	ctr.Fail = "osd pool set-quota fixture max_objects 0"
-	if err := poolFixtureCluster(ctr, 3).SetPoolQuota(t.Context(), "fixture", PoolQuota{}); err == nil || len(policyMutations(ctr)) != 1 {
+	if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetQuota(t.Context(), PoolQuota{}); err == nil || len(policyMutations(ctr)) != 1 {
 		t.Fatal("quota failure continued")
 	}
 }
@@ -85,11 +85,11 @@ func TestPoolPolicyPartialFailureDoesNotRollback(t *testing.T) {
 func TestPoolQuotaZeroClearsBothLimitsAndStatusIncludesNativeIDs(t *testing.T) {
 	ctr := policyFixture("2", "1", "1")
 	cluster := poolFixtureCluster(ctr, 3)
-	state, err := cluster.PoolStatus(t.Context(), "fixture")
+	state, err := poolHandle(t, t.Context(), cluster, "fixture").Status(t.Context())
 	if err != nil || state.ID != 7 || state.Quota.MaxBytes != 100 || state.Quota.MaxObjects != 4 {
 		t.Fatalf("invalid native snapshot: %+v %v", state, err)
 	}
-	if err := cluster.SetPoolQuota(t.Context(), "fixture", PoolQuota{}); err != nil {
+	if err := poolHandle(t, t.Context(), cluster, "fixture").SetQuota(t.Context(), PoolQuota{}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(policyMutations(ctr), []string{"osd pool set-quota fixture max_objects 0", "osd pool set-quota fixture max_bytes 0"}) {
@@ -136,7 +136,7 @@ func (ctr *replacedPoolFixture) Exec(ctx context.Context, args []string, opts ..
 }
 func TestPoolPolicyRefusesRecreatedPoolBetweenCommands(t *testing.T) {
 	ctr := &replacedPoolFixture{poolFixtureContainer: policyFixture("2", "1", "1")}
-	if err := poolFixtureCluster(ctr, 3).SetPoolQuota(t.Context(), "fixture", PoolQuota{}); err == nil || len(policyMutations(ctr.poolFixtureContainer)) != 0 {
+	if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetQuota(t.Context(), PoolQuota{}); err == nil || len(policyMutations(ctr.poolFixtureContainer)) != 0 {
 		t.Fatal("replacement pool policy changed")
 	}
 }
@@ -145,14 +145,14 @@ func TestPoolPolicyRefusesFixedChoiceAndChangedNativePlacement(t *testing.T) {
 	for _, num := range []string{`,"num":2`, `,"num":-1`, ``} {
 		ctr := policyFixture("2", "1", "1")
 		ctr.Output["osd crush rule dump --format json"] = strings.ReplaceAll(ctr.Output["osd crush rule dump --format json"], `,"num":0`, num)
-		if err := poolFixtureCluster(ctr, 3).SetPoolReplication(t.Context(), "fixture", 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
+		if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetReplication(t.Context(), 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
 			t.Fatal("unsupported fixed/missing CRUSH choice mutated policy")
 		}
 	}
 	for _, nativeEdit := range []string{`{"id":2,"weight":0}`, `{"id":8,"weight":1}`} {
 		ctr := policyFixture("2", "1", "1")
 		ctr.Output["osd crush dump --format json"] = strings.ReplaceAll(ctr.Output["osd crush dump --format json"], `{"id":2,"weight":1}`, nativeEdit)
-		if err := poolFixtureCluster(ctr, 3).SetPoolReplication(t.Context(), "fixture", 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
+		if err := poolHandle(t, t.Context(), poolFixtureCluster(ctr, 3), "fixture").SetReplication(t.Context(), 3, 2); err == nil || len(policyMutations(ctr)) != 0 {
 			t.Fatal("cached placement hid native weight/move change")
 		}
 	}

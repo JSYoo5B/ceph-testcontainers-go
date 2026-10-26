@@ -53,7 +53,7 @@ type Container struct {
 	featureClientReady     bool
 	featureClientAttempted bool
 	cephVersion            string
-	// authFences records, per auth entity, what an earlier RotateDaemonKey
+	// authFences records, per auth entity, what an earlier RotateKey
 	// or client key change left uncertain; see authFence.
 	authFences map[string]*authFence
 	// clientSecrets holds every client key that the module generated or
@@ -71,7 +71,7 @@ type Container struct {
 	// clientRevocations holds, per client entity, the state of the temporary
 	// revocation that has removed it until its Restore.
 	clientRevocations map[string]*clientRevocationState
-	// keyRotationDocker replaces the Docker client of RotateDaemonKey in tests.
+	// keyRotationDocker replaces the Docker client of RotateKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
 	// owner labels every container of the cluster; see clusterOwnerLabel.
 	owner string
@@ -95,7 +95,7 @@ type Container struct {
 	extensions            map[string]any
 	osds                  map[int]*OSDContainer
 	// detachedOSDs are retained stores and registrations without a
-	// container, until ReopenOSD or Terminate.
+	// container, until DetachedOSD.Reopen or Terminate.
 	detachedOSDs      map[int]*DetachedOSD
 	osdMemory         *osdMemoryStorage
 	osdVolume         *osdVolumeStorage
@@ -139,15 +139,16 @@ type Container struct {
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
 // The file is container-local unless WithOSDInMemoryStorage or
 // WithOSDVolumeStorage is selected.
-// Stop/Start can be used for failure injection; RemoveOSD drains and purges it.
+// Stop/Start can be used for failure injection; OSDContainer.Remove drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
 	ID          int
+	owner       *Container
 	nativeUUID  string
 	placement   OSDConfig
 	purged      bool
 	purgeIssued bool
-	// detaching marks an OSD that DetachOSD fenced; detachRemoved marks
+	// detaching marks an OSD that OSDContainer.Detach fenced; detachRemoved marks
 	// one whose container it removed. Both keep the OSD owned for retry.
 	detaching, detachRemoved bool
 }
@@ -672,7 +673,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets m
 	if config.Host == "" {
 		config.Host = fmt.Sprintf("osd-%d", id)
 	}
-	osd := &OSDContainer{ID: id, nativeUUID: osdUUID, placement: config}
+	osd := &OSDContainer{ID: id, owner: c, nativeUUID: osdUUID, placement: config}
 	c.osds[id] = osd
 	launch := osdLaunch{osd: osd}
 	// A generated host name is known only after registration. Preserve the
@@ -759,21 +760,9 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 	return nil
 }
 
-// RemoveOSD drains an owned OSD, waits for safe-to-destroy, stops it, waits for
-// down, purges it from Ceph and removes its container. It refuses the last OSD.
-// After identity admission, removal fences this Docker instance against new
-// native commands and drains its tracked commands before native mutations. A
-// failed drain retains ownership and its fence for retry; other targets remain
-// admitted. This is permanent removal, not retained-store detach or reopen.
-// Every removal phase verifies the captured registration UUID. External OSD
-// replacement must not race removal: Ceph has no UUID compare-and-swap purge.
-// An uncertain purge response remains tracked; a retry reconciles fresh native
-// absence only after this handle issued purge. Completed purge retries only
-// Docker cleanup. On error retry with a fresh context or terminate the cluster.
-func (c *Container) RemoveOSD(ctx context.Context, id int) error {
-	if gateErr := c.sharedGate("RemoveOSD"); gateErr != nil {
-		return gateErr
-	}
+// removeOSD implements OSDContainer.Remove, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -787,15 +776,13 @@ func (c *Container) RemoveOSD(ctx context.Context, id int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	osd, ok := c.osds[id]
-	if !ok || osd == nil {
-		if c.detachedOSDs[id] != nil {
-			return invalid(fmt.Errorf("osd.%d is detached; reopen it before removing it", id))
-		}
-		return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
+	id := handle.ID
+	if err := c.currentOSD(handle); err != nil {
+		return err
 	}
+	osd := handle
 	if osd.detaching {
-		return fmt.Errorf("osd.%d is being detached; retry DetachOSD", id)
+		return fmt.Errorf("osd.%d is being detached; retry OSDContainer.Detach", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

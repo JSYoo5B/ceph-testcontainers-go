@@ -54,7 +54,7 @@ func TestRetainedCancelFaultCancelsOnlyAfterASuccessfulReply(t *testing.T) {
 // candidate can then be detached again with a fresh context and reopened.
 func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	f := newRetainedFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,11 +62,11 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	defer cancel()
 	fault := &retainedCancelFault{next: f.cluster.osdRunner, cancel: cancel}
 	f.cluster.osdRunner = fault.run
-	osd, err := f.cluster.ReopenOSD(ctx, detached)
+	osd, err := detached.Reopen(ctx)
 	if err == nil || ctx.Err() == nil || osd == nil || osd.Container == nil || f.cluster.osds[3] != osd || !detached.reopened || f.cluster.detachedOSDs[3] != nil {
 		t.Fatalf("canceled reopen: %v %+v", err, osd)
 	}
-	if again, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
+	if again, err := detached.Reopen(t.Context()); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
 		t.Fatalf("consumed detached handle admitted a retry: %v runs=%d", err, f.runs)
 	}
 	if fault.calls != 1 || fault.canceled != 1 {
@@ -74,12 +74,12 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	}
 	// A fresh context settles the candidate: it is detached and reopened as a
 	// second distinct instance, with one more dispatch of the ordinary runner.
-	again, err := f.cluster.DetachOSD(t.Context(), 3)
+	again, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil || again == nil || f.cluster.osds[3] != nil {
 		t.Fatalf("detach of the canceled candidate: %v", err)
 	}
 	f.cluster.osdRunner = fault.next
-	second, err := f.cluster.ReopenOSD(t.Context(), again)
+	second, err := again.Reopen(t.Context())
 	if err != nil || second == nil || second == osd || f.cluster.osds[3] != second || f.runs != 2 {
 		t.Fatalf("reopen after the canceled candidate: %v runs=%d", err, f.runs)
 	}

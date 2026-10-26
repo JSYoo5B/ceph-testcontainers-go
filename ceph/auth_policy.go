@@ -5,12 +5,8 @@ import (
 	"errors"
 )
 
-// ClientCapabilities returns the current caps of a confirmed, owned identity.
-// It verifies the native key without returning auth database secrets.
-func (c *Container) ClientCapabilities(ctx context.Context, client *ClientConfig) (ClientCaps, error) {
-	if gateErr := c.sharedGate("ClientCapabilities"); gateErr != nil {
-		return ClientCaps{}, gateErr
-	}
+// clientCapabilities implements ClientConfig.Capabilities, which documents the behavior.
+func (c *Container) clientCapabilities(ctx context.Context, client *ClientConfig) (ClientCaps, error) {
 	if err := c.lockTopology(ctx); err != nil {
 		return ClientCaps{}, err
 	}
@@ -18,23 +14,14 @@ func (c *Container) ClientCapabilities(ctx context.Context, client *ClientConfig
 	return c.ownedClientCapabilities(ctx, client)
 }
 
-// UpdateClientCaps replaces all capabilities while retaining the identity/key.
-// Omitted services lose their previous capabilities. External auth edits must
-// not race this call. Already issued session tickets may retain previous caps;
-// verify permission changes using a fresh client connection. The change is
-// fenced like the import of ReplaceClientKey: a failed call reports what the
-// MONs hold once settled, and an uncertain one is resolved by the next
-// operation on the identity.
-func (c *Container) UpdateClientCaps(ctx context.Context, client *ClientConfig, caps ClientCaps) error {
-	if gateErr := c.sharedGate("UpdateClientCaps"); gateErr != nil {
-		return gateErr
-	}
+// updateClientCaps implements ClientConfig.UpdateCaps, which documents the behavior.
+func (c *Container) updateClientCaps(ctx context.Context, client *ClientConfig, caps ClientCaps) error {
 	args, err := clientCapArgs(caps)
 	if err != nil {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("at least one service capability is required; use DeleteClient for revocation")
+		return errors.New("at least one service capability is required; use ClientConfig.Delete for revocation")
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return err

@@ -140,11 +140,11 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 			t.Fatal(err)
 		}
 	}
-	originalSourcePool, err := source.PoolStatus(ctx, pool)
+	originalSourcePool, err := poolHandle(t, ctx, source, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalDestinationPool, err := destination.PoolStatus(ctx, pool)
+	originalDestinationPool, err := poolHandle(t, ctx, destination, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

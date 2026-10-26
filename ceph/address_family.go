@@ -61,7 +61,7 @@ func (family AddressFamily) String() string {
 // Native clients connect to the first entry, so they reach MGRs, OSDs and
 // MDSs over IPv4; ms_bind_prefer_ipv4 = false in a daemon's section of a
 // WithConfigFile file makes that daemon list its IPv6 address first.
-// Run, AddManager and RemoveManager check that the MONs, the active MGR and
+// Run, AddManager and ManagerContainer.Remove check that the MONs, the active MGR and
 // the up OSDs advertise a concrete address of each family, and fail with
 // ErrUnsupported otherwise.
 func WithAddressFamily(family AddressFamily) Option {

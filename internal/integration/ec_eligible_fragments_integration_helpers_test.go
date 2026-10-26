@@ -137,7 +137,7 @@ func ecObserve(t *testing.T, ctx context.Context, cluster *ceph.Container, pool 
 	t.Helper()
 	var last ecObservation
 	for attempt := 1; attempt <= 5; attempt++ {
-		snapshot, err := cluster.PoolPGs(ctx, pool)
+		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil || len(snapshot.PGs) != 1 {
 			t.Fatalf("PGs of %s: %+v, %v", pool, snapshot.PGs, err)
 		}
@@ -200,7 +200,7 @@ func ecWaitPG(t *testing.T, parent context.Context, cluster *ceph.Container, poo
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := cluster.PoolPGs(ctx, pool)
+		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]

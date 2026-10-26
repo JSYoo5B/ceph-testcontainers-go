@@ -96,7 +96,7 @@ func ecFourTwoWait(t *testing.T, parent context.Context, cluster *ceph.Container
 	defer cancel()
 	var last error
 	for {
-		s, err := cluster.PoolPGs(ctx, pool)
+		s, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err == nil {
 			last = checkECFourTwoPlacement(p, baseline, s, lost, floor, primary)
 			if last == nil {
@@ -184,7 +184,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	if seed.Phase != "seed" || seed.PID <= 0 || seed.Writer == 0 || seed.Reader == 0 || seed.Writer == seed.Reader || seed.Size != size || seed.Snap == 0 || seed.HeadVersion == 0 || seed.HeadSHA256 != ecFourTwoPayloadHash(size, 0) || seed.SnapSHA256 != seed.HeadSHA256 || seed.SnapVersion != seed.HeadVersion {
 		t.Fatalf("invalid seed/client/snapshot: %+v", seed)
 	}
-	baseline, err := cluster.PoolPGs(ctx, pool.Name)
+	baseline, err := pool.PGs(ctx)
 	if err != nil || len(baseline.PGs) != 1 {
 		t.Fatalf("initial 4+2 placement: %+v %v", baseline, err)
 	}
@@ -245,7 +245,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	if err := checkECFourTwoAck(seed, seed, one, size, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	firstAfter, err := cluster.PoolPGs(ctx, pool.Name)
+	firstAfter, err := pool.PGs(ctx)
 	if err != nil || checkECFourTwoPlacement(p, baseline, firstAfter, []int{firstIndex}, baseline.PGs[0].ReportedEpoch, -1) != nil {
 		t.Fatalf("first I/O placement interval changed: %+v %v", firstAfter, err)
 	}
@@ -273,7 +273,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	} else if two.Phase != "blocked" || two.PID != seed.PID || two.Writer != seed.Writer || two.Reader != seed.Reader || two.Read == nil || two.Write == nil || two.Read.Outcome != "unknown" || two.Write.Outcome != "unknown" || two.Read.Errno != 110 || two.Write.Errno != 110 {
 		t.Fatalf("default threshold did not bound the original operations: %+v", two)
 	}
-	secondAfter, err := cluster.PoolPGs(ctx, pool.Name)
+	secondAfter, err := pool.PGs(ctx)
 	if err != nil || checkECFourTwoPlacement(p, baseline, secondAfter, lost, firstAfter.PGs[0].ReportedEpoch, firstAfter.PGs[0].ActingPrimary) != nil {
 		t.Fatalf("second I/O placement interval changed: %+v %v", secondAfter, err)
 	}
@@ -293,7 +293,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := cluster.PoolPGs(ctx, pool.Name)
+	recovered, err := pool.PGs(ctx)
 	if err != nil || len(recovered.PGs) != 1 || recovered.FSID != baseline.FSID || recovered.PoolAfter.MinSize != p.MinSize || !slices.Equal(recovered.PGs[0].Acting, p.Original) || !strings.Contains(recovered.PGs[0].State, "clean") {
 		t.Fatalf("original 4+2 placement not restored: %+v %v", recovered, err)
 	}
@@ -333,7 +333,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 		t.Fatal(err)
 	}
 	restoredPolicy = true
-	if err := cluster.RemovePool(ctx, pool.Name); err != nil {
+	if err := pool.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

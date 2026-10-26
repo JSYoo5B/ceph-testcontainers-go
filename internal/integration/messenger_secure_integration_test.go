@@ -48,7 +48,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			initial, err := cluster.PoolStatus(ctx, "tc-messenger")
+			initial, err := poolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
 			if err != nil || initial.ID <= 0 {
 				t.Fatal("native pool identity unavailable", err)
 			}
@@ -78,7 +78,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			negative := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCRCProbe)
 			t.Logf("MSGR2_CRC_REFUSAL %s", negative)
 			secureMessengerClient(t, ctx, cluster, client, "after-crc-refusal")
-			final, err := cluster.PoolStatus(ctx, "tc-messenger")
+			final, err := poolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
 			if err != nil || final.ID != initial.ID || final.Size != initial.Size || final.PGNum != initial.PGNum {
 				t.Fatalf("secure topology changed pool identity/policy: %+v %v", final, err)
 			}

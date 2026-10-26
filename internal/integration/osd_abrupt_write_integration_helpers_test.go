@@ -291,7 +291,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 func abruptWitnessOf(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, object, client string) (abruptWitness, bool) {
 	t.Helper()
 	before := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
-	data, err := cluster.AdminSocket(ctx, daemon, "dump_ops_in_flight")
+	data, err := adminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
 	if err != nil {
 		t.Fatal("abrupt in-flight observation", err)
 	}
@@ -361,7 +361,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	} {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := cluster.AdminSocket(ctx, osd, "config", "get", setting.Name)
+			out, err := adminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
 			var reply map[string]string
 			if err == nil && json.Unmarshal(out, &reply) == nil && abruptSameNumber(reply[setting.Name], setting.Value) {
 				break

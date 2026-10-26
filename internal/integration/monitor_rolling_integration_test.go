@@ -117,7 +117,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				}
 				monitorRollingQuorum(t, ctx, cluster, 4)
 				record("mon."+added.DaemonName, "/etc/ceph/mon.keyring", added)
-				if err := cluster.RemoveMonitor(ctx, pair[0]); err != nil {
+				if err := monitorHandle(t, ctx, cluster, pair[0]).Remove(ctx); err != nil {
 					t.Fatal(err)
 				}
 				delete(nodes, "mon."+pair[0])

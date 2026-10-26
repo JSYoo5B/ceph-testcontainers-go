@@ -28,7 +28,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)
 	}
-	poolState, err := cluster.PoolStatus(ctx, pool)
+	poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || poolState.ID <= 0 {
 		t.Fatal("pool identity unavailable", err)
 	}
@@ -199,7 +199,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	}
 	t.Logf("%s held %s and finished it without starting it: %+v", osdName, held.Description, discarded.TypeData.Events)
 
-	if err := cluster.RemovePool(ctx, pool); err != nil {
+	if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

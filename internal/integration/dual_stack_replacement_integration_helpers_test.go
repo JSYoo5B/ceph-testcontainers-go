@@ -510,7 +510,7 @@ func testDualStackReplacement(t *testing.T) {
 	if _, err := cluster.AddMonitor(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemoveMonitor(ctx, "b"); err != nil {
+	if err := monitorHandle(t, ctx, cluster, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("mon.b", oldMon.Addrs)
@@ -586,7 +586,7 @@ func testDualStackReplacement(t *testing.T) {
 	if added.ID != 2 {
 		t.Fatalf("the new OSD is osd.%d, want osd.2", added.ID)
 	}
-	if err := cluster.RemoveOSD(ctx, 0); err != nil {
+	if err := osdHandle(t, ctx, cluster, 0).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("osd.0", oldOSD.Public, oldOSD.Cluster, oldOSD.HeartbeatFront, oldOSD.HeartbeatBack)
@@ -619,14 +619,14 @@ func testDualStackReplacement(t *testing.T) {
 	if _, err := cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(before.GID, 10)); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := fs.AddMDSReplacement(ctx, oldMDS)
+	replacement, err := oldMDS.AddReplacement(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replacement.ID != replacementMDS {
 		t.Fatalf("the replacement MDS is %s, want %s", replacement.ID, replacementMDS)
 	}
-	if err := fs.RemoveStoppedMDS(ctx, oldMDS); err != nil {
+	if err := oldMDS.RemoveStopped(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.WaitReady(ctx); err != nil {
@@ -668,7 +668,7 @@ func testDualStackReplacement(t *testing.T) {
 	if _, err := cluster.AddManager(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemoveManager(ctx, "a"); err != nil {
+	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("mgr.a", oldMgr.Addrs)

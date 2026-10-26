@@ -104,7 +104,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	identities := map[string]int64{}
 	for _, fs := range []*cephfs.Filesystem{target, sibling} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original replicated pool identity unavailable", err)
 			}
@@ -124,7 +124,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 			t.Fatal("original cluster changed", err)
 		}
 		for name, id := range identities {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID != id || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original pool changed", err)
 			}
@@ -156,7 +156,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal("original native registration expired before negative admission")
 	}
 	preflight, stop := context.WithTimeout(ctx, 30*time.Second)
-	refused := target.RemoveStoppedMDS(preflight, failed)
+	refused := failed.RemoveStopped(preflight)
 	contextErr := preflight.Err()
 	stop()
 	if refused == nil || contextErr != nil || errors.Is(refused, context.Canceled) || errors.Is(refused, context.DeadlineExceeded) || refused.Error() != "original stopped MDS name is still registered" {
@@ -185,7 +185,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, target, takeoverNonce, "seed", "replacement-extra")
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "verify", sibling.DataPool)
 	t.Logf("STOPPED_MDS_TAKEOVER fsid=%s fscid=%d old_name=%s old_gid=%d absent_globally=true active_name=%s active_gid=%d active_cid=%s", q.MonMap.FSID, before.target.id, old.Name, old.GID, takeover.Name, takeover.GID, survivorCID)
-	if err := target.RemoveStoppedMDS(ctx, failed); err != nil {
+	if err := failed.RemoveStopped(ctx); err != nil {
 		t.Fatal("original stopped CID retirement failed", err)
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)
@@ -203,7 +203,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 		t.Fatal("missing desired standby implied readiness or lost deadline", err)
 	}
 	copy := *failed
-	if err := target.RemoveStoppedMDS(ctx, &copy); err != nil {
+	if err := (&copy).RemoveStopped(ctx); err != nil {
 		t.Fatal("completed copied receipt retry failed", err)
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)
@@ -225,7 +225,7 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	}
 	newTask := coldMDSProcess(t, ctx, oracle, replacement)
 	recheck(current)
-	if err := target.RemoveStoppedMDS(ctx, &copy); err != nil {
+	if err := (&copy).RemoveStopped(ctx); err != nil {
 		t.Fatal("completed original receipt rejected after replacement", err)
 	}
 	currentMembers := target.MDSs()

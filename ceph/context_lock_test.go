@@ -11,11 +11,11 @@ import (
 func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 	operations := map[string]func(context.Context, *Container) error{
 		"AddMonitor":    func(ctx context.Context, c *Container) error { _, err := c.AddMonitor(ctx, "queued"); return err },
-		"RemoveMonitor": func(ctx context.Context, c *Container) error { return c.RemoveMonitor(ctx, "queued") },
+		"RemoveMonitor": func(ctx context.Context, c *Container) error { return monitorHandle(t, ctx, c, "queued").Remove(ctx) },
 		"AddManager":    func(ctx context.Context, c *Container) error { _, err := c.AddManager(ctx, "queued"); return err },
-		"RemoveManager": func(ctx context.Context, c *Container) error { return c.RemoveManager(ctx, "queued") },
+		"RemoveManager": func(ctx context.Context, c *Container) error { return managerHandle(t, ctx, c, "queued").Remove(ctx) },
 		"AddOSD":        func(ctx context.Context, c *Container) error { _, err := c.AddOSD(ctx); return err },
-		"RemoveOSD":     func(ctx context.Context, c *Container) error { return c.RemoveOSD(ctx, 3) },
+		"RemoveOSD":     func(ctx context.Context, c *Container) error { return osdHandle(t, ctx, c, 3).Remove(ctx) },
 		"Terminate":     func(ctx context.Context, c *Container) error { return c.Terminate(ctx) },
 	}
 	for name, operation := range operations {
@@ -30,7 +30,7 @@ func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 			// operation. Execute a real drain/purge with the same owned handle.
 			freshCtx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			if err := cluster.RemoveOSD(freshCtx, 3); err != nil {
+			if err := osdHandle(t, freshCtx, cluster, 3).Remove(freshCtx); err != nil {
 				t.Fatalf("fresh context could not finish existing OSD removal: %v", err)
 			}
 			if control.purges != 1 || daemon.stops != 1 || daemon.terminations != 1 || cluster.osds[3] != nil || cluster.osds[4] == nil {

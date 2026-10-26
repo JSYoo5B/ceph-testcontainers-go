@@ -54,10 +54,28 @@ type ErasureCodeConfig struct {
 // Pool identifies the pool, CRUSH rule and optional EC profile created for a
 // fixture. PoolConfig contains the resolved defaults. Cluster termination
 // disposes of its data together with the rest of the cluster.
+//
+// The operations on a pool are methods of its handle. The handle identifies
+// the native pool that it was created for or looked up as, by name and native
+// pool ID, so a later pool that reuses the name is not reached through it.
+// Copies of a Pool share that identity. A Pool that does not come from
+// Container.CreatePool or Container.Pool has no cluster and its operations
+// return an error.
 type Pool struct {
 	PoolConfig
 	CRUSHRule          string
 	ErasureCodeProfile string
+	owner              *Container
+	ident              *poolIdentity
+}
+
+// poolIdentity is what the copies of one Pool handle share: the native pool
+// ID once it is known and whether the handle removed the pool. The owner's
+// c.mu guards it, because every operation on a Pool holds that lock.
+type poolIdentity struct {
+	bound   bool
+	id      int64
+	removed bool
 }
 
 // CreatePool creates a new pool with explicit placement and replication settings.
@@ -97,7 +115,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool := &Pool{PoolConfig: config, CRUSHRule: "tc-" + config.Name + "-replicated"}
+	pool := &Pool{PoolConfig: config, CRUSHRule: "tc-" + config.Name + "-replicated", owner: c, ident: &poolIdentity{}}
 	if config.ErasureCode != nil {
 		pool.CRUSHRule = "tc-" + config.Name + "-ec"
 		pool.ErasureCodeProfile = pool.CRUSHRule
@@ -169,6 +187,9 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		if _, err := c.cephCLI(ctx, args...); err != nil {
 			return pool, fmt.Errorf("create pool %q: %w", pool.Name, err)
 		}
+	}
+	if state, err := c.poolState(ctx, pool.Name); err == nil {
+		pool.ident.bound, pool.ident.id = true, state.ID
 	}
 	return pool, nil
 }

@@ -48,7 +48,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	}
 	// Multicluster construction must use the live control/quorum rather than
 	// requiring the original embedded MON container to remain present.
-	if err := clusters[0].RemoveMonitor(ctx, "a"); err != nil {
+	if err := monitorHandle(t, ctx, clusters[0], "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if status, err := clusters[0].QuorumStatus(ctx); err != nil || len(status.QuorumNames) != 2 {

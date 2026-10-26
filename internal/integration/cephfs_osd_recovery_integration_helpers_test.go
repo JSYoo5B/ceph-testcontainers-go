@@ -112,7 +112,11 @@ func lookRecoveryPG(ctx context.Context, cluster *ceph.Container, pool, pgid str
 			look.osdUp, look.osdIn = state.Up, state.In
 		}
 	}
-	snapshot, err := cluster.PoolPGs(ctx, pool)
+	handle, err := cluster.Pool(ctx, pool)
+	if err != nil {
+		return look, err
+	}
+	snapshot, err := handle.PGs(ctx)
 	if err != nil {
 		return look, err
 	}
@@ -277,7 +281,7 @@ func testCephFSOSDRecovery(t *testing.T) {
 		cleanPGs, total := 0, 0
 		var seen []string
 		for _, pool := range []string{m.fs.MetadataPool, m.fs.DataPool} {
-			snapshot, err := m.cluster.PoolPGs(probeCtx, pool)
+			snapshot, err := poolHandle(t, probeCtx, m.cluster, pool).PGs(probeCtx)
 			if err != nil {
 				return "", false, err
 			}

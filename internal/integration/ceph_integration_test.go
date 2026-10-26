@@ -107,7 +107,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if addedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD addition replaced original pool")
 	}
-	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+	if err := original.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {
@@ -127,7 +127,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemoveOSD(ctx, readded.ID); err != nil {
+	if err := readded.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {

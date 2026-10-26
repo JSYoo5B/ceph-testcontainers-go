@@ -54,7 +54,7 @@ func testDaemonKeyRotation(t *testing.T) {
 		{"mgr.a", mgr, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-a/keyring"}},
 	} {
 		before := authKey(t, ctx, cluster, daemon.name)
-		if err := cluster.RotateDaemonKey(ctx, daemon.name); err != nil {
+		if err := rotateKey(t, ctx, cluster, daemon.name); err != nil {
 			t.Fatal(err)
 		}
 		after := authKey(t, ctx, cluster, daemon.name)
@@ -88,16 +88,13 @@ func testDaemonKeyRotation(t *testing.T) {
 	}
 	waitRotatedDaemonsUp(t, ctx, cluster)
 
-	// Refusals change nothing.
-	for _, daemon := range []string{"mon.a", "osd.9", "mds.a"} {
-		if err := cluster.RotateDaemonKey(ctx, daemon); err == nil {
-			t.Fatalf("%s was rotated", daemon)
-		}
-	}
+	// Refusals change nothing. A MON has no RotateKey, so rotating its key
+	// does not compile, and the handle of a removed daemon is refused, which
+	// the ceph package's unit tests cover.
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err == nil || !strings.Contains(err.Error(), "running") {
+	if err := osdHandle(t, ctx, cluster, 0).RotateKey(ctx); err == nil || !strings.Contains(err.Error(), "running") {
 		t.Fatalf("a stopped OSD was rotated: %v", err)
 	}
 	if pending := pendingKey(t, ctx, cluster, "osd.0"); pending != "" {
@@ -111,7 +108,7 @@ func testDaemonKeyRotation(t *testing.T) {
 
 	// Service secrets: the OSD's debug log lists the rotating secrets it holds
 	// and the secret that decrypted each client ticket.
-	if _, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "10/10"); err != nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_auth", "10/10"); err != nil {
 		t.Fatal(err)
 	}
 	first := waitRotatingSecretIDs(t, ctx, osd, 0)
@@ -132,7 +129,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	if renewed := used[len(used)-1]; renewed <= earlier || !slices.Contains(later, renewed) {
 		t.Fatalf("a later client ticket used secret %d after %d; held %v", renewed, earlier, later)
 	}
-	if _, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "1/5"); err != nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_auth", "1/5"); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("osd.0 held rotating secrets %v, then %v; client tickets were decrypted with secret %d, then %d", first, later, earlier, used[len(used)-1])
@@ -142,7 +139,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	current := authKey(t, ctx, cluster, "osd.0")
 	signalContainer(t, ctx, osd, "STOP")
 	callCtx, callCancel := context.WithTimeout(ctx, 30*time.Second)
-	err := cluster.RotateDaemonKey(callCtx, "osd.0")
+	err := osdHandle(t, callCtx, cluster, 0).RotateKey(callCtx)
 	callCancel()
 	signalContainer(t, ctx, osd, "CONT")
 	if err == nil || !strings.Contains(err.Error(), "RotateDaemonKey again") {
@@ -155,13 +152,13 @@ func testDaemonKeyRotation(t *testing.T) {
 	if running := rotateKeyProcesses(t, ctx, clusteraccess.ControlContainer(t, cluster)); running != "" {
 		t.Fatalf("a rotate-key CLI is still running in the control container:\n%s", running)
 	}
-	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {
+	if err := osdHandle(t, ctx, cluster, 0).RotateKey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if authKey(t, ctx, cluster, "osd.0") != handed || pendingKey(t, ctx, cluster, "osd.0") != "" {
 		t.Fatal("the retry did not finish with the handed key")
 	}
-	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err == nil || !strings.Contains(err.Error(), "until its container restarts") {
+	if err := osdHandle(t, ctx, cluster, 0).RotateKey(ctx); err == nil || !strings.Contains(err.Error(), "until its container restarts") {
 		t.Fatalf("a new key while the earlier handoff may still arrive: %v", err)
 	}
 	if pendingKey(t, ctx, cluster, "osd.0") != "" {
@@ -174,7 +171,7 @@ func testDaemonKeyRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRotatedDaemonsUp(t, ctx, cluster)
-	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {
+	if err := osdHandle(t, ctx, cluster, 0).RotateKey(ctx); err != nil {
 		t.Fatalf("rotation after the restart: %v", err)
 	}
 	if authKey(t, ctx, cluster, "osd.0") == handed {

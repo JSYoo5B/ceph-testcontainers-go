@@ -652,7 +652,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		}
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := cluster.AdminSocket(ctx, "mon."+name, "mon_status")
+			out, err := monitorHandle(t, ctx, cluster, name).AdminSocket(ctx, "mon_status")
 			if err == nil {
 				if observed, err := parseMonStatusObservation(out); err == nil && observed.MonmapEpoch > monmap.Epoch {
 					break
@@ -665,7 +665,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		}
 	}
 	// A command that the MON does not know is classified as unsupported.
-	if _, err := cluster.AdminSocket(ctx, "mon."+monitors[0], "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
+	if _, err := monitorHandle(t, ctx, cluster, monitors[0]).AdminSocket(ctx, "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
 		t.Fatalf("an unknown admin socket command gave %v, status %s", err, authQueryStatus(err))
 	}
 	status, err := cluster.ManagerStatus(ctx)
@@ -716,7 +716,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
-		return collectAuthFirstFailureBundle(ctx, cluster, client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+		return collectAuthFirstFailureBundle(ctx, withSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
 	}
 	bundle := collect(time.Minute, 4096)
 	data, err := json.Marshal(bundle)

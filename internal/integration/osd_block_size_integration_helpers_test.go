@@ -121,7 +121,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	poolState, err := cluster.PoolStatus(ctx, pool.Name)
+	poolState, err := pool.Status(ctx)
 	if err != nil || poolState.ID < 0 {
 		t.Fatal("original pool identity unavailable", err)
 	}
@@ -188,7 +188,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	osdMemoryPlacement(t, ctx, cluster, fsid, poolState.ID, pool.Name, added.ID, -1)
 	smallOSDData(t, ctx, cluster, fsid, pool.Name, poolState.ID, "third-osd-backfill")
 	original := initial[0]
-	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+	if err := original.Remove(ctx); err != nil {
 		t.Fatal("small-device drain failed", err)
 	}
 	if _, err := docker.Client.ContainerInspect(ctx, original.GetContainerID(), mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
@@ -311,7 +311,7 @@ func smallOSDRAMBacking(t *testing.T, ctx context.Context, docker *mobycl.Client
 
 func smallOSDData(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, pool string, poolID int64, phase string) {
 	t.Helper()
-	state, err := cluster.PoolStatus(ctx, pool)
+	state, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || state.ID != poolID || state.Size != 2 || state.MinSize != 1 {
 		t.Fatal("small-device original pool changed", err)
 	}

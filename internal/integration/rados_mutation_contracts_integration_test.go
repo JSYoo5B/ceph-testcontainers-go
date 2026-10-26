@@ -148,7 +148,7 @@ func TestRADOSMutationContracts(t *testing.T) {
 	}
 	// The OSD's records show that it started and committed each operation
 	// after the client had given up on it.
-	poolState, err := cluster.PoolStatus(ctx, pool)
+	poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

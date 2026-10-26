@@ -1,10 +1,10 @@
 # Retained OSD detach and reopen
 
-This is the first retained lifecycle increment for #6. `DetachOSD` and
-`ReopenOSD` restart one classic BlueStore store from the owned ordinary volume
+This is the first retained lifecycle increment for #6. `OSDContainer.Detach` and
+`DetachedOSD.Reopen` restart one classic BlueStore store from the owned ordinary volume
 of [WithOSDVolumeStorage](osd-volume-storage.md) in a different container,
 with the same numeric OSD ID, OSD UUID and cluster FSID. `AddOSD` and
-`RemoveOSD` keep their meanings: fresh registration and permanent purge.
+`OSDContainer.Remove` keep their meanings: fresh registration and permanent purge.
 
 ## States
 
@@ -16,7 +16,7 @@ with the same numeric OSD ID, OSD UUID and cluster FSID. `AddOSD` and
 | Reopened | `c.osds`, a new descriptor | a new instance | up, same UUID |
 
 Every transition holds the topology mutex, so two reopens of one store are
-serialized and the second finds it consumed. `RemoveOSD` refuses a detaching or
+serialized and the second finds it consumed. `OSDContainer.Remove` refuses a detaching or
 detached OSD. `Terminate` needs no extra step: a detached store has no
 container, and the owned volume is discarded as before.
 
@@ -27,7 +27,7 @@ container, and the owned volume is discarded as before.
    targets. Their undo needs the container that detach removes. A completed
    delay lease does not count.
 3. Fence the Docker instance against new native commands and drain its tracked
-   ones, as `RemoveOSD` does. The fence is per instance and leaves other
+   ones, as `OSDContainer.Remove` does. The fence is per instance and leaves other
    targets admitted.
 4. Stop the container, wait for the registration to be down, then remove the
    container. Stop alone is not enough, because a raw handle could start the
@@ -84,13 +84,13 @@ replica exists, so the bytes come from the retained store.
 The same batch checks native refusals before that positive path, and each one
 must leave nothing changed.
 
-1. With the OSD paused through `fault.Pause`, `DetachOSD` refuses. The same
+1. With the OSD paused through `fault.Pause`, `OSDContainer.Detach` refuses. The same
    container stays running and paused, the handle stays owned and the
    registration is unchanged. After the resume, a native command on that
    instance still runs, so the refusal set no fence. Detach then succeeds.
-2. After detach, `RemoveOSD` refuses and the registration stays the same.
+2. After detach, `OSDContainer.Remove` refuses and the registration stays the same.
 3. An independent observer container mounts the owned volume read/write and
-   appends a line to the retained `keyring`. `ReopenOSD` refuses because the
+   appends a line to the retained `keyring`. `DetachedOSD.Reopen` refuses because the
    store changed since detach. The Docker container list, the down
    registration with the same UUID and the store fingerprint stay unchanged:
    mode, inode, size and modification time of every entry, and a SHA-256 of
@@ -98,7 +98,7 @@ must leave nothing changed.
 4. The observer writes the original keyring bytes back in place, so the
    fingerprint equals the detached one except the keyring's modification
    time. The observer is removed and the reopen then succeeds.
-5. A second `ReopenOSD` of the consumed handle refuses.
+5. A second `DetachedOSD.Reopen` of the consumed handle refuses.
 
 This does not cover abrupt exit, host or daemon restart durability, image
 changes between detach and reopen, reopening in another cluster, the tmpfs and
@@ -142,7 +142,7 @@ and cleanup evidence; fake runner controls remain separate.
 ## Cancellation after creation
 
 The optional `retained_cancel_after_admission` batch
-cancels the caller context of one real `ReopenOSD` right after the runner
+cancels the caller context of one real `DetachedOSD.Reopen` right after the runner
 returned a ready container. The call returns an error with the owned
 candidate, the detached handle stays consumed and a retry refuses without
 another dispatch. The candidate is then detached with a fresh context and

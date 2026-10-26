@@ -40,7 +40,7 @@ type ClientConfig struct {
 	created bool
 	ready   bool
 	revoked bool
-	// replacedBy is the descriptor of the key that ReplaceClientKey gave the
+	// replacedBy is the descriptor of the key that ClientConfig.ReplaceKey gave the
 	// identity in place of this descriptor's key.
 	replacedBy *ClientConfig
 }
@@ -101,7 +101,7 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // Existing identities are rejected before mutation; their keys and caps are
 // never updated. A non-nil result with an error identifies an attempted or partial
 // creation; inspect auth state or terminate the cluster rather than retrying with
-// broader caps. DeleteClient can revoke a confirmed successful creation.
+// broader caps. ClientConfig.Delete can revoke a confirmed successful creation.
 // The key has the cluster's AuthConfig.KeyType, the release default without
 // one, or the type that WithClientKeyType selects.
 func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
@@ -258,19 +258,7 @@ func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientConta
 	}
 }
 
-// DeleteClient revokes an identity created by this cluster without deleting data.
-// It checks for an externally replaced key before deleting; external auth edits
-// must not race this operation. A repeat call after success is a no-op; existing
-// sessions may retain issued tickets. The removal is fenced like the import of
-// ReplaceClientKey: a failed call reports what the MONs hold once settled, and
-// an uncertain one is resolved by the next operation on the identity.
-func (c *Container) DeleteClient(ctx context.Context, client *ClientConfig) error {
-	if err := c.sharedGate("DeleteClient"); err != nil {
-		return err
-	}
-	return c.deleteClient(ctx, client)
-}
-
+// deleteClient implements ClientConfig.Delete, which documents the behavior.
 func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) error {
 	if err := c.lockTopology(ctx); err != nil {
 		return err
@@ -297,7 +285,7 @@ func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) erro
 		return nil
 	}
 	// The revocation belongs to the identity, whichever descriptor of the
-	// revoked key DeleteClient gets.
+	// revoked key ClientConfig.Delete gets.
 	if revocation := c.clientRevocations[client.name]; revocation != nil && client.replacedBy == nil && clientKey(client.keyring, client.name) == revocation.original.key {
 		// A temporary revocation becomes permanent.
 		deleted := func() {
