@@ -23,6 +23,11 @@ import (
 //     then /etc/faketimerc, and uses the first path that opens. An unavailable
 //     selected path therefore falls back to a non-owned source.
 //   - A read error on the opened file yields empty text, not a failure.
+//   - The reader fills a 256-byte static buffer, so at most 255 bytes of the
+//     file are kept, and the text is a C string that ends at the first NUL.
+//     prepare_config_contents then runs in place and removes carriage
+//     returns, line feeds and lines whose first character is # or ;. The
+//     parser sees that prepared text, never the raw file bytes.
 
 // faketimeFallbackSource names the file that supplied the configuration text.
 type faketimeFallbackSource string
@@ -57,7 +62,9 @@ type faketimeResolution struct {
 	EnvMode bool
 	// FileParsingEnabled mirrors parse_config_file after initialization.
 	FileParsingEnabled bool
-	// Text is the configuration text delivered to the parser.
+	// Text is the text delivered to the parser: for a file, the bytes after
+	// the reader limit and prepare_config_contents; for the environment, the
+	// variable value unchanged.
 	Text string
 	// Source is the file that supplied Text when EnvMode is false.
 	Source faketimeFallbackSource
@@ -84,11 +91,47 @@ func resolveFaketimeSource(in faketimeInputs) faketimeResolution {
 		}
 		res.Source = c.src
 		if !f.ReadError {
-			res.Text = f.Text
+			res.Text = prepareFaketimeFileText(f.Text)
 		}
 		return res
 	}
 	return res
+}
+
+// faketimeReaderBufferLen is BUFFERLEN of the pinned source; the reader keeps
+// at most one byte less to leave room for the terminating NUL.
+const faketimeReaderBufferLen = 256
+
+// prepareFaketimeFileText mirrors the pinned read_config_file buffer limit and
+// prepare_config_contents, byte for byte including the in-place write test.
+func prepareFaketimeFileText(raw string) string {
+	buf := []byte(raw)
+	if len(buf) > faketimeReaderBufferLen-1 {
+		buf = buf[:faketimeReaderBufferLen-1]
+	}
+	if i := strings.IndexByte(string(buf), 0); i >= 0 {
+		buf = buf[:i]
+	}
+	// One extra byte keeps *write_position readable at the terminator.
+	buf = append(buf, 0)
+	w := 0
+	inComment := false
+	beginning := true
+	for r := 0; buf[r] != 0; r++ {
+		if beginning && (buf[r] == '#' || buf[r] == ';') {
+			inComment = true
+		}
+		beginning = false
+		if buf[r] == '\n' {
+			inComment = false
+			beginning = true
+		}
+		if !inComment && buf[r] != '\r' && buf[w] != '\n' {
+			buf[w] = buf[r]
+			w++
+		}
+	}
+	return string(buf[:w])
 }
 
 // clockFileIdentity is the device and inode of the controller's owned file as
