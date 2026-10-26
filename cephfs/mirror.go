@@ -609,17 +609,10 @@ func (mirror *Mirror) Terminate(ctx context.Context, opts ...testcontainers.Term
 	if mirror == nil {
 		return nil
 	}
-	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
-		return err
-	}
-	defer mirror.mu.Unlock()
-	mirror.closed = true
-	if err := mirror.owned.Terminate(ctx, opts...); err != nil {
-		return err
-	}
-	mirror.daemons = nil
-	mirror.Container = nil
-	return nil
+	return multicluster.TerminateFixture(ctx, &mirror.mu, &mirror.closed, &mirror.owned, func() {
+		mirror.daemons = nil
+		mirror.Container = nil
+	}, opts...)
 }
 
 // AttachManagers reconciles peer-network access for every currently owned source

@@ -68,3 +68,47 @@ func TestTerminateOnceLockWaitHonorsContext(t *testing.T) {
 		t.Fatalf("fresh context could not retry: err=%v done=%t calls=%d", err, done, probe.calls)
 	}
 }
+
+func TestTerminateFixtureForgetsMembershipOnlyAfterCleanupSucceeds(t *testing.T) {
+	var mu sync.Mutex
+	var closed bool
+	var owned Resources
+	failing := true
+	calls := 0
+	owned.AddCleanup("probe", func(context.Context) error {
+		calls++
+		if failing {
+			return errors.New("cleanup failed")
+		}
+		return nil
+	})
+	forgotten := 0
+	forget := func() { forgotten++ }
+
+	if err := TerminateFixture(t.Context(), &mu, &closed, &owned, forget); err == nil || !closed || forgotten != 0 || calls != 1 {
+		t.Fatalf("failed cleanup: err=%v closed=%t forgotten=%d calls=%d", err, closed, forgotten, calls)
+	}
+	failing = false
+	if err := TerminateFixture(t.Context(), &mu, &closed, &owned, forget); err != nil || !closed || forgotten != 1 || calls != 2 {
+		t.Fatalf("retry: err=%v closed=%t forgotten=%d calls=%d", err, closed, forgotten, calls)
+	}
+	if err := TerminateFixture(t.Context(), &mu, &closed, &owned, forget); err != nil || forgotten != 2 || calls != 2 {
+		t.Fatalf("completed cleanup repeated: err=%v forgotten=%d calls=%d", err, forgotten, calls)
+	}
+}
+
+func TestTerminateFixtureLockWaitHonorsContext(t *testing.T) {
+	var mu sync.Mutex
+	var closed bool
+	var owned Resources
+	calls := 0
+	owned.AddCleanup("probe", func(context.Context) error { calls++; return nil })
+	mu.Lock()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	err := TerminateFixture(ctx, &mu, &closed, &owned, func() { t.Error("forget ran without the lock") })
+	mu.Unlock()
+	if !errors.Is(err, context.DeadlineExceeded) || closed || calls != 0 {
+		t.Fatalf("queued caller changed state: err=%v closed=%t calls=%d", err, closed, calls)
+	}
+}

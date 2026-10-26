@@ -27,3 +27,23 @@ func TerminateOnce(ctx context.Context, mu *sync.Mutex, done *bool, ctr testcont
 	*done = true
 	return nil
 }
+
+// TerminateFixture closes a mirror fixture under mu: it marks *closed, runs the
+// owned cleanup actions and, only when they all succeed, calls forget so the
+// caller drops its daemon membership and initial-daemon handle. A cleanup error
+// leaves the membership in place so the call can be retried; *closed stays set
+// either way, so later admission sees a closed fixture. The lock wait is
+// bounded by ctx. The caller keeps the mutex, flag and fields in its own
+// fixture type, so its other observers read the same state under the same lock.
+func TerminateFixture(ctx context.Context, mu *sync.Mutex, closed *bool, owned *Resources, forget func(), opts ...testcontainers.TerminateOption) error {
+	if err := LockObservation(ctx, mu); err != nil {
+		return err
+	}
+	defer mu.Unlock()
+	*closed = true
+	if err := owned.Terminate(ctx, opts...); err != nil {
+		return err
+	}
+	forget()
+	return nil
+}
