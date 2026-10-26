@@ -311,3 +311,32 @@ func TestUpgradeLedgerFinalizeGuards(t *testing.T) {
 		}
 	})
 }
+
+func TestUpgradeLedgerReservesInstanceForOneTransition(t *testing.T) {
+	a, b := ledgerDaemon("mon", "a"), ledgerDaemon("mon", "b")
+	for name, confirmFirst := range map[string]bool{"pending and pending": false, "confirmed and pending": true} {
+		t.Run(name, func(t *testing.T) {
+			l := newTestLedger(t)
+			ledgerWalk(t, l, "t1", a, upgradeStartAttempted)
+			if confirmFirst {
+				ledgerOK(t, l.confirm("t1", upgradeNativeEvidence{Instance: "dst-t1", Version: "20.2.4", FSID: a.FSID, StoreID: a.StoreID}))
+			}
+			ledgerWalk(t, l, "t2", b, upgradeOldAbsent)
+			if err := l.startAttempted("t2", "dst-t1"); err == nil {
+				t.Fatal("a second transition reserved the same destination instance")
+			}
+			if got, _ := l.stepOf("t2"); got != upgradeOldAbsent {
+				t.Fatalf("rejected reservation moved t2 to %s", got)
+			}
+			want := []string{"dst-t1"}
+			if confirmFirst {
+				want = nil
+			}
+			if !slices.Equal(l.owned(), want) {
+				t.Fatalf("owned = %v, want %v", l.owned(), want)
+			}
+			// A distinct instance is still accepted afterwards.
+			ledgerOK(t, l.startAttempted("t2", "dst-t2"))
+		})
+	}
+}

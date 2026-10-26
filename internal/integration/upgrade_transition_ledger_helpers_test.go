@@ -114,6 +114,7 @@ type upgradeLedger struct {
 	transitions map[string]*upgradeTransition // by transition identity
 	byDaemon    map[string]string             // daemon key -> transition identity
 	byStore     map[string]string             // store identity -> daemon key
+	instances   map[string]string             // destination instance -> transition identity, kept after confirmation
 	finalized   bool
 }
 
@@ -132,6 +133,7 @@ func newUpgradeLedger(arch string, approved ...upgradeReleasePair) (*upgradeLedg
 		transitions: map[string]*upgradeTransition{},
 		byDaemon:    map[string]string{},
 		byStore:     map[string]string{},
+		instances:   map[string]string{},
 	}
 	for _, p := range approved {
 		if p.Source == "" || p.Dest == "" || p.Source == p.Dest {
@@ -226,7 +228,8 @@ func (l *upgradeLedger) oldAbsent(id string, present bool, observeErr error) err
 }
 
 // startAttempted records the destination instance identity before the
-// creation call is made. From here the instance has a cleanup owner whatever
+// creation call is made. An instance identity belongs to one transition for the
+// life of the ledger, also after that transition is confirmed. From here the instance has a cleanup owner whatever
 // the call returns.
 func (l *upgradeLedger) startAttempted(id, instance string) error {
 	t, err := l.expect(id, upgradeOldAbsent)
@@ -236,6 +239,10 @@ func (l *upgradeLedger) startAttempted(id, instance string) error {
 	if instance == "" {
 		return errors.New("start attempt has no instance identity")
 	}
+	if owner := l.instances[instance]; owner != "" {
+		return fmt.Errorf("instance %q is already reserved by transition %q", instance, owner)
+	}
+	l.instances[instance] = id
 	t.step = upgradeStartAttempted
 	t.instance = instance
 	return nil
