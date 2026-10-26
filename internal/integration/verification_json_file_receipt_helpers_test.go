@@ -592,3 +592,14 @@ func (r jsonFileReceipt) summary() jsonFileSummary {
 	}
 	return s
 }
+
+// jsonFileQuoteCommand is the raw MON command that logs, at INF, a message
+// quoting a WRN marker. The MON echoes every command it handles to its own
+// output outside any log envelope, and the verifier reports a line with a
+// literal severity marker and no supported envelope as a gap. The marker is
+// therefore sent as JSON escapes: the MON decodes them into a message with a
+// literal marker, but the echo of the raw command never prints one. This is
+// the construction of the envelope scenario (log_envelope_native_integration_test.go).
+func jsonFileQuoteCommand(id string) string {
+	return `{"prefix": "log", "logtext": ["` + id + ` quotes \u005bWRN\u005d"]}`
+}

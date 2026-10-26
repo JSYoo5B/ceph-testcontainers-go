@@ -305,7 +305,7 @@ func testVerificationJSONFileNativeReceipt(t *testing.T) {
 	// The MON echoes every command it handles to its own output outside any
 	// log envelope, so the quoted marker is sent as JSON escapes: the MON
 	// decodes them into the message but never prints a literal marker.
-	emit(jsonFileRoleQuote, []string{quote}, []string{`{"prefix": "log", "logtext": ["` + quote + ` quotes [WRN]"]}`})
+	emit(jsonFileRoleQuote, []string{quote}, []string{jsonFileQuoteCommand(quote)})
 	var noiseIDs, noiseCommands []string
 	for i := range jsonFileNoiseCount {
 		id := fmt.Sprintf("jfr-noise-%s-%02d", suffix, i)

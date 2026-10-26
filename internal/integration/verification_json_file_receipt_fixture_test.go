@@ -413,3 +413,61 @@ func TestJSONFileSummaryOfAPartialReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The quote command must reach the MON without a literal severity marker (its
+// echo is unframed and would be a gap), yet decode to a message that has one.
+// The literal command is the negative control: it is what the first native
+// attempt sent.
+func TestJSONFileQuoteCommandHidesTheMarkerFromTheEcho(t *testing.T) {
+	id := "jfr-quote-0123456789ab"
+	command := jsonFileQuoteCommand(id)
+	if rawSeverityMarker.MatchString(command) {
+		t.Fatalf("the raw command carries a literal marker: %s", command)
+	}
+	var decoded struct {
+		Prefix  string   `json:"prefix"`
+		Logtext []string `json:"logtext"`
+	}
+	if err := json.Unmarshal([]byte(command), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Prefix != "log" || len(decoded.Logtext) != 1 || decoded.Logtext[0] != id+" quotes [WRN]" {
+		t.Fatalf("decoded command %+v", decoded)
+	}
+	literal := `{"prefix": "log", "logtext": ["` + id + ` quotes [WRN]"]}`
+	if !rawSeverityMarker.MatchString(literal) {
+		t.Fatal("the negative control carries no literal marker")
+	}
+	// An echo of the literal command is an unenveloped marker line: the raw
+	// read counts it, and the judge refuses a receipt that has one.
+	echo := "2026-10-26T10:00:03.000000000Z mon.a@0(leader) handle_command mon_command(" + literal + " v 0)"
+	raw, _ := jsonFileRawLines([]string{echo}, []string{id})
+	if raw[id].Unrecognized != 1 {
+		t.Fatalf("raw %+v", raw[id])
+	}
+	echo = "2026-10-26T10:00:03.000000000Z mon.a@0(leader) handle_command mon_command(" + command + " v 0)"
+	if raw, _ = jsonFileRawLines([]string{echo}, []string{id}); raw[id].Unrecognized != 0 || raw[id].Echo != 1 {
+		t.Fatalf("the escaped echo %+v", raw[id])
+	}
+}
+
+// The receipt of the first native attempt: the quoted entry's literal marker
+// echo is one unenveloped line, the verifier reports exactly one gap and the
+// quoted expectation matches nothing. The judge refuses it as gapped and
+// names the unenveloped line; the verifier's gap is not accepted.
+func TestJSONFileReceiptRefusesTheFirstNativeShape(t *testing.T) {
+	r := jsonFileFixtureReceipt()
+	quote := jsonFileFixtureID(jsonFileRoleQuote, 0)
+	r.Report.Logs.Gaps = []ceph.VerificationGap{{Source: "mon.a", Reason: "1 log lines carry an [ERR], [SEC] or [WRN] marker without a supported log envelope, so their severity was not classified"}}
+	r.Report.Logs.Outcome = ceph.VerificationUnexpected
+	raw := r.Raw[quote]
+	raw.Unrecognized = 1
+	r.Raw[quote] = raw
+	if got := jsonFileDisposition(r.Report, r.Source); got != "gapped" {
+		t.Fatalf("disposition %q", got)
+	}
+	err := judgeJSONFileReceipt(r)
+	if err == nil || !strings.Contains(err.Error(), `disposition is "gapped"`) || !strings.Contains(err.Error(), "reports those as a gap") {
+		t.Fatalf("the judge did not refuse the first native shape: %v", err)
+	}
+}
