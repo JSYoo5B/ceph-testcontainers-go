@@ -75,12 +75,17 @@ const (
 	// cpuTransitionAppliedUncertainReply: effective evidence shows the request
 	// took effect although the reply was lost. It is not a clean update.
 	cpuTransitionAppliedUncertainReply cpuTransitionVerdict = "applied-uncertain-reply"
-	// cpuTransitionConfiguredOnly: the engine records the value but the
-	// target is not a running task or the kernel does not show it.
+	// cpuTransitionConfiguredOnly: the engine records the requested value and
+	// either the same-generation task is not running (stopped, paused or
+	// restarting) or a readable, finite-or-unlimited kernel cpu.max of the
+	// same running generation does not show the request.
 	cpuTransitionConfiguredOnly cpuTransitionVerdict = "configured-only"
-	// cpuTransitionNotApplied: the settings and kernel show another value.
+	// cpuTransitionNotApplied: the inspected settings do NOT show the request
+	// and a readable kernel cpu.max of the same running generation also does
+	// not show it. Either source alone is insufficient.
 	cpuTransitionNotApplied cpuTransitionVerdict = "not-applied"
-	// cpuTransitionUncertain: the evidence cannot decide.
+	// cpuTransitionUncertain: the evidence is missing, unreadable, from
+	// another generation or contradictory (inspection and kernel disagree).
 	cpuTransitionUncertain cpuTransitionVerdict = "uncertain"
 )
 
@@ -113,18 +118,33 @@ func classifyCPUTransition(tr cpuTransitionRecord, checks cpuTransitionChecks) (
 	if !checks.skipEncoding && (tr.AfterLimits.CPUQuota != 0 || tr.AfterLimits.CPUPeriod != 0) {
 		return cpuTransitionUncertain, fmt.Errorf("%w: mixed CPU encoding in settings", errCPUTransition)
 	}
-	if tr.AfterLimits.NanoCPUs != tr.RequestedNano {
+	s := tr.AfterState
+	running := s.Running && !s.Paused && !s.Restarting
+	inspected := tr.AfterLimits.NanoCPUs == tr.RequestedNano
+	// Effective evidence is usable only from a readable cpu.max of an admitted
+	// controller. A missing or unlisted reading is unavailable, not a negative.
+	kernel := tr.Kernel != nil && tr.Kernel.ControllerListed && tr.Kernel.Max.Period != 0
+	kernelMatches := kernel && cpuMaxMatchesNanoCPUs(tr.Kernel.Max, tr.RequestedNano) == nil
+	if !inspected {
+		if !running && !checks.skipRunning {
+			return cpuTransitionUncertain, fmt.Errorf("%w: no running task to read an effective limit from", errCPUTransition)
+		}
+		if !kernel && !checks.skipKernel {
+			return cpuTransitionUncertain, fmt.Errorf("%w: inspection lacks the request and no kernel reading is usable", errCPUTransition)
+		}
+		if kernelMatches && !checks.skipKernel {
+			return cpuTransitionUncertain, fmt.Errorf("%w: inspection and kernel disagree", errCPUTransition)
+		}
 		return cpuTransitionNotApplied, nil
 	}
-	s := tr.AfterState
-	if !checks.skipRunning && (!s.Running || s.Paused || s.Restarting) {
+	if !running && !checks.skipRunning {
 		return cpuTransitionConfiguredOnly, nil
 	}
 	if !checks.skipKernel {
-		if tr.Kernel == nil || !tr.Kernel.ControllerListed {
-			return cpuTransitionConfiguredOnly, nil
+		if !kernel {
+			return cpuTransitionUncertain, fmt.Errorf("%w: no usable kernel reading to settle a configured value", errCPUTransition)
 		}
-		if err := cpuMaxMatchesNanoCPUs(tr.Kernel.Max, tr.RequestedNano); err != nil {
+		if !kernelMatches {
 			return cpuTransitionConfiguredOnly, nil
 		}
 	}

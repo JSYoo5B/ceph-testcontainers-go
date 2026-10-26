@@ -60,8 +60,8 @@ func TestCPUTransitionRefusesWhatIsNotEffective(t *testing.T) {
 		{"stopped target saved config only", func(r *cpuTransitionRecord) { r.AfterState.Running = false }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipRunning: true}},
 		{"paused target", func(r *cpuTransitionRecord) { r.AfterState.Paused = true }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipRunning: true}},
 		{"restarting target", func(r *cpuTransitionRecord) { r.AfterState.Restarting = true }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipRunning: true}},
-		{"no kernel reading", func(r *cpuTransitionRecord) { r.Kernel = nil }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipKernel: true}},
-		{"controller not listed", func(r *cpuTransitionRecord) { r.Kernel.ControllerListed = false }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipKernel: true}},
+		{"no kernel reading", func(r *cpuTransitionRecord) { r.Kernel = nil }, cpuTransitionUncertain, true, cpuTransitionChecks{skipKernel: true}},
+		{"controller not listed", func(r *cpuTransitionRecord) { r.Kernel.ControllerListed = false }, cpuTransitionUncertain, true, cpuTransitionChecks{skipKernel: true}},
 		{"kernel still shows old quota", func(r *cpuTransitionRecord) { r.Kernel.Max.Quota = 100000 }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipKernel: true}},
 		{"kernel unlimited", func(r *cpuTransitionRecord) { r.Kernel.Max = cpuMax{Unlimited: true, Period: 100000} }, cpuTransitionConfiguredOnly, false, cpuTransitionChecks{skipKernel: true}},
 		{"warnings returned", func(r *cpuTransitionRecord) { r.Warnings = []string{"w"} }, cpuTransitionUncertain, true, cpuTransitionChecks{skipWarnings: true}},
@@ -84,11 +84,46 @@ func TestCPUTransitionRefusesWhatIsNotEffective(t *testing.T) {
 	}
 }
 
-func TestCPUTransitionInspectedValueDifferingIsNotApplied(t *testing.T) {
-	r := tRecord(tTight)
-	r.AfterLimits.NanoCPUs = tBase
-	if v, err := classifyCPUTransition(r, cpuTransitionChecks{}); err != nil || v != cpuTransitionNotApplied {
-		t.Fatalf("got %s %v", v, err)
+// An inspected value that lacks the request is "not-applied" only when the
+// same-generation kernel reading also lacks it. Each other combination keeps
+// the uncertainty. The skipKernel control shows the earlier single-source
+// behavior (inspection alone decided) for every case.
+func TestCPUTransitionNotAppliedNeedsKernelAgreement(t *testing.T) {
+	old := func() cpuTransitionRecord {
+		r := tRecord(tTight)
+		r.AfterLimits.NanoCPUs = tBase
+		return r
+	}
+	cases := []struct {
+		name   string
+		mutate func(*cpuTransitionRecord)
+		want   cpuTransitionVerdict
+	}{
+		{"inspected old, kernel requested", func(r *cpuTransitionRecord) {}, cpuTransitionUncertain},
+		{"inspected old, kernel missing", func(r *cpuTransitionRecord) { r.Kernel = nil }, cpuTransitionUncertain},
+		{"inspected old, controller not listed", func(r *cpuTransitionRecord) { r.Kernel.ControllerListed = false }, cpuTransitionUncertain},
+		{"inspected old, kernel unreadable zero value", func(r *cpuTransitionRecord) { r.Kernel.Max = cpuMax{} }, cpuTransitionUncertain},
+		{"inspected old, task not running", func(r *cpuTransitionRecord) {
+			r.AfterState.Running = false
+			r.Kernel.Max = cpuMax{Quota: uint64(tBase / 10_000), Period: 100000}
+		}, cpuTransitionUncertain},
+		{"inspected old, kernel old", func(r *cpuTransitionRecord) { r.Kernel.Max = cpuMax{Quota: uint64(tBase / 10_000), Period: 100000} }, cpuTransitionNotApplied},
+		{"inspected old, kernel unlimited", func(r *cpuTransitionRecord) { r.Kernel.Max = cpuMax{Unlimited: true, Period: 100000} }, cpuTransitionNotApplied},
+	}
+	for _, c := range cases {
+		r := old()
+		c.mutate(&r)
+		v, err := classifyCPUTransition(r, cpuTransitionChecks{})
+		if v != c.want || (c.want == cpuTransitionUncertain) != (err != nil) {
+			t.Errorf("%s: got %s %v, want %s", c.name, v, err, c.want)
+		}
+		if c.want == cpuTransitionUncertain {
+			// Negative control: ignoring the effective evidence (or the
+			// running state) collapses the case into a definitive verdict.
+			if v, _ := classifyCPUTransition(r, cpuTransitionChecks{skipKernel: true, skipRunning: true}); v != cpuTransitionNotApplied {
+				t.Errorf("%s: single-source control should reach not-applied, got %s", c.name, v)
+			}
+		}
 	}
 }
 
