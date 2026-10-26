@@ -221,6 +221,7 @@ const (
 type memoryPressureChecks struct {
 	skipJoin       bool
 	skipBracket    bool
+	skipStamp      bool
 	skipLimit      bool
 	skipSwap       bool
 	skipRollback   bool
@@ -259,6 +260,11 @@ func classifyMemoryPressure(r memoryPressureRecord, checks memoryPressureChecks)
 	}
 	if r.Before.Source != memoryWitnessSource || r.After.Source != memoryWitnessSource {
 		return memoryIncomplete("reading source is not the target-local memory witness")
+	}
+	// An unrecorded reading time is the zero value, which would order before
+	// any real dispatch time and pass as a pre-step reading.
+	if !checks.skipStamp && (r.Before.At.IsZero() || r.After.At.IsZero()) {
+		return memoryIncomplete("a witness reading time is not recorded")
 	}
 	if !checks.skipBracket {
 		switch {
