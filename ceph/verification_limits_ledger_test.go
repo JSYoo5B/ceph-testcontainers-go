@@ -177,6 +177,15 @@ func judgeAbsence(l limLedger, kind string) error {
 	if slices.ContainsFunc(c.Findings, func(f limFinding) bool { return f.Truncated }) {
 		problems = append(problems, "a finding keeps only part of its text")
 	}
+	// A finding whose source is longer than the text it keeps is clipped
+	// evidence, whatever its flag says.
+	for _, f := range c.Findings {
+		for _, ev := range l.Events {
+			if ev.Kind == "log" && kind == "log" && ev.ID == f.ID && ev.Container == f.ContainerID && ev.SourceLen > f.TextLen && !f.Truncated {
+				problems = append(problems, fmt.Sprintf("finding %s keeps %d of %d bytes without a truncation flag", f.ID, f.TextLen, ev.SourceLen))
+			}
+		}
+	}
 	if c.Outcome == VerificationIncomplete {
 		problems = append(problems, "the check is incomplete")
 	}
@@ -198,8 +207,11 @@ func (g *limEmitter) log(container, id, class, tail string) {
 	g.next += time.Millisecond
 	message := "ledger-id=" + id + tail
 	ctr := g.fx.docker.containers[container]
-	ctr.lines = append(ctr.lines, fakeLogLine{verifyStart.Add(time.Minute + g.next), daemonLogLine("cluster", "WRN", message)})
-	g.events = append(g.events, limEvent{ID: id, Kind: "log", Container: container, Class: class, SourceLen: len(message)})
+	// The verifier bounds the whole daemon line (envelope and message), so
+	// SourceLen is that line's length.
+	line := daemonLogLine("cluster", "WRN", message)
+	ctr.lines = append(ctr.lines, fakeLogLine{verifyStart.Add(time.Minute + g.next), line})
+	g.events = append(g.events, limEvent{ID: id, Kind: "log", Container: container, Class: class, SourceLen: len(line)})
 }
 
 func (g *limEmitter) crash(container, id, class string) {
@@ -431,6 +443,68 @@ func TestVerificationLimitLedgerFindingTextBound(t *testing.T) {
 	if tail.Logs.Permitted != 1 || tail.Logs.Unexpected != 0 {
 		t.Fatalf("the whole line was not matched: %+v", tail.Logs)
 	}
+}
+
+// limBoundaryMessageTail pads a message so that the whole daemon line,
+// envelope included, is exactly total bytes long.
+func limBoundaryMessageTail(id string, total int) string {
+	return " " + strings.Repeat("b", total-len(daemonLogLine("cluster", "WRN", "ledger-id="+id+" ")))
+}
+
+// The text bound applies to the whole daemon line, not to its message: a
+// line of exactly maxFindingText bytes is kept whole and unflagged, one byte
+// more is cut and flagged, and a message of maxFindingText bytes is already
+// over the bound. Losing a correct flag is refused by both judges.
+func TestVerificationLimitLedgerTextBoundIsTheWholeLine(t *testing.T) {
+	run := func(total int) limLedger {
+		return runLimitScenario(t, limScenario{name: "boundary", emit: func(_ *verifyFixture, g *limEmitter) {
+			g.log("mon", "log-edge", "permitted", limBoundaryMessageTail("log-edge", total))
+		}})
+	}
+	exact, over := run(maxFindingText), run(maxFindingText+1)
+	for name, tc := range map[string]struct {
+		l         limLedger
+		truncated bool
+	}{"exact": {exact, false}, "one over": {over, true}} {
+		if err := judgeLimitAccounting(tc.l); err != nil {
+			t.Fatalf("%s: %v\nledger %+v", name, err, tc.l)
+		}
+		f := tc.l.Logs.Findings[0]
+		if f.Truncated != tc.truncated || f.TextLen != maxFindingText || tc.l.Events[0].SourceLen != maxFindingText+btoi(tc.truncated) {
+			t.Fatalf("%s: finding %+v, event %+v", name, f, tc.l.Events[0])
+		}
+		if (judgeAbsence(tc.l, "log") == nil) == tc.truncated {
+			t.Fatalf("%s: absence verdict %v", name, judgeAbsence(tc.l, "log"))
+		}
+	}
+	// A message of maxFindingText bytes alone is over the bound.
+	msg := runLimitScenario(t, limScenario{name: "message", emit: func(_ *verifyFixture, g *limEmitter) {
+		g.log("mon", "log-msg", "permitted", " "+strings.Repeat("m", maxFindingText-len("ledger-id=log-msg ")))
+	}})
+	if err := judgeLimitAccounting(msg); err != nil || !msg.Logs.Findings[0].Truncated {
+		t.Fatalf("%v\nledger %+v", err, msg.Logs)
+	}
+	for name, l := range map[string]limLedger{"exact": exact, "one over": over, "message": msg} {
+		lost := l
+		lost.Logs.Findings = slices.Clone(l.Logs.Findings)
+		lost.Logs.Findings[0].Truncated = false
+		if name == "exact" {
+			if judgeLimitAccounting(lost) != nil || judgeAbsence(lost, "log") != nil {
+				t.Fatalf("%s: an unflagged whole line was refused", name)
+			}
+			continue
+		}
+		if judgeLimitAccounting(lost) == nil || judgeAbsence(lost, "log") == nil {
+			t.Fatalf("%s: a lost truncation flag was accepted", name)
+		}
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // The finding limit keeps unexpected findings first and counts the rest as
