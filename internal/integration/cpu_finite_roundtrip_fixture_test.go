@@ -75,3 +75,32 @@ func TestCPURoundTripAssemblyRefusesIncompleteInspection(t *testing.T) {
 		}
 	}
 }
+
+func TestGuardedCPUUpdateDispatchesNothingToAStaleTarget(t *testing.T) {
+	g := tGen()
+	restarted := rtInspect(tTight)
+	restarted.State.StartedAt = "2026-10-25T01:00:00.000000001Z"
+	replaced := rtInspect(tTight)
+	replaced.ID = "c2"
+	paused := rtInspect(tTight)
+	paused.State.Paused = true
+	count := rtInspect(tTight)
+	count.RestartCount = 1
+	cases := map[string]container.InspectResponse{"restarted": restarted, "replaced": replaced, "paused": paused, "restart count": count}
+	for name, in := range cases {
+		calls := 0
+		_, err := guardedCPUUpdate(g, func() (container.InspectResponse, error) { return in, nil }, func() ([]string, error) { calls++; return nil, nil })
+		if calls != 0 || !errors.Is(err, errCPUUpdateStale) {
+			t.Fatalf("%s: dispatched %d updates, err=%v", name, calls, err)
+		}
+	}
+	calls := 0
+	_, err := guardedCPUUpdate(g, func() (container.InspectResponse, error) { return container.InspectResponse{}, errors.New("down") }, func() ([]string, error) { calls++; return nil, nil })
+	if calls != 0 || !errors.Is(err, errCPUUpdateStale) {
+		t.Fatalf("inspection failure: dispatched %d, err=%v", calls, err)
+	}
+	calls = 0
+	if _, err := guardedCPUUpdate(g, func() (container.InspectResponse, error) { return rtInspect(tBase), nil }, func() ([]string, error) { calls++; return nil, nil }); err != nil || calls != 1 {
+		t.Fatalf("the running captured generation must dispatch once: %d %v", calls, err)
+	}
+}

@@ -49,3 +49,27 @@ func assembleCPUTransition(gen containerGeneration, requested int64, replyReceiv
 		Kernel:        kernel,
 	}, nil
 }
+
+// errCPUUpdateStale refuses a dispatch before any engine call was made.
+var errCPUUpdateStale = errors.New("cpu update refused: target is not the running captured generation")
+
+// guardedCPUUpdate inspects the target and dispatches the update only when it
+// is still the running captured generation (same ID and start time, not
+// paused, restarting or restarted). A refusal means zero update calls were
+// made. This stops dispatch to an already-stale target; it does not make the
+// engine's update atomic against a restart that happens after the check, which
+// the caller's post-update fences still have to catch.
+func guardedCPUUpdate(gen containerGeneration, inspectNow func() (container.InspectResponse, error), dispatch func() ([]string, error)) (warnings []string, err error) {
+	current, err := inspectNow()
+	if err != nil {
+		return nil, fmt.Errorf("%w: inspection failed: %v", errCPUUpdateStale, err)
+	}
+	state, err := cpuEngineStateFromInspect(current, cpuEngineChecks{})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errCPUUpdateStale, err)
+	}
+	if err := state.check(gen, 0); err != nil {
+		return nil, fmt.Errorf("%w: %v", errCPUUpdateStale, err)
+	}
+	return dispatch()
+}

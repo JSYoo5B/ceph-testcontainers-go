@@ -98,10 +98,21 @@ func TestCPUFiniteBaselineRoundTrip(t *testing.T) {
 	// retained as received or uncertain; an uncertain outcome is settled only
 	// by the post-update inspection and kernel reading of the same generation.
 	update := func(call context.Context, nano int64) (cpuTransitionRecord, error) {
-		c, done := context.WithTimeout(call, 20*time.Second)
-		result, updateErr := docker.ContainerUpdate(c, id, mobycl.ContainerUpdateOptions{Resources: &container.Resources{NanoCPUs: nano}})
-		done()
-		received, warnings := cpuUpdateReply(result.Warnings, updateErr)
+		var updateErr error
+		var replyWarnings []string
+		dispatched := false
+		_, guardErr := guardedCPUUpdate(gen, func() (container.InspectResponse, error) { return rawInspect(call) }, func() ([]string, error) {
+			dispatched = true
+			c, done := context.WithTimeout(call, 20*time.Second)
+			defer done()
+			result, err := docker.ContainerUpdate(c, id, mobycl.ContainerUpdateOptions{Resources: &container.Resources{NanoCPUs: nano}})
+			updateErr, replyWarnings = err, result.Warnings
+			return result.Warnings, err
+		})
+		if !dispatched {
+			return cpuTransitionRecord{}, guardErr
+		}
+		received, warnings := cpuUpdateReply(replyWarnings, updateErr)
 		after, err := rawInspect(call)
 		if err != nil {
 			return cpuTransitionRecord{}, err
@@ -123,13 +134,12 @@ func TestCPUFiniteBaselineRoundTrip(t *testing.T) {
 		}
 		call, done := context.WithTimeout(context.Background(), 30*time.Second)
 		defer done()
-		current, err := rawInspect(call)
-		if err != nil || current.State == nil || current.State.StartedAt != gen.StartedAt {
-			t.Error("CPU restoration incomplete: captured generation unavailable")
-			return
-		}
-		if _, err := docker.ContainerUpdate(call, id, mobycl.ContainerUpdateOptions{Resources: &container.Resources{NanoCPUs: cpuRoundTripBaseline}}); err != nil {
-			t.Error("CPU restoration independently failed", err)
+		_, err := guardedCPUUpdate(gen, func() (container.InspectResponse, error) { return rawInspect(call) }, func() ([]string, error) {
+			result, err := docker.ContainerUpdate(call, id, mobycl.ContainerUpdateOptions{Resources: &container.Resources{NanoCPUs: cpuRoundTripBaseline}})
+			return result.Warnings, err
+		})
+		if err != nil {
+			t.Error("CPU restoration incomplete or independently failed", err)
 		}
 	})
 
