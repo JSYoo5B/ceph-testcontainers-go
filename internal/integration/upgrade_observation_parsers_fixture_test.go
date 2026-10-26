@@ -713,6 +713,32 @@ func TestUpgradeObservationsDisagreementsAreNotEvidence(t *testing.T) {
 		"mon dump lists another monitor set": func(o *upgradeObservationOutputs) {
 			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) { monAt(2)(m)["name"] = "d" }))
 		},
+		"mon dump epoch and release newer than quorum_status": func(o *upgradeObservationOutputs) {
+			o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) {
+				mm := m["monmap"].(map[string]any)
+				mm["epoch"], mm["min_mon_release"], mm["min_mon_release_name"] = 2, 19, "squid"
+			}))
+		},
+		"mon dump epoch differs only": func(o *upgradeObservationOutputs) {
+			o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) { m["monmap"].(map[string]any)["epoch"] = 2 }))
+		},
+		"mon dump release differs only": func(o *upgradeObservationOutputs) {
+			o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) {
+				mm := m["monmap"].(map[string]any)
+				mm["min_mon_release"], mm["min_mon_release_name"] = 19, "squid"
+			}))
+		},
+		"empty mon dump quorum with full quorum_status": func(o *upgradeObservationOutputs) {
+			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) { m["quorum"] = []any{} }))
+		},
+		"mon dump quorum is a subset": func(o *upgradeObservationOutputs) {
+			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) { m["quorum"] = []any{0, 1} }))
+		},
+		"ranks mapped to other names": func(o *upgradeObservationOutputs) {
+			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) {
+				monAt(0)(m)["name"], monAt(1)(m)["name"] = "b", "a"
+			}))
+		},
 		"mgr stat from another epoch": func(o *upgradeObservationOutputs) {
 			o.MgrStat = []byte(obsEdit(t, string(o.MgrStat), func(m map[string]any) { m["epoch"] = 10 }))
 		},
@@ -742,10 +768,15 @@ func TestUpgradeObservationsFeedPlanRefusals(t *testing.T) {
 			o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) {
 				m["quorum"], m["quorum_names"] = []any{0, 1}, []any{"a", "b"}
 			}))
+			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) { m["quorum"] = []any{0, 1} }))
 		}, "quorum"},
 		{"min_mon_release still the source after the MON phase", 3, func(o *upgradeObservationOutputs) {
 			o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) {
 				m["min_mon_release"], m["min_mon_release_name"] = 19, "squid"
+			}))
+			o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) {
+				mm := m["monmap"].(map[string]any)
+				mm["min_mon_release"], mm["min_mon_release_name"] = 19, "squid"
 			}))
 		}, "min_mon_release 19, want 20"},
 		{"standby manager missing", 5, func(o *upgradeObservationOutputs) {
@@ -786,5 +817,21 @@ func TestUpgradeObservationsFeedPlanRefusals(t *testing.T) {
 		if err := s.settle(ev); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: settle = %v, want it to contain %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// Positive control for the cross-checks above: identical facts in both
+// observations are accepted, including a mon dump epoch that is newer in both.
+func TestUpgradeObservationsAgreeingMonObservationsAreAccepted(t *testing.T) {
+	for n := 1; n <= 8; n++ {
+		if ev := upgradeSettledFromOutputs("mon.c", obsOutputsFor(t, n)); ev.ObservationErr != nil {
+			t.Fatalf("checkpoint %d: %v", n, ev.ObservationErr)
+		}
+	}
+	o := obsOutputsFor(t, 3)
+	o.MonDump = []byte(obsEdit(t, string(o.MonDump), func(m map[string]any) { m["epoch"] = 5 }))
+	o.QuorumStatus = []byte(obsEdit(t, string(o.QuorumStatus), func(m map[string]any) { m["monmap"].(map[string]any)["epoch"] = 5 }))
+	if ev := upgradeSettledFromOutputs("mon.c", o); ev.ObservationErr != nil {
+		t.Fatal(ev.ObservationErr)
 	}
 }

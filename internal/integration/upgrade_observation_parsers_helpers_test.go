@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -757,9 +758,7 @@ func upgradeSettledFromOutputs(daemon string, o upgradeObservationOutputs) upgra
 		if mgr, err = upgradeMgrView(mgrStat, mgrDump); err != nil {
 			note(err)
 		}
-		if mon.FSID != quorum.Monmap.FSID || !upgradeObsSameSet(mon.names(), quorum.Monmap.names()) {
-			note(errors.New("mon dump and quorum_status describe different monitor maps"))
-		}
+		note(upgradeMonObservationsAgree(mon, quorum))
 	}
 	if len(errs) > 0 {
 		sort.Strings(errs)
@@ -795,4 +794,32 @@ func upgradeObsContains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// upgradeMonObservationsAgree requires the two MON observations to describe
+// the same map, release and quorum. The adapter consumes the release from the
+// mon dump and the quorum from quorum_status, so any fact one of them states
+// that the other contradicts makes the pair unusable.
+func upgradeMonObservationsAgree(mon upgradeMonDump, q upgradeQuorumStatus) error {
+	var diffs []string
+	m := q.Monmap
+	if mon.Epoch != m.Epoch {
+		diffs = append(diffs, fmt.Sprintf("map epoch %d vs %d", mon.Epoch, m.Epoch))
+	}
+	if mon.FSID != m.FSID {
+		diffs = append(diffs, "fsid")
+	}
+	if mon.MinMonRelease != m.MinMonRelease || mon.MinMonReleaseName != m.MinMonReleaseName {
+		diffs = append(diffs, fmt.Sprintf("min_mon_release %d (%s) vs %d (%s)", mon.MinMonRelease, mon.MinMonReleaseName, m.MinMonRelease, m.MinMonReleaseName))
+	}
+	if !reflect.DeepEqual(mon.Mons, m.Mons) {
+		diffs = append(diffs, fmt.Sprintf("rank to name mapping %v vs %v", mon.Mons, m.Mons))
+	}
+	if !upgradeObsSameSet(mon.QuorumNames, q.Names) {
+		diffs = append(diffs, fmt.Sprintf("quorum %v vs %v", mon.QuorumNames, q.Names))
+	}
+	if len(diffs) > 0 {
+		return errors.New("mon dump and quorum_status contradict each other: " + strings.Join(diffs, "; "))
+	}
+	return nil
 }
