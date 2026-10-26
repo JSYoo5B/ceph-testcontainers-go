@@ -269,6 +269,17 @@ func lastLines(text string, n int) string {
 	return strings.Join(lines, "")
 }
 
+// countLines counts lines the way lastLines cuts them: every newline ends a
+// line, and a nonempty final fragment without a newline is a line too. Blank
+// lines count; a carriage return stays part of its line.
+func countLines(text string) int {
+	n := strings.Count(text, "\n")
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		n++
+	}
+	return n
+}
+
 func observeTail(t *testing.T, retained string, tail, maxBytes int) (string, tailWindow) {
 	t.Helper()
 	config := diagnosticsUnitConfig(t)
@@ -282,7 +293,7 @@ func observeTail(t *testing.T, retained string, tail, maxBytes int) (string, tai
 		},
 	}
 	output, truncated, err := diagnosticLogs(t.Context(), docker, "owned", config)
-	window := tailWindow{Requested: tail, Returned: strings.Count(output, "\n"), ReadComplete: err == nil, ByteTruncated: truncated, Bytes: len(output)}
+	window := tailWindow{Requested: tail, Returned: countLines(output), ReadComplete: err == nil, ByteTruncated: truncated, Bytes: len(output)}
 	window.WindowCoverage = "unproven"
 	if err == nil && !truncated && window.Returned < tail {
 		window.WindowCoverage = "whole_retained_log"
@@ -321,6 +332,38 @@ func TestCoverageLedgerTailOverflowIsNotVisibleToReadCompleteness(t *testing.T) 
 		output, window := observeTail(t, retained, 100, 8)
 		if strings.Contains(output, "early sentinel") || !window.ByteTruncated || window.WindowCoverage != "unproven" {
 			t.Fatalf("window %+v, output %q", window, output)
+		}
+	})
+	t.Run("final-newline-does-not-change-the-window", func(t *testing.T) {
+		cases := []struct {
+			name, retained string
+			tail           int
+			returned       int
+			want           string
+		}{
+			{"overflow", "early sentinel\nnoise1\nnoise2\nnoise3", 3, 3, "unproven"},
+			{"exact", "a\nb\nc", 3, 3, "unproven"},
+			{"short", "a\nb", 3, 2, "whole_retained_log"},
+			{"crlf-overflow", "early\r\nn1\r\nn2\r\nn3", 3, 3, "unproven"},
+			{"crlf-short", "a\r\nb", 3, 2, "whole_retained_log"},
+			{"trailing-blank-lines-overflow", "early\nn1\nn2\n\n", 3, 3, "unproven"},
+			{"empty", "", 3, 0, "whole_retained_log"},
+			{"only-newline", "\n", 3, 1, "whole_retained_log"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, bare := observeTail(t, tc.retained, tc.tail, 1<<16)
+				terminated := tc.retained
+				if terminated != "" && !strings.HasSuffix(terminated, "\n") {
+					terminated += "\n"
+				}
+				_, withNewline := observeTail(t, terminated, tc.tail, 1<<16)
+				for _, window := range []tailWindow{bare, withNewline} {
+					if window.Returned != tc.returned || window.WindowCoverage != tc.want {
+						t.Fatalf("window %+v, want %d lines and %s", window, tc.returned, tc.want)
+					}
+				}
+			})
 		}
 	})
 	t.Run("json-shape", func(t *testing.T) {
