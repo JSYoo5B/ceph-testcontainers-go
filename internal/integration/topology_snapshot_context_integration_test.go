@@ -37,11 +37,11 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	clients := []testcontainers.Container{sourceClient, destinationClient}
 	payload := []byte("busy constructor admission retains exact Ceph client data")
 	for i, cluster := range clusters {
-		var err error
-		before[i].config, before[i].keyring, err = cluster.ConnectionConfig(ctx)
+		cc, err := cluster.ConnectionConfig(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
+		before[i].config, before[i].keyring = cc.Conf, cc.Keyring
 		before[i].managers, err = cluster.Managers(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -109,7 +109,9 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		}
 	}
 	for i, cluster := range clusters {
-		config, keyring, err := cluster.ConnectionConfig(ctx)
+		cc, err := cluster.ConnectionConfig(ctx)
+		config := cc.Conf
+		keyring := cc.Keyring
 		if err != nil || !bytes.Equal(config, before[i].config) || !bytes.Equal(keyring, before[i].keyring) {
 			t.Fatalf("fresh bootstrap snapshot changed after canceled admission: %v", err)
 		}

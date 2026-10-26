@@ -94,9 +94,36 @@ func (c *Container) setOSDIn(ctx context.Context, handle *OSDContainer, in bool)
 	return nil
 }
 
+// OSDFlag is a global OSDMap flag token such as "noout". The constants name
+// the flags that OverrideOSDFlag can change. OSDFlags returns the flags that the
+// cluster reports, which can include other tokens, so the type stays open: a
+// value outside the constants is representable and OverrideOSDFlag refuses it
+// at run time.
+type OSDFlag string
+
+// The reversible global OSD flags that OverrideOSDFlag accepts. Composite
+// pause and irreversible compatibility flags are not among them.
+const (
+	OSDFlagNoUp        OSDFlag = "noup"
+	OSDFlagNoDown      OSDFlag = "nodown"
+	OSDFlagNoOut       OSDFlag = "noout"
+	OSDFlagNoIn        OSDFlag = "noin"
+	OSDFlagNoBackfill  OSDFlag = "nobackfill"
+	OSDFlagNoRebalance OSDFlag = "norebalance"
+	OSDFlagNoRecover   OSDFlag = "norecover"
+	OSDFlagNoScrub     OSDFlag = "noscrub"
+	OSDFlagNoDeepScrub OSDFlag = "nodeep-scrub"
+	OSDFlagNoSnapTrim  OSDFlag = "nosnaptrim"
+	OSDFlagNoAutoscale OSDFlag = "noautoscale"
+)
+
+// String returns the native flag token.
+func (f OSDFlag) String() string { return string(f) }
+
 // OSDFlags lists exact global OSDMap flag tokens, including native compatibility
-// flags. Per-OSD, CRUSH-node or device-class flags are separate native state.
-func (c *Container) OSDFlags(ctx context.Context) ([]string, error) {
+// flags that are not among the OSDFlag constants. Per-OSD, CRUSH-node or
+// device-class flags are separate native state.
+func (c *Container) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
@@ -106,7 +133,11 @@ func (c *Container) OSDFlags(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.Clone(dump.flags), nil
+	flags := make([]OSDFlag, len(dump.flags))
+	for i, flag := range dump.flags {
+		flags[i] = OSDFlag(flag)
+	}
+	return flags, nil
 }
 
 // OSDFlagOverrideHandle manages restoration of one global OSDMap flag, retaining
@@ -117,7 +148,7 @@ func (c *Container) OSDFlags(ctx context.Context) ([]string, error) {
 // must be restored or the cluster terminated. Unrelated flags are never changed.
 type OSDFlagOverrideHandle struct {
 	owner *Container
-	flag  string
+	flag  OSDFlag
 	state *osdFlagOverrideState
 }
 
@@ -126,12 +157,15 @@ type osdFlagOverrideState struct {
 }
 
 // OverrideOSDFlag changes one reversible global flag while remembering its
-// prior state. Supported flags are noup, nodown, noout, noin, nobackfill,
-// norebalance, norecover, noscrub, nodeep-scrub, nosnaptrim and noautoscale.
+// prior state. Supported flags are the OSDFlag constants: OSDFlagNoUp,
+// OSDFlagNoDown, OSDFlagNoOut, OSDFlagNoIn, OSDFlagNoBackfill,
+// OSDFlagNoRebalance, OSDFlagNoRecover, OSDFlagNoScrub, OSDFlagNoDeepScrub,
+// OSDFlagNoSnapTrim and OSDFlagNoAutoscale. Any other value, including an
+// untyped string constant that names another flag, is refused with an error.
 // Composite pause and irreversible compatibility flags are excluded. Overlapping
 // handles for a flag are refused. External edits to the same flag must not race
 // apply/restore: a boolean flag has no generation and Ceph provides no CAS.
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bool) (*OSDFlagOverrideHandle, error) {
+func (c *Container) OverrideOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error) {
 	if gateErr := c.sharedGate("OverrideOSDFlag"); gateErr != nil {
 		return nil, gateErr
 	}
@@ -152,9 +186,9 @@ func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bo
 	if err != nil {
 		return nil, err
 	}
-	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, flag), applied: enabled}}
+	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, string(flag)), applied: enabled}}
 	if c.flagOverrides == nil {
-		c.flagOverrides = make(map[string]*OSDFlagOverrideHandle)
+		c.flagOverrides = make(map[OSDFlag]*OSDFlagOverrideHandle)
 	}
 	c.flagOverrides[flag] = change
 	if change.state.previous == enabled {
@@ -167,7 +201,7 @@ func (c *Container) OverrideOSDFlag(ctx context.Context, flag string, enabled bo
 	if err != nil {
 		return change, err
 	}
-	if slices.Contains(dump.flags, flag) != enabled {
+	if slices.Contains(dump.flags, string(flag)) != enabled {
 		return change, errors.New("OSD flag readback differs from requested state")
 	}
 	return change, nil
@@ -200,7 +234,7 @@ func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	current := slices.Contains(dump.flags, change.flag)
+	current := slices.Contains(dump.flags, string(change.flag))
 	if current == change.state.previous {
 		change.finish()
 		return nil
@@ -215,7 +249,7 @@ func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if slices.Contains(dump.flags, change.flag) != change.state.previous {
+	if slices.Contains(dump.flags, string(change.flag)) != change.state.previous {
 		return errors.New("OSD flag restoration readback differs from original state")
 	}
 	change.finish()
@@ -227,14 +261,14 @@ func (change *OSDFlagOverrideHandle) finish() {
 	delete(change.owner.flagOverrides, change.flag)
 }
 
-var reversibleOSDFlags = []string{"noup", "nodown", "noout", "noin", "nobackfill", "norebalance", "norecover", "noscrub", "nodeep-scrub", "nosnaptrim", "noautoscale"}
+var reversibleOSDFlags = []OSDFlag{OSDFlagNoUp, OSDFlagNoDown, OSDFlagNoOut, OSDFlagNoIn, OSDFlagNoBackfill, OSDFlagNoRebalance, OSDFlagNoRecover, OSDFlagNoScrub, OSDFlagNoDeepScrub, OSDFlagNoSnapTrim, OSDFlagNoAutoscale}
 
-func (c *Container) setOSDFlag(ctx context.Context, flag string, enabled bool) error {
+func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"
 	if enabled {
 		op = "set"
 	}
-	_, err := c.cephCLI(ctx, "osd", op, flag)
+	_, err := c.cephCLI(ctx, "osd", op, string(flag))
 	return err
 }
 

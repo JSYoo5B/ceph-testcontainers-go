@@ -78,7 +78,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	}
 	registered := osdMemoryIdentities(t, ctx, cluster)
 	oldContainer := original.GetContainerID()
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

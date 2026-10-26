@@ -53,9 +53,9 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			probe(t, "seed")
 			var mapping struct {
-				PGID          string `json:"pgid"`
-				Acting        []int  `json:"acting"`
-				ActingPrimary int    `json:"acting_primary"`
+				PGID          ceph.PGID `json:"pgid"`
+				Acting        []int     `json:"acting"`
+				ActingPrimary int       `json:"acting_primary"`
 			}
 			if err := json.Unmarshal(mustCeph(t, ctx, cluster, "osd", "map", poolName, "victim", "--format", "json"), &mapping); err != nil || len(mapping.Acting) != 2 {
 				t.Fatal("native object mapping unavailable", err)

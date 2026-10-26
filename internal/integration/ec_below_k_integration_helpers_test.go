@@ -97,7 +97,7 @@ func testECBelowK(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	noout, err := c.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := c.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	var actor *ecFourTwoActor
 	requested := map[int]bool{}
 	stopped := map[int]bool{}

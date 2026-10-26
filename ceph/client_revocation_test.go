@@ -51,7 +51,7 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 	if text := fmt.Sprintf("%v %+v %#v", revocation, revocation, revocation); strings.Contains(text, original.key) || !strings.Contains(revocation.String(), "client.app") {
 		t.Fatalf("the revocation formats as %q", text)
 	}
-	if _, keyring, err := client.ConnectionConfig(); err != nil || clientKey(keyring, "client.app") != original.key {
+	if cc, err := client.ConnectionConfig(); err != nil || clientKey(cc.Keyring, "client.app") != original.key {
 		t.Fatalf("the revoked descriptor's credentials: %v", err)
 	}
 	for name, err := range map[string]error{

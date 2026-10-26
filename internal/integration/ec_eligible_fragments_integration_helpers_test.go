@@ -142,10 +142,10 @@ func ecObserve(t *testing.T, ctx context.Context, cluster *ceph.Container, pool 
 			t.Fatalf("PGs of %s: %+v, %v", pool, snapshot.PGs, err)
 		}
 		pg := snapshot.PGs[0]
-		before := ecPGCommand(t, ctx, cluster, pg.PGID, "query")
-		logRaw := ecPGCommand(t, ctx, cluster, pg.PGID, "log")
-		unfoundRaw := ecPGCommand(t, ctx, cluster, pg.PGID, "list_unfound")
-		after := ecPGCommand(t, ctx, cluster, pg.PGID, "query")
+		before := ecPGCommand(t, ctx, cluster, pg.PGID.String(), "query")
+		logRaw := ecPGCommand(t, ctx, cluster, pg.PGID.String(), "log")
+		unfoundRaw := ecPGCommand(t, ctx, cluster, pg.PGID.String(), "list_unfound")
+		after := ecPGCommand(t, ctx, cluster, pg.PGID.String(), "query")
 		obs := ecObservation{Primary: pg.ActingPrimary}
 		var errs [4]error
 		obs.Before, errs[0] = parseECPGReport(before)
@@ -314,7 +314,7 @@ func testECEligibleFragments(t *testing.T) {
 	head, _ := ecClassify(t, baseline, written.Writer, written.Snap, false)
 	ecExpect(t, "clean", head, ecSufficient, ecEligible, []int{0, 1, 2})
 
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -356,7 +356,7 @@ func testECEligibleFragments(t *testing.T) {
 		t.Fatalf("degraded list_unfound: %+v", degraded.Unfound)
 	}
 
-	hold, err := cluster.OverrideOSDFlag(ctx, "norecover", true)
+	hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoRecover, true)
 	if hold != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

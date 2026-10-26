@@ -70,7 +70,7 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	if cipher, _ := keyCipher(key); cipher != CipherAES256K {
 		t.Fatalf("the new key is %s, not the old key's type", cipher)
 	}
-	if _, keyring, err := client.ConnectionConfig(); err != nil || clientKey(keyring, "client.app") != old {
+	if cc, err := client.ConnectionConfig(); err != nil || clientKey(cc.Keyring, "client.app") != old {
 		t.Fatalf("the old descriptor's credentials changed: %v", err)
 	}
 	for name, err := range map[string]error{
@@ -243,7 +243,7 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 			if err == nil || next == nil || next.ready || !strings.Contains(err.Error(), "not known yet") {
 				t.Fatalf("an unsettled import returned %v, %v", next, err)
 			}
-			if _, _, err := next.ConnectionConfig(); err == nil {
+			if _, err := next.ConnectionConfig(); err == nil {
 				t.Fatal("the unconfirmed descriptor returned credentials")
 			}
 			if err := identityErr(c, client); err == nil || !strings.Contains(err.Error(), "not resolved yet") {

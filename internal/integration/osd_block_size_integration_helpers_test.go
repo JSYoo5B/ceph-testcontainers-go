@@ -126,7 +126,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original pool identity unavailable", err)
 	}
 	smallOSDData(t, ctx, cluster, fsid, pool.Name, poolState.ID, "seed")
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

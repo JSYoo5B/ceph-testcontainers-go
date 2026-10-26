@@ -48,8 +48,9 @@ cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
 [CephFS names](docs/guides/upgrading-cephfs-names.md),
 [network profiles](docs/guides/upgrading-network-profile-names.md) and the
 [RBD cache operation](docs/guides/upgrading-rbd-cache-name.md), the
-[topology accessors](docs/guides/upgrading-context-accessors.md) and the
-[operations that moved onto handles](docs/guides/upgrading-handle-operations.md).
+[topology accessors](docs/guides/upgrading-context-accessors.md), the
+[operations that moved onto handles](docs/guides/upgrading-handle-operations.md) and the
+[typed OSD flags, PG IDs and connection config](docs/guides/upgrading-typed-values.md).
 
 ## Requirements
 
@@ -102,11 +103,11 @@ func TestWithCeph(t *testing.T) {
 	}
 
 	// Give a native client the cluster's ceph.conf and an admin keyring.
-	conf, keyring, err := cluster.ConnectionConfig(ctx)
+	cfg, err := cluster.ConnectionConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = conf, keyring
+	_ = cfg
 }
 ```
 

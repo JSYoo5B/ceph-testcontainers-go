@@ -76,7 +76,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	registration := osdMemoryIdentities(t, ctx, cluster)
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

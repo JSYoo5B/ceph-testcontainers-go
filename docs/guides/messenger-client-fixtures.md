@@ -679,7 +679,7 @@ the reply which daemon answered and how each failure reaches the caller:
 | an identity without `allow *` on OSDs or MDSs | the daemon refuses: librados returns `-13`; the CLI, which first asks the daemon for its command descriptions, exits 13 with `Error EACCES: problem getting command descriptions` |
 | an OSD id or a pool missing from the client's OSDMap | librados refuses before sending anything: `-2` (ENOENT) |
 | an OSD that the OSDMap marks down | librados refuses before sending anything: `-6` (ENXIO) |
-| a paused OSD that the OSDMap keeps up (`OverrideOSDFlag("nodown")`, `fault.Pause`) | the command is sent and not answered; the client's own timeout ends it with `-110` (ETIMEDOUT), so whether it ran is unknown |
+| a paused OSD that the OSDMap keeps up (`OverrideOSDFlag(ceph.OSDFlagNoDown)`, `fault.Pause`) | the command is sent and not answered; the client's own timeout ends it with `-110` (ETIMEDOUT), so whether it ran is unknown |
 | an unknown command prefix | the OSD refuses it: `-22` (EINVAL), with the status `unknown command prefix` |
 
 librados reports the signed result of the reply and the CLI exits with its

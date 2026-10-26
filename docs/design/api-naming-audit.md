@@ -8,23 +8,23 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **793** functions, declared methods on
+The declaration catalogue contains **810** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **1089** exported field/nested-record/embedding entries in
-**181** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
+catalogue contains **1091** exported field/nested-record/embedding entries in
+**182** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
 `ceph.CaptureFileSource` (that embedding plus one read-only file method). Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 365 | 424 |
+| `ceph` | 382 | 426 |
 | `fault` | 35 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 125 | 204 |
 | `capture` | 36 | 56 |
-| Total | 793 | 1089 |
+| Total | 810 | 1091 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainer` and the
@@ -64,6 +64,7 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Owned additions and disruption leases | Retain `PauseLease`, `NetworkProfileLease`, `SnapshotScheduleLease`, and `ImmutableObjectCacheLease`. Preserve `Pause`/`Resume`, Apply/Restore and Add/Restore. `TemporaryBlocklist` retains its real native TTL; the cache's Start name deliberately drops Temporary because it has none. `Lease` identifies ownership, not universal expiry or automatic restoration. |
 | Quiesce and staged removal/addition | Retain `QuiesceSubvolumes`/`Quiesce.Release`, `MirrorDirectoryAddition`, `MirrorDirectoryRemoval`, `MirrorPeerRemoval`, their Begin/Status/Wait/Acknowledge methods and observation types. They represent native set or phased transition ownership, including partial/uncertain progress; a past-participle name or common Undo would misstate their contract. |
 | Operations on handles | Retain `OSDContainer.Remove`, `SetIn`, `Detach`, `AdminSocket` and `RotateKey`, `DetachedOSD.Reopen`, `MonitorContainer.Remove` and `AdminSocket`, `ManagerContainer.Remove`, `AdminSocket` and `RotateKey`, the `Pool` operations `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`, `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`, the `ClientConfig` operations `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`, `cephfs.Filesystem.Remove`, `cephfs.MDS.RemoveStopped` and `AddReplacement`, `rgw.Gateway.Remove` and the lookup `Container.Pool`. The receiver names the object, so the method drops the noun (`Remove`, not `RemoveOSD`) and takes no name or ID; the verbs keep their meaning. Creating operations (`AddOSD`, `AddMonitor`, `AddManager`, `CreatePool`, `CreateClient`, `cephfs.Start`, `rgw.Start`) have no handle yet and stay where they are. The former `Container` methods and package functions are gone, with no alias ([migration](../guides/upgrading-handle-operations.md)). |
+| Typed values | Retain `OSDFlag` with its eleven constants, `PGID` with `ParsePGID` and `String`, and the result type `ConnectionConfig` (fields `Conf` and `Keyring`) for `Container.ConnectionConfig` and `ClientConfig.ConnectionConfig`. A value type names what a plain `string` or an unlabeled `[]byte` pair hid, so a swapped conf/keyring assignment no longer compiles. `OSDFlag` stays an open string type because `OSDFlags` reports flags that have no constant; `OverrideOSDFlag` and the PG methods keep their run-time refusal. An untyped string constant still converts to these types. The method and the result type share the name `ConnectionConfig`, which Go allows. The former `string` and `[]byte, []byte` shapes are gone, with no alias ([migration](../guides/upgrading-typed-values.md)). |
 | Retained OSD lifecycle | Retain `OSDContainer.Detach`, `DetachedOSD.Reopen` and `DetachedOSD`. Detach names releasing a daemon's container while keeping its store and MON registration, and is distinct from `Remove` (drain and purge) and from container Stop/Start (same container). Reopen names starting a new container on that retained store; it neither allocates a registration like `Add*` nor formats like a fresh start. `DetachedOSD` exposes read-only accessors instead of mutable fields, because Reopen validates against private copies; `ClusterFSID` qualifies which FSID it is. |
 | Test finalization | Retain `TerminateOnCleanup`, `Finalization`, `Finalization.Check`, `Finalization.Cleanup` and `FinalizationConfig`. `TerminateOnCleanup` names what the call owns: it registers the cluster's termination with test cleanup, like `testcontainers.CleanupContainer`, and orders the checks, failure archive and cleanups before it. `Finalization` is that registered phase sequence, not a lease or restore handle; `Check` and `Cleanup` add steps to its two phases and keep `testing.TB.Cleanup`'s meaning of a function that runs at test end. `Archive` opts into the failure archive; `ArchiveDirectory`, `ArchiveTimeout`, `CheckTimeout` and `CleanupTimeout` qualify the phase they bound, and `Diagnostics` and `CrashMetadata` take the existing collector configurations unchanged. No generic cleanup interface or automatic archive for other fixtures follows. |
 | Lifetime and recovery operations | Retain `Terminate` for owned clusters/fixtures, `Close` for streams/shared fixtures, explicit Restore for policies/files, Stop for a process that may retain files, and Resume for thawing. `RestoreBackup`, `RestoreIncremental`, `Rebootstrap*`, `RepairPG` and clone cancel/remove are domain recovery operations, not interchangeable cleanup handles. |

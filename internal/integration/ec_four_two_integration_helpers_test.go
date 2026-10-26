@@ -142,7 +142,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			t.Fatal(err)
 		}
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	var actor *ecFourTwoActor
 	requested := map[int]bool{}
 	var order []int

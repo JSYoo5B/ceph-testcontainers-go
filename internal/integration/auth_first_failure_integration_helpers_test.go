@@ -677,7 +677,8 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, wrongKeyring, err := wrong.ConnectionConfig()
+	cc, err := wrong.ConnectionConfig()
+	wrongKeyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}

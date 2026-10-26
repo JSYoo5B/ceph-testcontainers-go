@@ -81,7 +81,7 @@ container teardown; resume a
 caller-owned container yourself before removing it.
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
+hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
 if hold != nil {
 	defer hold.Restore(context.Background())
 }

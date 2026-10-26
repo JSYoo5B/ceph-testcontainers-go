@@ -162,7 +162,8 @@ finally:
 		if err := grant.Client.UpdateCaps(ctx, caps); err != nil {
 			t.Fatal(err)
 		}
-		_, keyring, err := grant.Client.ConnectionConfig()
+		cc, err := grant.Client.ConnectionConfig()
+		keyring := cc.Keyring
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +177,8 @@ finally:
 		if err != nil || currentCaps.MDS != "allow r path="+neighbor.Path || currentCaps.OSD != "allow r pool="+neighborInfo.DataPool+" namespace="+neighborInfo.PoolNamespace || currentCaps.MGR != "allow r" {
 			t.Fatalf("unrelated rights were not preserved: %+v error=%v", currentCaps, err)
 		}
-		_, currentKeyring, err := grant.Client.ConnectionConfig()
+		cc2, err := grant.Client.ConnectionConfig()
+		currentKeyring := cc2.Keyring
 		if err != nil || !bytes.Equal(originalKeyrings[grant], currentKeyring) {
 			t.Fatal("deauthorization changed client credentials", err)
 		}

@@ -117,7 +117,8 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 			t.Fatalf("MonMap ciphers service=%s allowed=%v preferred=%s, want %s %v %s", gotService, gotAllowed, gotPreferred, service, want, preferred)
 		}
 	}
-	_, keyring, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	keyring := cc.Keyring
 	if err != nil || cephxKeyType(t, keyring, "client.admin") != auth.KeyType {
 		t.Fatalf("client.admin key type: %v", err)
 	}

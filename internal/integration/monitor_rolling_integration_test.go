@@ -135,7 +135,8 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if !slices.Equal(quorum.QuorumNames, []string{"d", "e", "f"}) {
 				t.Fatalf("final quorum is %v", quorum.QuorumNames)
 			}
-			currentConfig, _, err := cluster.ConnectionConfig(ctx)
+			cc, err := cluster.ConnectionConfig(ctx)
+			currentConfig := cc.Conf
 			if err != nil {
 				t.Fatal(err)
 			}

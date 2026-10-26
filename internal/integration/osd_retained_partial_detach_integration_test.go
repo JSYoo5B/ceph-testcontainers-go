@@ -80,7 +80,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	identities := osdMemoryIdentities(t, ctx, cluster)
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -537,7 +537,8 @@ func testCephFSSessionAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, keyring, err := restricted.ConnectionConfig()
+	cc, err := restricted.ConnectionConfig()
+	keyring := cc.Keyring
 	if err != nil {
 		t.Fatal(err)
 	}

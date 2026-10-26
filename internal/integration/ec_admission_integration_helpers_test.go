@@ -155,7 +155,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := checkECAdmissionHealthy(captured); err != nil {
 		t.Fatal(err)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), time.Minute)

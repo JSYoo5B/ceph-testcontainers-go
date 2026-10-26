@@ -310,7 +310,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	clean := waitPG(t, ctx, cluster, "clean on every OSD", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == width && !slices.Contains(pg.Acting, 2147483647)
 	})
-	pgid, primary := clean.PGID, clean.ActingPrimary
+	pgid, primary := clean.PGID.String(), clean.ActingPrimary
 	var victim *ceph.OSDContainer
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID != primary && slices.Contains(clean.Acting, osd.ID) {
@@ -320,7 +320,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	if victim == nil {
 		t.Fatalf("no replica besides primary osd.%d: %+v", primary, clean)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
@@ -337,12 +337,14 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	prefixes := []string{"seed:20"}
 	var phases []recoveryPhase
 	for _, phase := range []struct {
-		path, flag, prefix string
-		count              int
-		shortLog           bool
+		path     string
+		flag     ceph.OSDFlag
+		prefix   string
+		count    int
+		shortLog bool
 	}{
-		{"log", "norecover", "recovery", 5, false},
-		{"backfill", "nobackfill", "backfill", 60, true},
+		{"log", ceph.OSDFlagNoRecover, "recovery", 5, false},
+		{"backfill", ceph.OSDFlagNoBackfill, "backfill", 60, true},
 	} {
 		if phase.shortLog {
 			// A short log that is trimmed at every write leaves the replica's

@@ -50,12 +50,16 @@ func TestClientConfigCopiesCredentialsAndUsesCurrentMonitorConfig(t *testing.T) 
 	if client.Name() != "client.reader" || client.User() != "reader" || client.KeyringPath() != "/etc/ceph/ceph.client.reader.keyring" {
 		t.Fatal("client identity naming is inconsistent")
 	}
-	config, keyring, err := client.ConnectionConfig()
+	cc, err := client.ConnectionConfig()
+	config := cc.Conf
+	keyring := cc.Keyring
 	if err != nil || !bytes.Contains(config, []byte("[client.reader]\nkeyring = "+client.KeyringPath())) {
 		t.Fatalf("missing explicit client keyring config: %v", err)
 	}
 	config[0], keyring[0] = '!', '!'
-	againConfig, againKeyring, _ := client.ConnectionConfig()
+	cc2, _ := client.ConnectionConfig()
+	againConfig := cc2.Conf
+	againKeyring := cc2.Keyring
 	if againConfig[0] == '!' || againKeyring[0] == '!' {
 		t.Fatal("connection configuration aliases private memory")
 	}
@@ -98,7 +102,7 @@ func TestClientFailurePreservesDescriptorAndRedactsOutput(t *testing.T) {
 		if err == nil || client == nil || client.Name() != "client.reader" || strings.Contains(err.Error(), "PRIVATE-KEY") {
 			t.Fatalf("creation failure lost identity or leaked output: err=%v", err)
 		}
-		if _, _, err := client.ConnectionConfig(); err == nil {
+		if _, err := client.ConnectionConfig(); err == nil {
 			t.Fatal("partial identity returned usable credentials")
 		}
 		for _, call := range ctr.calls {

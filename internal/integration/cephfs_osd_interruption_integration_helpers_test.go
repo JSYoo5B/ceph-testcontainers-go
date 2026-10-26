@@ -276,7 +276,7 @@ func testCephFSOSDInterruption(t *testing.T) {
 		t.Fatalf("writer has data ops in flight before the pause: %v: %s", err, raw)
 	}
 
-	hold, err := m.cluster.OverrideOSDFlag(ctx, "nodown", true)
+	hold, err := m.cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
 	if hold != nil {
 		t.Cleanup(func() {
 			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)

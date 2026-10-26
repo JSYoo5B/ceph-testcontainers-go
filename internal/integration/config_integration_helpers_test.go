@@ -202,7 +202,8 @@ func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if got := show("mon.a", "mon_max_pg_per_osd"); got != "320" {
 		t.Fatalf("mon.a mon_max_pg_per_osd = %q, want the config file value", got)
 	}
-	config, _, err := cluster.ConnectionConfig(ctx)
+	cc, err := cluster.ConnectionConfig(ctx)
+	config := cc.Conf
 	if err != nil {
 		t.Fatal(err)
 	}

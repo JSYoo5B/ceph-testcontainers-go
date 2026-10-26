@@ -218,7 +218,8 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if json.Unmarshal(mixedMessengerExec(t, ctx, client, "ceph", "fsid", "--format", "json"), &observed) != nil || observed.FSID != status.FSID {
 			t.Fatal("exported client connected to a different cluster")
 		}
-		_, keyring, err := cluster.ConnectionConfig(ctx)
+		cc, err := cluster.ConnectionConfig(ctx)
+		keyring := cc.Keyring
 		if err != nil {
 			t.Fatal(err)
 		}

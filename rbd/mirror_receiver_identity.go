@@ -178,7 +178,8 @@ func captureRBDReceiverClusters(ctx context.Context, config MirrorConfig) (*rbdR
 		cluster *ceph.Container
 		result  *string
 	}{{config.Source, &ids.source}, {config.Destination, &ids.destination}} {
-		configuration, _, err := site.cluster.ConnectionConfig(ctx)
+		cc, err := site.cluster.ConnectionConfig(ctx)
+		configuration := cc.Conf
 		if err != nil {
 			return nil, rbdReceiverQuery(ctx, "read RBD original bootstrap identity", err)
 		}

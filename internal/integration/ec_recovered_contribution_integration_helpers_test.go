@@ -155,7 +155,7 @@ func testECRecoveredContribution(t *testing.T) {
 		t.Fatalf("holders are not two distinct owned OSDs: %+v, plan %+v", clean, plan)
 	}
 	receipt := ecContributionReceipt{
-		PG: clean.PGID, Acting: clean.Acting, Primary: clean.ActingPrimary,
+		PG: clean.PGID.String(), Acting: clean.Acting, Primary: clean.ActingPrimary,
 		RestoredOSD: restored.ID, RestoredIndex: restoredIndex, SecondOSD: second.ID, SecondIndex: plan.SecondIndex,
 		Stage: "placement",
 	}
@@ -199,7 +199,7 @@ func testECRecoveredContribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)

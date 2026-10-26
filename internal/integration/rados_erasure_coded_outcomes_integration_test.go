@@ -62,7 +62,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	if osd == nil || victim == clean.ActingPrimary {
 		t.Fatalf("shard 1 is on osd.%d, which is not an owned non-primary OSD: %+v", victim, clean)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if noout != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -29,7 +29,8 @@ type PoolPGSnapshot struct {
 // than the OSDMap brackets, and State retains unknown or future native states.
 // A reported OSD may have been removed or be outside fixture ownership.
 type PGState struct {
-	PGID, State                                 string
+	PGID                                        PGID
+	State                                       string
 	Up, Acting                                  []int
 	UpPrimary, ActingPrimary                    int
 	ReportedEpoch, MappingEpoch, LastEpochClean uint32
@@ -288,7 +289,7 @@ func decodePoolPGReports(data []byte, poolID int64) (bool, []PGState, error) {
 		for i, id := range *pg.Acting {
 			acting[i] = int(id)
 		}
-		result = append(result, PGState{PGID: *pg.PGID, State: *pg.State, Up: up, Acting: acting,
+		result = append(result, PGState{PGID: PGID(*pg.PGID), State: *pg.State, Up: up, Acting: acting,
 			UpPrimary: int(*pg.UpPrimary), ActingPrimary: int(*pg.ActingPrimary), ReportedEpoch: *pg.ReportedEpoch,
 			ReportedSequence: *pg.ReportedSequence, MappingEpoch: *pg.MappingEpoch, LastEpochClean: *pg.LastEpochClean, StatsInvalid: *pg.StatsInvalid,
 			Stats: PGStats{Objects: *s.Objects, Bytes: *s.Bytes, ObjectCopies: *s.ObjectCopies,

@@ -66,7 +66,7 @@ publish(2 + len(chunks), closed=True, **closing)
 
 // holdOSDFlag sets a global OSD flag through OverrideOSDFlag and registers
 // its restoration before it returns.
-func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag string) *ceph.OSDFlagOverrideHandle {
+func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag ceph.OSDFlag) *ceph.OSDFlagOverrideHandle {
 	t.Helper()
 	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 	if hold != nil {
@@ -122,7 +122,7 @@ func lookRecoveryPG(ctx context.Context, cluster *ceph.Container, pool, pgid str
 	}
 	look.poolSize, look.minSize = snapshot.PoolAfter.Size, snapshot.PoolAfter.MinSize
 	for _, pg := range snapshot.PGs {
-		if pg.PGID == pgid {
+		if pg.PGID.String() == pgid {
 			look.pg, look.found = pg, true
 		}
 	}
@@ -195,9 +195,9 @@ func testCephFSOSDRecovery(t *testing.T) {
 		t.Fatalf("before the stop: %s (pool size %d, min_size %d), %v", clean, clean.poolSize, clean.minSize, err)
 	}
 
-	noout := holdOSDFlag(t, ctx, m.cluster, "noout")
-	norecover := holdOSDFlag(t, ctx, m.cluster, "norecover")
-	nobackfill := holdOSDFlag(t, ctx, m.cluster, "nobackfill")
+	noout := holdOSDFlag(t, ctx, m.cluster, ceph.OSDFlagNoOut)
+	norecover := holdOSDFlag(t, ctx, m.cluster, ceph.OSDFlagNoRecover)
+	nobackfill := holdOSDFlag(t, ctx, m.cluster, ceph.OSDFlagNoBackfill)
 	grace := 20 * time.Second
 	if err := victim.Stop(ctx, &grace); err != nil {
 		t.Fatalf("stop osd.%d: %v", victim.ID, err)

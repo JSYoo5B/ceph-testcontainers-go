@@ -128,7 +128,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
+	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

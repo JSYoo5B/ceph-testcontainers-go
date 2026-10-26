@@ -69,7 +69,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			}
 
 			t.Run("frozen_up", func(t *testing.T) {
-				hold, err := cluster.OverrideOSDFlag(ctx, "nodown", true)
+				hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
 				if hold != nil {
 					t.Cleanup(func() { restoreFlag(t, hold) })
 				}

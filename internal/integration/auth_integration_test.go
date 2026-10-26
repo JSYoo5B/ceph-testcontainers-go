@@ -77,7 +77,8 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			probe(readerClient, reader, "readonly", reader.KeyringPath())
 			// Use another real key under the writer's entity name so this tests
 			// authentication failure rather than malformed keyring parsing.
-			_, otherKeyring, err := reader.ConnectionConfig()
+			cc, err := reader.ConnectionConfig()
+			otherKeyring := cc.Keyring
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +90,8 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			// Positive I/O after negative probes proves that caps were neither
 			// broadened by the duplicate request nor damaged by authentication failure.
 			probe(writerClient, writer, "verify", writer.KeyringPath())
-			_, keyBefore, err := writer.ConnectionConfig()
+			cc2, err := writer.ConnectionConfig()
+			keyBefore := cc2.Keyring
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +108,8 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 				t.Fatal(err)
 			}
 			probe(writerClient, writer, "verify", writer.KeyringPath())
-			_, keyAfter, err := writer.ConnectionConfig()
+			cc3, err := writer.ConnectionConfig()
+			keyAfter := cc3.Keyring
 			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
 				t.Fatal("capability change replaced client credentials")
 			}

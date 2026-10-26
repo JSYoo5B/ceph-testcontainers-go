@@ -151,7 +151,7 @@ func TestPoolPGRelocation(t *testing.T) {
 						}
 					}
 				})
-				for _, flag := range []string{"nobackfill", "norecover"} {
+				for _, flag := range []ceph.OSDFlag{ceph.OSDFlagNoBackfill, ceph.OSDFlagNoRecover} {
 					hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
 					if hold != nil {
 						holds = append(holds, hold)

@@ -10,30 +10,31 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// ConnectionConfig returns independent bootstrap copies, waiting for
-// topology and the configuration cache only while ctx remains active.
-func (c *Container) ConnectionConfig(ctx context.Context) ([]byte, []byte, error) {
+// ConnectionConfig returns the independent bootstrap ceph.conf and admin
+// keyring copies, waiting for topology and the configuration cache only while
+// ctx remains active. On error it returns the zero ConnectionConfig.
+func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, error) {
 	if gateErr := c.sharedGate("ConnectionConfig"); gateErr != nil {
-		return nil, nil, gateErr
+		return ConnectionConfig{}, gateErr
 	}
 	if c == nil {
-		return nil, nil, errors.New("ceph cluster is unavailable")
+		return ConnectionConfig{}, errors.New("ceph cluster is unavailable")
 	}
 	if err := c.lockTopology(ctx); err != nil {
-		return nil, nil, err
+		return ConnectionConfig{}, err
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, nil, errClusterTerminated
+		return ConnectionConfig{}, errClusterTerminated
 	}
 	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
-		return nil, nil, err
+		return ConnectionConfig{}, err
 	}
 	defer c.configMu.RUnlock()
 	if len(c.config) == 0 || len(c.keyring) == 0 {
-		return nil, nil, errors.New("ceph cluster bootstrap is incomplete")
+		return ConnectionConfig{}, errors.New("ceph cluster bootstrap is incomplete")
 	}
-	return bytes.Clone(c.config), bytes.Clone(c.keyring), nil
+	return ConnectionConfig{Conf: bytes.Clone(c.config), Keyring: bytes.Clone(c.keyring)}, nil
 }
 
 // Managers returns sorted owned candidate descriptors. The slice is
