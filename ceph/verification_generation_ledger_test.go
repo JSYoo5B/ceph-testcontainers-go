@@ -33,6 +33,38 @@ type genState struct {
 	Present bool
 }
 
+// genReceipt is one event as the report carries it: its id and the container
+// the finding names as its source.
+type genReceipt struct {
+	ID          string
+	ContainerID string
+}
+
+func receiptIDs(r []genReceipt) []string {
+	ids := make([]string, len(r))
+	for i, x := range r {
+		ids[i] = x.ID
+	}
+	return ids
+}
+
+// countReceipts counts the receipts of id, one by one. container is matched
+// only when it is not empty.
+func countReceipts(r []genReceipt, id, container string) int {
+	n := 0
+	for _, x := range r {
+		if x.ID == id && (container == "" || x.ContainerID == container) {
+			n++
+		}
+	}
+	return n
+}
+
+// recognizedOutcome reports whether o is one of the verifier's outcomes.
+func recognizedOutcome(o VerificationOutcome) bool {
+	return o == VerificationClean || o == VerificationUnexpected || o == VerificationIncomplete
+}
+
 // genEvent is a controlled event. Generation names the generation in which
 // the fixture produced it: "first" is the one selected at activation,
 // "second" is the same container after a restart, and "replacement" is a
@@ -51,8 +83,8 @@ type genLedger struct {
 	Baseline          genState
 	Evaluated         genState
 	Events            []genEvent
-	LogsReceived      []string
-	CrashesReceived   []string
+	LogsReceived      []genReceipt
+	CrashesReceived   []genReceipt
 	LogGaps           []string
 	CrashGaps         []string
 	LogsOutcome       VerificationOutcome
@@ -85,8 +117,13 @@ func judgeGenerationFullCoverage(l genLedger) error {
 	if len(l.LogGaps) > 0 || len(l.CrashGaps) > 0 {
 		bad("gaps: logs %v, crashes %v", l.LogGaps, l.CrashGaps)
 	}
-	if l.LogsOutcome == VerificationIncomplete || l.CrashesOutcome == VerificationIncomplete || l.ReportOutcome == VerificationIncomplete {
-		bad("an incomplete check: %s/%s/%s", l.LogsOutcome, l.CrashesOutcome, l.ReportOutcome)
+	for name, o := range map[string]VerificationOutcome{"logs": l.LogsOutcome, "crashes": l.CrashesOutcome, "report": l.ReportOutcome} {
+		switch {
+		case !recognizedOutcome(o):
+			bad("the %s outcome %q is missing or unknown", name, o)
+		case o == VerificationIncomplete:
+			bad("the %s outcome is incomplete", name)
+		}
 	}
 	if l.SourceLogBytes <= 0 {
 		bad("no log bytes were read")
@@ -101,10 +138,14 @@ func judgeGenerationFullCoverage(l genLedger) error {
 		if ev.Kind == "crash" {
 			received = l.CrashesReceived
 		}
-		n := countEqual(received, ev.ID)
+		n := countReceipts(received, ev.ID, "")
 		switch {
+		case ev.Generation == "first" && ev.Container != b.ContainerID:
+			bad("first-generation event %s belongs to %q, not the activation container %q", ev.ID, ev.Container, b.ContainerID)
+		case ev.Generation == "first" && countReceipts(received, ev.ID, ev.Container) != 1:
+			bad("first-generation event %s was received %d times from %q", ev.ID, countReceipts(received, ev.ID, ev.Container), ev.Container)
 		case ev.Generation == "first" && n != 1:
-			bad("first-generation event %s was received %d times", ev.ID, n)
+			bad("first-generation event %s was also received from another container", ev.ID)
 		case ev.Generation != "first" && n > 0:
 			bad("event %s of the %s generation was received", ev.ID, ev.Generation)
 		}
@@ -115,10 +156,12 @@ func judgeGenerationFullCoverage(l genLedger) error {
 	if first == 0 {
 		bad("no first-generation event")
 	}
-	for kind, ids := range map[string][]string{"log": l.LogsReceived, "crash": l.CrashesReceived} {
-		for _, id := range ids {
-			if !slices.ContainsFunc(l.Events, func(ev genEvent) bool { return ev.ID == id && ev.Kind == kind }) {
-				bad("%s %q was received but never emitted", kind, id)
+	for kind, receipts := range map[string][]genReceipt{"log": l.LogsReceived, "crash": l.CrashesReceived} {
+		for _, r := range receipts {
+			if !slices.ContainsFunc(l.Events, func(ev genEvent) bool {
+				return ev.ID == r.ID && ev.Kind == kind && ev.Container == r.ContainerID
+			}) {
+				bad("%s %q from %q was received but never emitted there", kind, r.ID, r.ContainerID)
 			}
 		}
 	}
@@ -135,12 +178,17 @@ func judgeGenerationFullCoverage(l genLedger) error {
 func judgeNoSilentLoss(l genLedger) error {
 	var problems []string
 	bad := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
+	for name, o := range map[string]VerificationOutcome{"logs": l.LogsOutcome, "crashes": l.CrashesOutcome, "report": l.ReportOutcome} {
+		if !recognizedOutcome(o) {
+			bad("the %s outcome %q is missing or unknown", name, o)
+		}
+	}
 	for _, ev := range l.Events {
 		received, gaps, outcome := l.LogsReceived, l.LogGaps, l.LogsOutcome
 		if ev.Kind == "crash" {
 			received, gaps, outcome = l.CrashesReceived, l.CrashGaps, l.CrashesOutcome
 		}
-		if countEqual(received, ev.ID) > 0 {
+		if countReceipts(received, ev.ID, ev.Container) > 0 {
 			continue
 		}
 		if len(gaps) == 0 {
@@ -149,8 +197,8 @@ func judgeNoSilentLoss(l genLedger) error {
 		if outcome != VerificationIncomplete && outcome != VerificationUnexpected {
 			bad("%s check is %q although event %s (%s generation) is missing", ev.Kind, outcome, ev.ID, ev.Generation)
 		}
-		if l.ReportOutcome == VerificationClean {
-			bad("the report is clean although event %s is missing", ev.ID)
+		if l.ReportOutcome != VerificationIncomplete && l.ReportOutcome != VerificationUnexpected {
+			bad("the report is %q although event %s is missing", l.ReportOutcome, ev.ID)
 		}
 	}
 	if len(problems) > 0 {
@@ -220,11 +268,11 @@ func runGenerationScenario(t *testing.T, sc genScenario) genLedger {
 		LogsOutcome: report.Logs.Outcome, CrashesOutcome: report.Crashes.Outcome, ReportOutcome: report.Outcome}
 	for _, finding := range report.Logs.Findings {
 		if m := ledgerIDText.FindStringSubmatch(finding.Text); m != nil {
-			l.LogsReceived = append(l.LogsReceived, m[1])
+			l.LogsReceived = append(l.LogsReceived, genReceipt{ID: m[1], ContainerID: finding.ContainerID})
 		}
 	}
 	for _, finding := range report.Crashes.Findings {
-		l.CrashesReceived = append(l.CrashesReceived, finding.CrashID)
+		l.CrashesReceived = append(l.CrashesReceived, genReceipt{ID: finding.CrashID, ContainerID: finding.ContainerID})
 	}
 	for _, gap := range report.Logs.Gaps {
 		l.LogGaps = append(l.LogGaps, gap.Source+": "+gap.Reason)
@@ -264,7 +312,7 @@ func TestVerificationGenerationLedgerContinuousControl(t *testing.T) {
 	if err := judgeNoSilentLoss(l); err != nil {
 		t.Fatal(err)
 	}
-	if l.ReportOutcome == VerificationIncomplete || !slices.Equal(l.LogsReceived, []string{"log-first"}) {
+	if l.ReportOutcome == VerificationIncomplete || !slices.Equal(receiptIDs(l.LogsReceived), []string{"log-first"}) {
 		t.Fatalf("ledger %+v", l)
 	}
 }
@@ -296,7 +344,7 @@ func TestVerificationGenerationLedgerRestart(t *testing.T) {
 				t.Fatalf("logs: received %v, bytes %d, gaps %v, %s", l.LogsReceived, l.SourceLogBytes, l.LogGaps, l.LogsOutcome)
 			}
 			if !hasGap(l.CrashGaps, "restarted since the activation") || l.CrashesOutcome != VerificationIncomplete ||
-				countEqual(l.CrashesReceived, "2026-10-23T01:02:00Z_first") != 1 || countEqual(l.CrashesReceived, "2026-10-23T01:04:00Z_second") != 1 {
+				countReceipts(l.CrashesReceived, "2026-10-23T01:02:00Z_first", "") != 1 || countReceipts(l.CrashesReceived, "2026-10-23T01:04:00Z_second", "") != 1 {
 				t.Fatalf("crashes: received %v, gaps %v, %s", l.CrashesReceived, l.CrashGaps, l.CrashesOutcome)
 			}
 			// The source keeps the activation's generation, not the new one.
@@ -362,7 +410,7 @@ func TestVerificationGenerationLedgerRotation(t *testing.T) {
 		t.Fatalf("%v\nledger %+v", err, l)
 	}
 	if judgeGenerationFullCoverage(l) == nil || len(l.LogsReceived) != 0 || l.SourceLogBytes != 0 ||
-		!hasGap(l.LogGaps, "rotates at max-size 10m") || countEqual(l.CrashesReceived, "2026-10-23T01:02:00Z_first") != 1 {
+		!hasGap(l.LogGaps, "rotates at max-size 10m") || countReceipts(l.CrashesReceived, "2026-10-23T01:02:00Z_first", "") != 1 {
 		t.Fatalf("ledger %+v", l)
 	}
 }
@@ -410,15 +458,38 @@ func TestVerificationGenerationLedgerJudgeControls(t *testing.T) {
 		"event without container":  func(l *genLedger) { l.Events[0].Container = "" },
 		"event without generation": func(l *genLedger) { l.Events[0].Generation = "" },
 		"event of unknown kind":    func(l *genLedger) { l.Events[0].Kind = "" },
-		"first log lost":           func(l *genLedger) { l.LogsReceived = nil },
-		"first crash lost":         func(l *genLedger) { l.CrashesReceived = nil },
-		"duplicate log":            func(l *genLedger) { l.LogsReceived = repeatInPlace(l.LogsReceived, "log-first") },
-		"duplicate crash":          func(l *genLedger) { l.CrashesReceived = repeatInPlace(l.CrashesReceived, "2026-10-23T01:02:00Z_first") },
-		"unemitted log":            func(l *genLedger) { l.LogsReceived = append(l.LogsReceived, "log-ghost") },
-		"unemitted crash":          func(l *genLedger) { l.CrashesReceived = append(l.CrashesReceived, "2026-10-23T01:09:00Z_ghost") },
+		"empty logs outcome":       func(l *genLedger) { l.LogsOutcome = "" },
+		"empty crashes outcome":    func(l *genLedger) { l.CrashesOutcome = "" },
+		"empty report outcome":     func(l *genLedger) { l.ReportOutcome = "" },
+		"all outcomes deleted":     func(l *genLedger) { l.LogsOutcome, l.CrashesOutcome, l.ReportOutcome = "", "", "" },
+		"unknown report outcome":   func(l *genLedger) { l.ReportOutcome = "passed" },
+		"unknown logs outcome":     func(l *genLedger) { l.LogsOutcome = "ok" },
+		"events of another container": func(l *genLedger) {
+			for i := range l.Events {
+				l.Events[i].Container = "osd1"
+			}
+		},
+		"one event of another container": func(l *genLedger) { l.Events[0].Container = "osd1" },
+		"receipts from another container": func(l *genLedger) {
+			l.LogsReceived[0].ContainerID, l.CrashesReceived[0].ContainerID = "osd1", "osd1"
+		},
+		"receipt without container": func(l *genLedger) { l.LogsReceived[0].ContainerID = "" },
+		"extra receipt from another container": func(l *genLedger) {
+			l.LogsReceived = append(l.LogsReceived, genReceipt{ID: "log-first", ContainerID: "osd1"})
+		},
+		"first log lost":   func(l *genLedger) { l.LogsReceived = nil },
+		"first crash lost": func(l *genLedger) { l.CrashesReceived = nil },
+		"duplicate log":    func(l *genLedger) { l.LogsReceived = repeatReceipt(l.LogsReceived, "log-first") },
+		"duplicate crash":  func(l *genLedger) { l.CrashesReceived = repeatReceipt(l.CrashesReceived, "2026-10-23T01:02:00Z_first") },
+		"unemitted log": func(l *genLedger) {
+			l.LogsReceived = append(l.LogsReceived, genReceipt{ID: "log-ghost", ContainerID: "mon"})
+		},
+		"unemitted crash": func(l *genLedger) {
+			l.CrashesReceived = append(l.CrashesReceived, genReceipt{ID: "2026-10-23T01:09:00Z_ghost", ContainerID: "mon"})
+		},
 		"later generation event received": func(l *genLedger) {
 			l.Events = append(l.Events, genEvent{ID: "log-later", Kind: "log", Container: "mon", Generation: "second"})
-			l.LogsReceived = append(l.LogsReceived, "log-later")
+			l.LogsReceived = append(l.LogsReceived, genReceipt{ID: "log-later", ContainerID: "mon"})
 		},
 		"only later-generation events": func(l *genLedger) {
 			for i := range l.Events {
@@ -435,13 +506,21 @@ func TestVerificationGenerationLedgerJudgeControls(t *testing.T) {
 		})
 	}
 	loss := map[string]func(*genLedger){
-		"log gap removed":     func(l *genLedger) { l.LogGaps = nil },
-		"crash gap removed":   func(l *genLedger) { l.CrashGaps = nil },
-		"log check clean":     func(l *genLedger) { l.LogsOutcome = VerificationClean },
-		"crash check clean":   func(l *genLedger) { l.CrashesOutcome = VerificationClean },
-		"log outcome empty":   func(l *genLedger) { l.LogsOutcome = "" },
-		"crash outcome empty": func(l *genLedger) { l.CrashesOutcome = "" },
-		"report clean":        func(l *genLedger) { l.ReportOutcome = VerificationClean },
+		"log gap removed":        func(l *genLedger) { l.LogGaps = nil },
+		"crash gap removed":      func(l *genLedger) { l.CrashGaps = nil },
+		"log check clean":        func(l *genLedger) { l.LogsOutcome = VerificationClean },
+		"crash check clean":      func(l *genLedger) { l.CrashesOutcome = VerificationClean },
+		"log outcome empty":      func(l *genLedger) { l.LogsOutcome = "" },
+		"crash outcome empty":    func(l *genLedger) { l.CrashesOutcome = "" },
+		"report clean":           func(l *genLedger) { l.ReportOutcome = VerificationClean },
+		"report outcome empty":   func(l *genLedger) { l.ReportOutcome = "" },
+		"report outcome unknown": func(l *genLedger) { l.ReportOutcome = "passed" },
+		"log outcome unknown":    func(l *genLedger) { l.LogsOutcome = "ok" },
+		"all outcomes deleted":   func(l *genLedger) { l.LogsOutcome, l.CrashesOutcome, l.ReportOutcome = "", "", "" },
+		"receipt of another container hides loss": func(l *genLedger) {
+			l.LogGaps, l.LogsOutcome = nil, VerificationClean
+			l.LogsReceived = []genReceipt{{ID: "log-first", ContainerID: "osd1"}, {ID: "log-second", ContainerID: "osd1"}}
+		},
 		"no gaps and all clean": func(l *genLedger) {
 			l.LogGaps, l.CrashGaps = nil, nil
 			l.LogsOutcome, l.CrashesOutcome, l.ReportOutcome = VerificationClean, VerificationClean, VerificationClean
@@ -454,4 +533,14 @@ func TestVerificationGenerationLedgerJudgeControls(t *testing.T) {
 			}
 		})
 	}
+}
+
+// repeatReceipt repeats the receipt of id right after its first occurrence.
+func repeatReceipt(r []genReceipt, id string) []genReceipt {
+	for i, x := range r {
+		if x.ID == id {
+			return slices.Insert(slices.Clone(r), i, x)
+		}
+	}
+	panic("id not received: " + id)
 }
