@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 const (
@@ -52,7 +53,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	}
 
 	// Map 1: native CRUSH placement of the OSDs, read from Ceph.
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	hostByOSD := map[int]string{}
 	for _, osd := range osds {
 		var location struct {
@@ -67,8 +68,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		}
 		hostByOSD[osd.ID] = location.CRUSH.Host
 	}
-	if len(osds) != 3 || len(cluster.Monitors()) != 3 || len(cluster.Managers()) != 2 {
-		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(cluster.Monitors()), len(cluster.Managers()))
+	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
+		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
 	states, err := cluster.OSDStates(ctx)
 	if err != nil || len(states) != 3 {
@@ -111,13 +112,13 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	standbyName := managerBefore.Standbys[0].Name
 	owned := map[string]bool{}
 	var members []outageMember
-	monitors, managers := cluster.Monitors(), cluster.Managers()
+	monitors, managers := clusteraccess.Monitors(t, cluster), clusteraccess.Managers(t, cluster)
 	for i, mon := range monitors {
 		owned[mon.GetContainerID()] = true
 		name := mon.DaemonName
 		members = append(members, outageMember{Role: "mon", Name: name, Host: hosts[i], Container: mon.GetContainerID(), daemon: outageContainer{mon.Container},
 			current: func() string {
-				for _, m := range cluster.Monitors() {
+				for _, m := range clusteraccess.Monitors(t, cluster) {
 					if m.DaemonName == name {
 						return m.GetContainerID()
 					}
@@ -135,7 +136,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		}
 		members = append(members, outageMember{Role: "mgr", Name: name, Host: host, Container: mgr.GetContainerID(), daemon: outageContainer{mgr.Container},
 			current: func() string {
-				for _, m := range cluster.Managers() {
+				for _, m := range clusteraccess.Managers(t, cluster) {
 					if m.DaemonName == name {
 						return m.GetContainerID()
 					}
@@ -148,7 +149,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		id := osd.ID
 		members = append(members, outageMember{Role: "osd", Name: strconv.Itoa(id), Host: hostByOSD[id], Container: osd.GetContainerID(), daemon: outageContainer{osd.Container},
 			current: func() string {
-				for _, o := range cluster.OSDs() {
+				for _, o := range clusteraccess.OSDs(t, cluster) {
 					if o.ID == id {
 						return o.GetContainerID()
 					}
@@ -160,7 +161,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owned[client.GetContainerID()] || owned[cluster.ControlContainer().GetContainerID()] {
+	if owned[client.GetContainerID()] || owned[clusteraccess.ControlContainer(t, cluster).GetContainerID()] {
 		t.Fatal("the client or control container is inside the outage membership")
 	}
 	hostA := manifest.onHost(hosts[0])

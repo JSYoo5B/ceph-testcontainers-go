@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // crushItemNone marks a missing shard in an EC PG's up and acting sets.
@@ -53,7 +54,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	clean := pgs.PGs[0]
 	victim := clean.Acting[1]
 	var osd *ceph.OSDContainer
-	for _, candidate := range cluster.OSDs() {
+	for _, candidate := range clusteraccess.OSDs(t, cluster) {
 		if candidate.ID == victim {
 			osd = candidate
 		}

@@ -460,7 +460,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 			return nil, errors.New("original cold MDS ownership changed before startup")
 		}
 		var err error
-		control, err = c.ControlContainerContext(ctx)
+		control, err = c.ControlContainer(ctx)
 		if err != nil || control == nil {
 			servicehook.Unlock(c)
 			return nil, clusterutil.OperationError(ctx, "select initial MDS auth control", err)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -126,7 +127,7 @@ func runningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 // ceph-authtool --key-type, which Squid and Tentacle before 20.2.4 lack.
 func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
-	_, reader, err := cluster.ControlContainer().Exec(ctx, []string{"ceph-authtool", "--help"}, tcexec.Multiplexed())
+	_, reader, err := clusteraccess.ControlContainer(t, cluster).Exec(ctx, []string{"ceph-authtool", "--help"}, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 
 	// Every key the fixture created is AES, and the daemons run with the
 	// fractional lifetimes.
-	_, keyring, err := cluster.ConnectionConfig()
+	_, keyring, err := cluster.ConnectionConfig(ctx)
 	if err != nil || cephxKeyType(t, keyring, "client.admin") != ceph.CipherAES {
 		t.Fatalf("client.admin key type: %v", err)
 	}

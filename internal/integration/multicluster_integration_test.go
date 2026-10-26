@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -39,15 +40,15 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 				if t.Failed() {
 					// The current MONs and MGRs too: after a MON replacement the
 					// first MON is gone, and MGR modules serve mirror commands.
-					ctrs := append([]testcontainers.Container{cluster.Container, cluster.ControlContainer()}, cluster.ServiceContainers()...)
-					for _, monitor := range cluster.Monitors() {
+					ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+					for _, monitor := range clusteraccess.Monitors(t, cluster) {
 						if monitor != nil && monitor.Container != nil {
 							ctrs = append(ctrs, monitor.Container)
 						}
 					}
-					ctrs = append(ctrs, osdContainers(cluster)...)
+					ctrs = append(ctrs, osdContainers(t, cluster)...)
 					ctrs = append(ctrs, cluster.ManagerContainer())
-					for _, mgr := range cluster.Managers() {
+					for _, mgr := range clusteraccess.Managers(t, cluster) {
 						if mgr != nil && mgr.Container != nil {
 							ctrs = append(ctrs, mgr.Container)
 						}
@@ -189,7 +190,7 @@ func multiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.
 // running, but no source MON, OSD, MDS or RGW can serve or replicate data.
 func stopMultiClusterSource(t *testing.T, ctx context.Context, source *ceph.Container) {
 	t.Helper()
-	ctrs := append(source.ServiceContainers(), osdContainers(source)...)
+	ctrs := append(source.ServiceContainers(), osdContainers(t, source)...)
 	ctrs = append(ctrs, source.Container)
 	for _, ctr := range ctrs {
 		timeout := 3 * time.Second

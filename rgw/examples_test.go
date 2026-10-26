@@ -22,7 +22,11 @@ func ExampleRun() {
 	if err != nil {
 		panic(err)
 	}
-	gateway := cluster.Gateways()[0]
+	gateways, err := cluster.Gateways(ctx)
+	if err != nil {
+		panic(err)
+	}
+	gateway := gateways[0]
 	user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "app"})
 	if err != nil {
 		panic(err)

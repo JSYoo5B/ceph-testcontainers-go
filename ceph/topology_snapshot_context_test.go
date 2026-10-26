@@ -21,13 +21,13 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 				var err error
 				switch getter {
 				case "config":
-					_, _, err = cluster.ConnectionConfigContext(ctx)
+					_, _, err = cluster.ConnectionConfig(ctx)
 				case "managers":
-					_, err = cluster.ManagersContext(ctx)
+					_, err = cluster.Managers(ctx)
 				case "monitors":
-					_, err = cluster.MonitorsContext(ctx)
+					_, err = cluster.Monitors(ctx)
 				case "osds":
-					_, err = cluster.OSDsContext(ctx)
+					_, err = cluster.OSDs(ctx)
 				}
 				return err
 			})
@@ -38,7 +38,7 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 func TestConnectionConfigContextBoundsConfigurationCacheWait(t *testing.T) {
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
 	assertSnapshotReadLockQueued(t, &cluster.configMu, func(ctx context.Context) error {
-		_, _, err := cluster.ConnectionConfigContext(ctx)
+		_, _, err := cluster.ConnectionConfig(ctx)
 		return err
 	})
 	if !cluster.mu.TryLock() {
@@ -85,7 +85,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T) {
 	a, b := &ManagerContainer{DaemonName: "a"}, &ManagerContainer{DaemonName: "b"}
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring"), managers: map[string]*ManagerContainer{"b": b, "a": a}}
-	config, keyring, err := cluster.ConnectionConfigContext(t.Context())
+	config, keyring, err := cluster.ConnectionConfig(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 	if !bytes.Equal(cluster.config, []byte("config")) || !bytes.Equal(cluster.keyring, []byte("keyring")) {
 		t.Fatal("bootstrap snapshot aliased private cache")
 	}
-	managers, err := cluster.ManagersContext(t.Context())
+	managers, err := cluster.Managers(t.Context())
 	if err != nil || len(managers) != 2 || managers[0] != a || managers[1] != b {
 		t.Fatalf("manager descriptors/order: %v %v", managers, err)
 	}
@@ -102,16 +102,16 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 		t.Fatal("manager snapshot modified ownership map")
 	}
 	cluster.closed = true
-	if _, _, err := cluster.ConnectionConfigContext(t.Context()); err == nil {
+	if _, _, err := cluster.ConnectionConfig(t.Context()); err == nil {
 		t.Fatal("closed cluster supplied bootstrap credentials")
 	}
-	// Legacy descriptor getters permit inspection after termination.
-	if managers, err := cluster.ManagersContext(t.Context()); err != nil || len(managers) != 2 {
+	// Descriptor snapshots permit inspection after termination.
+	if managers, err := cluster.Managers(t.Context()); err != nil || len(managers) != 2 {
 		t.Fatalf("closed descriptor inspection changed: %v %v", managers, err)
 	}
 }
 
-func TestMonitorAndOSDContextsMatchTheirLegacyGetters(t *testing.T) {
+func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 	primary := &testcontainers.DockerContainer{}
 	c, b := &MonitorContainer{DaemonName: "c"}, &MonitorContainer{DaemonName: "b"}
 	osd0, osd2 := &OSDContainer{ID: 0}, &OSDContainer{ID: 2}
@@ -119,24 +119,24 @@ func TestMonitorAndOSDContextsMatchTheirLegacyGetters(t *testing.T) {
 		osds: map[int]*OSDContainer{2: osd2, 0: osd0}}
 	for _, terminated := range []bool{false, true} {
 		cluster.monitorTerminated = terminated
-		monitors, err := cluster.MonitorsContext(t.Context())
+		monitors, err := cluster.Monitors(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		legacy := cluster.Monitors()
-		if len(monitors) != len(legacy) {
-			t.Fatalf("terminated=%v: monitors %v, legacy %v", terminated, monitors, legacy)
+		locked := cluster.monitorsLocked()
+		if len(monitors) != len(locked) {
+			t.Fatalf("terminated=%v: monitors %v, locked %v", terminated, monitors, locked)
 		}
 		for i := range monitors {
-			if monitors[i].DaemonName != legacy[i].DaemonName || monitors[i].Container != legacy[i].Container {
-				t.Fatalf("terminated=%v: monitor %d is %+v, legacy %+v", terminated, i, monitors[i], legacy[i])
+			if monitors[i].DaemonName != locked[i].DaemonName || monitors[i].Container != locked[i].Container {
+				t.Fatalf("terminated=%v: monitor %d is %+v, locked %+v", terminated, i, monitors[i], locked[i])
 			}
 		}
 		if want := map[bool]int{false: 3, true: 2}[terminated]; len(monitors) != want || monitors[len(monitors)-1] != c {
 			t.Fatalf("terminated=%v: monitor membership/order %v", terminated, monitors)
 		}
 	}
-	osds, err := cluster.OSDsContext(t.Context())
+	osds, err := cluster.OSDs(t.Context())
 	if err != nil || len(osds) != 2 || osds[0] != osd0 || osds[1] != osd2 {
 		t.Fatalf("osd descriptors/order: %v %v", osds, err)
 	}
@@ -150,19 +150,19 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, _, err := cluster.ConnectionConfigContext(ctx); !errors.Is(err, context.Canceled) {
+	if _, _, err := cluster.ConnectionConfig(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("config: %v", err)
 	}
-	if _, err := cluster.ManagersContext(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := cluster.Managers(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("managers: %v", err)
 	}
-	if _, err := cluster.MonitorsContext(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := cluster.Monitors(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("monitors: %v", err)
 	}
-	if _, err := cluster.OSDsContext(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := cluster.OSDs(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("osds: %v", err)
 	}
-	if _, _, err := cluster.ConnectionConfigContext(t.Context()); err != nil {
+	if _, _, err := cluster.ConnectionConfig(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -170,7 +170,7 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 func TestControlContainerContextBoundsConcurrentTermination(t *testing.T) {
 	cluster := &Container{}
 	assertSnapshotReadLockQueued(t, &cluster.controlMu, func(ctx context.Context) error {
-		_, err := cluster.ControlContainerContext(ctx)
+		_, err := cluster.ControlContainer(ctx)
 		return err
 	})
 }
@@ -270,17 +270,40 @@ func TestCephControlSnapshotDoesNotReenterTopologyOwner(t *testing.T) {
 func TestControlContainerContextRetainsStableCLIAndFallbackIdentity(t *testing.T) {
 	original, control := &snapshotCommandControl{}, &snapshotCommandControl{}
 	cluster := &Container{Container: original, controlPlane: control}
-	selected, err := cluster.ControlContainerContext(t.Context())
+	selected, err := cluster.ControlContainer(t.Context())
 	if err != nil || selected != control {
 		t.Fatalf("stable CLI identity differs: %v", err)
 	}
 	cluster.controlPlane = nil
-	selected, err = cluster.ControlContainerContext(t.Context())
+	selected, err = cluster.ControlContainer(t.Context())
 	if err != nil || selected != original {
 		t.Fatalf("default monitor CLI fallback identity differs: %v", err)
 	}
 	cluster.Container = nil
-	if selected, err := cluster.ControlContainerContext(t.Context()); err != nil || selected != nil {
+	if selected, err := cluster.ControlContainer(t.Context()); err != nil || selected != nil {
 		t.Fatalf("missing control snapshot changed compatibility semantics: %v", err)
+	}
+}
+
+func TestTopologyAccessorsRejectANilCluster(t *testing.T) {
+	var cluster *Container
+	ctx := t.Context()
+	if _, _, err := cluster.ConnectionConfig(ctx); err == nil {
+		t.Error("ConnectionConfig accepted a nil cluster")
+	}
+	if control, err := cluster.ControlContainer(ctx); err == nil || control != nil {
+		t.Errorf("ControlContainer accepted a nil cluster: %v %v", control, err)
+	}
+	if client, err := cluster.ClientContainer(ctx); err == nil || client != nil {
+		t.Errorf("ClientContainer accepted a nil cluster: %v %v", client, err)
+	}
+	if managers, err := cluster.Managers(ctx); err == nil || managers != nil {
+		t.Errorf("Managers accepted a nil cluster: %v %v", managers, err)
+	}
+	if monitors, err := cluster.Monitors(ctx); err == nil || monitors != nil {
+		t.Errorf("Monitors accepted a nil cluster: %v %v", monitors, err)
+	}
+	if osds, err := cluster.OSDs(ctx); err == nil || osds != nil {
+		t.Errorf("OSDs accepted a nil cluster: %v %v", osds, err)
 	}
 }

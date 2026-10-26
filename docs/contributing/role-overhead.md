@@ -42,7 +42,7 @@ trial records:
 - `StartSeconds`: `RunWithImages` through its normal core readiness return.
 - `Core`: five seconds settling followed by eleven one-shot cgroup snapshots
   at least one second apart, before any client request.
-- `FirstClientSeconds`: the first `ClientContainerContext` call. Split mode
+- `FirstClientSeconds`: the first `ClientContainer` call. Split mode
   creates an owned idle toolkit and checks connectivity/version; aggregate
   mode reuses the existing core executor.
 - `RBDProofSeconds`: pool setup, RBD initialization, clean barrier and a native

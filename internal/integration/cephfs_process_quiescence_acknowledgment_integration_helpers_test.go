@@ -170,7 +170,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	baseline := cephFSOriginalProcessBaseline{startedAt: original.state.StartedAt, instanceID: session.gid}
 	originalPeer := expected.PeerID
 	originalControl := source.Container
-	control, err := source.ControlContainerContext(ctx)
+	control, err := source.ControlContainer(ctx)
 	if err != nil || control != originalControl {
 		t.Fatalf("acknowledgment command oracle needs original single-MON CLI: %v", err)
 	}

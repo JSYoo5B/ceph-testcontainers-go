@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -395,7 +396,7 @@ func parseMonSessions(data []byte) (map[string][]monSession, error) {
 type authSources interface {
 	AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
 	ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
-	ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error)
+	Managers(ctx context.Context) ([]*ceph.ManagerContainer, error)
 	QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
 	RunNativeCommand(ctx context.Context, target testcontainers.Container, command ceph.NativeCommand) (ceph.NativeCommandResult, error)
 	RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error)
@@ -465,7 +466,7 @@ func (c *authCollector) observeManagers(phase string, sessions map[string][]monS
 	var managers []*ceph.ManagerContainer
 	if !c.query("owned MGRs "+phase, "observation", func(ctx context.Context) ([]byte, error) {
 		var err error
-		managers, err = c.sources.ManagersContext(ctx)
+		managers, err = c.sources.Managers(ctx)
 		return nil, err
 	}) {
 		return nil
@@ -630,7 +631,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	var monitors []string
-	for _, monitor := range cluster.Monitors() {
+	for _, monitor := range clusteraccess.Monitors(t, cluster) {
 		monitors = append(monitors, monitor.DaemonName)
 	}
 	// One wipe, as in a consumer's cycle; every MON's own MonMap must move
@@ -699,7 +700,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	recorded := rejection
 	// The expected identities are frozen now, before any diagnostic.
 	expected := authExpectedTarget{FSID: monmap.FSID, Monitors: monitors, Manager: status.ActiveName, GID: status.ActiveGID}
-	for _, manager := range cluster.Managers() {
+	for _, manager := range clusteraccess.Managers(t, cluster) {
 		if manager.DaemonName == status.ActiveName {
 			state, err := manager.State(ctx)
 			if err != nil {

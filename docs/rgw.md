@@ -65,7 +65,11 @@ func TestUploadAndDownload(t *testing.T) {
 	}
 
 	// Run started one gateway named "default" with a generated S3 user.
-	gateway := cluster.Gateways()[0]
+	gateways, err := cluster.Gateways(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := gateways[0]
 	endpoint, err := gateway.S3Endpoint(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +127,11 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-gateway := cluster.Gateways()[0]
+gateways, err := cluster.Gateways(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+gateway := gateways[0]
 endpoint, err := gateway.S3Endpoint(ctx)
 // Use gateway.AccessKey and gateway.SecretKey with a path-style S3 client,
 // as in the example above. Keep the keys out of test logs.
@@ -182,7 +190,7 @@ and must still be terminated. `testcontainers.CleanupContainer(t, cluster)`
 before the error check handles this.
 
 The package-level functions that act on a cluster (`Start`, `Remove`,
-`Gateways`, `GatewaysContext`) and the cluster fields of the multisite
+`Gateways`) and the cluster fields of the multisite
 configuration take a `*ceph.Container`. Pass `cluster.Container` for a cluster
 returned by `rgw.Run` (or by `rbd.Run` or `cephfs.Run`), or pass the value
 returned by `ceph.Run` directly.
@@ -289,12 +297,12 @@ the gateway's entrypoint, command, network or listener settings.
 The `Container` returned by `Run` has two shortcuts for its gateways:
 
 ```golang
-func (c *Container) Gateways() []*Gateway
+func (c *Container) Gateways(ctx context.Context) ([]*Gateway, error)
 func (c *Container) S3Endpoint(ctx context.Context) (string, error)
 ```
 
 `Gateways` returns the cluster's gateways sorted by name, like
-`rgw.Gateways(c.Container)`. `S3Endpoint` returns the S3 endpoint of the
+`rgw.Gateways(ctx, c.Container)`. `S3Endpoint` returns the S3 endpoint of the
 cluster's only gateway, such as the `default` gateway of a `Run` without
 `WithGateways`; with several gateways, or none, it fails, and you choose a
 gateway from `Gateways` instead.
@@ -802,22 +810,13 @@ retried when the cluster terminates.
 #### Gateways
 
 ```golang
-func Gateways(c *ceph.Container) []*Gateway
+func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error)
 ```
 
 Returns the cluster's gateways sorted by name, including gateways whose startup
-failed part way. The cluster owns their containers.
-
-#### GatewaysContext
-
-```golang
-func GatewaysContext(ctx context.Context, c *ceph.Container) ([]*Gateway, error)
-```
-
-Same as `Gateways`, but bounds the wait for a concurrent topology change by
-`ctx`.
-
-### Types
+failed part way. `ctx` bounds the wait for a concurrent topology change, and a
+nil cluster returns an error. The returned slice is independent; the cluster
+owns the gateways and their containers.
 
 #### Printing handles: String and GoString
 
@@ -1891,7 +1890,11 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-gateways := cluster.Gateways() // sorted: a, b
+gateways, err := cluster.Gateways(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+// gateways is sorted: a, b
 a, b := gateways[0], gateways[1]
 // Write through a with a's test user, read through b with the same keys.
 
@@ -2082,7 +2085,11 @@ gateways:
 cluster := startCluster(t, ceph.WithOSDCount(1))
 
 // Generate a CryptoKey for session tokens. Never log it.
-_, out, err := cluster.ControlContainer().Exec(ctx,
+control, err := cluster.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+_, out, err := control.Exec(ctx,
 	[]string{"ceph-authtool", "--gen-print-key"}, tcexec.Multiplexed())
 if err != nil {
 	t.Fatal(err)
@@ -2550,7 +2557,7 @@ _, err = client.PutObject(ctx, &s3.PutObjectInput{
 ```
 
 To confirm where the data went, list the data pool:
-`cluster.ControlContainer().Exec(ctx, []string{"rados", "-p", "app-cold", "ls"})`.
+`control.Exec(ctx, []string{"rados", "-p", "app-cold", "ls"})` with `control` from `cluster.ControlContainer(ctx)`.
 RGW object names in the data pool do not always contain the S3 key literally.
 
 With `Tags` on the target, only users with a matching placement tag can create
@@ -2943,7 +2950,7 @@ code, out, err := gateway.Exec(ctx,
 
 For a multisite gateway add `--rgw-realm`, `--rgw-zonegroup` and `--rgw-zone`,
 or use the multisite methods below. The control container also has
-`radosgw-admin` (`cluster.ControlContainer().Exec(...)`), which works for the
+`radosgw-admin` (`Exec` on `cluster.ControlContainer(ctx)`), which works for the
 default zone of a standalone cluster even when no gateway is running.
 
 ### radosgw-admin in multisite zones
@@ -2981,7 +2988,7 @@ The fixture never grants the global `admin` flag.
   of 4 (`rgw_thread_pool_size`), a 1-second exit timeout, and for multisite
   gateways a 30-second sync lease (`rgw_sync_lease_period`).
 - `cluster.Ceph(ctx, "df", "--format", "json")` and
-  `cluster.ControlContainer().Exec(ctx, []string{"rados", "-p", pool, "ls"})`
+  `control.Exec(ctx, []string{"rados", "-p", pool, "ls"})` with `control` from `cluster.ControlContainer(ctx)`
   inspect RGW pools.
 
 ## Limitations and release differences

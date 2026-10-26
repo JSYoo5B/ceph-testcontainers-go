@@ -55,16 +55,6 @@ func (c *Container) cliContainer() testcontainers.Container {
 	return c.Container
 }
 
-// ControlContainer returns the stable CLI container for multi-monitor clusters,
-// or the primary MON for the default single-monitor fixture. The cluster owns it.
-// A shared cluster returns nil; see SharedCluster.
-func (c *Container) ControlContainer() testcontainers.Container {
-	if c.sharedGate("ControlContainer") != nil {
-		return nil
-	}
-	return c.cliContainer()
-}
-
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
@@ -86,16 +76,6 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	return err
 }
 
-// Monitors returns membership owned by this fixture, sorted by daemon name.
-func (c *Container) Monitors() []*MonitorContainer {
-	if c.sharedGate("Monitors") != nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.monitorsLocked()
-}
-
 // monitorsLocked lists the owned MONs. The caller holds c.mu.
 func (c *Container) monitorsLocked() []*MonitorContainer {
 	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
@@ -106,21 +86,6 @@ func (c *Container) monitorsLocked() []*MonitorContainer {
 		result = append(result, mon)
 	}
 	slices.SortFunc(result, func(a, b *MonitorContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
-	return result
-}
-
-// Managers returns active/standby candidates owned by this fixture.
-func (c *Container) Managers() []*ManagerContainer {
-	if c.sharedGate("Managers") != nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := make([]*ManagerContainer, 0, len(c.managers))
-	for _, mgr := range c.managers {
-		result = append(result, mgr)
-	}
-	slices.SortFunc(result, func(a, b *ManagerContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
 	return result
 }
 

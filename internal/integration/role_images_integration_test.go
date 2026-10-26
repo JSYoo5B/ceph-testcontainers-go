@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
@@ -46,11 +47,11 @@ func TestRoleImagesOrdinaryRBD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := c.ClientContainerContext(t.Context())
+	client, err := c.ClientContainer(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client == c.ControlContainer() {
+	if client == clusteraccess.ControlContainer(t, c) {
 		t.Fatal("toolkit silently uses core")
 	}
 	code, _, err := client.Exec(t.Context(), []string{"sh", "-c", "! command -v radosgw-admin && ! command -v rbd-mirror && ! command -v ceph-mon"})
@@ -75,7 +76,7 @@ func TestRoleImagesOrdinaryRBD(t *testing.T) {
 	if _, err := rbd.CreateNamespace(t.Context(), c, "role-rbd", "after-mon-stop"); err != nil {
 		t.Fatal(err)
 	}
-	if again, err := c.ClientContainerContext(t.Context()); err != nil || again != client {
+	if again, err := c.ClientContainer(t.Context()); err != nil || again != client {
 		t.Fatalf("executor was replaced: %v", err)
 	}
 }

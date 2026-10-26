@@ -504,7 +504,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	// The deferred line runs on every outcome, before the cleanup restores the
 	// full ratios.
 	defer func() { t.Log(receipt.line()) }()
-	mapSources := retainedMapSources(m.cluster, m.client, asok)
+	mapSources := retainedMapSources(t, m.cluster, m.client, asok)
 	notFull := waitPoolFull(t, ctx, m.cluster, pool, false)
 	receipt.NotFullEpoch = &notFull
 	receipt.phase("pool-not-full")

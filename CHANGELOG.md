@@ -10,6 +10,15 @@ change the API.
 
 ### API naming
 
+- Keep one form of each topology accessor: the one that takes `ctx` and
+  returns an error. `ceph.Container.ConnectionConfig`, `ControlContainer`,
+  `Managers`, `Monitors` and `OSDs`, and `rgw.Gateways`, now take `ctx` and
+  return an error; the `...Context` forms are renamed to these names, and
+  `ClientContainerContext` becomes `ClientContainer`. `(*rgw.Container).Gateways`
+  takes `ctx` and returns an error as well. A refused shared-cluster call is an
+  error instead of an empty result, waiting honors `ctx`, and a nil cluster
+  returns an error. There is no deprecated phase and no alias. See
+  `docs/guides/upgrading-context-accessors.md`.
 - Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
   `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
   error ownership and cleanup stay unchanged; there is no automatic expiry or

@@ -9,6 +9,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -31,7 +32,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 			status, err := cluster.ManagerStatus(statusCtx)
 			statusCancel()
 			t.Logf("cluster %d final native MGR map: %+v error=%v", index, status, err)
-			for _, manager := range cluster.Managers() {
+			for _, manager := range clusteraccess.Managers(t, cluster) {
 				if manager == nil || manager.Container == nil {
 					continue
 				}
@@ -181,7 +182,7 @@ func cephFSAssertManagerPeerNetworks(t *testing.T, ctx context.Context, source *
 		t.Fatal(err)
 	}
 	defer func() { _ = docker.Close() }()
-	for _, manager := range source.Managers() {
+	for _, manager := range clusteraccess.Managers(t, source) {
 		inspection, err := docker.ContainerInspect(ctx, manager.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)

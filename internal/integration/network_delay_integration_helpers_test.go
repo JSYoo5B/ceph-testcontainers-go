@@ -19,6 +19,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -231,7 +232,7 @@ func testNetworkDelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	objects := placeDelayObjects(t, ctx, cluster, client)
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	delayed, other := osds[0], osds[1]
 	slow, fast := objects[delayed.ID], objects[other.ID]
 	payload := delayExec(t, ctx, client, "rados", "-p", delayPool, "get", slow, "/dev/stdout")
@@ -716,7 +717,7 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 	image := netemImage(t)
 	cluster, client := newServiceCluster(t, ceph.WithPoolDefaults(1, 1), ceph.WithAddressFamily(ceph.AddressIPv6))
 	objects := placeDelayObjects(t, ctx, cluster, client)
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	delayed, other := osds[0], osds[1]
 	slow, fast := objects[delayed.ID], objects[other.ID]
 	ipv6 := func(ctr testcontainers.Container) netip.Addr {

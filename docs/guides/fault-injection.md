@@ -77,7 +77,11 @@ work on it directly. The process exits and its peers see closed connections
 immediately. The container, its Ceph identity and its data are kept.
 
 ```golang
-osd := cluster.OSDs()[0]
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+osd := osds[0]
 timeout := 10 * time.Second
 if err := osd.Stop(ctx, &timeout); err != nil {
 	t.Fatal(err)
@@ -93,11 +97,11 @@ if err := cluster.WaitForClean(ctx); err != nil {
 
 | Daemon | Handle | Notes |
 | --- | --- | --- |
-| MON | `cluster.Monitors()[i]` | Use `ceph.WithMonitorCount(3)` or more. With one MON, the MON container is also the control container that runs every fixture command, so stopping it makes every fixture call fail until it starts again. `WaitForQuorum` waits for a majority of the current monmap. |
-| MGR | `cluster.Managers()[i]` | Use `ceph.WithManagerCount(2)` so a standby takes over. `ManagerStatus` reports the active name. |
-| OSD | `cluster.OSDs()[i]` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `OverrideOSDFlag` to avoid data movement during long outages. |
+| MON | element `i` of `cluster.Monitors(ctx)` | Use `ceph.WithMonitorCount(3)` or more. With one MON, the MON container is also the control container that runs every fixture command, so stopping it makes every fixture call fail until it starts again. `WaitForQuorum` waits for a majority of the current monmap. |
+| MGR | element `i` of `cluster.Managers(ctx)` | Use `ceph.WithManagerCount(2)` so a standby takes over. `ManagerStatus` reports the active name. |
+| OSD | element `i` of `cluster.OSDs(ctx)` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `OverrideOSDFlag` to avoid data movement during long outages. |
 | MDS | `fs.MDSs()[i]` | Configure `StandbyMDS` so a standby takes the rank. Use `fs.MDSStatus` to see who holds each rank; `fs.WaitReady` also waits for the requested standby capacity, so restart the stopped daemon before calling it. |
-| RGW | `rgw.Gateways(cluster)[i]` | In bridge mode Docker can assign a new mapped port on restart. Call `S3Endpoint` again after `Start`. |
+| RGW | element `i` of `rgw.Gateways(ctx, cluster)` | In bridge mode Docker can assign a new mapped port on restart. Call `S3Endpoint` again after `Start`. |
 | RBD and CephFS mirror daemons | `mirror.Daemons()[i]` | `rbd.MirrorDaemon.Status` reports the native leader election. |
 
 `Start` does not wait for an OSD to be up and in again. Wait with `WaitForClean`, `OSDStates` or `HealthDetails`
@@ -118,7 +122,11 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[1])
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+pause, err := fault.Pause(ctx, cluster, osds[1])
 // A lost Docker reply does not prove the container is still running.
 // Resume a non-nil handle even when err is not nil.
 if pause != nil {
@@ -210,7 +218,11 @@ if err != nil {
 	t.Fatal(err)
 }
 // Cut only replication and heartbeat traffic of osd.0.
-cut, err := fault.InterruptNetwork(ctx, cluster, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+cut, err := fault.InterruptNetwork(ctx, cluster, osds[0], ceph.ClusterNetworkPlane)
 if cut != nil {
 	defer cut.Restore(cleanupCtx)
 }
@@ -286,7 +298,11 @@ if cluster != nil {
 if err != nil {
 	t.Fatal(err)
 }
-delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -445,7 +461,11 @@ and `Loss` in the same qdisc, and `Delay` may then be zero. The lease, its
 selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-limit, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+limit, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -565,7 +585,11 @@ if err != nil {
 	return err
 }
 peer := inspect.NetworkSettings.Networks[source.NetworkName()].IPAddress
-lease, err := fault.ApplyNetworkProfile(ctx, source, source.OSDs()[0].Container, fault.NetworkProfile{
+sourceOSDs, err := source.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+lease, err := fault.ApplyNetworkProfile(ctx, source, sourceOSDs[0].Container, fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        peer,
@@ -624,7 +648,11 @@ to the lease's netem qdisc. Each is a `fault.NetworkPacketFault` with a
 its selection, its checks and `Restore` are those of any other delay.
 
 ```golang
-fault, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+fault, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -802,8 +830,12 @@ privileges and work on host networking.
 
 ```golang
 // osd.1 drops client messages. It keeps talking to its peers and stays up.
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
-	Section: fmt.Sprintf("osd.%d", cluster.OSDs()[1].ID),
+	Section: fmt.Sprintf("osd.%d", osds[1].ID),
 	Name:    "ms_blackhole_client",
 	Value:   "true",
 })

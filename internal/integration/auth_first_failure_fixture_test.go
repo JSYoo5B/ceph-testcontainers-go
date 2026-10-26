@@ -293,7 +293,7 @@ func (h *heldSources) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, er
 	return ceph.ManagerStatus{}, h.query(ctx)
 }
 
-func (h *heldSources) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+func (h *heldSources) Managers(ctx context.Context) ([]*ceph.ManagerContainer, error) {
 	return nil, h.query(ctx)
 }
 

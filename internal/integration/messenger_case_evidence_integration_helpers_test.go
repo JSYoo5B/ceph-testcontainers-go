@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -64,13 +65,13 @@ func registerMessengerEvidence(t *testing.T) func(map[string]any) {
 // owned separately from the cluster. Collecting evidence must not start one.
 func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.Container, parent []byte, fsid string, executors ...testcontainers.Container) map[string]any {
 	t.Helper()
-	version := strings.TrimSpace(execOutput(t, ctx, cluster.ControlContainer(), "ceph", "--version"))
+	version := strings.TrimSpace(execOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--version"))
 	match := regexp.MustCompile(`^ceph version ([0-9]+\.[0-9]+\.[0-9]+) `).FindStringSubmatch(version)
 	if len(match) != 2 {
 		t.Fatalf("unrecognized native Ceph version: %q", version)
 	}
-	containers := append([]testcontainers.Container{cluster.Container, cluster.ControlContainer()}, cluster.ServiceContainers()...)
-	for _, osd := range cluster.OSDs() {
+	containers := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		containers = append(containers, osd.Container)
 	}
 	ids, err := messengerEvidenceImages(ctx, containers, executors...)

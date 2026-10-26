@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // monSession is one entry of a MON's "sessions" admin socket command.
@@ -25,7 +26,7 @@ type monSession struct {
 func managerMonSessions(t *testing.T, ctx context.Context, cluster *ceph.Container) map[string][]monSession {
 	t.Helper()
 	sessions := map[string][]monSession{}
-	for _, monitor := range cluster.Monitors() {
+	for _, monitor := range clusteraccess.Monitors(t, cluster) {
 		out, err := cluster.AdminSocket(ctx, "mon."+monitor.DaemonName, "sessions")
 		if err != nil {
 			t.Fatalf("sessions of mon.%s: %v", monitor.DaemonName, err)

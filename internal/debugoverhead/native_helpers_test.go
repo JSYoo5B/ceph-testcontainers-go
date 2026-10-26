@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -77,7 +78,7 @@ func runDebugOverhead(t *testing.T, option string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	inspection, err := docker.Client.ContainerInspect(ctx, osd.GetContainerID(), mobycl.ContainerInspectOptions{})
 	if err != nil || inspection.Container.State == nil || inspection.Container.Config == nil || inspection.Container.HostConfig == nil {
 		t.Fatal("OSD inspection unavailable", err)
@@ -88,7 +89,7 @@ func runDebugOverhead(t *testing.T, option string) {
 	if logConfig.Type != "json-file" || logConfig.Config["max-size"] != "" && logConfig.Config["max-size"] != "-1" {
 		t.Fatalf("measurement needs unrotated json-file Docker logs, got driver %q, max-size %q", logConfig.Type, logConfig.Config["max-size"])
 	}
-	client, err := cluster.ClientContainerContext(ctx)
+	client, err := cluster.ClientContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,7 @@ print(json.dumps(dict(bytes=len(actual),sha256=hashlib.sha256(actual).hexdigest(
 	}
 	report := map[string]any{"schema": "ceph-debug-overhead/v1", "fsid": quorum.MonMap.FSID, "daemon": "osd.0", "generation": gen,
 		"option": option, "trials_per_arm": 3, "images": imageIDs, "docker_log_driver": logConfig.Type,
-		"ceph_version":   strings.TrimSpace(execOutput(t, ctx, cluster.ControlContainer(), "ceph", "--version")),
+		"ceph_version":   strings.TrimSpace(execOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--version")),
 		"client_version": strings.TrimSpace(execOutput(t, ctx, client, "rados", "--version")),
 		"platform":       runtime.GOOS + "/" + runtime.GOARCH, "go_version": runtime.Version(),
 		"effective_log_options": options, "fixed_post_workload_wait_ns": time.Second.Nanoseconds(), "log_limit_bytes_per_arm": debugOverheadLogLimit,

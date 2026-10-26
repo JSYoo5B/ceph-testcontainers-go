@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 func TestHostFailureDomainPool(t *testing.T) {
@@ -43,7 +44,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 	// hosts/racks model placement on one Docker engine; stopping an OSD here
 	// removes the only daemon in that host's failure domain.
 	hostByOSD := make(map[int]string)
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		output, err := cluster.Ceph(ctx, "osd", "find", strconv.Itoa(osd.ID), "--format", "json")
 		if err != nil {
 			t.Fatal(err)
@@ -102,7 +103,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 		}
 	}
 	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "seed")
-	failed := cluster.OSDs()[0]
+	failed := clusteraccess.OSDs(t, cluster)[0]
 	stopTimeout := 5 * time.Second
 	if err := failed.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)

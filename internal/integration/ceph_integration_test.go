@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -80,7 +81,7 @@ func TestClusterLifecycle(t *testing.T) {
 	t.Log("independent client: wrote and read 16 objects")
 
 	// Failure injection keeps OSD identity/data; graceful removal deletes it.
-	original := cluster.OSDs()[0]
+	original := clusteraccess.OSDs(t, cluster)[0]
 	stopTimeout := 5 * time.Second
 	if err := original.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)

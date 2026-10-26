@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -98,7 +99,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if raw := osdMemoryInspect(t, ctx, docker.Client, oldContainer); !raw.State.Running || !raw.State.Paused {
 		t.Fatalf("pause refusal changed the container state %+v", raw.State)
 	}
-	if owned := cluster.OSDs(); len(owned) != 1 || owned[0] != original || original.GetContainerID() != oldContainer {
+	if owned := clusteraccess.OSDs(t, cluster); len(owned) != 1 || owned[0] != original || original.GetContainerID() != oldContainer {
 		t.Fatal("pause refusal changed the owned OSD handle")
 	}
 	if !slices.Equal(pausedRegistration, noInitialOSDNativeDump(t, ctx, cluster)) {
@@ -123,7 +124,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if _, err := docker.Client.ContainerInspect(ctx, oldContainer, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("detached container remains", err)
 	}
-	if len(cluster.OSDs()) != 0 {
+	if len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("a detached OSD is still listed")
 	}
 	native := noInitialOSDNativeDump(t, ctx, cluster)
@@ -180,7 +181,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if !maps.Equal(tampered, retainedStoreFingerprint(t, ctx, observer, store)) {
 		t.Fatal("the store refusal changed the retained store")
 	}
-	if len(cluster.OSDs()) != 0 {
+	if len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("the store refusal published an OSD")
 	}
 	// Restore the keyring bytes in place, keeping its inode.

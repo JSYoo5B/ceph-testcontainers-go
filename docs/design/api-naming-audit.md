@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **795** functions, declared methods on
+The declaration catalogue contains **789** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **1089** exported field/nested-record/embedding entries in
 **181** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
@@ -18,17 +18,17 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 366 | 424 |
+| `ceph` | 361 | 424 |
 | `fault` | 35 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
-| `rgw` | 126 | 204 |
+| `rgw` | 125 | 204 |
 | `capture` | 36 | 56 |
-| Total | 795 | 1089 |
+| Total | 789 | 1089 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
-`RunWithImages`, `WithImages`, `Images`, `ClientContainerContext` and the
-mirror variants, the context-bounded `MonitorsContext` and `OSDsContext`
+`RunWithImages`, `WithImages`, `Images`, `ClientContainer` and the
+mirror variants, the context-bounded `Monitors` and `OSDs`
 getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
 and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
 accessors) added for #6, the test finalization added for #49
@@ -56,8 +56,8 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Family examined | Decision and reason |
 | --- | --- |
 | Cluster construction, topology and resource operations | Retain `Run`, `RunWithImages`, `Add*`, `Create*`, `Remove*`, `Start`, `Set*` and `Update*`. Their verbs distinguish allocating an owned resource, attaching a daemon to an existing cluster, and changing existing policy. `cephfs.Start`/`rgw.Start` attach services; package `Run` owns a cluster. No blanket Create/Add or Set/Apply conversion is justified. |
-| Role selection and feature executors | Retain `ImageSet` and `Essential`, `Client`, `CephFS`, `RBDAux`, `RGW`, `All`: they match the current dependency-role contract. `WithImages` selects configuration; `Images` reports effective selection; `ClientContainerContext` names the lazy toolkit executor. `ControlImage`/`ControlContainer*` retain their control-plane meaning rather than restoring old daemon-role image options. |
-| Context-bounded getters | Retain `ConnectionConfigContext`, `ControlContainerContext`, `ManagersContext`, `MonitorsContext` and `OSDsContext`. The `Context` suffix names the variant of an existing getter that returns the same owned result but waits for the topology only while `ctx` is active; the context-free getters remain. It does not promise that a returned descriptor stays live. |
+| Role selection and feature executors | Retain `ImageSet` and `Essential`, `Client`, `CephFS`, `RBDAux`, `RGW`, `All`: they match the current dependency-role contract. `WithImages` selects configuration; `Images` reports effective selection; `ClientContainer` names the lazy toolkit executor. `ControlImage`/`ControlContainer` retain their control-plane meaning rather than restoring old daemon-role image options. |
+| Context-taking getters | Retain `ConnectionConfig`, `ControlContainer`, `Managers`, `Monitors` and `OSDs` of `ceph.Container` and `rgw.Gateways`. Each exists once, takes `ctx` first and returns an error. The former no-context getters and the `Context` suffix variants are gone, with no alias ([migration](../guides/upgrading-context-accessors.md)). The call waits for the topology only while `ctx` is active and does not promise that a returned descriptor stays live. |
 | Queries and waits | Retain domain nouns (`Pools`, `OSDStates`, `Sessions`, `Zonegroups`, `ImageStatus`, `DataPools`), plus List where the standalone namespace CLI uses it. Receiver/package context resolves subject names. `WaitReady`, `WaitFor*`, `Wait*Ready` and `Wait*Synced` identify actual readiness/sync predicates; a naming pass must not turn one observation into a broader completion promise. |
 | Requests, observations and value/resource types | Retain `Config`, `Setting`, `Policy`, `Status`, `State`, `Info`, `Snapshot`, `Report` and domain resource nouns. Request and returned observation distinctions are explicit in their signatures/reference pages. Repeated `Filesystem`, `Mirror`, `Pool`, `Client` or `Network` words remain where needed to distinguish data pools, host/cluster networks, source/destination and daemon/client roles. |
 | Saved policies and revocation handles | Retain the completed `Override*` and management `*Handle` names from #18/#19. Retain `FullRatiosOverride` and `BlocklistOverride` as the explicit #15/#16 exceptions: their domain/Restore methods already identify the saved policy. This does not move either policy into `fault`, add automatic undo, or claim an uncertain handle succeeded. |

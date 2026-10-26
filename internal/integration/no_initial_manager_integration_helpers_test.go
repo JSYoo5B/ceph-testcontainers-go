@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -59,7 +60,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	fsid := q.MonMap.FSID
 	originalMONCID := cluster.GetContainerID()
-	if len(cluster.Managers()) != 0 || cluster.ManagerContainer() != nil || customizers.Load() != 1 {
+	if len(clusteraccess.Managers(t, cluster)) != 0 || cluster.ManagerContainer() != nil || customizers.Load() != 1 {
 		t.Fatal("cold construction launched a manager or changed MON customizer scope")
 	}
 	noInitialManagerMap(t, ctx, cluster, false)
@@ -69,7 +70,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if noStorage {
 		wantOSDs = 0
 	}
-	if err != nil || len(states) != wantOSDs || len(cluster.OSDs()) != wantOSDs || len(noInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
+	if err != nil || len(states) != wantOSDs || len(clusteraccess.OSDs(t, cluster)) != wantOSDs || len(noInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
 		t.Fatal("cold constructor changed selected storage inventory", err)
 	}
 	for _, state := range states {
@@ -78,7 +79,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		}
 	}
 	originalOSDCIDs := make([]string, 0, wantOSDs)
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		originalOSDCIDs = append(originalOSDCIDs, osd.GetContainerID())
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, nil, "cold")
@@ -97,7 +98,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	canceled, stop := context.WithCancel(ctx)
 	stop()
-	if mgr, err := cluster.AddManager(canceled, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(cluster.Managers()) != 0 {
+	if mgr, err := cluster.AddManager(canceled, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(clusteraccess.Managers(t, cluster)) != 0 {
 		t.Fatal("canceled first manager changed owned state", err)
 	}
 	noInitialManagerAuth(t, ctx, cluster, nil)
@@ -141,7 +142,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	oracle.owned = append(oracle.owned, manager.GetContainerID())
 	originalMGRCID := manager.GetContainerID()
-	ownedManagers := cluster.Managers()
+	ownedManagers := clusteraccess.Managers(t, cluster)
 	if len(ownedManagers) != 1 || ownedManagers[0] != manager {
 		t.Fatal("first manager did not retain exact owned descriptor")
 	}
@@ -149,7 +150,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	noInitialManagerAuth(t, ctx, cluster, []string{"mgr.a"})
 	managerLifecycleRBDReady(t, ctx, cluster)
 	if noStorage {
-		if len(cluster.OSDs()) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+		if len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 			t.Fatal("first manager implicitly provisioned storage")
 		}
 		noInitialManagerResources(t, ctx, oracle, cluster, client, "manager-before-storage")
@@ -208,7 +209,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		t.Fatal("provisioning replaced original MON/MGR identity", err)
 	}
 	finalOSDCIDs := make([]string, 0, 2)
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		finalOSDCIDs = append(finalOSDCIDs, osd.GetContainerID())
 	}
 	finalStates, err := cluster.OSDStates(ctx)
@@ -348,7 +349,7 @@ func noInitialManagerMute(snapshot ceph.HealthSnapshot, code string) *ceph.Healt
 
 func noInitialManagerMap(t *testing.T, ctx context.Context, cluster *ceph.Container, active bool) uint64 {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
+	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
 	var status struct {
 		Available  *bool              `json:"available"`
 		ActiveName *string            `json:"active_name"`
@@ -399,7 +400,7 @@ func noInitialManagerAuth(t *testing.T, parent context.Context, cluster *ceph.Co
 
 func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string, wantOK bool) bool {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
+	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
 	t.Logf("NO_INITIAL_MGR_HEALTH phase=%s detail=%s", phase, data)
 	var health struct {
 		Status string                     `json:"status"`
@@ -458,10 +459,10 @@ func noInitialManagerResources(t *testing.T, ctx context.Context, o *noInitialOS
 		}
 		expected[ctr.GetContainerID()] = role
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		add(osd.Container, "osd")
 	}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		add(mgr.Container, "mgr")
 	}
 	if client != nil {

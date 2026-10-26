@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -132,7 +133,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if _, err := docker.Client.ContainerInspect(ctx, oldID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("old instance was not removed", err)
 	}
-	owned := cluster.OSDs()
+	owned := clusteraccess.OSDs(t, cluster)
 	if len(owned) != 1 || owned[0] != original || original.GetContainerID() != oldID {
 		t.Fatal("partial detach discarded its owned descriptor")
 	}
@@ -171,7 +172,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if actions := partialDetachEvents(t, ctx, docker.Client, owner, beforeRetry, afterRetry); len(actions) != 0 {
 		t.Fatal("settlement changed runtime instances", actions)
 	}
-	if len(cluster.OSDs()) != 0 || detached.ID() != original.ID || detached.UUID() != identities[original.ID] || detached.ClusterFSID() != quorum.MonMap.FSID {
+	if len(clusteraccess.OSDs(t, cluster)) != 0 || detached.ID() != original.ID || detached.UUID() != identities[original.ID] || detached.ClusterFSID() != quorum.MonMap.FSID {
 		t.Fatal("settled detached identity differs")
 	}
 	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {

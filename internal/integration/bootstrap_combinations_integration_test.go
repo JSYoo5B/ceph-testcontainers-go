@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -69,7 +70,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			opts: []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers()},
 			pool: "rbd",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
-				if managers := cluster.Managers(); len(managers) != 0 {
+				if managers := clusteraccess.Managers(t, cluster); len(managers) != 0 {
 					t.Fatalf("managers = %d, want none", len(managers))
 				}
 			},
@@ -101,7 +102,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			}
 			// Clean PG statistics come from a manager; without one the
 			// object round trip below is the readiness check.
-			if len(cluster.Managers()) != 0 {
+			if len(clusteraccess.Managers(t, cluster)) != 0 {
 				if err := cluster.WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}

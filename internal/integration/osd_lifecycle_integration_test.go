@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -69,12 +70,12 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			original := cluster.OSDs()[0]
+			original := clusteraccess.OSDs(t, cluster)[0]
 			originalCalls := &osdRemovalContainerCalls{Container: original.Container}
 			original.Container = originalCalls
 			// Single-MON fixtures use the embedded handle for their CLI, allowing
 			// a response fault without replacing any Docker/native resource.
-			if cluster.ControlContainer() != cluster.Container {
+			if clusteraccess.ControlContainer(t, cluster) != cluster.Container {
 				t.Fatal("expected the initial MON to provide the control CLI")
 			}
 			fault := &osdRemovalPurgeReplyFault{Container: cluster.Container, id: original.ID}
@@ -82,7 +83,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := cluster.RemoveOSD(ctx, original.ID); !errors.Is(err, errOSDPurgeReplyLost) {
 				t.Fatalf("real purge did not retain its lost reply error: %v", err)
 			}
-			if fault.purges.Load() != 1 || len(cluster.OSDs()) != 3 {
+			if fault.purges.Load() != 1 || len(clusteraccess.OSDs(t, cluster)) != 3 {
 				t.Fatal("uncertain purge lost cleanup ownership or repeated the purge")
 			}
 			actions, stops, terminations := fault.mutations.Load(), originalCalls.stops.Load(), originalCalls.terminations.Load()
@@ -92,7 +93,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
 				t.Fatal("retry uncertain purge", err)
 			}
-			if fault.purges.Load() != 1 || len(cluster.OSDs()) != 2 {
+			if fault.purges.Load() != 1 || len(clusteraccess.OSDs(t, cluster)) != 2 {
 				t.Fatal("purge retry repeated native purge or retained completed cleanup")
 			}
 			if fault.mutations.Load() != actions || originalCalls.stops.Load() != stops || originalCalls.terminations.Load() != terminations+1 {
@@ -120,7 +121,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 
 			// This test actor explicitly removes a different OSD outside the API
 			// and creates an unowned, down registration with its old number.
-			foreignTarget := cluster.OSDs()[1]
+			foreignTarget := clusteraccess.OSDs(t, cluster)[1]
 			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", fmt.Sprintf("osd.%d", foreignTarget.ID), "0")
 			cephCommand(t, ctx, cluster, "osd", "out", strconv.Itoa(foreignTarget.ID))
 			if err := cluster.WaitForPGClean(ctx); err != nil {
@@ -162,7 +163,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err != nil || !bytes.Equal(before, after) || fault.mutations.Load() != mutations || foreignCalls.stops.Load() != 0 || foreignCalls.terminations.Load() != 0 {
 				t.Fatal("foreign OSD rejection changed the native map or issued a mutation", err)
 			}
-			if len(cluster.OSDs()) != 3 {
+			if len(clusteraccess.OSDs(t, cluster)) != 3 {
 				t.Fatal("foreign OSD rejection lost the old owned container cleanup handle")
 			}
 			verify()

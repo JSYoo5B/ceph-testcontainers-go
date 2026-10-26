@@ -47,7 +47,8 @@ audit are recorded in [API naming](docs/design/api-naming.md). Upgrade guides
 cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
 [CephFS names](docs/guides/upgrading-cephfs-names.md),
 [network profiles](docs/guides/upgrading-network-profile-names.md) and the
-[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md).
+[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md) and the
+[topology accessors](docs/guides/upgrading-context-accessors.md).
 
 ## Requirements
 
@@ -100,7 +101,7 @@ func TestWithCeph(t *testing.T) {
 	}
 
 	// Give a native client the cluster's ceph.conf and an admin keyring.
-	conf, keyring, err := cluster.ConnectionConfig()
+	conf, keyring, err := cluster.ConnectionConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,11 @@ files, err := cephfs.Run(ctx, ceph.DefaultImage)
 // One S3 gateway with a generated test user.
 objects, err := rgw.Run(ctx, ceph.DefaultImage)
 endpoint, err := objects.S3Endpoint(ctx)
-gateway := objects.Gateways()[0] // AccessKey, SecretKey and Region
+gateways, err := objects.Gateways(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+gateway := gateways[0] // AccessKey, SecretKey and Region
 ```
 
 To serve several services from one cluster, pass their options to `ceph.Run`:

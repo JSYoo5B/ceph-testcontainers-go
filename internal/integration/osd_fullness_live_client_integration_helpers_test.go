@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -182,7 +183,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var victim *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID != primary && slices.Contains(clean.Acting, osd.ID) {
 			victim = osd
 		}

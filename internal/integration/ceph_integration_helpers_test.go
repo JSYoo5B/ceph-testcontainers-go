@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -68,9 +69,9 @@ func execCommand(t *testing.T, ctx context.Context, ctr testcontainers.Container
 	}
 }
 
-func osdContainers(cluster *ceph.Container) []testcontainers.Container {
+func osdContainers(t testing.TB, cluster *ceph.Container) []testcontainers.Container {
 	var result []testcontainers.Container
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		result = append(result, osd.Container)
 	}
 	return result

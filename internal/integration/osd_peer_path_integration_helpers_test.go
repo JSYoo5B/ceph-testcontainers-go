@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -214,7 +215,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 		t.Logf("osd.%d cluster %v heartbeat back %v", osd.ID, osd.Cluster, osd.HeartbeatBack)
 	}
 	containers := map[int]*ceph.OSDContainer{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		containers[osd.ID] = osd
 	}
 	if containers[primary] == nil || containers[replica] == nil || !clusterIP[primary].IsValid() || !clusterIP[replica].IsValid() {

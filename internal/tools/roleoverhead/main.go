@@ -223,7 +223,7 @@ func measureTrial(ctx context.Context, docker *testcontainers.DockerClient, cfg 
 		return result, err
 	}
 	started = time.Now()
-	toolkit, err := c.ClientContainerContext(ctx)
+	toolkit, err := c.ClientContainer(ctx)
 	result.FirstClientSeconds = time.Since(started).Seconds()
 	if err != nil {
 		return result, err

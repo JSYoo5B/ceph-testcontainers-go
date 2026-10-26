@@ -1198,7 +1198,10 @@ if err != nil {
 	t.Fatal(err)
 }
 filesystems := cephfs.Filesystems(cluster) // owned filesystem descriptors
-gateways := rgw.Gateways(cluster)          // owned gateway descriptors
+gateways, err := rgw.Gateways(ctx, cluster) // owned gateway descriptors
+if err != nil {
+	t.Fatal(err)
+}
 ```
 
 | Option | Creates during `Run` | Add to a running cluster | Details |
@@ -1491,7 +1494,7 @@ that only read state stay available.
 | --- | --- |
 | `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `AdminSocket`, `ControlContainer`, `ControlContainerContext`, `ConnectionConfig`, `ConnectionConfigContext`, `WithClient`, `ManagerContainer`, `Monitors`, `MonitorsContext`, `Managers`, `ManagersContext`, `OSDs`, `OSDsContext`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil. |
+| `Ceph`, `AdminSocket`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
@@ -2108,31 +2111,39 @@ output; assertions compare the raw bytes. Redaction is best effort.
 #### ControlContainer
 
 ```golang
-func (c *Container) ControlContainer() testcontainers.Container
+func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error)
 ```
 
 Returns the container in which the fixture runs CLI commands. In a single-MON
 cluster this is MON `a`. With more than one monitor it is an independent CLI
 container created by the first [AddMonitor](#addmonitor) (also during `Run`), so
 commands keep working while MON `a` is stopped or removed. The cluster owns it.
-Use it to run other tools from the control image:
+`ctx` bounds the wait for a concurrent control-plane creation or termination.
+The returned handle is a snapshot; it does not promise that the container stays
+alive. A shared cluster refuses the call with an error. Use it to run other
+tools from the control image:
 
 ```golang
-code, reader, err := cluster.ControlContainer().Exec(ctx,
+control, err := cluster.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+code, reader, err := control.Exec(ctx,
 	[]string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())
 ```
 
 Do not pause or stop it; [fault.Pause](fault.md#pause) refuses it.
 
-#### ControlContainerContext
+#### ClientContainer
 
 ```golang
-func (c *Container) ControlContainerContext(ctx context.Context) (testcontainers.Container, error)
+func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Container, error)
 ```
 
-Like [ControlContainer](#controlcontainer), but bounds the wait for a concurrent
-control-plane creation or termination by `ctx`. The returned handle is a snapshot;
-it does not promise that the container stays alive.
+Returns the owned userspace toolkit executor. A separate client image starts it
+lazily; aggregate images reuse the [control container](#controlcontainer).
+`ctx` bounds the wait for a concurrent topology change, and a shared cluster
+refuses the call with an error. The cluster owns the container.
 
 #### ControlImage
 
@@ -2181,16 +2192,23 @@ sorted by service name. The cluster owns their cleanup. Use the service packages
 #### Monitors
 
 ```golang
-func (c *Container) Monitors() []*ceph.MonitorContainer
+func (c *Container) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, error)
 ```
 
-Returns the owned monitors sorted by daemon name. Each `*ceph.MonitorContainer`
+Returns the owned monitors sorted by daemon name. `ctx` bounds the wait for a
+concurrent topology change, and a shared cluster refuses the call with an error.
+The returned slice is independent; descriptors and containers remain owned by
+the cluster. Each `*ceph.MonitorContainer`
 embeds its `testcontainers.Container` and has a `DaemonName`. `Stop` and `Start`
 on the handle inject failures and preserve the monitor's store; use
 [RemoveMonitor](#removemonitor) to change membership.
 
 ```golang
-mon := cluster.Monitors()[1]
+monitors, err := cluster.Monitors(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+mon := monitors[1]
 timeout := 10 * time.Second
 if err := mon.Stop(ctx, &timeout); err != nil {
 	t.Fatal(err)
@@ -2214,16 +2232,6 @@ again. A MON whose endpoint is interrupted with
 [fault.InterruptNetwork](fault.md#interruptnetwork) does not start until the interruption is
 restored. MON a's container waits for a quorum when it starts, so after all
 MONs were stopped, start the others first.
-
-#### MonitorsContext
-
-```golang
-func (c *Container) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error)
-```
-
-Like [Monitors](#monitors), but bounds the wait for a concurrent topology change
-by `ctx`. The returned slice is independent; descriptors and containers remain
-owned by the cluster.
 
 #### AddMonitor
 
@@ -2306,10 +2314,13 @@ their next start.
 #### Managers
 
 ```golang
-func (c *Container) Managers() []*ceph.ManagerContainer
+func (c *Container) Managers(ctx context.Context) ([]*ceph.ManagerContainer, error)
 ```
 
-Returns the owned manager candidates sorted by daemon name. Each
+Returns the owned manager candidates sorted by daemon name. `ctx` bounds the
+wait for a concurrent topology change, and a shared cluster refuses the call
+with an error. The returned slice is independent; descriptors and containers
+remain owned by the cluster. Each
 `*ceph.ManagerContainer` embeds its container and has a `DaemonName`. Stop the
 active manager's container to trigger a standby takeover, or stop the only
 manager to test behaviour without a manager:
@@ -2319,7 +2330,11 @@ status, err := cluster.ManagerStatus(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-for _, mgr := range cluster.Managers() {
+managers, err := cluster.Managers(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+for _, mgr := range managers {
 	if mgr.DaemonName == status.ActiveName {
 		timeout := 10 * time.Second
 		if err := mgr.Stop(ctx, &timeout); err != nil {
@@ -2328,16 +2343,6 @@ for _, mgr := range cluster.Managers() {
 	}
 }
 ```
-
-#### ManagersContext
-
-```golang
-func (c *Container) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error)
-```
-
-Like [Managers](#managers), but bounds the wait for a concurrent topology change
-by `ctx`. The returned slice is independent; descriptors and containers remain
-owned by the cluster.
 
 #### ManagerContainer
 
@@ -2392,16 +2397,23 @@ restarts.
 #### OSDs
 
 ```golang
-func (c *Container) OSDs() []*ceph.OSDContainer
+func (c *Container) OSDs(ctx context.Context) ([]*ceph.OSDContainer, error)
 ```
 
-Returns a snapshot of the owned OSDs sorted by ID. Each `*ceph.OSDContainer`
+Returns a snapshot of the owned OSDs sorted by ID. `ctx` bounds the wait for a
+concurrent topology change, and a shared cluster refuses the call with an error.
+The returned slice is independent; descriptors and containers remain owned by
+the cluster. Each `*ceph.OSDContainer`
 embeds its container and has the numeric `ID`; `Placement()` returns its resolved
 CRUSH location. `Stop`/`Start` on the handle inject daemon failures; the OSD keeps
 its identity and data (also with in-memory storage):
 
 ```golang
-osd := cluster.OSDs()[0]
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+osd := osds[0]
 timeout := 10 * time.Second
 if err := osd.Stop(ctx, &timeout); err != nil {
 	t.Fatal(err)
@@ -2425,16 +2437,6 @@ startup. Failed initialization is not automatically replayed. See
 and limits. [Launch recipes](design/osd-launch-recipes.md) capture file/config
 inputs and rebuild fresh Readers without replaying container creation; neither
 change introduces retained-store detach/reopen support.
-
-#### OSDsContext
-
-```golang
-func (c *Container) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error)
-```
-
-Like [OSDs](#osds), but bounds the wait for a concurrent topology change by
-`ctx`. The returned slice is independent; descriptors and containers remain
-owned by the cluster.
 
 #### AddOSD
 
@@ -3243,7 +3245,7 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
 #### ConnectionConfig
 
 ```golang
-func (c *Container) ConnectionConfig() ([]byte, []byte, error)
+func (c *Container) ConnectionConfig(ctx context.Context) ([]byte, []byte, error)
 ```
 
 Returns independent copies of the bootstrap `ceph.conf` and the admin keyring for
@@ -3251,10 +3253,12 @@ a native client that you start yourself, for example a test process using
 go-ceph in host mode or a custom client implementation. The configuration
 contains the addresses that the cluster advertises: container addresses in bridge
 mode, host addresses (with final MON ports) in host mode. The keyring grants full
-privileges. It fails after termination or before bootstrap completed.
+privileges. `ctx` bounds the wait for a concurrent topology change or
+configuration update. It fails after termination or before bootstrap completed,
+and a shared cluster refuses the call.
 
 ```golang
-config, keyring, err := cluster.ConnectionConfig()
+config, keyring, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -3272,15 +3276,6 @@ if err := os.WriteFile(keyringPath, keyring, 0o600); err != nil {
 ```
 
 For a restricted identity use `ClientConfig.ConnectionConfig()` instead.
-
-#### ConnectionConfigContext
-
-```golang
-func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte, error)
-```
-
-Like [ConnectionConfig](#connectionconfig), but bounds the wait for a concurrent
-topology change or configuration update by `ctx`.
 
 #### RefreshClientMonitorConfig
 
@@ -3843,7 +3838,7 @@ PG still inconsistent.
 
 ### Container Methods: Fault injection
 
-Daemon handles (`Monitors()`, `Managers()`, `OSDs()`, and the MDS and RGW handles
+Daemon handles (from `Monitors`, `Managers` and `OSDs`, and the MDS and RGW handles
 of the service packages) support `Stop` and `Start`: the process ends and peers
 see the connection close. The dedicated operations in [`fault`](fault.md) add other failure shapes. For
 Messenger-level delays and dropped messages (`ms_blackhole_*`,
@@ -4717,7 +4712,10 @@ rule replicated_rule {
     step emit
 }
 `
-control := cluster.ControlContainer()
+control, err := cluster.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 if err := control.CopyToContainer(ctx, []byte(legacyMap), "/tmp/crush.txt", 0o644); err != nil {
 	t.Fatal(err)
 }
@@ -4877,7 +4875,11 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-osd := cluster.OSDs()[0]
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+osd := osds[0]
 timeout := 10 * time.Second
 if err := osd.Stop(ctx, &timeout); err != nil {
 	t.Fatal(err)
@@ -5120,7 +5122,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig()
+config, keyring, err := cluster.ConnectionConfig(ctx)
 // Write both files and point librados at them (see ConnectionConfig).
 ```
 
@@ -5137,7 +5139,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig()
+config, keyring, err := cluster.ConnectionConfig(ctx)
 // Hand config and keyring to the client under test (for example an
 // independent Messenger v2 implementation), or attach a container with
 // cluster.WithClient() / cluster.WithClientIdentity(...).
@@ -5171,12 +5173,12 @@ cluster's containers:
 | --- | --- |
 | Any `ceph` command | `cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "nodelete", "true")` |
 | JSON output | `cluster.Ceph(ctx, "osd", "dump", "--format", "json")` and `json.Unmarshal` |
-| `rados`, `rbd`, `ceph-authtool`, Python clients | `cluster.ControlContainer().Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` |
+| `rados`, `rbd`, `ceph-authtool`, Python clients | `control.Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` with `control` from `cluster.ControlContainer(ctx)` |
 | A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
 | Any central option | [OverrideConfig](#overrideconfig), so it is restored |
-| Commands inside one daemon's container | `cluster.OSDs()[0].Exec(ctx, []string{...})` (OSD images may not contain the `ceph` CLI) |
+| Commands inside one daemon's container | `Exec` on an element of `cluster.OSDs(ctx)` (OSD images may not contain the `ceph` CLI) |
 | `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](rgw.md) package |
 
 Arguments are passed without a shell. `cluster.Ceph` adds `--connect-timeout 5`
@@ -5292,7 +5294,7 @@ to service Run entry points with images.Essential as the image argument.
 `Run` without an explicit set uses its image as the aggregate. `Images()`
 returns the effective selection and `ControlImage()` returns essential.
 
-`ClientContainerContext` lazily creates one owned toolkit for a separate
+`ClientContainer` lazily creates one owned toolkit for a separate
 client image; aggregate selections reuse the control executor. Initial
 attachment is serialized with MON topology changes and honors cancellation.
 The cluster owns partial/successful toolkit teardown. RBD/CephFS operations,

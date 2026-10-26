@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -56,7 +57,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 				if keeperID != "" {
 					osdMemoryCapacity(t, cleanup, docker.Client, keeperID, "failure")
 				}
-				for _, osd := range cluster.OSDs() {
+				for _, osd := range clusteraccess.OSDs(t, cluster) {
 					if osd.Container == nil {
 						continue
 					}
@@ -80,7 +81,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 		t.Fatal("original native FSID unavailable")
 	}
 	afterVolumes, afterKeepers := osdMemoryLabelInventory(t, ctx, docker.Client)
-	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeKeepers, afterKeepers) || len(cluster.OSDs()) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeKeepers, afterKeepers) || len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero-OSD bootstrap allocated memory storage or registered an OSD")
 	}
 	t.Logf("OSD_MEMORY_LAZY fsid=%s new_volumes=0 new_keepers=0", fsid)
@@ -93,17 +94,17 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 			t.Fatal("provision initial memory OSD", err)
 		}
 	}
-	initial := cluster.OSDs()
+	initial := clusteraccess.OSDs(t, cluster)
 	if len(initial) != 2 {
 		t.Fatal("exact two-OSD ownership unavailable")
 	}
 	volumeName, keeper := osdMemoryBacking(t, ctx, docker.Client, cluster, initial, image)
 	keeperID = keeper.ID
 	owned[keeper.ID] = true
-	for _, ctr := range append([]testcontainers.Container{cluster.Container}, osdContainers(cluster)...) {
+	for _, ctr := range append([]testcontainers.Container{cluster.Container}, osdContainers(t, cluster)...) {
 		owned[ctr.GetContainerID()] = true
 	}
-	for _, manager := range cluster.Managers() {
+	for _, manager := range clusteraccess.Managers(t, cluster) {
 		owned[manager.GetContainerID()] = true
 	}
 	network, err := docker.Client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
@@ -223,7 +224,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 		t.Fatal("replacement reused old container or native UUID")
 	}
 	osdMemoryDirectory(t, ctx, replacement, fsid, current[replacement.ID])
-	osdMemoryBacking(t, ctx, docker.Client, cluster, cluster.OSDs(), image)
+	osdMemoryBacking(t, ctx, docker.Client, cluster, clusteraccess.OSDs(t, cluster), image)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal("replacement recovery failed", err)
 	}
@@ -244,7 +245,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if refused != nil || refusalErr == nil || contextErr != nil || errors.Is(refusalErr, context.DeadlineExceeded) || refusalErr.Error() != "OSD memory keeper is not running; stored data may be lost" {
 		t.Fatal("lost keeper was not a completed pre-registration refusal", refusalErr, contextErr)
 	}
-	if !slices.Equal(beforeRefusal, noInitialOSDNativeDump(t, ctx, cluster)) || !maps.Equal(current, osdMemoryIdentities(t, ctx, cluster)) || len(cluster.OSDs()) != 3 {
+	if !slices.Equal(beforeRefusal, noInitialOSDNativeDump(t, ctx, cluster)) || !maps.Equal(current, osdMemoryIdentities(t, ctx, cluster)) || len(clusteraccess.OSDs(t, cluster)) != 3 {
 		t.Fatal("lost-keeper refusal changed native OSD IDs/UUIDs or ownership")
 	}
 	afterRefusal := osdMemoryInspect(t, ctx, docker.Client, keeper.ID)

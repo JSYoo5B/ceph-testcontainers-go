@@ -134,11 +134,11 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 	// A multi-MON fixture can remain live after its embedded primary MON was
 	// stopped or removed. Its independent CLI is the control handle; checking
 	// only the original container would reject a healthy surviving quorum.
-	sourceControl, err := source.ControlContainerContext(ctx)
+	sourceControl, err := source.ControlContainer(ctx)
 	if err != nil {
 		return fmt.Errorf("inspect source Ceph control handle: %w", err)
 	}
-	destinationControl, err := destination.ControlContainerContext(ctx)
+	destinationControl, err := destination.ControlContainer(ctx)
 	if err != nil {
 		return fmt.Errorf("inspect destination Ceph control handle: %w", err)
 	}
@@ -148,7 +148,7 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 		return invalid(errors.New("multicluster requires two running Ceph clusters"))
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if _, _, err := cluster.ConnectionConfigContext(ctx); err != nil {
+		if _, _, err := cluster.ConnectionConfig(ctx); err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("multicluster requires initialized, unterminated Ceph clusters: %w", err)
 			}

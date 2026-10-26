@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 )
 
@@ -125,7 +126,7 @@ finally:
 		if err := guardGeneration(probe); err != nil {
 			return err
 		}
-		r, err := cluster.RunNativeCommand(probe, cluster.ControlContainer(), ceph.NativeCommand{
+		r, err := cluster.RunNativeCommand(probe, clusteraccess.ControlContainer(t, cluster), ceph.NativeCommand{
 			Argv:    []string{"ceph", "tell", "mds." + inducedBefore.Active[0].Name, "config", "set", "mds_cache_memory_limit", value},
 			Timeout: 30 * time.Second, MaxStdout: 16 << 10, MaxStderr: 16 << 10, Label: "owned MDS cache limit",
 		})

@@ -225,9 +225,9 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | --- | --- |
 | `WithClient()` | Attach an application container with the admin keyring. |
 | `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `DeleteClient` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
-| `ConnectionConfig()` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
+| `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `PoolStatus`, `RemovePool`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
-| `Ceph(ctx, args...)`, `ControlContainer()`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
+| `Ceph(ctx, args...)`, `ControlContainer(ctx)`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
 | `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `OverrideConfig` | Set any Ceph option and restore it. |
 | `CephVersion()` | Branch on the Ceph release (`"20.2.4"`, `"19.2.5"`). |
@@ -380,7 +380,7 @@ These helpers move CLI-generated RBD archives between clusters through Go
 stay independent.
 
 `client` is any container that has the `rbd` CLI and credentials for its own
-cluster: `cluster.ControlContainer()` or a container attached with `WithClient`.
+cluster: `cluster.ControlContainer(ctx)` or a container attached with `WithClient`.
 `image` is an RBD image spec such as `volumes/disk` or `volumes/tenant-a/disk`.
 
 Common rules:
@@ -1295,7 +1295,11 @@ func TestTenantNamespace(t *testing.T) {
 	rw, ro := start(writer), start(reader)
 
 	// An image in the default namespace, created with admin credentials.
-	if code, out, err := run(ctx, cluster.ControlContainer(),
+	control, err := cluster.ControlContainer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, out, err := run(ctx, control,
 		"rbd", "create", "--size", "16M", "volumes/shared"); err != nil || code != 0 {
 		t.Fatalf("create volumes/shared: %d %s %v", code, out, err)
 	}
@@ -1396,7 +1400,11 @@ func TestLockHandover(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, err := run(ctx, cluster.ControlContainer(),
+	control, err := cluster.ControlContainer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, out, err := run(ctx, control,
 		"rbd", "create", "--size", "16M", "volumes/disk"); err != nil || code != 0 {
 		t.Fatalf("create image: %d %s %v", code, out, err)
 	}
@@ -1869,8 +1877,14 @@ times; their results are not one atomic observation.
 ### Back up an image and restore it on another cluster
 
 ```golang
-src := source.ControlContainer()
-dst := destination.ControlContainer()
+src, err := source.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+dst, err := destination.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 // destination has an initialized pool "volumes" (rbd.WithPools or InitPool).
 
 // Full backup with a baseline snapshot.
@@ -1911,7 +1925,7 @@ Everything without a typed API is one native command away.
 | Need | How |
 | --- | --- |
 | `ceph` CLI on a cluster | `out, err := cluster.Ceph(ctx, "osd", "pool", "get", "volumes", "all", "--format", "json")` (stdout only) |
-| `rbd` or `rados` on a cluster | `cluster.ControlContainer().Exec(ctx, []string{"rbd", ...}, tcexec.Multiplexed())` (admin credentials) |
+| `rbd` or `rados` on a cluster | `control.Exec(ctx, []string{"rbd", ...}, tcexec.Multiplexed())` with `control` from `cluster.ControlContainer(ctx)` (admin credentials) |
 | `rbd` on either side of a mirror | `link.SourceRBD(ctx, args...)`, `link.DestinationRBD(ctx, args...)` (stdout only, error on non-zero exit) |
 | `rbd` as a restricted identity | Exec in a container attached with `cluster.WithClientIdentity(id)`, passing `--id id.User()` |
 | `rbd-mirror` admin socket | `daemon.Exec(ctx, []string{"ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status"}, tcexec.Multiplexed())` for a `daemon` from `link.Daemons()` |

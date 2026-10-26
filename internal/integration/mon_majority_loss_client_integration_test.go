@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 const monLossClientPool = "tc-mon-loss-client"
@@ -62,7 +63,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(5))
-	monitors := cluster.Monitors()
+	monitors := clusteraccess.Monitors(t, cluster)
 	if len(monitors) != 5 {
 		t.Fatal("fixture did not construct five monitors")
 	}

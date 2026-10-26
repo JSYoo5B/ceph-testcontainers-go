@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // ecInstance identifies one running incarnation of an OSD container.
@@ -133,7 +134,7 @@ func testECRecoveredContribution(t *testing.T) {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && !slices.Contains(pg.Acting, ecFragmentNone)
 	})
 	byID := map[int]*ceph.OSDContainer{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		byID[osd.ID] = osd
 	}
 	restoredIndex := -1

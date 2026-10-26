@@ -37,21 +37,9 @@ func Remove(ctx context.Context, c *ceph.Container, name string) error {
 	return removeGateway(ctx, c, name)
 }
 
-// Gateways returns the cluster's named gateway descriptors sorted by gateway
-// name, including partially initialized gateways. The cluster owns their
-// containers.
-func Gateways(c *ceph.Container) []*Gateway {
-	if c == nil {
-		return nil
-	}
-	servicehook.Lock(c)
-	defer servicehook.Unlock(c)
-	return gateways(c).sorted()
-}
-
-// GatewaysContext returns sorted owned gateway descriptors, including partial
+// Gateways returns sorted owned gateway descriptors, including partial
 // startup attempts, while bounding the wait for fixture topology by ctx.
-func GatewaysContext(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
+func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 	if c == nil {
 		return nil, errNilCluster
 	}

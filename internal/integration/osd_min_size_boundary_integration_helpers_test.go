@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -162,7 +163,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var a, b, d *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		switch {
 		case !slices.Contains(clean.Acting, osd.ID):
 			d = osd
@@ -187,7 +188,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	t.Logf("OSD_MIN_SIZE_RUNTIME ceph=%q platform=%q pg=%s primary=osd.%d replica=osd.%d peer=osd.%d spare=osd.%d", strings.TrimSpace(string(out)), strings.TrimSpace(string(uname.Stdout)), pgid, primary, a.ID, b.ID, d.ID)
 
 	stopped := map[int]bool{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		restore(fmt.Sprintf("osd.%d", osd.ID), func(cleanup context.Context) error {
 			if stopped[osd.ID] {
 				stopped[osd.ID] = false
@@ -200,7 +201,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	// admitted only for that same instance, and its result is read back apart
 	// from the request.
 	instances := map[int]secondFaultInstance{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		instances[osd.ID] = secondFaultInstanceOf(t, ctx, osd)
 		if !instances[osd.ID].Running {
 			t.Fatalf("osd.%d is not running before any fault: %+v", osd.ID, instances[osd.ID])

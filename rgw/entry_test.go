@@ -70,11 +70,8 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	if err := Remove(ctx, nil, "a"); err == nil {
 		t.Fatal("nil cluster removed a gateway")
 	}
-	if _, err := GatewaysContext(ctx, nil); err == nil {
+	if _, err := Gateways(ctx, nil); err == nil {
 		t.Fatal("nil cluster listed gateways")
-	}
-	if Gateways(nil) != nil {
-		t.Fatal("nil cluster reported gateways")
 	}
 }
 
@@ -92,7 +89,7 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 			}
 			return err
 		},
-		"GatewaysContext": func(ctx context.Context, c *ceph.Container) error { _, err := GatewaysContext(ctx, c); return err },
+		"Gateways": func(ctx context.Context, c *ceph.Container) error { _, err := Gateways(ctx, c); return err },
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
@@ -110,17 +107,17 @@ func TestGatewaySnapshotsCopyOwnedDescriptors(t *testing.T) {
 	x, y := &Gateway{GatewayName: "x"}, &Gateway{GatewayName: "y"}
 	cluster := testCluster(nil, servicehook.TestConfig{}, nil)
 	gateways(cluster).byName["y"], gateways(cluster).byName["x"] = y, x
-	snapshot, err := GatewaysContext(t.Context(), cluster)
+	snapshot, err := Gateways(t.Context(), cluster)
 	if err != nil || len(snapshot) != 2 || snapshot[0] != x || snapshot[1] != y {
 		t.Fatalf("gateway descriptors/order: %v %v", snapshot, err)
 	}
 	snapshot[0] = nil
-	if gateways(cluster).byName["x"] != x || Gateways(cluster)[0] != x {
+	if gateways(cluster).byName["x"] != x || gateways(cluster).sorted()[0] != x {
 		t.Fatal("gateway snapshot modified ownership map")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := GatewaysContext(ctx, cluster); !errors.Is(err, context.Canceled) {
+	if _, err := Gateways(ctx, cluster); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expired context listed gateways: %v", err)
 	}
 	if registry := gateways(cluster); len(registry.Secrets()) != 4 || len(registry.ConfigTargets()) != 0 {
@@ -130,8 +127,8 @@ func TestGatewaySnapshotsCopyOwnedDescriptors(t *testing.T) {
 
 func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 	var missing *Container
-	if missing.Gateways() != nil {
-		t.Fatal("nil container reported gateways")
+	if got, err := missing.Gateways(t.Context()); err == nil || got != nil {
+		t.Fatalf("nil container listed gateways: %v %v", got, err)
 	}
 	if _, err := missing.S3Endpoint(t.Context()); err == nil {
 		t.Fatal("nil container returned an endpoint")
@@ -142,8 +139,8 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 	}
 	only := &Gateway{GatewayName: "default", publicAddress: "192.0.2.10", port: 8000}
 	gateways(cluster.Container).byName["default"] = only
-	if got := cluster.Gateways(); len(got) != 1 || got[0] != only {
-		t.Fatalf("Gateways = %v", got)
+	if got, err := cluster.Gateways(t.Context()); err != nil || len(got) != 1 || got[0] != only {
+		t.Fatalf("Gateways = %v %v", got, err)
 	}
 	if endpoint, err := cluster.S3Endpoint(t.Context()); err != nil || endpoint != "http://192.0.2.10:8000" {
 		t.Fatalf("S3Endpoint = %q, %v", endpoint, err)

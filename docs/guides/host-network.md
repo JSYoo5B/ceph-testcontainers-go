@@ -11,7 +11,7 @@ must be networked.
 | Client location | Network mode | How to connect |
 | --- | --- | --- |
 | A Linux container next to the cluster | Bridge (default) | `cluster.WithClient()` or `cluster.WithClientIdentity(client)` |
-| The test process on a Linux Docker host | Host | `ceph.WithHostNetwork()` and `cluster.ConnectionConfig()` |
+| The test process on a Linux Docker host | Host | `ceph.WithHostNetwork()` and `cluster.ConnectionConfig(ctx)` |
 | The test process on macOS or Windows with Docker Desktop | Host, with Docker Desktop host networking enabled | Same as above; see [Docker Desktop](#docker-desktop) |
 | An S3 client anywhere | Either | `rgw.Gateway.S3Endpoint(ctx)` (plain HTTP) |
 
@@ -119,7 +119,7 @@ if errors.Is(err, ceph.ErrHostNetworkUnavailable) {
 if err != nil {
 	t.Fatal(err)
 }
-config, keyring, err := cluster.ConnectionConfig()
+config, keyring, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -210,9 +210,9 @@ The helper containers are released by the cluster, also in `Terminate`.
 
 ### Connecting from the test process
 
-`ConnectionConfig()` returns independent copies of the bootstrap `ceph.conf`
+`ConnectionConfig(ctx)` returns independent copies of the bootstrap `ceph.conf`
 and the admin keyring. In host mode the MON addresses in it are final.
-`ConnectionConfigContext(ctx)` does the same while bounding the wait for
+`ConnectionConfig(ctx)` does the same while bounding the wait for
 concurrent topology changes. The copy is a snapshot: after `AddMonitor` or
 `RemoveMonitor`, call it again.
 
@@ -227,7 +227,7 @@ this code in a test file of your own module with the build constraint
 `//go:build linux && cgo`.
 
 ```golang
-conf, keyring, err := cluster.ConnectionConfig()
+conf, keyring, err := cluster.ConnectionConfig(ctx)
 if err != nil {
 	t.Fatal(err)
 }

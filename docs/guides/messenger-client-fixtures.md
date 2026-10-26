@@ -77,10 +77,10 @@ until it reports an active MGR and one standby.
 | Control | Fixture | Proven by |
 | --- | --- | --- |
 | Pause a MON or a MGR and resume it | `fault.Pause` and `fault.PauseLease.Resume`. The paused daemon's socket still accepts TCP connections, but the daemon sends nothing. A paused MON leaves the quorum to the other two. A MON paused for longer than the MON ticket lifetime can strand a daemon whose MON session was on it: the daemon's reconnect is refused with `EACCES`, and its MON client stops authenticating. With 12 s tickets and a 25 s pause, this happened to the active MGR in two of four runs. Check MGR-dependent behaviour before such a pause, or restart the stranded daemon. | `TestMessengerClientProfileSecure` |
-| Fail over the active MGR | `cluster.Ceph(ctx, "mgr", "fail", name)`. The failed MGR restarts its process and registers as a standby again, about 1.5 s later on 20.2.4; wait until `ManagerStatus` lists it before the next control, such as a monmap change. A daemon that must authenticate again after the MONs have rotated away the secret of its ticket, for example after an election that outlasted the ticket lifetime, is refused with `EACCES` and can stay unregistered while its process runs (see the pause row); `Stop` and `Start` on its `Managers()` handle bring it back. See [MGR MonClients](#mgr-monclients) before treating a refusal as that case. | `TestMessengerClientProfileSecure`, which waits for the standby before its next control |
+| Fail over the active MGR | `cluster.Ceph(ctx, "mgr", "fail", name)`. The failed MGR restarts its process and registers as a standby again, about 1.5 s later on 20.2.4; wait until `ManagerStatus` lists it before the next control, such as a monmap change. A daemon that must authenticate again after the MONs have rotated away the secret of its ticket, for example after an election that outlasted the ticket lifetime, is refused with `EACCES` and can stay unregistered while its process runs (see the pause row); `Stop` and `Start` on its `Managers(ctx)` handle bring it back. See [MGR MonClients](#mgr-monclients) before treating a refusal as that case. | `TestMessengerClientProfileSecure`, which waits for the standby before its next control |
 | Tell which MON session belongs to a registered MGR | the owned MONs' `sessions` admin socket command, through `cluster.AdminSocket(ctx, "mon.<name>", "sessions")`; see [MGR MonClients](#mgr-monclients) | `TestMessengerClientProfileManagerMonClients` |
-| Stop one MGR and start it again | `Managers()`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket; see [MGR transition receipt](#mgr-transition-receipt) for when the MGR is registered again. | `TestMessengerClientProfileSecure`, `TestMessengerClientProfileManagerTransition` |
-| Restart one MON | `Monitors()`, then `Stop` and `Start` | `TestMessengerClientProfileSecure` |
+| Stop one MGR and start it again | `Managers(ctx)`, then `Stop` and `Start` on the handle. `Start` waits only for the admin socket; see [MGR transition receipt](#mgr-transition-receipt) for when the MGR is registered again. | `TestMessengerClientProfileSecure`, `TestMessengerClientProfileManagerTransition` |
+| Restart one MON | `Monitors(ctx)`, then `Stop` and `Start` | `TestMessengerClientProfileSecure` |
 | Stop every MON and start them again | `Stop` each MON; start `b` and `c` before `a`. MON a's container checks `ceph status` when it starts, which needs a quorum. Each MON comes back at its monmap address. | `TestMessengerClientProfileSecure`, with the MONs down longer than a MON ticket lives |
 | Stop MON a for good | `Stop` on its handle. With three MONs, the fixture's own CLI runs in a separate control container and keeps working. | `TestMessengerClientProfileSecure` |
 | Start MGRs later | `AddManager` | `TestMessengerClientProfileDelayedManagers` |
@@ -122,7 +122,7 @@ phases:
 1. Baseline: one available active and one standby, both owned. The test
    freezes the FSID, the MON names, both MgrMap registrations (name and GID)
    and both containers' IDs and start times.
-2. Promotion: `Stop` on the active's `Managers()` handle. The phase waits
+2. Promotion: `Stop` on the active's `Managers(ctx)` handle. The phase waits
    until the captured standby is active with the same GID, container ID and
    start time, and the stopped MGR has left the MgrMap.
 3. Restoration: `Start` on the same handle. `Start` waits only for the admin
@@ -195,7 +195,7 @@ collects:
 | --- | --- | --- |
 | `monitors` | `AdminSocket(ctx, "mon.<name>", "mon_status")` for each expected MON | each MON's own rank, state, election epoch, quorum, MonMap epoch, `auth_epoch` (Tentacle; absent on Squid) and FSID, without a MON session |
 | `quorum_names` | `QuorumStatus` | the quorum as a MON session reports it, a different observation from each MON's own state |
-| `managers`, `managers_after` | `mgr dump`, `ManagersContext` and each MGR container's start time, and every expected MON's `sessions` | each MGR's GID and container instance, before and after the collection, and its MON sessions split as in [MGR MonClients](#mgr-monclients): the beacon session's global ID and the module clients' |
+| `managers`, `managers_after` | `mgr dump`, `Managers` and each MGR container's start time, and every expected MON's `sessions` | each MGR's GID and container instance, before and after the collection, and its MON sessions split as in [MGR MonClients](#mgr-monclients): the beacon session's global ID and the module clients' |
 | `native_controls` | `RunNativeCommand` of `ceph tell mgr.<name> version` for the tested target and the active MGR | behavioral controls, with their phase: a new client authenticated with its own ticket |
 | `queries` | every query above | name, kind, start and end, and a status: `complete`, `unsupported`, `timed_out`, `truncated`, `failed` or `unavailable`, with a redacted error and output excerpt of at most 1 KiB otherwise |
 | `first_failure`, `held_session`, `consumer_tickets`, `provenance`, `expected_target` | your records | stored as given |
@@ -205,7 +205,7 @@ The collection has one total budget, here a minute, and a bound per query.
 It runs from a context of its own, so a test context that ended with the
 failure does not stop it, and it keeps going after a query fails. Every wait
 ends with the budget: the MONs come from your frozen list, the MGR
-containers from `ManagersContext`, and errors are redacted within what is
+containers from `Managers`, and errors are redacted within what is
 left of the budget. An error that could not be redacted in time is replaced
 by a fixed "text withheld" marker. The one exception is a control that
 `RunNativeCommand` could not confirm as stopped: its `Stop` has a separate

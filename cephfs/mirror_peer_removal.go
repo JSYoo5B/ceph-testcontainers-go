@@ -571,7 +571,7 @@ func normalCephFSRemovalProcess(s *container.State) bool {
 }
 
 func (r *MirrorPeerRemoval) watchers(ctx context.Context) (map[string]string, error) {
-	control, err := r.source.ClientContainerContext(ctx)
+	control, err := r.source.ClientContainer(ctx)
 	if err != nil {
 		return nil, cephFSObserveQuery("select CephFS peer drain control container", err)
 	}

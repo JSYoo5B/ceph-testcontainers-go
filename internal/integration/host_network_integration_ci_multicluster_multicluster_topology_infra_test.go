@@ -38,7 +38,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 			t.Fatal(err)
 		}
 		fsids[i] = status.FSID
-		config, keyring, err := cluster.ConnectionConfig()
+		config, keyring, err := cluster.ConnectionConfig(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

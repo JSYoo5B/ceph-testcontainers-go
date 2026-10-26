@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -89,7 +90,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			// A completed native placement edit must override cached fixture
 			// placement when deciding whether a new replica count is feasible.
-			osdID := cluster.OSDs()[2].ID
+			osdID := clusteraccess.OSDs(t, cluster)[2].ID
 			osdName := fmt.Sprintf("osd.%d", osdID)
 			// CRUSH dump exposes the exact 16.16 item weight. Tree output's
 			// rounded crush_weight is unsuitable for an exact restoration; a

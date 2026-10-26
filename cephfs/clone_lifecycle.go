@@ -35,7 +35,7 @@ type cephFSCloneMetadata struct {
 // metadata_manager}.py and volumes/fs/async_cloner.py.
 func (fs *Filesystem) readCloneIncarnation(ctx context.Context, identity *cephFSCloneIdentity) (*cephFSCloneIncarnation, error) {
 	base := path.Join(path.Dir(path.Dir(path.Dir(identity.source.subvolume.path))), cephFSNativeGroup(identity.group), identity.name)
-	control, err := fs.cluster.ClientContainerContext(ctx)
+	control, err := fs.cluster.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS clone CLI container: %w", err)
 	}

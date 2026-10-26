@@ -309,12 +309,12 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `WithClient()` | Attach a client container with `ceph.conf` and the admin keyring. |
 | `WithClientIdentity(client)` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
 | `CreateClient`, `DeleteClient` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
-| `ConnectionConfig()` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
+| `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
 | `OverrideConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `RemovePool`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
-| `ControlContainer()`, `ControlImage()` | The container that runs fixture commands and its image (mirror daemons usually use `ControlImage()`). |
+| `ControlContainer(ctx)`, `ControlImage()` | The container that runs fixture commands and its image (mirror daemons usually use `ControlImage()`). |
 | `ServiceContainers()` | Owned MDS (and RGW) containers. |
 | `CephVersion()` | The Ceph release of the `Run` image. |
 
@@ -2145,7 +2145,7 @@ Notes:
   or `/dev/fuse`.
 - For a native client in the test process, start the cluster with
   `ceph.WithHostNetwork()` on a Linux Docker host and pass the bytes from
-  `cluster.ConnectionConfig()` to the client. See
+  `cluster.ConnectionConfig(ctx)` to the client. See
   [Host network](guides/host-network.md).
 
 ### Test quota enforcement (EDQUOT)

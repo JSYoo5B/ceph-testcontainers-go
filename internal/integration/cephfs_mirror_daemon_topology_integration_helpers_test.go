@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -73,7 +74,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 				for _, daemon := range mirror.Daemons() {
 					multiClusterLogContainer(t, logCtx, daemon.Container)
 				}
-				for _, manager := range source.Managers() {
+				for _, manager := range clusteraccess.Managers(t, source) {
 					if manager != nil && manager.Container != nil {
 						multiClusterLogContainer(t, logCtx, manager.Container)
 					}
@@ -132,7 +133,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 
 	// Cross-check admin peer status against the native directory map. The
 	// process selected for outage must own real directories before it is stopped.
-	fsDescription := multiClusterExecOutput(t, ctx, source.ControlContainer(), "ceph", "fs", "get", sourceFS.FilesystemName, "--format", "json")
+	fsDescription := multiClusterExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "fs", "get", sourceFS.FilesystemName, "--format", "json")
 	var filesystem struct {
 		ID int `json:"id"`
 	}

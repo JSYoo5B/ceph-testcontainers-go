@@ -128,7 +128,7 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	control := source.Container
-	if selected, err := source.ControlContainerContext(ctx); err != nil || selected != control {
+	if selected, err := source.ControlContainer(ctx); err != nil || selected != control {
 		t.Fatalf("addition command oracle requires original single-MON control: %v", err)
 	}
 	counter := &cephFSDirectoryAdditionCommandCounter{Container: control, filesystem: sourceFS.FilesystemName, added: added, unapplied: unapplied}

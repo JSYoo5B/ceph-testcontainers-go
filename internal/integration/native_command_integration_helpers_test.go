@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/containerd/errdefs"
@@ -35,9 +36,9 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}, opts...)...)
-	control := cluster.ControlContainer()
+	control := clusteraccess.ControlContainer(t, cluster)
 	logNativeRuntime(t, ctx, cluster, map[string]testcontainers.Container{
-		"control": control, "mgr": cluster.ManagerContainer(), "osd": cluster.OSDs()[0], "client": client,
+		"control": control, "mgr": cluster.ManagerContainer(), "osd": clusteraccess.OSDs(t, cluster)[0], "client": client,
 	})
 
 	// The reproduction of the issue: a read-only MGR query that hangs on a
@@ -383,7 +384,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 
 	t.Run("admission", func(t *testing.T) {
 		// OSD images need not have python3.
-		osd := cluster.OSDs()[0]
+		osd := clusteraccess.OSDs(t, cluster)[0]
 		result, err := cluster.RunNativeCommand(ctx, osd, ceph.NativeCommand{Argv: []string{"ceph-osd", "--version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
 		switch {
@@ -482,7 +483,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			!strings.Contains(failure.Reason, "tc-missing-pool") {
 			t.Fatalf("a missing pool returned %v", err)
 		}
-		control := cluster.ControlContainer()
+		control := clusteraccess.ControlContainer(t, cluster)
 		if _, err := servicehook.Command(ctx, client, "rados", "--pool", "tc-missing-pool", "ls"); !errors.Is(err, fs.ErrNotExist) ||
 			!errors.As(err, &failure) || failure.Program != "rados" || failure.Errno != "ENOENT" {
 			t.Fatalf("rados on a missing pool returned %v", err)
@@ -504,7 +505,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	t.Run("lost_receipt", func(t *testing.T) {
 		// A mutation that ran keeps its effect when its exec loses the final
 		// inspection; the call is no request refused before any change.
-		control := cluster.ControlContainer()
+		control := clusteraccess.ControlContainer(t, cluster)
 		lossy := &nativeReceiptLoss{Container: control, cause: errdefs.ErrNotFound}
 		_, err := cluster.RunNativeCommand(ctx, lossy, ceph.NativeCommand{Argv: []string{"ceph", "--connect-timeout", "5", "config", "set", "mon.a", "debug_mon", "3/6"},
 			Timeout: 20 * time.Second, MaxStdout: 4096, MaxStderr: 4096, Label: "set debug_mon"})

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -42,7 +43,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 				return
 			}
 			if t.Failed() {
-				for _, osd := range cluster.OSDs() {
+				for _, osd := range clusteraccess.OSDs(t, cluster) {
 					osdMemoryFailureLogs(t, context.Background(), osd)
 				}
 			}
@@ -59,7 +60,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	// A rejected, canceled addition must not register or allocate an OSD.
 	canceled, stop := context.WithCancel(ctx)
 	stop()
-	if osd, err := cluster.AddOSD(canceled); !errors.Is(err, context.Canceled) || osd != nil || len(cluster.OSDs()) != 0 {
+	if osd, err := cluster.AddOSD(canceled); !errors.Is(err, context.Canceled) || osd != nil || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("partial setup cancellation changed ownership", err)
 	}
 	osd, err := cluster.AddOSD(ctx)
@@ -73,7 +74,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := cluster.ClientContainerContext(ctx)
+	client, err := cluster.ClientContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if err := osd.Start(canceled); !errors.Is(err, context.Canceled) {
 		t.Fatal("canceled restart", err)
 	}
-	if len(cluster.OSDs()) != 1 || cluster.OSDs()[0] != osd || osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID()).State.Running {
+	if len(clusteraccess.OSDs(t, cluster)) != 1 || clusteraccess.OSDs(t, cluster)[0] != osd || osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID()).State.Running {
 		t.Fatal("canceled restart lost ownership or started daemon")
 	}
 	if err := osd.Start(ctx); err != nil {

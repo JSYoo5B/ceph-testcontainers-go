@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -247,7 +248,7 @@ func heldRenewedWithin(t *testing.T, ctx context.Context, ctr testcontainers.Con
 func monitorLogLines(t *testing.T, ctx context.Context, cluster *ceph.Container, texts ...string) int {
 	t.Helper()
 	count := 0
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		logs, err := mon.Logs(ctx)
 		if err != nil {
 			t.Fatal(err)

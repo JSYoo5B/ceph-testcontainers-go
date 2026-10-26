@@ -74,12 +74,12 @@ func TestRADOSInspectionRequiresToolkitInsteadOfCoreFallback(t *testing.T) {
 
 func TestClientExecutorMissingAndClosedDoNotAllocate(t *testing.T) {
 	c := &Container{settings: options{imageSet: &ImageSet{Essential: "core"}}}
-	if ctr, err := c.ClientContainerContext(t.Context()); ctr != nil || !errors.Is(err, ErrInvalidRequest) {
+	if ctr, err := c.ClientContainer(t.Context()); ctr != nil || !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("missing client: %v %v", ctr, err)
 	}
 	c.settings.imageSet.Client = "toolkit"
 	c.nativeClosed = true
-	if ctr, err := c.ClientContainerContext(context.Background()); ctr != nil || !errors.Is(err, errClusterTerminated) {
+	if ctr, err := c.ClientContainer(context.Background()); ctr != nil || !errors.Is(err, errClusterTerminated) {
 		t.Fatalf("closed client: %v %v", ctr, err)
 	}
 }
@@ -87,11 +87,11 @@ func TestClientExecutorMissingAndClosedDoNotAllocate(t *testing.T) {
 func TestAggregateClientExecutorUsesCurrentControl(t *testing.T) {
 	mon, control := &monitorLifecycleDaemon{}, &monitorLifecycleDaemon{}
 	c := &Container{Container: mon}
-	if got, err := c.ClientContainerContext(t.Context()); err != nil || got != mon {
+	if got, err := c.ClientContainer(t.Context()); err != nil || got != mon {
 		t.Fatalf("aggregate MON: %v %v", got, err)
 	}
 	c.controlPlane = control
-	if got, err := c.ClientContainerContext(t.Context()); err != nil || got != control {
+	if got, err := c.ClientContainer(t.Context()); err != nil || got != control {
 		t.Fatalf("aggregate stable CLI: %v %v", got, err)
 	}
 }
@@ -110,7 +110,7 @@ func TestExpandedAllSelectionIsIdempotent(t *testing.T) {
 func TestSingleImageToolkitReusesCoreWithoutAllocation(t *testing.T) {
 	mon := &monitorLifecycleDaemon{}
 	c := &Container{Container: mon, settings: options{imageSet: &ImageSet{Essential: "complete", Client: "complete"}}}
-	got, err := c.ClientContainerContext(t.Context())
+	got, err := c.ClientContainer(t.Context())
 	if err != nil || got != mon || c.featureClient != nil {
 		t.Fatalf("unnecessary all-image executor: %v %v", got, err)
 	}
@@ -130,7 +130,7 @@ func TestTerminationCancelsToolkitStartup(t *testing.T) {
 
 func TestUnconfirmedToolkitStartIsNotRepeated(t *testing.T) {
 	c := &Container{settings: options{imageSet: &ImageSet{Essential: "core", Client: "toolkit"}}, featureClientAttempted: true}
-	if ctr, err := c.ClientContainerContext(t.Context()); ctr != nil || err == nil {
+	if ctr, err := c.ClientContainer(t.Context()); ctr != nil || err == nil {
 		t.Fatalf("unconfirmed startup retried: %v %v", ctr, err)
 	}
 }
@@ -152,7 +152,7 @@ func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
 	defer c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	if ctr, err := c.ClientContainerContext(ctx); ctr != nil || !errors.Is(err, context.DeadlineExceeded) || c.featureClientAttempted {
+	if ctr, err := c.ClientContainer(ctx); ctr != nil || !errors.Is(err, context.DeadlineExceeded) || c.featureClientAttempted {
 		t.Fatalf("attachment raced a topology change or ignored its deadline: %v %v", ctr, err)
 	}
 }

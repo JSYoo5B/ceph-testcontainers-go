@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -54,7 +55,7 @@ func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container,
 			t.Fatal(err)
 		}
 	}
-	control := cluster.ControlContainer()
+	control := clusteraccess.ControlContainer(t, cluster)
 	if err := control.CopyToContainer(ctx, []byte(text), "/tmp/tc-crush.txt", 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 
 	// A clean restart saves and loads the MemStore, and the OSD does not move
 	// itself back into a host bucket.
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	stop := 20 * time.Second
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)

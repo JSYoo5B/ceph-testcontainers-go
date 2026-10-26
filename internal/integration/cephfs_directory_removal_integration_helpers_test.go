@@ -134,7 +134,7 @@ func testCephFSDirectoryRemovalRelease(t *testing.T, host bool) {
 		}
 	}
 	originalControl := source.Container
-	control, err := source.ControlContainerContext(ctx)
+	control, err := source.ControlContainer(ctx)
 	if err != nil || control != originalControl {
 		t.Fatalf("lost-response probe needs original single-MON CLI: %v", err)
 	}

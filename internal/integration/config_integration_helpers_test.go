@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -77,7 +78,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	who := fmt.Sprintf("osd.%d", osds[0].ID)
 	checkRuntime := func(osd *ceph.OSDContainer, value string) {
 		t.Helper()
@@ -191,7 +192,7 @@ func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Cont
 		}
 		return strings.TrimSpace(string(data))
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		for option, want := range map[string]string{"bluestore_cache_size": "134217728", "osd_memory_target": "1073741824"} {
 			if got := show(fmt.Sprintf("osd.%d", osd.ID), option); got != want {
 				t.Fatalf("osd.%d %s = %q, want the config file value %s", osd.ID, option, got, want)
@@ -201,7 +202,7 @@ func checkNativeConfigFile(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if got := show("mon.a", "mon_max_pg_per_osd"); got != "320" {
 		t.Fatalf("mon.a mon_max_pg_per_osd = %q, want the config file value", got)
 	}
-	config, _, err := cluster.ConnectionConfig()
+	config, _, err := cluster.ConnectionConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -88,7 +88,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		}
 		return previous.daemon, nil
 	}
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.ControlContainer(ctx)
 	if err != nil || control == nil {
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "select MDS replacement control", err)
@@ -119,7 +119,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		if err := fs.checkMDSReplacementOwner(stopped, i, nil); err != nil {
 			return nil, err
 		}
-		selected, err := c.ControlContainerContext(ctx)
+		selected, err := c.ControlContainer(ctx)
 		if err != nil || selected == nil {
 			return nil, clusterutil.OperationError(ctx, "select admitted MDS replacement control", err)
 		}

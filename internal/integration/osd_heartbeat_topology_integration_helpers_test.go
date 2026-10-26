@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 func readOSDMap(t *testing.T, ctx context.Context, cluster *ceph.Container) osdMap {
@@ -79,7 +80,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	topologyRados(t, ctx, client, "seed")
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	if len(osds) != 3 {
 		t.Fatalf("want three OSDs, have %d", len(osds))
 	}

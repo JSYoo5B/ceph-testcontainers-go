@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -36,7 +37,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	}
 	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second}), ceph.WithConfigFile(tick))
-	osd, mgr := cluster.OSDs()[0], cluster.ManagerContainer()
+	osd, mgr := clusteraccess.OSDs(t, cluster)[0], cluster.ManagerContainer()
 
 	// A pending key left by an interrupted rotation is the one a later call
 	// finishes with: get-or-create-pending returns it instead of a new key.
@@ -151,7 +152,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	if handed == "" || authKey(t, ctx, cluster, "osd.0") != current {
 		t.Fatal("an uncertain handoff did not keep both keys")
 	}
-	if running := rotateKeyProcesses(t, ctx, cluster.ControlContainer()); running != "" {
+	if running := rotateKeyProcesses(t, ctx, clusteraccess.ControlContainer(t, cluster)); running != "" {
 		t.Fatalf("a rotate-key CLI is still running in the control container:\n%s", running)
 	}
 	if err := cluster.RotateDaemonKey(ctx, "osd.0"); err != nil {

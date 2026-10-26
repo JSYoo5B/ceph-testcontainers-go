@@ -20,6 +20,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -540,7 +541,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 		t.Fatalf("osd map of %s: %v: %.1024s, PG %s primary %d", backoffObject, err, out, clean.PGID, clean.ActingPrimary)
 	}
 	var primary, replica *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		switch {
 		case osd.ID == clean.ActingPrimary:
 			primary = osd

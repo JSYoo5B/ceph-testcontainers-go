@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 func monitorBootstrapRBDPeerConfig(t *testing.T, ctx context.Context, destination *ceph.Container, pool, peer string) (string, string) {
@@ -68,11 +69,11 @@ func monitorBootstrapSetPeerConfig(t *testing.T, ctx context.Context, source *ce
 		t.Fatal(err)
 	}
 	const path = "/tmp/tc-cephfs-peer-config.json"
-	if err := source.ControlContainer().CopyToContainer(ctx, raw, path, 0o600); err != nil {
+	if err := clusteraccess.ControlContainer(t, source).CopyToContainer(ctx, raw, path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	topologyExecOutput(t, ctx, source.ControlContainer(), "ceph", "config-key", "set", "cephfs/mirror/peer/"+filesystem+"/"+peer, "-i", path)
-	topologyExecOutput(t, ctx, source.ControlContainer(), "rm", "-f", path)
+	topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "config-key", "set", "cephfs/mirror/peer/"+filesystem+"/"+peer, "-i", path)
+	topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "rm", "-f", path)
 }
 
 func monitorBootstrapAssertPeerConfig(t *testing.T, before, after map[string]json.RawMessage, addresses string) {

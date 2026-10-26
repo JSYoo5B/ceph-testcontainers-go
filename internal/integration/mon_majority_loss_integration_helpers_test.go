@@ -190,7 +190,7 @@ func captureMajorityBaseline(ctx context.Context, rec *monReplacementRecorder, c
 		return nil, fmt.Errorf("baseline is not a full quorum of %d: monmap %v, quorum %v", count, b.Members, status.QuorumNames)
 	}
 	listCtx, cancelList := context.WithTimeout(ctx, rec.bounds.Query)
-	monitors, err := cluster.MonitorsContext(listCtx)
+	monitors, err := cluster.Monitors(listCtx)
 	cancelList()
 	if err != nil {
 		return nil, fmt.Errorf("list monitors: %w", err)
@@ -285,7 +285,7 @@ func observeMajorityRound(parent context.Context, rec *monReplacementRecorder, c
 	defer cancel()
 	round := majorityRound{At: time.Now(), Samples: make([]majoritySample, len(b.Members))}
 	listCtx, cancelList := context.WithTimeout(ctx, rec.bounds.Query)
-	monitors, err := cluster.MonitorsContext(listCtx)
+	monitors, err := cluster.Monitors(listCtx)
 	cancelList()
 	if err != nil {
 		round.Incomplete = append(round.Incomplete, fmt.Sprintf("list monitors: %v", err))

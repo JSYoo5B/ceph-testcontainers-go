@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown
@@ -59,11 +60,11 @@ func TestPausedOSDFaults(t *testing.T) {
 				t.Logf("CONTAINER_PAUSE_CLIENT %s", execOutput(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
 			}
 			probe(t, "seed")
-			target := cluster.OSDs()[1]
+			target := clusteraccess.OSDs(t, cluster)[1]
 			if target == nil || target.Container == nil {
 				t.Fatal("second owned OSD unavailable")
 			}
-			if pause, err := fault.Pause(ctx, cluster, cluster.ControlContainer()); err == nil || pause != nil {
+			if pause, err := fault.Pause(ctx, cluster, clusteraccess.ControlContainer(t, cluster)); err == nil || pause != nil {
 				t.Fatal("control CLI container was paused")
 			}
 

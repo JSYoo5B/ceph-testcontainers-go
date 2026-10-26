@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -171,7 +172,7 @@ eventLoop:
 	if winner == original || newID == oldID || original.GetContainerID() != oldID || oldRaw.GetContainerID() != oldID {
 		t.Fatal("instance handles were rebound")
 	}
-	owned := cluster.OSDs()
+	owned := clusteraccess.OSDs(t, cluster)
 	if len(owned) != 1 || owned[0] != winner {
 		t.Fatal("owned replacement differs")
 	}

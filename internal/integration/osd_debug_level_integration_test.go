@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // TestOSDDebugLevel opens runtime debug level windows on one surviving OSD
@@ -101,7 +102,7 @@ func TestOSDDebugLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	pause, err := fault.Pause(ctx, cluster, osd)
 	if err != nil {
 		if pause != nil {

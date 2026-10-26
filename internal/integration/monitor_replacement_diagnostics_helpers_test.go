@@ -34,9 +34,9 @@ type monReplacementCluster interface {
 	QuorumStatus(context.Context) (ceph.QuorumStatus, error)
 	AdminSocket(context.Context, string, ...string) ([]byte, error)
 	CollectDiagnostics(context.Context, ceph.DiagnosticsConfig) (*ceph.DiagnosticsReport, error)
-	MonitorsContext(context.Context) ([]*ceph.MonitorContainer, error)
-	ManagersContext(context.Context) ([]*ceph.ManagerContainer, error)
-	OSDsContext(context.Context) ([]*ceph.OSDContainer, error)
+	Monitors(context.Context) ([]*ceph.MonitorContainer, error)
+	Managers(context.Context) ([]*ceph.ManagerContainer, error)
+	OSDs(context.Context) ([]*ceph.OSDContainer, error)
 }
 
 // monReplacementBounds bounds every step. Operation guards AddMonitor and
@@ -520,7 +520,7 @@ func (r *monReplacementRecorder) replace(ctx context.Context, pairs [][2]string)
 	members := slices.Clone(r.Baseline.MonMap)
 	if len(members) == 0 {
 		listCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
-		monitors, err := r.cluster.MonitorsContext(listCtx)
+		monitors, err := r.cluster.Monitors(listCtx)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("list monitors before the replacement: %w", err)
@@ -579,7 +579,7 @@ func (r *monReplacementRecorder) phase(ctx context.Context, name string, want []
 				return status, false, nil
 			}
 			// So is owned membership that the probe's bound cannot list.
-			monitors, err := r.cluster.MonitorsContext(probeCtx)
+			monitors, err := r.cluster.Monitors(probeCtx)
 			if err != nil {
 				return status, false, nil
 			}
@@ -751,7 +751,7 @@ func (r *monReplacementRecorder) snapshot(parent context.Context, full bool) *mo
 		}()
 	}
 	listCtx, cancelList := context.WithTimeout(ctx, r.bounds.Query)
-	monitors, err := r.cluster.MonitorsContext(listCtx)
+	monitors, err := r.cluster.Monitors(listCtx)
 	cancelList()
 	if err != nil {
 		incomplete("list monitors: %v", err)
@@ -938,13 +938,13 @@ func (r *monReplacementRecorder) warmIdentities(ctx context.Context) (result []w
 func (r *monReplacementRecorder) ownedDaemons(ctx context.Context) ([]*ceph.ManagerContainer, []*ceph.OSDContainer, []string) {
 	var unlisted []string
 	listCtx, cancel := context.WithTimeout(ctx, r.bounds.Query)
-	managers, err := r.cluster.ManagersContext(listCtx)
+	managers, err := r.cluster.Managers(listCtx)
 	cancel()
 	if err != nil {
 		unlisted = append(unlisted, "list managers: "+err.Error())
 	}
 	listCtx, cancel = context.WithTimeout(ctx, r.bounds.Query)
-	osds, err := r.cluster.OSDsContext(listCtx)
+	osds, err := r.cluster.OSDs(listCtx)
 	cancel()
 	if err != nil {
 		unlisted = append(unlisted, "list osds: "+err.Error())

@@ -195,7 +195,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 	// separate completion contracts and could legitimately release overlap gates.
 	var pending cephfs.MirrorSnapshot
 	originalControl := source.Container
-	control, err := source.ControlContainerContext(ctx)
+	control, err := source.ControlContainer(ctx)
 	if err != nil || control != originalControl {
 		t.Fatalf("pending-gate oracle needs original single-MON CLI: %v", err)
 	}
@@ -511,7 +511,7 @@ func cephFSOriginalProcessSession(ctx context.Context, daemon *cephfs.MirrorDaem
 // Parse the complete result, including unrelated/new identities. Never infer
 // old GID retirement by searching only its old address or current inventory.
 func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, pool string) (map[string]string, error) {
-	client, err := source.ClientContainerContext(ctx)
+	client, err := source.ClientContainer(ctx)
 	if err != nil {
 		return nil, err
 	}

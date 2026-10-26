@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -94,14 +95,14 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if reached := monitorBannerReachable(t, ctx, cluster); reached != (family == ceph.AddressIPv4MappedIPv6) {
 		t.Fatalf("%s: the published MON port reached the MON: %t", family, reached)
 	}
-	for _, ctr := range []testcontainers.Container{cluster.Monitors()[0].Container, cluster.Monitors()[2].Container, cluster.OSDs()[0].Container} {
+	for _, ctr := range []testcontainers.Container{clusteraccess.Monitors(t, cluster)[0].Container, clusteraccess.Monitors(t, cluster)[2].Container, clusteraccess.OSDs(t, cluster)[0].Container} {
 		checkMessengerSockets(t, ctx, ctr, family)
 	}
 
 	// An interrupted OSD endpoint comes back at its original IPv4 and, on the
 	// dual-stack bridge, IPv6 address, so its advertised address still
 	// reaches it.
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	endpointBefore := osdEndpoint(t, ctx, cluster, osd.Container)
 	link, err := fault.InterruptNetwork(ctx, cluster, osd.Container, ceph.PublicNetworkPlane)
 	if err != nil {

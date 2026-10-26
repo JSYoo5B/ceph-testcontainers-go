@@ -41,7 +41,7 @@ func TestPartialClusterDiagnostics(t *testing.T) {
 	if cluster == nil || runErr == nil || cluster.Container == nil {
 		t.Fatal("expected inspectable partial cluster after the actual initial MON failure")
 	}
-	containers := diagnosticsOwnedContainers(cluster)
+	containers := diagnosticsOwnedContainers(t, cluster)
 	before := diagnosticsCaptureState(t, ctx, cluster, containers, false)
 	report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{Timeout: 30 * time.Second, OperationTimeout: 2 * time.Second})
 	if report == nil || err == nil || report.Complete {

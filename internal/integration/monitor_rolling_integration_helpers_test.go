@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -62,7 +63,7 @@ func monitorRollingQuorum(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	topologyWait(t, ctx, func() bool {
 		quorum, err := cluster.QuorumStatus(ctx)
-		return err == nil && len(quorum.QuorumNames) == count && len(quorum.MonMap.Mons) == count && len(cluster.Monitors()) == count
+		return err == nil && len(quorum.QuorumNames) == count && len(quorum.MonMap.Mons) == count && len(clusteraccess.Monitors(t, cluster)) == count
 	})
 }
 

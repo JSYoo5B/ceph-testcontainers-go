@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
@@ -78,7 +79,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 		t.Fatalf("daemon %s has no endpoint on %s", daemon.DaemonName, source.NetworkName())
 	}
 	peer := endpoint.IPAddress
-	osd := source.OSDs()[0]
+	osd := clusteraccess.OSDs(t, source)[0]
 	// The status reports the local snapshot a little after its bytes arrive.
 	synced, err := observe(ctx, time.Minute, 30*time.Second, time.Second, func(probeCtx context.Context) (rbdMirrorProgress, bool, error) {
 		progress, err := rbdMirrorImageProgress(probeCtx, mirror, "cut")

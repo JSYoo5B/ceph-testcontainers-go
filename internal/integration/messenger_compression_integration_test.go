@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // compressionPhaseReceipt is what one phase observed.
@@ -71,7 +72,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	if len(osds) != 2 {
 		t.Fatalf("cluster has %d OSDs, want 2", len(osds))
 	}
@@ -163,7 +164,7 @@ func waitOSDOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Container, phase compressionPhase,
 	pool string, dump bool, offsets []int) compressionPhaseReceipt {
 	t.Helper()
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	receipt := compressionPhaseReceipt{Phase: phase.name, Mode: phase.mode, Compressed: phase.compressed}
 	var problems []string
 	for deadline := time.Now().Add(2 * time.Minute); ; {

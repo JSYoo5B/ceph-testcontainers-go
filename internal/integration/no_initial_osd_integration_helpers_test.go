@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -68,7 +69,7 @@ func (o *noInitialOSDOracle) assertOnlyControl(t *testing.T, ctx context.Context
 	if err != nil || info.Info.ID != o.engine {
 		t.Fatal("original native engine changed", err)
 	}
-	managers := cluster.Managers()
+	managers := clusteraccess.Managers(t, cluster)
 	if len(managers) != 1 || managers[0].Container == nil {
 		t.Fatal("default manager ownership unavailable")
 	}
@@ -226,7 +227,7 @@ func noInitialOSDBootstrap(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if err != nil || !mgr.Available || mgr.ActiveName != "a" || mgr.ActiveGID == 0 || !status.MgrMap.Available {
 		t.Fatal("actual active MGR unavailable", err)
 	}
-	if status.OSDMap.NumOSDs != 0 || status.OSDMap.NumUpOSDs != 0 || status.OSDMap.NumInOSDs != 0 || len(cluster.OSDs()) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+	if status.OSDMap.NumOSDs != 0 || status.OSDMap.NumUpOSDs != 0 || status.OSDMap.NumInOSDs != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero construction registered or launched storage")
 	}
 	// Only storage-related checks are allowed without OSDs. Missing modules or
@@ -419,7 +420,7 @@ func testNoInitialOSDPartial(t *testing.T, host bool) {
 	oracle.assertOnlyControl(t, ctx, cluster, "partial-first-zero")
 	noInitialOSDPoolDefaults(t, ctx, cluster, "1", "1")
 	partial, err := cluster.AddOSD(ctx)
-	if err == nil || partial == nil || partial.Container != nil || partial.ID != 0 || partial.Placement().Host != "osd-0" || len(cluster.OSDs()) != 1 || cluster.OSDs()[0] != partial {
+	if err == nil || partial == nil || partial.Container != nil || partial.ID != 0 || partial.Placement().Host != "osd-0" || len(clusteraccess.OSDs(t, cluster)) != 1 || clusteraccess.OSDs(t, cluster)[0] != partial {
 		t.Fatal("generated-host conflict lost original partial registration", err)
 	}
 	states, err := cluster.OSDStates(ctx)

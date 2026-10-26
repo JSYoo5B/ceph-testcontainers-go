@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -107,7 +108,7 @@ func newBandwidthFixture(t *testing.T, ctx context.Context, customizers ...testc
 	if _, err := cluster.Ceph(ctx, "osd", "pool", "application", "enable", bandwidthPool, "rados"); err != nil {
 		t.Fatal(err)
 	}
-	limited := cluster.OSDs()[0]
+	limited := clusteraccess.OSDs(t, cluster)[0]
 	object, sha256 := putBandwidthObject(t, ctx, cluster, client, limited.ID, "bulk", bandwidthObject)
 	return bandwidthFixture{image: image, cluster: cluster, client: client, control: toolkitContainer(t, cluster), limited: limited, object: object, sha256: sha256}
 }

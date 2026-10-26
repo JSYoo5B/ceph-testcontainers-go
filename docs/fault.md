@@ -88,7 +88,11 @@ if hold != nil {
 if err != nil {
 	t.Fatal(err)
 }
-pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[1])
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+pause, err := fault.Pause(ctx, cluster, osds[1])
 if pause != nil {
 	defer pause.Resume(context.Background())
 }
@@ -164,7 +168,11 @@ refuses to run it with `ceph.ErrInvalidRequest` until `Restore` has
 reattached its endpoint, because the MON can only bind its monmap address.
 
 ```golang
-cut, err := fault.InterruptNetwork(ctx, cluster, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+cut, err := fault.InterruptNetwork(ctx, cluster, osds[0], ceph.ClusterNetworkPlane)
 if cut != nil {
 	defer cut.Restore(context.Background())
 }
@@ -292,7 +300,11 @@ requested one, or `fault.DefaultNetworkQueueLimit`.
   container.
 
 ```golang
-delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -317,7 +329,11 @@ clientAddress, err := client.ContainerIP(ctx)
 if err != nil {
 	t.Fatal(err)
 }
-delay, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+delay, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Delay:       200 * time.Millisecond,
@@ -355,7 +371,11 @@ cut, err := fault.ApplyNetworkProfile(ctx, cluster, mds, fault.NetworkProfile{
 only to the selected peers, until `Restore`:
 
 ```golang
-limit, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+limit, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),
@@ -404,7 +424,11 @@ decision that much dependent on the previous one's. A zero value is off
 `5% 10%`.
 
 ```golang
-fault, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+fault, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 	HelperImage: fault.NetemHelperImage,
 	Plane:       ceph.PublicNetworkPlane,
 	Peer:        netip.MustParseAddr(clientAddress),

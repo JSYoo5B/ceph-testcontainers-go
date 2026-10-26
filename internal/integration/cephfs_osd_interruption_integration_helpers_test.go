@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -263,13 +264,13 @@ func testCephFSOSDInterruption(t *testing.T) {
 		t.Fatalf("inode %d lives in pool %d, osd map names %d", opened.Inode, pool, placed.PoolID)
 	}
 	var target *ceph.OSDContainer
-	for _, osd := range m.cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, m.cluster) {
 		if osd.ID == placed.ActingPrimary {
 			target = osd
 		}
 	}
-	if target == nil || len(m.cluster.OSDs()) != 2 || !slices.Contains(journal.Acting, target.ID) {
-		t.Fatalf("osd.%d (acting %v) is not an owned OSD that also holds the journal (acting %v): %d OSDs", placed.ActingPrimary, placed.Acting, journal.Acting, len(m.cluster.OSDs()))
+	if target == nil || len(clusteraccess.OSDs(t, m.cluster)) != 2 || !slices.Contains(journal.Acting, target.ID) {
+		t.Fatalf("osd.%d (acting %v) is not an owned OSD that also holds the journal (acting %v): %d OSDs", placed.ActingPrimary, placed.Acting, journal.Acting, len(clusteraccess.OSDs(t, m.cluster)))
 	}
 	if ops, raw, err := objecterRequests(ctx, m.cluster, m.client, writerAsok, ""); err != nil || len(objecterOpsOn(ops, placed.PoolID, "")) != 0 {
 		t.Fatalf("writer has data ops in flight before the pause: %v: %s", err, raw)

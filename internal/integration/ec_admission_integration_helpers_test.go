@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -142,7 +143,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 		t.Fatal(err)
 	}
 	var victim *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID == plan.Victim {
 			victim = osd
 		}

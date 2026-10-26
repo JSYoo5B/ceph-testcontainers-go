@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -96,7 +97,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 		}
 		inPlane("mgr."+native.ActiveManager.Name, native.ActiveManager.Addrs, publicSubnet, netip.Addr{})
 		osds := map[int]ceph.OSDAddress{}
-		for _, osd := range cluster.OSDs() {
+		for _, osd := range clusteraccess.OSDs(t, cluster) {
 			inspection, err := docker.ContainerInspect(ctx, osd.GetContainerID(), mobycl.ContainerInspectOptions{})
 			if err != nil {
 				t.Fatal(err)
@@ -161,7 +162,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	}
 	topologyRados(t, ctx, client, "public-endpoint-restored")
 	// Interrupt an OSD's backend without stopping its process/public listener.
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	backend, err := fault.InterruptNetwork(ctx, cluster, osd, ceph.ClusterNetworkPlane)
 	if backend != nil {
 		t.Cleanup(func() {
@@ -269,7 +270,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(5))
-	if len(cluster.Monitors()) != 5 {
+	if len(clusteraccess.Monitors(t, cluster)) != 5 {
 		t.Fatal("fixture did not construct five monitors")
 	}
 	cephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-topology", "8")
@@ -288,7 +289,7 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 			}
 		}
 	})
-	for i, mon := range cluster.Monitors()[:2] {
+	for i, mon := range clusteraccess.Monitors(t, cluster)[:2] {
 		cut, err := fault.InterruptNetwork(ctx, cluster, mon, ceph.PublicNetworkPlane)
 		if cut != nil {
 			cuts = append(cuts, cut)

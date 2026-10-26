@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
@@ -81,7 +82,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if err != nil || final.ID != initial.ID || final.Size != initial.Size || final.PGNum != initial.PGNum {
 				t.Fatalf("secure topology changed pool identity/policy: %+v %v", final, err)
 			}
-			t.Logf("MSGR2_SECURE pool_id=%d monitor_count=%d manager_count=%d osd_count=%d native_io=true crc_refused=true", final.ID, len(cluster.Monitors()), len(cluster.Managers()), len(cluster.OSDs()))
+			t.Logf("MSGR2_SECURE pool_id=%d monitor_count=%d manager_count=%d osd_count=%d native_io=true crc_refused=true", final.ID, len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)), len(clusteraccess.OSDs(t, cluster)))
 		})
 	}
 }

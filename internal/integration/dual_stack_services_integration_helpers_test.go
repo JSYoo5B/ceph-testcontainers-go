@@ -22,6 +22,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -484,7 +485,7 @@ func mdsContainer(t *testing.T, cluster *ceph.Container, name string) testcontai
 // managerContainer returns the owned container of the named MGR.
 func managerContainer(t *testing.T, cluster *ceph.Container, name string) testcontainers.Container {
 	t.Helper()
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		if mgr.DaemonName == name {
 			return mgr.Container
 		}
@@ -496,7 +497,7 @@ func managerContainer(t *testing.T, cluster *ceph.Container, name string) testco
 // osdContainer returns the owned container of the OSD.
 func osdContainer(t *testing.T, cluster *ceph.Container, id int) testcontainers.Container {
 	t.Helper()
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID == id {
 			return osd.Container
 		}
@@ -652,7 +653,7 @@ func testDualStackServices(t *testing.T) {
 
 	// S3 over explicit IPv4 and IPv6 gateway addresses, and over the
 	// published host port.
-	gateways := rgw.Gateways(cluster)
+	gateways := clusteraccess.Gateways(t, cluster)
 	if len(gateways) != 1 {
 		t.Fatalf("%d gateways", len(gateways))
 	}

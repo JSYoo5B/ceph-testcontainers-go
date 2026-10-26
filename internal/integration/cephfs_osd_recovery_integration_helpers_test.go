@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // cephFSRecoveryWriter keeps one mount with an admin socket and one O_RDWR
@@ -145,7 +146,7 @@ func testCephFSOSDRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	m := startCephFSSingleMDS(t, ctx)
-	osds := m.cluster.OSDs()
+	osds := clusteraccess.OSDs(t, m.cluster)
 	if len(osds) != 2 {
 		t.Fatalf("want two owned OSDs, have %d", len(osds))
 	}

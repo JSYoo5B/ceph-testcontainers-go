@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -98,7 +99,7 @@ func TestSharedCluster(t *testing.T) {
 			},
 			"AddOSD": func() error { _, err := cluster.AddOSD(ctx); return err },
 			"ControlContainerContext": func() error {
-				_, err := cluster.ControlContainerContext(ctx)
+				_, err := cluster.ControlContainer(ctx)
 				return err
 			},
 			"Exec":      func() error { _, _, err := cluster.Exec(ctx, []string{"true"}); return err },
@@ -108,7 +109,7 @@ func TestSharedCluster(t *testing.T) {
 				t.Errorf("%s on the shared cluster returned %v, want ErrSharedCluster", name, err)
 			}
 		}
-		if cluster.ControlContainer() != nil || cluster.OSDs() != nil {
+		if clusteraccess.ControlContainer(t, cluster) != nil || clusteraccess.OSDs(t, cluster) != nil {
 			t.Error("the shared cluster handed out a container")
 		}
 		if status, err := cluster.Status(ctx); err != nil || status.FSID != fsid {

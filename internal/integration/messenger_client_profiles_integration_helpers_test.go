@@ -20,6 +20,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -116,14 +117,14 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 			t.Fatalf("MonMap ciphers service=%s allowed=%v preferred=%s, want %s %v %s", gotService, gotAllowed, gotPreferred, service, want, preferred)
 		}
 	}
-	_, keyring, err := cluster.ConnectionConfig()
+	_, keyring, err := cluster.ConnectionConfig(ctx)
 	if err != nil || cephxKeyType(t, keyring, "client.admin") != auth.KeyType {
 		t.Fatalf("client.admin key type: %v", err)
 	}
 	if got := authEntityKeyType(t, ctx, cluster, "mon."); got != auth.KeyType {
 		t.Fatalf("mon. has a %s key, want %s", got, auth.KeyType)
 	}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		if got := authEntityKeyType(t, ctx, cluster, "mgr."+mgr.DaemonName); got != preferred {
 			t.Fatalf("mgr.%s has a %s key, want %s", mgr.DaemonName, got, preferred)
 		}
@@ -134,7 +135,7 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 // with, and that global_id reclaim is not allowed insecurely.
 func checkProfileTickets(t *testing.T, ctx context.Context, cluster *ceph.Container, monTTL, serviceTTL float64) {
 	t.Helper()
-	for _, daemon := range []string{"mon.a", "mgr." + cluster.Managers()[0].DaemonName} {
+	for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
 		if got := runningOption(t, ctx, cluster, daemon, "auth_mon_ticket_ttl"); got != monTTL {
 			t.Fatalf("%s auth_mon_ticket_ttl = %v, want %v", daemon, got, monTTL)
 		}
@@ -343,7 +344,7 @@ func profileMonitorAddress(t *testing.T, ctx context.Context, cluster *ceph.Cont
 func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Container, identities map[string]*ceph.ClientConfig, monTTL time.Duration) {
 	t.Helper()
 	monitors := map[string]*ceph.MonitorContainer{}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		monitors[mon.DaemonName] = mon
 	}
 	if len(monitors) != 3 || monitors["a"] == nil || monitors["b"] == nil || monitors["c"] == nil {
@@ -375,7 +376,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 		t.Fatalf("active MGR address: %+v, %v", native, err)
 	}
 	var active *ceph.ManagerContainer
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		if mgr.DaemonName == before.ActiveName {
 			active = mgr
 		}
@@ -413,7 +414,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 		t.Fatalf("managers: %+v, %v", status, err)
 	}
 	var standby *ceph.ManagerContainer
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		if mgr.DaemonName == status.Standbys[0].Name {
 			standby = mgr
 		}
@@ -567,10 +568,10 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
-	if osds, err := cluster.DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(cluster.OSDs()) != 0 {
+	if osds, err := cluster.DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatalf("the profile has OSDs: %+v, %v", osds.OSDs, err)
 	}
-	daemons := profileDaemons(cluster)
+	daemons := profileDaemons(t, cluster)
 	for _, option := range []string{"ms_cluster_mode", "ms_service_mode", "ms_client_mode", "ms_mon_cluster_mode", "ms_mon_service_mode", "ms_mon_client_mode"} {
 		waitEffectiveMode(t, ctx, cluster, option, "secure", daemons...)
 	}
@@ -598,7 +599,7 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	mgrs := []string{}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		mgrs = append(mgrs, "mgr."+mgr.DaemonName)
 	}
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", strings.Join(modeNames(monitors), " "), "mon.a", "mon.b", "mon.c")
@@ -654,7 +655,7 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 	}
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "secure", mgrs...)
 	stop := 10 * time.Second
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		if err := mgr.Stop(ctx, &stop); err != nil {
 			t.Fatal(err)
 		}
@@ -696,7 +697,7 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileTickets(t, ctx, cluster, monTTL.Seconds(), serviceTTL.Seconds())
 	for name, want := range options {
-		for _, daemon := range []string{"mon.a", "mgr." + cluster.Managers()[0].DaemonName} {
+		for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
 			if got := runningOption(t, ctx, cluster, daemon, name); got != want {
 				t.Fatalf("%s %s = %v, want %v", daemon, name, got, want)
 			}
@@ -722,7 +723,7 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, -1)
 	status, err := cluster.ManagerStatus(ctx)
-	if err != nil || status.Available || status.ActiveGID != 0 || len(status.Standbys) != 0 || len(cluster.Managers()) != 0 {
+	if err != nil || status.Available || status.ActiveGID != 0 || len(status.Standbys) != 0 || len(clusteraccess.Managers(t, cluster)) != 0 {
 		t.Fatalf("a MGR exists before any was started: %+v, %v", status, err)
 	}
 	if _, err := cluster.AddManager(ctx, "a"); err != nil {
@@ -759,7 +760,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
-	monsAndMgrs := slices.DeleteFunc(profileDaemons(cluster), func(daemon string) bool { return strings.HasPrefix(daemon, "osd.") })
+	monsAndMgrs := slices.DeleteFunc(profileDaemons(t, cluster), func(daemon string) bool { return strings.HasPrefix(daemon, "osd.") })
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "crc", monsAndMgrs...)
 	waitEffectiveMode(t, ctx, cluster, "ms_service_mode", "crc", "osd.0")
 	if got := authEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
@@ -875,15 +876,15 @@ func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *
 }
 
 // profileDaemons names every owned MON, MGR and OSD.
-func profileDaemons(cluster *ceph.Container) []string {
+func profileDaemons(t testing.TB, cluster *ceph.Container) []string {
 	var daemons []string
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		daemons = append(daemons, "mon."+mon.DaemonName)
 	}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		daemons = append(daemons, "mgr."+mgr.DaemonName)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		daemons = append(daemons, fmt.Sprintf("osd.%d", osd.ID))
 	}
 	return daemons

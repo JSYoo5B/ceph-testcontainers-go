@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -89,7 +90,7 @@ func TestPostTestVerification(t *testing.T) {
 	}
 
 	crashDaemon(t, ctx, cluster.ManagerContainer())
-	crashDaemon(t, ctx, cluster.OSDs()[0].Container)
+	crashDaemon(t, ctx, clusteraccess.OSDs(t, cluster)[0].Container)
 
 	report, err = policy.Evaluate(ctx)
 	if err != nil {
@@ -155,7 +156,7 @@ func TestPostTestVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = docker.Close() }()
-	if _, err := docker.ContainerRemove(ctx, cluster.OSDs()[1].GetContainerID(), mobycl.ContainerRemoveOptions{Force: true}); err != nil {
+	if _, err := docker.ContainerRemove(ctx, clusteraccess.OSDs(t, cluster)[1].GetContainerID(), mobycl.ContainerRemoveOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	report, err = later.Evaluate(ctx)

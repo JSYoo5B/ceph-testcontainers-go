@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -204,7 +205,7 @@ func osdMemoryWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 	defer cancel()
 	for {
 		if up {
-			for _, osd := range cluster.OSDs() {
+			for _, osd := range clusteraccess.OSDs(t, cluster) {
 				state, err := osd.State(ctx)
 				if err != nil || state == nil || !state.Running {
 					t.Fatalf("restarted OSD exited before becoming up: cid=%s state=%+v error=%v", osd.GetContainerID(), state, err)
@@ -277,7 +278,7 @@ func osdMemoryData(t *testing.T, ctx context.Context, cluster *ceph.Container, f
 	if err != nil || status.ID != poolID || status.Size != 2 || status.MinSize != 1 {
 		t.Fatal("retained pool identity/policy changed", err)
 	}
-	control, err := cluster.ControlContainerContext(ctx)
+	control, err := cluster.ControlContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

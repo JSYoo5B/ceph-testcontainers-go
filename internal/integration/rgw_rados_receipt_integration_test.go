@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -60,7 +61,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway := cluster.Gateways()[0]
+	gateway := clusteraccess.RGWGateways(t, cluster)[0]
 	endpoint, err := gateway.S3Endpoint(ctx)
 	if err != nil {
 		t.Fatal(err)

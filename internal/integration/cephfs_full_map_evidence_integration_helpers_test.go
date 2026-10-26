@@ -9,9 +9,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -441,7 +443,7 @@ func counterDeltas(before, after mapCounters) (full, inc *uint64, note string) {
 // retainedMapSources reads the retained client through its admin socket
 // path in the client container and each owned OSD through the cluster's
 // admin socket API. The OSD list is taken when the sources are built.
-func retainedMapSources(cluster *ceph.Container, client testcontainers.Container, asok string) mapEvidenceSources {
+func retainedMapSources(t testing.TB, cluster *ceph.Container, client testcontainers.Container, asok string) mapEvidenceSources {
 	src := mapEvidenceSources{
 		ClientAdmin: func(ctx context.Context, args ...string) ([]byte, error) {
 			result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
@@ -458,7 +460,7 @@ func retainedMapSources(cluster *ceph.Container, client testcontainers.Container
 		},
 		MonCommand: func(ctx context.Context, args ...string) ([]byte, error) { return cluster.Ceph(ctx, args...) },
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		src.OSDs = append(src.OSDs, osd.ID)
 	}
 	return src

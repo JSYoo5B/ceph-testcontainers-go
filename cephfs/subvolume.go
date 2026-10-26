@@ -162,7 +162,7 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && fs.nativeIdentity != nil
 	timeout := servicehook.StartupTimeout(c)
 	if valid {
-		control, err := c.ControlContainerContext(ctx)
+		control, err := c.ControlContainer(ctx)
 		if err != nil {
 			servicehook.Unlock(c)
 			filesystems(c).setupMu.Unlock()
