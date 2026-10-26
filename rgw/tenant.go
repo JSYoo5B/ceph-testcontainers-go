@@ -40,12 +40,16 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	// The gateway state is keyed by the cluster, so rgw still takes it.
-	c := servicehook.TenantCluster(t)
-	if c == nil {
+	if err := port.Live(); err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	g := sharedGateway(c)
+	// The gateway state is keyed by the cluster, which the port reaches
+	// without handing it out.
+	var g *Gateway
+	_ = port.WithTopology(func() error {
+		g = pickSharedGateway(gatewaysFrom(port.Extension).sorted())
+		return nil
+	})
 	if g == nil {
 		return nil, invalid(errors.New("the shared cluster runs no RGW gateway; start one with rgw.WithGateways in ceph.WithSharedRunOptions"))
 	}
@@ -55,16 +59,24 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if err := port.AttachScope("rgw tenant "+t.ID(), u.release); err != nil {
 		return nil, err
 	}
-	servicehook.Lock(c)
-	defer servicehook.Unlock(c)
-	if err := g.validateAdminGateway(); err != nil {
+	if err := port.WithTopology(func() error { return u.create(ctx) }); err != nil {
 		return nil, err
+	}
+	return u, nil
+}
+
+// create makes the S3 user of u's RGW tenant. The caller holds the cluster
+// mutex.
+func (u *TenantUser) create(ctx context.Context) error {
+	g, t := u.gateway, u.tenant
+	if err := g.validateAdminGateway(); err != nil {
+		return err
 	}
 	ctx, cancel := g.adminContext(ctx)
 	defer cancel()
 	data, err := g.adminCommand(ctx, "user", "create", "--tenant", t.ID(), "--uid", tenantUserID, "--display-name", "tenant "+t.ID())
 	if err != nil {
-		return nil, fmt.Errorf("create the RGW user of tenant %s: %w", t.ID(), err)
+		return fmt.Errorf("create the RGW user of tenant %s: %w", t.ID(), err)
 	}
 	var created struct {
 		Keys []struct {
@@ -74,10 +86,10 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(data, &created); err != nil || len(created.Keys) != 1 || created.Keys[0].AccessKey == "" || created.Keys[0].SecretKey == "" {
-		return nil, errors.New("decode the S3 keys of a tenant's RGW user")
+		return errors.New("decode the S3 keys of a tenant's RGW user")
 	}
 	u.accessKey, u.secretKey = created.Keys[0].AccessKey, created.Keys[0].SecretKey
-	return u, nil
+	return nil
 }
 
 // Tenant returns the RGW tenant, the tenant's ID. S3 paths of another RGW
@@ -193,7 +205,12 @@ func rgwMetadata(ctx context.Context, g *Gateway) (users, buckets []string, err 
 func sharedGateway(c *ceph.Container) *Gateway {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	sorted := gateways(c).sorted()
+	return pickSharedGateway(gateways(c).sorted())
+}
+
+// pickSharedGateway returns the gateway named default or else the first of
+// the name-sorted gateways, or nil.
+func pickSharedGateway(sorted []*Gateway) *Gateway {
 	for _, g := range sorted {
 		if g.GatewayName == "default" {
 			return g
