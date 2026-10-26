@@ -40,8 +40,7 @@ type hooks interface {
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
 	TenantCluster(t *ceph.Tenant) *ceph.Container
-	TenantClient(ctx context.Context, t *ceph.Tenant, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
-	AttachTenantScope(t *ceph.Tenant, key string, release func(ctx context.Context) ([]string, error)) error
+	TenantPort(t *ceph.Tenant) (TenantPort, error)
 	RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error))
 	Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error)
 	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error)
@@ -113,26 +112,40 @@ func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
 func Closed(c *ceph.Container) bool { return get().Closed(c) }
 
 // TenantCluster returns the shared cluster of a live tenant, or nil. Its
-// gate refuses the methods that a tenant cannot use; the scoped operations
-// of the service packages use the hooks instead.
+// gate refuses the methods that a tenant cannot use. Only rgw (whose gateway
+// state is keyed by the cluster) and integration tests still use it; rbd and
+// cephfs use Tenant.
 func TenantCluster(t *ceph.Tenant) *ceph.Container { return get().TenantCluster(t) }
 
-// TenantClient creates client.ID-suffix for a live tenant with caps that the
-// service limited to the tenant's resources. The tenant's release deletes it,
-// and the tenant's WithClientIdentity and RunNativeCommand accept it.
-func TenantClient(ctx context.Context, t *ceph.Tenant, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error) {
-	return get().TenantClient(ctx, t, suffix, caps)
+// TenantPort is what an adapter may do for one live tenant. It does not
+// return the cluster.
+type TenantPort = interface {
+	ID() string
+	// Live fails once the tenant is released or its cluster terminated.
+	Live() error
+	// StartupTimeout bounds one fixture operation.
+	StartupTimeout() time.Duration
+	// Command runs a CLI command in the tenant's cluster. It does not check
+	// liveness, so a scope's release can use it.
+	Command(ctx context.Context, args ...string) ([]byte, error)
+	// CreateClient creates client.ID-suffix for the tenant with caps that
+	// the service limited to the tenant's resources. The tenant's release
+	// deletes it, and the tenant's WithClientIdentity and RunNativeCommand
+	// accept it.
+	CreateClient(ctx context.Context, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
+	// AttachScope registers a service resource of the tenant. The tenant's
+	// release calls release, in reverse order of attachment and before it
+	// deletes the tenant's clients, to remove the resource and list what
+	// remains of it; a remainder or an error poisons the shared cluster.
+	// Attach before creating the resource, so that a partial creation is
+	// removed too. Each key is attached once per tenant.
+	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
+	WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 }
 
-// AttachTenantScope registers a service resource of a live tenant. The
-// tenant's release calls release, in reverse order of attachment and before
-// it deletes the tenant's clients, to remove the resource and list what
-// remains of it; a remainder or an error poisons the shared cluster. Attach
-// before creating the resource, so that a partial creation is removed too.
-// Each key is attached once per tenant.
-func AttachTenantScope(t *ceph.Tenant, key string, release func(ctx context.Context) ([]string, error)) error {
-	return get().AttachTenantScope(t, key, release)
-}
+// Tenant returns the port of a live tenant, or the error that says it is
+// released.
+func Tenant(t *ceph.Tenant) (TenantPort, error) { return get().TenantPort(t) }
 
 // RegisterSharedService records a service package's shared-cluster hooks.
 // prepare runs on each shared cluster before its baseline is taken, while

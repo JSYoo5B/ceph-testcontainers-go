@@ -22,8 +22,7 @@ import (
 // client's sessions, removes the group with its subvolumes, snapshots and
 // files, and waits until the namespace holds no data.
 type TenantGroup struct {
-	tenant   *ceph.Tenant
-	cluster  *ceph.Container
+	tenant   servicehook.TenantPort
 	fs       string
 	dataPool string
 	client   *ceph.ClientConfig
@@ -49,33 +48,33 @@ func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
 	if fs != "" && !naming.ClientID.MatchString(fs) {
 		return nil, invalid(errors.New("filesystem name must use letters, digits, dots, underscores or hyphens"))
 	}
-	c := servicehook.TenantCluster(t)
-	if c == nil {
+	port, err := servicehook.Tenant(t)
+	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
+	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
 	defer cancel()
-	found, err := tenantScript(ctx, c, "find", fs, t.ID())
+	found, err := tenantScript(ctx, port.Command, "find", fs, t.ID())
 	if err != nil {
 		return nil, err
 	}
 	if found.Error != "" {
 		return nil, invalid(errors.New(found.Error))
 	}
-	g := &TenantGroup{tenant: t, cluster: c, fs: found.Filesystem, dataPool: found.DataPool}
+	g := &TenantGroup{tenant: port, fs: found.Filesystem, dataPool: found.DataPool}
 	// Attached first, so that the release also removes a group whose
 	// creation failed after it applied.
-	if err := servicehook.AttachTenantScope(t, "cephfs group "+g.fs+"/"+t.ID(), g.release); err != nil {
+	if err := port.AttachScope("cephfs group "+g.fs+"/"+t.ID(), g.release); err != nil {
 		return nil, err
 	}
-	created, err := tenantScript(ctx, c, "create", g.fs, t.ID(), g.dataPool)
+	created, err := tenantScript(ctx, port.Command, "create", g.fs, t.ID(), g.dataPool)
 	if err != nil {
 		return nil, err
 	}
 	if created.Error != "" {
 		return nil, fmt.Errorf("create the subvolume group of tenant %s: %s", t.ID(), created.Error)
 	}
-	client, err := servicehook.TenantClient(ctx, t, "cephfs-"+g.fs, ceph.ClientCaps{
+	client, err := port.CreateClient(ctx, "cephfs-"+g.fs, ceph.ClientCaps{
 		Mon: "allow r",
 		MDS: "allow rw fsname=" + g.fs + " path=" + g.Path(),
 		OSD: "allow rw pool=" + g.dataPool + " namespace=" + g.PoolNamespace(),
@@ -127,12 +126,12 @@ func (g *TenantGroup) CreateSubvolume(ctx context.Context, name string, sizeByte
 	if sizeBytes < 0 {
 		return "", invalid(errors.New("subvolume size must not be negative"))
 	}
-	if servicehook.TenantCluster(g.tenant) == nil {
+	if g.tenant.Live() != nil {
 		return "", invalid(fmt.Errorf("tenant %s is released", g.tenant.ID()))
 	}
-	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(g.cluster))
+	ctx, cancel := context.WithTimeout(ctx, g.tenant.StartupTimeout())
 	defer cancel()
-	result, err := tenantScript(ctx, g.cluster, "subvolume", g.fs, g.tenant.ID(), name, strconv.FormatInt(sizeBytes, 10))
+	result, err := tenantScript(ctx, g.tenant.Command, "subvolume", g.fs, g.tenant.ID(), name, strconv.FormatInt(sizeBytes, 10))
 	if err != nil {
 		return "", err
 	}
@@ -143,7 +142,7 @@ func (g *TenantGroup) CreateSubvolume(ctx context.Context, name string, sizeByte
 }
 
 func (g *TenantGroup) release(ctx context.Context) ([]string, error) {
-	result, err := tenantScript(ctx, g.cluster, "release", g.fs, g.tenant.ID(), g.dataPool,
+	result, err := tenantScript(ctx, g.tenant.Command, "release", g.fs, g.tenant.ID(), g.dataPool,
 		"client."+g.tenant.ID()+"-cephfs-"+g.fs, strconv.Itoa(int(tenantPurgeWait/time.Second)))
 	if err != nil {
 		return nil, err
@@ -152,6 +151,17 @@ func (g *TenantGroup) release(ctx context.Context) ([]string, error) {
 		return result.Remaining, errors.New(result.Error)
 	}
 	return result.Remaining, nil
+}
+
+// commandRunner runs a CLI command in the cluster of a tenant.
+type commandRunner = func(ctx context.Context, args ...string) ([]byte, error)
+
+// clusterCommand runs commands in c, for the hooks that run before a cluster
+// is shared and so have no tenant.
+func clusterCommand(c *ceph.Container) commandRunner {
+	return func(ctx context.Context, args ...string) ([]byte, error) {
+		return servicehook.ClientCommand(ctx, c, args...)
+	}
 }
 
 type tenantScriptResult struct {
@@ -166,9 +176,9 @@ type tenantScriptResult struct {
 	Ready bool `json:"ready"`
 }
 
-func tenantScript(ctx context.Context, c *ceph.Container, args ...string) (tenantScriptResult, error) {
+func tenantScript(ctx context.Context, run commandRunner, args ...string) (tenantScriptResult, error) {
 	var result tenantScriptResult
-	data, err := servicehook.ClientCommand(ctx, c, append([]string{"python3", "-c", tenantGroupScript}, args...)...)
+	data, err := run(ctx, append([]string{"python3", "-c", tenantGroupScript}, args...)...)
 	if err != nil {
 		return result, fmt.Errorf("cephfs tenant %s: %w", args[0], err)
 	}
@@ -395,7 +405,7 @@ func prepareShared(ctx context.Context, c *ceph.Container) error {
 	ctx, cancel := context.WithTimeout(ctx, tenantVolumesWait)
 	defer cancel()
 	for {
-		result, err := tenantScript(ctx, c, "probe")
+		result, err := tenantScript(ctx, clusterCommand(c), "probe")
 		if err != nil {
 			return err
 		}
@@ -413,7 +423,7 @@ func prepareShared(ctx context.Context, c *ceph.Container) error {
 // probeShared lists the subvolume groups of every filesystem, each owned by
 // the tenant of its name.
 func probeShared(ctx context.Context, c *ceph.Container) (map[string]string, error) {
-	result, err := tenantScript(ctx, c, "probe")
+	result, err := tenantScript(ctx, clusterCommand(c), "probe")
 	if err != nil {
 		return nil, err
 	}

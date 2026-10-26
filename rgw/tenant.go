@@ -36,6 +36,11 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if t == nil {
 		return nil, invalid(errors.New("tenant is required"))
 	}
+	port, err := servicehook.Tenant(t)
+	if err != nil {
+		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
+	}
+	// The gateway state is keyed by the cluster, so rgw still takes it.
 	c := servicehook.TenantCluster(t)
 	if c == nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
@@ -47,7 +52,7 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	u := &TenantUser{tenant: t, gateway: g}
 	// Attached first, so that the release also removes a user whose
 	// creation failed after it applied.
-	if err := servicehook.AttachTenantScope(t, "rgw tenant "+t.ID(), u.release); err != nil {
+	if err := port.AttachScope("rgw tenant "+t.ID(), u.release); err != nil {
 		return nil, err
 	}
 	servicehook.Lock(c)

@@ -18,7 +18,7 @@ import (
 // tenant's release removes the namespace with its images, snapshots, groups
 // and trash, and deletes the client.
 type TenantNamespace struct {
-	tenant *ceph.Tenant
+	tenant servicehook.TenantPort
 	pool   string
 	client *ceph.ClientConfig
 }
@@ -42,13 +42,13 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	if err := validateResourceName("pool", pool); err != nil {
 		return nil, err
 	}
-	c := servicehook.TenantCluster(t)
-	if c == nil {
+	port, err := servicehook.Tenant(t)
+	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
+	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
 	defer cancel()
-	data, err := servicehook.ClientCommand(ctx, c, "ceph", "--connect-timeout", "5", "osd", "pool", "application", "get", pool, "--format", "json")
+	data, err := port.Command(ctx, "ceph", "--connect-timeout", "5", "osd", "pool", "application", "get", pool, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("inspect RBD pool %q: %w", pool, err)
 	}
@@ -62,20 +62,20 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	namespace := t.ID()
 	// Attached first, so that the release also removes a namespace whose
 	// creation failed after it applied.
-	if err := servicehook.AttachTenantScope(t, "rbd namespace "+pool+"/"+namespace, func(ctx context.Context) ([]string, error) {
-		return releaseTenantNamespace(ctx, c, pool, namespace)
+	if err := port.AttachScope("rbd namespace "+pool+"/"+namespace, func(ctx context.Context) ([]string, error) {
+		return releaseTenantNamespace(ctx, port, pool, namespace)
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "create", "--pool", pool, "--namespace", namespace); err != nil {
+	if _, err := port.Command(ctx, "rbd", "namespace", "create", "--pool", pool, "--namespace", namespace); err != nil {
 		return nil, fmt.Errorf("create RBD namespace %q: %w", namespace, err)
 	}
 	scope := "profile rbd pool=" + pool + " namespace=" + namespace
-	client, err := servicehook.TenantClient(ctx, t, "rbd-"+pool, ceph.ClientCaps{Mon: "allow r", OSD: scope, MGR: scope})
+	client, err := port.CreateClient(ctx, "rbd-"+pool, ceph.ClientCaps{Mon: "allow r", OSD: scope, MGR: scope})
 	if err != nil {
 		return nil, fmt.Errorf("create the RBD client of tenant %s: %w", t.ID(), err)
 	}
-	return &TenantNamespace{tenant: t, pool: pool, client: client}, nil
+	return &TenantNamespace{tenant: port, pool: pool, client: client}, nil
 }
 
 // Pool returns the RBD pool that holds the namespace.
@@ -163,8 +163,8 @@ finally:
     cluster.shutdown()
 `
 
-func releaseTenantNamespace(ctx context.Context, c *ceph.Container, pool, namespace string) ([]string, error) {
-	data, err := servicehook.ClientCommand(ctx, c, "python3", "-c", tenantReleaseScript, pool, namespace, fmt.Sprint(tenantWatchWait))
+func releaseTenantNamespace(ctx context.Context, port servicehook.TenantPort, pool, namespace string) ([]string, error) {
+	data, err := port.Command(ctx, "python3", "-c", tenantReleaseScript, pool, namespace, fmt.Sprint(tenantWatchWait))
 	if err != nil {
 		return nil, fmt.Errorf("remove RBD namespace %q: %w", namespace, err)
 	}
