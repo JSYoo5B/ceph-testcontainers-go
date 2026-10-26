@@ -149,7 +149,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 
 	// The receipt is registered first so that it is emitted after the
 	// restoration cleanup and before the cluster is destroyed.
-	run := osdCPURun{Baseline: osdCPUBaseline, Tight: osdCPUTight}
+	run := osdCPURun{Baseline: osdCPUBaseline, Tight: osdCPUTight, Identity: osdCPUIdentity{Generation: gen, PID: target.PID}}
 	details := map[string]any{
 		"osd": osd.ID, "pg": pg.PGID.String(), "acting": pg.Acting, "container": id, "started_at": gen.StartedAt,
 		"pid": target.PID, "process_start": target.ProcessStart, "engine": info.Info.ServerVersion,
@@ -285,7 +285,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 
 	// window runs the predeclared workload between two kernel readings and
 	// samples the target while it runs.
-	window := func(label string, expected cpuMax) (osdCPUWindowVerdict, error) {
+	window := func(label string, expected cpuMax, ref *osdCPUWindowRef) (osdCPUWindowVerdict, error) {
 		t.Helper()
 		w := osdCPUWindow{Label: label, Generation: gen, PID: target.PID, Expected: expected}
 		failureBefore := failureLine()
@@ -330,6 +330,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 				w.Load = &report
 			}
 		}
+		*ref = osdCPUWindowRef{Identity: osdCPUIdentity{Generation: w.Generation, PID: w.PID}, Expected: w.Expected, ExecStart: w.ExecStart, ExecEnd: w.ExecEnd}
 		verdict, verr := classifyOSDCPUWindow(w, osdCPUWindowChecks{})
 		receipt := windowReceipt(w, verdict, verr)
 		receipt["heartbeat_failure_line_before"], receipt["heartbeat_failure_line_after"] = failureBefore, failureLine()
@@ -379,7 +380,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	// Control window under the admitted baseline: the workload must not
 	// throttle the OSD there, or the pressure window would prove nothing.
 	var verr error
-	if run.Control, verr = window("baseline", baselineMax); run.Control != osdWindowNotThrottled {
+	if run.Control, verr = window("baseline", baselineMax, &run.ControlRef); run.Control != osdWindowNotThrottled {
 		t.Fatalf("baseline control window is %s, not a clean no-throttle interval: %v", run.Control, verr)
 	}
 
@@ -391,7 +392,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	// The progress baseline is taken after the tightened limit is confirmed.
 	confirmed, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
 
-	run.Pressure, verr = window("pressure", tightMax)
+	run.Pressure, verr = window("pressure", tightMax, &run.PressureRef)
 	underPressure, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
 	t.Logf("OSD_CPU_LEDGER healthy=%+v tightened=%+v after_pressure=%+v pressure_verdict=%s", healthy, confirmed, underPressure, run.Pressure)
 	if run.Pressure == osdWindowExited || run.Pressure == osdWindowMarkedDown {
@@ -404,7 +405,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	}
 	restoredMark, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
 
-	if run.Back, verr = window("restored", restore.Kernel.Max); run.Back != osdWindowNotThrottled {
+	if run.Back, verr = window("restored", restore.Kernel.Max, &run.BackRef); run.Back != osdWindowNotThrottled {
 		t.Logf("restored window is %s: %v", run.Back, verr)
 	}
 	afterRestore := secondFaultAcks(t, ctx, cluster, client, ledger, restoredMark, 3, "after the baseline was restored")

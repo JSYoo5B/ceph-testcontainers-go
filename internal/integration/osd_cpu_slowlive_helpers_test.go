@@ -236,6 +236,7 @@ type osdCPUWindowChecks struct {
 	skipExit    bool
 	skipMapDown bool
 	skipSamples bool
+	skipTimes   bool
 	skipLoad    bool
 	skipBracket bool
 	skipQuota   bool
@@ -256,6 +257,23 @@ func classifyOSDCPUWindow(w osdCPUWindow, checks osdCPUWindowChecks) (osdCPUWind
 		for _, v := range views {
 			if i := v.Instance; i != nil && (!i.Running || i.OOMKilled || i.PID != w.PID || i.StartedAt != w.Generation.StartedAt) {
 				return osdWindowExited, fmt.Errorf("%w: target observed as %+v, frozen pid %d started %s", errOSDCPUWindow, *i, w.PID, w.Generation.StartedAt)
+			}
+		}
+	}
+	// Every recorded time must exist before any ordering is judged: the zero
+	// time compares before every real one and would pass as "earlier".
+	if !checks.skipTimes {
+		switch {
+		case w.ExecStart.IsZero() || w.ExecEnd.IsZero():
+			return osdWindowIncomplete, fmt.Errorf("%w: execution window time is missing", errOSDCPUWindow)
+		case w.Baseline != nil && (w.Baseline.At.IsZero() || w.Baseline.At.After(w.ExecStart)):
+			return osdWindowIncomplete, fmt.Errorf("%w: pre-workload observation has no time or was taken after the start", errOSDCPUWindow)
+		case (w.Before != nil && w.Before.At.IsZero()) || (w.After != nil && w.After.At.IsZero()):
+			return osdWindowIncomplete, fmt.Errorf("%w: kernel reading has no timestamp", errOSDCPUWindow)
+		}
+		for _, v := range w.Samples {
+			if v.At.IsZero() {
+				return osdWindowIncomplete, fmt.Errorf("%w: observation has no timestamp", errOSDCPUWindow)
 			}
 		}
 	}
@@ -349,7 +367,12 @@ func classifyOSDCPUWindow(w osdCPUWindow, checks osdCPUWindowChecks) (osdCPUWind
 
 // osdCPURun is everything the scenario retains.
 type osdCPURun struct {
-	Baseline, Tight int64
+	// Identity is the frozen target. Every transition, window and kernel
+	// reading must name it.
+	Identity osdCPUIdentity
+	// Refs join each window to the transition that installed its limit.
+	ControlRef, PressureRef, BackRef osdCPUWindowRef
+	Baseline, Tight                  int64
 	// Admit moves the OSD from the unlimited creation state to the finite
 	// baseline. That step is not reversed; Tighten and Restore are the round
 	// trip.
@@ -360,6 +383,66 @@ type osdCPURun struct {
 	LedgerVerified         bool // every acknowledged object read back byte for byte, none torn or replayed
 	ClusterClean           bool // every OSD up and in, the PG active+clean
 	SameInstanceAtEnd      bool // the target is still the frozen process generation
+}
+
+// osdCPUIdentity is the frozen container generation and daemon process.
+type osdCPUIdentity struct {
+	Generation containerGeneration
+	PID        int
+}
+
+// osdCPUWindowRef is what a window says about itself: its target, the limit it
+// expected and its execution times.
+type osdCPUWindowRef struct {
+	Identity           osdCPUIdentity
+	Expected           cpuMax
+	ExecStart, ExecEnd time.Time
+}
+
+// osdCPUJoin refuses a run whose records do not all describe one target in one
+// order: each transition and its kernel reading must name the frozen
+// generation and process, each window must expect the limit its transition
+// installed, and the sequence admit, control, tighten, pressure, restore, back
+// must be strictly ordered in time with every time present.
+func osdCPUJoin(r osdCPURun) []string {
+	var out []string
+	id := r.Identity
+	if !id.Generation.valid() || id.PID <= 0 {
+		return []string{"frozen identity is incomplete"}
+	}
+	for name, tr := range map[string]cpuTransitionRecord{"admit": r.Admit, "tighten": r.Tighten, "restore": r.Restore} {
+		if tr.Generation != id.Generation || tr.AfterState.ID != id.Generation.ID || tr.AfterState.StartedAt != id.Generation.StartedAt || tr.AfterState.PID != id.PID {
+			out = append(out, name+" transition does not name the frozen target")
+		}
+		if tr.Kernel == nil || tr.Kernel.Generation != id.Generation || tr.Kernel.At.IsZero() {
+			out = append(out, name+" kernel reading is missing, has no time or names another target")
+		}
+	}
+	for name, ref := range map[string]osdCPUWindowRef{"control": r.ControlRef, "pressure": r.PressureRef, "restored": r.BackRef} {
+		if ref.Identity != id {
+			out = append(out, name+" window does not name the frozen target")
+		}
+		if ref.ExecStart.IsZero() || !ref.ExecEnd.After(ref.ExecStart) {
+			out = append(out, name+" window times are missing or unordered")
+		}
+	}
+	for name, p := range map[string]struct {
+		ref osdCPUWindowRef
+		tr  cpuTransitionRecord
+	}{"control": {r.ControlRef, r.Admit}, "pressure": {r.PressureRef, r.Tighten}, "restored": {r.BackRef, r.Restore}} {
+		if p.tr.Kernel != nil && p.ref.Expected != p.tr.Kernel.Max {
+			out = append(out, name+" window expected a limit its transition did not install")
+		}
+	}
+	if r.Admit.Kernel != nil && r.Tighten.Kernel != nil && r.Restore.Kernel != nil {
+		ordered := r.Admit.Kernel.At.Before(r.ControlRef.ExecStart) && r.ControlRef.ExecEnd.Before(r.Tighten.Kernel.At) &&
+			r.Tighten.Kernel.At.Before(r.PressureRef.ExecStart) && r.PressureRef.ExecEnd.Before(r.Restore.Kernel.At) &&
+			r.Restore.Kernel.At.Before(r.BackRef.ExecStart)
+		if !ordered {
+			out = append(out, "transitions and windows are not in the declared order")
+		}
+	}
+	return out
 }
 
 type osdCPURunVerdict string
@@ -390,6 +473,7 @@ func classifyOSDCPURun(r osdCPURun) (osdCPURunVerdict, []string) {
 			return osdRunMarkedDown, []string{name + " window: target marked down in the OSD map"}
 		}
 	}
+	reasons = append(reasons, osdCPUJoin(r)...)
 	for name, tr := range map[string]cpuTransitionRecord{"admit": r.Admit, "tighten": r.Tighten, "restore": r.Restore} {
 		if v, err := classifyCPUTransition(tr, cpuTransitionChecks{}); v != cpuTransitionApplied {
 			reasons = append(reasons, fmt.Sprintf("%s transition is %s: %v", name, v, err))

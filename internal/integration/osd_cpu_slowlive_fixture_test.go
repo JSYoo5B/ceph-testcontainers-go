@@ -235,6 +235,25 @@ func TestOSDCPUWindowClassification(t *testing.T) {
 		{name: "throttled periods exceed elapsed periods", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
 			mutate:  func(w *osdCPUWindow) { w.After.Stat.Throttled = 500 },
 			disable: func(c *osdCPUWindowChecks) { c.skipPeriods = true }},
+		{name: "missing pre-workload kernel timestamp", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
+			mutate:  func(w *osdCPUWindow) { w.Before.At = time.Time{} },
+			disable: func(c *osdCPUWindowChecks) { c.skipTimes = true }},
+		{name: "missing post-workload kernel timestamp", want: osdWindowIncomplete, wrong: osdWindowIncomplete,
+			mutate: func(w *osdCPUWindow) { w.After.At = time.Time{} }},
+		{name: "missing execution start", want: osdWindowIncomplete, wrong: osdWindowIncomplete,
+			mutate: func(w *osdCPUWindow) { w.ExecStart = time.Time{} }},
+		{name: "missing execution end", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
+			mutate:  func(w *osdCPUWindow) { w.ExecEnd = time.Time{} },
+			disable: func(c *osdCPUWindowChecks) { c.skipTimes = true; c.skipBracket = true; c.skipSamples = true }},
+		{name: "missing baseline observation timestamp", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
+			mutate:  func(w *osdCPUWindow) { w.Baseline.At = time.Time{} },
+			disable: func(c *osdCPUWindowChecks) { c.skipTimes = true }},
+		{name: "baseline observed after the workload started", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
+			mutate:  func(w *osdCPUWindow) { w.Baseline.At = w.ExecStart.Add(time.Second) },
+			disable: func(c *osdCPUWindowChecks) { c.skipTimes = true }},
+		{name: "sample without a timestamp", want: osdWindowIncomplete, wrong: osdWindowThrottledLive,
+			mutate:  func(w *osdCPUWindow) { w.Samples[1].At = time.Time{} },
+			disable: func(c *osdCPUWindowChecks) { c.skipTimes = true }},
 		{name: "frozen process missing", want: osdWindowIncomplete, mutate: func(w *osdCPUWindow) { w.PID = 0 }},
 	}
 	for _, c := range cases {
@@ -258,19 +277,90 @@ func TestOSDCPUWindowClassification(t *testing.T) {
 
 func osdRunGood() osdCPURun {
 	const base, tight = int64(2_000_000_000), int64(250_000_000)
-	applied := func(requested int64) cpuTransitionRecord {
+	id := osdCPUIdentity{Generation: cpuGen, PID: 4242}
+	applied := func(requested int64, at time.Time) cpuTransitionRecord {
 		return cpuTransitionRecord{
 			Generation: cpuGen, RequestedNano: requested, ReplyReceived: true,
 			AfterState:  cpuEngineState{ID: cpuGen.ID, StartedAt: cpuGen.StartedAt, PID: 4242, Running: true},
 			AfterLimits: cpuEngineLimits{NanoCPUs: requested},
-			Kernel: &cpuWitness{Generation: cpuGen, At: osdT0, Source: cpuWitnessSource, ControllerListed: true,
+			Kernel: &cpuWitness{Generation: cpuGen, At: at, Source: cpuWitnessSource, ControllerListed: true,
 				Max: cpuMax{Quota: uint64(requested / 10_000), Period: 100000}},
 		}
 	}
-	return osdCPURun{
-		Baseline: base, Tight: tight, Admit: applied(base), Tighten: applied(tight), Restore: applied(base),
+	r := osdCPURun{
+		Identity: id, Baseline: base, Tight: tight,
+		Admit: applied(base, osdT0), Tighten: applied(tight, osdT0.Add(40*time.Second)), Restore: applied(base, osdT0.Add(80*time.Second)),
 		Control: osdWindowNotThrottled, Pressure: osdWindowThrottledLive, Back: osdWindowNotThrottled,
 		LedgerAcksAfterRestore: true, LedgerVerified: true, ClusterClean: true, SameInstanceAtEnd: true,
+	}
+	ref := func(tr cpuTransitionRecord, start time.Duration) osdCPUWindowRef {
+		return osdCPUWindowRef{Identity: id, Expected: tr.Kernel.Max, ExecStart: osdT0.Add(start), ExecEnd: osdT0.Add(start + 12*time.Second)}
+	}
+	r.ControlRef, r.PressureRef, r.BackRef = ref(r.Admit, 10*time.Second), ref(r.Tighten, 50*time.Second), ref(r.Restore, 90*time.Second)
+	return r
+}
+
+// TestOSDCPURunRequiresJoinedRecords mutates whole records, not single fields:
+// a complete, internally consistent admission for another target, a window
+// that names another process, and time-less or misordered sequences.
+func TestOSDCPURunRequiresJoinedRecords(t *testing.T) {
+	other := containerGeneration{ID: "c2", StartedAt: cpuGen.StartedAt}
+	cases := []struct {
+		name   string
+		mutate func(*osdCPURun)
+	}{
+		{"whole admission record for another target", func(r *osdCPURun) {
+			r.Admit.Generation = other
+			r.Admit.AfterState.ID = other.ID
+			r.Admit.Kernel.Generation = other
+		}},
+		{"whole tighten record for another target", func(r *osdCPURun) {
+			r.Tighten.Generation = other
+			r.Tighten.AfterState.ID = other.ID
+			r.Tighten.Kernel.Generation = other
+			r.Restore.Generation = other
+			r.Restore.AfterState.ID = other.ID
+			r.Restore.Kernel.Generation = other
+		}},
+		{"admission names another process", func(r *osdCPURun) { r.Admit.AfterState.PID = 9001 }},
+		{"admission kernel reading without a time", func(r *osdCPURun) { r.Admit.Kernel.At = time.Time{} }},
+		{"restore kernel reading missing", func(r *osdCPURun) { r.Restore.Kernel = nil }},
+		{"control window for another process", func(r *osdCPURun) { r.ControlRef.Identity.PID = 9001 }},
+		{"pressure window for another generation", func(r *osdCPURun) { r.PressureRef.Identity.Generation = other }},
+		{"restored window expects another limit", func(r *osdCPURun) { r.BackRef.Expected = cpuMax{Quota: 25000, Period: 100000} }},
+		{"pressure window expects the baseline", func(r *osdCPURun) { r.PressureRef.Expected = r.Admit.Kernel.Max }},
+		{"window without times", func(r *osdCPURun) { r.PressureRef.ExecStart, r.PressureRef.ExecEnd = time.Time{}, time.Time{} }},
+		{"pressure window before the tighten reading", func(r *osdCPURun) { r.PressureRef.ExecStart = r.Tighten.Kernel.At.Add(-time.Second) }},
+		{"restore reading before the pressure window ended", func(r *osdCPURun) { r.Restore.Kernel.At = r.PressureRef.ExecEnd.Add(-time.Second) }},
+		{"no frozen identity", func(r *osdCPURun) { r.Identity = osdCPUIdentity{} }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := osdRunGood()
+			c.mutate(&r)
+			if v, why := classifyOSDCPURun(r); v == osdRunSlowLive || len(why) == 0 {
+				t.Fatalf("accepted: %s %v", v, why)
+			}
+		})
+	}
+}
+
+// TestOSDCPUMissingTimestampThroughRunVerdict carries the window verdict of a
+// window with a zero pre-workload kernel timestamp into the run: without the
+// time rule the window and the run are accepted, with it neither is.
+func TestOSDCPUMissingTimestampThroughRunVerdict(t *testing.T) {
+	w := osdWindow(t)
+	w.Before.At = time.Time{}
+	broken, _ := classifyOSDCPUWindow(w, osdCPUWindowChecks{skipTimes: true})
+	r := osdRunGood()
+	r.Pressure = broken
+	if v, _ := classifyOSDCPURun(r); v != osdRunSlowLive {
+		t.Fatalf("negative control: without the rule the run is %s, want %s", v, osdRunSlowLive)
+	}
+	fixed, _ := classifyOSDCPUWindow(w, osdCPUWindowChecks{})
+	r.Pressure = fixed
+	if v, _ := classifyOSDCPURun(r); v == osdRunSlowLive {
+		t.Fatalf("a window without a pre-workload timestamp established slow-live")
 	}
 }
 
